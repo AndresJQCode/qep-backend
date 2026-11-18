@@ -176,6 +176,9 @@ public static partial class FlowValidator
     {
         switch (node)
         {
+            case MessageNode { Media: { } media } message:
+                CheckMediaMessage(message, media, context, issues);
+                break;
             case MessageNode message:
                 CheckText(node, message.Text, message.UrlButton is null ? TextMaxLength : InteractiveBodyMaxLength, issues);
                 if (message.UrlButton is { } urlButton)
@@ -611,14 +614,55 @@ public static partial class FlowValidator
         }
     }
 
-    // Pasar a un asesor y Resolver pueden no decir nada; si dicen algo, es texto libre.
-    private static void CheckOptionalText(FlowNode node, string text, List<FlowIssue> issues)
+    /// <summary>
+    /// Spec 2026-11-18 «Validation». El texto es el pie y puede ir vacío, salvo con botón: el <c>cta_url</c> de WhatsApp exige cuerpo
+    /// (Review Focus 3). Tope: 1024 (pie de WhatsApp y cuerpo del interactivo), salvo el audio sin botón, cuyo texto sale solo, como texto libre.
+    /// </summary>
+    private static void CheckMediaMessage(MessageNode message, MessageMedia media, FlowValidationContext context, List<FlowIssue> issues)
     {
-        if (text.Length > TextMaxLength)
+        var isAudio = media.Kind == ChatbotMediaKinds.Audio;
+        if (message.UrlButton is { } urlButton)
+        {
+            CheckText(message, message.Text, InteractiveBodyMaxLength, issues);
+            CheckLabel(message, urlButton.Label, issues);
+            CheckUrlButton(message, urlButton, issues);
+        }
+        else
+        {
+            CheckOptionalText(message, message.Text, isAudio ? TextMaxLength : InteractiveBodyMaxLength, issues);
+        }
+
+        if (context.MediaFiles?.GetValueOrDefault(media.FileId) != media.Kind)
+        {
+            issues.Add(Error(FlowIssueCodes.MessageMediaMissing, message.Id, "Falta el archivo de este mensaje. Vuelve a subirlo."));
+        }
+
+        if (isAudio && !string.IsNullOrWhiteSpace(message.Text))
+        {
+            issues.Add(Warning(
+                FlowIssueCodes.MessageAudioCaptionSeparate, message.Id,
+                "El audio no lleva texto: se envía como un mensaje aparte, después del audio."));
+        }
+
+        if (isAudio && message.UrlButton is not null)
+        {
+            issues.Add(Warning(
+                FlowIssueCodes.MessageAudioButtonSeparate, message.Id,
+                "El audio no lleva botón: el botón se envía en un mensaje aparte, después del audio."));
+        }
+    }
+
+    // Pasar a un asesor y Resolver pueden no decir nada; si dicen algo, es texto libre.
+    private static void CheckOptionalText(FlowNode node, string text, List<FlowIssue> issues) =>
+        CheckOptionalText(node, text, TextMaxLength, issues);
+
+    private static void CheckOptionalText(FlowNode node, string text, int maxLength, List<FlowIssue> issues)
+    {
+        if (text.Length > maxLength)
         {
             issues.Add(Error(
                 FlowIssueCodes.TextTooLong, node.Id,
-                $"El texto de «{node.Title}» tiene {text.Length} caracteres; el máximo es {TextMaxLength}."));
+                $"El texto de «{node.Title}» tiene {text.Length} caracteres; el máximo es {maxLength}."));
         }
     }
 

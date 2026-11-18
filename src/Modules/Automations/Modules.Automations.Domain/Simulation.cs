@@ -117,7 +117,8 @@ public sealed class Simulation
 /// Spec 2026-10-21 §8: una línea de la transcripción del simulador. <see cref="From"/> es uno de <see cref="TranscriptSenders"/>. Una línea
 /// del bot trae lo que el mensaje ofrecía (<see cref="Buttons"/>, <see cref="List"/> o <see cref="UrlButton"/>) para que el panel lo pinte
 /// como lo vería el cliente y el tester toque una opción; <see cref="NodeId"/> y <see cref="NodeTitle"/> dicen qué bloque la escribió
-/// (<c>null</c> en las del tester).
+/// (<c>null</c> en las del tester). <see cref="Media"/> (spec 2026-11-18) es el archivo de un Mensaje, ya resuelto; <c>null</c> en el resto y en
+/// las líneas guardadas antes de que existiera.
 /// </summary>
 public sealed record TranscriptEntry(
     string From,
@@ -127,7 +128,11 @@ public sealed record TranscriptEntry(
     IReadOnlyList<TranscriptButton>? Buttons,
     TranscriptList? List,
     TranscriptUrlButton? UrlButton,
-    DateTimeOffset At);
+    DateTimeOffset At,
+    TranscriptMedia? Media = null);
+
+/// <summary>Spec 2026-11-18: el archivo de una línea del bot. <see cref="Kind"/> en minúscula y <see cref="Url"/> la URL pública absoluta.</summary>
+public sealed record TranscriptMedia(string Kind, string Url, string FileName, string ContentType);
 
 /// <summary>Un botón de respuesta: <see cref="Id"/> es el <c>replyId</c> que el panel manda al tocarlo.</summary>
 public sealed record TranscriptButton(string Id, string Title);

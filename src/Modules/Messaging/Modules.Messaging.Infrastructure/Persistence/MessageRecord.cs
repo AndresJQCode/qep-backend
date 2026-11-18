@@ -72,6 +72,12 @@ internal sealed class MessageMediaRecord
 
     /// <summary>Spec 2026-10-14 §6.2: la URL del adjunto de Instagram; <c>null</c> en WhatsApp.</summary>
     public string? SourceUrl { get; set; }
+
+    /// <summary>Spec 2026-11-18: el archivo de Storage (dueño <c>ChatbotMedia</c>) que mandó un chatbot; <c>null</c> en el resto.</summary>
+    public Guid? StorageFileId { get; set; }
+
+    /// <summary>Spec 2026-11-18: la URL pública de ese archivo, que la burbuja carga; sin copia en R2 (<c>storage_key</c> nulo).</summary>
+    public string? PublicUrl { get; set; }
 }
 
 internal sealed class WebhookDeliveryRecord

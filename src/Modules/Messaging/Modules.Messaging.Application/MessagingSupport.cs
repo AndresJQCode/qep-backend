@@ -249,7 +249,8 @@ internal static class MessageMapping
             row.Direction.ToString(),
             row.Kind.ToString(),
             row.Text,
-            row.Media is null ? null : new MediaDto(MediaUrl(tenantId, row.Id), row.Media.MimeType, row.Media.FileName, row.Caption),
+            // Spec 2026-11-18 (BFF): el archivo de un chatbot se dibuja desde su URL pública; no se copian bytes por envío.
+            row.Media is null ? null : new MediaDto(row.Media.PublicUrl ?? MediaUrl(tenantId, row.Id), row.Media.MimeType, row.Media.FileName, row.Caption),
             row.Kind == MessageKind.Location ? LocationFrom(row.DetailsJson) : null,
             row.Status.ToString(),
             MessageFailureReasons.For(row.FailureCode),

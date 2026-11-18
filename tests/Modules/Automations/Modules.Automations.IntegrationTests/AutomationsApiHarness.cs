@@ -192,10 +192,16 @@ internal static class AutomationsApiHarness
         /// el handler anti-SSRF sólo en este host: la URL base de las conexiones sembradas no resuelve en ningún DNS.</summary>
         public FakeExternalApiHandler ExternalApi { get; } = new();
 
+        /// <summary>Spec 2026-11-18: Storage del archivo de un bloque «Mensaje», en memoria. La política sigue siendo la real.</summary>
+        public FakeChatbotMediaStore Media { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.ConfigureTestServices(services =>
             {
+                services.RemoveAll<IChatbotMediaStore>();
+                services.AddSingleton<IChatbotMediaStore>(Media);
+
                 foreach (var name in GraphClientNames)
                 {
                     services.AddHttpClient(name).ConfigurePrimaryHttpMessageHandler(() => MetaHandler);

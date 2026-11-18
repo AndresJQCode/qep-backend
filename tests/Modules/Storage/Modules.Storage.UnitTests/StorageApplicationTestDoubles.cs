@@ -297,6 +297,15 @@ internal sealed class UntouchablePaymentProofProcessor : IPaymentProofImageProce
         throw new InvalidOperationException("No proof must be processed.");
 }
 
+internal sealed class UntouchableChatbotMediaProcessing : IChatbotMediaProcessing
+{
+    public bool Matches(string name, ReadOnlySpan<byte> header) =>
+        throw new InvalidOperationException("No chatbot media must be checked.");
+
+    public Task<ProcessedChatbotImage?> ShrinkAsync(byte[] content, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("No chatbot media must be shrunk.");
+}
+
 internal sealed class UntouchableScanner : IFileScanner
 {
     public Task<FileScanResult> ScanAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken) =>

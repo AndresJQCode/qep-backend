@@ -50,4 +50,38 @@ public sealed class InteractiveSendTests
         var json = InteractiveSendJson.ToMetaObject(new CtaUrlSend("No estás registrado.", "Registrarme", new Uri("https://app.clasic.com.co/registro-clientes"))).ToJsonString(InteractiveSendJson.DetailsOptions);
         Assert.Equal("""{"type":"cta_url","body":{"text":"No estás registrado."},"action":{"name":"cta_url","parameters":{"display_text":"Registrarme","url":"https://app.clasic.com.co/registro-clientes"}}}""", json);
     }
+
+    // Spec 2026-11-18: con botón, el archivo del bot va de encabezado del cta_url, por link.
+    private static CtaUrlSend CtaWith(InteractiveMediaHeader header, string? textHeader = null) =>
+        new("Mira el catálogo", "Ver", new Uri("https://qcode.co/catalogo"), textHeader, MediaHeader: header);
+
+    [Fact]
+    public void ACtaWithAnImageHeaderSerializesTheLink()
+    {
+        var image = InteractiveSendJson.ToMetaObject(CtaWith(new InteractiveMediaHeader("image", new Uri("https://pub/x.jpg"), "x.jpg")));
+        var document = InteractiveSendJson.ToMetaObject(CtaWith(new InteractiveMediaHeader("document", new Uri("https://pub/lista.pdf"), "Lista.pdf")));
+
+        Assert.Equal("""{"type":"image","image":{"link":"https://pub/x.jpg"}}""", image["header"]!.ToJsonString());
+        Assert.Equal("""{"type":"document","document":{"link":"https://pub/lista.pdf","filename":"Lista.pdf"}}""", document["header"]!.ToJsonString());
+        Assert.Equal("Mira el catálogo", image["body"]!["text"]!.GetValue<string>());
+        Assert.Empty(InteractiveSendValidation.Validate(CtaWith(new InteractiveMediaHeader("video", new Uri("https://pub/x.mp4"), null))));
+    }
+
+    [Fact]
+    public void TextAndMediaHeaderTogetherConflict() =>
+        Assert.Contains(
+            "interactive.header.conflict",
+            InteractiveSendValidation.Validate(CtaWith(new InteractiveMediaHeader("image", new Uri("https://pub/x.jpg"), null), textHeader: "Hola")));
+
+    [Fact]
+    public void AnAudioHeaderIsInvalid() =>
+        Assert.Contains(
+            "interactive.header.media_type_invalid",
+            InteractiveSendValidation.Validate(CtaWith(new InteractiveMediaHeader("audio", new Uri("https://pub/x.mp3"), null))));
+
+    [Fact]
+    public void AnHttpHeaderLinkIsNotHttps() =>
+        Assert.Contains(
+            "interactive.header.link_not_https",
+            InteractiveSendValidation.Validate(CtaWith(new InteractiveMediaHeader("image", new Uri("http://pub/x.jpg"), null))));
 }

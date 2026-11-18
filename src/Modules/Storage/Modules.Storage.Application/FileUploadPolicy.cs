@@ -6,6 +6,14 @@ public static class FileUploadPolicy
 {
     public const long MaxSizeBytes = 25 * 1024 * 1024;
 
+    /// <summary>Spec 2026-11-18: el tope del multimedia de un chatbot es el del documento de WhatsApp (100 MB). Cada tipo tiene su propio
+    /// tope, más chico, que valida Automations con la política de Mensajería antes de abrir la sesión.</summary>
+    public const long ChatbotMediaMaxSizeBytes = 100L * 1024 * 1024;
+
+    /// <summary>Spec 2026-11-18: el tope de Meta para una imagen enviada por link. Una imagen de chatbot más grande se comprime al
+    /// completar.</summary>
+    public const long ChatbotMediaLinkImageMaxBytes = 5L * 1024 * 1024;
+
     private static readonly Dictionary<string, string[]> AllowedTypes =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
@@ -20,6 +28,20 @@ public static class FileUploadPolicy
             [".png"] = ["image/png"],
         };
 
+    // Spec 2026-11-18: lo que un chatbot manda además de la tabla general (la columna WhatsApp de OutboundMediaPolicy de Mensajería,
+    // que una prueba de paridad del Bootstrapper compara). Sólo para ChatbotMedia: la consola no acepta video ni audio.
+    private static readonly Dictionary<string, string[]> ChatbotMediaTypes =
+        new Dictionary<string, string[]>(AllowedTypes, StringComparer.OrdinalIgnoreCase)
+        {
+            [".mp4"] = ["video/mp4"],
+            [".3gp"] = ["video/3gpp"],
+            [".mp3"] = ["audio/mpeg"],
+            [".m4a"] = ["audio/mp4"],
+            [".aac"] = ["audio/aac"],
+            [".amr"] = ["audio/amr"],
+            [".ogg"] = ["audio/ogg"],
+        };
+
     /// <summary>Las extensiones permitidas con sus tipos MIME, de sólo lectura. Lo lee la prueba de paridad de los adjuntos de Soporte
     /// (<c>SupportAttachmentParityTests</c>), que no puede ver la tabla de otra forma.</summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> AllowedMimeTypesByExtension { get; } =
@@ -31,10 +53,37 @@ public static class FileUploadPolicy
 
     /// <summary>La misma regla con un tope más chico que el general: el de quien abre la sesión sin miembro (Soporte, 10 MB). Un tope
     /// por encima de <see cref="MaxSizeBytes"/> es un error de programación.</summary>
-    public static void ValidateDeclaration(string name, string mimeType, long sizeBytes, long maxSizeBytes)
+    public static void ValidateDeclaration(string name, string mimeType, long sizeBytes, long maxSizeBytes) =>
+        Validate(name, mimeType, sizeBytes, maxSizeBytes, MaxSizeBytes, AllowedTypes);
+
+    /// <summary>El tope máximo que admite un tipo de dueño: <see cref="ChatbotMediaMaxSizeBytes"/> para el multimedia de un chatbot,
+    /// <see cref="MaxSizeBytes"/> para el resto.</summary>
+    public static long MaxSizeBytesFor(FileOwnerType ownerType) =>
+        ownerType is FileOwnerType.ChatbotMedia ? ChatbotMediaMaxSizeBytes : MaxSizeBytes;
+
+    /// <summary>La regla según el dueño (spec 2026-11-18): <see cref="FileOwnerType.ChatbotMedia"/> suma video y audio a la tabla
+    /// general y sube el techo a <see cref="ChatbotMediaMaxSizeBytes"/>; cualquier otro dueño valida igual que la sobrecarga de cuatro
+    /// argumentos. Un tope por encima del techo del dueño es un error de programación.</summary>
+    public static void ValidateDeclaration(
+        string name, string mimeType, long sizeBytes, long maxSizeBytes, FileOwnerType ownerType) =>
+        Validate(
+            name,
+            mimeType,
+            sizeBytes,
+            maxSizeBytes,
+            MaxSizeBytesFor(ownerType),
+            ownerType is FileOwnerType.ChatbotMedia ? ChatbotMediaTypes : AllowedTypes);
+
+    private static void Validate(
+        string name,
+        string mimeType,
+        long sizeBytes,
+        long maxSizeBytes,
+        long ceilingBytes,
+        Dictionary<string, string[]> allowedTypes)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxSizeBytes, 0);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxSizeBytes, MaxSizeBytes);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxSizeBytes, ceilingBytes);
 
         var safeName = Path.GetFileName(name?.Trim());
         if (string.IsNullOrWhiteSpace(safeName) || !string.Equals(safeName, name?.Trim(), StringComparison.Ordinal))
@@ -52,7 +101,7 @@ public static class FileUploadPolicy
         }
 
         var extension = Path.GetExtension(safeName);
-        if (!AllowedTypes.TryGetValue(extension, out var allowedMimeTypes))
+        if (!allowedTypes.TryGetValue(extension, out var allowedMimeTypes))
         {
             throw new StorageDomainException(
                 "storage.file.type_not_allowed",

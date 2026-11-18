@@ -473,6 +473,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         media.Property(value => value.LastError).HasColumnName("last_error").HasMaxLength(256);
         // Spec 2026-10-14 §6.2: la URL pública (firmada, con vencimiento) del adjunto de Instagram; null en WhatsApp.
         media.Property(value => value.SourceUrl).HasColumnName("source_url");
+        // Spec 2026-11-18: el archivo de un chatbot se referencia, no se copia.
+        media.Property(value => value.StorageFileId).HasColumnName("storage_file_id");
+        media.Property(value => value.PublicUrl).HasColumnName("public_url").HasMaxLength(2048);
         media.HasIndex(value => value.NextAttemptAt).HasDatabaseName("IX_message_media_pending").HasFilter("stored_at IS NULL");
     }
 

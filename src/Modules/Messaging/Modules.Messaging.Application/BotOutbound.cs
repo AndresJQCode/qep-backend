@@ -5,15 +5,23 @@ namespace Modules.Messaging.Application;
 
 /// <summary>Spec 2026-10-21 D-I4: lo que un bot manda. <see cref="Text"/> es <c>null</c> cuando viaja <see cref="Interactive"/>; el texto
 /// guardado del mensaje es entonces el cuerpo del interactivo. Spec 2026-10-29 §4.4: <see cref="Bot"/> es el chatbot o el agente de IA que
-/// firma el mensaje (<c>sent_by_kind</c> 2 o 3).</summary>
-public sealed record BotSend(Guid TenantId, Guid ConversationId, BotRef Bot, Guid ClientId, string? Text, InteractiveSend? Interactive)
+/// firma el mensaje (<c>sent_by_kind</c> 2 o 3). Spec 2026-11-18: con <see cref="Media"/> el mensaje es un archivo por link; <see cref="Text"/>
+/// es su pie (nunca en un audio) o, con <see cref="Interactive"/> (un <see cref="CtaUrlSend"/> con <see cref="CtaUrlSend.MediaHeader"/>),
+/// <c>null</c> y el cuerpo del interactivo.</summary>
+public sealed record BotSend(
+    Guid TenantId, Guid ConversationId, BotRef Bot, Guid ClientId, string? Text, InteractiveSend? Interactive, BotMediaSend? Media = null)
 {
     /// <summary>El envío de un chatbot, como antes de <see cref="BotRef"/>.</summary>
-    public BotSend(Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, string? text, InteractiveSend? interactive)
-        : this(tenantId, conversationId, BotRef.Chatbot(chatbotId), clientId, text, interactive)
+    public BotSend(Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, string? text, InteractiveSend? interactive, BotMediaSend? media = null)
+        : this(tenantId, conversationId, BotRef.Chatbot(chatbotId), clientId, text, interactive, media)
     {
     }
 }
+
+/// <summary>Spec 2026-11-18: el archivo de un chatbot, ya publicado. <see cref="Link"/> es la URL pública de Storage, que Meta descarga y la
+/// burbuja del hilo dibuja; <see cref="StorageFileId"/> es el id del archivo en Storage, que queda en <c>message_media.storage_file_id</c> para
+/// saber qué conversaciones lo muestran. No se copia nada a R2 por envío.</summary>
+public sealed record BotMediaSend(MessageKind Kind, Uri Link, string FileName, string MimeType, long SizeBytes, Guid StorageFileId);
 
 public abstract record BotSendResult
 {
@@ -101,6 +109,13 @@ public sealed class BotOutbound(
             return new BotSendResult.WindowClosed();
         }
 
+        // Spec 2026-11-18 y decisión del owner del 2026-11-18: el archivo de un bot sólo sale por WhatsApp; Instagram espera a que los chatbots
+        // corran ahí. Un archivo mal armado (link que no es https, audio con pie o con botón) no llega a Meta ni deja fila.
+        if (send.Media is { } botMedia && (conversation.Channel != ConversationChannel.WhatsApp || !IsAcceptableMedia(botMedia, send)))
+        {
+            return new BotSendResult.Rejected(MessagingErrorCodes.MessageRejected);
+        }
+
         // Los interactivos son de WhatsApp (D-I2); en Instagram el bot sólo manda texto.
         if (send.Interactive is not null && conversation.Channel != ConversationChannel.WhatsApp)
         {
@@ -114,25 +129,33 @@ public sealed class BotOutbound(
 
         // La misma regla que el texto de un asesor (SendMessageValidator): el flujo lo escribe un admin y puede traer un \0 o pasarse
         // de largo, y eso no debe llegar a Meta ni dejar fila. El largo de un texto es el de su canal (§6.5).
-        if (send.Interactive is null
+        // Un archivo sin interactivo no tiene texto: su pie (opcional) ya lo miró IsAcceptableMedia.
+        var plainMedia = send.Media is not null && send.Interactive is null;
+        if (!plainMedia && (send.Interactive is null
                 ? !SendMessageValidator.IsAcceptableText(send.Text)
                     || send.Text!.Trim().Length > ChannelOutboundRules.For(conversation.Channel).TextMaxLength
-                : !AreAcceptable(send.Interactive))
+                : !AreAcceptable(send.Interactive)))
         {
             return new BotSendResult.Rejected(MessagingErrorCodes.MessageRejected);
         }
 
         // Con interactivo, su cuerpo es la única fuente del texto guardado.
-        var text = send.Interactive?.Body ?? send.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(text))
+        var text = plainMedia ? null : send.Interactive?.Body ?? send.Text?.Trim();
+        if (!plainMedia && string.IsNullOrWhiteSpace(text))
         {
             return new BotSendResult.Rejected(MessagingErrorCodes.MessageRejected);
         }
 
+        var caption = plainMedia && !string.IsNullOrWhiteSpace(send.Text) ? send.Text.Trim() : null;
         var draft = new OutboundDraft(
             Guid.CreateVersion7(), conversation.Id, send.TenantId, conversation.ConnectionId, send.ClientId, text, SentByMemberId: null, now,
-            Kind: send.Interactive is null ? MessageKind.Text : MessageKind.Interactive,
+            Kind: plainMedia ? send.Media!.Kind : send.Interactive is null ? MessageKind.Text : MessageKind.Interactive,
+            // Spec 2026-11-18 (BFF): la fila referencia el archivo público; la burbuja lo carga de ahí y nada se copia por envío.
+            Media: send.Media is { } stored
+                ? new OutboundMedia(stored.MimeType, stored.SizeBytes, null, stored.FileName, stored.StorageFileId, stored.Link.AbsoluteUri)
+                : null,
             DetailsJson: send.Interactive is null ? null : InteractiveSendJson.ToDetailsJson(send.Interactive),
+            Caption: caption,
             SentByChatbotId: send.Bot.Kind == BotKind.Chatbot ? send.Bot.Id : null,
             SentByAgentId: send.Bot.Kind == BotKind.Agent ? send.Bot.Id : null);
         await using var claim = await outbound.ClaimAsync(draft, cancellationToken);
@@ -155,7 +178,7 @@ public sealed class BotOutbound(
                 return new BotSendResult.ConnectionUnavailable();
             }
 
-            result = await instagram.SendTextAsync(igSender, conversation.UserId!, text, CancellationToken.None);
+            result = await instagram.SendTextAsync(igSender, conversation.UserId!, text!, CancellationToken.None);
         }
         else
         {
@@ -171,7 +194,10 @@ public sealed class BotOutbound(
             var callback = SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D");
             result = send.Interactive is { } card
                 ? await meta.SendInteractiveAsync(sender, target, card, callback, null, CancellationToken.None)
-                : await meta.SendTextAsync(sender, target, text, callback, null, CancellationToken.None);
+                : send.Media is { } link
+                    ? await meta.SendMediaLinkAsync(
+                        sender, target, new MediaLink(link.Kind, link.Link, link.FileName), caption, callback, null, CancellationToken.None)
+                    : await meta.SendTextAsync(sender, target, text!, callback, null, CancellationToken.None);
         }
 
         try
@@ -202,6 +228,28 @@ public sealed class BotOutbound(
         bot.Kind == BotKind.Chatbot
             ? conversation.AutomationBotKind is null or BotKind.Chatbot
             : conversation.AutomationBotKind == BotKind.Agent && conversation.AutomationAgentId == bot.Id;
+
+    /// <summary>Spec 2026-11-18: el link es https (Meta lo descarga), el tipo se manda por link y el pie cabe en el de un asesor
+    /// (<see cref="SendMediaMessageValidator.MaxCaptionLength"/>). Un audio no lleva pie ni botón: el motor los manda aparte. Con interactivo,
+    /// sólo un <c>cta_url</c> con el archivo de encabezado.</summary>
+    private static bool IsAcceptableMedia(BotMediaSend media, BotSend send)
+    {
+        if (!media.Link.IsAbsoluteUri || media.Link.Scheme != Uri.UriSchemeHttps
+            || media.Kind is not (MessageKind.Image or MessageKind.Video or MessageKind.Audio or MessageKind.Document))
+        {
+            return false;
+        }
+
+        if (send.Interactive is not null)
+        {
+            return media.Kind != MessageKind.Audio && send.Interactive is CtaUrlSend { MediaHeader: not null };
+        }
+
+        return string.IsNullOrWhiteSpace(send.Text)
+            || (media.Kind != MessageKind.Audio
+                && SendMessageValidator.IsAcceptableText(send.Text)
+                && send.Text.Trim().Length <= SendMediaMessageValidator.MaxCaptionLength);
+    }
 
     /// <summary>Cada texto del interactivo, también ids y la URL, pasa la regla del asesor: sin caracteres de control y ≤ 4096. Los
     /// vacíos y los topes de Meta, más cortos, ya los miró <see cref="InteractiveSendValidation"/>.</summary>

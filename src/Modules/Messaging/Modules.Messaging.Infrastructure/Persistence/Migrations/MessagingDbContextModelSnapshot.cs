@@ -1472,6 +1472,11 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_attempt_at");
 
+                    b.Property<string>("PublicUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("public_url");
+
                     b.Property<string>("Sha256")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
@@ -1484,6 +1489,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<string>("SourceUrl")
                         .HasColumnType("text")
                         .HasColumnName("source_url");
+
+                    b.Property<Guid?>("StorageFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("storage_file_id");
 
                     b.Property<string>("StorageKey")
                         .HasMaxLength(256)
