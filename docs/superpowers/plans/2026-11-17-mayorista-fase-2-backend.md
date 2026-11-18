@@ -249,7 +249,7 @@ El link del correo es `{Notifications:WholesaleInvitationUrl}/{token}`, por defe
 ```
 InvitationSummary  { wholesalerName, businessName, contactName, email,
                      status: 'pending'|'accepted'|'expired', expiresAt, hasPassword }
-LinkableTenant     { tenantId, name, linkable, reason: null|'wholesaler'|'already_linked',
+LinkableTenant     { tenantId, name, linkable, ineligibleReason: null|'same_tenant'|'already_linked',
                      modulesToEnable: string[] }          // claves que faltan de catalog, suppliers, purchases
 AcceptInvitation   { mode: 'NewTenant', displayName, slug } | { mode: 'LinkTenant', tenantId }
 AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
@@ -262,7 +262,7 @@ AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
   (401 `identity.credentials.invalid`); en los dos casos marca el correo verificado (`IPasswordCredentials.AcceptInvitationAsync`).
   Las dos exigen invitación `pending`.
 - `GET /linkable-tenants`: los tenants `Active` donde la sesión es **owner** (`Tenant.OwnerMembershipId`), todos, con `linkable`
-  y `reason`; el del mayorista sale `wholesaler` y uno ya vinculado a este mayorista, `already_linked`. Exige el mismo correo.
+  e `ineligibleReason`; el del mayorista sale `same_tenant` y uno ya vinculado a este mayorista, `already_linked`. Exige el mismo correo.
 - `POST /accept` (D-3, D-16, D-17): correo de la sesión = correo de la invitación. `NewTenant`: crea el tenant con
   `InvitedDistributorModules` (`catalog, customers, companies, quotations, orders, reporting, suppliers, purchases`), aunque
   `Registration:PublicTenantSignupEnabled` esté apagado; quien acepta queda owner (rol `admin`). `displayName` y `slug` con las
@@ -761,7 +761,7 @@ AWholesalerWithoutTheModuleIs409Unavailable
 AcceptingTwiceBySameUserReturnsTheSameResult            // Review Focus 1
 RetryAfterAFailedCustomerStepReusesTheReservedTenant    // Review Focus 2: 1.ª llamada, EnsureCustomer lanza → invitación Pending; 2.ª, RegisterInvited devuelve false (ya existe) y termina; un solo tenant
 AReservedTenantThatExistsWinsOverTheRequestedMode       // D-17
-LinkableTenantsMarkTheWholesalerAndTheAlreadyLinked     // reason "wholesaler" / "already_linked"; modulesToEnable correcto
+LinkableTenantsMarkTheWholesalerAndTheAlreadyLinked     // ineligibleReason "same_tenant" / "already_linked"; modulesToEnable correcto
 ```
 
 - [ ] **Step 2: Corre y verifica que fallan**
