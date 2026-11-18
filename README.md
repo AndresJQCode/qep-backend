@@ -2479,7 +2479,10 @@ pasa a `404`).
 | `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
 
 - Quien no tiene cuenta abre sesión con el link: `session` exige el correo de la invitación verificado por Google y
-  `session-with-password` crea la contraseña (o verifica la que ya existe). Las dos aprovisionan el usuario por ese correo.
+  `session-with-password` crea la contraseña (o verifica la que ya existe). `session-with-password` aprovisiona el usuario por
+  ese correo; `session` usa el usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
+  (`WholesaleInvitationGoogleSession`). Una cuenta de Google ya vinculada a un usuario con otro correo es
+  `403 wholesale.invitation.email_mismatch`, sin crear nada.
 - `accept` recibe `{ mode: "NewTenant", displayName, slug }` (crea el tenant del distribuidor con
   `catalog, customers, companies, quotations, orders, reporting, suppliers, purchases`, aunque el alta pública esté apagada) o
   `{ mode: "LinkTenant", tenantId }` (un tenant del que la sesión es owner; prende `catalog`, `suppliers` y `purchases` si
