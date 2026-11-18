@@ -520,6 +520,16 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
             {
                 services.Remove(descriptor);
             }
+
+            // Y el barrido diario (spec 2026-11-17, «Closing the residual gaps»): TemplateHeaderImageSweepTests lo corre a mano.
+            var templateImageSweepWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(TemplateHeaderImageSweepWorker))
+                .ToList();
+            foreach (var descriptor in templateImageSweepWorkers)
+            {
+                services.Remove(descriptor);
+            }
         });
     }
 }

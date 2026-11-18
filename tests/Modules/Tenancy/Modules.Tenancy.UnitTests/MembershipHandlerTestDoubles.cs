@@ -82,6 +82,9 @@ internal sealed class StubUserDirectory(IReadOnlyDictionary<Guid, string> emails
 {
     public Task<string?> GetEmailAsync(Guid userId, CancellationToken cancellationToken) =>
         Task.FromResult(emails.TryGetValue(userId, out var email) ? email : null);
+
+    public Task<Guid?> FindUserIdByEmailAsync(string email, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class RosterReadExecutionContext(TenantId tenantId) : IExecutionContext

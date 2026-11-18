@@ -41,6 +41,13 @@ public class ResourceConflictException(string code, string message, Exception? i
     public string Code { get; } = code;
 }
 
+// 410: lo pedido existió pero ya no se puede usar (spec 2026-11-17 mayorista, D-6: una invitación vencida). Distinta de
+// ResourceNotFoundException (404), que dice que nunca existió o que ya no está, y de DomainException (422).
+public sealed class ResourceGoneException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
 public sealed class PreconditionRequiredException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;

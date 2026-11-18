@@ -108,7 +108,7 @@ public sealed class SeedStartupTests
         var ct = TestContext.Current.CancellationToken;
         // Vacía: los dos pods tienen que migrar y sembrar a la vez, no sólo sembrar.
         await using var database = await StartEmptyDatabaseAsync();
-        using var a =new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var a = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
         using var b = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
 
         var clients = await Task.WhenAll(Task.Run(() => a.CreateClient(), ct), Task.Run(() => b.CreateClient(), ct));
@@ -214,7 +214,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers", "support"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "purchases", "quotations", "reporting", "shopify", "store", "suppliers", "support", "wholesale"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -247,7 +247,7 @@ public sealed class SeedStartupTests
             Guid.CreateVersion7(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "quotations", "reporting", "shopify", "store", "suppliers", "support"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "purchases", "quotations", "reporting", "shopify", "store", "suppliers", "support", "wholesale"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -309,7 +309,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers", "support"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "purchases", "quotations", "reporting", "shopify", "store", "suppliers", "support", "wholesale"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -336,7 +336,7 @@ public sealed class SeedStartupTests
         Assert.Equal(ownerUserId, membership.UserId);
         Assert.NotEqual(operatorUserId, membership.UserId);
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers", "support"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "purchases", "quotations", "reporting", "shopify", "store", "suppliers", "support", "wholesale"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -416,7 +416,7 @@ public sealed class SeedStartupTests
             membership => membership.TenantId == new TenantId(OperatorTenantId),
             TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers", "support"],
+            ["ai", "automations", "billing", "catalog", "companies", "copilot", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "purchases", "quotations", "reporting", "shopify", "store", "suppliers", "support", "wholesale"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 

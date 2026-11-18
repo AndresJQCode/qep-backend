@@ -56,6 +56,10 @@ namespace Modules.Suppliers.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
+                    b.Property<Guid?>("LinkedTenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("linked_tenant_id");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(160)
@@ -151,6 +155,11 @@ namespace Modules.Suppliers.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "Category")
                         .HasDatabaseName("IX_suppliers_tenant_category");
+
+                    b.HasIndex("TenantId", "LinkedTenantId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_suppliers_tenant_linked_tenant")
+                        .HasFilter("linked_tenant_id IS NOT NULL");
 
                     b.ToTable("suppliers", "suppliers");
                 });

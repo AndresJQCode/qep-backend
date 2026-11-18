@@ -73,14 +73,14 @@ public sealed class MessagingTemplateImageStoreTests
     [InlineData(SystemUploadOutcome.Rejected, TemplateImageState.Rejected)]
     public async Task CompleteMapsEachOutcome(SystemUploadOutcome outcome, TemplateImageState expected)
     {
-        var fileId = _uploads.Seed(TenantId, FileOwnerType.MessageTemplate, TenantId, outcome, "image/jpeg", 4096);
+        var fileId = _uploads.Seed(TenantId, FileOwnerType.MessageTemplate, TenantId, outcome, "image/jpeg", 4096, Now.AddHours(-3));
 
         var file = await NewStore().CompleteAsync(TenantId, fileId, Ct);
 
         Assert.Equal(expected, file.State);
         if (expected is TemplateImageState.Available)
         {
-            Assert.Equal(("image/jpeg", 4096L), (file.MimeType, file.SizeBytes));
+            Assert.Equal(("image/jpeg", 4096L, Now.AddHours(-3)), (file.MimeType, file.SizeBytes, file.CreatedAt));
         }
         else
         {
@@ -157,6 +157,21 @@ public sealed class MessagingTemplateImageStoreTests
         Assert.Equal(
             [("storage.file.published", _executionContext.SubjectId), ("storage.file.deleted", _executionContext.SubjectId)], _audit.ByActor);
         Assert.Equal(2, _unitOfWork.Saves);
+    }
+
+    // Spec 2026-11-17, «Closing the residual gaps»: publicar copió los objetos pero el guardado de Storage falló, así que la fila no
+    // tiene PublicStorageKey. Liberar retira igual la clave determinista.
+    [Fact]
+    public async Task ReleaseRemovesPublicCopiesWithoutAStoredKey()
+    {
+        var file = AvailableImage(TenantId, TenantId, FileOwnerType.MessageTemplate);
+        var computedKey = $"tenants/{TenantId:N}/media/{file.Id.Value:N}/original.png";
+
+        await NewStore(file).ReleaseAsync(TenantId, file.Id.Value, Ct);
+
+        Assert.Equal([computedKey], _publicStorage.DeletedKeys);
+        Assert.Equal(FileResourceStatus.Deleted, file.Status);
+        Assert.Equal(1, _unitOfWork.Saves);
     }
 
     [Fact]

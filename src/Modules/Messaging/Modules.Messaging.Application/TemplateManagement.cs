@@ -425,6 +425,9 @@ public sealed partial class CreateTemplateHandler(
                 (MessagingErrorCodes.TemplateHeaderImageUnsupported, "A template header image must be a JPEG or PNG file."),
             _ when file.SizeBytes > TemplateHeaderImagePolicy.MaxSizeBytes =>
                 (MessagingErrorCodes.TemplateHeaderImageTooLarge, "A template header image cannot exceed 5 MB."),
+            // Antes de publicar: un archivo que el barrido diario de Storage ya podría estar soltando no se toma (ver MaxUploadAge).
+            _ when clock.UtcNow - file.CreatedAt > TemplateHeaderImagePolicy.MaxUploadAge =>
+                (MessagingErrorCodes.TemplateHeaderImageRejected, "The header image was uploaded too long ago; upload it again."),
             _ => (null, null),
         };
         if (code is not null)

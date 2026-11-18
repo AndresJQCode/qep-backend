@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -128,11 +128,29 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-11-14 (soporte, C9): tickets y PQRSF; no depende de ningún módulo y se prende por tenant.
     [Fact]
-    public void SupportIsLastHasNoDependenciesAndIsOffForNewTenants()
+    public void SupportHasNoDependenciesAndIsOffForNewTenants()
     {
-        Assert.Equal("support", TenantModuleKeys.All[^1].Value);
         Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Support));
         Assert.DoesNotContain(TenantModuleKeys.Support, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-17 (compras): la línea es una variante del catálogo y el proveedor sale del directorio; se prende por
+    // tenant. Ya no es la última: mayorista va después.
+    [Fact]
+    public void PurchasesDependsOnSuppliersAndCatalogAndIsOffForNewTenants()
+    {
+        Assert.Equal([TenantModuleKeys.Suppliers, TenantModuleKeys.Catalog], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Purchases));
+        Assert.DoesNotContain(TenantModuleKeys.Purchases, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-17 (mayorista): el pedido del distribuidor es un Order; se prende por tenant.
+    [Fact]
+    public void WholesaleIsLastDependsOnOrdersAndIsOffForNewTenants()
+    {
+        Assert.Equal("wholesale", TenantModuleKeys.All[^1].Value);
+        Assert.Equal(21, TenantModuleKeys.All.Count);
+        Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Wholesale));
+        Assert.DoesNotContain(TenantModuleKeys.Wholesale, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]

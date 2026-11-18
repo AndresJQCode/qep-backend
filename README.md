@@ -851,9 +851,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai` y `support`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai`, `support` y `purchases`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. `purchases` (las órdenes de compra a proveedores) exige `suppliers` y `catalog`; no viene con el signup y se prende por tenant. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -1343,6 +1343,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/orders-settings`       | `GET`, `PUT` (los tres ajustes del pedido; ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `tenancy.settings.read` / `.update` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
 | `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
+| `/api/v1/tenants/{tenantId}/purchases/orders` | `GET` (`status`=`Draft`\|`Sent`\|`Confirmed`\|`Received`\|`Cancelled` sin importar mayúsculas, `supplierId`, `search` en el número o el nombre del proveedor, `page`, `pageSize` por defecto 50, tope 200; de la más nueva a la más vieja; `counts` por estado más `all` con los mismos filtros salvo `status`), `POST` (201 + `Location`, en `Draft` con número `OC-0001` por tenant; un alta rechazada no gasta número), `preview` (`POST`, mismo cuerpo, no escribe; `purchases.order.manage`), y por orden `GET`, `pdf` (`GET`, `application/pdf`, `OC-0001.pdf`, en cualquier estado), `PUT` y `DELETE` (sólo `Draft`, `If-Match`), `send`, `confirm` (cuerpo `{ lines: [{ lineId, confirmedQuantity, confirmedUnitCost }] }` con cada línea una vez), `receive` y `cancel` (`POST`, `If-Match`). Costos sin IVA; el IVA se suma en `totals` con la tasa que la línea copió del catálogo al guardar el borrador. Módulo `purchases` (apagado por defecto). Errores propios: `purchases.order.not_found` (404), `.not_draft` y `.invalid_transition` (409), `.empty`, `.line_not_in_catalog`, `.supplier_inactive`, `.invalid_currency`, `.confirm_lines_mismatch` (422), `.pdf_render_failed` (502); proveedor inexistente: `suppliers.supplier.not_found` (404) | `purchases.order.read` (`GET`, `pdf`) / `purchases.order.manage` (`POST`, `preview`, `PUT`, `DELETE`, `send`, `confirm`, `receive`, `cancel`) |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
@@ -3275,13 +3276,25 @@ cuerpo de cada request. `QCodePdfRenderer` es su único cliente.
 | --- | --- | --- |
 | `Quotations__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
 | `Quotations__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
-| `Support__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `SUPPORT_PDF_BASE_URL` |
-| `Support__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `SUPPORT_PDF_API_KEY` |
+| `Support__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
+| `Support__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
+| `Purchases__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
+| `Purchases__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
 
-La respuesta formal de Soporte (fase 4b) usa el mismo servicio con **su propia clave** (`Support:Pdf`, `SupportPdfRenderer`), nunca
-la de cotizaciones: `qcode-pdf` identifica al cliente por el hash de la clave. `SupportPdfOptionsValidator` la exige en producción
-igual que la de cotizaciones, y un token del pipeline sin resolver (`#{…}#`) cuenta como ausente: **sin `SUPPORT_PDF_API_KEY` en
-`Backend-prod` el pod no arranca.**
+**Una sola clave para todo el backend de QEP** (decisión del owner, 2026-11-17). Cada módulo que genera PDF tiene su sección
+(`Quotations:Pdf`, `Support:Pdf`, `Purchases:Pdf`) y su validador, para que ninguno dependa de la configuración de otro, pero en
+producción las tres leen los mismos dos tokens. Las claves vivían todas en el mismo pod, así que separarlas no aislaba nada, y cada
+variable más era otra forma de que el pod no arrancara. Lo que se pierde: `qcode-pdf` identifica al cliente por el hash de la clave, así
+que en sus logs QEP es un solo cliente, y rotar la clave toca los tres módulos a la vez. `SUPPORT_PDF_*` y `PURCHASES_PDF_*` ya no se
+leen; si existen en `Backend-prod`, se pueden borrar.
+
+Cada validador exige HTTPS siempre y la clave en producción, y un token del pipeline sin resolver (`#{…}#`) cuenta como ausente: **sin
+`QUOTATIONS_PDF_BASE_URL` o `QUOTATIONS_PDF_API_KEY` en `Backend-prod`, el pod entero de la API no arranca.**
+
+La respuesta formal de Soporte (fase 4b) usa `Support:Pdf` y `SupportPdfRenderer`. La orden de compra
+(`GET …/purchases/orders/{id}/pdf`) usa `Purchases:Pdf` (`TimeoutSeconds` por defecto 30), `PurchaseOrderPdfRenderer` y la plantilla
+`purchase-order.typ` incrustada. Si `qcode-pdf` no devuelve el PDF de compras, la respuesta es `502 purchases.order.pdf_render_failed`,
+sin el cuerpo del servicio.
 
 **Sin la API key el pod no arranca en producción.** A diferencia de WhatsApp, acá no hay
 fallback: `qcode-pdf` respondería 401 y todo envío moriría con `quotation.pdf.render_failed`.
@@ -6152,9 +6165,9 @@ parciales de los recorridos del cierre automático y de la encuesta). Las cinco 
   sólo cuando no quede un pod viejo, y no hagas rollback después de aprovisionarlas: el `Down` de
   `AddSupportFormalAndSurveyTemplateKinds` **borra esas filas**, y con ellas plantillas ya aprobadas por Meta. Lo mismo vale para
   cualquier valor nuevo de los enums de Soporte que se guardan por nombre (`SupportTicketEventKind` y los de la encuesta).
-- **`SUPPORT_PDF_API_KEY` y `SUPPORT_PDF_BASE_URL` tienen que existir en `Backend-prod` antes de que esto llegue a `main`.** Sin la
-  clave, `SupportPdfOptionsValidator` (`ValidateOnStart`) no deja arrancar el pod en producción; un `#{…}#` sin resolver cuenta como
-  ausente. Es una clave propia de `qcode-pdf`, nunca la de cotizaciones.
+- **Soporte usa la clave de `qcode-pdf` de todo el backend** (`QUOTATIONS_PDF_API_KEY` y `QUOTATIONS_PDF_BASE_URL`, decisión del
+  owner del 2026-11-17, que reemplaza la clave propia `SUPPORT_PDF_*`). Sin ella, `SupportPdfOptionsValidator` (`ValidateOnStart`) no
+  deja arrancar el pod en producción; un `#{…}#` sin resolver cuenta como ausente. Ver § Generación del PDF.
 - **Frontend: la página `/calificar?token=…` tiene que responder con `Referrer-Policy: no-referrer`.** El token va en la query de la
   URL de la página (sólo la API lo recibe en el cuerpo); sin esa cabecera, cualquier recurso de terceros que la página cargue (una
   fuente, una analítica, el logo del tenant) recibe la URL completa con el token en el `Referer`, y con él se califica la encuesta.

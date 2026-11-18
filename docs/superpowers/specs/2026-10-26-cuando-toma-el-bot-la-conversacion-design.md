@@ -323,8 +323,8 @@ Revisión de lectura, sin correr pruebas. Rutas relativas a `qep-backend/src/` s
   en el resumen del hilo. Cambiarla para la cobertura cambia también qué ofrecen «Iniciar» y «Continuar»: sus pruebas entran en el alcance.
 - Con «Continuar», una pausa `Manual` sin asesor ya no termina la corrida. D-16c deja `Manual` sobre una pausa automática, cuya corrida ya
   terminó `Interrupted`, así que no habilita «Continuar» por sí sola; igual hay que probarlo.
-- El spec de Agentes IA (`docs/superpowers/specs/2026-10-29-agentes-ia-design.md`, D-A9) sigue citando D-M16, que D-1 reemplazó. El
-  módulo no existe todavía; se corrige ese spec antes de construirlo.
+- El spec de Agentes IA (`docs/superpowers/specs/2026-10-29-agentes-ia-design.md`, D-A9) citaba D-M16, que D-1 reemplazó. El módulo
+  se construyó con la regla vieja; D-A9 y `AiInboxProcessor.TriggerAppliesAsync` se corrigieron el 2026-11-18.
 
 ### 9.4 Decisiones pendientes nuevas
 

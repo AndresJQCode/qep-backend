@@ -84,6 +84,186 @@ public sealed class TenantRegistrationServiceTests
         Assert.Empty(availability.Asked);
     }
 
+    // Spec 2026-11-17 (mayorista), D-3 y D-17: la aceptación de la invitación crea el tenant con el id reservado al invitar,
+    // bajo el candado de ese tenant, con los módulos que pide Mayorista y no con los del signup.
+    private static readonly IReadOnlyList<TenantModuleKey> InvitedModules =
+    [
+        TenantModuleKeys.Catalog, TenantModuleKeys.Customers, TenantModuleKeys.Companies, TenantModuleKeys.Quotations,
+        TenantModuleKeys.Orders, TenantModuleKeys.Reporting, TenantModuleKeys.Suppliers, TenantModuleKeys.Purchases,
+    ];
+
+    [Fact]
+    public async Task RegisterInvitedTenantCreatesTheTenantWithTheReservedIdAndTheGivenModules()
+    {
+        var invited = new InvitedFixture();
+        var reserved = TenantId.New();
+        var owner = Guid.CreateVersion7();
+
+        var created = await invited.Service.RegisterInvitedTenantAsync(
+            reserved, owner, Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.True(created);
+        var tenant = Assert.Single(invited.Tenants.Added);
+        Assert.Equal(reserved, tenant.Id);
+        Assert.Equal("Org", tenant.DisplayName);
+        Assert.Equal(
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "suppliers", "purchases"],
+            invited.Modules.Added.Select(module => module.ModuleKey.Value));
+        Assert.All(invited.Modules.Added, module =>
+            Assert.Equal((reserved, TenantModuleSources.Invitation, Now), (module.TenantId, module.Source, module.EnabledAt)));
+        Assert.Equal("invitation", TenantModuleSources.Invitation);
+        var membership = Assert.Single(invited.Memberships.All);
+        Assert.Equal((owner, reserved, Membership.RegistrationOrigin), (membership.UserId, membership.TenantId, membership.Origin));
+        Assert.Equal([Membership.AdminRole], membership.Roles);
+        Assert.True(tenant.IsOwner(membership.Id));
+        var audit = Assert.Single(invited.Audit.Entries);
+        Assert.Equal((reserved.Value, owner, "tenancy.tenant.registered"), (audit.TenantId, audit.ActorId, audit.Action));
+        // El candado del tenant reservado va antes de leer, y el commit es el último paso.
+        Assert.Equal($"lock:{reserved}", invited.Steps[0]);
+        Assert.Equal(["save", "commit"], invited.Steps.TakeLast(2));
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantTwiceForTheSameOwnerReturnsFalseAndWritesNothing()
+    {
+        var invited = new InvitedFixture();
+        var reserved = TenantId.New();
+        var owner = Guid.CreateVersion7();
+        await invited.Service.RegisterInvitedTenantAsync(
+            reserved, owner, Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+        invited.Steps.Clear();
+
+        var created = await invited.Service.RegisterInvitedTenantAsync(
+            reserved, owner, Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.False(created);
+        Assert.Single(invited.Tenants.Added);
+        Assert.Equal(InvitedModules.Count, invited.Modules.Added.Count);
+        Assert.Single(invited.Memberships.All);
+        Assert.Single(invited.Audit.Entries);
+        Assert.DoesNotContain("save", invited.Steps);
+        Assert.DoesNotContain("commit", invited.Steps);
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantOwnedByAnotherUserThrows()
+    {
+        var invited = new InvitedFixture();
+        var reserved = TenantId.New();
+        await invited.Service.RegisterInvitedTenantAsync(
+            reserved, Guid.CreateVersion7(), Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => invited.Service.RegisterInvitedTenantAsync(
+            reserved, Guid.CreateVersion7(), Data, InvitedModules, "trace", TestContext.Current.CancellationToken));
+
+        Assert.Single(invited.Tenants.Added);
+        Assert.Single(invited.Memberships.All);
+    }
+
+    // Ruling W7: el alta invitada no depende de Registration:PublicTenantSignupEnabled. El servicio no recibe
+    // IConfiguration (el interruptor lo lee RegistrationEndpoints), y los defaults del signup —lo único que sale de
+    // configuración aquí— lanzan si se leen: con el signup público apagado la invitación igual crea el tenant.
+    [Fact]
+    public async Task RegisterInvitedTenantDoesNotReadTheSignupFlag()
+    {
+        var invited = new InvitedFixture(new ThrowingDefaults());
+
+        var created = await invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(), Guid.CreateVersion7(), Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.True(created);
+        Assert.Single(invited.Tenants.Added);
+        Assert.Equal(InvitedModules.Count, invited.Modules.Added.Count);
+    }
+
+    // Ruling W11 (a): la lista de módulos la arma otro módulo, así que el alta no confía en ella. Una clave repetida sería
+    // una violación de PK (500) y un conjunto sin sus dependencias dejaría un tenant inconsistente: las dos fallan antes del
+    // candado, sin escribir nada.
+    [Fact]
+    public async Task RegisterInvitedTenantRejectsARepeatedModuleWithoutWriting()
+    {
+        var invited = new InvitedFixture();
+
+        await Assert.ThrowsAsync<ArgumentException>(() => invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(),
+            Guid.CreateVersion7(),
+            Data,
+            [TenantModuleKeys.Catalog, TenantModuleKeys.Suppliers, TenantModuleKeys.Catalog],
+            "trace",
+            TestContext.Current.CancellationToken));
+
+        Assert.Empty(invited.Steps);
+        Assert.Empty(invited.Tenants.Added);
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantRejectsAModuleWithoutItsDependenciesWithoutWriting()
+    {
+        var invited = new InvitedFixture();
+
+        // purchases depende de suppliers y catalog; falta catalog.
+        await Assert.ThrowsAsync<ArgumentException>(() => invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(),
+            Guid.CreateVersion7(),
+            Data,
+            [TenantModuleKeys.Suppliers, TenantModuleKeys.Purchases],
+            "trace",
+            TestContext.Current.CancellationToken));
+
+        Assert.Empty(invited.Steps);
+        Assert.Empty(invited.Tenants.Added);
+    }
+
+    private sealed class InvitedFixture
+    {
+        public InvitedFixture(ITenantModuleDefaults? defaults = null)
+        {
+            Tenants = new StoringTenantRepository(Steps);
+            Modules = new RecordingTenantModuleRepository(Steps);
+            Service = new TenantRegistrationService(
+                Tenants,
+                Memberships,
+                Modules,
+                defaults ?? new FixedDefaults(TenantModuleKeys.DefaultForNewTenants),
+                new StepsUnitOfWork(Steps),
+                Audit,
+                new RecordingOutboxWriter(),
+                new FixedClock(Now),
+                new RecordingSlugAvailability());
+        }
+
+        public List<string> Steps { get; } = [];
+        public StoringTenantRepository Tenants { get; }
+        public InMemoryMembershipRepository Memberships { get; } = new();
+        public RecordingTenantModuleRepository Modules { get; }
+        public RecordingAuditRecorder Audit { get; } = new();
+        public TenantRegistrationService Service { get; }
+    }
+
+    /// <summary>Guarda lo agregado y lo devuelve al leer: el segundo intento ve el tenant del primero.</summary>
+    private sealed class StoringTenantRepository(List<string> steps) : ITenantRepository
+    {
+        public List<Tenant> Added { get; } = [];
+
+        public Task<Tenant?> GetAsync(TenantId id, CancellationToken cancellationToken)
+        {
+            steps.Add("read-tenant");
+            return Task.FromResult(Added.SingleOrDefault(tenant => tenant.Id == id));
+        }
+
+        public void Add(Tenant tenant)
+        {
+            steps.Add("tenant");
+            Added.Add(tenant);
+        }
+    }
+
+    private sealed class ThrowingDefaults : ITenantModuleDefaults
+    {
+        public IReadOnlyCollection<TenantModuleKey> ForNewTenants =>
+            throw new InvalidOperationException("The invited registration must not read the signup defaults.");
+    }
+
     private static TenantRegistrationData DataWithSlug(string slug) => Data with { Slug = slug };
 
     private static (TenantRegistrationService Service, RecordingSlugAvailability Availability) NewSlugService(

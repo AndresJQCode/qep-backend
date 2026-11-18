@@ -11,6 +11,16 @@ public static class TemplateHeaderImagePolicy
 {
     public const long MaxSizeBytes = 5 * 1024 * 1024;
 
+    /// <summary>
+    /// Revisión final (spec 2026-11-17, «Closing the residual gaps»): una creación sólo toma un archivo subido hace como mucho 12 h. El barrido
+    /// diario de Storage suelta las imágenes de más de 24 h que ninguna fila usa, y lo único que lo aleja de una creación en vuelo es esa
+    /// gracia: si una creación tomara un archivo de más de 24 h, el barrido podría preguntar (sin fila), la creación guardar y el barrido
+    /// borrar, y la plantilla quedaría con la imagen muerta. Con 12 h, un archivo que pasa esta revisión necesita otras 12 h más antes de que
+    /// el barrido lo mire, mucho más de lo que tarda la creación (Meta responde en segundos). El navegador pide una sesión nueva en cada
+    /// envío, así que esto sólo frena un id viejo reenviado por la API.
+    /// </summary>
+    public static readonly TimeSpan MaxUploadAge = TimeSpan.FromHours(12);
+
     private static readonly string[] AllowedMimeTypes = ["image/jpeg", "image/png"];
 
     public static bool IsAllowedMimeType(string? mimeType) =>

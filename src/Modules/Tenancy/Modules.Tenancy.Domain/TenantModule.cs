@@ -78,4 +78,7 @@ public static class TenantModuleSources
 
     /// <summary>Spec 2026-10-08 §3: la fila la creó la consola (el módulo nunca había existido).</summary>
     public const string Operator = "operator";
+
+    /// <summary>Spec 2026-11-17: la fila la creó la aceptación de una invitación de mayorista.</summary>
+    public const string Invitation = "invitation";
 }

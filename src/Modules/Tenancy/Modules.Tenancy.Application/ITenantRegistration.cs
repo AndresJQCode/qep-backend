@@ -29,4 +29,21 @@ public interface ITenantRegistration
     /// </summary>
     /// <exception cref="TenantDomainException">tenancy.slug.invalid, tenancy.settings.*.invalid o tenancy.slug.taken.</exception>
     Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista), D-3 y D-17: el alta del tenant de un distribuidor al aceptar la invitación, con el id que
+    /// se reservó al invitar y bajo el candado de ese tenant. Idempotente: si el tenant ya existe y su owner es una membresía
+    /// de <paramref name="ownerUserId"/> (un intento anterior cortado o un doble clic), no escribe nada y devuelve
+    /// <c>false</c>. Los módulos son los que pide quien llama, con origen <c>invitation</c>, no los del signup. <b>No</b> mira
+    /// <c>Registration:PublicTenantSignupEnabled</c>: la invitación es la autorización, y lo decide quien llama.
+    /// </summary>
+    /// <returns><c>true</c> si creó el tenant; <c>false</c> si ya existía con ese owner.</returns>
+    /// <exception cref="InvalidOperationException">El tenant reservado existe con otro owner.</exception>
+    Task<bool> RegisterInvitedTenantAsync(
+        TenantId tenantId,
+        Guid ownerUserId,
+        TenantRegistrationData data,
+        IReadOnlyList<TenantModuleKey> modules,
+        string correlationId,
+        CancellationToken cancellationToken);
 }

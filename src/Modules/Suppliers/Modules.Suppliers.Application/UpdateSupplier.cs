@@ -58,7 +58,8 @@ public sealed class UpdateSupplierHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateSupplierCommand> validator,
-    ISupplierPhoneNormalizer phoneNormalizer)
+    ISupplierPhoneNormalizer phoneNormalizer,
+    ITenantDirectory tenantDirectory)
     : ICommandHandler<UpdateSupplierCommand, SupplierResponse>
 {
     public async Task<SupplierResponse> HandleAsync(
@@ -86,6 +87,6 @@ public sealed class UpdateSupplierHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return supplier.ToResponse(city);
+        return supplier.ToResponse(city, await supplier.ResolveLinkedTenantAsync(tenantDirectory, cancellationToken));
     }
 }

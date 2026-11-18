@@ -15,6 +15,8 @@ public sealed class CreateTemplateWithHeaderImageTests
 
     private sealed class Rig
     {
+        public Rig() => Images.DefaultCreatedAt = Bed.Now;
+
         public MessagingTestBed Bed { get; } = new();
 
         public FakeMessageTemplateRepository Repository { get; } = new();
@@ -89,6 +91,36 @@ public sealed class CreateTemplateWithHeaderImageTests
         Assert.Empty(rig.Bed.Meta.ExampleUploads);
         Assert.Empty(rig.Bed.Meta.CreatedTemplates);
         Assert.Empty(rig.Repository.Rows);
+    }
+
+    // Revisión final, I1: el barrido diario de Storage suelta una imagen de más de 24 h que ninguna fila usa. Una creación que tomara un
+    // archivo así podría cruzarse con él (el barrido pregunta, la creación guarda, el barrido borra) y dejar la plantilla sin imagen.
+    [Fact]
+    public async Task AnImageOlderThanTwelveHoursIsRejectedBeforePublishing()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(
+            rig.Bed.TenantId, "image/png", 2048, createdAt: rig.Bed.Now - TemplateHeaderImagePolicy.MaxUploadAge - TimeSpan.FromSeconds(1));
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.CreateAsync(fileId));
+
+        Assert.Equal(MessagingErrorCodes.TemplateHeaderImageRejected, error.Code);
+        Assert.Equal([TemplateMessages.HeaderImage], error.FieldErrors["headerImageFileId"]);
+        Assert.Equal(["Complete"], rig.Images.Calls);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Repository.Rows);
+    }
+
+    [Fact]
+    public async Task AnImageExactlyTwelveHoursOldIsStillAccepted()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048, createdAt: rig.Bed.Now - TemplateHeaderImagePolicy.MaxUploadAge);
+
+        var dto = await rig.CreateAsync(fileId);
+
+        Assert.Equal($"https://public.test/{fileId}.png", dto.HeaderImageUrl);
+        Assert.Equal(["Complete", "Publish", "Read"], rig.Images.Calls);
     }
 
     [Fact]
@@ -345,10 +377,14 @@ internal sealed class ScriptedTemplateImageStore : IMessagingTemplateImageStore
     /// <summary>Corre al publicar: sirve para cancelar el request justo después.</summary>
     public Action? OnPublish { get; set; }
 
-    public Guid Seed(Guid tenantId, string mimeType, long size, TemplateImageState state = TemplateImageState.Available)
+    /// <summary>La creación de un archivo sembrado sin <c>createdAt</c>: el rig la pone en el «ahora» del reloj de la prueba.</summary>
+    public DateTimeOffset DefaultCreatedAt { get; set; }
+
+    public Guid Seed(
+        Guid tenantId, string mimeType, long size, TemplateImageState state = TemplateImageState.Available, DateTimeOffset? createdAt = null)
     {
         var fileId = Guid.CreateVersion7();
-        _files[fileId] = (tenantId, new TemplateImageFile(state, mimeType, size));
+        _files[fileId] = (tenantId, new TemplateImageFile(state, mimeType, size, createdAt ?? DefaultCreatedAt));
         return fileId;
     }
 
@@ -360,7 +396,7 @@ internal sealed class ScriptedTemplateImageStore : IMessagingTemplateImageStore
         Calls.Add("Complete");
         return Task.FromResult(_files.TryGetValue(fileId, out var stored) && stored.TenantId == tenantId
             ? stored.File
-            : new TemplateImageFile(TemplateImageState.NotFound, null, 0));
+            : new TemplateImageFile(TemplateImageState.NotFound, null, 0, default));
     }
 
     public Task<byte[]> ReadAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)

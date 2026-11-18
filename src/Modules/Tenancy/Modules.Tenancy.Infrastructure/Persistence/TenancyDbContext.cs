@@ -148,10 +148,10 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         {
             table.HasCheckConstraint(
                 "CK_tenant_modules_module_key",
-                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support')");
+                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale')");
             table.HasCheckConstraint(
                 "CK_tenant_modules_source",
-                "source IN ('backfill','signup','seed','manual','operator')");
+                "source IN ('backfill','signup','seed','manual','operator','invitation')");
             table.HasCheckConstraint("CK_tenant_modules_status", "status IN ('active','inactive')");
         });
         module.HasKey(value => new { value.TenantId, value.ModuleKey });

@@ -160,10 +160,12 @@ internal sealed class FakeStorageSystemUploads : IStorageSystemUploads
 
     /// <summary>Un archivo que, al completarse, termina en <paramref name="outcome"/>.</summary>
     public Guid Seed(
-        Guid tenantId, FileOwnerType ownerType, Guid ownerId, SystemUploadOutcome outcome, string mimeType = "image/png", long sizeBytes = 2048)
+        Guid tenantId, FileOwnerType ownerType, Guid ownerId, SystemUploadOutcome outcome, string mimeType = "image/png", long sizeBytes = 2048,
+        DateTimeOffset createdAt = default)
     {
         var fileId = Guid.CreateVersion7();
-        _files[fileId] = new Seeded(tenantId, ownerType, ownerId, outcome, new SystemFileInfo(fileId, "banner.png", mimeType, sizeBytes));
+        _files[fileId] = new Seeded(
+            tenantId, ownerType, ownerId, outcome, new SystemFileInfo(fileId, "banner.png", mimeType, sizeBytes, createdAt));
         return fileId;
     }
 

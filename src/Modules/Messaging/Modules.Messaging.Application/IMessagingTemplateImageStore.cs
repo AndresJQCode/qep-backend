@@ -36,6 +36,6 @@ public enum TemplateImageState
     Rejected,
 }
 
-/// <summary>Cómo quedó el archivo al completar. <see cref="MimeType"/> y <see cref="SizeBytes"/> sólo valen con
-/// <see cref="TemplateImageState.Available"/>.</summary>
-public sealed record TemplateImageFile(TemplateImageState State, string? MimeType, long SizeBytes);
+/// <summary>Cómo quedó el archivo al completar. <see cref="MimeType"/>, <see cref="SizeBytes"/> y <see cref="CreatedAt"/> (cuándo se abrió
+/// la sesión de subida) sólo valen con <see cref="TemplateImageState.Available"/>.</summary>
+public sealed record TemplateImageFile(TemplateImageState State, string? MimeType, long SizeBytes, DateTimeOffset CreatedAt);
