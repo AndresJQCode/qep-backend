@@ -134,12 +134,21 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        bool? wholesaleApproved,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
             tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, orderDateFrom, orderDateTo, orderNumber, source);
+        // D-1: «Por aprobar» es la marca, no un estado; el filtro deja sólo pedidos mayoristas.
+        if (wholesaleApproved is { } approved)
+        {
+            orders = approved
+                ? orders.Where(order => order.Source == OrderSource.Wholesale && order.WholesaleApprovedAt != null)
+                : orders.Where(order => order.Source == OrderSource.Wholesale && order.WholesaleApprovedAt == null);
+        }
+
         var total = await orders.CountAsync(cancellationToken);
         // Spec 2026-11-16 §5: primero la fecha del pedido; dentro del mismo día, el instante en que se creó.
         var items = await orders
@@ -151,6 +160,25 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .ToListAsync(cancellationToken);
         return (items, total);
     }
+
+    public Task<int> CountAwaitingWholesaleApprovalAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
+        string? orderNumber,
+        OrderSource? source,
+        CancellationToken cancellationToken) =>
+        Filtered(
+                tenantId, clientId, clientIds, advisorId, OrderStatus.Open, paymentStatus, fulfillmentStatus, invoiced,
+                orderDateFrom, orderDateTo, orderNumber, source)
+            .Where(order => order.Source == OrderSource.Wholesale && order.WholesaleApprovedAt == null)
+            .CountAsync(cancellationToken);
 
     public async Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
         Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken)

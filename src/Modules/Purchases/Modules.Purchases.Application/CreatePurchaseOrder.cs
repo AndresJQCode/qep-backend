@@ -15,7 +15,8 @@ public sealed record CreatePurchaseOrderCommand(
 
 /// <summary>
 /// Crea la orden en <c>Draft</c>. Todo lo que puede responder 422 (validación, moneda, proveedor, líneas) va antes de abrir la
-/// transacción y pedir el número: un alta rechazada nunca gasta un consecutivo.
+/// transacción y pedir el número: un alta rechazada nunca gasta un consecutivo. Mayorista fase 3 (D-10): el modo vinculado
+/// queda fijado acá con el mayorista del proveedor, y moneda y costo salen de su lista (D-11).
 /// </summary>
 public sealed class CreatePurchaseOrderHandler(
     IExecutionContext executionContext,
@@ -38,7 +39,7 @@ public sealed class CreatePurchaseOrderHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var memberId = await PurchasesAuthorization.ResolveMemberAsync(
             executionContext, membershipDirectory, command.TenantId, cancellationToken);
-        var lines = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
+        var build = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
 
         PurchaseOrder order;
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
@@ -49,9 +50,10 @@ public sealed class CreatePurchaseOrderHandler(
                 command.TenantId,
                 $"OC-{sequence:D4}",
                 command.SupplierId,
-                command.Currency,
+                build.SupplierTenantId,
+                build.Currency,
                 command.Notes,
-                lines,
+                build.Lines,
                 memberId,
                 now);
             orders.Add(order);

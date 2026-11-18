@@ -7,9 +7,30 @@ public sealed record PurchaseOrderSupplierRefDto(Guid Id, string Name);
 
 /// <summary>
 /// El proveedor del detalle. Trae <c>IsActive</c> porque la pantalla explica por qué «Enviar» respondería 422
-/// <c>supplier_inactive</c> sin pedir el proveedor aparte (D-4).
+/// <c>supplier_inactive</c> sin pedir el proveedor aparte (D-4). <c>IsLinked</c> (mayorista fase 3) dice si hoy es un
+/// mayorista en QEP; el modo de la orden lo dice <see cref="PurchaseOrderDetailDto.Mode"/>, que es el que manda.
 /// </summary>
-public sealed record PurchaseOrderSupplierDto(Guid Id, string Name, bool IsActive);
+public sealed record PurchaseOrderSupplierDto(Guid Id, string Name, bool IsActive, bool IsLinked = false);
+
+/// <summary>Mayorista fase 3 (D-9): la foto de la lista del mayorista para pintar «base y descuento», todo con IVA incluido.</summary>
+public sealed record PurchaseOrderListPriceDto(decimal BasePrice, decimal DiscountPercent, decimal UnitPrice);
+
+/// <summary>Mayorista fase 3: el pedido que la orden creó en el mayorista. Null en una externa y en un borrador vinculado.</summary>
+public sealed record PurchaseOrderLinkedDto(string OrderNumber);
+
+/// <summary>
+/// Mayorista fase 3 (adenda): los conteos del banner «2 líneas cambiaron… · 2 productos no estaban en tu catálogo», calculados
+/// acá para que la pantalla no recorra las líneas.
+/// </summary>
+public sealed record PurchaseOrderChangesDto(int ChangedLines, int AddedLines, int RejectedLines, int CreatedProducts);
+
+/// <summary>Los dos modos de una orden (D-10), por nombre en el JSON.</summary>
+public static class PurchaseOrderModes
+{
+    public const string External = "External";
+
+    public const string Linked = "Linked";
+}
 
 /// <summary>Quién creó la orden con su nombre visible ya resuelto: la pantalla no cruza ids con el padrón.</summary>
 public sealed record PurchaseOrderMemberDto(Guid MemberId, string Name);
@@ -20,16 +41,22 @@ public sealed record PurchaseOrderMemberDto(Guid MemberId, string Name);
 /// </summary>
 public sealed record PurchaseOrderLineDto(
     Guid Id,
-    Guid VariantId,
+    Guid? VariantId,
     string Code,
     string Name,
-    decimal Quantity,
+    decimal? Quantity,
     decimal? ConfirmedQuantity,
     decimal UnitCost,
     decimal? ConfirmedUnitCost,
     decimal TaxRatePercent,
     string LineStatus,
-    decimal Subtotal);
+    decimal Subtotal,
+    /// <summary>Mayorista fase 3: la variante del mayorista; null en una orden externa.</summary>
+    Guid? SupplierVariantId = null,
+    /// <summary>Mayorista fase 3: la foto de la lista; null en una externa y en una línea que agregó el mayorista.</summary>
+    PurchaseOrderListPriceDto? ListPrice = null,
+    /// <summary>Mayorista fase 3 (D-18): la variante propia la creó la confirmación.</summary>
+    bool CreatedInCatalog = false);
 
 /// <summary>Subtotal sin IVA, IVA y total, ya redondeados por línea (<c>PurchaseOrderMath</c>): la pantalla no suma.</summary>
 public sealed record PurchaseOrderTotalsDto(decimal Subtotal, decimal Tax, decimal Total);
@@ -59,7 +86,12 @@ public sealed record PurchaseOrderDetailDto(
     PurchaseOrderTotalsDto Totals,
     decimal RequestedTotal,
     IReadOnlyList<PurchaseOrderHistoryDto> History,
-    IReadOnlyList<string> AllowedActions);
+    IReadOnlyList<string> AllowedActions,
+    /// <summary>Mayorista fase 3 (adenda): <c>External</c> o <c>Linked</c>, el modo fijado al guardar (D-10). La pantalla
+    /// decide por esto, nunca por <c>supplier.isLinked</c>.</summary>
+    string Mode = PurchaseOrderModes.External,
+    PurchaseOrderLinkedDto? Linked = null,
+    PurchaseOrderChangesDto? Changes = null);
 
 /// <summary>
 /// Una fila de la lista. <c>Total</c> sigue la regla de <c>totals.total</c> del detalle y <c>LineCount</c> viene contado, para
@@ -74,7 +106,10 @@ public sealed record PurchaseOrderSummaryDto(
     string Currency,
     decimal Total,
     DateTimeOffset CreatedAt,
-    int LineCount);
+    int LineCount,
+    /// <summary>Mayorista fase 3: si la orden va a un mayorista vinculado, y el modo por nombre (adenda).</summary>
+    bool IsLinked = false,
+    string Mode = PurchaseOrderModes.External);
 
 /// <summary>
 /// Cuántas órdenes hay en cada estado con los filtros de la lista salvo <c>status</c>, para las pestañas (D-18). Las claves del
@@ -106,16 +141,25 @@ public sealed record PurchaseOrderPreviewLineDto(
     string Code,
     string Name,
     decimal TaxRatePercent,
-    decimal Subtotal);
+    decimal Subtotal,
+    /// <summary>Mayorista fase 3: con proveedor vinculado, <c>VariantId</c> es la del mayorista y esto su precio de lista.</summary>
+    PurchaseOrderListPriceDto? ListPrice = null);
 
 /// <summary>
 /// La vista previa del formulario (con debounce): misma aritmética que el alta (D-19), así el total que se ve es el que se
 /// guarda. Las líneas vuelven en el orden del cuerpo.
 /// </summary>
-public sealed record PurchaseOrderPreviewDto(IReadOnlyList<PurchaseOrderPreviewLineDto> Lines, PurchaseOrderTotalsDto Totals);
+/// <remarks>Mayorista fase 3: <c>Currency</c> es la moneda efectiva (la del mayorista con proveedor vinculado, D-11).</remarks>
+public sealed record PurchaseOrderPreviewDto(
+    IReadOnlyList<PurchaseOrderPreviewLineDto> Lines,
+    PurchaseOrderTotalsDto Totals,
+    string Currency);
 
-/// <summary>Una línea del cuerpo: la variante, la cantidad y el costo unitario sin IVA.</summary>
-public sealed record PurchaseOrderLineInput(Guid VariantId, decimal Quantity, decimal UnitCost);
+/// <summary>
+/// Una línea del cuerpo: la variante, la cantidad y el costo unitario sin IVA. Mayorista fase 3 (D-11): con proveedor vinculado
+/// la variante es del mayorista y el costo se ignora (sale de la lista); con proveedor externo el costo sigue siendo obligatorio.
+/// </summary>
+public sealed record PurchaseOrderLineInput(Guid VariantId, decimal Quantity, decimal? UnitCost);
 
 /// <summary>
 /// El cuerpo de <c>POST /</c>, <c>PUT /{id}</c> y <c>POST /preview</c>: un solo record porque el contrato dice «igual que

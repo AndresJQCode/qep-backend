@@ -24,7 +24,9 @@ internal static class OrderPricingRecalculation
         // (Shopify y las que vengan) se precia siempre con el valor por defecto de su moneda, aun editado:
         // decisión del owner. El manual, el que nació de una cotización y el de la tienda pública (decisión del owner,
         // 2026-11-03) toman la regla vigente del tenant.
-        var rounding = order.Source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store
+        // El pedido mayorista también (D-6): es la regla con que Wholesale redondea el precio de lista, así que el pedido y la
+        // orden de compra no divergen.
+        var rounding = order.Source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store or OrderSource.Wholesale
             ? await priceRounding.GetAsync(tenantId, order.Currency, cancellationToken)
             : PriceRoundingDefaults.For(order.Currency);
         order.UsePriceRounding(rounding, occurredAt);
@@ -34,7 +36,9 @@ internal static class OrderPricingRecalculation
             return;
         }
 
-        if (order.IsRetail)
+        // D-5: el pedido mayorista no tiene escalas, piso ni mínimo de compra; el precio de lista ya trae el descuento del
+        // distribuidor. Como el detal: toda línea queda en 0 %.
+        if (order.IsRetail || order.Source == OrderSource.Wholesale)
         {
             order.ApplyGroupDiscounts(
                 order.Items.ToDictionary(

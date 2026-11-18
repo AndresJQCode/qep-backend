@@ -616,7 +616,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         var order = modelBuilder.Entity<Order>();
         order.ToTable("orders", "quotations", table =>
         {
-            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store')");
+            // Mayorista fase 3: 'Wholesale' es el pedido que crea la orden de compra de un distribuidor vinculado.
+            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store','Wholesale')");
             table.HasCheckConstraint("CK_orders_freight_charge_mode", FreightChargeModeCheck);
         });
         order.HasKey(value => value.Id);
@@ -795,6 +796,17 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.CancellationReason)
             .HasColumnName("cancellation_reason")
             .HasMaxLength(Order.CancellationReasonMaxLength);
+        // Mayorista fase 3: el enlace con la orden de compra del distribuidor (referencias blandas a otro tenant, sin FK) y la
+        // marca «Por aprobar» (D-1: aprobado = wholesale_approved_at con valor). «Lo anuló el comprador» no se guarda: se deriva
+        // de cancelled_by nulo (pre-flight X4).
+        order.Property(value => value.BuyerTenantId).HasColumnName("buyer_tenant_id");
+        order.Property(value => value.PurchaseOrderId).HasColumnName("purchase_order_id");
+        order.Property(value => value.WholesaleApprovedAt).HasColumnName("wholesale_approved_at");
+        order.Property(value => value.WholesaleApprovedBy)
+            .HasColumnName("wholesale_approved_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
         // Spec 2026-10-05: quién y cuándo se marcó como facturado. Nullables, porque un pedido sin
         // facturar no tiene nada que guardar acá y revertir las vuelve a null.
         order.Property(value => value.InvoicedAt).HasColumnName("invoiced_at");
@@ -869,6 +881,9 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     {
         var item = modelBuilder.Entity<OrderItem>();
         item.ToTable("order_items", "quotations");
+        // Mayorista fase 3: la línea de la orden de compra de la que salió; nula fuera de un pedido mayorista y en una línea que
+        // agregó el mayorista. Sin FK: vive en el tenant del distribuidor.
+        item.Property(value => value.SourcePurchaseOrderLineId).HasColumnName("source_purchase_order_line_id");
         item.HasKey(value => value.Id);
         item.Property(value => value.Id)
             .HasColumnName("id")

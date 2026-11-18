@@ -33,7 +33,9 @@ public sealed record QuotationItemDto(
     string? ProductName,
     /// <summary>El tipo y la unidad que la línea fijó al nacer (spec 2026-11-18 §3.4), por nombre.</summary>
     string Kind,
-    string SalesUnit);
+    string SalesUnit,
+    /// <summary>Mayorista fase 3: la línea de la orden de compra de la que salió, sólo en un pedido mayorista.</summary>
+    Guid? SourcePurchaseOrderLineId = null);
 
 public sealed record QuotationDto(
     Guid Id,
@@ -1073,7 +1075,10 @@ public sealed record QuotationItemResponse(
     /// por nombre (spec 2026-11-18 §3.4). Son los que la línea fijó al nacer, no los del catálogo de hoy: la pantalla
     /// pone la unidad junto a la cantidad con su propio diccionario. Con default por la misma razón que el anterior.</summary>
     string Kind = "Physical",
-    string SalesUnit = "Unit");
+    string SalesUnit = "Unit",
+    /// <summary>Mayorista fase 3: en un pedido mayorista, si la línea vino de la orden de compra del distribuidor (false = la
+    /// agregó el mayorista). Null en cualquier otro documento.</summary>
+    bool? FromPurchaseOrder = null);
 
 /// <summary>
 /// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No

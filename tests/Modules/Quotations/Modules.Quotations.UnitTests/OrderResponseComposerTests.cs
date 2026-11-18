@@ -350,11 +350,47 @@ public sealed class OrderResponseComposerTests
             "Cambió la fecha del pedido de 2026-11-14 a 2026-11-10.",
             OrderChangeSummary.OrderDateChanged(new DateOnly(2026, 11, 14), new DateOnly(2026, 11, 10)));
 
+    // Mayorista fase 3 (D-7, adenda): el detalle nombra al distribuidor con el nombre de su tenant, dice quién aprobó y marca
+    // las líneas que vinieron de la orden de compra.
+    [Fact]
+    public async Task AWholesaleDetailNamesTheDistributorAndMarksTheLines()
+    {
+        var order = WholesaleOrderFixtures.Wholesale(WholesaleOrderFixtures.Line(Guid.CreateVersion7(), 1m, 8_500m));
+        var added = Guid.CreateVersion7();
+        order.AddItem(OrderItemId.New(), added, added, 1m, 5_000m, 0m, 0, OrderLineCosts.None, WholesaleOrderFixtures.Advisor, Now);
+        var approver = Guid.CreateVersion7();
+        order.ApproveWholesale(new MemberId(approver), Now);
+        var tenants = new StubTenantDirectory { DisplayName = "Distribuciones Norte" };
+
+        var response = await Composer(tenants: tenants).ComposeAsync(
+            TenantId, new OrderDetailDto(order.ToDto(), null, []), TestContext.Current.CancellationToken);
+
+        var wholesale = response.Wholesale!;
+        Assert.Equal((WholesaleOrderFixtures.BuyerTenantId, "Distribuciones Norte"), (wholesale.BuyerTenant.Id, wholesale.BuyerTenant.Name));
+        Assert.Equal((WholesaleOrderFixtures.PurchaseOrderId, "OC-0007", "Approved"), (wholesale.PurchaseOrderId, wholesale.PurchaseOrderNumber, wholesale.Approval));
+        Assert.Equal(approver, wholesale.ApprovedBy!.MemberId);
+        Assert.False(wholesale.CancelledByBuyer);
+        Assert.Equal([true, false], response.Items.Select(item => item.FromPurchaseOrder));
+    }
+
+    [Fact]
+    public async Task AManualDetailHasNoWholesaleBlock()
+    {
+        var order = OrderBuilders.Pending(TenantId, new MemberId(Guid.CreateVersion7()), Now);
+
+        var response = await Composer().ComposeAsync(
+            TenantId, new OrderDetailDto(order.ToDto(), null, []), TestContext.Current.CancellationToken);
+
+        Assert.Null(response.Wholesale);
+        Assert.All(response.Items, item => Assert.Null(item.FromPurchaseOrder));
+    }
+
     private static OrderResponseComposer Composer(
         StubQuotationCustomerLookup? customers = null,
         StubQuotationBuyerAccountLookup? buyers = null,
         FixedTenantClock? clock = null,
-        StubQuotationWithholdingLookup? withholdings = null) =>
+        StubQuotationWithholdingLookup? withholdings = null,
+        StubTenantDirectory? tenants = null) =>
         new(
             customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
@@ -363,5 +399,6 @@ public sealed class OrderResponseComposerTests
             withholdings ?? new StubQuotationWithholdingLookup(),
             new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
             buyers ?? new StubQuotationBuyerAccountLookup(),
-            clock ?? new FixedTenantClock(Now));
+            clock ?? new FixedTenantClock(Now),
+            tenants ?? new StubTenantDirectory());
 }

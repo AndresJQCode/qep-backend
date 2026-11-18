@@ -25,7 +25,10 @@ public sealed record ListOrdersQuery(
     /// fecha del pedido, que es un día del tenant (spec 2026-11-16 §4).</summary>
     string? TimeZone = null,
     string? FulfillmentStatus = null,
-    string? Invoiced = null) : IQuery<OrderPage>;
+    string? Invoiced = null,
+    /// <summary>Mayorista fase 3: <c>Pending</c> o <c>Approved</c> (sin distinguir mayúsculas); otro valor es 422
+    /// <c>validation.failed</c> con <c>errors.WholesaleApproval</c>.</summary>
+    string? WholesaleApproval = null) : IQuery<OrderPage>;
 
 /// <summary>Fila de la lista. <c>QuotationId</c> y <c>QuotationNumber</c> son nulos en un pedido manual
 /// o externo; <c>Source</c> y <c>ExternalReference</c> dicen de dónde vino. <c>FulfillmentStatus</c> e
@@ -56,13 +59,18 @@ public sealed record OrderListItemDto(
     DateOnly OrderDate,
     /// <summary>Ver <see cref="Order.RequiresShipping"/> (spec 2026-11-18 §5). Resuelto por página, porque la fila no trae
     /// las líneas.</summary>
-    bool RequiresShipping);
+    bool RequiresShipping,
+    /// <summary>Mayorista fase 3: número de la orden y aprobación; null fuera de un pedido mayorista.</summary>
+    OrderListWholesaleDto? Wholesale = null);
 
+/// <summary><c>PendingWholesaleApprovals</c>: el aviso «N pedidos de distribuidores esperan tu aprobación» (adenda), con los
+/// filtros vigentes salvo el de estado.</summary>
 public sealed record OrderPage(
     IReadOnlyList<OrderListItemDto> Items,
     int Total,
     int Page,
-    int PageSize);
+    int PageSize,
+    int PendingWholesaleApprovals = 0);
 
 public sealed class ListOrdersHandler(
     IOrderRepository repository,
@@ -88,6 +96,7 @@ public sealed class ListOrdersHandler(
         var fulfillmentStatus = OrderListing.ParseFulfillmentStatus(query.FulfillmentStatus);
         var invoiced = OrderListing.ParseInvoiced(query.Invoiced);
         var source = OrderListing.ParseSource(query.Source);
+        var wholesaleApproved = OrderListing.ParseWholesaleApproval(query.WholesaleApproval);
         var advisorId = query.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, query.TenantId, query.ClientCuc, cancellationToken);
@@ -113,12 +122,26 @@ public sealed class ListOrdersHandler(
             query.ConvertedTo,
             query.OrderNumber,
             source,
+            wholesaleApproved,
             page,
             pageSize,
+            cancellationToken);
+        var pendingWholesaleApprovals = await repository.CountAwaitingWholesaleApprovalAsync(
+            query.TenantId,
+            query.ClientId,
+            clientIds,
+            advisorId,
+            paymentStatus,
+            fulfillmentStatus,
+            invoiced,
+            query.ConvertedFrom,
+            query.ConvertedTo,
+            query.OrderNumber,
+            source,
             cancellationToken);
 
         var items = await OrderListing.ToListItemsAsync(
             customerLookup, advisorLookup, quotationRepository, repository, query.TenantId, rows, cancellationToken);
-        return new OrderPage(items, total, page, pageSize);
+        return new OrderPage(items, total, page, pageSize, pendingWholesaleApprovals);
     }
 }

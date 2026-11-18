@@ -511,6 +511,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
+        // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado y el aplicador de sus eventos (lo llama el
+        // procesador del inbox de Compras en su scope por mensaje; los adaptadores de los puertos mayoristas van más abajo).
+        services.AddScoped<
+            IQueryHandler<Modules.Purchases.Application.ListSupplierCatalogQuery, Modules.Purchases.Application.SupplierCatalogPageDto>,
+            Modules.Purchases.Application.ListSupplierCatalogHandler>();
+        services.AddScoped<Modules.Purchases.Application.WholesaleOrderEventApplier>();
 
         // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.
         services.AddScoped<
@@ -558,6 +564,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wholesale.Application.DistributorComposer>();
         // La invitación vista desde el link: sin IExecutionContext, el tenant del mayorista sale de la invitación.
         services.AddScoped<Modules.Wholesale.Application.IDistributorInvitationService, Modules.Wholesale.Application.DistributorInvitationService>();
+        // Fase 3: la única puerta entre tenants al catálogo del mayorista (relación, visibilidad y precio de lista).
+        services.AddScoped<Modules.Wholesale.Application.WholesaleOffers>();
 
         // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
         // responde 500.
@@ -1019,6 +1027,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<MarkOrderPaidCommand, OrderDto>, MarkOrderPaidHandler>();
         services.AddScoped<ICommandHandler<UnmarkOrderPaidCommand, OrderDto>, UnmarkOrderPaidHandler>();
         services.AddScoped<ICommandHandler<PrepareOrderCommand, OrderDto>, PrepareOrderHandler>();
+        // Mayorista fase 3 (D-1, D-2): aprobar el pedido de un distribuidor.
+        services.AddScoped<ICommandHandler<ApproveWholesaleOrderCommand, OrderDto>, ApproveWholesaleOrderHandler>();
         services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
         services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
         services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
@@ -1078,6 +1088,10 @@ public static class QepServiceCollectionExtensions
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
+        // Mayorista fase 3: el pedido de la orden de compra vinculada (lo usa el adaptador de Compras) y el precio de lista del
+        // distribuidor para la línea que el mayorista agrega al editar (D-5).
+        services.AddScoped<IWholesaleOrderGateway, WholesaleOrderGateway>();
+        services.AddScoped<IWholesaleLinePricing, QuotationsWholesaleLinePricing>();
         // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
         services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
         // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de
@@ -1836,6 +1850,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
+        // Mayorista fase 3: el catálogo del mayorista, su motor de pedidos (por un scope propio por llamada) y el catálogo propio
+        // para la confirmación, enrolado en la transacción del inbox de Compras.
+        services.AddScoped<Modules.Purchases.Application.IWholesaleCatalog, PurchasesWholesaleCatalog>();
+        services.AddScoped<Modules.Purchases.Application.IWholesaleOrderIntake, PurchasesWholesaleOrderIntake>();
+        services.AddScoped<IWholesaleIntakeDirectory, WholesaleIntakeDirectory>();
+        services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogWriter, PurchasesCatalogWriter>();
+        // Y la adenda del contrato: el estado de la relación con el mayorista en la lista y el detalle de proveedores.
+        services.AddScoped<ISupplierRelationshipLookup, SuppliersWholesaleRelationshipLookup>();
 
         // Wholesale, spec 2026-11-17: Catalog, Companies, Tenancy, Suppliers y Customers entran por puertos del módulo.
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCatalogReader, WholesaleCatalogReader>();

@@ -17,4 +17,10 @@ public enum PurchaseOrderLineStatus
 
     /// <summary>Confirmada con cantidad 0: el proveedor no la despacha.</summary>
     Rejected,
+
+    /// <summary>
+    /// No se pidió: el mayorista la agregó al aprobar el pedido de una orden vinculada. Sin cantidad pedida, llega ya
+    /// confirmada.
+    /// </summary>
+    Added,
 }

@@ -1388,6 +1388,24 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   no de una variable propia: no hay `WholesaleInvitationUrl` que dar de alta en el pipeline. El token viaja sólo en el payload
   del outbox; `SensitivePaths.Mask` lo tapa en `platform.request_failures` y en su línea de log, también el de la invitación de
   miembros. Una ruta nueva con un secreto en un segmento se suma ahí.
+- **«Por aprobar» de un pedido `Wholesale` es `WholesaleApprovedAt`, no un estado** (mayorista fase 3, D-1). `OrderStatus` sigue
+  `Open/Archived/Cancelled`; pendiente es `Open` sin `wholesale_approved_at`. Aprobado deja de ser editable (`IsEditable`, D-3):
+  la aprobación ya le llevó las líneas al distribuidor y una edición posterior nunca le llegaría. «Lo anuló el comprador» tampoco
+  se guarda: se deriva de `cancelled_by` nulo (`Order.CancelledByBuyer`).
+- **La orden vinculada guarda costo sin IVA y congela la lista** (D-9). `UnitCost` es el precio de lista del mayorista sin IVA
+  (`PurchaseOrderMath.NetOfVat`); `list_base_price`, `list_discount_percent` y `list_unit_price` (con IVA) quedan como foto para
+  pintar «base y descuento». Los totales de la orden y del pedido pueden diferir en centavos. La moneda del pedido tiene que ser
+  la de la orden: si el mayorista cambió la suya, el envío es 409 `wholesaler_rejected` y una aprobación en otra moneda se
+  registra y no se aplica.
+- **Los eventos de vuelta del mayorista los consume Purchases con inbox propio, y la creación de productos va en su
+  transacción** (`WholesaleOrderEventsProcessor`, consumidor `purchases.wholesale-order-events`). `PurchasesCatalogWriter` enrola
+  el `CatalogDbContext` en la conexión y la transacción de `PurchasesDbContext` (calca `ShopifyCatalogWriter`) y abre un punto de
+  guardado por producto: en Postgres una sentencia fallida aborta la transacción entera, así que sin el punto de guardado un
+  alta fallida dejaría la confirmación sin guardar y el evento reintentando para siempre (ruling X2). Un evento que encuentra la
+  orden todavía en borrador (`RetryLater`) no se marca: vuelve cuando vence su reclamo.
+- **Un producto creado por Compras no tiene precio de venta (`AllowsNoPrice`) ni origen externo** (D-16, D-17). Nace sin
+  `ExternalSource` para que el distribuidor lo edite como cualquier otro, sin precio, y con costo sólo si es mayor que 0. No sale
+  en tienda, POS ni cotizaciones hasta que alguien le ponga precio; guardar el producto desde el formulario exige precio.
 
 ## Verificación
 

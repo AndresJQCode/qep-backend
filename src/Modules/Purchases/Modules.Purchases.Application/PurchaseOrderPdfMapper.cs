@@ -36,7 +36,8 @@ public static class PurchaseOrderPdfMapper
                 return new PurchaseOrderPdfLine(
                     line.Code,
                     line.Name,
-                    quantity.ToString("#,0.##", numbers),
+                    // Una línea Added no tiene cantidad pedida: sin la confirmada se imprime «—».
+                    quantity?.ToString("#,0.##", numbers) ?? "—",
                     Money(unitCost),
                     $"{line.TaxRatePercent.ToString("0.##", numbers)} %",
                     Money(line.Subtotal));

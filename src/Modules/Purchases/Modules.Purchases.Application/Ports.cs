@@ -83,13 +83,18 @@ public interface IPurchasesAuditPublisher
         DateTimeOffset occurredAt);
 }
 
-/// <summary>Un proveedor del directorio visto desde Compras. <c>IdentificationType</c> va con el nombre del cable.</summary>
+/// <summary>
+/// Un proveedor del directorio visto desde Compras. <c>IdentificationType</c> va con el nombre del cable. Mayorista fase 3:
+/// <c>LinkedTenantId</c> es el tenant mayorista con que el proveedor está vinculado (null si es externo); una orden lo fija al
+/// guardarse (D-10).
+/// </summary>
 public sealed record PurchasesSupplierRef(
     Guid Id,
     string Name,
     string IdentificationType,
     string IdentificationNumber,
-    bool IsActive);
+    bool IsActive,
+    Guid? LinkedTenantId = null);
 
 /// <summary>El directorio de proveedores; adaptador en Bootstrapper sobre Suppliers. Todo acotado al tenant.</summary>
 public interface IPurchasesSupplierLookup

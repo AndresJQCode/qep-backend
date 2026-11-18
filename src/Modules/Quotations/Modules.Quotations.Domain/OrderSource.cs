@@ -7,5 +7,8 @@ public enum OrderSource
     Quotation,
     Manual,
     Shopify,
-    Store
+    Store,
+
+    /// <summary>Lo crea la orden de compra de un distribuidor vinculado (mayorista fase 3).</summary>
+    Wholesale
 }

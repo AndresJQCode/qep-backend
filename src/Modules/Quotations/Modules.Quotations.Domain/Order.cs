@@ -147,6 +147,28 @@ public sealed class Order
     /// pedido con el correo mal escrito no serviría, porque el dueño de ese correo lo recuperaría al iniciar sesión.</summary>
     public bool BuyerAccountSetByMember { get; private set; }
 
+    /// <summary>Mayorista fase 3: el tenant distribuidor cuya orden de compra creó el pedido. Null fuera de
+    /// <see cref="OrderSource.Wholesale"/>.</summary>
+    public Guid? BuyerTenantId { get; private set; }
+
+    /// <summary>La orden de compra (en el tenant del distribuidor) que creó el pedido. Null fuera de
+    /// <see cref="OrderSource.Wholesale"/>.</summary>
+    public Guid? PurchaseOrderId { get; private set; }
+
+    /// <summary>D-1: «Por aprobar» es una marca, no un estado. Cuándo y quién aprobó el pedido mayorista; desde ahí deja
+    /// de ser editable (D-3) y la orden del distribuidor queda confirmada con estas líneas.</summary>
+    public DateTimeOffset? WholesaleApprovedAt { get; private set; }
+
+    public MemberId? WholesaleApprovedBy { get; private set; }
+
+    /// <summary>Un pedido mayorista abierto que nadie aprobó todavía.</summary>
+    public bool IsAwaitingWholesaleApproval =>
+        Source == OrderSource.Wholesale && Status == OrderStatus.Open && WholesaleApprovedAt is null;
+
+    /// <summary>Lo anuló el comprador (la tienda o el distribuidor): es la única anulación que no deja
+    /// <see cref="CancelledBy"/>, porque no hay un miembro del tenant detrás.</summary>
+    public bool CancelledByBuyer => Status == OrderStatus.Cancelled && CancelledAt is not null && CancelledBy is null;
+
     /// <summary>El comprador sólo anula lo que nadie ha tocado (spec 2026-11-10 §3.7): abierto, con el pago en
     /// PaymentPending, sin ningún comprobante registrado (un asesor puede dejar un comprobante con el pago aún en
     /// PaymentPending), sin preparar y sin facturar.</summary>
@@ -344,8 +366,13 @@ public sealed class Order
     public bool IsPrepared => FulfillmentStatus == OrderFulfillmentStatus.Prepared;
 
     /// <summary>La única guarda de edición (spec 2026-11-10 §3.6): abierto, sin preparar y sin facturar. Pagado no
-    /// congela, como en Shopify.</summary>
-    public bool IsEditable => Status == OrderStatus.Open && !IsPrepared && !IsInvoiced;
+    /// congela, como en Shopify. Un pedido mayorista aprobado tampoco (D-3): la aprobación ya le llevó sus líneas al
+    /// distribuidor y una edición posterior nunca le llegaría.</summary>
+    public bool IsEditable =>
+        Status == OrderStatus.Open
+        && !IsPrepared
+        && !IsInvoiced
+        && !(Source == OrderSource.Wholesale && WholesaleApprovedAt is not null);
 
     /// <summary>Sin tope (plan 2026-10-15, P2): hereda las notas de la cotización, que no lo tienen.</summary>
     public string? Notes { get; private set; }
@@ -605,7 +632,7 @@ public sealed class Order
         OrderLineCosts costs,
         string? buyerNotes = null)
     {
-        if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store)
+        if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store or OrderSource.Wholesale)
         {
             throw new QuotationsDomainException(
                 ExternalOrderErrors.SourceInvalid,
@@ -667,6 +694,47 @@ public sealed class Order
         return order;
     }
 
+    /// <summary>La clave de idempotencia del envío de una orden de compra vinculada (D-8): un reintento encuentra el pedido
+    /// que ya existe en vez de crear otro. Lleva al comprador (rulings X1 y X8a): el id de la orden de otro comprador da otra
+    /// clave y nunca encuentra este pedido.</summary>
+    public static string WholesaleExternalKey(Guid buyerTenantId, Guid purchaseOrderId) =>
+        $"purchase-order:{buyerTenantId:D}:{purchaseOrderId:D}";
+
+    /// <summary>
+    /// El pedido que crea la orden de compra de un distribuidor vinculado (mayorista fase 3). Calca
+    /// <see cref="CreateFromStore"/>: pago pendiente, sin comprobantes ni envío, la nota del comprador en
+    /// <see cref="BuyerNotes"/>. La referencia externa es el número de la orden (D-7) y cada línea guarda la línea de la
+    /// orden de la que salió. Nace por aprobar (D-1).
+    /// </summary>
+    public static Order CreateFromWholesale(
+        OrderId id,
+        Guid tenantId,
+        string orderNumber,
+        OrderHeader header,
+        QuotationParties parties,
+        QuotationBillingAccount billingAccount,
+        IReadOnlyCollection<OrderLineInput> lines,
+        string? buyerNotes,
+        MemberId createdBy,
+        DateTimeOffset occurredAt,
+        DateOnly orderDate,
+        Guid buyerTenantId,
+        Guid purchaseOrderId,
+        string purchaseOrderNumber)
+    {
+        ArgumentNullException.ThrowIfNull(billingAccount);
+        ArgumentException.ThrowIfNullOrWhiteSpace(purchaseOrderNumber);
+        var order = Build(
+            id, tenantId, orderNumber, OrderSource.Wholesale, purchaseOrderNumber, header, parties, billingAccount,
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, buyerNotes, createdBy, [], occurredAt,
+            orderDate, OrderLineCosts.None);
+        order.ExternalKey = NormalizeExternalKey(WholesaleExternalKey(buyerTenantId, purchaseOrderId));
+        order.BuyerNotes = NormalizeNotes(buyerNotes);
+        order.BuyerTenantId = buyerTenantId;
+        order.PurchaseOrderId = purchaseOrderId;
+        return order;
+    }
+
     /// <summary>
     /// El cálculo de la tienda para el carrito (spec de la tienda §5.2): los totales con el mismo motor que un
     /// pedido, pero sin cliente, sin partes, con los indicadores del cliente apagados y sin cuenta de cobro,
@@ -720,9 +788,10 @@ public sealed class Order
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var line in lines)
         {
-            order.AddItemCore(
+            var item = order.AddItemCore(
                 OrderItemId.New(), line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
                 line.TaxPercentage, line.DiscountOrigin, line.Product, line.Kind, line.SalesUnit, occurredAt);
+            item.LinkPurchaseOrderLine(line.SourcePurchaseOrderLineId);
         }
 
         order.EnsureCreatable();
@@ -1148,6 +1217,21 @@ public sealed class Order
         Touch(updatedBy, occurredAt);
     }
 
+    /// <summary>D-4: el precio por línea sólo se edita en un pedido mayorista, mientras sea editable. Cantidad, descuento y
+    /// tasa no cambian; el precio pasa por la regla de redondeo del pedido.</summary>
+    public void ChangeItemUnitPrice(OrderItemId itemId, decimal unitPrice, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        if (Source != OrderSource.Wholesale)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.UnitPriceNotEditable, "Only a wholesale order lets you change a line price.");
+        }
+
+        EnsureEditable("Prices can only be changed while the order is editable.");
+        FindItem(itemId).ChangeUnitPrice(unitPrice, ChargesVat, Currency, PriceRounding, occurredAt);
+        Touch(updatedBy, occurredAt);
+    }
+
     public void RemoveItem(OrderItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable("Products can only be removed while the order is editable.");
@@ -1374,6 +1458,12 @@ public sealed class Order
             throw new QuotationsDomainException(OrderStateErrors.AlreadyArchived, "The order is already archived.");
         }
 
+        if (IsAwaitingWholesaleApproval)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.AwaitingApproval, "A wholesale order awaiting approval cannot be archived.");
+        }
+
         Status = OrderStatus.Archived;
         ArchivedBy = archivedBy;
         ArchivedAt = occurredAt;
@@ -1399,7 +1489,8 @@ public sealed class Order
     /// preparado; si no, devuelve <c>false</c> sin tocar nada.</summary>
     public bool ArchiveIfSettled(MemberId? archivedBy, DateTimeOffset occurredAt)
     {
-        if (Status != OrderStatus.Open || PaymentStatus != OrderPaymentStatus.FullPaymentReceived || !IsPrepared)
+        if (Status != OrderStatus.Open || PaymentStatus != OrderPaymentStatus.FullPaymentReceived || !IsPrepared
+            || IsAwaitingWholesaleApproval)
         {
             return false;
         }
@@ -1487,17 +1578,69 @@ public sealed class Order
 
     public void CancelByBuyer(Guid buyerAccountId, DateTimeOffset occurredAt)
     {
-        if (BuyerAccountId != buyerAccountId || !CanBeCancelledByBuyer)
+        EnsureCancellableByBuyer(BuyerAccountId == buyerAccountId && CanBeCancelledByBuyer);
+        ApplyBuyerCancellation(BuyerOrderErrors.CancellationReason, occurredAt);
+    }
+
+    /// <summary>
+    /// D-12: el distribuidor anula su orden vinculada y, con ella, el pedido, mientras el mayorista no lo apruebe. Misma
+    /// convención que <see cref="CancelByBuyer"/> (pre-flight X4): sin miembro detrás (<see cref="CancelledBy"/> null, que
+    /// es lo que lee <see cref="CancelledByBuyer"/>), la misma guarda <see cref="CanBeCancelledByBuyer"/> y el mismo
+    /// código. Devuelve <c>false</c> sin cambiar nada si ya estaba anulado (un reintento); los ids se comprueban antes,
+    /// para que un comprador ajeno no aprenda nada del pedido.
+    /// </summary>
+    public bool CancelByWholesaleBuyer(Guid buyerTenantId, Guid purchaseOrderId, string reason, DateTimeOffset occurredAt)
+    {
+        EnsureCancellableByBuyer(
+            Source == OrderSource.Wholesale && BuyerTenantId == buyerTenantId && PurchaseOrderId == purchaseOrderId);
+        if (Status == OrderStatus.Cancelled)
+        {
+            return false;
+        }
+
+        EnsureCancellableByBuyer(WholesaleApprovedAt is null && CanBeCancelledByBuyer);
+        ApplyBuyerCancellation(NormalizeCancellationReason(reason), occurredAt);
+        return true;
+    }
+
+    /// <summary>D-1: el mayorista aprueba el pedido tal como quedó; desde ahí no se edita (D-3).</summary>
+    public void ApproveWholesale(MemberId approvedBy, DateTimeOffset occurredAt)
+    {
+        if (Source != OrderSource.Wholesale)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.SourceInvalid, "Only a wholesale order is approved.");
+        }
+
+        EnsureOpen("Only an open order can be approved.");
+        if (WholesaleApprovedAt is not null)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.AlreadyApproved, "The wholesale order is already approved.");
+        }
+
+        WholesaleApprovedAt = occurredAt;
+        WholesaleApprovedBy = approvedBy;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    private static void EnsureCancellableByBuyer(bool cancellable)
+    {
+        if (!cancellable)
         {
             throw new QuotationsDomainException(
                 BuyerOrderErrors.NotCancellableByBuyer,
                 "The order cannot be cancelled by this buyer.");
         }
+    }
 
+    private void ApplyBuyerCancellation(string reason, DateTimeOffset occurredAt)
+    {
         Status = OrderStatus.Cancelled;
         CancelledBy = null;
         CancelledAt = occurredAt;
-        CancellationReason = BuyerOrderErrors.CancellationReason;
+        CancellationReason = reason;
         UpdatedAt = occurredAt;
         Version++;
     }

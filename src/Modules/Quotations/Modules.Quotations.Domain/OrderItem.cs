@@ -66,6 +66,10 @@ public sealed class OrderItem
 
     public string? ProductCode { get; private set; }
 
+    /// <summary>La línea de la orden de compra vinculada de la que salió (mayorista fase 3). Null en cualquier otro pedido y
+    /// en una línea que el mayorista agregó al editar.</summary>
+    public Guid? SourcePurchaseOrderLineId { get; private set; }
+
     public string? ProductName { get; private set; }
 
     public decimal Quantity { get; private set; }
@@ -154,6 +158,18 @@ public sealed class OrderItem
         new(
             id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat,
             position, currency, rounding, kind, salesUnit, occurredAt);
+
+    internal void LinkPurchaseOrderLine(Guid? purchaseOrderLineId) => SourcePurchaseOrderLineId = purchaseOrderLineId;
+
+    /// <summary>D-4: el precio de lista de un pedido mayorista se corrige a mano. Reprecia con la cantidad, el descuento y la
+    /// tasa del producto que la línea ya tiene, igual que <see cref="UpdateQuantity"/>.</summary>
+    internal void ChangeUnitPrice(
+        decimal unitPrice,
+        bool chargesVat,
+        string currency,
+        PriceRounding rounding,
+        DateTimeOffset occurredAt) =>
+        Apply(Quantity, unitPrice, DiscountPercentage, ProductTaxRate, chargesVat, currency, rounding, occurredAt);
 
     internal void CaptureProduct(QuotationProductSnapshot product)
     {

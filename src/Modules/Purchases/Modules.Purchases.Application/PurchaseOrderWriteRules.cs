@@ -49,9 +49,11 @@ internal sealed class PurchaseOrderWriteRules : AbstractValidator<IPurchaseOrder
             line.RuleFor(input => input.Quantity)
                 .GreaterThan(0m)
                 .PrecisionScale(QuantityPrecision, Scale, ignoreTrailingZeros: true);
+            // D-11: opcional acá; con proveedor externo lo exige el armado de líneas, que sabe cuál es.
             line.RuleFor(input => input.UnitCost)
                 .GreaterThan(0m)
-                .PrecisionScale(CostPrecision, Scale, ignoreTrailingZeros: true);
+                .PrecisionScale(CostPrecision, Scale, ignoreTrailingZeros: true)
+                .When(input => input.UnitCost is not null);
         });
         // La segunda aparición es la que sobra: la primera queda como la buena, igual que en la pantalla.
         RuleFor(command => command.Lines).Custom((lines, context) =>

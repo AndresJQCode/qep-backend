@@ -18,4 +18,12 @@ public interface IQuotationLifecycleEventPublisher
     void PublishOrderCreated(Order order, DateTimeOffset occurredAt);
 
     void PublishOrderCancelled(Order order, DateTimeOffset occurredAt);
+
+    /// <summary>Mayorista fase 3 (D-1): <c>quotations.order.wholesale-approved.v1</c> con todas las líneas finales
+    /// (<see cref="WholesaleOrderEvents.ApprovedLines"/>); con él la orden de compra del distribuidor queda confirmada.</summary>
+    void PublishWholesaleApproved(Order order, DateTimeOffset occurredAt);
+
+    /// <summary>Mayorista fase 3 (D-12, D-21): <c>quotations.order.wholesale-cancelled.v1</c>. <paramref name="byBuyer"/> dice
+    /// si lo anuló el distribuidor (su orden ya está anulada) o el mayorista (la orden se anula con el evento).</summary>
+    void PublishWholesaleCancelled(Order order, bool byBuyer, DateTimeOffset occurredAt);
 }

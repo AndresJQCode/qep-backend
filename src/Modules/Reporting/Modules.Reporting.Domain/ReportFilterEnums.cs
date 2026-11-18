@@ -30,7 +30,8 @@ public enum OrderSourceFilter
     Manual,
     Shopify,
     Pos,
-    Store
+    Store,
+    Wholesale
 }
 
 /// <summary>

@@ -16,7 +16,8 @@ public sealed class ActivateSupplierHandler(
     ISupplierGeographyLookup geographyLookup,
     IExecutionContext executionContext,
     IClock clock,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    ISupplierRelationshipLookup relationships)
     : ICommandHandler<ActivateSupplierCommand, SupplierResponse>
 {
     public async Task<SupplierResponse> HandleAsync(
@@ -41,6 +42,6 @@ public sealed class ActivateSupplierHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await supplier.ToResponseAsync(geographyLookup, tenantDirectory, cancellationToken);
+        return await supplier.ToResponseAsync(geographyLookup, tenantDirectory, relationships, cancellationToken);
     }
 }

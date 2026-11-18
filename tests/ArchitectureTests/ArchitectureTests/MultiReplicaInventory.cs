@@ -86,6 +86,8 @@ public static class MultiReplicaInventory
             "Modules/Identity/Modules.Identity.Infrastructure/Persistence/IdentityInboxClaims.cs:38-43 — ClaimedOutboxConsumer; el borrado además bajo pg_advisory_xact_lock (OrphanUserCleanupWorker.cs:191)"),
         new("Modules.Pipeline.Infrastructure.Messaging.QuotationEventsWorker", WorkerClassification.Claimed,
             "Modules/Pipeline/Modules.Pipeline.Infrastructure/Persistence/PipelineInbox.cs:50-55 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
+        new("Modules.Purchases.Infrastructure.Messaging.WholesaleOrderEventsWorker", WorkerClassification.Claimed,
+            "Modules/Purchases/Modules.Purchases.Infrastructure/Persistence/PurchasesInbox.cs:49-54 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
         new("Modules.Shopify.Infrastructure.Workers.CitySynonymEventsWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyInbox.cs:49-54 — ShopifyClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
         new("Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeWorker", WorkerClassification.Claimed,

@@ -83,8 +83,26 @@ public sealed class PurchaseOrderLineBuilderTests
             drafts);
     }
 
-    private Task<IReadOnlyList<PurchaseOrderLineDraft>> Build(
+    // Mayorista fase 3: con proveedor vinculado la moneda del cuerpo no importa (D-11), así que su chequeo no corre.
+    [Fact]
+    public async Task ALinkedSupplierSkipsTheCurrencyCheck()
+    {
+        var supplier = Guid.CreateVersion7();
+        _suppliers.Add(supplier, "Mayorista", linkedTenantId: Guid.CreateVersion7());
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+
+        var build = await new PurchaseOrderLineBuilder(_suppliers, _catalog, _wholesale).BuildAsync(
+            TenantId,
+            new PreviewPurchaseOrderCommand(TenantId, supplier, "XYZ", null, [new PurchaseOrderLineInput(item.VariantId, 1m, null)]),
+            CancellationToken.None);
+
+        Assert.Equal("USD", build.Currency);
+    }
+
+    private readonly FakeWholesaleCatalog _wholesale = new();
+
+    private async Task<IReadOnlyList<PurchaseOrderLineDraft>> Build(
         Guid supplierId, string currency, IReadOnlyList<PurchaseOrderLineInput> lines) =>
-        new PurchaseOrderLineBuilder(_suppliers, _catalog).BuildAsync(
-            TenantId, new PreviewPurchaseOrderCommand(TenantId, supplierId, currency, null, lines), CancellationToken.None);
+        (await new PurchaseOrderLineBuilder(_suppliers, _catalog, _wholesale).BuildAsync(
+            TenantId, new PreviewPurchaseOrderCommand(TenantId, supplierId, currency, null, lines), CancellationToken.None)).Lines;
 }

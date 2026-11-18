@@ -460,9 +460,17 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
 {
     public List<string> Actions { get; } = [];
 
+    /// <summary>Lo publicado con <see cref="Publish"/>, con su actor: la fase 3 audita con <c>Guid.Empty</c> lo que hace el
+    /// distribuidor (D-22).</summary>
+    public List<(string Action, Guid ActorId)> Entries { get; } = [];
+
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
-        string outcome, DateTimeOffset occurredAt) => Actions.Add(action);
+        string outcome, DateTimeOffset occurredAt)
+    {
+        Actions.Add(action);
+        Entries.Add((action, actorId));
+    }
 
     public void PublishWithDetails(
         Guid tenantId, Guid actorId, string action, string resourceId,
@@ -1011,6 +1019,11 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
 
     public OrderSource? LastSource { get; private set; }
 
+    public bool? LastWholesaleApproved { get; private set; }
+
+    /// <summary>Lo que se agregó con <see cref="Add"/>: los pedidos que un caso de uso creó.</summary>
+    public List<Order> Added { get; } = [];
+
     public OrderFulfillmentStatus? LastFulfillmentStatus { get; private set; }
 
     public bool? LastInvoiced { get; private set; }
@@ -1082,10 +1095,12 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        bool? wholesaleApproved,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
+        LastWholesaleApproved = wholesaleApproved;
         LastClientIds = clientIds;
         LastSearchRange = (orderDateFrom, orderDateTo);
         LastSource = source;
@@ -1093,6 +1108,22 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         LastInvoiced = invoiced;
         return Task.FromResult<(IReadOnlyList<Order>, int)>((rows, rows.Length));
     }
+
+    // Los filtros que no son el de estado son SQL y los cubre la integración; acá alcanza con la marca.
+    public Task<int> CountAwaitingWholesaleApprovalAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
+        string? orderNumber,
+        OrderSource? source,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(rows.Count(row => row.IsAwaitingWholesaleApproval));
 
     public (Guid TenantId, Guid BuyerAccountId, int Page, int PageSize)? LastBuyerSearch { get; private set; }
 
@@ -1277,7 +1308,7 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         return Task.FromResult<IReadOnlySet<Guid>>(PaymentProofFileInUse ? fileIds.ToHashSet() : new HashSet<Guid>());
     }
 
-    public void Add(Order order) { }
+    public void Add(Order order) => Added.Add(order);
 
     public void AddHistoryEntry(OrderHistoryEntry entry) => History.Add(entry);
 }
@@ -1536,6 +1567,23 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
     // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
     public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
         Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
+
+    /// <summary>Las líneas de cada aprobación, tal como las arma el contrato del evento.</summary>
+    public List<IReadOnlyList<WholesaleApprovedLineData>> WholesaleApproved { get; } = [];
+
+    public List<(Guid OrderId, bool ByBuyer)> WholesaleCancelled { get; } = [];
+
+    public void PublishWholesaleApproved(Order order, DateTimeOffset occurredAt)
+    {
+        Published.Add(("wholesale.approved", order.Id.Value, order.Total, order.Currency));
+        WholesaleApproved.Add(WholesaleOrderEvents.ApprovedLines(order));
+    }
+
+    public void PublishWholesaleCancelled(Order order, bool byBuyer, DateTimeOffset occurredAt)
+    {
+        Published.Add(("wholesale.cancelled", order.Id.Value, 0m, string.Empty));
+        WholesaleCancelled.Add((order.Id.Value, byBuyer));
+    }
 }
 
 /// <summary>Las transportadoras sembradas, y cuántas veces se buscó una: <c>ShippingResolver</c> no
@@ -1636,8 +1684,11 @@ internal sealed class StubTenantDirectory : ITenantDirectory
     public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<string?>(null);
 
+    /// <summary>El nombre visible de cualquier tenant por el que se pregunte (el distribuidor de un pedido mayorista).</summary>
+    public string? DisplayName { get; set; }
+
     public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<string?>(null);
+        Task.FromResult(DisplayName);
 
     public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<string?>(null);

@@ -76,8 +76,28 @@ public interface IOrderRepository
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        bool? wholesaleApproved,
         int page,
         int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Mayorista fase 3 (adenda del contrato): cuántos pedidos mayoristas abiertos esperan aprobación con los mismos filtros
+    /// que la página, salvo el de estado (y el de aprobación, que es justo lo que se cuenta). Alimenta el aviso «N pedidos de
+    /// distribuidores esperan tu aprobación».
+    /// </summary>
+    Task<int> CountAwaitingWholesaleApprovalAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
+        string? orderNumber,
+        OrderSource? source,
         CancellationToken cancellationToken);
 
     /// <summary>Los pedidos de un comprador de la tienda, del más reciente al más viejo, sin tracking.</summary>

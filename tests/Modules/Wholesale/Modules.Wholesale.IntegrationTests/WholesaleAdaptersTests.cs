@@ -58,6 +58,64 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
         Assert.Equal(2, total);
     }
 
+    // Fase 3: lo que el distribuidor puede pedir por id. Una variante sin precio en la moneda, de un producto inactivo o de
+    // otro tenant no vuelve; la que vuelve trae su camino de categorías (la suya y sus ancestros).
+    [Fact]
+    public async Task FindSellableSkipsInactiveAndUnpricedVariants()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var other = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        using var otherManager = WholesaleApiHarness.CreateManager(Factory, other);
+        var home = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Hogar");
+        var kitchen = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Cocina", home);
+        var priced = await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "A-1", "Olla", 10_000m, kitchen);
+        var unpriced = await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "A-2", "Tetera", priceCop: null);
+        var inactive = await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "A-3", "Sartén", 20_000m);
+        var foreign = await WholesaleApiHarness.CreateVariantAsync(otherManager, other.TenantId, "A-4", "Ajena", 5_000m);
+        await WholesaleApiHarness.ExecuteAsync(
+            Factory,
+            $"""
+            UPDATE catalog.products SET is_active = false
+            WHERE id = (SELECT product_id FROM catalog.product_variants WHERE id = {inactive})
+            """);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var reader = scope.ServiceProvider.GetRequiredService<IWholesaleCatalogReader>();
+        var found = await reader.FindSellableAsync(tenant.TenantId, "COP", [priced, unpriced, inactive, foreign], Ct);
+
+        var item = Assert.Single(found.Values);
+        Assert.Equal((priced, "A-1", "Olla", 10_000m), (item.VariantId, item.Code, item.Name, item.BasePrice));
+        Assert.Equal([kitchen, home], item.CategoryPath);
+    }
+
+    // Fase 3: la búsqueda del catálogo del mayorista expande las categorías a sus descendientes y filtra por código o nombre.
+    [Fact]
+    public async Task SearchSellableFiltersByCategoryAndText()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var home = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Hogar");
+        var kitchen = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Cocina", home);
+        var tools = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Ferretería");
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "H-1", "Cojín", 5_000m, home);
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "C-1", "Olla", 10_000m, kitchen);
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "F-1", "Olla de hierro", 30_000m, tools);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var reader = scope.ServiceProvider.GetRequiredService<IWholesaleCatalogReader>();
+        var (byCategory, categoryTotal) = await reader.SearchSellableAsync(
+            tenant.TenantId, "COP", [home], null, 1, 50, Ct);
+        var (byText, textTotal) = await reader.SearchSellableAsync(tenant.TenantId, "COP", [home], "olla", 1, 50, Ct);
+        var (byCode, _) = await reader.SearchSellableAsync(tenant.TenantId, "COP", null, "F-1", 1, 50, Ct);
+
+        Assert.Equal(["Cojín", "Olla"], byCategory.Select(item => item.Name));
+        Assert.Equal(2, categoryTotal);
+        Assert.Equal(["Olla"], byText.Select(item => item.Name));
+        Assert.Equal(1, textTotal);
+        Assert.Equal(["Olla de hierro"], byCode.Select(item => item.Name));
+    }
+
     // D-7: un cliente que ya tiene ese NIT se reutiliza; dos llamadas dan el mismo cliente.
     [Fact]
     public async Task CustomerProvisioningReusesAnExistingNit()

@@ -22,6 +22,19 @@ public static class PurchasesErrorCodes
 
     public const string ConfirmLinesMismatch = "purchases.order.confirm_lines_mismatch";
 
+    /// <summary>409: el mayorista ya aprobó, preparó, facturó o archivó el pedido de la orden vinculada (D-12).</summary>
+    public const string NotCancellable = "purchases.order.not_cancellable";
+
+    /// <summary>El proveedor no es un tenant vinculado: la acción es sólo de órdenes vinculadas.</summary>
+    public const string SupplierNotLinked = "purchases.order.supplier_not_linked";
+
+    /// <summary>409: el motor de pedidos del mayorista rechazó el alta (D-15); el código interno va al log.</summary>
+    public const string WholesalerRejected = "purchases.order.wholesaler_rejected";
+
+    public const string ProductNotVisible = "wholesale.product.not_visible";
+
+    public const string RelationshipInactive = "wholesale.relationship.inactive";
+
     /// <summary>502: <c>qcode-pdf</c> no devolvió el PDF. No está en el contrato del spec (pendiente del owner, R8).</summary>
     public const string PdfRenderFailed = "purchases.order.pdf_render_failed";
 }

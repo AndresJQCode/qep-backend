@@ -31,19 +31,23 @@ public sealed class PreviewPurchaseOrderHandler(
     {
         PurchasesAuthorization.EnsureAuthorized(executionContext, command.TenantId, PurchasesPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-        var drafts = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
+        var build = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
 
-        var lines = drafts
+        var lines = build.Lines
             .Select(draft => new PurchaseOrderPreviewLineDto(
-                draft.VariantId,
+                // Externa: la variante propia. Vinculada: la del mayorista, con su precio de lista (mayorista fase 3).
+                draft.Listing?.SupplierVariantId ?? draft.VariantId!.Value,
                 draft.Code,
                 draft.Name,
                 draft.TaxRatePercent,
-                PurchaseOrderMath.Subtotal(draft.Quantity, draft.UnitCost)))
+                PurchaseOrderMath.Subtotal(draft.Quantity, draft.UnitCost),
+                draft.Listing is { } listing
+                    ? new PurchaseOrderListPriceDto(listing.BasePrice, listing.DiscountPercent, listing.UnitPrice)
+                    : null))
             .ToList();
         var totals = PurchaseOrderMath.Sum(
             lines.Select(line => (line.Subtotal, PurchaseOrderMath.Tax(line.Subtotal, line.TaxRatePercent))));
 
-        return new PurchaseOrderPreviewDto(lines, PurchaseOrderComposer.ToTotals(totals));
+        return new PurchaseOrderPreviewDto(lines, PurchaseOrderComposer.ToTotals(totals), build.Currency);
     }
 }

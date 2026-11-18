@@ -115,6 +115,9 @@ public static class OrderEndpoints
             (tenantId, orderId) => new ArchiveOrderCommand(tenantId, orderId));
         MapStateAction(collection, "unarchive", OrdersPermissions.OrderManage,
             (tenantId, orderId) => new UnarchiveOrderCommand(tenantId, orderId));
+        // Mayorista fase 3 (D-1, D-2): aprobar el pedido de un distribuidor, con el permiso de gestión.
+        MapStateAction(collection, "approve", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new ApproveWholesaleOrderCommand(tenantId, orderId));
 
         // «Enviar el pedido por WhatsApp». Mismo contrato que POST /quotations/{id}/send: el cuerpo es
         // opcional de verdad (un cuerpo inferido como requerido rompió aquel envío con 500), y responde el
@@ -228,18 +231,20 @@ public static class OrderEndpoints
         int pageSize = QuotationPaging.DefaultPageSize,
         string? timeZone = null,
         string? fulfillmentStatus = null,
-        string? invoiced = null)
+        string? invoiced = null,
+        string? wholesaleApproval = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersQuery(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, source, page, pageSize, timeZone, fulfillmentStatus, invoiced),
+                clientCuc, orderNumber, source, page, pageSize, timeZone, fulfillmentStatus, invoiced, wholesaleApproval),
             cancellationToken);
         return Results.Ok(new OrdersPageResponse(
             result.Items.Select(ToListItemResponse).ToArray(),
             result.Total,
             result.Page,
-            result.PageSize));
+            result.PageSize,
+            result.PendingWholesaleApprovals));
     }
 
     private static async Task<IResult> ExportOrdersAsync(
@@ -300,7 +305,8 @@ public static class OrderEndpoints
         order.ExternalReference,
         ShippingResponse.From(order.Shipping),
         order.OrderDate,
-        order.RequiresShipping);
+        order.RequiresShipping,
+        order.Wholesale);
 
     private static async Task<IResult> GetOrderAsync(
         Guid tenantId,
@@ -439,7 +445,7 @@ public static class OrderEndpoints
 
     private static OrderItemAddition[] ToAdditions(IReadOnlyList<OrderEditItemRequest>? items) =>
         (items ?? [])
-            .Select(item => new OrderItemAddition(item.VariantId, item.Quantity))
+            .Select(item => new OrderItemAddition(item.VariantId, item.Quantity, item.UnitPrice))
             .ToArray();
 
     private static async Task<IResult> AddOrderItemsAsync(
@@ -549,7 +555,7 @@ public static class OrderEndpoints
         SaveOrderEditsRequest request) =>
         (
             (request.Items ?? [])
-                .Select(item => new OrderItemAddition(item.VariantId, item.Quantity))
+                .Select(item => new OrderItemAddition(item.VariantId, item.Quantity, item.UnitPrice))
                 .ToArray(),
             new OrderEditProofs(
                 (request.Proofs?.Add ?? [])

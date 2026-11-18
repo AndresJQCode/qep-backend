@@ -17,6 +17,13 @@ public static class PurchaseOrderMath
 
     public static decimal Tax(decimal subtotal, decimal taxRatePercent) => Round(subtotal * taxRatePercent / 100m);
 
+    /// <summary>
+    /// Precio unitario sin IVA a partir de uno con IVA incluido (D-9): la lista del mayorista lleva IVA y los costos de
+    /// compras no.
+    /// </summary>
+    public static decimal NetOfVat(decimal grossUnitPrice, decimal taxRatePercent) =>
+        Round(grossUnitPrice * 100m / (100m + taxRatePercent));
+
     public static PurchaseOrderTotals Sum(IEnumerable<(decimal Subtotal, decimal Tax)> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);

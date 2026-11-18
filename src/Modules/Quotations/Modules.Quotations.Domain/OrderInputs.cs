@@ -19,7 +19,9 @@ public sealed record OrderHeader(
 /// igual que hace el cotizador. <see cref="Product"/> es la foto de código y nombre, si ya se tiene.
 /// <see cref="VariantId"/> es la clave de la línea (spec 2026-10-20 §4); <see cref="ProductId"/> es su
 /// producto, para agrupar por producto. <see cref="Kind"/> y <see cref="SalesUnit"/> son los del producto en el
-/// catálogo (spec 2026-11-18 §3.4); una línea externa (Shopify) no los trae y nace <c>Physical</c>/<c>Unit</c>.</summary>
+/// catálogo (spec 2026-11-18 §3.4); una línea externa (Shopify) no los trae y nace <c>Physical</c>/<c>Unit</c>.
+/// <see cref="SourcePurchaseOrderLineId"/> es la línea de la orden de compra de la que salió, sólo en un pedido
+/// mayorista: con ella la aprobación vuelve a la orden línea por línea.</summary>
 public sealed record OrderLineInput(
     Guid VariantId,
     Guid ProductId,
@@ -30,4 +32,5 @@ public sealed record OrderLineInput(
     QuotationProductSnapshot? Product = null,
     QuotationDiscountOrigin DiscountOrigin = QuotationDiscountOrigin.Own,
     ProductKind Kind = ProductKind.Physical,
-    SalesUnit SalesUnit = SalesUnit.Unit);
+    SalesUnit SalesUnit = SalesUnit.Unit,
+    Guid? SourcePurchaseOrderLineId = null);

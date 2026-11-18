@@ -9,24 +9,29 @@ public sealed record ExternalOptionDraft(string Name, IReadOnlyList<string> Valu
 /// <see cref="ExternalProductResult.VariantIdsByKey"/> para que quien llama guarde el vínculo.</param>
 /// <param name="OptionValues">Un valor por opción del borrador, en su orden.</param>
 /// <param name="Price">El precio en <see cref="ExternalProductDraft.Currency"/>, ya con la regla de
-/// impuestos y redondeo aplicada por quien llama.</param>
+/// impuestos y redondeo aplicada por quien llama. Null sólo al crear (mayorista fase 3, D-16): el producto nace sin
+/// precio de venta; <see cref="IExternalProductWriter.UpdateAsync"/> lo rechaza con <see cref="ArgumentException"/>.</param>
+/// <param name="Cost">El costo sin IVA en <see cref="ExternalProductDraft.Currency"/> (D-18). Sólo se guarda si es mayor que
+/// cero; nulo o no positivo, la variante nace sin costo.</param>
 public sealed record ExternalVariantDraft(
     string Key,
     string Code,
     string? Barcode,
     IReadOnlyList<string> OptionValues,
-    decimal Price);
+    decimal? Price,
+    decimal? Cost = null);
 
 /// <summary>
 /// El producto como lo manda la plataforma externa. <paramref name="TaxRateId"/> sólo se usa al
 /// crear: después la tasa se edita en QEP (spec 2026-11-17 S-2, plan D4).
 /// </summary>
-/// <param name="Source">El origen que se guarda en <c>Product.ExternalSource</c> (<c>"shopify"</c>).</param>
+/// <param name="Source">El origen que se guarda en <c>Product.ExternalSource</c> (<c>"shopify"</c>). Null deja el producto
+/// propio de QEP (D-17): el que crea Compras lo edita el distribuidor como cualquier otro.</param>
 /// <param name="ActorId">Quién firma la auditoría y el historial de precios: el usuario que pidió la
 /// importación, o <see cref="Guid.Empty"/> para el sistema (P3).</param>
 public sealed record ExternalProductDraft(
     Guid TenantId,
-    string Source,
+    string? Source,
     string Name,
     bool IsActive,
     Guid? TaxRateId,
@@ -106,4 +111,10 @@ public interface IExternalProductWriter
         CancellationToken cancellationToken);
 
     Task<ExternalDefaultTaxRates> FindDefaultTaxRatesAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// La variante del tenant con ese código (D-18): recortado, igualdad exacta con mayúsculas como el índice único, y en
+    /// cualquier estado del producto y de la variante. Null si no hay, o si el código queda vacío.
+    /// </summary>
+    Task<Guid?> FindVariantIdByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken);
 }
