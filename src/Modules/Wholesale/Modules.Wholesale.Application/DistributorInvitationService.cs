@@ -218,7 +218,22 @@ public sealed class DistributorInvitationService(
         switch (choice)
         {
             case NewTenantChoice newTenant:
-                await registration.EnsureRegistrableAsync(newTenant.Data, cancellationToken);
+                try
+                {
+                    await registration.EnsureRegistrableAsync(newTenant.Data, cancellationToken);
+                }
+                catch (TenantDomainException)
+                {
+                    // Review Focus 1: la otra pestaña commiteó el tenant reservado entre la relectura de arriba y este chequeo, y
+                    // el slug «tomado» es el suyo. Se termina sobre él como en D-17; cualquier otro rechazo sale tal cual.
+                    if (!await IsReservedAndOwnedAsync(reserved, userId, cancellationToken))
+                    {
+                        throw;
+                    }
+
+                    return (reserved, true, WholesaleModuleSets.InvitedDistributor);
+                }
+
                 await registration.RegisterInvitedTenantAsync(
                     new TenantId(reserved), userId, newTenant.Data, WholesaleModuleSets.InvitedDistributor, correlationId,
                     cancellationToken);
@@ -252,6 +267,10 @@ public sealed class DistributorInvitationService(
                 throw new ArgumentOutOfRangeException(nameof(choice), choice, "Unknown acceptance mode.");
         }
     }
+
+    private async Task<bool> IsReservedAndOwnedAsync(Guid reserved, Guid userId, CancellationToken cancellationToken) =>
+        await tenantDirectory.GetStatusAsync(new TenantId(reserved), cancellationToken) is not null
+        && (await ownership.ListOwnedActiveTenantsAsync(userId, cancellationToken)).Any(tenant => tenant.TenantId == reserved);
 
     /// <summary>
     /// Otra pestaña ganó el guardado (412) o el tenant ya quedó vinculado por otra relación (el índice único). Se sueltan los

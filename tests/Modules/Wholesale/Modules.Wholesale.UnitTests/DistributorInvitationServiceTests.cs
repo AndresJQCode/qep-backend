@@ -322,6 +322,33 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal((Guid?)reserved, _invitation.DistributorTenantId);
     }
 
+    // Review Focus 1, la carrera de verdad: la otra pestaña commitea el tenant reservado entre la relectura y el chequeo del slug,
+    // que ahora dice «tomado» por el propio tenant. Termina sobre el reservado, sin un 422.
+    [Fact]
+    public async Task AConcurrentAcceptThatCreatedTheReservedTenantFirstIsNotASlugError()
+    {
+        var reserved = _invitation.Invitation.ReservedTenantId;
+        _tenancy.BeforeEnsureRegistrable = () =>
+            _tenancy.AddTenant(reserved, "Distri Norte", _user, TenantStatus.Active, [.. WholesaleModuleSets.InvitedDistributor]);
+
+        var result = await AcceptAsync(new NewTenantChoice(NewTenantData));
+
+        Assert.Equal((reserved, "Distri Norte", true), (result.TenantId, result.TenantName, result.Created));
+        Assert.Empty(_tenancy.Registered);
+        Assert.Equal(DistributorStatus.Active, _invitation.Status);
+    }
+
+    [Fact]
+    public async Task ASlugTakenByAnotherTenantIsStillA422()
+    {
+        _tenancy.AddTenant("Distri Norte", Guid.CreateVersion7(), TenantStatus.Active, TenantModuleKeys.Catalog);
+
+        var error = await Assert.ThrowsAsync<TenantDomainException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+
+        Assert.Equal("tenancy.slug.taken", error.Code);
+        AssertNothingWritten();
+    }
+
     [Fact]
     public async Task AReservedTenantOwnedBySomeoneElseIsNeverHandedOver()
     {

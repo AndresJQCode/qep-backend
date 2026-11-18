@@ -220,8 +220,12 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
     public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult(Tenants.TryGetValue(tenantId, out var tenant) ? TenantModuleSet.FromStored(tenant.Modules) : null);
 
+    /// <summary>Corre antes del chequeo del slug: simula otra aceptación que commiteó el tenant justo antes.</summary>
+    public Action? BeforeEnsureRegistrable { get; set; }
+
     public Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken)
     {
+        BeforeEnsureRegistrable?.Invoke();
         Checked.Add(data);
         if (Tenants.Values.Any(tenant => tenant.Name == data.DisplayName))
         {
