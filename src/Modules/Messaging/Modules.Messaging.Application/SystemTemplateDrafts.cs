@@ -193,6 +193,35 @@ public sealed class GetSupportSurveyTemplateDraftHandler(
     }
 }
 
+/// <summary>Mayorista, <c>GET …/template-management/wholesale-invitation-notice/draft</c>: el borrador de la plantilla del aviso de invitación
+/// de distribuidor de la conexión.</summary>
+public sealed record GetWholesaleInvitationNoticeTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetWholesaleInvitationNoticeTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetWholesaleInvitationNoticeTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindWholesaleInvitationNoticeAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(
+                query.TenantId, query.ConnectionId, WholesaleInvitationNoticeTemplateDefinition.Name, WholesaleInvitationNoticeTemplateDefinition.Language,
+                cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(
+            current, external, WholesaleInvitationNoticeTemplateDefinition.BaseBody, SystemTemplateVariables.WholesaleInvitationNotice,
+            WholesaleInvitationNoticeTemplateDefinition.IsAdoptable);
+    }
+}
+
 /// <summary><c>GET …/template-management/billing/draft</c>: los borradores de las dos plantillas de cobro de la conexión.</summary>
 public sealed record GetBillingTemplatesDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<BillingTemplatesDraftDto>;
 

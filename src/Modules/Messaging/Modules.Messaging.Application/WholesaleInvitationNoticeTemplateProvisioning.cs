@@ -1,6 +1,11 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
+using BuildingBlocks.Application;
+using FluentValidation;
+using FluentValidation.Results;
+using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.Application;
 
@@ -85,4 +90,166 @@ public static class WholesaleInvitationNoticeTemplateDefinition
 
     internal static string? StoredBody(string componentsJson) =>
         TemplateCatalog.FromStored(Name, Language, Category, TemplateComponentsBuilder.Named, componentsJson).Body?.Trim();
+}
+
+/// <summary>Mayorista, <c>POST …/template-management/wholesale-invitation-notice</c>: aprovisiona (o adopta, o reintenta) la plantilla del
+/// aviso de invitación de distribuidor.</summary>
+/// <param name="Body">El cuerpo editado, o <c>null</c> para el texto base.</param>
+public sealed record ProvisionWholesaleInvitationNoticeTemplateCommand(Guid TenantId, Guid ConnectionId, string? Body = null) : ICommand<ManagedTemplateDto>;
+
+/// <summary>El cuerpo, si viene, usa sólo las variables del aviso.</summary>
+public sealed class ProvisionWholesaleInvitationNoticeTemplateCommandValidator : AbstractValidator<ProvisionWholesaleInvitationNoticeTemplateCommand>
+{
+    public ProvisionWholesaleInvitationNoticeTemplateCommandValidator() =>
+        RuleFor(command => command.Body).Custom((body, context) =>
+        {
+            if (body is not null
+                && TemplateBodyRules.Check(body, SystemTemplateVariables.KeysOf(SystemTemplateVariables.WholesaleInvitationNotice)) is { } error)
+            {
+                context.AddFailure(new ValidationFailure("body", error));
+            }
+        });
+}
+
+/// <summary>
+/// Mayorista: el mismo procedimiento que <see cref="ProvisionSupportReplyTemplateHandler"/>, paso por paso, con la fila
+/// <c>WholesaleInvitationNotice</c>: viva ⇒ <c>wholesale_invitation_notice_exists</c>; externa <c>qep_mayorista_invitacion</c>/<c>es</c> viva y
+/// compatible ⇒ adopción (auditada con <c>["kind"]</c>), incompatible ⇒ <c>wholesale_invitation_notice_conflict</c>; versión siguiente a la
+/// mayor <c>qep_mayorista_invitacion*</c> del espejo; hasta <see cref="MaxCreateAttempts"/> creaciones ante <c>name_taken</c>; crear antes de
+/// borrar la rechazada; una sola transacción. La carrera entre dos primeros aprovisionamientos la cierra
+/// <c>UX_message_templates_wholesale_invitation_notice</c>. Sin gate de módulo, como la de pedido.
+/// </summary>
+public sealed partial class ProvisionWholesaleInvitationNoticeTemplateHandler(
+    IMessageTemplateRepository repository,
+    IWhatsAppCloudClient meta,
+    IMessagingConnectionDirectory connections,
+    IMessagingMemberNames memberNames,
+    CallerMembership callerMembership,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingAuditRecorder audit,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    ILogger<ProvisionWholesaleInvitationNoticeTemplateHandler> logger,
+    IValidator<ProvisionWholesaleInvitationNoticeTemplateCommand> validator)
+    : ICommandHandler<ProvisionWholesaleInvitationNoticeTemplateCommand, ManagedTemplateDto>
+{
+    public const int MaxCreateAttempts = ProvisionQuotationTemplateHandler.MaxCreateAttempts;
+
+    private static readonly string[] AdoptedFields = ["kind"];
+
+    public async Task<ManagedTemplateDto> HandleAsync(ProvisionWholesaleInvitationNoticeTemplateCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        var source = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var now = clock.UtcNow;
+        var body = (command.Body ?? WholesaleInvitationNoticeTemplateDefinition.BaseBody).Trim();
+
+        var current = await repository.FindWholesaleInvitationNoticeAsync(command.TenantId, command.ConnectionId, cancellationToken);
+        if (current is { IsLive: true })
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateWholesaleInvitationNoticeExists,
+                "This connection already has its wholesale invitation notice template pending or approved.");
+        }
+
+        if (current is null
+            && await repository.FindByNameAsync(
+                command.TenantId, command.ConnectionId, WholesaleInvitationNoticeTemplateDefinition.Name, WholesaleInvitationNoticeTemplateDefinition.Language,
+                cancellationToken)
+                is { IsLive: true } external)
+        {
+            return await AdoptAsync(command, external, body, now, cancellationToken);
+        }
+
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+
+        var mirror = await repository.ListAsync(command.TenantId, command.ConnectionId, cancellationToken);
+        var nextVersion = (mirror
+            .Where(template => string.Equals(template.Language, WholesaleInvitationNoticeTemplateDefinition.Language, StringComparison.Ordinal))
+            .Select(template => WholesaleInvitationNoticeTemplateDefinition.VersionOf(template.Name))
+            .Max() ?? 0) + 1;
+
+        var (created, name) = await CreateAsync(command, source, body, nextVersion, cancellationToken);
+
+        if (current is not null)
+        {
+            var deleted = await meta.DeleteTemplateAsync(source, current.MetaTemplateId, current.Name, cancellationToken);
+            if (deleted.Failure is { } failure)
+            {
+                if (TemplateGraphErrors.IsTokenRejected(failure))
+                {
+                    throw await TemplateGraphErrors.FailAsync(connections, command.TenantId, command.ConnectionId, failure, cancellationToken);
+                }
+
+                LogPreviousVersionNotDeleted(logger, command.TenantId, command.ConnectionId, current.MetaTemplateId);
+            }
+
+            repository.Remove(current);
+        }
+
+        var memberId = await callerMembership.FindAsync(command.TenantId, cancellationToken);
+        var template = MessageTemplate.Pending(
+            command.TenantId, command.ConnectionId, created.Id, name, WholesaleInvitationNoticeTemplateDefinition.Language, created.Category,
+            TemplateComponentsBuilder.Named, created.Status,
+            TemplateComponentsBuilder.Components(WholesaleInvitationNoticeTemplateDefinition.Draft(name, body)).ToJsonString(),
+            MessageTemplateKind.WholesaleInvitationNotice, memberId, now);
+        repository.Add(template);
+        audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateWholesaleInvitationNoticeProvisioned, template.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return ManagedTemplateMapping.ToDto(template, await NamesOfAsync(command.TenantId, template, cancellationToken));
+    }
+
+    private async Task<ManagedTemplateDto> AdoptAsync(
+        ProvisionWholesaleInvitationNoticeTemplateCommand command, MessageTemplate external, string body, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (!WholesaleInvitationNoticeTemplateDefinition.IsAdoptable(external.ComponentsJson)
+            || (command.Body is not null
+                && !string.Equals(WholesaleInvitationNoticeTemplateDefinition.StoredBody(external.ComponentsJson), body, StringComparison.Ordinal)))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateWholesaleInvitationNoticeConflict,
+                $"A template named '{WholesaleInvitationNoticeTemplateDefinition.Name}' already exists in Meta with another body or an incompatible shape; delete it from the templates screen first.");
+        }
+
+        external.AdoptAsWholesaleInvitationNotice(now);
+        audit.RecordTemplate(
+            command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateWholesaleInvitationNoticeProvisioned, external.Id, now, AdoptedFields);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return ManagedTemplateMapping.ToDto(external, await NamesOfAsync(command.TenantId, external, cancellationToken));
+    }
+
+    private async Task<(CreatedTemplate Created, string Name)> CreateAsync(
+        ProvisionWholesaleInvitationNoticeTemplateCommand command, MessagingTemplateSource source, string body, int firstVersion,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var name = WholesaleInvitationNoticeTemplateDefinition.NameFor(firstVersion + attempt - 1);
+            var created = await meta.CreateTemplateAsync(source, WholesaleInvitationNoticeTemplateDefinition.Payload(name, body), cancellationToken);
+            if (created.Succeeded && created.Value is { } value)
+            {
+                return (value, name);
+            }
+
+            var error = await TemplateGraphErrors.FailAsync(
+                connections, command.TenantId, command.ConnectionId, created.Failure ?? new MessagingGraphFailure(0, null, "unreachable"), cancellationToken);
+            if (error.Code != MessagingErrorCodes.TemplateNameTaken || attempt >= MaxCreateAttempts)
+            {
+                throw error;
+            }
+        }
+    }
+
+    private Task<IReadOnlyDictionary<Guid, string>> NamesOfAsync(Guid tenantId, MessageTemplate template, CancellationToken cancellationToken) =>
+        TemplateManagementSupport.MemberNamesAsync(
+            memberNames, tenantId, template.CreatedByMemberId is { } member ? [member] : [], cancellationToken);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Meta did not delete the previous wholesale invitation notice template {MetaTemplateId} of connection {ConnectionId} in tenant {TenantId}; its mirror row is removed anyway and the next refresh brings it back as External if Meta still has it.")]
+    private static partial void LogPreviousVersionNotDeleted(ILogger logger, Guid tenantId, Guid connectionId, string metaTemplateId);
 }

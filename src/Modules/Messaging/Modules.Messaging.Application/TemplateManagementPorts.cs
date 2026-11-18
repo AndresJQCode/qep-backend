@@ -100,6 +100,14 @@ public interface ISupportSurveyTemplateReadiness
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
 
+/// <summary>Mayorista: la señal de la plantilla del aviso de invitación de distribuidor, hermana de <see cref="ISupportReplyTemplateReadiness"/>.
+/// Devuelve la fila <c>WholesaleInvitationNotice</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen las opciones de
+/// conexión de Mayorista y el envío del aviso (<c>IWholesaleInvitationNoticeOutbound</c>).</summary>
+public interface IWholesaleInvitationNoticeReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
 /// <summary>Cobros recurrentes §5: la señal para el consumidor Billing, hermana de <see cref="IQuotationTemplateReadiness"/>. Devuelve la fila de ese
 /// <paramref name="kind"/> (<c>BillingReminder</c> o <c>BillingOverdue</c>) en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>. Devuelve
 /// nombre e idioma y no un <c>bool</c> porque el reintento versiona el nombre (<c>qep_cobro_recordatorio_v2</c>…).</summary>

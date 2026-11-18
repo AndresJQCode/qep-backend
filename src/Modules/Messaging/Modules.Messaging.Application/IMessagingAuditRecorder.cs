@@ -136,6 +136,7 @@ public static class MessagingAuditActions
     public const string TemplateSupportReplyProvisioned = "messaging.template.support_reply_provisioned";
     public const string TemplateSupportFormalReplyProvisioned = "messaging.template.support_formal_reply_provisioned";
     public const string TemplateSupportSurveyProvisioned = "messaging.template.support_survey_provisioned";
+    public const string TemplateWholesaleInvitationNoticeProvisioned = "messaging.template.wholesale_invitation_notice_provisioned";
     public const string TemplateDeleted = "messaging.template.deleted";
 
     public const string HistorySyncResourceType = "history_sync";

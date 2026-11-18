@@ -1329,6 +1329,9 @@ public static class QepServiceCollectionExtensions
         // Soporte fase 4b: la plantilla de la encuesta, con los tres botones fijos.
         services.AddScoped<ICommandHandler<ProvisionSupportSurveyTemplateCommand, ManagedTemplateDto>, ProvisionSupportSurveyTemplateHandler>();
         services.AddScoped<IQueryHandler<GetSupportSurveyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportSurveyTemplateDraftHandler>();
+        // Mayorista: la plantilla del aviso de invitación de distribuidor, calcada de la «Aviso de respuesta».
+        services.AddScoped<ICommandHandler<ProvisionWholesaleInvitationNoticeTemplateCommand, ManagedTemplateDto>, ProvisionWholesaleInvitationNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetWholesaleInvitationNoticeTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.

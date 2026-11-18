@@ -134,6 +134,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ISupportFormalReplyTemplateReadiness, SupportFormalReplyTemplateReadiness>();
         // Soporte fase 4b: la de la encuesta, para su envío por WhatsApp.
         services.AddScoped<ISupportSurveyTemplateReadiness, SupportSurveyTemplateReadiness>();
+        // Mayorista: la del aviso de invitación de distribuidor, para las conexiones que Mayorista ofrece y el envío del aviso.
+        services.AddScoped<IWholesaleInvitationNoticeReadiness, WholesaleInvitationNoticeTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();
