@@ -68,6 +68,7 @@ using Modules.Buyers.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
+using Modules.Wholesale.Api;
 using Modules.Wholesale.Infrastructure;
 using Scalar.AspNetCore;
 
@@ -398,6 +399,9 @@ app.MapAiEndpoints();
 app.MapSupplierEndpoints();
 // Spec 2026-11-17: órdenes de compra a proveedores.
 app.MapPurchaseOrderEndpoints();
+// Spec 2026-11-17: mayorista (listas de precios, distribuidores y la invitación desde el link).
+app.MapWholesaleEndpoints();
+app.MapWholesaleInvitationEndpoints();
 // Spec 2026-10-30: administración de claves de API.
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();

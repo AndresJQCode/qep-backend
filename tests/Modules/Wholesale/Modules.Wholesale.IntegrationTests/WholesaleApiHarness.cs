@@ -34,6 +34,74 @@ internal static class WholesaleApiHarness
 
     public static string DistributorsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/distributors";
 
+    public static string CategoriesUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/categories";
+
+    /// <summary>La raíz de las rutas del link; el token va escapado como lo mandaría el navegador.</summary>
+    public static string InvitationUrl(string token) => $"/api/v1/wholesale-invitations/{Uri.EscapeDataString(token)}";
+
+    /// <summary>El correo del usuario que siembra <see cref="NewTenantAsync"/>: invitar a ése es invitar a un owner existente.</summary>
+    public static string EmailOf(WholesaleTestTenant tenant) => $"mayorista-{tenant.SubjectId:N}@example.com";
+
+    /// <summary>Quien abre el link sin sesión.</summary>
+    public static HttpClient CreateAnonymous(QepApiFactory factory) => factory.CreateClient();
+
+    /// <summary>
+    /// La sesión de quien acepta, con el stub por headers: el sujeto QEP va en <c>X-Subject-Id</c> y el tenant es uno cualquiera
+    /// (el stub exige el header, pero las rutas del link no miran el tenant de la sesión).
+    /// </summary>
+    public static HttpClient CreateSession(QepApiFactory factory, Guid userId, Guid? tenantId = null)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Subject-Id", userId.ToString());
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", (tenantId ?? Guid.CreateVersion7()).ToString());
+        return client;
+    }
+
+    /// <summary>Lo que el stub simula de un token de Google: un subject nuevo y el correo, verificado o no.</summary>
+    public static HttpClient CreateGoogle(QepApiFactory factory, string email, bool verified = true)
+    {
+        var client = CreateSession(factory, Guid.CreateVersion7());
+        client.DefaultRequestHeaders.Add("X-Email", email);
+        client.DefaultRequestHeaders.Add("X-Email-Verified", verified ? "true" : "false");
+        return client;
+    }
+
+    /// <summary>Abre sesión con contraseña desde el link y devuelve el id del usuario (lo crea si no existía).</summary>
+    public static async Task<Guid> PasswordSessionAsync(QepApiFactory factory, string token, string password = "Distri-2026!")
+    {
+        using var anonymous = CreateAnonymous(factory);
+        var response = await anonymous.PostAsJsonAsync($"{InvitationUrl(token)}/session-with-password", new { password }, Ct);
+        await EnsureSuccessAsync(response);
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.GetProperty("userId").GetGuid();
+    }
+
+    /// <summary>Lista, empresa facturadora e invitación: lo que toda prueba de la aceptación necesita del lado del mayorista.</summary>
+    public static async Task<(WholesaleTestTenant Wholesaler, DistributorDetailDto Distributor, string Token)> InvitedAsync(
+        QepApiFactory factory, string email = "ana@distri.co", string identificationNumber = "900123456")
+    {
+        var wholesaler = await NewTenantAsync(factory);
+        using var manager = CreateManager(factory, wholesaler);
+        var list = await CreatePriceListAsync(manager, wholesaler.TenantId, "Oro", 10m);
+        var company = await CreateCompanyAsync(manager, wholesaler.TenantId, "Mayorista Central SAS");
+        var (distributor, token) = await InviteAsync(factory, manager, wholesaler, list.Id, company, email, identificationNumber);
+        return (wholesaler, distributor, token);
+    }
+
+    /// <summary>Repite <paramref name="read"/> hasta que cumpla <paramref name="done"/> o pasen cinco segundos (escrituras
+    /// que corren después de la respuesta, como el log de fallas del middleware).</summary>
+    public static async Task<T> EventuallyAsync<T>(Func<Task<T>> read, Func<T, bool> done)
+    {
+        var value = await read();
+        for (var attempt = 0; attempt < 50 && !done(value); attempt++)
+        {
+            await Task.Delay(100, Ct);
+            value = await read();
+        }
+
+        return value;
+    }
+
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
         var database = new PostgreSqlBuilder("postgres:18-alpine")
@@ -309,7 +377,11 @@ internal static class WholesaleApiHarness
     private sealed record GeographyRow(Guid Id, string Name);
 
     /// <param name="configureServices">Sustituciones de servicios para la prueba; corre después del registro de la aplicación.</param>
-    public sealed class QepApiFactory(string connectionString, Action<IServiceCollection>? configureServices = null)
+    /// <param name="settings">Configuración que la prueba fija por encima de <c>appsettings.json</c>.</param>
+    public sealed class QepApiFactory(
+        string connectionString,
+        Action<IServiceCollection>? configureServices = null,
+        IReadOnlyDictionary<string, string>? settings = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -330,6 +402,11 @@ internal static class WholesaleApiHarness
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos en la base de pruebas.
             builder.UseSetting("Seed:Enabled", "false");
+
+            foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+            {
+                builder.UseSetting(key, value);
+            }
 
             if (configureServices is not null)
             {
