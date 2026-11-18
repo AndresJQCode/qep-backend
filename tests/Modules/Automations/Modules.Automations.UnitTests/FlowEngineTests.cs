@@ -71,6 +71,79 @@ public sealed class FlowEngineTests
         Assert.Equal("n1", send.NodeId);
     }
 
+    // Spec 2026-11-18 «Execution»: un Mensaje con archivo.
+    private static readonly Guid MediaFile = Guid.Parse("7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11");
+
+    private static MessageNode MediaMessage(string kind, string text, UrlButton? urlButton = null) =>
+        Message("n1", text, urlButton: urlButton) with { Media = new MessageMedia(kind, MediaFile) };
+
+    private static readonly RunVariables Ana = RunVariables.Parse("""{ "nombre_contacto": "Ana", "orden": { "id": 42 } }""");
+
+    [Theory]
+    [InlineData("image")]
+    [InlineData("video")]
+    [InlineData("document")]
+    public void AnImageWithCaptionAndButtonIsOneSendMedia(string kind)
+    {
+        var flow = Flow(MediaMessage(kind, "Hola {nombre_contacto}", new UrlButton("Ver {orden.id}", "https://www.example.com/ordenes/{orden.id}")));
+
+        var result = Start(flow, Ana);
+
+        Assert.Equal<Effect>(
+            [
+                new Effect.SendMedia("n1", kind, MediaFile, "Hola Ana", new UrlButton("Ver 42", "https://www.example.com/ordenes/42")),
+                new Effect.EndRun("n1", EndReasons.OutputUnconnected),
+            ],
+            result.Effects);
+        Assert.Equal([0], Assert.Single(result.Steps).SendIndexes);
+    }
+
+    [Fact]
+    public void ACaptionBlankAfterInterpolationIsNull()
+    {
+        var result = Start(Flow(MediaMessage("image", "  {vacio} ")));
+
+        Assert.Equal(new Effect.SendMedia("n1", "image", MediaFile, null, null), result.Effects[0]);
+    }
+
+    // Review Focus 4: el audio y su texto son dos envíos, cada uno con su clientId, así que reintentar el segundo no repite el audio.
+    [Fact]
+    public void AudioWithTextIsTwoSendsInOrder()
+    {
+        var result = Start(Flow(MediaMessage("audio", "Escucha, {nombre_contacto}")), Ana);
+
+        Assert.Equal<Effect>(
+            [
+                new Effect.SendMedia("n1", "audio", MediaFile, null, null),
+                new Effect.SendText("n1", "Escucha, Ana"),
+                new Effect.EndRun("n1", EndReasons.OutputUnconnected),
+            ],
+            result.Effects);
+        Assert.Equal([0, 1], Assert.Single(result.Steps).SendIndexes);
+    }
+
+    [Fact]
+    public void AudioWithAButtonSendsTheCtaAfterTheAudio()
+    {
+        var withText = Start(Flow(MediaMessage("audio", "Mira, {nombre_contacto}", new UrlButton("Ver", "https://www.example.com/{orden.id}"))), Ana);
+        var withoutText = Start(Flow(MediaMessage("audio", "", new UrlButton("Ver", "https://www.example.com"))));
+
+        Assert.Equal<Effect>(
+            [
+                new Effect.SendMedia("n1", "audio", MediaFile, null, null),
+                new Effect.SendInteractive("n1", new InteractiveMessage.CtaUrl("Mira, Ana", "Ver", "https://www.example.com/42")),
+            ],
+            withText.Effects.Take(2));
+        Assert.Equal(new Effect.SendInteractive("n1", new InteractiveMessage.CtaUrl("", "Ver", "https://www.example.com")), withoutText.Effects[1]);
+    }
+
+    [Fact]
+    public void AMessageWithoutMediaStillSendsText()
+    {
+        Assert.Equal(new Effect.SendText("n1", "Hola Ana"), Start(Flow(Message("n1", "Hola {nombre_contacto}")), Ana).Effects[0]);
+        Assert.Equal(1, Start(Flow(MediaMessage("audio", "")), Ana).Effects.Count(effect => effect is Effect.SendMedia or Effect.SendText));
+    }
+
     [Fact]
     public void AnUnconnectedOutputEndsCompleted()
     {

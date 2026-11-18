@@ -25,7 +25,7 @@ public sealed record SimulationContext(Guid TenantId, Guid SimulationId, Guid Co
 /// escriben una línea <c>system</c> (D-S3: tocarían conversaciones reales). El bloque HTTP usa su respuesta de ejemplo salvo con
 /// <see cref="SimulationContext.LiveHttp"/> (D-S2).
 /// </summary>
-public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusinessHours businessHours, IClock clock)
+public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusinessHours businessHours, IChatbotMediaStore media, IClock clock)
 {
     /// <summary>D-S2: el <c>ErrorCode</c> con que sale por <c>error</c> un bloque sin respuesta de ejemplo.</summary>
     public const string NoSampleResponse = "http.no_sample_response";
@@ -56,6 +56,9 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                         break;
                     case Effect.SendInteractive card:
                         lines.Bot(card.NodeId, card.Message);
+                        break;
+                    case Effect.SendMedia send:
+                        await SendMediaAsync(send, context, lines, cancellationToken);
                         break;
                     case Effect.WaitForCustomer:
                         // El estado ya dice en qué bloque espera: currentNodeId es lo que el lienzo marca.
@@ -115,6 +118,21 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
         }
 
         return (state, lines.All);
+    }
+
+    /// <summary>Spec 2026-11-18 «Simulator»: el archivo se resuelve por tenant como en el envío real. Sin él, una línea <c>system</c> lo dice y
+    /// la del bot sale sin archivo: el tester ve lo mismo que el validador (<c>message.media_missing</c>) sin que la simulación se corte.</summary>
+    private async Task SendMediaAsync(Effect.SendMedia send, SimulationContext context, Lines lines, CancellationToken cancellationToken)
+    {
+        var file = (await media.ResolveAsync(context.TenantId, [send.FileId], cancellationToken)).FirstOrDefault(found => found.FileId == send.FileId);
+        if (file is null)
+        {
+            lines.System(send.NodeId, "Falta el archivo de este mensaje. Vuelve a subirlo.");
+        }
+
+        lines.Bot(
+            send.NodeId, send.Caption ?? string.Empty, send.UrlButton is { } button ? new TranscriptUrlButton(button.Label, button.Url) : null,
+            file is null ? null : new TranscriptMedia(file.Kind, file.Url.AbsoluteUri, file.FileName, file.ContentType));
     }
 
     /// <summary>Spec 2026-10-26 repetir R-6: el destino de hoy y, si el traspaso es por «No acepto», cuántas veces no aceptó. El motor no
@@ -221,6 +239,9 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
 
         public void Bot(string nodeId, string text) => Add(TranscriptSenders.Bot, nodeId, text);
 
+        public void Bot(string nodeId, string text, TranscriptUrlButton? urlButton, TranscriptMedia? media) =>
+            Add(TranscriptSenders.Bot, nodeId, text, urlButton: urlButton, media: media);
+
         public void Bot(string nodeId, InteractiveMessage message)
         {
             switch (message)
@@ -245,9 +266,9 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
 
         private void Add(
             string from, string nodeId, string text, IReadOnlyList<TranscriptButton>? buttons = null, TranscriptList? list = null,
-            TranscriptUrlButton? urlButton = null) =>
+            TranscriptUrlButton? urlButton = null, TranscriptMedia? media = null) =>
             entries.Add(new TranscriptEntry(
-                from, nodeId, flow.Nodes.FirstOrDefault(node => node.Id == nodeId)?.Title, text, buttons, list, urlButton, now));
+                from, nodeId, flow.Nodes.FirstOrDefault(node => node.Id == nodeId)?.Title, text, buttons, list, urlButton, now, media));
     }
 }
 

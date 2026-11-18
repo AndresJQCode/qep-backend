@@ -660,10 +660,42 @@ public static class FlowEngine
         /// texto que queda en blanco al interpolar no se manda (como en Pasar a un asesor y Resolver), pero el bloque sigue por <c>next</c>.</summary>
         private void Send(MessageNode message)
         {
-            if (message.UrlButton is { } button)
+            if (message.Media is { } media)
+            {
+                SendWithMedia(message, media);
+            }
+            else if (message.UrlButton is { } button)
             {
                 AddSend(new Effect.SendInteractive(
                     message.Id, new InteractiveMessage.CtaUrl(Text(message.Text), Text(button.Label), Text(button.Url))));
+            }
+            else
+            {
+                SendOptional(message.Id, message.Text);
+            }
+        }
+
+        /// <summary>
+        /// Spec 2026-11-18 «Execution». Imagen, video y documento salen en un solo mensaje: el texto es el pie y, con botón, el cuerpo del
+        /// <c>cta_url</c> con el archivo de encabezado. Un audio no lleva pie ni botón: sale solo y después va el texto (como cualquier texto,
+        /// no se manda si queda en blanco) o el <c>CtaUrl</c>. Son dos efectos con dos <c>clientId</c>: reintentar la unidad no repite el audio
+        /// (Review Focus 4).
+        /// </summary>
+        private void SendWithMedia(MessageNode message, MessageMedia media)
+        {
+            if (media.Kind != ChatbotMediaKinds.Audio)
+            {
+                var caption = Text(message.Text);
+                var button = message.UrlButton is { } urlButton ? new UrlButton(Text(urlButton.Label), Text(urlButton.Url)) : null;
+                AddSend(new Effect.SendMedia(message.Id, media.Kind, media.FileId, string.IsNullOrWhiteSpace(caption) ? null : caption, button));
+                return;
+            }
+
+            AddSend(new Effect.SendMedia(message.Id, media.Kind, media.FileId, null, null));
+            if (message.UrlButton is { } audioButton)
+            {
+                AddSend(new Effect.SendInteractive(
+                    message.Id, new InteractiveMessage.CtaUrl(Text(message.Text), Text(audioButton.Label), Text(audioButton.Url))));
             }
             else
             {

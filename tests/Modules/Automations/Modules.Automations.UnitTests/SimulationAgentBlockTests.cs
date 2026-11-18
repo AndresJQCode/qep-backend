@@ -28,7 +28,7 @@ public sealed class SimulationAgentBlockTests
 
     private static RunState Initial() => RunState.Initial(FixedVariables.Build("Cliente de prueba", "3000000000", "Clasic", "Simulador"));
 
-    private static SimulationRunner Runner() => new(new NoHttp(), new OpenHours(), new FixedClock());
+    private static SimulationRunner Runner() => new(new NoHttp(), new OpenHours(), new NoMedia(), new FixedClock());
 
     private static SimulationContext Context() => new(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.Empty, false);
 
@@ -102,5 +102,18 @@ public sealed class SimulationAgentBlockTests
     private sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow { get; } = DateTimeOffset.UtcNow;
+    }
+
+    private sealed class NoMedia : IChatbotMediaStore
+    {
+        public Task<ChatbotMediaSession> OpenUploadAsync(
+            Guid tenantId, string fileName, string contentType, long sizeBytes, long maxBytes, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ChatbotMediaCompletion> CompleteAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ChatbotMediaFile>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

@@ -53,6 +53,7 @@ public sealed class RunUnitLog
         {
             Effect.SendText => "Text",
             Effect.SendInteractive => "Interactive",
+            Effect.SendMedia => "Media",
             _ => null,
         };
         if (kind is not null)
