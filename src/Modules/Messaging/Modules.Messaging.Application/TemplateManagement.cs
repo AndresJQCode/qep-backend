@@ -358,12 +358,15 @@ public sealed partial class CreateTemplateHandler(
         }
 
         var mimeType = await EnsureUsableImageAsync(command.TenantId, fileId, cancellationToken);
-        var publicUrl = await images.PublishAsync(command.TenantId, fileId, cancellationToken);
-        // Desde acá la imagen es pública. Hasta que la fila quede guardada, cualquier salida la libera, también una cancelación del
-        // request: una imagen pública sin fila no puede quedar. Con la fila guardada nunca se libera: es su imagen.
+        // Desde la publicación la imagen puede ser pública. Hasta que la fila quede guardada, cualquier salida la libera, también una
+        // cancelación del request: una imagen pública sin fila no puede quedar. Con la fila guardada nunca se libera: es su imagen.
+        // La publicación va dentro (revisión final): si falla después de copiar al bucket público (el guardado de Storage, una cancelación),
+        // las copias públicas no quedan sin fila. Liberar un archivo a medio publicar o sin publicar es seguro: ReleaseAsync despublica lo
+        // que haya y lo borra.
         var saved = false;
         try
         {
+            var publicUrl = await images.PublishAsync(command.TenantId, fileId, cancellationToken);
             var bytes = await images.ReadAsync(command.TenantId, fileId, cancellationToken);
             var handle = await UploadImageAsync(command, source, bytes, mimeType, cancellationToken);
             var withImage = await CreateAsync(

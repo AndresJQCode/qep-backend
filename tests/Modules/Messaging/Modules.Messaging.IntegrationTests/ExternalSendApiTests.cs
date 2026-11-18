@@ -1084,9 +1084,10 @@ public sealed class ExternalSendApiTests
         await AssertProblemAsync(
             await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", null)),
             HttpStatusCode.UnprocessableEntity, "messaging.template.header_mismatch");
-        await ExecuteAsync(f.ConnectionString,
+        // Exactamente una fila: si el espejo no tuviera la plantilla, la prueba pasaría sin probar nada.
+        Assert.Equal(1, await ExecuteAsync(f.ConnectionString,
             "UPDATE messaging.message_templates SET header_image_file_id = @file, header_image_url = @url WHERE name = 'aviso_logo'",
-            ("file", Guid.CreateVersion7()), ("url", stored));
+            ("file", Guid.CreateVersion7()), ("url", stored)));
 
         var withoutHeader = await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", null));
         var withHeader = await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink }));

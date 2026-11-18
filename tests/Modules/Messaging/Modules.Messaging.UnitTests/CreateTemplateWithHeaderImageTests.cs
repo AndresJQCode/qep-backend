@@ -310,6 +310,24 @@ public sealed class CreateTemplateWithHeaderImageTests
 
         Assert.Empty(rig.Images.Calls);
     }
+
+    // Revisión final: la publicación puede fallar después de copiar al bucket público (el guardado de Storage, una cancelación). Va dentro
+    // de la compensación: se libera y sale el error original.
+    [Fact]
+    public async Task AFailedPublishReleasesTheImage()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        var failure = new InvalidOperationException("Storage save failed after the public copy");
+        rig.Images.PublishFailure = failure;
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => rig.CreateAsync(fileId));
+
+        Assert.Same(failure, error);
+        Assert.Equal(["Complete", "Publish", "Release"], rig.Images.Calls);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Repository.Rows);
+    }
 }
 
 /// <summary>El puerto de la imagen en memoria, con el orden de las llamadas.</summary>
@@ -320,6 +338,9 @@ internal sealed class ScriptedTemplateImageStore : IMessagingTemplateImageStore
     public List<string> Calls { get; } = [];
 
     public Exception? ReleaseFailure { get; set; }
+
+    /// <summary>Si no es <c>null</c>, <see cref="PublishAsync"/> la lanza después de registrar la llamada.</summary>
+    public Exception? PublishFailure { get; set; }
 
     /// <summary>Corre al publicar: sirve para cancelar el request justo después.</summary>
     public Action? OnPublish { get; set; }
@@ -353,7 +374,9 @@ internal sealed class ScriptedTemplateImageStore : IMessagingTemplateImageStore
     {
         Calls.Add("Publish");
         OnPublish?.Invoke();
-        return Task.FromResult($"https://public.test/{fileId}.png");
+        return PublishFailure is { } failure
+            ? Task.FromException<string>(failure)
+            : Task.FromResult($"https://public.test/{fileId}.png");
     }
 
     public Task ReleaseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)

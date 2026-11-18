@@ -202,11 +202,18 @@ internal static class MessagingSaveChanges
     /// La sincronización que perdió deja sus filas del espejo pendientes en el contexto, y el catálogo atrapa el 412 del llenado implícito
     /// y sigue (<c>MirroredTemplateCatalog</c>). Sin soltarlas, el siguiente <c>SaveChanges</c> del mismo request (el de la campaña que
     /// se estaba creando) las volvería a insertar y chocaría otra vez. Sólo se sueltan las del espejo: lo demás pendiente es del handler.
+    /// <para>Revisión final (spec 2026-11-17): también los avisos de liberación de la imagen de encabezado que la sincronización agregó al
+    /// eliminar filas. Van con la eliminación: si ésta se suelta y el aviso no, el siguiente guardado liberaría la imagen de una fila que
+    /// sigue existiendo.</para>
     /// </summary>
-    private static void DiscardMirrorChanges(MessagingDbContext dbContext)
+    internal static void DiscardMirrorChanges(MessagingDbContext dbContext)
     {
         foreach (var entry in dbContext.ChangeTracker.Entries()
-                     .Where(entry => entry.Entity is MessageTemplate or TemplateMirrorSyncRecord)
+                     .Where(entry => entry.Entity is MessageTemplate or TemplateMirrorSyncRecord
+                         || (entry.State == EntityState.Added && entry.Entity is MessagingOutboxRecord
+                         {
+                             EventName: MessagingIntegrationEvents.TemplateHeaderImageReleased,
+                         }))
                      .ToList())
         {
             entry.State = EntityState.Detached;
