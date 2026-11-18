@@ -10,6 +10,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Cuerpos con la forma del contrato de Siigo (spec 2026-11-18 §3) que lee SiigoApiClientTests. -->
+    <None Include="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Siigo\Modules.Siigo.Domain\Modules.Siigo.Domain.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Siigo\Modules.Siigo.Application\Modules.Siigo.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Siigo\Modules.Siigo.Infrastructure\Modules.Siigo.Infrastructure.csproj" />

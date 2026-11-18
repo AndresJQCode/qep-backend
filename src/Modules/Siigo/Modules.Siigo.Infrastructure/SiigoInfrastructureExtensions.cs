@@ -1,13 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Modules.Siigo.Application;
+using Modules.Siigo.Infrastructure.Api;
 using Modules.Siigo.Infrastructure.Persistence;
 
 namespace Modules.Siigo.Infrastructure;
 
-/// <summary>Persistencia y auditoría del módulo Siigo. Sin hosted services ni singletons con estado (nada que clasificar en
-/// <c>MultiReplicaInventory</c>).</summary>
+/// <summary>Persistencia, auditoría y cliente HTTP del módulo Siigo. Sin hosted services; el único singleton con estado es
+/// <see cref="SiigoTokenCache"/>, clasificado en <c>MultiReplicaInventory</c>.</summary>
 public static class SiigoInfrastructureExtensions
 {
     public static IServiceCollection AddSiigoInfrastructure(
@@ -29,6 +32,21 @@ public static class SiigoInfrastructureExtensions
 
         services.AddScoped<ISiigoUnitOfWork, SiigoUnitOfWork>();
         services.AddScoped<ISiigoAuditRecorder, SiigoAuditRecorder>();
+
+        // Spec 2026-11-18 §8: Siigo:BaseUrl y Siigo:PartnerId. Se validan al arrancar (en Production, sin Partner-Id el pod no arranca).
+        services.AddOptions<SiigoOptions>().Bind(configuration.GetSection(SiigoOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SiigoOptions>, SiigoOptionsValidator>();
+
+        // El cliente de la API: sin loggers (el log de HttpClient escribiría el Authorization y la URL con la identificación del
+        // cliente) y sin redirecciones (la clave de acceso viaja en el cuerpo de /auth). El token por conexión vive en un singleton con
+        // estado en memoria: un token de más por réplica no tiene efecto (MultiReplicaInventory).
+        services.AddMemoryCache();
+        // El caché de tokens es singleton y no ve IClock (scoped): lee la hora del TimeProvider, el del sistema si nadie registró otro.
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<SiigoTokenCache>();
+        services.AddHttpClient<ISiigoApi, SiigoApiClient>(SiigoApiClient.HttpClientName, SiigoApiClient.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => SiigoApiClient.CreatePrimaryHandler())
+            .RemoveAllLoggers();
 
         return services;
     }

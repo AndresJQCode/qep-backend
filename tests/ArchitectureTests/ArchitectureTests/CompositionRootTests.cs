@@ -1381,6 +1381,27 @@ public sealed class CompositionRootTests
         Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
     }
 
+    /// <summary>Spec 2026-11-18 §7: el cliente de la API de Siigo (<c>siigo</c>) no tiene loggers —el log de <c>HttpClient</c> escribiría
+    /// el <c>Authorization</c> y la URL con la identificación del cliente— ni sigue redirecciones: la clave de acceso viaja en el cuerpo de
+    /// <c>/auth</c>. El nombre va literal porque <c>SiigoApiClient</c> es interno de Siigo.Infrastructure.</summary>
+    [Fact]
+    public void TheSiigoHttpClientHasNoLoggersAndNoRedirects()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler("siigo");
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
     /// <summary>
     /// Plan fase 2, C2.4 (spec 2026-11-17 copiloto §6): un contexto de ejecución que no sale de los claims de un request sólo lo crea el
     /// ejecutor de herramientas del copiloto, y sólo él lo instala en un scope. Cualquier otro lugar que lo hiciera podría correr consultas

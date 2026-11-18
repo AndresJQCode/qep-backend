@@ -161,9 +161,22 @@ public sealed class SiigoConnectionTesterTests : IDisposable
         Assert.Equal("network", result.Reason);
     }
 
-    // Un 3xx no se sigue: la clave no viaja a otro host.
+    // Una conexión que se cae a mitad del cuerpo de /auth (HttpIOException hereda de IOException) también es «no pude verificar».
     [Fact]
-    public async Task ARedirectIsNotFollowed()
+    public async Task AConnectionResetWhileReadingTheAuthBodyIsUnreachable()
+    {
+        _api.AuthBodyFailure = new IOException("reset");
+
+        var result = await TestAsync(_services);
+
+        Assert.Equal(ConnectionTestOutcome.Unreachable, result.Outcome);
+        Assert.Equal("network", result.Reason);
+    }
+
+    // El handler primario es de mentira, así que esta prueba sólo dice que un 3xx es «no pude verificar» y que no hay segunda llamada;
+    // que el handler real no sigue redirecciones lo prueba CompositionRootTests.TheSiigoTesterHttpClientHasNoLoggersAndNoRedirects.
+    [Fact]
+    public async Task A3xxAnswerIsUnreachableAndNothingElseIsCalled()
     {
         _api.AuthStatus = HttpStatusCode.Found;
         _api.Location = "https://elsewhere.test/auth";
@@ -192,8 +205,10 @@ public sealed class SiigoConnectionTesterTests : IDisposable
         }
     }
 
+    // Cubre el ILogger del probador. Que el HttpClient no tenga loggers (el que escribiría los headers, a nivel Trace) lo prueba
+    // CompositionRootTests.TheSiigoTesterHttpClientHasNoLoggersAndNoRedirects: acá el handler primario es de mentira.
     [Fact]
-    public async Task TheLogsNeverCarryTheAccessKeyNorTheToken()
+    public async Task TheTestersOwnLogsNeverCarryTheAccessKeyNorTheToken()
     {
         _api.AuthBody = $$"""{"access_token":"{{Token}}"}""";
         _api.DocumentTypesStatus = HttpStatusCode.Unauthorized;
@@ -223,6 +238,9 @@ internal sealed class StubSiigoHandler : HttpMessageHandler
 
     public Exception? Throw { get; set; }
 
+    /// <summary>Si se pone, el cuerpo de <c>/auth</c> falla al leerse con esta excepción (los headers ya llegaron).</summary>
+    public Exception? AuthBodyFailure { get; set; }
+
     public ConcurrentQueue<StubSiigoRequest> Requests { get; } = new();
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -242,7 +260,10 @@ internal sealed class StubSiigoHandler : HttpMessageHandler
 
         var isAuth = request.RequestUri?.AbsolutePath == "/auth";
         var response = isAuth
-            ? new HttpResponseMessage(AuthStatus) { Content = new StringContent(AuthBody) }
+            ? new HttpResponseMessage(AuthStatus)
+            {
+                Content = AuthBodyFailure is { } bodyFailure ? new FailingContent(bodyFailure) : new StringContent(AuthBody),
+            }
             : new HttpResponseMessage(DocumentTypesStatus) { Content = new StringContent("[]") };
         if (Location is not null)
         {
@@ -250,6 +271,20 @@ internal sealed class StubSiigoHandler : HttpMessageHandler
         }
 
         return response;
+    }
+}
+
+/// <summary>Un cuerpo que lanza al leerse, como una conexión que se cae a mitad de la respuesta.</summary>
+internal sealed class FailingContent(Exception failure) : HttpContent
+{
+    protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) => Task.FromException(failure);
+
+    protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromException<Stream>(failure);
+
+    protected override bool TryComputeLength(out long length)
+    {
+        length = 0;
+        return false;
     }
 }
 

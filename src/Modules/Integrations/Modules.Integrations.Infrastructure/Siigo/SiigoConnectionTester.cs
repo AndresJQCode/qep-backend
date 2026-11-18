@@ -26,6 +26,9 @@ internal sealed partial class SiigoConnectionTester(
 
     public const string DefaultBaseUrl = "https://api.siigo.com";
 
+    /// <summary>Lo mismo que el timeout del cliente (<see cref="ConfigureClient"/>), para la lectura del cuerpo de <c>/auth</c>.</summary>
+    private static readonly TimeSpan BodyTimeout = TimeSpan.FromSeconds(15);
+
     public string ProviderKey => IntegrationProviders.Siigo.Key;
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Siigo credential test step {Step} answered HTTP {StatusCode}: {Outcome}")]
@@ -75,7 +78,11 @@ internal sealed partial class SiigoConnectionTester(
                 return authResult;
             }
 
-            var token = await ReadTokenAsync(authResponse, cancellationToken);
+            // El cliente manda con ResponseHeadersRead, así que el timeout del HttpClient no cubre el cuerpo: se acota aparte, con el
+            // mismo tiempo, o un servidor que manda los headers y se queda callado dejaría la prueba colgada.
+            using var bodyTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bodyTimeout.CancelAfter(BodyTimeout);
+            var token = await ReadTokenAsync(authResponse, bodyTimeout.Token);
             if (token is null)
             {
                 LogUnreachable(logger, "auth_without_token");
@@ -91,13 +98,14 @@ internal sealed partial class SiigoConnectionTester(
             LogAnswered(logger, "document-types", (int)documentTypesResponse.StatusCode, result.Outcome);
             return result;
         }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // El timeout del HttpClient, no una cancelación de quien llama.
+            // El timeout del HttpClient o el de la lectura del cuerpo, no una cancelación de quien llama.
             LogUnreachable(logger, "timeout");
             return ConnectionTestResult.Unreachable("timeout");
         }
-        catch (HttpRequestException)
+        // Una conexión que se cae a mitad del cuerpo de /auth es HttpIOException, que hereda de IOException y no de HttpRequestException.
+        catch (Exception exception) when (exception is HttpRequestException or IOException)
         {
             LogUnreachable(logger, "network");
             return ConnectionTestResult.Unreachable("network");
