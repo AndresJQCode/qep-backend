@@ -101,8 +101,9 @@ hoy no se usa en QEP pero evita una migración de datos el día que el ERP lo pi
 
 ### 3.3 Contrato HTTP de Catalog
 
-`kind` y `salesUnit` entran al cuerpo de alta y edición del producto (opcionales en el JSON; ausentes = `Physical` y
-`Unit`, para que un cliente viejo no rompa) y a la respuesta del detalle y del listado. Filtro `?kind=` en el listado
+`kind` y `salesUnit` entran al cuerpo de alta y edición del producto (opcionales en el JSON: ausentes en el alta = `Physical` y
+`Unit`; ausentes en la edición = se conserva lo guardado, como `visibleInStore`, para que un cliente viejo no
+vuelva físico un servicio; viajan como texto y un valor desconocido es 422 `validation.failed`) y a la respuesta del detalle y del listado. Filtro `?kind=` en el listado
 **[decisión del diseño]**: es lo primero que pide una pantalla de catálogo mixto.
 
 ### 3.4 Foto en la línea
