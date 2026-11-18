@@ -77,11 +77,15 @@ public sealed class WholesaleInvitationNoticeOutboundTests
         var sent = Assert.IsType<WholesaleInvitationNoticeSendResult.Sent>(await SendAsync(f, Send(f)));
 
         // Abre por teléfono, sin asignar a nadie y sin cliente: el distribuidor invitado no es un cliente del tenant.
-        Assert.Equal($"Open||{Phone}|t", await ScalarAsync<string>(f.ConnectionString,
+        Assert.Equal($"Open||{Phone}", await ScalarAsync<string>(f.ConnectionString,
             """
-            SELECT status || '|' || coalesce(assigned_member_id::text, '') || '|' || wa_id || '|' || (customer_id IS NULL)::text
+            SELECT status || '|' || coalesce(assigned_member_id::text, '') || '|' || wa_id
             FROM messaging.conversations WHERE id = @id
             """,
+            ("id", sent.ConversationId)));
+        // Como booleano y no como texto: en Postgres bool::text da «true», no «t».
+        Assert.True(await ScalarAsync<bool>(f.ConnectionString,
+            "SELECT customer_id IS NULL FROM messaging.conversations WHERE id = @id",
             ("id", sent.ConversationId)));
         // La fila de la plantilla (su details), liquidada como Sent (1) con el wamid de Meta, con quien invita como autor.
         var text = "¡Hola, Ana Pérez! Distribuciones Andinas te invitó como distribuidor en la plataforma Lulo CRM. Te enviamos la invitación al "
