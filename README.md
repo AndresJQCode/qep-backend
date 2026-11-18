@@ -3237,21 +3237,25 @@ cuerpo de cada request. `QCodePdfRenderer` es su único cliente.
 | --- | --- | --- |
 | `Quotations__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
 | `Quotations__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
-| `Support__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `SUPPORT_PDF_BASE_URL` |
-| `Support__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `SUPPORT_PDF_API_KEY` |
-| `Purchases__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `PURCHASES_PDF_BASE_URL` |
-| `Purchases__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `PURCHASES_PDF_API_KEY` |
+| `Support__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
+| `Support__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
+| `Purchases__Pdf__BaseUrl` | [`k8s/prod-configMap.yaml`](k8s/prod-configMap.yaml) | `QUOTATIONS_PDF_BASE_URL` |
+| `Purchases__Pdf__ApiKey` | [`k8s/prod-secret.yaml`](k8s/prod-secret.yaml) | `QUOTATIONS_PDF_API_KEY` |
 
-La respuesta formal de Soporte (fase 4b) usa el mismo servicio con **su propia clave** (`Support:Pdf`, `SupportPdfRenderer`), nunca
-la de cotizaciones: `qcode-pdf` identifica al cliente por el hash de la clave. `SupportPdfOptionsValidator` la exige en producción
-igual que la de cotizaciones, y un token del pipeline sin resolver (`#{…}#`) cuenta como ausente: **sin `SUPPORT_PDF_API_KEY` en
-`Backend-prod` el pod no arranca.**
+**Una sola clave para todo el backend de QEP** (decisión del owner, 2026-11-17). Cada módulo que genera PDF tiene su sección
+(`Quotations:Pdf`, `Support:Pdf`, `Purchases:Pdf`) y su validador, para que ninguno dependa de la configuración de otro, pero en
+producción las tres leen los mismos dos tokens. Las claves vivían todas en el mismo pod, así que separarlas no aislaba nada, y cada
+variable más era otra forma de que el pod no arrancara. Lo que se pierde: `qcode-pdf` identifica al cliente por el hash de la clave, así
+que en sus logs QEP es un solo cliente, y rotar la clave toca los tres módulos a la vez. `SUPPORT_PDF_*` y `PURCHASES_PDF_*` ya no se
+leen; si existen en `Backend-prod`, se pueden borrar.
 
-La orden de compra (`GET …/purchases/orders/{id}/pdf`) va por el mismo camino con **su propia sección y clave**
-(`Purchases:Pdf:BaseUrl`, `Purchases:Pdf:ApiKey`, `Purchases:Pdf:TimeoutSeconds` por defecto 30; `PurchaseOrderPdfRenderer`, plantilla
-`purchase-order.typ` incrustada). `PurchasesPdfOptionsValidator` exige HTTPS siempre y la clave en producción; un token sin resolver
-cuenta como ausente: **sin `PURCHASES_PDF_BASE_URL` (en todos los entornos) o sin `PURCHASES_PDF_API_KEY` (en producción) en `Backend-prod`, el pod entero de la API no arranca**, no sólo el PDF de compras. Si `qcode-pdf` no devuelve el PDF, la
-respuesta es `502 purchases.order.pdf_render_failed`, sin el cuerpo del servicio.
+Cada validador exige HTTPS siempre y la clave en producción, y un token del pipeline sin resolver (`#{…}#`) cuenta como ausente: **sin
+`QUOTATIONS_PDF_BASE_URL` o `QUOTATIONS_PDF_API_KEY` en `Backend-prod`, el pod entero de la API no arranca.**
+
+La respuesta formal de Soporte (fase 4b) usa `Support:Pdf` y `SupportPdfRenderer`. La orden de compra
+(`GET …/purchases/orders/{id}/pdf`) usa `Purchases:Pdf` (`TimeoutSeconds` por defecto 30), `PurchaseOrderPdfRenderer` y la plantilla
+`purchase-order.typ` incrustada. Si `qcode-pdf` no devuelve el PDF de compras, la respuesta es `502 purchases.order.pdf_render_failed`,
+sin el cuerpo del servicio.
 
 **Sin la API key el pod no arranca en producción.** A diferencia de WhatsApp, acá no hay
 fallback: `qcode-pdf` respondería 401 y todo envío moriría con `quotation.pdf.render_failed`.
@@ -6122,9 +6126,9 @@ parciales de los recorridos del cierre automático y de la encuesta). Las cinco 
   sólo cuando no quede un pod viejo, y no hagas rollback después de aprovisionarlas: el `Down` de
   `AddSupportFormalAndSurveyTemplateKinds` **borra esas filas**, y con ellas plantillas ya aprobadas por Meta. Lo mismo vale para
   cualquier valor nuevo de los enums de Soporte que se guardan por nombre (`SupportTicketEventKind` y los de la encuesta).
-- **`SUPPORT_PDF_API_KEY` y `SUPPORT_PDF_BASE_URL` tienen que existir en `Backend-prod` antes de que esto llegue a `main`.** Sin la
-  clave, `SupportPdfOptionsValidator` (`ValidateOnStart`) no deja arrancar el pod en producción; un `#{…}#` sin resolver cuenta como
-  ausente. Es una clave propia de `qcode-pdf`, nunca la de cotizaciones.
+- **Soporte usa la clave de `qcode-pdf` de todo el backend** (`QUOTATIONS_PDF_API_KEY` y `QUOTATIONS_PDF_BASE_URL`, decisión del
+  owner del 2026-11-17, que reemplaza la clave propia `SUPPORT_PDF_*`). Sin ella, `SupportPdfOptionsValidator` (`ValidateOnStart`) no
+  deja arrancar el pod en producción; un `#{…}#` sin resolver cuenta como ausente. Ver § Generación del PDF.
 - **Frontend: la página `/calificar?token=…` tiene que responder con `Referrer-Policy: no-referrer`.** El token va en la query de la
   URL de la página (sólo la API lo recibe en el cuerpo); sin esa cabecera, cualquier recurso de terceros que la página cargue (una
   fuente, una analítica, el logo del tenant) recibe la URL completa con el token en el `Referer`, y con él se califica la encuesta.

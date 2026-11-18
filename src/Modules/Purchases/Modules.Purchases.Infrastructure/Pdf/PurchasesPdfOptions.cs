@@ -1,10 +1,11 @@
 namespace Modules.Purchases.Infrastructure.Pdf;
 
 /// <summary>
-/// Cómo llega Compras a <c>qcode-pdf</c> (copia de <c>SupportPdfOptions</c>). Sección y clave propias, nunca <c>Quotations:Pdf</c> ni
-/// <c>Support:Pdf</c>: el servicio resuelve el cliente por el hash de la clave, así que compartirla mezclaría el tráfico en sus logs, y
-/// rotar una obligaría a tocar las otras. La URL va en el ConfigMap; la clave, en el Secret (<c>PURCHASES_PDF_API_KEY</c> del grupo
-/// <c>Backend-prod</c>).
+/// Cómo llega Compras a <c>qcode-pdf</c> (copia de <c>SupportPdfOptions</c>). Sección propia, para que el módulo no dependa de la
+/// configuración de otro, pero la clave es una sola para todo el backend de QEP (decisión del owner, 2026-11-17): todas las claves
+/// viven en el mismo pod, así que separarlas no aísla nada y cada variable más es otra forma de que el pod no arranque. En producción
+/// la URL y la clave salen de los mismos tokens que cotizaciones (<c>QUOTATIONS_PDF_BASE_URL</c> en el ConfigMap,
+/// <c>QUOTATIONS_PDF_API_KEY</c> en el Secret, grupo <c>Backend-prod</c>).
 /// </summary>
 public sealed class PurchasesPdfOptions
 {

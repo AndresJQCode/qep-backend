@@ -40,8 +40,8 @@ internal sealed class PurchasesPdfOptionsValidator(IHostEnvironment environment)
             else if (IsUnresolvedPipelineToken(options.ApiKey))
             {
                 failures.Add(
-                    $"{PurchasesPdfOptions.SectionName}:ApiKey is an unresolved pipeline token in Production: add PURCHASES_PDF_API_KEY to "
-                    + "the Backend-prod group.");
+                    $"{PurchasesPdfOptions.SectionName}:ApiKey is an unresolved pipeline token in Production: add QUOTATIONS_PDF_API_KEY (the qcode-pdf "
+                    + "key shared by the whole QEP backend) to the Backend-prod group.");
             }
         }
 

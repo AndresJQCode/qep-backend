@@ -27,14 +27,16 @@ public sealed class PurchasesPdfOptionsValidatorTests
     }
 
     [Theory]
-    [InlineData("#{PURCHASES_PDF_API_KEY}#")]
-    [InlineData("  #{PURCHASES_PDF_API_KEY}#  ")]
+    [InlineData("#{QUOTATIONS_PDF_API_KEY}#")]
+    [InlineData("  #{QUOTATIONS_PDF_API_KEY}#  ")]
     public void ProductionWithAnUnresolvedPipelineTokenFails(string apiKey)
     {
         var result = ValidatorFor(Environments.Production).Validate(null, new PurchasesPdfOptions { ApiKey = apiKey });
 
         Assert.True(result.Failed);
         Assert.Contains("Purchases:Pdf:ApiKey", result.FailureMessage);
+        // One qcode-pdf key for the whole QEP backend (owner, 2026-11-17): the message must name the shared pipeline variable.
+        Assert.Contains("QUOTATIONS_PDF_API_KEY", result.FailureMessage);
         Assert.DoesNotContain(apiKey.Trim(), result.FailureMessage);
     }
 
