@@ -245,7 +245,7 @@ public sealed class RunProcessorRecordingTests
             var chatbots = new ServingChatbots();
             var clock = new FixedClock();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new OkHttp(), media, audit, new NoDataConsents(), chatbots, new ModuleStatus(moduleEnabled),
+                Messenger, conversations, hours, http ?? new OkHttp(), media, new MemoryChatbotMedia(), audit, new NoDataConsents(), chatbots, new ModuleStatus(moduleEnabled),
                 NullLogger<RunEffects>.Instance);
             var recorder = new RunUnitWriter(Units, clock, Logs.CreateLogger<RunUnitWriter>());
             return new RunProcessor(
@@ -449,6 +449,13 @@ public sealed class RunProcessorRecordingTests
 
         public Task<BotSendOutcome> SendInteractiveAsync(
             Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, InteractiveMessage message, CancellationToken cancellationToken)
+        {
+            Sent.Add(clientId);
+            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
+        }
+
+        public Task<BotSendOutcome> SendMediaAsync(
+            Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, BotMediaMessage message, CancellationToken cancellationToken)
         {
             Sent.Add(clientId);
             return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));

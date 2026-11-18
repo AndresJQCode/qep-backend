@@ -1186,7 +1186,7 @@ public sealed partial class RunProcessorTests
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
         IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
         EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation,
-        bool hoursOpen = true, bool resolvedAfterRun = false, bool aiEnabled = true)
+        bool hoursOpen = true, bool resolvedAfterRun = false, bool aiEnabled = true, IChatbotMediaStore? chatbotMedia = null)
     {
         public RecordingInbox Inbox { get; } = new();
 
@@ -1209,7 +1209,8 @@ public sealed partial class RunProcessorTests
             var hours = new OpenHours(hoursOpen);
             var files = media ?? new NoMedia();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings, trigger),
+                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, chatbotMedia ?? new MemoryChatbotMedia(), audit, DataConsents,
+                new ServingChatbots(flow, engineSettings, trigger),
                 new ModuleStatus(moduleEnabled, aiEnabled), NullLogger<RunEffects>.Instance);
             return new RunProcessor(
                 Unit, Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,
@@ -1503,6 +1504,17 @@ public sealed partial class RunProcessorTests
             var messageId = Guid.CreateVersion7();
             Interactives.Add((message, messageId));
             return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(messageId));
+        }
+
+        /// <summary>Spec 2026-11-18: cada archivo con su clientId; siempre sale (los rechazos de estas pruebas son del texto).</summary>
+        public List<(Guid ClientId, BotMediaMessage Message)> MediaSends { get; } = [];
+
+        public Task<BotSendOutcome> SendMediaAsync(
+            Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, BotMediaMessage message, CancellationToken cancellationToken)
+        {
+            Sent.Add(clientId);
+            MediaSends.Add((clientId, message));
+            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
         }
     }
 
