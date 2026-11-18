@@ -320,6 +320,7 @@ public sealed partial class CreateTemplateHandler(
     IClock clock,
     IValidator<CreateTemplateCommand> validator,
     IMessagingTemplateImageStore images,
+    ITemplateHeaderImageReleases imageReleases,
     ILogger<CreateTemplateHandler> logger)
     : ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>
 {
@@ -442,13 +443,27 @@ public sealed partial class CreateTemplateHandler(
     }
 
     /// <summary>Libera la imagen ya publicada de una creación que falló, con <see cref="CancellationToken.None"/>: la liberación no puede
-    /// depender del request que se está cayendo. Si falla, se registra y sale el error original. El respaldo por outbox, para que la imagen
-    /// se libere igual cuando Storage está caído, lo agrega el bloque C del plan 2026-11-17.</summary>
+    /// depender del request que se está cayendo. Si Storage no la libera (R2 caído), deja el aviso
+    /// <see cref="MessagingIntegrationEvents.TemplateHeaderImageReleased"/> en el outbox y Storage la libera con reintentos (plan 2026-11-17
+    /// Task 8). El aviso se guarda solo: antes se descarta lo que el tracker tenía (la fila y la auditoría que no se pudieron guardar, si el
+    /// fallo fue al guardar), para que no viaje con él. Si eso también falla, se registra y sale el error original.</summary>
     private async Task ReleaseOrDeferAsync(Guid tenantId, Guid fileId)
     {
         try
         {
             await images.ReleaseAsync(tenantId, fileId, CancellationToken.None);
+            return;
+        }
+        catch (Exception exception)
+        {
+            LogReleaseDeferred(logger, exception, tenantId, fileId);
+        }
+
+        try
+        {
+            unitOfWork.DiscardPendingChanges();
+            imageReleases.Publish(tenantId, fileId, clock.UtcNow);
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
         }
         catch (Exception exception)
         {
@@ -458,12 +473,17 @@ public sealed partial class CreateTemplateHandler(
 
     [LoggerMessage(
         Level = LogLevel.Warning,
+        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released now; the release goes through the outbox.")]
+    private static partial void LogReleaseDeferred(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
         Message = "Meta did not accept the header image of a template for connection {ConnectionId} in tenant {TenantId}: status {HttpStatus}, code {GraphCode}, reason {Reason}; the connection is not reported.")]
     private static partial void LogUploadFailed(ILogger logger, Guid tenantId, Guid connectionId, int httpStatus, string graphCode, string reason);
 
     [LoggerMessage(
         Level = LogLevel.Error,
-        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released; it stays published.")]
+        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released nor deferred to the outbox; it stays published.")]
     private static partial void LogReleaseFailed(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
 }
 
@@ -480,7 +500,8 @@ public sealed class DeleteTemplateHandler(
     IMessagingAuditRecorder audit,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITemplateHeaderImageReleases imageReleases)
     : ICommandHandler<DeleteTemplateCommand, bool>
 {
     public async Task<bool> HandleAsync(DeleteTemplateCommand command, CancellationToken cancellationToken)
@@ -504,8 +525,16 @@ public sealed class DeleteTemplateHandler(
                 TemplateGraphOperation.Delete, cancellationToken);
         }
 
+        var now = clock.UtcNow;
         repository.Remove(template);
-        audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateDeleted, template.Id, clock.UtcNow);
+        // Spec 2026-11-17: la imagen del encabezado la libera Storage al leer el aviso, que commitea con la eliminación de la fila. Si el
+        // guardado falla, no sale aviso y la imagen sigue siendo de su fila.
+        if (template.HeaderImageFileId is { } fileId)
+        {
+            imageReleases.Publish(command.TenantId, fileId, now);
+        }
+
+        audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateDeleted, template.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
     }

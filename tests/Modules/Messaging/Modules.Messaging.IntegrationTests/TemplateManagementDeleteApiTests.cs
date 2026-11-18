@@ -103,6 +103,58 @@ public sealed class TemplateManagementDeleteApiTests
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.template.deleted'"));
     }
 
+    /// <summary>Plan 2026-11-17 Task 8: le pone a una fila del espejo la imagen publicada de un archivo del fake, como la deja una creación.</summary>
+    private static async Task<Guid> AttachPublishedImageAsync(Fixture f, Guid templateId)
+    {
+        var fileId = f.Factory.TemplateImages.Seed(f.Tenant.TenantId, new byte[2048]);
+        f.Factory.TemplateImages.Files[fileId].Published = true;
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.message_templates SET header_image_file_id = @file, header_image_url = @url WHERE id = @id",
+            ("file", fileId), ("url", $"https://public.test/{fileId}.png"), ("id", templateId));
+        return fileId;
+    }
+
+    private static Task<long> ReleaseRowsAsync(Fixture f, Guid fileId) =>
+        CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'messaging.template.header-image-released.v1' AND payload->>'fileId' = @file AND payload->>'tenantId' = @t",
+            ("file", fileId.ToString()), ("t", f.Tenant.TenantId.ToString()));
+
+    [Fact]
+    public async Task DeletingAnImageTemplateWritesTheReleaseInTheSameTransaction()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var ids = await IdsByNameAsync(f);
+        var fileId = await AttachPublishedImageAsync(f, ids["promo"]);
+
+        var response = await SendAsync(f.Admin, HttpMethod.Delete, TemplateUrl(f, ids["promo"]));
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f, fileId));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'messaging.template.header-image-released.v1' AND correlation_id <> '' AND attempts = 0"));
+        // El request no libera: lo hace Storage al consumir el aviso.
+        Assert.False(f.Factory.TemplateImages.Files[fileId].Released);
+        Assert.True(f.Factory.TemplateImages.Files[fileId].Published);
+    }
+
+    [Fact]
+    public async Task AFailedDeleteWritesNoRelease()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, deleteAnswer: () => FakeMetaGraphHandler.Json(HttpStatusCode.InternalServerError, FakeMetaGraphHandler.GraphError(1)));
+        using var host = f.Factory;
+        var ids = await IdsByNameAsync(f);
+        var fileId = await AttachPublishedImageAsync(f, ids["promo"]);
+
+        var response = await SendAsync(f.Admin, HttpMethod.Delete, TemplateUrl(f, ids["promo"]));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(0L, await ReleaseRowsAsync(f, fileId));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE id = @id", ("id", ids["promo"])));
+    }
+
     [Fact]
     public async Task AnUnknownTemplateIdIs404AndNeverReachesMeta()
     {

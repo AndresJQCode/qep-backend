@@ -37,6 +37,8 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
+        // Plan 2026-11-17 Task 8: el aviso de liberación de la imagen del encabezado, en el SaveChanges de quien elimina la plantilla.
+        services.AddScoped<ITemplateHeaderImageReleases, TemplateHeaderImageReleasePublisher>();
         // Borrar clientes (A-12 y P4): el candado compartido del cliente al colgarle una conversación, sobre la conexión de Mensajería.
         services.AddScoped<IMessagingCustomerReferenceLock, MessagingCustomerReferenceLock>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).

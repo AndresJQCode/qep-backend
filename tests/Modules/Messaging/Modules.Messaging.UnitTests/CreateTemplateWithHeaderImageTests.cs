@@ -27,6 +27,8 @@ public sealed class CreateTemplateWithHeaderImageTests
 
         public RecordingLogger<CreateTemplateHandler> Logger { get; } = new();
 
+        public RecordingTemplateImageReleases Releases { get; } = new();
+
         public IMessagingMemberNames? MemberNames { get; set; }
 
         public Task<ManagedTemplateDto> CreateAsync(Guid? headerImageFileId, string? header = null, CancellationToken? cancellationToken = null)
@@ -36,7 +38,7 @@ public sealed class CreateTemplateWithHeaderImageTests
             var executionContext = new FakeExecutionContext(Bed.TenantId, Bed.SubjectId, MessagingPermissions.TemplateManage);
             var handler = new CreateTemplateHandler(
                 Repository, Bed.Meta, Bed.Connections, MemberNames ?? new FakeMemberNames(Bed.MemberId), new CallerMembership(membership, executionContext), UnitOfWork,
-                Audit, Bed.TenantModules, executionContext, new FakeClock(Bed.Now), new CreateTemplateCommandValidator(), Images, Logger);
+                Audit, Bed.TenantModules, executionContext, new FakeClock(Bed.Now), new CreateTemplateCommandValidator(), Images, Releases, Logger);
             return handler.HandleAsync(
                 new CreateTemplateCommand(
                     Bed.TenantId, Bed.ConnectionId, "promo_imagen", "es", "MARKETING", header, "Hola {{first_name}}, mira la oferta.", null, [],
@@ -144,19 +146,69 @@ public sealed class CreateTemplateWithHeaderImageTests
         Assert.Equal("Release", rig.Images.Calls[^1]);
     }
 
-    // Bloque C agrega el respaldo por outbox; acá la falla de la liberación sólo se registra y sale el error original.
+    // Plan 2026-11-17 Task 8: si la liberación sincrónica falla (R2 caído), el aviso de liberación va al outbox, guardado solo: se descarta
+    // lo que el tracker tenía (la fila que no se pudo guardar) para que no viaje con él. Sale el error original.
     [Fact]
-    public async Task AFailedReleaseIsLoggedAndTheOriginalErrorLeaves()
+    public async Task AFailedReleaseFallsBackToTheOutboxAndTheOriginalErrorLeaves()
     {
         var rig = new Rig();
         var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
         rig.Bed.Meta.NextCreatedTemplate = new MessagingGraphResult<CreatedTemplate>(null, MetaRejection);
         rig.Images.ReleaseFailure = new InvalidOperationException("R2 is down");
+        var discardsAtPublish = -1;
+        rig.Releases.OnPublish = () => discardsAtPublish = rig.UnitOfWork.Discards;
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.CreateAsync(fileId));
 
         Assert.Equal(MessagingErrorCodes.TemplateRejectedByMeta, error.Code);
+        Assert.Equal((rig.Bed.TenantId, fileId, rig.Bed.Now), Assert.Single(rig.Releases.Published));
+        Assert.Equal(1, discardsAtPublish);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+        Assert.Contains(rig.Logger.Entries, entry => entry.Level == LogLevel.Warning && entry.Message.Contains(fileId.ToString(), StringComparison.Ordinal));
+    }
+
+    // Una cancelación del request que llega con la liberación caída deja el aviso igual: el guardado del respaldo no usa el token del request.
+    [Fact]
+    public async Task ACancelledCreateWithAFailedReleaseStillWritesTheRelease()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        rig.Images.ReleaseFailure = new InvalidOperationException("R2 is down");
+        using var request = new CancellationTokenSource();
+        rig.Images.OnPublish = request.Cancel;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => rig.CreateAsync(fileId, cancellationToken: request.Token));
+
+        Assert.Single(rig.Releases.Published);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+    }
+
+    // Si también el outbox falla, queda el error en el log con el archivo y sale el error original.
+    [Fact]
+    public async Task AFailedReleaseAndAFailedOutboxAreLoggedAndTheOriginalErrorLeaves()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        rig.UnitOfWork.Failure = new MessagingDomainException(MessagingErrorCodes.TemplateNameTaken, "taken");
+        rig.Images.ReleaseFailure = new InvalidOperationException("R2 is down");
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.CreateAsync(fileId));
+
+        Assert.Equal(MessagingErrorCodes.TemplateNameTaken, error.Code);
         Assert.Contains(rig.Logger.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains(fileId.ToString(), StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ASuccessfulReleaseWritesNoOutboxRelease()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        rig.Bed.Meta.NextCreatedTemplate = new MessagingGraphResult<CreatedTemplate>(null, MetaRejection);
+
+        await Assert.ThrowsAsync<MessagingDomainException>(() => rig.CreateAsync(fileId));
+
+        Assert.Empty(rig.Releases.Published);
+        Assert.Equal(0, rig.UnitOfWork.Discards);
     }
 
     // Revisión del bloque B: un request cancelado después de publicar no deja una imagen pública sin fila.

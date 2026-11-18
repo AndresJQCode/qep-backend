@@ -316,6 +316,28 @@ public sealed class TemplateManagementCreateApiTests
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId)));
     }
 
+    /// <summary>Plan 2026-11-17 Task 8: Storage caído cuando Meta rechaza. La liberación sincrónica falla, el aviso queda en el outbox para que
+    /// Storage la libere después, y sale el error de Meta.</summary>
+    [Fact]
+    public async Task AFailedSynchronousReleaseFallsBackToTheOutbox()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, _ => FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest,
+            """{"error":{"message":"(#100) Invalid parameter","type":"OAuthException","code":100,"error_user_title":"Invalid Format","error_user_msg":"The image is too small.","fbtrace_id":"t"}}"""));
+        using var host = f.Factory;
+        var fileId = f.Factory.TemplateImages.Seed(f.Tenant.TenantId, new byte[2048]);
+        f.Factory.TemplateImages.ReleaseFailure = new InvalidOperationException("R2 is down");
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, TemplatesUrl(f), ImageBody(fileId));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("messaging.template.rejected_by_meta", (await ProblemAsync(response)).Code);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'messaging.template.header-image-released.v1' AND payload->>'fileId' = @file AND payload->>'tenantId' = @t",
+            ("file", fileId.ToString()), ("t", f.Tenant.TenantId.ToString())));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId)));
+    }
+
     [Fact]
     public async Task AHeaderAndAHeaderImageTogetherAreValidationFailedOnHeader()
     {
