@@ -83,6 +83,15 @@ public sealed class SuppliersDbContext(DbContextOptions<SuppliersDbContext> opti
             .HasColumnName("notes")
             .HasMaxLength(Supplier.NotesMaxLength);
         supplier.Property(value => value.IsActive).HasColumnName("is_active");
+
+        // Spec 2026-11-17 (mayorista), D-8: el mayorista que el proveedor representa en QEP. Sin FK a tenancy.tenants (otro
+        // esquema y otro módulo, como la ciudad no modelada). Uno por mayorista dentro del tenant: el índice único parcial lo
+        // arbitra y SuppliersUnitOfWork lo traduce por nombre a suppliers.supplier.linked_elsewhere.
+        supplier.Property(value => value.LinkedTenantId).HasColumnName("linked_tenant_id");
+        supplier.HasIndex(value => new { value.TenantId, value.LinkedTenantId })
+            .IsUnique()
+            .HasFilter("linked_tenant_id IS NOT NULL")
+            .HasDatabaseName("IX_suppliers_tenant_linked_tenant");
         supplier.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();

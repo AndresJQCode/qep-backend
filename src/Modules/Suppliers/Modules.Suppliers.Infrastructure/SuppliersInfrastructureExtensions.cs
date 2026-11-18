@@ -32,6 +32,9 @@ public static class SuppliersInfrastructureExtensions
         services.AddSingleton<ISupplierPhoneNormalizer, LibPhoneNumberSupplierNormalizer>();
         services.AddSingleton<ISupplierExportBuilder, ClosedXmlSupplierExportBuilder>();
         services.AddScoped<ISupplierExportEventPublisher, SupplierExportEventPublisher>();
+        // Spec 2026-11-17 (mayorista): el proveedor vinculado que deja la aceptación de una invitación. Lo consume Wholesale por
+        // un adaptador en Bootstrapper.
+        services.AddScoped<ISupplierLinking, SupplierLinking>();
 
         return services;
     }

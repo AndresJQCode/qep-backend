@@ -83,6 +83,14 @@ public sealed class Supplier
 
     public bool IsActive { get; private set; }
 
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista), D-8: el tenant del mayorista que este proveedor representa en QEP, o <c>null</c> para un
+    /// proveedor externo. Lo fija sólo la aceptación de una invitación (<see cref="CreateLinked"/>, <see cref="LinkTo"/>),
+    /// nunca el formulario. Uno por mayorista dentro del tenant: lo arbitra el índice único parcial
+    /// <c>IX_suppliers_tenant_linked_tenant</c>. Mientras esté vinculado, el documento no se puede cambiar.
+    /// </summary>
+    public Guid? LinkedTenantId { get; private set; }
+
     /// <summary>Contador de concurrencia optimista; sube en cada escritura.</summary>
     public int Version { get; private set; }
 
@@ -109,10 +117,58 @@ public sealed class Supplier
         return supplier;
     }
 
+    /// <summary>El proveedor que representa al mayorista <paramref name="linkedTenantId"/> (D-8). Nace con los mismos
+    /// invariantes que <see cref="Create"/>.</summary>
+    public static Supplier CreateLinked(
+        Guid tenantId,
+        Guid linkedTenantId,
+        SupplierWriteData data,
+        ISupplierPhoneNormalizer phones,
+        DateTimeOffset now)
+    {
+        EnsureLinkTarget(linkedTenantId);
+        var supplier = Create(tenantId, data, phones, now);
+        supplier.LinkedTenantId = linkedTenantId;
+        return supplier;
+    }
+
     public void Update(SupplierWriteData data, ISupplierPhoneNormalizer phones, DateTimeOffset now)
     {
         Apply(data, phones, now);
         Version++;
+    }
+
+    /// <summary>
+    /// Vincula un proveedor que ya existía con el documento del mayorista (D-8): así no se crea un duplicado que choque con
+    /// <c>IX_suppliers_tenant_identification</c>. Ya vinculado a ese mismo tenant no cambia nada; a otro,
+    /// <c>suppliers.supplier.linked_elsewhere</c>.
+    /// </summary>
+    public void LinkTo(Guid linkedTenantId, DateTimeOffset now)
+    {
+        EnsureLinkTarget(linkedTenantId);
+        if (LinkedTenantId == linkedTenantId)
+        {
+            return;
+        }
+
+        if (LinkedTenantId is not null)
+        {
+            throw new SuppliersDomainException(
+                "suppliers.supplier.linked_elsewhere",
+                "The supplier is already linked to another tenant.");
+        }
+
+        LinkedTenantId = linkedTenantId;
+        Version++;
+        UpdatedAt = now;
+    }
+
+    private static void EnsureLinkTarget(Guid linkedTenantId)
+    {
+        if (linkedTenantId == Guid.Empty)
+        {
+            throw new ArgumentException("The linked tenant id cannot be empty.", nameof(linkedTenantId));
+        }
     }
 
     public void Deactivate(DateTimeOffset now)
@@ -164,6 +220,15 @@ public sealed class Supplier
         var identification = SupplierIdentification.Create(
             IdentificationTypeParser.Parse(data.IdentificationType),
             data.IdentificationNumber);
+        // D-8: el documento de un proveedor vinculado es el de la empresa facturadora del mayorista (D-2) y no se edita a
+        // mano. Se compara ya normalizado: el mismo número con espacios alrededor no es un cambio.
+        if (LinkedTenantId is not null && identification != Identification)
+        {
+            throw new SuppliersDomainException(
+                "suppliers.supplier.linked_identity_locked",
+                "The identification of a linked supplier cannot be changed.");
+        }
+
         var contact = new SupplierContactInfo
         {
             Phone = data.Phone,

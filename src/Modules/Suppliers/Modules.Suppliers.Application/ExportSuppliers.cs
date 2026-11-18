@@ -144,7 +144,8 @@ public sealed class ExportSuppliersHandler(
             ? new Dictionary<Guid, SupplierCityRef>()
             : await geographyLookup.FindCitiesAsync(cityIds, cancellationToken);
 
-        return [.. suppliers.Select(supplier => supplier.ToResponse(ResolveCity(citiesById, supplier)))];
+        // El Excel no tiene columna del mayorista vinculado: resolver su nombre por proveedor serían consultas que nadie lee.
+        return [.. suppliers.Select(supplier => supplier.ToResponse(ResolveCity(citiesById, supplier), linkedTenant: null))];
     }
 
     // Un miss es corrupción de datos y no una entrada inválida: mismo criterio que la lista.

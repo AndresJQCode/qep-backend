@@ -12,6 +12,18 @@ public interface ISupplierRepository
 
     void Add(Supplier supplier);
 
+    /// <summary>Spec 2026-11-17 (mayorista): el proveedor de este tenant vinculado a <paramref name="linkedTenantId"/>, con
+    /// tracking (puede escribirse a continuación).</summary>
+    Task<Supplier?> FindByLinkedTenantAsync(Guid tenantId, Guid linkedTenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-17 (mayorista), D-8: el proveedor de este tenant con ese documento, con tracking.
+    /// <paramref name="number"/> llega recortado, como lo guarda <see cref="SupplierIdentification"/>.</summary>
+    Task<Supplier?> FindByIdentificationAsync(
+        Guid tenantId,
+        IdentificationType type,
+        string number,
+        CancellationToken cancellationToken);
+
     Task<(IReadOnlyList<Supplier> Items, int Total)> SearchAsync(
         Guid tenantId,
         string? search,

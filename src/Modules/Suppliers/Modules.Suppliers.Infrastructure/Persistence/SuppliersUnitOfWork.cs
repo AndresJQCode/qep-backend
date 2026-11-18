@@ -16,6 +16,11 @@ internal sealed class SuppliersUnitOfWork(SuppliersDbContext dbContext) : ISuppl
     // modela (ver el comentario en ConfigureSupplier).
     private const string CityForeignKey = "FK_suppliers_cities_city_id";
 
+    // Spec 2026-11-17 (mayorista): un proveedor por mayorista dentro del tenant (AddSupplierLinkedTenant).
+    private const string LinkedTenantIndex = "IX_suppliers_tenant_linked_tenant";
+
+    public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
@@ -37,6 +42,13 @@ internal sealed class SuppliersUnitOfWork(SuppliersDbContext dbContext) : ISuppl
             throw new SuppliersDomainException(
                 "suppliers.supplier.identification_taken",
                 "Another supplier in this tenant already uses that identification.");
+        }
+        catch (DbUpdateException exception) when (IsUniqueViolationOf(exception, LinkedTenantIndex))
+        {
+            // Dos aceptaciones de la misma invitación a la vez; SupplierLinking relee una vez y encuentra la ganadora.
+            throw new ResourceConflictException(
+                "suppliers.supplier.linked_elsewhere",
+                "Another supplier in this tenant is already linked to that wholesaler.");
         }
         catch (DbUpdateException exception) when (IsForeignKeyViolationOf(exception, CityForeignKey))
         {
