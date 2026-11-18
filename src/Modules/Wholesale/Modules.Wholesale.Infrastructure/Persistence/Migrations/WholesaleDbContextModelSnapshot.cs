@@ -269,6 +269,36 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                     b.ToTable("price_lists", "wholesale");
                 });
 
+            modelBuilder.Entity("Modules.Wholesale.Infrastructure.Persistence.WholesaleInboxMessage", b =>
+                {
+                    b.Property<string>("Consumer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("consumer");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Consumer", "MessageId");
+
+                    b.ToTable("inbox_messages", "wholesale");
+                });
+
             modelBuilder.Entity("Modules.Wholesale.Infrastructure.Persistence.WholesaleOutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -345,6 +375,7 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                                 .HasColumnName("expires_at");
 
                             b1.Property<int>("Generation")
+                                .IsConcurrencyToken()
                                 .ValueGeneratedOnAdd()
                                 .HasColumnType("integer")
                                 .HasDefaultValue(0)

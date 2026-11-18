@@ -84,6 +84,8 @@ public sealed class WholesaleDbContextMappingTests
         var generation = invitations.FindProperty(nameof(DistributorInvitation.Generation))!;
         Assert.Equal(("generation", typeof(int), false, (object?)0),
             (generation.GetColumnName(), generation.ClrType, generation.IsNullable, generation.GetDefaultValue()));
+        // D-4: el resultado de un aviso leído antes de un cambio de generación no se escribe sobre la nueva.
+        Assert.True(generation.IsConcurrencyToken);
 
         var status = invitations.FindProperty(nameof(DistributorInvitation.NoticeStatus))!;
         Assert.Equal(("notice_status", (int?)16, true, typeof(string)),

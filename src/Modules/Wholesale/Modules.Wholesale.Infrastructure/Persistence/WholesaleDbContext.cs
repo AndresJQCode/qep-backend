@@ -49,12 +49,16 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
 
     internal DbSet<WholesaleOutboxMessage> Outbox => Set<WholesaleOutboxMessage>();
 
+    // Spec 2026-11-18: el inbox del consumidor del aviso por WhatsApp (InvitationNoticeProcessor), como Compras.
+    internal DbSet<WholesaleInboxMessage> Inbox => Set<WholesaleInboxMessage>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigurePriceList(modelBuilder);
         ConfigureDistributor(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
+        ConfigureInbox(modelBuilder);
     }
 
     // Enums como texto de 16 y `version` como bigint fijado a mano: un cambio del tipo CLR no cambia el esquema.
@@ -177,7 +181,12 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
             invitation.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
             invitation.Property(value => value.AcceptedByUserId).HasColumnName("accepted_by_user_id");
             // Las invitaciones de antes del aviso quedan en la generación 0 y sin aviso.
-            invitation.Property(value => value.Generation).HasColumnName("generation").HasDefaultValue(0);
+            // Token de concurrencia (D-4): el resultado de un aviso leído antes de un PUT o un «Reenviar» no se escribe sobre la
+            // generación nueva; el UPDATE no encuentra la fila y el mensaje vuelve, ya viejo.
+            invitation.Property(value => value.Generation)
+                .HasColumnName("generation")
+                .HasDefaultValue(0)
+                .IsConcurrencyToken();
             invitation.Property(value => value.NoticeStatus)
                 .HasColumnName("notice_status")
                 .HasConversion<string>()
@@ -189,6 +198,20 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
             invitation.HasIndex(value => value.ReservedTenantId).IsUnique().HasDatabaseName(InvitationReservedTenantIndex);
         });
         distributor.Navigation(value => value.Invitation).IsRequired();
+    }
+
+    // Copia de PurchasesDbContext.ConfigureInbox.
+    private static void ConfigureInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<WholesaleInboxMessage>();
+        inbox.ToTable("inbox_messages", Schema);
+        inbox.HasKey(value => new { value.Consumer, value.MessageId });
+        inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(200);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id");
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        // Los nombres van a mano porque WholesaleInboxClaims los escribe en SQL crudo.
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
     }
 
     // Forma de SuppliersDbContext.ConfigureOutboxProjection.
