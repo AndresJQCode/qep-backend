@@ -11,4 +11,8 @@ public static class SiigoAuditActions
     public const string InvoiceRejected = "siigo.invoice.rejected";
 
     public const string InvoiceResolved = "siigo.invoice.resolved";
+
+    /// <summary>El recurso de las entradas de configuración: la conexión de Integrations (con el mismo nombre que le dan Shopify y
+    /// Messaging).</summary>
+    public const string ConnectionResourceType = "integration_connection";
 }

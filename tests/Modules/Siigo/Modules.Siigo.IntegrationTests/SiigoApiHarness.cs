@@ -2,7 +2,11 @@ using System.Net.Http.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Catalog.Application;
+using Modules.Companies.Application;
+using Modules.Tenancy.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Npgsql;
@@ -141,6 +145,137 @@ internal static class SiigoApiHarness
         return connection.Id;
     }
 
+    /// <summary>Lo que hace falta para sembrar empresas, tasas y productos por las APIs de cada módulo.</summary>
+    public static readonly string[] SeedPermissions =
+    [
+        CatalogPermissions.ProductRead,
+        CatalogPermissions.ProductManage,
+        CatalogPermissions.TaxRateRead,
+        CatalogPermissions.TaxRateManage,
+        CompaniesPermissions.CompanyRead,
+        CompaniesPermissions.CompanyManage,
+        TenancyPermissions.SettingsUpdate,
+    ];
+
+    public static async Task<T> ScalarAsync<T>(string connectionString, string sql, params (string Name, object Value)[] parameters)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        return (T)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
+    internal sealed record CompanyRef(Guid Id, string BankName, string AccountNumber);
+
+    /// <summary>La empresa con su cuenta de cobro en COP (la que el pedido congela en <c>BillingAccount</c>) y, si se pide, tasas de
+    /// retención asignadas.</summary>
+    public static async Task<CompanyRef> CreateCompanyAsync(
+        HttpClient client, Guid tenantId, string name = "Origen Botánico SAS", IReadOnlyList<Guid>? withholdingTaxRateIds = null)
+    {
+        var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name,
+                bankAccounts = new[] { new { bankName = "Bancolombia", accountNumber, currency = "COP" } },
+                taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
+                cityId = await AnyCityIdAsync(client),
+                phone = "6045551234",
+                email = "ventas@origen.example.co",
+                address = "Cra 50 # 10-20, Rionegro",
+                withholdingTaxRateIds,
+            },
+            TestContext.Current.CancellationToken);
+        await EnsureSuccessAsync(response);
+        return new CompanyRef(await ReadIdAsync(response), "Bancolombia", accountNumber);
+    }
+
+    /// <summary>Una tasa de IVA (el tipo por defecto) o, con <paramref name="type"/>, de otro tipo (<c>Retefuente</c>).</summary>
+    public static async Task<Guid> CreateTaxRateAsync(
+        HttpClient client, Guid tenantId, string name, decimal percentage, string? type = null, string? country = null, Guid? cityId = null)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/tax-rates",
+            new { name, percentage, type, country, cityId },
+            TestContext.Current.CancellationToken);
+        await EnsureSuccessAsync(response);
+        return await ReadIdAsync(response);
+    }
+
+    /// <summary>Un producto con una sola variante (el código va en la variante) y precio COP de lista.</summary>
+    public static async Task<Guid> CreateProductAsync(
+        HttpClient client, Guid tenantId, string code, string name, decimal priceCop, Guid? taxRateId)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products",
+            new
+            {
+                name,
+                taxRateId,
+                variants = new[]
+                {
+                    new
+                    {
+                        code,
+                        pricing = new
+                        {
+                            prices = new Dictionary<string, decimal> { ["COP"] = priceCop },
+                            scales = new object[]
+                            {
+                                new { fromUnit = 1, toUnit = 999_999, discount = 0m, restriction = "multiple", multiple = 1 },
+                            },
+                            packagingUnits = Array.Empty<int>(),
+                        },
+                    },
+                },
+            },
+            TestContext.Current.CancellationToken);
+        await EnsureSuccessAsync(response);
+        return await ReadIdAsync(response);
+    }
+
+    public static async Task<Guid> AnyCityIdAsync(HttpClient client)
+    {
+        var departments = await client.GetFromJsonAsync<List<IdDto>>("/api/v1/departments", TestContext.Current.CancellationToken);
+        Assert.NotNull(departments);
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<IdDto>>(
+                $"/api/v1/cities?departmentId={department.Id}", TestContext.Current.CancellationToken);
+            if (cities is { Count: > 0 })
+            {
+                return cities[0].Id;
+            }
+        }
+
+        throw new InvalidOperationException("No seeded DIVIPOLA department has at least one city.");
+    }
+
+    /// <summary>Como <c>EnsureSuccessStatusCode</c>, pero el mensaje lleva el cuerpo del problema: sin él, un 422 de una siembra no dice
+    /// qué campo rechazó.</summary>
+    public static async Task EnsureSuccessAsync(HttpResponseMessage response)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"{(int)response.StatusCode} {response.RequestMessage?.RequestUri?.AbsolutePath}: {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+        }
+    }
+
+    private static async Task<Guid> ReadIdAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadFromJsonAsync<IdDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body.Id;
+    }
+
     private static async Task<PostgreSqlContainer> StartServerAsync()
     {
         var server = new PostgreSqlBuilder("postgres:18-alpine")
@@ -187,11 +322,20 @@ internal static class SiigoApiHarness
         }
     }
 
-    public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
+    /// <param name="siigo">Si viene, es el handler primario del cliente nombrado <c>siigo</c>: ninguna prueba llama a Siigo.</param>
+    public sealed class QepApiFactory(string connectionString, FakeSiigoApi? siigo = null) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            if (siigo is not null)
+            {
+                // El mismo nombre que SiigoApiClient.HttpClientName, que es interno: el cliente real queda, la red es de mentira.
+                builder.ConfigureTestServices(services => services
+                    .AddHttpClient("siigo")
+                    .ConfigurePrimaryHttpMessageHandler(() => siigo.CreateHandler()));
+            }
+
             builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 40 }.ConnectionString);
             // Fijados, nunca heredados: los user-secrets de quien corre las pruebas pueden prender la semilla o apuntar a otro lado.
             builder.UseSetting("Platform:OperatorTenantId", string.Empty);
@@ -224,4 +368,6 @@ internal static class SiigoApiHarness
     }
 
     private sealed record RegisteredDto(Guid TenantId, Guid OwnerUserId);
+
+    private sealed record IdDto(Guid Id);
 }

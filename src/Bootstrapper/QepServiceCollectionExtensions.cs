@@ -65,6 +65,7 @@ using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Settings;
 using Modules.Siigo.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
@@ -1564,6 +1565,19 @@ public static class QepServiceCollectionExtensions
         // Siigo (spec 2026-11-18): la factura electrónica de un pedido en Siigo. Sólo ve Tenancy (y Audit para su auditoría
         // atómica); conexión, pedido, cliente, producto, ciudad y empresa entran por adaptadores que llegan con cada caso de uso.
         services.AddSiigoInfrastructure(configuration);
+        // §5.3 y §7 (Tarea 6): la configuración de cada conexión (siigo.settings.manage, política ya registrada abajo) y las listas de
+        // Siigo que sus selectores leen en vivo. Los puertos de Siigo hacia Integrations, Companies y Catalog (SiigoPorts.cs) se unen acá:
+        // Siigo no referencia ninguno de esos módulos (SiigoLayerTests).
+        services.AddScoped<IQueryHandler<GetSiigoSettingsQuery, SiigoSettingsDto>, GetSiigoSettingsHandler>();
+        services.AddScoped<ICommandHandler<AssignSiigoCompanyCommand, SiigoSettingsDto>, AssignSiigoCompanyHandler>();
+        services.AddScoped<ICommandHandler<UpdateSiigoDocumentCommand, SiigoSettingsDto>, UpdateSiigoDocumentHandler>();
+        services.AddScoped<ICommandHandler<UpdateSiigoTaxesCommand, SiigoSettingsDto>, UpdateSiigoTaxesHandler>();
+        services.AddScoped<ICommandHandler<UpdateSiigoPaymentsCommand, SiigoSettingsDto>, UpdateSiigoPaymentsHandler>();
+        services.AddScoped<IQueryHandler<ListSiigoOptionsQuery, IReadOnlyList<SiigoOptionDto>>, ListSiigoOptionsHandler>();
+        services.AddValidatorsFromAssemblyContaining<UpdateSiigoDocumentValidator>();
+        services.AddScoped<ISiigoConnectionDirectory, SiigoConnectionDirectory>();
+        services.AddScoped<ISiigoCompanyDirectory, SiigoCompanyDirectory>();
+        services.AddScoped<ISiigoTaxRateDirectory, SiigoTaxRateDirectory>();
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
