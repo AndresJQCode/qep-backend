@@ -19,13 +19,17 @@ internal sealed class CustomerDuplicateQueries(CustomersDbContext dbContext) : I
         Guid tenantId, string normalizedNumber, Guid? excludeCustomerId, int take, CancellationToken cancellationToken)
     {
         // SELECT * para que EF reciba todas las columnas mapeadas (un FromSql crudo no las completa), y LINQ encima.
+        // AsSingleQuery explícito: el cliente trae dos colecciones owned (tasas de retención y ciudades donde es agente) que
+        // EF une a la misma consulta y, sin decirlo, avisa 20504 en cada búsqueda. Son unas pocas filas por cliente y la
+        // página es de 20: un solo viaje a la base vale más que ahorrarse las repeticiones.
         var query = dbContext.Customers
             .FromSqlRaw(
                 $"SELECT * FROM customers.customers WHERE tenant_id = {{0}} AND identification_type IS NOT NULL " +
                 $"AND identification_number IS NOT NULL AND merged_into_id IS NULL AND {CustomerIdentificationSql.NormalizedNumber} = {{1}}",
                 tenantId,
                 normalizedNumber)
-            .AsNoTracking();
+            .AsNoTracking()
+            .AsSingleQuery();
 
         if (excludeCustomerId is { } excluded)
         {

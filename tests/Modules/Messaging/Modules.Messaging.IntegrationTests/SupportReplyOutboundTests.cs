@@ -807,7 +807,7 @@ public sealed class SupportReplyOutboundTests
             services, tenantId, connectionId, memberId, SupportFormalReplyTemplateDefinition.Name,
             TemplateComponentsBuilder.Components(
                 SupportFormalReplyTemplateDefinition.Draft(SupportFormalReplyTemplateDefinition.Name, SupportFormalReplyTemplateDefinition.BaseBody),
-                "4::handle").ToJsonString(),
+                TemplateMediaHeader.Document("4::handle")).ToJsonString(),
             MessageTemplateKind.SupportFormalReply);
 
     private static Task SeedApprovedSurveyAsync(IServiceProvider services, Guid tenantId, Guid connectionId, Guid memberId) =>

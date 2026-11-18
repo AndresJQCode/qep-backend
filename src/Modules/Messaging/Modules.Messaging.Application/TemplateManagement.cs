@@ -1,7 +1,9 @@
 using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
 using FluentValidation;
+using System.Globalization;
 using FluentValidation.Results;
+using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
 
@@ -32,7 +34,9 @@ internal static class ManagedTemplateMapping
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(memberNames);
-        var described = TemplateCatalog.FromStored(template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson);
+        // Con la imagen guardada, la pantalla dice «enviable» igual que el catálogo del chat (spec 2026-11-17).
+        var described = TemplateCatalog.FromStored(
+            template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson, template.HeaderImageUrl);
         return new ManagedTemplateDto(
             template.Id,
             template.MetaTemplateId,
@@ -53,7 +57,8 @@ internal static class ManagedTemplateMapping
             template.CreatedByMemberId is { } member ? new MemberRefDto(member, memberNames.GetValueOrDefault(member) ?? MessageMapping.DeletedMemberName) : null,
             template.CreatedAt,
             template.UpdatedAt,
-            BillingTemplateDefinitions.RequestedCategoryFor(template.Kind, template.Name, template.Category));
+            BillingTemplateDefinitions.RequestedCategoryFor(template.Kind, template.Name, template.Category),
+            template.HeaderImageUrl);
     }
 }
 
@@ -153,6 +158,8 @@ public static class TemplateMessages
     public const string Language = "Elige un idioma con la forma «es» o «es_CO».";
     public const string Category = "La categoría es MARKETING o UTILITY.";
     public const string Header = "El encabezado lleva hasta 60 caracteres y no admite variables.";
+    public const string HeaderExclusive = "Elige un encabezado de texto o una imagen, no los dos.";
+    public const string HeaderImage = "Sube una imagen JPG o PNG de hasta 5 MB.";
     public const string Footer = "El pie lleva hasta 60 caracteres.";
     public const string Body = "Escribe un cuerpo de 1 a 1024 caracteres con algo más que variables.";
     public const string BodyVariable = "Las variables van entre llaves dobles, en minúsculas, con números o guiones bajos y sin espacios: {{nombre}}.";
@@ -165,7 +172,8 @@ public static class TemplateMessages
     public const string ButtonPhone = "El botón de llamada necesita un número de 7 a 20 dígitos, con «+» opcional.";
 }
 
-/// <summary>§4.7 <c>POST …/template-management/templates</c>. Todo opcional para que lo que falte salga 422 con su clave en <c>errors</c>.</summary>
+/// <summary>§4.7 <c>POST …/template-management/templates</c>. Todo opcional para que lo que falte salga 422 con su clave en <c>errors</c>.
+/// <c>HeaderImageFileId</c> (spec 2026-11-17) es la imagen fija del encabezado, ya subida por la sesión de la imagen.</summary>
 public sealed record CreateTemplateCommand(
     Guid TenantId,
     Guid ConnectionId,
@@ -176,7 +184,8 @@ public sealed record CreateTemplateCommand(
     string? Body,
     string? Footer,
     IReadOnlyList<TemplateButtonInput>? Buttons,
-    IReadOnlyDictionary<string, string?>? Examples) : ICommand<ManagedTemplateDto>;
+    IReadOnlyDictionary<string, string?>? Examples,
+    Guid? HeaderImageFileId = null) : ICommand<ManagedTemplateDto>;
 
 /// <summary>§4.8. Lo que Meta valida y nosotros no (proporción de variables frente a texto, variable al final) vuelve de Meta como
 /// <c>rejected_by_meta</c>: duplicarlo sería mantener dos copias de reglas que Meta cambia sin avisar.</summary>
@@ -202,6 +211,10 @@ public sealed partial class CreateTemplateCommandValidator : AbstractValidator<C
         RuleFor(command => command.Header)
             .Must(header => header is null || (header.Length <= 60 && !header.Contains("{{", StringComparison.Ordinal)))
             .OverridePropertyName("header").WithMessage(TemplateMessages.Header);
+        // Spec 2026-11-17: el encabezado es de texto o es una imagen. Va en «header» porque es el campo que el usuario escribió de más.
+        RuleFor(command => command.Header)
+            .Must((command, header) => command.HeaderImageFileId is null || string.IsNullOrEmpty(header))
+            .OverridePropertyName("header").WithMessage(TemplateMessages.HeaderExclusive);
         RuleFor(command => command.Footer)
             .Must(footer => footer is null || footer.Length <= 60)
             .OverridePropertyName("footer").WithMessage(TemplateMessages.Footer);
@@ -289,8 +302,12 @@ public sealed partial class CreateTemplateCommandValidator : AbstractValidator<C
 }
 
 /// <summary>§4.3 «CreateTemplateCommand»: valida, comprueba el nombre en el espejo sin llamar a Meta, crea en Meta, inserta <c>PENDING</c>
-/// <c>Free</c>, audita y guarda. Si Meta falla no se escribe nada.</summary>
-public sealed class CreateTemplateHandler(
+/// <c>Free</c>, audita y guarda. Si Meta falla no se escribe nada.
+/// <para>Spec 2026-11-17, con <c>HeaderImageFileId</c>: después de lo anterior (nada de eso toca el archivo) completa el archivo y lo revisa
+/// contra <see cref="TemplateHeaderImagePolicy"/>, lo publica, sube sus bytes a Meta para el <c>header_handle</c> y crea con un encabezado
+/// <c>IMAGE</c>. Desde que se publica, cualquier fallo (Meta rechaza, la subida a Meta falla, el nombre se pierde al guardar) libera la
+/// imagen antes de dejar salir el error: ninguna imagen pública sobrevive sin su fila.</para></summary>
+public sealed partial class CreateTemplateHandler(
     IMessageTemplateRepository repository,
     IWhatsAppCloudClient meta,
     IMessagingConnectionDirectory connections,
@@ -301,9 +318,15 @@ public sealed class CreateTemplateHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<CreateTemplateCommand> validator)
+    IValidator<CreateTemplateCommand> validator,
+    IMessagingTemplateImageStore images,
+    ITemplateHeaderImageReleases imageReleases,
+    ILogger<CreateTemplateHandler> logger)
     : ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>
 {
+    private static readonly IReadOnlyDictionary<string, string[]> HeaderImageField =
+        new Dictionary<string, string[]>(StringComparer.Ordinal) { ["headerImageFileId"] = [TemplateMessages.HeaderImage] };
+
     public async Task<ManagedTemplateDto> HandleAsync(CreateTemplateCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -320,7 +343,49 @@ public sealed class CreateTemplateHandler(
             throw new MessagingDomainException(MessagingErrorCodes.TemplateNameTaken, "Another template of this connection already uses that name in that language.");
         }
 
-        var created = await meta.CreateTemplateAsync(source, TemplateComponentsBuilder.CreatePayload(draft), cancellationToken);
+        if (command.HeaderImageFileId is not { } fileId)
+        {
+            var template = await CreateAsync(command, source, draft, mediaHeader: null, attach: null, cancellationToken);
+            return await ToDtoAsync(command, template, cancellationToken);
+        }
+
+        // Revisión del bloque C: un archivo que ya es la imagen de una plantilla guardada (doble envío, un fileId reenviado) no se toma.
+        // Si se tomara, el fallo de esta creación liberaría la imagen de la otra, que sigue enviándose. No se toca el archivo.
+        if (await repository.IsHeaderImageInUseAsync(command.TenantId, fileId, cancellationToken))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateHeaderImageRejected, "The header image already belongs to another template.", fieldErrors: HeaderImageField);
+        }
+
+        var mimeType = await EnsureUsableImageAsync(command.TenantId, fileId, cancellationToken);
+        // Desde la publicación la imagen puede ser pública. Hasta que la fila quede guardada, cualquier salida la libera, también una
+        // cancelación del request: una imagen pública sin fila no puede quedar. Con la fila guardada nunca se libera: es su imagen.
+        // La publicación va dentro (revisión final): si falla después de copiar al bucket público (el guardado de Storage, una cancelación),
+        // las copias públicas no quedan sin fila. Liberar un archivo a medio publicar o sin publicar es seguro: ReleaseAsync despublica lo
+        // que haya y lo borra.
+        var saved = false;
+        try
+        {
+            var publicUrl = await images.PublishAsync(command.TenantId, fileId, cancellationToken);
+            var bytes = await images.ReadAsync(command.TenantId, fileId, cancellationToken);
+            var handle = await UploadImageAsync(command, source, bytes, mimeType, cancellationToken);
+            var withImage = await CreateAsync(
+                command, source, draft, TemplateMediaHeader.Image(handle), (template, now) => template.AttachHeaderImage(fileId, publicUrl, now), cancellationToken);
+            saved = true; // CreateAsync termina con SaveChangesAsync.
+            return await ToDtoAsync(command, withImage, cancellationToken);
+        }
+        catch (Exception) when (!saved)
+        {
+            await ReleaseOrDeferAsync(command.TenantId, fileId);
+            throw;
+        }
+    }
+
+    private async Task<MessageTemplate> CreateAsync(
+        CreateTemplateCommand command, MessagingTemplateSource source, TemplateDraft draft, TemplateMediaHeader? mediaHeader,
+        Action<MessageTemplate, DateTimeOffset>? attach, CancellationToken cancellationToken)
+    {
+        var created = await meta.CreateTemplateAsync(source, TemplateComponentsBuilder.CreatePayload(draft, mediaHeader), cancellationToken);
         if (!created.Succeeded || created.Value is null)
         {
             throw await TemplateGraphErrors.FailAsync(
@@ -331,14 +396,128 @@ public sealed class CreateTemplateHandler(
         var memberId = await callerMembership.FindAsync(command.TenantId, cancellationToken);
         var template = MessageTemplate.Pending(
             command.TenantId, command.ConnectionId, created.Value.Id, draft.Name, draft.Language, created.Value.Category, TemplateComponentsBuilder.Named,
-            created.Value.Status, TemplateComponentsBuilder.Components(draft).ToJsonString(), MessageTemplateKind.Free, memberId, now);
+            created.Value.Status, TemplateComponentsBuilder.Components(draft, mediaHeader).ToJsonString(), MessageTemplateKind.Free, memberId, now);
+        attach?.Invoke(template, now);
         repository.Add(template);
         audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateCreated, template.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        return template;
+    }
+
+    private async Task<ManagedTemplateDto> ToDtoAsync(CreateTemplateCommand command, MessageTemplate template, CancellationToken cancellationToken)
+    {
         var names = await TemplateManagementSupport.MemberNamesAsync(
-            memberNames, command.TenantId, memberId is { } member ? [member] : [], cancellationToken);
+            memberNames, command.TenantId, template.CreatedByMemberId is { } member ? [member] : [], cancellationToken);
         return ManagedTemplateMapping.ToDto(template, names);
     }
+
+    /// <summary>Completa la subida y revisa el archivo con lo que Storage guardó, no con lo que el navegador declaró. Cada problema sale con
+    /// su código y la clave <c>headerImageFileId</c>, que el formulario marca en el campo del encabezado. Devuelve el tipo del archivo.</summary>
+    private async Task<string> EnsureUsableImageAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
+    {
+        var file = await images.CompleteAsync(tenantId, fileId, cancellationToken);
+        var (code, message) = file.State switch
+        {
+            TemplateImageState.NotFound => (MessagingErrorCodes.TemplateHeaderImageNotFound, "The header image was not found in this tenant."),
+            TemplateImageState.NotUploaded => (MessagingErrorCodes.TemplateHeaderImageNotUploaded, "The header image was not uploaded yet."),
+            TemplateImageState.Rejected => (MessagingErrorCodes.TemplateHeaderImageRejected, "The header image was rejected by the file scan."),
+            _ when !TemplateHeaderImagePolicy.IsAllowedMimeType(file.MimeType) =>
+                (MessagingErrorCodes.TemplateHeaderImageUnsupported, "A template header image must be a JPEG or PNG file."),
+            _ when file.SizeBytes > TemplateHeaderImagePolicy.MaxSizeBytes =>
+                (MessagingErrorCodes.TemplateHeaderImageTooLarge, "A template header image cannot exceed 5 MB."),
+            _ => (null, null),
+        };
+        if (code is not null)
+        {
+            throw new MessagingDomainException(code, message!, fieldErrors: HeaderImageField);
+        }
+
+        return file.MimeType!.Trim().ToLowerInvariant();
+    }
+
+    /// <summary>Como el PDF del pedido (<c>OrderTemplateProvisioning</c>): la subida es un endpoint de la app, no de la WABA, así que nunca
+    /// se reporta la conexión; <c>no_app_id</c> se registra y sale como <c>upload_failed</c>.</summary>
+    private async Task<string> UploadImageAsync(
+        CreateTemplateCommand command, MessagingTemplateSource source, byte[] bytes, string mimeType, CancellationToken cancellationToken)
+    {
+        var fileName = mimeType == "image/png" ? "encabezado.png" : "encabezado.jpg";
+        var upload = await meta.UploadTemplateExampleAsync(source, bytes, mimeType, fileName, cancellationToken);
+        if (upload.Succeeded && upload.Value is { } handle)
+        {
+            return handle;
+        }
+
+        var failure = upload.Failure ?? new MessagingGraphFailure(0, null, "no_handle");
+        LogUploadFailed(
+            logger, command.TenantId, command.ConnectionId, failure.HttpStatus, failure.Code?.ToString(CultureInfo.InvariantCulture) ?? "none", failure.Reason);
+        throw new MessagingDomainException(MessagingErrorCodes.TemplateUploadFailed, "WhatsApp did not accept the header image of the template.");
+    }
+
+    /// <summary>Libera la imagen ya publicada de una creación que falló, con <see cref="CancellationToken.None"/>: la liberación no puede
+    /// depender del request que se está cayendo. Si Storage no la libera (R2 caído), deja el aviso
+    /// <see cref="MessagingIntegrationEvents.TemplateHeaderImageReleased"/> en el outbox y Storage la libera con reintentos (plan 2026-11-17
+    /// Task 8). El aviso se guarda solo: antes se descarta lo que el tracker tenía (la fila y la auditoría que no se pudieron guardar, si el
+    /// fallo fue al guardar), para que no viaje con él. Si eso también falla, se registra y sale el error original.
+    /// <para>Revisión del bloque C: antes de liberar (por cualquiera de los dos caminos) se pregunta a la base si una plantilla guardada usa
+    /// el archivo. Si una lo usa (otra creación con el mismo fileId ganó entre la revisión de arriba y este fallo), no se libera: es su
+    /// imagen. Si la pregunta misma falla, tampoco: una imagen pública de más es mejor que quitarle la suya a una plantilla viva.</para></summary>
+    private async Task ReleaseOrDeferAsync(Guid tenantId, Guid fileId)
+    {
+        try
+        {
+            if (await repository.IsHeaderImageInUseAsync(tenantId, fileId, CancellationToken.None))
+            {
+                LogReleaseSkippedInUse(logger, tenantId, fileId);
+                return;
+            }
+        }
+        catch (Exception exception)
+        {
+            LogReleaseFailed(logger, exception, tenantId, fileId);
+            return;
+        }
+
+        try
+        {
+            await images.ReleaseAsync(tenantId, fileId, CancellationToken.None);
+            return;
+        }
+        catch (Exception exception)
+        {
+            LogReleaseDeferred(logger, exception, tenantId, fileId);
+        }
+
+        try
+        {
+            unitOfWork.DiscardPendingChanges();
+            imageReleases.Publish(tenantId, fileId, clock.UtcNow);
+            await unitOfWork.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            LogReleaseFailed(logger, exception, tenantId, fileId);
+        }
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released now; the release goes through the outbox.")]
+    private static partial void LogReleaseDeferred(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} is not released: a saved template uses it.")]
+    private static partial void LogReleaseSkippedInUse(ILogger logger, Guid tenantId, Guid fileId);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Meta did not accept the header image of a template for connection {ConnectionId} in tenant {TenantId}: status {HttpStatus}, code {GraphCode}, reason {Reason}; the connection is not reported.")]
+    private static partial void LogUploadFailed(ILogger logger, Guid tenantId, Guid connectionId, int httpStatus, string graphCode, string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released nor deferred to the outbox; it stays published.")]
+    private static partial void LogReleaseFailed(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
 }
 
 /// <summary>§4.7 <c>DELETE …/template-management/templates/{templateId}</c>. D-T11: en Meta sólo ese idioma; D-T12: no si una campaña
@@ -354,7 +533,8 @@ public sealed class DeleteTemplateHandler(
     IMessagingAuditRecorder audit,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITemplateHeaderImageReleases imageReleases)
     : ICommandHandler<DeleteTemplateCommand, bool>
 {
     public async Task<bool> HandleAsync(DeleteTemplateCommand command, CancellationToken cancellationToken)
@@ -378,8 +558,16 @@ public sealed class DeleteTemplateHandler(
                 TemplateGraphOperation.Delete, cancellationToken);
         }
 
+        var now = clock.UtcNow;
         repository.Remove(template);
-        audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateDeleted, template.Id, clock.UtcNow);
+        // Spec 2026-11-17: la imagen del encabezado la libera Storage al leer el aviso, que commitea con la eliminación de la fila. Si el
+        // guardado falla, no sale aviso y la imagen sigue siendo de su fila.
+        if (template.HeaderImageFileId is { } fileId)
+        {
+            imageReleases.Publish(command.TenantId, fileId, now);
+        }
+
+        audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateDeleted, template.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
     }

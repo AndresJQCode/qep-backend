@@ -126,11 +126,14 @@ public sealed class CreateOrderHandler(
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, OrdersPermissions.OrderManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        foreach (var proof in command.PaymentProofs)
-        {
-            await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, orderRepository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
-        }
+        // Todos los comprobantes del cuerpo en dos lecturas, no dos por comprobante, como al convertir.
+        await OrderPaymentProofResolver.ResolveManyAsync(
+            fileLookup,
+            orderRepository,
+            command.TenantId,
+            command.PaymentProofs.Select(proof => proof.FileId).ToArray(),
+            exceptProofId: null,
+            cancellationToken);
 
         var advisorId = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

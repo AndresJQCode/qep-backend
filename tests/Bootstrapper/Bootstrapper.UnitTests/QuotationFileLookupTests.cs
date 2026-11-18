@@ -79,11 +79,33 @@ public sealed class QuotationFileLookupTests
             TenantId, attachment.Id.Value, "acta.pdf", TestContext.Current.CancellationToken));
     }
 
-    private static FileResource AvailablePaymentProof()
+    // Consultas por request, fase 2: los comprobantes de un cuerpo en una sola lectura. Lo de otro tenant y lo de Soporte no
+    // vienen, igual que un id que no existe.
+    [Fact]
+    public async Task FindManyReadsOnceAndLeavesOutOtherTenantsAndSupportFiles()
     {
+        var proof = AvailablePaymentProof();
+        var foreign = AvailablePaymentProof(Guid.CreateVersion7());
+        var attachment = FileResource.CreatePendingUpload(
+            FileResourceId.New(), TenantId, Guid.NewGuid(), FileOwnerType.SupportTicket, "acta.pdf",
+            "application/pdf", 1024, $"staging/{Guid.CreateVersion7():N}", Now);
+        var repository = new InMemoryFileResourceRepository(proof, foreign, attachment);
+        var lookup = new QuotationFileLookup(repository, new UnusedObjectStorage(), Options.Create(new QuotationsOptions()));
+
+        var found = await lookup.FindManyAsync(
+            TenantId, [proof.Id.Value, foreign.Id.Value, attachment.Id.Value, Guid.CreateVersion7()], TestContext.Current.CancellationToken);
+
+        Assert.Equal([proof.Id.Value], found.Keys);
+        Assert.True(found[proof.Id.Value].IsPaymentProof);
+        Assert.Equal((1, 0), (repository.ListByIdsCalls, repository.GetCalls));
+    }
+
+    private static FileResource AvailablePaymentProof(Guid? tenantId = null)
+    {
+        var owner = tenantId ?? TenantId;
         var proof = FileResource.CreatePendingUpload(
-            FileResourceId.New(), TenantId, Guid.CreateVersion7(), FileOwnerType.PaymentProof, "comprobante.webp",
-            "image/webp", 1024, $"staging/tenants/{TenantId:N}/{Guid.CreateVersion7():N}", Now);
+            FileResourceId.New(), owner, Guid.CreateVersion7(), FileOwnerType.PaymentProof, "comprobante.webp",
+            "image/webp", 1024, $"staging/tenants/{owner:N}/{Guid.CreateVersion7():N}", Now);
         proof.CompleteUpload("checksum", 1024, Now);
         proof.MarkClean(Now);
         return proof;

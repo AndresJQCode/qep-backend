@@ -152,8 +152,12 @@ public interface IOrderRepository
     Task<IReadOnlyList<OrderHistoryEntry>> ListHistoryAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken);
 
-    Task<bool> IsPaymentProofFileInUseAsync(
-        Guid fileId, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken);
+    /// <summary>
+    /// Cuáles de <paramref name="fileIds"/> ya usa algún comprobante de pago, menos <paramref name="exceptProofId"/>
+    /// (revisión final, I2). Una sola lectura para todos los archivos de un cuerpo.
+    /// </summary>
+    Task<IReadOnlySet<Guid>> ListPaymentProofFilesInUseAsync(
+        IReadOnlyCollection<Guid> fileIds, OrderPaymentProofId? exceptProofId, CancellationToken cancellationToken);
 
     void Add(Order order);
 

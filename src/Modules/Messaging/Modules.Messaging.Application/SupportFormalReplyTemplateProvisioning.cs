@@ -72,7 +72,7 @@ public static class SupportFormalReplyTemplateDefinition
     /// <summary>Sin pie ni botones; el encabezado de documento lo pone el handle al armar el payload.</summary>
     public static TemplateDraft Draft(string name, string body) => new(name, Language, Category, null, body, null, [], Examples);
 
-    public static JsonObject Payload(string handle, string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body), handle);
+    public static JsonObject Payload(string handle, string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body), TemplateMediaHeader.Document(handle));
 
     /// <summary>Una externa se adopta si tiene encabezado de documento, cuerpo no vacío, ningún botón y sus variables son de la lista de
     /// Soporte o <c>fullname</c> (la única clave vieja que el envío sabe llenar). Mira la forma, no el texto.</summary>
@@ -196,7 +196,7 @@ public sealed partial class ProvisionSupportFormalReplyTemplateHandler(
         var template = MessageTemplate.Pending(
             command.TenantId, command.ConnectionId, created.Id, name, SupportFormalReplyTemplateDefinition.Language, created.Category,
             TemplateComponentsBuilder.Named, created.Status,
-            TemplateComponentsBuilder.Components(SupportFormalReplyTemplateDefinition.Draft(name, body), handle).ToJsonString(),
+            TemplateComponentsBuilder.Components(SupportFormalReplyTemplateDefinition.Draft(name, body), TemplateMediaHeader.Document(handle)).ToJsonString(),
             MessageTemplateKind.SupportFormalReply, memberId, now);
         repository.Add(template);
         audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateSupportFormalReplyProvisioned, template.Id, now);

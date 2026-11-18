@@ -45,10 +45,17 @@ public sealed class ClosedXmlCustomerExportBuilderTests
         BuildWorkbook(new Dictionary<Guid, string>(), customers);
 
     private XLWorkbook BuildWorkbook(IReadOnlyDictionary<Guid, string> companyNumbers, params CustomerDto[] customers) =>
+        BuildWorkbook(companyNumbers, new Dictionary<Guid, IReadOnlyList<string>>(), customers);
+
+    private XLWorkbook BuildWorkbook(
+        IReadOnlyDictionary<Guid, string> companyNumbers,
+        IReadOnlyDictionary<Guid, IReadOnlyList<string>> tagNames,
+        params CustomerDto[] customers) =>
         new(new MemoryStream(
             builder.Build(
                 customers,
                 companyNumbers,
+                tagNames,
                 new TenantCalendar(Now, Bogota),
                 "yyyy-MM-dd HH:mm",
                 CancellationToken.None).Content));
@@ -126,6 +133,27 @@ public sealed class ClosedXmlCustomerExportBuilderTests
 
         Assert.Contains("Retefuente", headers);
         Assert.DoesNotContain("ReteICA", headers);
+    }
+
+    [Fact]
+    public void TheExportCarriesTheTagNamesSeparatedBySemicolon()
+    {
+        var tagged = Customer("Natural");
+        var plain = Customer(null);
+        using var workbook = BuildWorkbook(
+            new Dictionary<Guid, string>(),
+            new Dictionary<Guid, IReadOnlyList<string>> { [tagged.Id] = ["Evento macel", "VIP"] },
+            tagged,
+            plain);
+
+        var headers = Headers(workbook);
+        var sheet = workbook.Worksheet("Clientes");
+        var column = Array.IndexOf(headers, CustomerImportColumns.Tags) + 1;
+
+        // La misma cabecera y el mismo separador que el importador lee: un exportado se puede volver a subir sin perder etiquetas.
+        Assert.Equal(CustomerImportColumns.Ordered.Count + 2, column);
+        Assert.Equal("Evento macel; VIP", sheet.Cell(2, column).GetString());
+        Assert.Equal(string.Empty, sheet.Cell(3, column).GetString());
     }
 
     [Fact]

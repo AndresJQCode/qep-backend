@@ -17,12 +17,16 @@ internal static class ValkeyTestServer
     // Valor de prueba, no es un secreto: sólo existe dentro del contenedor efímero.
     internal const string QepPassword = "qep-acl-test";
 
+    // Sólo para leer ACL LOG en las pruebas; no existe en producción y no cambia la línea de qep.
+    internal const string AuditorPassword = "auditor-acl-test";
+
     private const int Port = 6379;
     private const string AclPath = "/etc/valkey/users.acl";
 
     private static readonly string Acl =
         "user default off\n" +
-        $"user qep on >{QepPassword} ~qep:* &qep:* +@all -@dangerous -@scripting\n";
+        $"user qep on >{QepPassword} ~qep:* &qep:* +@all -@dangerous -@scripting +info\n" +
+        $"user auditor on >{AuditorPassword} ~* &* +@all\n";
 
     internal static async Task<IContainer> StartAsync(bool withProductionAcl, CancellationToken ct)
     {
@@ -41,6 +45,9 @@ internal static class ValkeyTestServer
         await container.StartAsync(ct);
         return container;
     }
+
+    internal static string AuditorConnectionString(IContainer container) =>
+        $"{container.Hostname}:{container.GetMappedPublicPort(Port)},user=auditor,password={AuditorPassword},abortConnect=false";
 
     internal static string ConnectionString(IContainer container, bool asQep) =>
         $"{container.Hostname}:{container.GetMappedPublicPort(Port)}" +

@@ -96,6 +96,35 @@ public sealed class TemplateManagementApiTests
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId)));
     }
 
+    /// <summary>Plan 2026-11-17 Task 8: la fila que el refresco elimina se lleva su imagen por el outbox, en el mismo guardado.</summary>
+    [Fact]
+    public async Task ASyncThatDropsAnImageTemplateWritesTheRelease()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var url = TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId);
+        await f.Admin.GetAsync(url, Ct);
+        var fileId = f.Factory.TemplateImages.Seed(f.Tenant.TenantId, new byte[2048]);
+        f.Factory.TemplateImages.Files[fileId].Published = true;
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.message_templates SET header_image_file_id = @file, header_image_url = @url WHERE tenant_id = @t AND name = 'borrador'",
+            ("file", fileId), ("url", $"https://public.test/{fileId}.png"), ("t", f.Tenant.TenantId));
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK,
+            """{"data":[{"id":"1","name":"seguimiento","language":"es","status":"APPROVED","category":"UTILITY","parameter_format":"NAMED","components":[{"type":"BODY","text":"Hola {{first_name}}"}]}]}""");
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, $"{url}/sync");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE name = 'borrador' AND tenant_id = @t", ("t", f.Tenant.TenantId)));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'messaging.template.header-image-released.v1' AND payload->>'fileId' = @file AND payload->>'tenantId' = @t",
+            ("file", fileId.ToString()), ("t", f.Tenant.TenantId.ToString())));
+        // Lo libera Storage al consumir el aviso, no el request.
+        Assert.False(f.Factory.TemplateImages.Files[fileId].Released);
+    }
+
     [Fact]
     public async Task WithoutThePermissionOrFromAnotherTenantIs403AndNeverReachesMeta()
     {

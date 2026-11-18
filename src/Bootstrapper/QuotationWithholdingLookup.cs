@@ -16,6 +16,12 @@ namespace Bootstrapper;
 /// (spec impuestos por tipo §7.5). Vive acá por el mismo motivo que
 /// <see cref="QuotationCustomerLookup"/>: Quotations no referencia ni a Catalog ni a Customers. No decide si una
 /// tasa sirve para un selector (eso es <see cref="WithholdingSelection"/>): sólo arma la foto.
+/// <para>
+/// Scoped a propósito: memoiza el cliente y la empresa que lee, y el memo vive lo que el request. El composer pide el
+/// mismo cliente dos o tres veces (<c>MunicipalWithholdingExplanation.cs:66-72</c>, <c>MunicipalContexts.cs:83-86</c>,
+/// <c>QuotationDraftBuilder.cs:76</c>), y en producción cada lectura en serie paga la red hasta la base. El memo guarda
+/// la instancia que devolvió el repositorio, no una copia, así que ve lo que el mismo scope le cambie.
+/// </para>
 /// </summary>
 internal sealed class QuotationWithholdingLookup(
     ICustomerRepository customers,
@@ -24,10 +30,13 @@ internal sealed class QuotationWithholdingLookup(
     ITaxUnitValueRepository taxUnitValues)
     : IQuotationWithholdingLookup
 {
+    private readonly Dictionary<(Guid TenantId, Guid CustomerId), Customer?> customerMemo = [];
+    private readonly Dictionary<(Guid TenantId, Guid CompanyId), Company?> companyMemo = [];
+
     public async Task<IReadOnlyList<WithholdingRate>> ForCompanyMunicipalAsync(
         Guid tenantId, Guid companyId, string country, Guid cityId, DateOnly documentDate, CancellationToken cancellationToken)
     {
-        var company = await companies.FindAsync(tenantId, new CompanyId(companyId), cancellationToken);
+        var company = await FindCompanyAsync(tenantId, companyId, cancellationToken);
         if (company is null || company.WithholdingTaxRateIds.Count == 0)
         {
             return [];
@@ -49,7 +58,7 @@ internal sealed class QuotationWithholdingLookup(
     public async Task<bool> IsWithholdingAgentAsync(
         Guid tenantId, Guid customerId, string country, string type, Guid cityId, CancellationToken cancellationToken)
     {
-        var customer = await customers.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
+        var customer = await FindCustomerAsync(tenantId, customerId, cancellationToken);
         return customer is not null && customer.IsWithholdingAgent(Canonical(country), type, cityId);
     }
 
@@ -83,7 +92,7 @@ internal sealed class QuotationWithholdingLookup(
     public async Task<IReadOnlyList<WithholdingRate>> ForCustomerAsync(
         Guid tenantId, Guid customerId, string? country, DateOnly documentDate, CancellationToken cancellationToken)
     {
-        var customer = await customers.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
+        var customer = await FindCustomerAsync(tenantId, customerId, cancellationToken);
         if (customer is null || customer.WithholdingTaxRateIds.Count == 0)
         {
             return [];
@@ -124,6 +133,29 @@ internal sealed class QuotationWithholdingLookup(
         return found
             .Zip(photos, (rate, photo) => new WithholdingRateCandidate(photo, rate.IsActive, Withholds(rate)))
             .ToDictionary(candidate => candidate.Rate.TaxRateId);
+    }
+
+    // Un id que no existe también se memoiza: preguntar otra vez en el mismo request daría lo mismo.
+    private async Task<Customer?> FindCustomerAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+    {
+        if (!customerMemo.TryGetValue((tenantId, customerId), out var customer))
+        {
+            customer = await customers.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
+            customerMemo[(tenantId, customerId)] = customer;
+        }
+
+        return customer;
+    }
+
+    private async Task<Company?> FindCompanyAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken)
+    {
+        if (!companyMemo.TryGetValue((tenantId, companyId), out var company))
+        {
+            company = await companies.FindAsync(tenantId, new CompanyId(companyId), cancellationToken);
+            companyMemo[(tenantId, companyId)] = company;
+        }
+
+        return company;
     }
 
     // La UVT se lee sólo si alguna tasa tiene base mínima en un país con unidad, y una sola vez para todas.

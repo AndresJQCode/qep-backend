@@ -47,6 +47,10 @@ public interface IMessageTemplateRepository
     /// <summary>D-T12: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión usa ese nombre en ese idioma.</summary>
     Task<bool> IsReferencedByActiveCampaignAsync(Guid tenantId, Guid connectionId, string name, string language, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-17: si alguna plantilla guardada del tenant (de cualquier conexión) tiene ese archivo como imagen del encabezado.
+    /// Lee la base, no lo rastreado: una fila agregada y sin guardar no cuenta. Crear la usa para no tomar ni liberar la imagen de otra.</summary>
+    Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);
+
     /// <summary>§4.1 <c>template_mirror_syncs</c>: cuándo se confirmó el espejo de la conexión contra Meta; <c>null</c> si nunca.</summary>
     Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 

@@ -37,6 +37,7 @@ public sealed class ExportCustomersHandler(
     ICustomerGeographyLookup geographyLookup,
     ICustomerTaxRateLookup taxRateLookup,
     ICustomerCompanyDirectory companyDirectory,
+    ICustomerTagRepository tags,
     ICustomerExportBuilder exportBuilder,
     ICustomerExportStorage exportStorage,
     ICustomerExportEventPublisher exportEventPublisher,
@@ -92,7 +93,8 @@ public sealed class ExportCustomersHandler(
         var dateTimePattern = RegionalDateFormat.WithTime(settings?.DateFormat);
         var items = await ToDtosAsync(command.TenantId, customers, cancellationToken);
         var companyNumbers = await CompanyNumbersAsync(command.TenantId, customers, cancellationToken);
-        var file = exportBuilder.Build(items, companyNumbers, calendar, dateTimePattern, cancellationToken);
+        var tagNames = await TagNamesAsync(command.TenantId, customers, cancellationToken);
+        var file = exportBuilder.Build(items, companyNumbers, tagNames, calendar, dateTimePattern, cancellationToken);
 
         // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
         // entrada de auditoria. No hay exportacion a medias ni correo con un enlace que no resuelve.
@@ -180,6 +182,20 @@ public sealed class ExportCustomersHandler(
         return companies
             .Where(pair => !string.IsNullOrWhiteSpace(pair.Value.IdentificationNumber))
             .ToDictionary(pair => pair.Key, pair => pair.Value.IdentificationNumber!);
+    }
+
+    // Las etiquetas de todos en una consulta, por nombre, como las lista la bandeja (spec 2026-11-17).
+    private async Task<IReadOnlyDictionary<Guid, IReadOnlyList<string>>> TagNamesAsync(
+        Guid tenantId,
+        IReadOnlyList<Customer> customers,
+        CancellationToken cancellationToken)
+    {
+        var rows = await tags.ListForCustomersAsync(tenantId, [.. customers.Select(customer => customer.Id)], cancellationToken);
+        return rows
+            .GroupBy(row => row.Customer.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<string>)[.. group.Select(row => row.Tag.Name).OrderBy(name => name, StringComparer.OrdinalIgnoreCase)]);
     }
 
     // La misma resolucion en lote que ListCustomersHandler, y aca importa mas: a escala de tenant

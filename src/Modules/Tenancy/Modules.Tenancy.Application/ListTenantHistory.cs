@@ -40,13 +40,10 @@ public sealed class ListTenantHistoryHandler(
         var module = query.Module is null ? null : TenantModuleKey.Parse(query.Module);
         var history = await reader.ListHistoryAsync(query.TargetTenantId, module, query.Page, query.PageSize, cancellationToken);
 
-        // Directo desde Tenancy.Application, que ya referencia Identity.Application (ListMemberships.cs:102),
-        // y una consulta por actor de la página, no por lote.
-        var emails = new Dictionary<Guid, string?>();
-        foreach (var actor in history.Batches.Select(batch => batch[0].ActorUserId).Distinct())
-        {
-            emails[actor] = await userDirectory.GetEmailAsync(actor, cancellationToken);
-        }
+        // Directo desde Tenancy.Application, que ya referencia Identity.Application (ListMemberships.cs:102), y un solo
+        // viaje a Identity por los actores de la página: el que ya no existe no viene en el diccionario y sale null.
+        var emails = await userDirectory.GetEmailsAsync(
+            history.Batches.Select(batch => batch[0].ActorUserId).Distinct().ToList(), cancellationToken);
 
         var items = history.Batches
             .Select(batch =>
@@ -55,7 +52,7 @@ public sealed class ListTenantHistoryHandler(
                 var head = batch[0];
                 return new OperatorHistoryBatchDto(
                     head.BatchId, TenantChangeVocabulary.ToText(head.Kind), head.OccurredAt, head.ActorUserId,
-                    emails[head.ActorUserId], TenantChangeVocabulary.ToText(head.Reason), head.Note,
+                    emails.GetValueOrDefault(head.ActorUserId), TenantChangeVocabulary.ToText(head.Reason), head.Note,
                     batch.Select(change => new OperatorHistoryChangeDto(
                             change.ModuleKey?.Value, change.FromStatus, change.ToStatus, change.ProviderKey))
                         .ToArray());

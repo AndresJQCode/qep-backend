@@ -14,6 +14,9 @@ public interface IUserRepository
 
     Task<User?> FindByIdAsync(Guid userId, CancellationToken cancellationToken);
 
+    /// <summary>Los usuarios de esos ids en una sola consulta; los que no existen no vienen.</summary>
+    Task<IReadOnlyList<User>> ListByIdsAsync(IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken);
+
     void Add(User user);
 
     /// <summary>

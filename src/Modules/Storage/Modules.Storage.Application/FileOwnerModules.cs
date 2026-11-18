@@ -28,6 +28,7 @@ public static class FileOwnerModules
             [FileOwnerType.Tenant] = null,
             [FileOwnerType.Store] = TenantModuleKeys.Store,
             [FileOwnerType.SupportTicket] = TenantModuleKeys.Support,
+            [FileOwnerType.MessageTemplate] = TenantModuleKeys.Messaging,
         }.ToFrozenDictionary();
 
     public static TenantModuleKey? ModuleOf(FileOwnerType ownerType) => ByOwnerType[ownerType];

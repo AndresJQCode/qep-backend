@@ -118,6 +118,39 @@ public sealed class ConversationListFiltersApiTests
         Assert.Equal(all.GetProperty("counts").GetRawText(), tagged.GetProperty("counts").GetRawText());
     }
 
+    // Spec qep-frontend 2026-11-17 (chip y filtro por conexión): connectionId acota la lista a un número; los counts no se mueven.
+    [Fact]
+    public async Task TheConnectionFilterKeepsOnlyConversationsOfThatNumberInBothTabsAndTheCountsDoNotMove()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var ventas = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT id FROM integrations.connections WHERE tenant_id = @t AND name = 'Ventas'", ("t", f.Tenant.TenantId));
+        var soporte = await SeedWhatsAppConnectionAsync(f.Factory, f.Tenant.TenantId, "Soporte", "333", "444");
+        var (laura, _) = await IngestAsync(f, "CO.L", "w1", 1760000100, "Laura");
+        using (var anonymous = f.Factory.CreateClient())
+        {
+            await PostWebhookAsync(anonymous, MetaPayloads.Inbound("333", "CO.M", null, "w2", 1760000200, "hola", profileName: "Mateo"));
+            await DrainDeliveriesAsync(f.Factory);
+        }
+        var mateo = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations WHERE user_id = 'CO.M'");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET status = 'Resolved' WHERE id = @id", ("id", mateo));
+
+        var all = await ListAsync(f, "");
+        var onlyVentas = await ListAsync(f, $"?connectionId={ventas}");
+        var resolvedSoporte = await ListAsync(f, $"?status=Resolved&connectionId={soporte}");
+        var resolvedVentas = await ListAsync(f, $"?status=Resolved&connectionId={ventas}");
+        var foreign = await ListAsync(f, $"?connectionId={Guid.CreateVersion7()}");
+
+        Assert.Equal([laura], Ids(all));
+        Assert.Equal([laura], Ids(onlyVentas));
+        Assert.Equal([mateo], Ids(resolvedSoporte));
+        Assert.Empty(Ids(resolvedVentas));
+        Assert.Empty(Ids(foreign));
+        Assert.Equal(all.GetProperty("counts").GetRawText(), onlyVentas.GetProperty("counts").GetRawText());
+    }
+
     [Fact]
     public async Task UnreadKeepsOnlyConversationsWithUnreadMessagesInBothTabs()
     {

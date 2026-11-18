@@ -304,4 +304,37 @@ public sealed class MessageTemplatePersistenceTests
             return 0;
         });
     }
+    // Spec 2026-11-17: las dos columnas de la imagen fija del encabezado.
+    [Fact]
+    public async Task TheHeaderImageColumnsRoundTrip()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var fileId = Guid.CreateVersion7();
+        var url = $"https://public.test/{fileId}.png";
+
+        var (withImageId, withoutImageId) = await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            var withImage = MessageTemplate.Pending(f.TenantId, f.ConnectionId, "900", "promo", "es", "MARKETING", "NAMED", "PENDING",
+                """[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Hola"}]""", MessageTemplateKind.Free, null, Now);
+            withImage.AttachHeaderImage(fileId, url, Now);
+            var withoutImage = Mirrored(f, "901", "aviso");
+            repository.Add(withImage);
+            repository.Add(withoutImage);
+            await unitOfWork.SaveChangesAsync(Ct);
+            return (withImage.Id, withoutImage.Id);
+        });
+
+        await InScopeAsync(f.Factory, async (repository, _) =>
+        {
+            var withImage = await repository.FindAsync(f.TenantId, f.ConnectionId, withImageId, Ct);
+            Assert.NotNull(withImage);
+            Assert.Equal<(Guid?, string?)>((fileId, url), (withImage.HeaderImageFileId, withImage.HeaderImageUrl));
+            var withoutImage = await repository.FindAsync(f.TenantId, f.ConnectionId, withoutImageId, Ct);
+            Assert.NotNull(withoutImage);
+            Assert.Equal<(Guid?, string?)>((null, null), (withoutImage.HeaderImageFileId, withoutImage.HeaderImageUrl));
+            return 0;
+        });
+    }
 }

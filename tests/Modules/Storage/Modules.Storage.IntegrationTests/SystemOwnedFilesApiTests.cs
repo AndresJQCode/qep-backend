@@ -9,10 +9,12 @@ using static Modules.Storage.IntegrationTests.PaymentProofStorageHarness;
 namespace Modules.Storage.IntegrationTests;
 
 /// <summary>
-/// Fix round 1 del Bloque D (Soporte fase 3): los archivos de dueño de sistema (<see cref="SystemOwnedFiles"/>, hoy los adjuntos
-/// <c>SupportTicket</c> del formulario público) no existen para la consola de Storage. Un miembro con todos los permisos
+/// Fix round 1 del Bloque D (Soporte fase 3): los archivos de dueño de sistema (<see cref="SystemOwnedFiles"/>: los adjuntos
+/// <c>SupportTicket</c> del formulario público y, desde el spec 2026-11-17, las imágenes de encabezado <c>MessageTemplate</c>) no existen
+/// para la consola de Storage. Un miembro con todos los permisos
 /// <c>storage.file.*</c> no los lista, no los baja, no los publica, no los borra ni los edita, y no puede abrir una subida con ese
-/// dueño. Sólo llegan por los caminos de Soporte. Un archivo de un dueño común sigue funcionando igual. Un host por prueba: el bucket
+/// dueño. Sólo llegan por los caminos de su módulo. Cada prueba corre con cada dueño de sistema (<see cref="SystemOwners"/>, que una
+/// prueba ata a <see cref="SystemOwnedFiles.OwnerTypes"/>). Un archivo de un dueño común sigue funcionando igual. Un host por prueba: el bucket
 /// es un doble.
 /// </summary>
 public sealed class SystemOwnedFilesApiTests
@@ -22,8 +24,18 @@ public sealed class SystemOwnedFilesApiTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    public static TheoryData<FileOwnerType> SystemOwners => new(FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate);
+
+    // Un dueño de sistema nuevo tiene que entrar a SystemOwners: si no, estas pruebas dejan de cubrirlo sin ponerse rojas.
     [Fact]
-    public async Task TheConsoleCannotOpenAnUploadForASupportTicket()
+    public void SystemOwnersCoversEverySystemOwnedFile()
+    {
+        Assert.Equal(SystemOwnedFiles.OwnerTypes.Order(), SystemOwners.Select(row => row.Data).Order());
+    }
+
+    [Theory]
+    [MemberData(nameof(SystemOwners))]
+    public async Task TheConsoleCannotOpenAnUploadForASystemOwner(FileOwnerType ownerType)
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new StorageApiFactory(database.GetConnectionString());
@@ -31,39 +43,45 @@ public sealed class SystemOwnedFilesApiTests
 
         using var response = await client.PostAsJsonAsync(
             FilesUrl,
-            new { ownerId = Guid.NewGuid(), ownerType = "SupportTicket", name = "acta.pdf", mimeType = "application/pdf", sizeBytes = 10 },
+            new { ownerId = Guid.NewGuid(), ownerType = ownerType.ToString(), name = "acta.pdf", mimeType = "application/pdf", sizeBytes = 10 },
             Ct);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("storage.file.owner_type_invalid", (await response.Content.ReadFromJsonAsync<ProblemPayload>(Ct))!.Code);
     }
 
-    [Fact]
-    public async Task TheListLeavesSupportAttachmentsOutAndKeepsTheRest()
+    [Theory]
+    [MemberData(nameof(SystemOwners))]
+    public async Task TheListLeavesSystemOwnedFilesOutAndKeepsTheRest(FileOwnerType ownerType)
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new StorageApiFactory(database.GetConnectionString());
         using var client = Member(factory);
-        var attachment = await SupportAttachmentAsync(factory, database.GetConnectionString());
+        var attachment = await SystemOwnedFileAsync(factory, database.GetConnectionString(), ownerType);
         var normal = await CreateAvailableAsync(client, factory, "User", "contrato.pdf", "application/pdf", Pdf());
 
         var all = await IdsAsync(client, FilesUrl);
-        var filtered = await IdsAsync(client, $"{FilesUrl}?ownerId={attachment.OwnerId}&ownerType=SupportTicket");
+        var filtered = await IdsAsync(client, $"{FilesUrl}?ownerId={attachment.OwnerId}&ownerType={ownerType}");
 
         Assert.Contains(normal.FileId, all);
         Assert.DoesNotContain(attachment.FileId, all);
         Assert.Empty(filtered);
-        Assert.DoesNotContain(attachment.OwnerId.ToString(), await (await client.GetAsync(FilesUrl, Ct)).Content.ReadAsStringAsync(Ct),
-            StringComparison.OrdinalIgnoreCase);
+        // El dueño de una imagen de plantilla es el tenant, que la respuesta no lleva; el de un adjunto es un secreto que no se filtra.
+        if (ownerType is not FileOwnerType.MessageTemplate)
+        {
+            Assert.DoesNotContain(attachment.OwnerId.ToString(), await (await client.GetAsync(FilesUrl, Ct)).Content.ReadAsStringAsync(Ct),
+                StringComparison.OrdinalIgnoreCase);
+        }
     }
 
-    [Fact]
-    public async Task EveryRouteOfASupportAttachmentIsNotFound()
+    [Theory]
+    [MemberData(nameof(SystemOwners))]
+    public async Task EveryRouteOfASystemOwnedFileIsNotFound(FileOwnerType ownerType)
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new StorageApiFactory(database.GetConnectionString());
         using var client = Member(factory);
-        var attachment = await SupportAttachmentAsync(factory, database.GetConnectionString());
+        var attachment = await SystemOwnedFileAsync(factory, database.GetConnectionString(), ownerType);
         var url = $"{FilesUrl}/{attachment.FileId}";
 
         var responses = new[]
@@ -114,19 +132,21 @@ public sealed class SystemOwnedFilesApiTests
         return client;
     }
 
-    /// <summary>Un adjunto disponible, subido por el camino de Soporte (sin miembro) con una imagen: también se podría publicar.</summary>
-    private static async Task<(Guid FileId, Guid OwnerId)> SupportAttachmentAsync(StorageApiFactory factory, string connectionString)
+    /// <summary>Un archivo disponible de un dueño de sistema, subido por el camino sin miembro con una imagen: también se podría publicar.
+    /// El dueño de un adjunto de Soporte es un secreto aleatorio; el de una imagen de plantilla, el tenant.</summary>
+    private static async Task<(Guid FileId, Guid OwnerId)> SystemOwnedFileAsync(
+        StorageApiFactory factory, string connectionString, FileOwnerType ownerType)
     {
-        var ownerId = Guid.NewGuid();
+        var ownerId = ownerType is FileOwnerType.MessageTemplate ? TenantId : Guid.NewGuid();
         var content = await PngAsync(32, 32);
         await using var scope = factory.Services.CreateAsyncScope();
         var uploads = scope.ServiceProvider.GetRequiredService<IStorageSystemUploads>();
         var session = await uploads.OpenAsync(
-            TenantId, FileOwnerType.SupportTicket, ownerId, "foto.png", "image/png", content.Length, 10 * 1024 * 1024, Ct);
+            TenantId, ownerType, ownerId, "foto.png", "image/png", content.Length, 10 * 1024 * 1024, Ct);
         factory.ObjectStorage.Upload((await ReadFileAsync(connectionString, session.FileId)).StorageKey, content);
         Assert.Equal(
             SystemUploadOutcome.Available,
-            (await uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.SupportTicket, ownerId, Ct)).Outcome);
+            (await uploads.CompleteAsync(TenantId, session.FileId, ownerType, ownerId, Ct)).Outcome);
         return (session.FileId, ownerId);
     }
 

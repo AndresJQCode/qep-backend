@@ -1247,6 +1247,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
         // Messaging (spec 2026-10-14 §4.3): crear una plantilla libre y mandarla a aprobación.
         services.AddScoped<ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>, CreateTemplateHandler>();
+        // Spec 2026-11-17: la sesión de subida de la imagen del encabezado; el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<CreateTemplateHeaderImageSessionCommand, TemplateHeaderImageSessionDto>, CreateTemplateHeaderImageSessionHandler>();
         // Messaging (spec 2026-10-14 §4.3): aprovisionar, adoptar o reintentar la plantilla de cotización de una conexión.
         services.AddScoped<ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>, ProvisionQuotationTemplateHandler>();
         services.AddScoped<ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>, ProvisionBillingTemplatesHandler>();
@@ -1739,6 +1741,10 @@ public static class QepServiceCollectionExtensions
         // Decisión 4 del spec 2026-09-19: publica/despublica el logo del tenant sobre Storage sin
         // pasar por sus handlers ni sus permisos.
         services.AddScoped<ITenantLogoStorage, TenantLogoStorage>();
+
+        // Spec 2026-11-17: la imagen del encabezado de plantilla sobre Storage, con el mismo criterio que el logo: sin pasar por los
+        // handlers de Storage ni por sus permisos (la autoriza messaging.template.manage).
+        services.AddScoped<IMessagingTemplateImageStore, MessagingTemplateImageStore>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los

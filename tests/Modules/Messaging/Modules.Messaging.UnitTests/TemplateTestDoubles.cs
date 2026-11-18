@@ -234,6 +234,13 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
     public Task<bool> IsReferencedByActiveCampaignAsync(Guid tenantId, Guid connectionId, string name, string language, CancellationToken cancellationToken) =>
         Task.FromResult(ActiveCampaignTemplates.Contains((name, language)));
 
+    /// <summary>Las imágenes de encabezado de plantillas ya guardadas, por tenant. Aparte de <see cref="Rows"/> porque <see cref="Add"/>
+    /// agrega antes de guardar, y la consulta real lee sólo lo guardado.</summary>
+    public HashSet<(Guid TenantId, Guid FileId)> SavedHeaderImages { get; } = [];
+
+    public Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+        Task.FromResult(SavedHeaderImages.Contains((tenantId, fileId)));
+
     public Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Syncs.TryGetValue((tenantId, connectionId), out var at) ? at : (DateTimeOffset?)null);
 
@@ -245,4 +252,19 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
 
     private static MessageTemplate[] Ordered(IEnumerable<MessageTemplate> rows) =>
         rows.OrderBy(row => row.Name, StringComparer.Ordinal).ThenBy(row => row.Language, StringComparer.Ordinal).ToArray();
+}
+
+/// <summary>Plan 2026-11-17 Task 8: los avisos de liberación de la imagen del encabezado, en orden, sin outbox.</summary>
+internal sealed class RecordingTemplateImageReleases : ITemplateHeaderImageReleases
+{
+    public List<(Guid TenantId, Guid FileId, DateTimeOffset OccurredAt)> Published { get; } = [];
+
+    /// <summary>Corre al publicar: sirve para ver en qué estado estaba la unidad de trabajo.</summary>
+    public Action? OnPublish { get; set; }
+
+    public void Publish(Guid tenantId, Guid fileId, DateTimeOffset occurredAt)
+    {
+        OnPublish?.Invoke();
+        Published.Add((tenantId, fileId, occurredAt));
+    }
 }

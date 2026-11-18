@@ -703,4 +703,20 @@ public sealed class CampaignDispatcherTests
 
         Assert.Equal(256, Assert.Single(Assert.Single(bed.Store.Added).Batch).CustomerName.Length);
     }
+    // Spec 2026-11-17: el worker manda la imagen fija guardada de la plantilla.
+    [Fact]
+    public async Task ACampaignOfAStoredImageTemplateSendsTheLink()
+    {
+        const string url = "https://public.test/imagen.png";
+        var bed = new DispatchBed();
+        var template = Assert.Single(bed.Bed.Templates.Catalog);
+        bed.Bed.Templates.Catalog[0] = template with { HeaderMedia = TemplateHeaderMedia.Image, HeaderImageUrl = url };
+        bed.Bed.Meta.NextSend = Sent("wamid.img");
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(), Ct);
+
+        Assert.Equal(TemplateHeader.ByLink("image", url, null), Assert.Single(bed.Bed.Meta.TemplateSends).Template.Header);
+        using var details = JsonDocument.Parse(Assert.Single(bed.Store.Prepared).DetailsJson);
+        Assert.Equal(url, details.RootElement.GetProperty("template").GetProperty("header").GetProperty("link").GetString());
+    }
 }
