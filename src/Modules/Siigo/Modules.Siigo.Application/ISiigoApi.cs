@@ -43,7 +43,11 @@ public sealed record SiigoCustomerRequest(
     string? Phone,
     string? ContactFirstName,
     string? ContactLastName,
-    string? ContactEmail);
+    string? ContactEmail)
+{
+    // Un record imprimiría documento, nombre, dirección y contacto del cliente en cualquier log o excepción que lo interpole.
+    public override string ToString() => "SiigoCustomerRequest { }";
+}
 
 /// <summary>
 /// El cuerpo de <c>POST /v1/invoices</c>, ya serializado. Va como texto y no como objeto a propósito: el armador lo guarda en
