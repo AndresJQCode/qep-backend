@@ -135,13 +135,18 @@ public sealed record WithholdingAgentCityRequest(string Type, string Country, Gu
 /// Una tasa de retención asignada a un cliente, con los datos del catálogo que la ficha necesita para pintarla sin otra
 /// llamada (BFF). Desde el spec ReteICA por empresa (A15) sólo son tasas nacionales (<c>"Retefuente"</c>).
 /// </summary>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> de la tasa: <c>All</c>, <c>Goods</c> o <c>Services</c> (spec
+/// 2026-11-18 servicios pendientes §2). Un cliente puede tener una Retefuente de bienes y otra de servicios, y la ficha
+/// dice cuál es cuál con este campo, aunque la tasa ya no esté en el catálogo activo; sin él tendrías que cruzar el id con
+/// ese catálogo. Va al final y con default para no tocar las construcciones existentes.</param>
 public sealed record CustomerWithholdingTaxRateDto(
     Guid Id,
     string Name,
     string Type,
     string Country,
     decimal Percentage,
-    bool IsActive);
+    bool IsActive,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>Spec 2026-11-10 §4.2: un contacto como lo pinta la ficha de su empresa.</summary>
 public sealed record CustomerContactDto(Guid Id, string Name, string? Phone, string? Email, bool IsComplete, bool IsActive);

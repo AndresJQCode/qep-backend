@@ -195,6 +195,37 @@ public sealed class CustomerWithholdingTaxRatesApiTests
         Assert.Equal([goods, services], RateIds(resent));
     }
 
+    // Spec 2026-11-18 servicios pendientes §2: cada tasa guardada trae su alcance, para que la ficha diga «Retefuente
+    // (servicios)» aunque la tasa ya no esté en el catálogo activo que la pantalla tiene a mano.
+    [Fact]
+    public async Task SavedRatesCarryTheirScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var goods = await InsertRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente compras", "Retefuente", 2.5m, appliesTo: "Goods");
+        var services = await InsertRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios", "Retefuente", 4m, appliesTo: "Services");
+        var body = Body(city.CityId);
+        body["withholdingTaxRateIds"] = new[] { goods, services };
+
+        var created = await CreateAsync(client, body);
+        var read = await ReadAsync(
+            await client.GetAsync(
+                $"{CustomersUrl()}/{created.GetProperty("id").GetGuid()}", TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+
+        foreach (var customer in new[] { created, read })
+        {
+            var scopes = customer.GetProperty("withholdingTaxRates").EnumerateArray()
+                .ToDictionary(rate => rate.GetProperty("id").GetGuid(), rate => rate.GetProperty("appliesTo").GetString());
+            Assert.Equal("Goods", scopes[goods]);
+            Assert.Equal("Services", scopes[services]);
+        }
+    }
+
     [Fact]
     public async Task CustomerRejectsAllWithAnotherScope()
     {

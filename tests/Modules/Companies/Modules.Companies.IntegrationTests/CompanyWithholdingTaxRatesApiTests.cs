@@ -109,6 +109,29 @@ public sealed class CompanyWithholdingTaxRatesApiTests
         await AssertCodeAsync(response, "companies.company.withholding_municipality_repeated");
     }
 
+    // Spec 2026-11-18 servicios pendientes §2: la tasa guardada trae su alcance, así la ficha dice «ReteICA (servicios)»
+    // aunque la tasa ya no esté en el catálogo activo. Se lee como JSON: el contrato que se prueba es el de la red.
+    [Fact]
+    public async Task SavedRateCarriesItsScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateAdmin(factory);
+        var (first, _) = await TwoMunicipalitiesAsync(client);
+        var company = await CreateCompanyAsync(client, "Andes", "CTA-1", cityId: first.Id);
+        var services = await CreateRateAsync(client, "ReteICA servicios", "ReteICA", first.Id, appliesTo: "Services");
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await PutAsync(client, company.Id, first.Id, withholdingTaxRateIds: new[] { services })).StatusCode);
+
+        var detail = await client.GetStringAsync($"{CompaniesUrl()}/{company.Id}", TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(detail);
+        var rate = Assert.Single(document.RootElement.GetProperty("withholdingTaxRates").EnumerateArray());
+        Assert.Equal(services, rate.GetProperty("id").GetGuid());
+        Assert.Equal("Services", rate.GetProperty("appliesTo").GetString());
+    }
+
     [Fact]
     public async Task RetefuenteIs422()
     {
