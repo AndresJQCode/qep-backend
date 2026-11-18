@@ -100,6 +100,8 @@ public sealed class TenantRegistrationService(
         string correlationId,
         CancellationToken cancellationToken)
     {
+        EnsureClosedModuleSet(modules);
+
         // El candado del tenant reservado serializa dos aceptaciones simultáneas (doble clic, dos pestañas): la segunda
         // espera, ve el tenant de la primera y termina sin escribir.
         await using var scope = await unitOfWork.BeginTenantChangeScopeAsync(tenantId, cancellationToken);
@@ -157,5 +159,29 @@ public sealed class TenantRegistrationService(
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await scope.CommitAsync(cancellationToken);
         return true;
+    }
+
+    /// <summary>
+    /// Ruling W11 (a): la lista la arma otro módulo, así que no se confía en ella. Una clave repetida sería una violación de
+    /// PK (500) y una sin sus dependencias dejaría un tenant inconsistente; las dos fallan antes del candado.
+    /// </summary>
+    private static void EnsureClosedModuleSet(IReadOnlyList<TenantModuleKey> modules)
+    {
+        ArgumentNullException.ThrowIfNull(modules);
+        var keys = modules.ToHashSet();
+        if (keys.Count != modules.Count)
+        {
+            throw new ArgumentException("The invited tenant modules cannot repeat a key.", nameof(modules));
+        }
+
+        var missing = keys
+            .SelectMany(key => TenantModuleKeys.DependenciesOf(key).Where(dependency => !keys.Contains(dependency)))
+            .Distinct()
+            .ToList();
+        if (missing.Count > 0)
+        {
+            throw new ArgumentException(
+                $"The invited tenant modules miss their dependencies: {string.Join(", ", missing)}.", nameof(modules));
+        }
     }
 }

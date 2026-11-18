@@ -9,7 +9,34 @@ public sealed class DistributorTests
     private static readonly Guid Tenant = Guid.CreateVersion7();
     private static readonly DateTimeOffset Now = new(2026, 11, 17, 15, 0, 0, TimeSpan.Zero);
 
-    private static Distributor Invite(string email = "ana@distri.co", string tokenHash = "hash-1") =>
+    // La forma de InvitationTokens.HashOf: SHA-256 en hex minúsculo.
+    private const string Hash1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string Hash2 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    // Ruling W11 (c): la última red sobre el campo más sensible de la invitación. Un token plano (base64url, 43 caracteres),
+    // un hash en mayúsculas, uno cortado o uno que no es hex no se guardan nunca.
+    [Theory]
+    [InlineData("Zx0pQ9mW3rT7yU1iO5aS8dF2gH6jK4lZ0xC3vB7nM1q")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")]
+    public void InviteRejectsATokenHashThatIsNotALowercaseSha256(string tokenHash)
+    {
+        Assert.Throws<ArgumentException>(() => Invite(tokenHash: tokenHash));
+    }
+
+    [Fact]
+    public void ResendRejectsATokenHashThatIsNotALowercaseSha256()
+    {
+        var distributor = Invite();
+
+        Assert.Throws<ArgumentException>(() =>
+            distributor.ResendInvitation("Zx0pQ9mW3rT7yU1iO5aS8dF2gH6jK4lZ0xC3vB7nM1q", Now.AddHours(1)));
+        Assert.Equal(Hash1, distributor.Invitation.TokenHash);
+        Assert.Equal(1, distributor.Version);
+    }
+
+    private static Distributor Invite(string email = "ana@distri.co", string tokenHash = Hash1) =>
         Distributor.Invite(
             Tenant, email, "  Distribuciones Norte SAS ", " 900123456 ", " Ana Pérez ", PriceListId.New(),
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), tokenHash, Guid.CreateVersion7(), Now);
@@ -39,7 +66,7 @@ public sealed class DistributorTests
 
         var distributor = Distributor.Invite(
             Tenant, " Ana@Distri.CO ", "  Distribuciones Norte SAS ", " 900123456 ", " Ana Pérez ", priceList, advisor,
-            company, invitedBy, "hash-1", reserved, Now);
+            company, invitedBy, Hash1, reserved, Now);
 
         Assert.NotEqual(Guid.Empty, distributor.Id.Value);
         Assert.Equal((Tenant, "ana@distri.co", "Distribuciones Norte SAS", "900123456", "Ana Pérez"),
@@ -50,7 +77,7 @@ public sealed class DistributorTests
         Assert.Null(distributor.DistributorTenantId);
         Assert.Null(distributor.CustomerId);
         Assert.Null(distributor.ActivatedAt);
-        Assert.Equal(("hash-1", Now, Now.AddHours(72), reserved),
+        Assert.Equal((Hash1, Now, Now.AddHours(72), reserved),
             (distributor.Invitation.TokenHash, distributor.Invitation.SentAt, distributor.Invitation.ExpiresAt, distributor.Invitation.ReservedTenantId));
         Assert.Null(distributor.Invitation.AcceptedAt);
         Assert.Null(distributor.Invitation.AcceptedByUserId);
@@ -69,9 +96,9 @@ public sealed class DistributorTests
         var reserved = distributor.Invitation.ReservedTenantId;
         var later = Now.AddHours(100);
 
-        distributor.ResendInvitation("hash-2", later);
+        distributor.ResendInvitation(Hash2, later);
 
-        Assert.Equal(("hash-2", later, later.AddHours(72), reserved),
+        Assert.Equal((Hash2, later, later.AddHours(72), reserved),
             (distributor.Invitation.TokenHash, distributor.Invitation.SentAt, distributor.Invitation.ExpiresAt, distributor.Invitation.ReservedTenantId));
         Assert.Equal((2L, later), (distributor.Version, distributor.UpdatedAt));
         Assert.Equal(InvitationViewState.Pending, distributor.InvitationState(later));
@@ -82,7 +109,7 @@ public sealed class DistributorTests
     {
         var distributor = Active();
 
-        var error = Assert.Throws<WholesaleDomainException>(() => distributor.ResendInvitation("hash-2", Now.AddHours(3)));
+        var error = Assert.Throws<WholesaleDomainException>(() => distributor.ResendInvitation(Hash2, Now.AddHours(3)));
 
         Assert.Equal(WholesaleErrorCodes.DistributorInvalidTransition, error.Code);
     }
