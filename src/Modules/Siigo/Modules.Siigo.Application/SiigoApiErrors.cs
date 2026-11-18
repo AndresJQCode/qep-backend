@@ -28,11 +28,40 @@ public static partial class SiigoApiErrors
 
         var matches = NumberPattern().Matches(message);
         return matches.Count > 0
-            && decimal.TryParse(matches[^1].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value)
+            && decimal.TryParse(Canonical(matches[^1].Value), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value)
                 ? value
                 : null;
     }
 
-    [GeneratedRegex(@"\d+(?:\.\d+)?")]
+    // El número completo, con miles y decimales: «288,490.50» es 288490.50 y no 490.50. Con los dos separadores, el último es el decimal;
+    // con sólo comas en grupos de tres son miles («1,234,567»), y con varios puntos también; una sola coma o un solo punto es decimal.
+    private static string Canonical(string number)
+    {
+        var lastComma = number.LastIndexOf(',');
+        var lastDot = number.LastIndexOf('.');
+        if (lastComma >= 0 && lastDot >= 0)
+        {
+            var decimalSeparator = lastComma > lastDot ? ',' : '.';
+            var thousands = decimalSeparator == ',' ? '.' : ',';
+            return number.Replace(thousands.ToString(), string.Empty, StringComparison.Ordinal).Replace(decimalSeparator, '.');
+        }
+
+        if (lastComma >= 0)
+        {
+            return GroupedThousands(number, ',') ? number.Replace(",", string.Empty, StringComparison.Ordinal) : number.Replace(',', '.');
+        }
+
+        return lastDot >= 0 && number.IndexOf('.', StringComparison.Ordinal) != lastDot && GroupedThousands(number, '.')
+            ? number.Replace(".", string.Empty, StringComparison.Ordinal)
+            : number;
+    }
+
+    private static bool GroupedThousands(string number, char separator)
+    {
+        var parts = number.Split(separator);
+        return parts.Length > 1 && parts[0].Length is >= 1 and <= 3 && parts.Skip(1).All(part => part.Length == 3);
+    }
+
+    [GeneratedRegex(@"\d+(?:[.,]\d+)*")]
     private static partial Regex NumberPattern();
 }

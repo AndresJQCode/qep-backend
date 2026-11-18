@@ -173,6 +173,9 @@ public sealed class SiigoApiClientTests : IDisposable
     [Theory]
     [InlineData("El total de pagos debe ser 288490.5", 288490.5)]
     [InlineData("Expected total: 1234 (payments 1000)", 1000.0)]
+    [InlineData("El total de pagos debe ser 288,490.50", 288490.5)]
+    [InlineData("El total de pagos debe ser 1,234,567", 1234567.0)]
+    [InlineData("El total de pagos debe ser 288.490,50", 288490.5)]
     [InlineData("sin numeros", null)]
     public void TheExpectedTotalIsTheLastNumberOfTheMessage(string message, double? expected) =>
         Assert.Equal(expected is null ? null : (decimal)expected, SiigoApiErrors.ParseExpectedPaymentsTotal(message));
