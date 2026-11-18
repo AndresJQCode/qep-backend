@@ -55,7 +55,7 @@ referencias «§N» de este plan son a él).
 
 ## Bloque A — Fundación (Tareas 1–3)
 
-### Tarea 1: Clave de módulo `siigo` en Tenancy
+### Task 1: Clave de módulo `siigo` en Tenancy
 
 **Files:**
 - Modify: `src/Modules/Tenancy/Modules.Tenancy.Domain/TenantModuleKey.cs`
@@ -82,7 +82,7 @@ referencias «§N» de este plan son a él).
   Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(tenancy): add the siigo module key`
 
-### Tarea 2: Proveedor `siigo` en Integrations, con su probador
+### Task 2: Proveedor `siigo` en Integrations, con su probador
 
 **Files:**
 - Modify: `src/Modules/Integrations/Modules.Integrations.Domain/IntegrationCatalog.cs` (enum `IntegrationCategory`)
@@ -124,7 +124,7 @@ Tarea 5.
   filtrada por `TheSiigoTesterHttpClient` y la integración filtrada por `IntegrationsPersistenceTests`. Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(integrations): add the siigo provider and its connection tester`
 
-### Tarea 3: Esqueleto del módulo `Siigo`, permisos y autorización
+### Task 3: Esqueleto del módulo `Siigo`, permisos y autorización
 
 **Files:**
 - Create: `src/Modules/Siigo/Modules.Siigo.{Domain,Application,Infrastructure,Api}/` (csproj y marcadores: `SiigoDomainException`, `ISiigoUnitOfWork`, `SiigoInfrastructureExtensions`, `SiigoEndpoints`)
@@ -172,7 +172,7 @@ Tarea 5.
 
 ## Bloque B — Configuración y asistente (Tareas 4–7)
 
-### Tarea 4: Configuración por conexión (dominio y persistencia)
+### Task 4: Configuración por conexión (dominio y persistencia)
 
 **Files:**
 - Create: `src/Modules/Siigo/Modules.Siigo.Domain/SiigoSettings.cs`, `SiigoVariantLink.cs`, `SiigoTaxLink.cs`, `SiigoWithholdingLink.cs`, `SiigoPaymentLink.cs`, `SiigoSettingsReadiness.cs`, `BankAccountKey.cs`, `SiigoErrorCodes.cs`
@@ -216,7 +216,7 @@ Tarea 5.
 - [ ] **Step 4: Correr** `dotnet test tests/Modules/Siigo/Modules.Siigo.UnitTests --filter "FullyQualifiedName~SiigoSettings|FullyQualifiedName~BankAccountKey"`. Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(siigo): per-connection settings and links`
 
-### Tarea 5: Cliente HTTP de Siigo
+### Task 5: Cliente HTTP de Siigo
 
 **Files:**
 - Create: `src/Modules/Siigo/Modules.Siigo.Application/ISiigoApi.cs` (puerto y DTO del contrato), `SiigoApiErrors.cs`
@@ -263,7 +263,7 @@ Tarea 5.
   `CompositionRootTests` filtrada por `TheSiigoHttpClient`. Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(siigo): siigo api client with token cache and idempotent invoice creation`
 
-### Tarea 6: Puertos y endpoints de configuración
+### Task 6: Puertos y endpoints de configuración
 
 **Files:**
 - Create: `src/Modules/Siigo/Modules.Siigo.Application/SiigoPorts.cs` (puertos de esta tarea y de las 7–9)
@@ -310,7 +310,7 @@ Tarea 5.
 - [ ] **Step 4: Correr** `dotnet test tests/Modules/Siigo/Modules.Siigo.IntegrationTests --filter "FullyQualifiedName~SiigoSettingsApiTests"`. Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(siigo): settings endpoints for the setup wizard`
 
-### Tarea 7: Vínculo de productos
+### Task 7: Vínculo de productos
 
 **Files:**
 - Create: `src/Bootstrapper/SiigoVariantCatalog.cs`
@@ -345,7 +345,7 @@ Tarea 5.
 
 ## Bloque C — Facturación (Tareas 8–10)
 
-### Tarea 8: Armado de la factura (código puro)
+### Task 8: Armado de la factura (código puro)
 
 **Files:**
 - Create: `src/Modules/Siigo/Modules.Siigo.Application/Invoicing/SiigoInvoiceBuilder.cs`, `SiigoInvoiceInput.cs`, `SiigoCustomerMapper.cs`, `SiigoIdentificationTypes.cs`, `SiigoWithholdingPlacement.cs`, `SiigoMissing.cs`
@@ -415,7 +415,7 @@ Reglas que fija el plan (§6.3–6.4):
 - [ ] **Step 4: Correr** `dotnet test tests/Modules/Siigo/Modules.Siigo.UnitTests --filter "FullyQualifiedName~SiigoInvoiceBuilderTests|FullyQualifiedName~SiigoCustomerMapperTests"`. Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(siigo): build the siigo invoice from an order`
 
-### Tarea 9: Quotations — marca por proveedor y puerto de facturación externa
+### Task 9: Quotations — marca por proveedor y puerto de facturación externa
 
 **Files:**
 - Modify: `src/Modules/Quotations/Modules.Quotations.Domain/Order.cs`, `OrderStateErrors.cs`
@@ -457,7 +457,7 @@ Reglas que fija el plan (§6.3–6.4):
   y por `InvoiceOrder` (las existentes de la marca manual no cambian). Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(quotations): external invoicing mark and port`
 
-### Tarea 10: Emitir, retomar y resolver la factura
+### Task 10: Emitir, retomar y resolver la factura
 
 **Files:**
 - Create: `src/Modules/Siigo/Modules.Siigo.Domain/SiigoInvoice.cs`, `SiigoInvoiceStatus.cs`, `SiigoInvoiceKind.cs`, `SiigoIdempotencyKey.cs`
@@ -523,7 +523,7 @@ Retomar una `Pending` reenvía `request_json` con su clave, sin rearmar; si la c
 
 ## Bloque D — Cierre (Tarea 11)
 
-### Tarea 11: Fugas, despliegue y documentación
+### Task 11: Fugas, despliegue y documentación
 
 **Files:**
 - Create: `tests/Modules/Siigo/Modules.Siigo.IntegrationTests/SiigoNoLeakTests.cs`
