@@ -102,15 +102,28 @@ internal sealed class TemplateHeaderImageFiles(StorageDbContext dbContext) : ITe
 
     public async Task AbandonAsync()
     {
-        if (_transaction is not null)
+        var transaction = _transaction;
+        _transaction = null;
+        try
         {
-            // Sin token: un rollback que no se pide por un apagado también tiene que soltar el candado.
-            await _transaction.RollbackAsync(CancellationToken.None);
-            await _transaction.DisposeAsync();
-            _transaction = null;
+            if (transaction is not null)
+            {
+                // Sin token: un rollback que no se pide por un apagado también tiene que soltar el candado.
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
         }
+        finally
+        {
+            // Revisión final: un rollback que falla (la conexión se cayó) no deja la transacción colgada en el contexto; si quedara,
+            // cada reclamo siguiente de la corrida fallaría al abrir la suya. Al desecharla el contexto la olvida y la conexión la
+            // descarta.
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync();
+            }
 
-        dbContext.ChangeTracker.Clear();
+            dbContext.ChangeTracker.Clear();
+        }
     }
 
     private sealed record CandidateRow(Guid TenantId, Guid Id, DateTimeOffset CreatedAt);

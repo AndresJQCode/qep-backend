@@ -16,7 +16,8 @@ internal interface ITemplateHeaderImageSweep
 // borrado lógico y auditoría del sistema, guardado por archivo.
 //
 // Recorre por cursor (created_at, id) en páginas de BatchSize hasta el final: las imágenes vivas son las más viejas y nunca salen del
-// conjunto, así que mirar sólo la primera página dejaría ciego al barrido en cuanto un tenant pase de BatchSize plantillas con imagen.
+// conjunto, así que mirar sólo la primera página dejaría ciego al barrido en cuanto haya más de BatchSize imágenes vivas en total: la
+// página es de todos los tenants, no de uno.
 //
 // Falla cerrado: si Messaging no responde por un tenant, no se suelta nada de ese tenant en esa página. Un archivo que falla (R2, la base)
 // se registra, se deshace su transacción y el barrido sigue; mañana vuelve a aparecer.
@@ -114,6 +115,17 @@ internal sealed partial class TemplateHeaderImageSweep(
             var resource = await files.ClaimAsync(tenantId, id, cancellationToken);
             if (resource is null)
             {
+                return false;
+            }
+
+            // Revisión final: entre la pregunta de la página y el reclamo, una creación que reusa un id viejo pudo guardar su fila. Se
+            // vuelve a preguntar por este archivo bajo el candado; si ya lo usa una plantilla, se suelta el candado sin tocarlo. Un fallo
+            // de la pregunta cae al catch: falla cerrado y no se suelta. La ventana que queda (la creación guarda después de esta
+            // pregunta) la cierra Messaging, que no acepta una imagen subida hace más de 12 h.
+            var stillReferenced = await references.FindReferencedAsync(tenantId, [id.Value], cancellationToken);
+            if (stillReferenced.Contains(id.Value))
+            {
+                await AbandonQuietlyAsync(id);
                 return false;
             }
 

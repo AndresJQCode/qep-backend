@@ -117,9 +117,11 @@ public sealed class TemplateHeaderImageSweepTests
         var released = await NewSweep().SweepAsync(Now, Ct);
 
         Assert.Equal(2, released);
-        Assert.Equal(2, _references.Calls.Count);
-        Assert.Equal([fileA.Id.Value], _references.Calls.Single(call => call.TenantId == TenantA).FileIds);
-        Assert.Equal([fileB.Id.Value], _references.Calls.Single(call => call.TenantId == TenantB).FileIds);
+        // La pregunta por página y la de cada archivo bajo el reclamo: todas con el tenant del archivo.
+        Assert.All(_references.Calls.Where(call => call.TenantId == TenantA), call => Assert.Equal([fileA.Id.Value], call.FileIds));
+        Assert.All(_references.Calls.Where(call => call.TenantId == TenantB), call => Assert.Equal([fileB.Id.Value], call.FileIds));
+        Assert.Equal(2, _references.Calls.Count(call => call.TenantId == TenantA));
+        Assert.Equal(2, _references.Calls.Count(call => call.TenantId == TenantB));
         Assert.Equal(FileResourceStatus.Deleted, fileA.Status);
         Assert.Equal(FileResourceStatus.Deleted, fileB.Status);
     }
@@ -155,6 +157,25 @@ public sealed class TemplateHeaderImageSweepTests
 
         Assert.Equal(0, released);
         Assert.Equal(FileResourceStatus.Available, file.Status);
+        Assert.Empty(_publicStorage.DeletedKeys);
+        Assert.Empty(_audit.Entries);
+    }
+
+    // Revisión final: una creación que reusa un id viejo puede guardar su fila entre la pregunta de la página y el reclamo. Bajo el
+    // candado se vuelve a preguntar por ese archivo, y si ya lo usa una plantilla no se suelta.
+    [Fact]
+    public async Task AFileReferencedAfterTheListingIsNotReleased()
+    {
+        var file = _files.Seed(TenantA, FileOwnerType.MessageTemplate, Now.AddDays(-2));
+        _references.ReferenceAfterFirstAsk(TenantA, file.Id.Value);
+
+        var released = await NewSweep().SweepAsync(Now, Ct);
+
+        Assert.Equal(0, released);
+        Assert.Equal(FileResourceStatus.Available, file.Status);
+        Assert.Equal([file.Id], _files.Claimed);
+        Assert.Equal([file.Id], _files.Abandoned);
+        Assert.Empty(_files.Committed);
         Assert.Empty(_publicStorage.DeletedKeys);
         Assert.Empty(_audit.Entries);
     }
@@ -263,6 +284,12 @@ public sealed class TemplateHeaderImageSweepTests
 
         public Guid? FailingTenant { get; set; }
 
+        private readonly List<(Guid TenantId, Guid FileId)> _late = [];
+
+        /// <summary>Sin referencia en la primera pregunta que lo incluye; referenciado desde la siguiente (una creación que se guardó
+        /// en el medio).</summary>
+        public void ReferenceAfterFirstAsk(Guid tenantId, Guid fileId) => _late.Add((tenantId, fileId));
+
         public void Reference(Guid tenantId, Guid fileId)
         {
             if (!_byTenant.TryGetValue(tenantId, out var ids))
@@ -283,7 +310,14 @@ public sealed class TemplateHeaderImageSweepTests
             }
 
             var referenced = _byTenant.TryGetValue(tenantId, out var ids) ? ids : [];
-            return Task.FromResult<IReadOnlySet<Guid>>(fileIds.Where(referenced.Contains).ToHashSet());
+            IReadOnlySet<Guid> result = fileIds.Where(referenced.Contains).ToHashSet();
+            foreach (var late in _late.Where(late => late.TenantId == tenantId && fileIds.Contains(late.FileId)).ToList())
+            {
+                _late.Remove(late);
+                Reference(late.TenantId, late.FileId);
+            }
+
+            return Task.FromResult(result);
         }
     }
 
