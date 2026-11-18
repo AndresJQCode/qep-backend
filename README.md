@@ -2485,8 +2485,9 @@ pasa a `404`).
   faltan). En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista y deja la relación
   `Active`. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
 - Errores: `404 wholesale.invitation.not_found`, `410 wholesale.invitation.expired`, `409 wholesale.invitation.already_accepted`,
-  `.unavailable` (el mayorista no está activo, apagó `wholesale` o su empresa facturadora no sirve), `wholesale.relationship.inactive`
-  (la relación está bloqueada) y `wholesale.distributor.already_linked`; `403 wholesale.invitation.email_mismatch` y
+  `.unavailable` (el mayorista no está activo, apagó `wholesale` o su empresa facturadora no sirve) y
+  `wholesale.distributor.already_linked`; `403 wholesale.relationship.inactive` (la relación está bloqueada),
+  `wholesale.invitation.email_mismatch` y
   `.not_tenant_owner`; `422 wholesale.invitation.self_link`, los de `register-tenant` y `validation.failed`
   (`Mode`, `DisplayName`, `Slug`, `TenantId`).
 

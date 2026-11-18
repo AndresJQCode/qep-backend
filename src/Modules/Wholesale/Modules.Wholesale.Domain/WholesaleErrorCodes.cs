@@ -18,6 +18,9 @@ public static class WholesaleErrorCodes
 
     public const string InvitationNotTenantOwner = "wholesale.invitation.not_tenant_owner";
 
+    // Spec 2026-11-17 y ruling W18: 403 en todos lados; en esta fase, al aceptar una relación bloqueada.
+    public const string RelationshipInactive = "wholesale.relationship.inactive";
+
     // 409
     public const string PriceListInUse = "wholesale.price_list.in_use";
 
@@ -32,9 +35,6 @@ public static class WholesaleErrorCodes
     public const string InvitationAlreadyAccepted = "wholesale.invitation.already_accepted";
 
     public const string InvitationUnavailable = "wholesale.invitation.unavailable";
-
-    // Ruling W16: el spec lo lista como 403 para fase 3; al aceptar es el estado de la relación, no un permiso.
-    public const string RelationshipInactive = "wholesale.relationship.inactive";
 
     // 410
     public const string InvitationExpired = "wholesale.invitation.expired";

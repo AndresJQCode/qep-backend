@@ -273,9 +273,8 @@ AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
   `wholesale.invitation.expired`; 409 `wholesale.invitation.already_accepted` (otro usuario o ya consumida en `session*`),
   `wholesale.invitation.unavailable` (el tenant del mayorista no está `Active` o apagó `wholesale`, o su empresa facturadora
   está inactiva o tiene un documento que el proveedor no admite; rulings W14 y W16),
-  `wholesale.relationship.inactive` (la relación ya aceptada está bloqueada; ruling W16),
   `wholesale.distributor.already_linked` (ese tenant ya tiene relación con este mayorista, P-1); 403
-  `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner`; 422 `wholesale.invitation.self_link`,
+  `wholesale.relationship.inactive` (la relación ya aceptada está bloqueada; rulings W16 y W18), `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner`; 422 `wholesale.invitation.self_link`,
   `tenancy.slug.invalid`, `tenancy.slug.taken`, `tenancy.settings.display_name.invalid`, `validation.failed` (`Mode`,
   `DisplayName`, `Slug`, `TenantId`); 401 sin sesión.
 
@@ -291,13 +290,13 @@ AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
 | Status | Códigos |
 | --- | --- |
 | 404 | `wholesale.price_list.not_found`, `wholesale.distributor.not_found`, `wholesale.invitation.not_found` |
-| 403 | `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner` |
-| 409 | `wholesale.price_list.in_use`, `wholesale.price_list.name_taken`, `wholesale.distributor.identification_taken`, `wholesale.distributor.invalid_transition`, `wholesale.distributor.already_linked`, `wholesale.invitation.already_accepted`, `wholesale.invitation.unavailable`, `wholesale.relationship.inactive` (al aceptar, W16) |
+| 403 | `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner`, `wholesale.relationship.inactive` (al aceptar, W16/W18) |
+| 409 | `wholesale.price_list.in_use`, `wholesale.price_list.name_taken`, `wholesale.distributor.identification_taken`, `wholesale.distributor.invalid_transition`, `wholesale.distributor.already_linked`, `wholesale.invitation.already_accepted`, `wholesale.invitation.unavailable` |
 | 410 | `wholesale.invitation.expired` |
 | 422 | `wholesale.price_list.category_not_found`, `wholesale.distributor.advisor_invalid`, `wholesale.distributor.company_invalid`, `wholesale.invitation.self_link`, `suppliers.supplier.linked_identity_locked` |
 
 `wholesale.product.not_visible` del spec es de fase 3; `wholesale.relationship.inactive` ya se usa al aceptar una relación
-bloqueada (409, ruling W16), y fase 3 decide su uso en los pedidos.
+bloqueada (403 como el spec, rulings W16 y W18), y fase 3 decide su uso en los pedidos.
 
 ---
 

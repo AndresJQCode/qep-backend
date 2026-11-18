@@ -233,14 +233,14 @@ public sealed class DistributorInvitationServiceTests
         AssertNothingWritten();
     }
 
-    // Ruling W16 (b): el mayorista bloqueó la relación; volver a aceptar no es el doble clic de D-16.
+    // Rulings W16 (b) y W18: el mayorista bloqueó la relación; volver a aceptar no es el doble clic de D-16. 403, como el spec.
     [Fact]
-    public async Task AcceptingABlockedRelationshipIs409Inactive()
+    public async Task AcceptingABlockedRelationshipIs403Inactive()
     {
         await AcceptAsync(new NewTenantChoice(NewTenantData));
         _invitation.Block(DistributorWorld.Now);
 
-        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
 
         Assert.Equal("wholesale.relationship.inactive", error.Code);
         Assert.Single(_tenancy.Registered);
