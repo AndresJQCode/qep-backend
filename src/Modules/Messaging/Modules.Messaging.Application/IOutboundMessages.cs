@@ -5,8 +5,11 @@ namespace Modules.Messaging.Application;
 /// <summary>Spec 2026-10-11 §6.5: el medio de un saliente, ya en R2. Sin clave: la calcula el reclamo con su
 /// <c>MessageId</c> (<see cref="MessagingMediaKeys.For"/>), que en un reintento de un <c>Failed</c> no es el del
 /// borrador. <c>Sha256Hex</c> en minúsculas, como la copia de los entrantes; <c>null</c> si la subida a Meta cortó a mitad y no hay
-/// hash completo (la columna lo admite). <c>FileName</c>: el nombre real que ve la persona (<c>null</c> en una nota de voz).</summary>
-public sealed record OutboundMedia(string MimeType, long SizeBytes, string? Sha256Hex, string? FileName = null);
+/// hash completo (la columna lo admite). <c>FileName</c>: el nombre real que ve la persona (<c>null</c> en una nota de voz).
+/// Spec 2026-11-18: con <c>PublicUrl</c> (el archivo de un chatbot) el medio no está en R2 de Mensajería: la fila guarda la URL pública y
+/// <c>StorageFileId</c>, el id del archivo en Storage, sin clave ni id de Meta.</summary>
+public sealed record OutboundMedia(
+    string MimeType, long SizeBytes, string? Sha256Hex, string? FileName = null, Guid? StorageFileId = null, string? PublicUrl = null);
 
 /// <summary>Spec 2026-10-30 §4.4: la clave de API que escribe un saliente. El nombre se copia a la fila: el hilo firma con el nombre que tenía la clave
 /// al enviar, aunque después la renombren o la revoquen.</summary>
