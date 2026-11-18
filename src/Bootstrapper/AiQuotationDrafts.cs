@@ -75,18 +75,28 @@ internal sealed class AiQuotationAdvisors(IMembershipRepository memberships, IUs
 
     public async Task<IReadOnlyList<AiMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        var result = new List<AiMemberRef>();
+        var eligible = new List<Membership>();
         foreach (var membership in await memberships.ListByTenantAsync(new TenantId(tenantId), cancellationToken))
         {
-            if (membership.State != MembershipState.Active || !await GrantsQuotingAsync(tenantId, membership, cancellationToken))
+            if (membership.State == MembershipState.Active && await GrantsQuotingAsync(tenantId, membership, cancellationToken))
             {
-                continue;
+                eligible.Add(membership);
             }
+        }
 
+        // Un solo viaje a Identity por los correos de quienes no tienen nombre, como MessagingAssignees.
+        var emails = await users.GetEmailsAsync(
+            eligible.Where(membership => string.IsNullOrWhiteSpace(membership.DisplayName))
+                .Select(membership => membership.UserId)
+                .ToList(),
+            cancellationToken);
+        var result = new List<AiMemberRef>();
+        foreach (var membership in eligible)
+        {
             // Como MessagingAssignees: el nombre de la membresía o, sin él, el correo.
             var name = !string.IsNullOrWhiteSpace(membership.DisplayName)
                 ? membership.DisplayName
-                : await users.GetEmailAsync(membership.UserId, cancellationToken);
+                : emails.GetValueOrDefault(membership.UserId);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 result.Add(new AiMemberRef(membership.Id.Value, name));

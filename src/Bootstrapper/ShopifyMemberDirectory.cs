@@ -31,17 +31,21 @@ internal sealed class ShopifyMemberDirectory(IMembershipRepository memberships, 
     // pantalla no tendría qué mostrar.
     public async Task<IReadOnlyList<ShopifyMemberOption>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken)
     {
+        var active = (await memberships.ListByTenantAsync(new TenantId(tenantId), cancellationToken))
+            .Where(membership => membership.State == MembershipState.Active)
+            .ToList();
+        // Un solo viaje a Identity por los correos de quienes no tienen nombre, como MessagingMemberNames.
+        var emails = await users.GetEmailsAsync(
+            active.Where(membership => string.IsNullOrWhiteSpace(membership.DisplayName))
+                .Select(membership => membership.UserId)
+                .ToList(),
+            cancellationToken);
         var options = new List<ShopifyMemberOption>();
-        foreach (var membership in await memberships.ListByTenantAsync(new TenantId(tenantId), cancellationToken))
+        foreach (var membership in active)
         {
-            if (membership.State != MembershipState.Active)
-            {
-                continue;
-            }
-
             var name = !string.IsNullOrWhiteSpace(membership.DisplayName)
                 ? membership.DisplayName
-                : await users.GetEmailAsync(membership.UserId, cancellationToken);
+                : emails.GetValueOrDefault(membership.UserId);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 options.Add(new ShopifyMemberOption(membership.Id.Value, name));

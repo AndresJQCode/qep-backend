@@ -18,13 +18,24 @@ internal sealed class CustomersAuthorNames(IMembershipRepository memberships, IU
         Guid tenantId, IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken)
     {
         var names = new Dictionary<Guid, string>();
-        // Pocos autores distintos por ficha: una lectura por autor es más simple que un método de lote en Tenancy.
+        // Pocos autores distintos por ficha: una lectura de membresía por autor es más simple que un método de lote en Tenancy.
+        var found = new List<(Guid UserId, Membership? Membership)>();
         foreach (var userId in userIds.Distinct())
         {
-            var membership = await memberships.FindByUserAndTenantAsync(userId, new TenantId(tenantId), cancellationToken);
+            found.Add((userId, await memberships.FindByUserAndTenantAsync(userId, new TenantId(tenantId), cancellationToken)));
+        }
+
+        // Los correos de quienes no tienen nombre, en cambio, van en un solo viaje a Identity.
+        var emails = await users.GetEmailsAsync(
+            found.Where(item => string.IsNullOrWhiteSpace(item.Membership?.DisplayName))
+                .Select(item => item.UserId)
+                .ToList(),
+            cancellationToken);
+        foreach (var (userId, membership) in found)
+        {
             var name = !string.IsNullOrWhiteSpace(membership?.DisplayName)
                 ? membership.DisplayName
-                : await users.GetEmailAsync(userId, cancellationToken);
+                : emails.GetValueOrDefault(userId);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 names[userId] = name;
