@@ -511,6 +511,29 @@ public static class QepServiceCollectionExtensions
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
 
+        // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListPriceListsQuery, Modules.Wholesale.Application.PriceListsResponse>,
+            Modules.Wholesale.Application.ListPriceListsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetPriceListQuery, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.GetPriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.CreatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.CreatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.UpdatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.UpdatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.DeletePriceListCommand, bool>,
+            Modules.Wholesale.Application.DeletePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.PreviewPriceListCommand, Modules.Wholesale.Application.PriceListPreviewDto>,
+            Modules.Wholesale.Application.PreviewPriceListHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListWholesaleCategoriesQuery, Modules.Wholesale.Application.WholesaleCategoriesResponse>,
+            Modules.Wholesale.Application.ListWholesaleCategoriesHandler>();
+
         // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
         // responde 500.
         services.AddScoped<
@@ -1360,6 +1383,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
