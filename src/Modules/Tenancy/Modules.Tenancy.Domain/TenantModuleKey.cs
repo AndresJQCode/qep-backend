@@ -106,8 +106,12 @@ public static class TenantModuleKeys
     /// tenant.</summary>
     public static readonly TenantModuleKey Wholesale = TenantModuleKey.Define("wholesale");
 
+    /// <summary>Spec 2026-11-18 (integración Siigo): factura electrónica de un pedido en Siigo. Depende de <see cref="Orders"/>
+    /// (lo que se factura es un <c>Order</c>) y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Siigo = TenantModuleKey.Define("siigo");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -136,6 +140,8 @@ public static class TenantModuleKeys
         [Purchases] = [Suppliers, Catalog],
         // Spec 2026-11-17 (mayorista): el pedido del distribuidor es un Order del mayorista.
         [Wholesale] = [Orders],
+        // Spec 2026-11-18 (integración Siigo): lo que se factura es un pedido.
+        [Siigo] = [Orders],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>
