@@ -44,7 +44,7 @@ public sealed class StorageSystemUploads(
         long maxSizeBytes,
         CancellationToken cancellationToken)
     {
-        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes);
+        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes, ownerType);
 
         var id = FileResourceId.New();
         var key = StorageKey.StagingFor(tenantId, id);

@@ -188,7 +188,15 @@ public sealed class FileResource
         long sizeBytes,
         DateTimeOffset occurredAt)
     {
-        RequirePaymentProof();
+        // Spec 2026-11-18: una imagen de chatbot por encima de 5 MB (el tope de Meta por link) también se reemplaza por su versión
+        // comprimida.
+        if (OwnerType is not (FileOwnerType.PaymentProof or FileOwnerType.ChatbotMedia))
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                "Only a payment proof or a chatbot media file can be replaced by its processed image.");
+        }
+
         RequireStatus(FileResourceStatus.PendingScan);
         ArgumentException.ThrowIfNullOrWhiteSpace(mimeType);
         ArgumentException.ThrowIfNullOrWhiteSpace(extension);
@@ -380,7 +388,10 @@ public sealed class FileResource
     public void Publish(string publicStorageKey, DateTimeOffset occurredAt)
     {
         EnsureDownloadable();
-        if (!MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        // Spec 2026-11-18: el multimedia de un chatbot se manda por link (video, audio, documento), así que se publica cualquier tipo
+        // que su política aceptó. Para cualquier otro dueño, sólo imágenes.
+        if (OwnerType is not FileOwnerType.ChatbotMedia
+            && !MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
         {
             throw new StorageDomainException(
                 "storage.file.public_image_required",
