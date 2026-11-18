@@ -134,6 +134,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     public const string MessageTemplateNameLanguageIndex = "UX_message_templates_name_language";
 
+    /// <summary>Spec 2026-11-17 (fix round 2 del bloque C): una imagen de encabezado pertenece a una sola plantilla. Parcial sobre
+    /// <c>header_image_file_id IS NOT NULL</c>. Dos creaciones con el mismo archivo a la vez: la que pierde choca acá, el guardado lo traduce
+    /// a <c>header_image_rejected</c> y su compensación ve la fila de la ganadora y no libera la imagen.</summary>
+    public const string MessageTemplateHeaderImageIndex = "UX_message_templates_header_image";
+
     /// <summary>Fix de la Task 8 (spec 2026-10-14 §4.5): una sola <c>Quotation</c> por conexión. Parcial sobre <c>kind = 'Quotation'</c>,
     /// que se guarda como texto (<c>CK_message_templates_kind</c>). Dos primeros aprovisionamientos a la vez chocan acá y la unidad de
     /// trabajo lo traduce por nombre a <c>quotation_exists</c>.</summary>
@@ -820,6 +825,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Spec 2026-11-17: la imagen fija del encabezado; nulas en toda plantilla sin una.
         template.Property(value => value.HeaderImageFileId).HasColumnName("header_image_file_id");
         template.Property(value => value.HeaderImageUrl).HasColumnName("header_image_url").HasMaxLength(MessageTemplate.HeaderImageUrlMaxLength);
+        template.HasIndex(value => value.HeaderImageFileId, MessageTemplateHeaderImageIndex).IsUnique()
+            .HasFilter("header_image_file_id IS NOT NULL");
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.MetaTemplateId }, MessageTemplateMetaIdIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Name, value.Language }, MessageTemplateNameLanguageIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");

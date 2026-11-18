@@ -897,6 +897,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
 
+                    b.HasIndex(new[] { "HeaderImageFileId" }, "UX_message_templates_header_image")
+                        .IsUnique()
+                        .HasFilter("header_image_file_id IS NOT NULL");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "MetaTemplateId" }, "UX_message_templates_meta_id")
                         .IsUnique();
 

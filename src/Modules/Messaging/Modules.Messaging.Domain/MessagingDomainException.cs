@@ -26,5 +26,11 @@ public sealed class MessagingDomainException : DomainException, IHasFieldErrors
         : base(code, message, innerException) =>
         FieldErrors = NoFieldErrors;
 
+    /// <summary>Con campos marcados y la causa: una violación de unicidad que el guardado traduce a un error del campo (la imagen de
+    /// encabezado que ya tiene otra plantilla).</summary>
+    public MessagingDomainException(string code, string message, IReadOnlyDictionary<string, string[]> fieldErrors, Exception innerException)
+        : base(code, message, innerException) =>
+        FieldErrors = fieldErrors;
+
     public IReadOnlyDictionary<string, string[]> FieldErrors { get; }
 }
