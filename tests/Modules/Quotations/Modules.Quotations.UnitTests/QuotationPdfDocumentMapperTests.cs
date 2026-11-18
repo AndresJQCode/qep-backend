@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -557,6 +558,61 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal("NIF", QuotationResponseComposer.ToBillingResponse(account, company)!.CompanyDocumentType);
         Assert.Null(QuotationResponseComposer.ToBillingResponse(account, null)!.CompanyDocumentType);
     }
+
+    // ---- Unidad de venta (spec 2026-11-18 §6) ----
+
+    // Un tenant que no usa unidades imprime el PDF de hoy: con todas las líneas en Unit, ninguna lleva unidad.
+    [Fact]
+    public void AllUnitLinesOmitTheUnit()
+    {
+        var document = Map(Response());
+
+        Assert.All(document.Items, line => Assert.Null(line.Unit));
+    }
+
+    // Con una sola línea que no es Unit, todas llevan la suya, incluida «unidad»: la columna se lee pareja.
+    [Fact]
+    public void AMixedDocumentLabelsEveryLine()
+    {
+        var response = Response();
+        var items = response.Items.ToArray();
+        var document = Map(response with
+        {
+            Items =
+            [
+                items[0] with { Quantity = 2m, Kind = "Service", SalesUnit = "Hour" },
+                items[1] with { Quantity = 1m },
+            ],
+        });
+
+        Assert.Equal(["horas", "unidad"], document.Items.Select(line => line.Unit));
+    }
+
+    // Plural y singular salen del backend con un diccionario cerrado; la plantilla sólo imprime el texto.
+    [Theory]
+    [InlineData(SalesUnit.Unit, 1, "unidad")]
+    [InlineData(SalesUnit.Unit, 3, "unidades")]
+    [InlineData(SalesUnit.Service, 1, "servicio")]
+    [InlineData(SalesUnit.Service, 2, "servicios")]
+    [InlineData(SalesUnit.Hour, 1, "hora")]
+    [InlineData(SalesUnit.Hour, 2.5, "horas")]
+    [InlineData(SalesUnit.Day, 1, "día")]
+    [InlineData(SalesUnit.Day, 2, "días")]
+    [InlineData(SalesUnit.Week, 2, "semanas")]
+    [InlineData(SalesUnit.Month, 1, "mes")]
+    [InlineData(SalesUnit.Month, 6, "meses")]
+    [InlineData(SalesUnit.Year, 1, "año")]
+    [InlineData(SalesUnit.Year, 2, "años")]
+    [InlineData(SalesUnit.Kilogram, 3, "kg")]
+    [InlineData(SalesUnit.Meter, 1, "m")]
+    [InlineData(SalesUnit.SquareMeter, 12, "m²")]
+    [InlineData(SalesUnit.Liter, 4, "l")]
+    public void PluralFollowsQuantity(SalesUnit unit, double quantity, string expected) =>
+        Assert.Equal(expected, SalesUnitLabels.Spanish(unit, (decimal)quantity));
+
+    [Fact]
+    public void EverySalesUnitHasASpanishLabel() =>
+        Assert.All(Enum.GetValues<SalesUnit>(), unit => Assert.False(string.IsNullOrEmpty(SalesUnitLabels.Spanish(unit, 2m))));
 
     private static QuotationResponse Response() => new(
         Guid.CreateVersion7(),
