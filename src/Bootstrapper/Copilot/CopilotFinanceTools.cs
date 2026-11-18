@@ -19,8 +19,10 @@ internal static class CopilotFinanceTools
     [
         new SearchLoansTool(),
         new GetLoanTool(),
+        new ListInstallmentsTool(),
         new SearchServicesTool(),
         new GetServiceTool(),
+        new ListChargesTool(),
     ];
 
     public static CopilotCitation LoanRef(Guid id, string name) => new(CopilotCitationKinds.Loan, id.ToString(), name);
