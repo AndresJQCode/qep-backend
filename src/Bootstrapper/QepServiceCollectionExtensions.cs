@@ -1844,6 +1844,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
+        // Ruling W17: el paso de Identity de session-with-password, con la contraseña validada antes de crear al usuario.
+        services.AddScoped<WholesaleInvitationPasswordSession>();
 
         // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].

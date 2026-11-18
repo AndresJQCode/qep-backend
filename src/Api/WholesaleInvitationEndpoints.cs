@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using Bootstrapper;
 using Bootstrapper.Authentication;
 using BuildingBlocks.Application;
 using FluentValidation;
@@ -163,15 +164,14 @@ public static class WholesaleInvitationEndpoints
         return await establisher.EstablishAsync(httpContext, userId, invitation.Email, cancellationToken);
     }
 
-    // Orden fijo: cuerpo (400) → invitación aceptable → bajo el lock, aprovisionar por el correo invitado → crear o verificar la
-    // contraseña (marca el correo verificado) → commit → sesión. La contraseña no se registra en ningún lado.
+    // Orden fijo: cuerpo (400) → invitación aceptable → contraseña con las reglas del registro (422, W17) → bajo el lock,
+    // aprovisionar por el correo invitado → crear o verificar la contraseña (marca el correo verificado) → commit → sesión. La
+    // contraseña no se registra en ningún lado.
     private static async Task<IResult> SessionWithPasswordAsync(
         string token,
         HttpContext httpContext,
         IDistributorInvitationService invitations,
-        ITenancyUnitOfWork tenancyUnitOfWork,
-        IIdentityProvisioning identityProvisioning,
-        IPasswordCredentials passwordCredentials,
+        WholesaleInvitationPasswordSession passwordSession,
         SessionEstablisher establisher,
         CancellationToken cancellationToken)
     {
@@ -197,14 +197,8 @@ public static class WholesaleInvitationEndpoints
         }
 
         var invitation = await invitations.RequirePendingAsync(token, cancellationToken);
-
-        AuthenticatedUser user;
-        await using (var lifecycle = await tenancyUnitOfWork.BeginUserLifecycleScopeAsync(invitation.Email, cancellationToken))
-        {
-            var userId = await identityProvisioning.GetOrProvisionInvitedUserAsync(invitation.Email, cancellationToken);
-            user = await passwordCredentials.AcceptInvitationAsync(userId, request.Password ?? string.Empty, cancellationToken);
-            await lifecycle.CommitAsync(cancellationToken);
-        }
+        // Ruling W17: valida la contraseña antes de crear al usuario (WholesaleInvitationPasswordSession).
+        var user = await passwordSession.OpenAsync(invitation.Email, request.Password ?? string.Empty, cancellationToken);
 
         return await establisher.EstablishAsync(httpContext, user.UserId, user.Email, cancellationToken);
     }
