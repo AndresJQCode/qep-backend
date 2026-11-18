@@ -78,6 +78,11 @@ public static class StorageInfrastructureExtensions
         // Spec 2026-11-17: despublica y borra la imagen de encabezado de una plantilla que Messaging soltó, con reintentos.
         services.AddScoped<ITemplateHeaderImageReleaseProcessor, TemplateHeaderImageReleaseProcessor>();
         services.AddHostedService<TemplateHeaderImageReleaseWorker>();
+        // Spec 2026-11-17, «Closing the residual gaps»: una vez al día suelta las imágenes de más de 24 h que ninguna plantilla usa.
+        // ITemplateImageReferences lo registra Bootstrapper (Storage no conoce a Messaging).
+        services.AddScoped<ITemplateHeaderImageFiles, TemplateHeaderImageFiles>();
+        services.AddScoped<ITemplateHeaderImageSweep, TemplateHeaderImageSweep>();
+        services.AddHostedService<TemplateHeaderImageSweepWorker>();
         // Spec 2026-09-16, D12: la reconciliación de payment-proofs/, en modo solo-registrar hasta
         // que alguien apague Storage:PaymentProofOrphanCleanup:DryRun.
         services.AddScoped<IPaymentProofOrphanCleanupProcessor, PaymentProofOrphanCleanupProcessor>();
