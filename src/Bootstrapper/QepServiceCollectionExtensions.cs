@@ -73,6 +73,7 @@ using Modules.Support.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using Modules.Wholesale.Application;
+using Modules.Wholesale.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
@@ -510,6 +511,53 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
+
+        // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListPriceListsQuery, Modules.Wholesale.Application.PriceListsResponse>,
+            Modules.Wholesale.Application.ListPriceListsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetPriceListQuery, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.GetPriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.CreatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.CreatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.UpdatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.UpdatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.DeletePriceListCommand, bool>,
+            Modules.Wholesale.Application.DeletePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.PreviewPriceListCommand, Modules.Wholesale.Application.PriceListPreviewDto>,
+            Modules.Wholesale.Application.PreviewPriceListHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListWholesaleCategoriesQuery, Modules.Wholesale.Application.WholesaleCategoriesResponse>,
+            Modules.Wholesale.Application.ListWholesaleCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListDistributorsQuery, Modules.Wholesale.Application.DistributorsResponse>,
+            Modules.Wholesale.Application.ListDistributorsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetDistributorQuery, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.GetDistributorHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetDistributorOptionsQuery, Modules.Wholesale.Application.DistributorOptionsDto>,
+            Modules.Wholesale.Application.GetDistributorOptionsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.InviteDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.InviteDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.UpdateDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.UpdateDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.TransitionDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.TransitionDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.DeleteDistributorCommand, bool>,
+            Modules.Wholesale.Application.DeleteDistributorHandler>();
+        services.AddScoped<Modules.Wholesale.Application.DistributorComposer>();
+        // La invitación vista desde el link: sin IExecutionContext, el tenant del mayorista sale de la invitación.
+        services.AddScoped<Modules.Wholesale.Application.IDistributorInvitationService, Modules.Wholesale.Application.DistributorInvitationService>();
 
         // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
         // responde 500.
@@ -1360,6 +1408,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
@@ -1380,6 +1429,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
+        services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
         services.AddBuyersInfrastructure(configuration);
@@ -1786,6 +1836,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
+
+        // Wholesale, spec 2026-11-17: Catalog, Companies, Tenancy, Suppliers y Customers entran por puertos del módulo.
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCatalogReader, WholesaleCatalogReader>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCompanyLookup, WholesaleCompanyLookup>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleMemberDirectory, WholesaleMemberDirectory>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
+        // Ruling W17: el paso de Identity de session-with-password, con la contraseña validada antes de crear al usuario.
+        services.AddScoped<WholesaleInvitationPasswordSession>();
 
         // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].

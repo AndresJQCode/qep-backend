@@ -64,7 +64,8 @@ internal static class RequestFailureCapture
             RequestFailureId.New(),
             SubjectIdOf(httpContext),
             httpContext.Request.Method,
-            httpContext.Request.Path.Value ?? "/",
+            // Sin el token de una invitación (SensitivePaths): la fila la lee la consola de operador.
+            SensitivePaths.Mask(httpContext.Request.Path),
             statusCode,
             errorCode,
             exception.Message,
@@ -91,7 +92,7 @@ internal static class RequestFailureCapture
             RequestFailureId.New(),
             SubjectIdOf(httpContext),
             httpContext.Request.Method,
-            httpContext.Request.Path.Value ?? "/",
+            SensitivePaths.Mask(httpContext.Request.Path),
             statusCode,
             CodeForStatus(statusCode),
             DescriptionForStatus(statusCode),

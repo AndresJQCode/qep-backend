@@ -1375,6 +1375,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   en `model_jobs.result` hasta su commit); nunca en logs, auditoría ni `tool_calls`. La auditoría (`ai.copilot.settings_updated`,
   `ai.copilot.thread_deleted`) es de metadatos: `IAiAuditRecorder.RecordCopilot` no tiene parámetro de texto libre. Borrar un hilo
   guarda su auditoría en la misma transacción del borrado (`CopilotRepository.DeleteThreadAsync`). Lo amarra `CopilotNoLeakTests`.
+- **La aceptación de una invitación de mayorista no es atómica entre módulos** (plan mayorista fase 2, D-3). Es idempotente por
+  el tenant reservado (`wholesale.distributor_invitations.reserved_tenant_id`), el proveedor (`LinkedTenantId` o documento) y el
+  cliente (documento); la invitación se consume en el último commit, el de `wholesale`. No la cambies a «consumir primero»: un
+  fallo a mitad dejaría la invitación gastada y la relación a medias, sin link para reintentar. Si otra pestaña crea el tenant
+  reservado mientras ésta valida el slug, el `slug.taken` es el propio y la aceptación termina sobre él
+  (`DistributorInvitationService`, Review Focus 1).
+- **`Supplier.LinkedTenantId` lo escribe sólo `ISupplierLinking`** (D-8). El formulario de proveedores no lo acepta (un
+  `linkedTenantId` en el cuerpo se ignora) y un proveedor vinculado no cambia de documento: 422
+  `suppliers.supplier.linked_identity_locked`.
+- **El link de la invitación de mayorista sale de `Notifications:AppBaseUrl`** (`AccountLinks.WholesaleInvitation`, ruling W1),
+  no de una variable propia: no hay `WholesaleInvitationUrl` que dar de alta en el pipeline. El token viaja sólo en el payload
+  del outbox; `SensitivePaths.Mask` lo tapa en `platform.request_failures` y en su línea de log, también el de la invitación de
+  miembros. Una ruta nueva con un secreto en un segmento se suma ahí.
 
 ## Verificación
 
