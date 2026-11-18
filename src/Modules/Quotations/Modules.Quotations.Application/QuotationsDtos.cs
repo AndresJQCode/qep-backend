@@ -30,7 +30,9 @@ public sealed record QuotationItemDto(
     /// líneas enviadas antes de que existieran. No viajan así al cliente HTTP: el composer los
     /// resuelve contra el catálogo con <see cref="QuotationItemProductLabel"/>.</summary>
     string? ProductCode,
-    string? ProductName);
+    string? ProductName,
+    /// <summary>Mayorista fase 3: la línea de la orden de compra de la que salió, sólo en un pedido mayorista.</summary>
+    Guid? SourcePurchaseOrderLineId = null);
 
 public sealed record QuotationDto(
     Guid Id,
@@ -1044,7 +1046,10 @@ public sealed record QuotationItemResponse(
     string DiscountOrigin,
     /// <summary>Por qué el piso global no le dio su descuento a esta línea, o null si no hay nada
     /// que explicar. Con default para no tocar las construcciones que ya existen.</summary>
-    GlobalScaleFloorMissResponse? GlobalScaleFloorMiss = null);
+    GlobalScaleFloorMissResponse? GlobalScaleFloorMiss = null,
+    /// <summary>Mayorista fase 3: en un pedido mayorista, si la línea vino de la orden de compra del distribuidor (false = la
+    /// agregó el mayorista). Null en cualquier otro documento.</summary>
+    bool? FromPurchaseOrder = null);
 
 /// <summary>
 /// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No

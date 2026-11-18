@@ -75,7 +75,25 @@ internal static class OrderMapping
         order.BuyerNotes,
         order.BuyerAccountId,
         [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)],
-        order.OrderDate);
+        order.OrderDate,
+        WholesaleOf(order));
+
+    /// <summary>Mayorista fase 3: el vínculo del pedido con la orden del distribuidor; null fuera de un pedido mayorista.</summary>
+    public static OrderWholesaleState? WholesaleOf(Order order) =>
+        order is { Source: OrderSource.Wholesale, BuyerTenantId: { } buyerTenantId, PurchaseOrderId: { } purchaseOrderId }
+            ? new OrderWholesaleState(
+                buyerTenantId,
+                purchaseOrderId,
+                order.ExternalReference ?? string.Empty,
+                ApprovalOf(order),
+                order.WholesaleApprovedAt,
+                order.WholesaleApprovedBy?.Value,
+                order.CancelledByBuyer)
+            : null;
+
+    // D-1: la marca, no un estado. Un anulado sin aprobar sigue diciendo Pending; el estado del pedido dice que se anuló.
+    private static string ApprovalOf(Order order) =>
+        order.WholesaleApprovedAt is null ? WholesaleApprovals.Pending : WholesaleApprovals.Approved;
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
@@ -112,7 +130,8 @@ internal static class OrderMapping
         order.Source.ToString(),
         order.ExternalReference,
         order.ShippingDtoOf(),
-        order.OrderDate);
+        order.OrderDate,
+        WholesaleOf(order) is { } wholesale ? new OrderListWholesaleDto(wholesale.PurchaseOrderNumber, wholesale.Approval) : null);
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
         entry.Id.Value,
@@ -151,7 +170,8 @@ internal static class OrderMapping
         item.Position,
         item.DiscountOrigin.ToString(),
         item.ProductCode,
-        item.ProductName);
+        item.ProductName,
+        item.SourcePurchaseOrderLineId);
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(
         proof.Id.Value, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn);

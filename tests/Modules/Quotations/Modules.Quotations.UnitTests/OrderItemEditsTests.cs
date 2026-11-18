@@ -40,7 +40,7 @@ public sealed class OrderItemEditsTests
         Order order, StubPricingCatalog catalog, RecordingOrderVariantCostLookup costs,
         params OrderItemAddition[] desired) =>
         OrderItemEdits.ApplyAsync(
-            order, desired, catalog, costs, TenantId, UpdatedBy, Now.AddDays(1), isRetail: false,
+            order, desired, catalog, costs, new StubWholesaleLinePricing(), TenantId, UpdatedBy, Now.AddDays(1), isRetail: false,
             TestContext.Current.CancellationToken);
 
     // Spec costo de producto §4.3: un pedido pagado sigue editable y la línea nueva ya cuenta como vendida, así que

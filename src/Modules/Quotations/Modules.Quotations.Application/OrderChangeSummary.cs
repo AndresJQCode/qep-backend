@@ -29,6 +29,17 @@ public static class OrderChangeSummary
     // El pedido de la tienda sale directo del checkout: no hay solicitud que nombrar.
     public static string CreatedFromStore() => "Creado desde la tienda.";
 
+    /// <summary>Mayorista fase 3: el pedido que creó la orden de compra de un distribuidor vinculado.</summary>
+    public static string CreatedFromPurchaseOrder(string purchaseOrderNumber) =>
+        Trim($"Creado desde la orden de compra {purchaseOrderNumber} del distribuidor.");
+
+    /// <summary>D-1: la aprobación del pedido mayorista; desde acá no se edita y la orden del distribuidor queda confirmada.</summary>
+    public static string WholesaleApproved() => "Aprobó el pedido del distribuidor.";
+
+    /// <summary>D-4: el precio por línea de un pedido mayorista.</summary>
+    public static string ItemUnitPriceChanged(string productName, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió el precio de {productName}: {format.Number(from)} → {format.Number(to)}.");
+
     public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
         QuotationChangeSummary.ItemAdded(productName, quantity, format);
 

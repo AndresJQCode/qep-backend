@@ -1,3 +1,5 @@
+using FluentValidation;
+using FluentValidation.Results;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -109,6 +111,31 @@ internal static class OrderListing
             : throw new QuotationsDomainException(
                 "order.order.source_invalid",
                 $"'{source}' is not a valid order source.");
+    }
+
+    /// <summary>
+    /// Mayorista fase 3: el filtro por la marca de aprobación (D-1). <c>Pending</c> es <c>false</c> (sin aprobar) y
+    /// <c>Approved</c> es <c>true</c>; sin valor, todos. Otro valor es un error de campo, como pide el contrato.
+    /// </summary>
+    public static bool? ParseWholesaleApproval(string? approval)
+    {
+        if (string.IsNullOrWhiteSpace(approval))
+        {
+            return null;
+        }
+
+        if (string.Equals(approval.Trim(), WholesaleApprovals.Pending, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.Equals(approval.Trim(), WholesaleApprovals.Approved, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        throw new ValidationException(
+            [new ValidationFailure(nameof(ListOrdersQuery.WholesaleApproval), "Use Pending or Approved.")]);
     }
 
     // El CUC no vive en el pedido: se resuelve a ids de cliente contra Customers y recién entonces se

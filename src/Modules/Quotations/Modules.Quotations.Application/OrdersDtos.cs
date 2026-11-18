@@ -106,7 +106,51 @@ public sealed record OrderDto(
     IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null,
     /// <summary>La fecha del pedido en el calendario del tenant (spec 2026-11-16 §4), aparte de <see cref="ConvertedAt"/>,
     /// que no cambia. Lleva default sólo porque va después de los opcionales: <c>OrderMapping.ToDto</c> la escribe siempre.</summary>
-    DateOnly OrderDate = default);
+    DateOnly OrderDate = default,
+    /// <summary>Mayorista fase 3: el vínculo con la orden del distribuidor, sin nombres resueltos. No viaja en
+    /// <c>OrderResponse</c>: el compositor del detalle lo resuelve en la raíz (<see cref="OrderDetailResponse.Wholesale"/>).</summary>
+    OrderWholesaleState? Wholesale = null);
+
+/// <summary>Los dos valores de la aprobación mayorista (D-1), por nombre en el JSON.</summary>
+public static class WholesaleApprovals
+{
+    public const string Pending = "Pending";
+
+    public const string Approved = "Approved";
+}
+
+/// <summary>El vínculo de un pedido mayorista tal como lo guarda el pedido; los nombres los resuelve el compositor.</summary>
+public sealed record OrderWholesaleState(
+    Guid BuyerTenantId,
+    Guid PurchaseOrderId,
+    string PurchaseOrderNumber,
+    string Approval,
+    DateTimeOffset? ApprovedAt,
+    Guid? ApprovedBy,
+    bool CancelledByBuyer);
+
+/// <summary>Un tenant con su nombre visible (el distribuidor, en el detalle de un pedido mayorista).</summary>
+public sealed record OrderTenantRefDto(Guid Id, string? Name);
+
+/// <summary>Una membresía con su nombre visible.</summary>
+public sealed record OrderMemberRefDto(Guid MemberId, string? Name);
+
+/// <summary>
+/// Mayorista fase 3 (D-7 y adenda): lo que el mayorista ve del distribuidor en el detalle. El nombre del tenant es el que ya
+/// muestra Distribuidores (ningún dato nuevo cruza); <c>Approval</c> es <c>Pending</c> o <c>Approved</c>. Null fuera de un
+/// pedido mayorista.
+/// </summary>
+public sealed record OrderWholesaleDto(
+    OrderTenantRefDto BuyerTenant,
+    Guid PurchaseOrderId,
+    string PurchaseOrderNumber,
+    string Approval,
+    DateTimeOffset? ApprovedAt,
+    OrderMemberRefDto? ApprovedBy,
+    bool CancelledByBuyer);
+
+/// <summary>La fila mayorista de la lista: el número de la orden y la aprobación, para la insignia «Por aprobar».</summary>
+public sealed record OrderListWholesaleDto(string PurchaseOrderNumber, string Approval);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2). <c>QuotationCreatedAt</c> es el <c>CreatedAt</c> de esa
@@ -208,7 +252,9 @@ public sealed record RecognizeOrderCarrierRequest(Guid CarrierId, bool RememberN
 
 /// <summary>Una línea del estado deseado del pedido, por variante (spec 2026-10-20 §4; antes
 /// <c>productId</c>): dos tallas del mismo producto son dos líneas.</summary>
-public sealed record OrderEditItemRequest(Guid VariantId, decimal Quantity);
+/// <summary>Una línea de la edición. <c>UnitPrice</c> (IVA incluido, mayor o igual a 0) sólo en un pedido mayorista sin aprobar
+/// (D-4); en otro origen es 422 <c>order.item.unit_price_not_editable</c>.</summary>
+public sealed record OrderEditItemRequest(Guid VariantId, decimal Quantity, decimal? UnitPrice = null);
 
 public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount, DateOnly? PaidOn = null);
 
@@ -435,7 +481,9 @@ public sealed record OrderListItemResponse(
     /// envío adentro): la grilla muestra transportadora y contraentrega sin pedir el pedido entero.</summary>
     ShippingResponse Shipping,
     /// <summary>La fecha del pedido (spec 2026-11-16 §4): la que filtra y ordena la lista.</summary>
-    DateOnly OrderDate);
+    DateOnly OrderDate,
+    /// <summary>Mayorista fase 3: número de la orden y aprobación; null fuera de un pedido mayorista.</summary>
+    OrderListWholesaleDto? Wholesale = null);
 
 /// <summary>La cotización de origen del detalle. <c>CreatedAt</c> es el de la cotización (spec 2026-11-16 F-8): el detalle
 /// lo muestra junto a la fecha del pedido.</summary>
@@ -469,7 +517,9 @@ public sealed record OrderDetailResponse(
     IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings,
     // Spec 2026-11-15 §4: la cuenta de comprador del pedido de la tienda con su correo, para que la pantalla no consulte a
     // Buyers. Sólo en el detalle: el listado no hace la búsqueda cruzada. Null sin cuenta o con la cuenta ya borrada.
-    BuyerAccountResponse? BuyerAccount);
+    BuyerAccountResponse? BuyerAccount,
+    // Mayorista fase 3 (D-7): el distribuidor, la orden y la aprobación. Null fuera de un pedido mayorista.
+    OrderWholesaleDto? Wholesale = null);
 
 /// <summary>La cuenta de comprador de un pedido, como la muestra el detalle (spec 2026-11-15 §4).</summary>
 public sealed record BuyerAccountResponse(Guid Id, string Email);
@@ -478,4 +528,7 @@ public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,
     int Total,
     int Page,
-    int PageSize);
+    int PageSize,
+    /// <summary>Mayorista fase 3 (adenda): los pedidos mayoristas que esperan aprobación con los filtros vigentes salvo el de
+    /// estado, para el aviso de la lista.</summary>
+    int PendingWholesaleApprovals = 0);

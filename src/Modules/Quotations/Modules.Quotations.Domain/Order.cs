@@ -685,8 +685,10 @@ public sealed class Order
     }
 
     /// <summary>La clave de idempotencia del envío de una orden de compra vinculada (D-8): un reintento encuentra el pedido
-    /// que ya existe en vez de crear otro.</summary>
-    public static string WholesaleExternalKey(Guid purchaseOrderId) => $"purchase-order:{purchaseOrderId:D}";
+    /// que ya existe en vez de crear otro. Lleva al comprador (rulings X1 y X8a): el id de la orden de otro comprador da otra
+    /// clave y nunca encuentra este pedido.</summary>
+    public static string WholesaleExternalKey(Guid buyerTenantId, Guid purchaseOrderId) =>
+        $"purchase-order:{buyerTenantId:D}:{purchaseOrderId:D}";
 
     /// <summary>
     /// El pedido que crea la orden de compra de un distribuidor vinculado (mayorista fase 3). Calca
@@ -716,7 +718,7 @@ public sealed class Order
             id, tenantId, orderNumber, OrderSource.Wholesale, purchaseOrderNumber, header, parties, billingAccount,
             ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, buyerNotes, createdBy, [], occurredAt,
             orderDate, OrderLineCosts.None);
-        order.ExternalKey = NormalizeExternalKey(WholesaleExternalKey(purchaseOrderId));
+        order.ExternalKey = NormalizeExternalKey(WholesaleExternalKey(buyerTenantId, purchaseOrderId));
         order.BuyerNotes = NormalizeNotes(buyerNotes);
         order.BuyerTenantId = buyerTenantId;
         order.PurchaseOrderId = purchaseOrderId;

@@ -38,4 +38,7 @@ public enum OrderHistoryEventType
     /// <summary>Spec 2026-11-16 §3 (F-6): un asesor cambió la «Fecha del pedido». La entrada la escribe el handler del guardado
     /// del borrador, con la fecha anterior y la nueva en <c>Details</c>. Al final, como los demás.</summary>
     OrderDateChanged,
+
+    // Mayorista fase 3 (adenda del contrato): el mayorista aprobó el pedido de un distribuidor (D-1).
+    WholesaleApproved,
 }

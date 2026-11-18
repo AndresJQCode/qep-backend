@@ -73,8 +73,9 @@ public sealed class WholesaleOrderTests
 
         Assert.Equal(OrderSource.Wholesale, order.Source);
         Assert.Equal("OC-0007", order.ExternalReference);
-        Assert.Equal($"purchase-order:{PurchaseOrderId:D}", order.ExternalKey);
-        Assert.Equal(Order.WholesaleExternalKey(PurchaseOrderId), order.ExternalKey);
+        // Ruling X8a: la clave lleva al comprador, así el id de la orden de otro comprador no encuentra este pedido.
+        Assert.Equal($"purchase-order:{BuyerTenantId:D}:{PurchaseOrderId:D}", order.ExternalKey);
+        Assert.Equal(Order.WholesaleExternalKey(BuyerTenantId, PurchaseOrderId), order.ExternalKey);
         Assert.Equal(BuyerTenantId, order.BuyerTenantId);
         Assert.Equal(PurchaseOrderId, order.PurchaseOrderId);
         Assert.Equal("Entregar en bodega", order.BuyerNotes);
