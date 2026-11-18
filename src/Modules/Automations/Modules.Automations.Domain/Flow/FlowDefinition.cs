@@ -26,11 +26,33 @@ public sealed record FlowVariable(string Name, string Type);
 /// </summary>
 public abstract record FlowNode(string Id, string Kind, string Title, IReadOnlyDictionary<string, string?> Outputs);
 
-/// <summary>Con <see cref="UrlButton"/> sale como interactivo <c>CtaUrl</c> (D-I1); sin él, como texto.</summary>
-public sealed record MessageNode(string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Text, UrlButton? UrlButton)
+/// <summary>
+/// Con <see cref="UrlButton"/> sale como interactivo <c>CtaUrl</c> (D-I1); sin él, como texto. Con <see cref="Media"/> (spec 2026-11-18)
+/// lleva un archivo y <see cref="Text"/> es su pie; <c>null</c> es el mensaje de texto de siempre.
+/// </summary>
+public sealed record MessageNode(
+    string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Text, UrlButton? UrlButton, MessageMedia? Media = null)
     : FlowNode(Id, FlowNodeKinds.Message, Title, Outputs);
 
 public sealed record UrlButton(string Label, string Url);
+
+/// <summary>
+/// Spec 2026-11-18: el archivo de un bloque «Mensaje». El flujo guarda sólo el id del archivo de Storage (dueño <c>ChatbotMedia</c>),
+/// nunca una URL: la URL pública, el nombre y el tipo se resuelven por tenant cuando hacen falta. <see cref="Kind"/> es uno de
+/// <see cref="ChatbotMediaKinds"/>.
+/// </summary>
+public sealed record MessageMedia(string Kind, Guid FileId);
+
+/// <summary>Los tipos de archivo de un bloque «Mensaje», en minúscula (decisión del owner 2026-11-18).</summary>
+public static class ChatbotMediaKinds
+{
+    public const string Image = "image";
+    public const string Video = "video";
+    public const string Audio = "audio";
+    public const string Document = "document";
+
+    public static readonly IReadOnlyList<string> All = [Image, Video, Audio, Document];
+}
 
 /// <summary><see cref="MaxAttempts"/> pisa el del chatbot (D-C7); <c>null</c> usa el del chatbot.</summary>
 public sealed record OpenQuestionNode(
