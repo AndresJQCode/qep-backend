@@ -87,8 +87,16 @@ internal sealed class PlainTemplateOutbound(
             DetailsJson: built.DetailsJson);
         await using var claim = await outbound.ClaimAsync(draft, cancellationToken);
 
+        // Una Failed con el reintento apagado es terminal, como en OutboundGuards.TakeInFlightAsync: no se reenvía aunque quien llama
+        // repita su clientId (el procesador del aviso de Mayorista reintenta siempre con el mismo).
+        if (!claim.Inserted && claim.Existing is { Status: MessageStatus.Failed, RetryDisabled: true })
+        {
+            await claim.RollbackAsync(CancellationToken.None);
+            return new PlainTemplateSendResult.Failed(MessagingErrorCodes.MessageNotRetriable);
+        }
+
         // Un reintento con el mismo clientId cuya fila ya salió (o está en camino) no vuelve a llamar a Meta: devuelve la que hay. Una
-        // Failed sí se reenvía, sobre la misma fila.
+        // Failed con reintento sí se reenvía, sobre la misma fila.
         if (!claim.Inserted && claim.Existing is { } existing && existing.Status != MessageStatus.Failed)
         {
             await claim.RollbackAsync(CancellationToken.None);

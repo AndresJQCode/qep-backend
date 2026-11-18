@@ -129,6 +129,30 @@ public sealed class WholesaleInvitationNoticeOutboundTests
             "SELECT status::text FROM messaging.messages WHERE id = @id", ("id", first.MessageId)));
     }
 
+    /// <summary>Una fila Failed con el reintento apagado es terminal (como <c>OutboundGuards.TakeInFlightAsync</c>): repetir el clientId
+    /// no la reenvía ni llama a Meta, y devuelve <c>not_retriable</c>.</summary>
+    [Fact]
+    public async Task TheSameClientIdOnAFailedRowWithRetryDisabledDoesNotResend()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(132015));
+        var clientId = Guid.CreateVersion7();
+        Assert.IsType<WholesaleInvitationNoticeSendResult.Failed>(await SendAsync(f, Send(f, clientId)));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.messages SET retry_disabled = true WHERE direction = 2");
+
+        var second = await SendAsync(f, Send(f, clientId));
+
+        Assert.Equal(new WholesaleInvitationNoticeSendResult.Failed("messaging.message.not_retriable"), second);
+        Assert.Single(MetaCalls(f));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.Equal("4", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status::text FROM messaging.messages WHERE direction = 2"));
+        Assert.True(await ScalarAsync<bool>(f.ConnectionString,
+            "SELECT retry_disabled FROM messaging.messages WHERE direction = 2"));
+    }
+
     [Fact]
     public async Task AConnectionThatIsNotActiveReturnsConnectionUnavailableAndWritesNothing()
     {
