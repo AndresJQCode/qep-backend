@@ -1405,6 +1405,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
         services.AddScoped<IQueryHandler<ExportChatbotQuery, ChatbotExportDto>, ExportChatbotHandler>();
         services.AddScoped<ICommandHandler<ImportChatbotCommand, ChatbotEditorDto>, ImportChatbotHandler>();
+        // Automations (spec 2026-11-18): subir y completar el archivo de un bloque «Mensaje».
+        services.AddScoped<ICommandHandler<CreateChatbotMediaSessionCommand, ChatbotMediaSessionDto>, CreateChatbotMediaSessionHandler>();
+        services.AddScoped<ICommandHandler<CompleteChatbotMediaCommand, ChatbotMediaFileDto>, CompleteChatbotMediaHandler>();
         // Automations (spec 2026-10-21 D-C8): el catálogo de plantillas, guardar un chatbot como plantilla y borrarla.
         services.AddScoped<IQueryHandler<ListChatbotTemplatesQuery, TemplateCatalogDto>, ListChatbotTemplatesHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotAsTemplateCommand, TemplateDto>, SaveChatbotAsTemplateHandler>();
