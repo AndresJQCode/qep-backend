@@ -512,7 +512,7 @@ public static class QepServiceCollectionExtensions
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
         // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado y el aplicador de sus eventos (lo llama el
-        // procesador del inbox de Task 7, que también registra los adaptadores de los puertos mayoristas).
+        // procesador del inbox de Compras en su scope por mensaje; los adaptadores de los puertos mayoristas van más abajo).
         services.AddScoped<
             IQueryHandler<Modules.Purchases.Application.ListSupplierCatalogQuery, Modules.Purchases.Application.SupplierCatalogPageDto>,
             Modules.Purchases.Application.ListSupplierCatalogHandler>();
@@ -1850,6 +1850,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
+        // Mayorista fase 3: el catálogo del mayorista, su motor de pedidos (por un scope propio por llamada) y el catálogo propio
+        // para la confirmación, enrolado en la transacción del inbox de Compras.
+        services.AddScoped<Modules.Purchases.Application.IWholesaleCatalog, PurchasesWholesaleCatalog>();
+        services.AddScoped<Modules.Purchases.Application.IWholesaleOrderIntake, PurchasesWholesaleOrderIntake>();
+        services.AddScoped<IWholesaleIntakeDirectory, WholesaleIntakeDirectory>();
+        services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogWriter, PurchasesCatalogWriter>();
+        // Y la adenda del contrato: el estado de la relación con el mayorista en la lista y el detalle de proveedores.
+        services.AddScoped<ISupplierRelationshipLookup, SuppliersWholesaleRelationshipLookup>();
 
         // Wholesale, spec 2026-11-17: Catalog, Companies, Tenancy, Suppliers y Customers entran por puertos del módulo.
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCatalogReader, WholesaleCatalogReader>();

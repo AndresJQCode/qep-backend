@@ -247,4 +247,18 @@ public sealed class WholesaleOffersTests
 
         Assert.Empty(prices);
     }
+
+    // Task 7: el reintento de un envío (D-8) pinta base y descuento con la oferta vigente, sin revalidar la relación.
+    [Fact]
+    public async Task OrderOffersCarryBaseAndDiscountIgnoringBlocked()
+    {
+        var cocina = _catalog.AddProduct("C-1", "Olla", _catalog.AddCategory("Cocina"), cop: 10000m);
+        var distributor = SeedActive();
+        UseCategories(distributor, 15m, _catalog.AddCategory("Hogar"));
+        distributor.Block(DistributorWorld.Now);
+
+        var offers = await Offers().OffersForOrderAsync(_world.Tenant, _buyer, "COP", [cocina], Ct);
+
+        Assert.Equal((10000m, 15m, 8500m), (offers[cocina].BasePrice, offers[cocina].DiscountPercent, offers[cocina].ListPrice));
+    }
 }

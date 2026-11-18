@@ -155,25 +155,36 @@ public sealed class WholesaleOffers(
         Guid buyerTenantId,
         string currency,
         IReadOnlyCollection<Guid> variantIds,
+        CancellationToken cancellationToken) =>
+        (await OffersForOrderAsync(wholesalerTenantId, buyerTenantId, currency, variantIds, cancellationToken))
+            .ToDictionary(pair => pair.Key, pair => pair.Value.ListPrice);
+
+    /// <summary>
+    /// Lo mismo que <see cref="ListPricesForOrderAsync"/>, con la oferta entera (precio base y descuento): el reintento de un
+    /// envío que encuentra el pedido ya creado (D-8) pinta «base y descuento» sin volver a validar la relación.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<Guid, WholesaleOffer>> OffersForOrderAsync(
+        Guid wholesalerTenantId,
+        Guid buyerTenantId,
+        string currency,
+        IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken)
     {
         var distributor = await distributors.FindByTenantsAsync(wholesalerTenantId, buyerTenantId, cancellationToken);
         if (distributor is null || variantIds.Count == 0)
         {
-            return new Dictionary<Guid, decimal>();
+            return new Dictionary<Guid, WholesaleOffer>();
         }
 
         var list = await priceLists.GetAsync(wholesalerTenantId, distributor.PriceListId, cancellationToken);
         if (list is null)
         {
-            return new Dictionary<Guid, decimal>();
+            return new Dictionary<Guid, WholesaleOffer>();
         }
 
         var rounding = await priceRounding.GetAsync(wholesalerTenantId, currency, cancellationToken);
         var found = await catalog.FindSellableAsync(wholesalerTenantId, currency, variantIds, cancellationToken);
-        return found.ToDictionary(
-            pair => pair.Key,
-            pair => WholesalePricing.ListPrice(pair.Value.BasePrice, list.DiscountPercent, rounding));
+        return found.ToDictionary(pair => pair.Key, pair => OfferOf(pair.Value, list.DiscountPercent, rounding));
     }
 
     private static WholesaleOffer OfferOf(

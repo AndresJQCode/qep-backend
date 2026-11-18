@@ -34,6 +34,13 @@ public sealed partial class WholesaleOrderEventApplier(
             return outcome;
         }
 
+        // Revisión del bloque B, M2: costos en otra moneda nunca se aplican en silencio, y reintentar no lo arregla.
+        if (approval.Currency is { } currency && !string.Equals(currency, order.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            LogCurrencyMismatch(logger, approval.BuyerTenantId, approval.PurchaseOrderId, currency, order.Currency);
+            return WholesaleEventOutcome.Ignored;
+        }
+
         // El costo de la orden es sin IVA (D-9); la tasa que viaja es la efectiva de la línea del pedido.
         var finalLines = approval.Lines
             .Select(line => new WholesalerFinalLine(
@@ -162,6 +169,10 @@ public sealed partial class WholesaleOrderEventApplier(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Wholesale event for purchase order {PurchaseOrderId} of tenant {TenantId} does not match it (wholesaler {WholesalerTenantId}, order {OrderId}); ignored.")]
     private static partial void LogMismatch(
         ILogger logger, Guid tenantId, Guid purchaseOrderId, Guid wholesalerTenantId, Guid orderId);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Wholesale approval for purchase order {PurchaseOrderId} of tenant {TenantId} is in {EventCurrency} but the order is in {OrderCurrency}; it is not applied.")]
+    private static partial void LogCurrencyMismatch(
+        ILogger logger, Guid tenantId, Guid purchaseOrderId, string eventCurrency, string orderCurrency);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Wholesale event for purchase order {PurchaseOrderId} of tenant {TenantId} (order {OrderId}) found it still in draft; it will be retried.")]
     private static partial void LogNotSentYet(ILogger logger, Guid tenantId, Guid purchaseOrderId, Guid orderId);

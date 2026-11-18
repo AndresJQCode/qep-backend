@@ -50,14 +50,19 @@ public interface IWholesaleCatalog
 /// <summary>Una línea de la orden que viaja al pedido del mayorista: su id, la variante del mayorista y la cantidad.</summary>
 public sealed record WholesaleIntakeLine(Guid PurchaseOrderLineId, Guid VariantId, decimal Quantity);
 
-/// <summary>Lo que «Enviar» entrega al mayorista. El comprador es el tenant de la ruta, nunca un dato del cuerpo.</summary>
+/// <summary>
+/// Lo que «Enviar» entrega al mayorista. El comprador es el tenant de la ruta, nunca un dato del cuerpo. <c>Currency</c> es la
+/// de la orden (D-11): si el mayorista cambió su moneda desde el borrador, el pedido no se crea ni se adopta (revisión del
+/// bloque B, M2) y el distribuidor edita la orden para volver a preciarla.
+/// </summary>
 public sealed record WholesaleIntakeRequest(
     Guid BuyerTenantId,
     Guid WholesalerTenantId,
     Guid PurchaseOrderId,
     string PurchaseOrderNumber,
     string? Notes,
-    IReadOnlyList<WholesaleIntakeLine> Lines);
+    IReadOnlyList<WholesaleIntakeLine> Lines,
+    string Currency);
 
 /// <summary>
 /// El pedido que quedó en el mayorista con sus líneas, ya convertidas a la foto de la orden (costo sin IVA, D-9). Con
@@ -82,13 +87,15 @@ public interface IWholesaleOrderIntake
     /// <summary>
     /// D-12: anula el pedido mientras el mayorista no lo apruebe. Aprobado, preparado, facturado o archivado: 409
     /// <c>purchases.order.not_cancellable</c> (<c>ResourceConflictException</c>). Idempotente si ya estaba anulado.
+    /// <para><paramref name="orderId"/> nulo es un borrador (revisión del bloque B, M1): el envío pudo crear el pedido y no
+    /// alcanzar a guardarlo en la orden. Se busca el que salió de esta orden por su clave; si no hay ninguno, no pasa nada.</para>
     /// </summary>
     Task CancelAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         Guid purchaseOrderId,
         string purchaseOrderNumber,
-        Guid orderId,
+        Guid? orderId,
         CancellationToken cancellationToken);
 }
 
@@ -128,13 +135,18 @@ public sealed record WholesaleApprovedLine(
     decimal UnitPrice,
     decimal TaxPercentage);
 
-/// <summary>El evento de aprobación ya leído por el procesador del inbox: quién lo emite y a qué orden va.</summary>
+/// <summary>
+/// El evento de aprobación ya leído por el procesador del inbox: quién lo emite y a qué orden va. <c>Currency</c> es la del
+/// pedido; si no es la de la orden, la aprobación no se aplica (revisión del bloque B, M2). Nula sólo en quien arma el evento
+/// sin moneda (pruebas): no se compara.
+/// </summary>
 public sealed record WholesaleApproval(
     Guid WholesalerTenantId,
     Guid OrderId,
     Guid BuyerTenantId,
     Guid PurchaseOrderId,
-    IReadOnlyList<WholesaleApprovedLine> Lines);
+    IReadOnlyList<WholesaleApprovedLine> Lines,
+    string? Currency = null);
 
 /// <summary>El evento de anulación (<c>quotations.order.wholesale-cancelled.v1</c>) ya leído por el procesador del inbox.</summary>
 public sealed record WholesaleCancellation(

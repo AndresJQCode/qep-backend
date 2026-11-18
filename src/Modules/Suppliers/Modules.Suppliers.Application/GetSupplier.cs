@@ -10,7 +10,8 @@ public sealed class GetSupplierHandler(
     ISupplierRepository repository,
     ISupplierGeographyLookup geographyLookup,
     IExecutionContext executionContext,
-    ITenantDirectory tenantDirectory)
+    ITenantDirectory tenantDirectory,
+    ISupplierRelationshipLookup relationships)
     : IQueryHandler<GetSupplierQuery, SupplierResponse>
 {
     public async Task<SupplierResponse> HandleAsync(
@@ -24,6 +25,6 @@ public sealed class GetSupplierHandler(
             query.TenantId, new SupplierId(query.SupplierId), cancellationToken)
             ?? throw SupplierNotFound.For(query.SupplierId);
 
-        return await supplier.ToResponseAsync(geographyLookup, tenantDirectory, cancellationToken);
+        return await supplier.ToResponseAsync(geographyLookup, tenantDirectory, relationships, cancellationToken);
     }
 }

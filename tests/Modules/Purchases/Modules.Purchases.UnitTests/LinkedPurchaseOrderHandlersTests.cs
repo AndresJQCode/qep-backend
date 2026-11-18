@@ -46,6 +46,9 @@ public sealed class LinkedPurchaseOrderHandlersTests
         _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), _suppliers, _orders, _unitOfWork,
         _audit, Composer(), _intake);
 
+    private DeletePurchaseOrderHandler DeleteHandler() => new(
+        _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), _orders, _unitOfWork, _audit, _intake);
+
     private ConfirmPurchaseOrderHandler ConfirmHandler() => new(
         _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), _orders, _unitOfWork, _audit,
         Composer(), new ConfirmPurchaseOrderValidator());
@@ -135,6 +138,8 @@ public sealed class LinkedPurchaseOrderHandlersTests
 
         var request = Assert.Single(_intake.Submitted);
         Assert.Equal((TenantId, Wholesaler, order.Id.Value, "OC-0007"), (request.BuyerTenantId, request.WholesalerTenantId, request.PurchaseOrderId, request.PurchaseOrderNumber));
+        // M2: el adaptador compara la moneda del pedido con la de la orden; nunca la cambia en silencio.
+        Assert.Equal("COP", request.Currency);
         Assert.Equal([(sourceLine.Id, sourceLine.SupplierVariantId!.Value, 2m)], request.Lines.Select(line => (line.PurchaseOrderLineId, line.VariantId, line.Quantity)));
         Assert.Equal(PurchaseOrderStatus.Sent, order.Status);
         Assert.Equal((_intake.OrderId, "PED-0042"), (order.LinkedOrderId!.Value, order.LinkedOrderNumber));
@@ -176,21 +181,60 @@ public sealed class LinkedPurchaseOrderHandlersTests
             new TransitionPurchaseOrderCommand(TenantId, order.Id.Value, order.Version, PurchaseOrderAction.Cancel), Ct);
 
         Assert.Equal(
-            [(TenantId, Wholesaler, order.Id.Value, "OC-0007", PurchaseOrderTestData.LinkedOrderId)],
+            [(TenantId, Wholesaler, order.Id.Value, "OC-0007", (Guid?)PurchaseOrderTestData.LinkedOrderId)],
             _intake.Cancelled);
         Assert.Equal(PurchaseOrderStatus.Cancelled, order.Status);
     }
 
+    // Revisión del bloque B, M1: si el envío creó el pedido y Compras no alcanzó a guardar, el borrador no sabe el id del
+    // pedido. Cancelarlo le pide al mayorista anular el que haya salido de esta orden (por su clave), sin id.
     [Fact]
-    public async Task CancelOfALinkedDraftDoesNotTouchTheWholesaler()
+    public async Task CancelOfALinkedDraftAlsoCancelsAnOrderLeftByAFailedSend()
     {
         var order = _orders.Seed(PurchaseOrderTestData.LinkedOrder());
 
         await TransitionHandler().HandleAsync(
             new TransitionPurchaseOrderCommand(TenantId, order.Id.Value, order.Version, PurchaseOrderAction.Cancel), Ct);
 
-        Assert.Empty(_intake.Cancelled);
+        Assert.Equal([(TenantId, Wholesaler, order.Id.Value, "OC-0007", (Guid?)null)], _intake.Cancelled);
         Assert.Equal(PurchaseOrderStatus.Cancelled, order.Status);
+    }
+
+    [Fact]
+    public async Task DeleteOfALinkedDraftAlsoCancelsAnOrderLeftByAFailedSend()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.LinkedOrder());
+
+        await DeleteHandler().HandleAsync(new DeletePurchaseOrderCommand(TenantId, order.Id.Value, order.Version), Ct);
+
+        Assert.Equal([(TenantId, Wholesaler, order.Id.Value, "OC-0007", (Guid?)null)], _intake.Cancelled);
+        Assert.Empty(_orders.Orders);
+    }
+
+    // El pedido huérfano ya lo aprobó el mayorista: el borrador no se borra (409) y se puede volver a enviar (D-8 lo adopta).
+    [Fact]
+    public async Task DeleteOfALinkedDraftWhoseOrderWasApprovedIs409AndKeepsTheDraft()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.LinkedOrder());
+        _intake.CancelFailure = new ResourceConflictException(PurchasesErrorCodes.NotCancellable, "Approved.");
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            DeleteHandler().HandleAsync(new DeletePurchaseOrderCommand(TenantId, order.Id.Value, order.Version), Ct));
+
+        Assert.Equal(PurchasesErrorCodes.NotCancellable, error.Code);
+        Assert.Single(_orders.Orders);
+        Assert.Equal(0, _unitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task DeleteOfAnExternalDraftDoesNotTouchTheWholesaler()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.Order());
+
+        await DeleteHandler().HandleAsync(new DeletePurchaseOrderCommand(TenantId, order.Id.Value, order.Version), Ct);
+
+        Assert.Empty(_intake.Cancelled);
+        Assert.Empty(_orders.Orders);
     }
 
     // Review Focus 2: el mayorista aprobó primero. El 409 deja la orden Sent con su versión hasta que llegue el evento.

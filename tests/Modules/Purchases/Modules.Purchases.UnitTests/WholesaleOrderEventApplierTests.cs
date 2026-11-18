@@ -213,4 +213,32 @@ public sealed class WholesaleOrderEventApplierTests
         Assert.Null(order.Lines.Single(line => line.Status == PurchaseOrderLineStatus.Added).VariantId);
         Assert.Equal(PurchaseOrderStatus.Confirmed, order.Status);
     }
+
+    // Revisión del bloque B, M2: un pedido en otra moneda que la orden no se aplica nunca en silencio; reintentar no lo arregla.
+    [Fact]
+    public async Task AnApprovalInAnotherCurrencyIsIgnoredAndChangesNothing()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+        var version = order.Version;
+
+        var outcome = await Applier().ApplyApprovedAsync(
+            Approval(order, Final(order.Lines[0], 2m)) with { Currency = "USD" }, Later, Ct);
+
+        Assert.Equal(WholesaleEventOutcome.Ignored, outcome);
+        Assert.Equal((PurchaseOrderStatus.Sent, version), (order.Status, order.Version));
+        Assert.Empty(_writer.Calls);
+        Assert.Empty(_audit.Entries);
+        Assert.Equal(0, _unitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task AnApprovalInTheSameCurrencyIgnoringCaseApplies()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+
+        var outcome = await Applier().ApplyApprovedAsync(
+            Approval(order, Final(order.Lines[0], 2m)) with { Currency = "cop" }, Later, Ct);
+
+        Assert.Equal(WholesaleEventOutcome.Applied, outcome);
+    }
 }

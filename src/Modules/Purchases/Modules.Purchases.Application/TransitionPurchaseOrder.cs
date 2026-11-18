@@ -20,7 +20,8 @@ public sealed record TransitionPurchaseOrderCommand(
 /// alta, 422 <c>supplier_inactive</c> y la orden sigue en borrador. Recibir y cancelar no tienen reglas extra.
 /// <para>Mayorista fase 3: una orden vinculada (el modo fijado al guardar, D-10) se envía creando el pedido en el mayorista
 /// (<see cref="IWholesaleOrderIntake"/>, idempotente, D-8) y adopta sus líneas; cancelarla en <c>Sent</c> anula primero el
-/// pedido (D-12): si el mayorista ya lo aprobó, el 409 sale de ahí y la orden no cambia.</para>
+/// pedido (D-12): si el mayorista ya lo aprobó, el 409 sale de ahí y la orden no cambia. Cancelar un borrador vinculado anula
+/// el pedido que haya dejado un envío que no terminó de guardarse (revisión del bloque B, M1).</para>
 /// </summary>
 public sealed class TransitionPurchaseOrderHandler(
     IExecutionContext executionContext,
@@ -76,7 +77,8 @@ public sealed class TransitionPurchaseOrderHandler(
                         order.Notes,
                         order.Lines
                             .Select(line => new WholesaleIntakeLine(line.Id, line.SupplierVariantId!.Value, line.Quantity!.Value))
-                            .ToList()),
+                            .ToList(),
+                        order.Currency),
                     cancellationToken);
                 order.SendToWholesaler(submitted.OrderId, submitted.OrderNumber, submitted.Lines, memberId, clock.UtcNow);
                 break;
@@ -87,10 +89,11 @@ public sealed class TransitionPurchaseOrderHandler(
                 order.Receive(memberId, clock.UtcNow);
                 break;
             default:
-                if (order is { IsLinked: true, Status: PurchaseOrderStatus.Sent, LinkedOrderId: { } linkedOrderId })
+                // D-12 en Sent; en Draft (revisión del bloque B, M1) el envío pudo dejar un pedido sin que la orden lo supiera.
+                if (order is { IsLinked: true, Status: PurchaseOrderStatus.Sent or PurchaseOrderStatus.Draft })
                 {
                     await wholesaleOrders.CancelAsync(
-                        command.TenantId, order.SupplierTenantId!.Value, order.Id.Value, order.Number, linkedOrderId,
+                        command.TenantId, order.SupplierTenantId!.Value, order.Id.Value, order.Number, order.LinkedOrderId,
                         cancellationToken);
                 }
 

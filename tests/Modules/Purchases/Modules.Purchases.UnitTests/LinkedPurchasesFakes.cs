@@ -169,7 +169,7 @@ internal sealed class FakeWholesaleOrderIntake : IWholesaleOrderIntake
 {
     public List<WholesaleIntakeRequest> Submitted { get; } = [];
 
-    public List<(Guid BuyerTenantId, Guid WholesalerTenantId, Guid PurchaseOrderId, string Number, Guid OrderId)> Cancelled { get; } = [];
+    public List<(Guid BuyerTenantId, Guid WholesalerTenantId, Guid PurchaseOrderId, string Number, Guid? OrderId)> Cancelled { get; } = [];
 
     /// <summary>Con valor, el próximo envío devuelve este resultado (un pedido que ya existía).</summary>
     public WholesaleIntakeResult? Existing { get; set; }
@@ -199,7 +199,7 @@ internal sealed class FakeWholesaleOrderIntake : IWholesaleOrderIntake
         Guid wholesalerTenantId,
         Guid purchaseOrderId,
         string purchaseOrderNumber,
-        Guid orderId,
+        Guid? orderId,
         CancellationToken cancellationToken)
     {
         if (CancelFailure is { } failure)
