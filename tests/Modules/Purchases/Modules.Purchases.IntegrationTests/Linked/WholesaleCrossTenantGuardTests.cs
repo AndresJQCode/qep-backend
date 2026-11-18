@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using Modules.Purchases.Application;
 using Modules.Purchases.Domain;
 
-namespace Modules.Purchases.IntegrationTests;
+namespace Modules.Purchases.IntegrationTests.Linked;
 
 /// <summary>
 /// Mayorista fase 3, «Lectura entre tenants»: el distribuidor sólo ve y pide del catálogo de un mayorista con el que tiene una

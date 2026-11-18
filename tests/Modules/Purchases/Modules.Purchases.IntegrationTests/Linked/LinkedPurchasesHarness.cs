@@ -13,7 +13,7 @@ using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Wholesale.Application;
 
-namespace Modules.Purchases.IntegrationTests;
+namespace Modules.Purchases.IntegrationTests.Linked;
 
 /// <summary>
 /// Mayorista fase 3: dos tenants con la relación armada por el camino real de fase 2 (el mayorista invita, el distribuidor acepta

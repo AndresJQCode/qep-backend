@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Modules.Purchases.Domain;
 
-namespace Modules.Purchases.IntegrationTests;
+namespace Modules.Purchases.IntegrationTests.Linked;
 
 /// <summary>
 /// Mayorista fase 3: los eventos de vuelta. El mayorista aprueba (tal cual o con cambios) o anula; Compras los consume con su

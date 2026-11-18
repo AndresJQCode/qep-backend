@@ -1,7 +1,7 @@
 using System.Net;
 using Modules.Purchases.Domain;
 
-namespace Modules.Purchases.IntegrationTests;
+namespace Modules.Purchases.IntegrationTests.Linked;
 
 /// <summary>
 /// Mayorista fase 3: «Enviar» una orden vinculada crea el pedido en el mayorista al precio de lista de ese momento (D-8, D-9),
