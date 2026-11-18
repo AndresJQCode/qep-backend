@@ -65,6 +65,7 @@ using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Products;
 using Modules.Siigo.Application.Settings;
 using Modules.Siigo.Infrastructure;
 using Modules.Storage.Application;
@@ -1574,6 +1575,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<UpdateSiigoTaxesCommand, SiigoSettingsDto>, UpdateSiigoTaxesHandler>();
         services.AddScoped<ICommandHandler<UpdateSiigoPaymentsCommand, SiigoSettingsDto>, UpdateSiigoPaymentsHandler>();
         services.AddScoped<IQueryHandler<ListSiigoOptionsQuery, IReadOnlyList<SiigoOptionDto>>, ListSiigoOptionsHandler>();
+        // Paso 6 (Tarea 7): los vínculos de las variantes con los productos de Siigo.
+        services.AddScoped<IQueryHandler<ListSiigoVariantLinksQuery, SiigoVariantLinksPageDto>, ListSiigoVariantLinksHandler>();
+        services.AddScoped<ICommandHandler<LinkSiigoVariantCommand, SiigoVariantLinkDto>, LinkSiigoVariantHandler>();
+        services.AddScoped<ICommandHandler<UnlinkSiigoVariantCommand, SiigoCoverageDto>, UnlinkSiigoVariantHandler>();
+        services.AddScoped<ICommandHandler<AutoLinkSiigoVariantsByCodeCommand, SiigoAutoLinkResultDto>, AutoLinkSiigoVariantsByCodeHandler>();
+        services.AddScoped<ISiigoVariantCatalog, SiigoVariantCatalog>();
         services.AddValidatorsFromAssemblyContaining<UpdateSiigoDocumentValidator>();
         services.AddScoped<ISiigoConnectionDirectory, SiigoConnectionDirectory>();
         services.AddScoped<ISiigoCompanyDirectory, SiigoCompanyDirectory>();

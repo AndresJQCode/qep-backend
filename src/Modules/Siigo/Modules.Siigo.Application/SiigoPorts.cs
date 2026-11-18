@@ -68,3 +68,35 @@ public interface ISiigoSettingsRepository
     /// </summary>
     Task<SiigoSettings?> FindOrCreateAsync(Guid tenantId, Guid connectionId, bool withVariantLinks, CancellationToken cancellationToken);
 }
+
+/// <summary>Una variante de QEP tal como la tabla de vínculos la pinta: <paramref name="DisplayName"/> es el producto más los valores de
+/// sus opciones; <paramref name="IsActive"/> exige variante y producto activos.</summary>
+public sealed record SiigoVariantRef(Guid VariantId, string DisplayName, string Code, bool IsActive);
+
+/// <summary>Catalog. Las variantes del tenant para el paso «Productos» (spec 2026-11-18 §5.3). El adaptador lee el catálogo directo
+/// (proyección sobre <c>catalog.product_variants</c>, sin cargar el agregado: un producto llega a 2.048 variantes).</summary>
+public interface ISiigoVariantCatalog
+{
+    /// <summary>
+    /// Una página de variantes (activas o no), por producto y código. <paramref name="search"/> busca sin distinguir mayúsculas en el
+    /// código de la variante y el nombre del producto. <paramref name="onlyVariantIds"/> deja sólo esas (vacía no devuelve filas);
+    /// <paramref name="excludeVariantIds"/> las quita: así «vinculadas» y «sin vincular» salen sin cruzar dos esquemas. El total es el de
+    /// la búsqueda, no el de la página.
+    /// </summary>
+    Task<SiigoPage<SiigoVariantRef>> SearchAsync(
+        Guid tenantId,
+        string? search,
+        IReadOnlyCollection<Guid>? onlyVariantIds,
+        IReadOnlyCollection<Guid>? excludeVariantIds,
+        int skip,
+        int take,
+        CancellationToken cancellationToken);
+
+    /// <summary>Las variantes activas del tenant (variante y producto activos), para la cobertura. Con <paramref name="onlyVariantIds"/>,
+    /// cuántas de ésas lo son.</summary>
+    Task<int> CountActiveAsync(Guid tenantId, IReadOnlyCollection<Guid>? onlyVariantIds, CancellationToken cancellationToken);
+
+    /// <summary>Todas las variantes activas con su código, para «Vincular por código». El <c>DisplayName</c> es el del producto: ahí no
+    /// se pinta, y armar el de cada variante costaría las opciones de todo el catálogo.</summary>
+    Task<IReadOnlyList<SiigoVariantRef>> ListAllActiveCodesAsync(Guid tenantId, CancellationToken cancellationToken);
+}

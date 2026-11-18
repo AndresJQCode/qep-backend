@@ -21,6 +21,9 @@ public sealed record SiigoPaymentSettings(
     string? CashOnDeliveryPaymentTypeId,
     string? DefaultPaymentTypeId);
 
+/// <summary>Un vínculo variante → producto de Siigo que el auto-vínculo propone (spec 2026-11-18 §5.3, paso 6).</summary>
+public sealed record SiigoVariantLinkInput(Guid VariantId, string Code, string SiigoProductId, string Name);
+
 /// <summary>
 /// Spec 2026-11-18 §5.2: la configuración de una conexión de Siigo, una fila por conexión (PK <see cref="ConnectionId"/>), con los
 /// vínculos de impuestos, retenciones, cuentas de cobro y productos. Nace vacía al primer acceso. <b>Toda escritura sube
@@ -193,6 +196,34 @@ public sealed class SiigoSettings
         else
         {
             existing.Replace(code, siigoProductId, name, origin, memberId, at);
+        }
+
+        Touch();
+    }
+
+    /// <summary>Vincula varias variantes de una vez (el auto-vínculo por código): <b>sube la versión una sola vez</b>, no una por vínculo, y
+    /// nada si la lista viene vacía. Una variante que ya tiene vínculo se reemplaza como en <see cref="LinkVariant"/>; el llamador es
+    /// quien decide no pasar las que ya tienen uno.</summary>
+    public void LinkVariants(
+        IReadOnlyList<SiigoVariantLinkInput> links, SiigoLinkOrigin origin, Guid memberId, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(links);
+        if (links.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var link in links)
+        {
+            var existing = _variantLinks.Find(candidate => candidate.VariantId == link.VariantId);
+            if (existing is null)
+            {
+                _variantLinks.Add(new SiigoVariantLink(ConnectionId, TenantId, link.VariantId, link.Code, link.SiigoProductId, link.Name, origin, memberId, at));
+            }
+            else
+            {
+                existing.Replace(link.Code, link.SiigoProductId, link.Name, origin, memberId, at);
+            }
         }
 
         Touch();

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Products;
 using Modules.Siigo.Application.Settings;
 
 namespace Modules.Siigo.Api;
@@ -12,7 +13,7 @@ namespace Modules.Siigo.Api;
 /// con el módulo apagado, <c>ModuleEntitlementMask</c> ya se lo quitó) y el handler (<c>SiigoAuthorization</c>) a quien lo tiene en
 /// otro tenant, con 403 y nunca 404. La configuración de una conexión vive bajo
 /// <c>/api/v1/tenants/{tenantId}/siigo/connections/{connectionId}</c>, con <c>siigo.settings.manage</c>; los <c>PUT</c> llevan
-/// <c>If-Match</c> con la versión (sin él, 428; con una vieja, 412). Los vínculos de productos y la facturación llegan con sus tareas.
+/// <c>If-Match</c> con la versión (sin él, 428; con una vieja, 412). Los vínculos de productos están bajo <c>…/products</c>; la facturación llega con su tarea.
 /// </summary>
 public static class SiigoEndpoints
 {
@@ -63,8 +64,61 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Paso 6 (spec 2026-11-18 §5.3): el vínculo de cada variante de QEP con un producto de Siigo. Sin If-Match: el vínculo de una
+        // fila no pisa lo que otra pestaña editó en otra fila, y la versión de la configuración sube igual.
+        group.MapGet("/products", ListProductsAsync)
+            .Produces<SiigoVariantLinksPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/products/{variantId:guid}/link", LinkProductAsync)
+            .Produces<SiigoVariantLinkDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/products/{variantId:guid}/link", UnlinkProductAsync)
+            .Produces<SiigoCoverageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed);
+
+        group.MapPost("/products/auto-link", AutoLinkProductsAsync)
+            .Produces<SiigoAutoLinkResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         return endpoints;
     }
+
+    private static async Task<IResult> ListProductsAsync(
+        Guid tenantId,
+        Guid connectionId,
+        string? search,
+        string? filter,
+        int? page,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListSiigoVariantLinksQuery(tenantId, connectionId, search, filter, page), cancellationToken));
+
+    private static async Task<IResult> LinkProductAsync(
+        Guid tenantId,
+        Guid connectionId,
+        Guid variantId,
+        SiigoProductLinkRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new LinkSiigoVariantCommand(tenantId, connectionId, variantId, request.SiigoProductId, request.Code, request.Name), cancellationToken));
+
+    private static async Task<IResult> UnlinkProductAsync(
+        Guid tenantId, Guid connectionId, Guid variantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new UnlinkSiigoVariantCommand(tenantId, connectionId, variantId), cancellationToken));
+
+    private static async Task<IResult> AutoLinkProductsAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new AutoLinkSiigoVariantsByCodeCommand(tenantId, connectionId), cancellationToken));
 
     private static async Task<IResult> GetSettingsAsync(
         Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, HttpContext httpContext, CancellationToken cancellationToken) =>
@@ -185,6 +239,9 @@ public static class SiigoEndpoints
         return long.TryParse(normalized, out version) && version >= 0;
     }
 }
+
+/// <summary>El cuerpo de <c>PUT …/products/{variantId}/link</c>: el producto de Siigo elegido (id, código y nombre).</summary>
+public sealed record SiigoProductLinkRequest(string? SiigoProductId, string? Code, string? Name);
 
 /// <summary>El cuerpo de <c>PUT …/company</c>. Opcional en el binding: una empresa que falta es un 422 con <c>errors</c>.</summary>
 public sealed record SiigoCompanyRequest(Guid? CompanyId);

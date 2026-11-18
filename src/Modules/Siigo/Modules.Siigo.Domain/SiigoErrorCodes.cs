@@ -19,6 +19,9 @@ public static class SiigoErrorCodes
     /// <summary>422: un valor de la configuración pasa del largo de su columna (los validadores lo frenan antes con el campo).</summary>
     public const string SettingsValueTooLong = "siigo.settings.value_too_long";
 
+    /// <summary>422: la variante que se quiere vincular no existe en el catálogo del tenant.</summary>
+    public const string ProductVariantNotFound = "siigo.product.variant_not_found";
+
     /// <summary>409: la conexión no se puede usar (pausada, con la clave rechazada, ilegible…); el motivo viaja en <c>details</c>.</summary>
     public const string ConnectionUnavailable = "siigo.connection_unavailable";
 
