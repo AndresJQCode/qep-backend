@@ -24,7 +24,7 @@ public static class WholesaleInvitationEmailTemplate
     {
         ArgumentNullException.ThrowIfNull(format);
 
-        var subject = $"{wholesalerName} te invita a comprarle en QEP";
+        var subject = $"{wholesalerName} te invita a comprarle en Lulo CRM";
         // En la hora del tenant del mayorista y con su patrón de fecha (spec 2026-10-23, D-R2).
         var expiry = format.Expiry(expiresAt);
 
@@ -36,14 +36,14 @@ public static class WholesaleInvitationEmailTemplate
 
         var textBody =
             $"Hola.\n\n" +
-            $"{wholesalerName} quiere venderle a {businessName} por QEP. " +
+            $"{wholesalerName} quiere venderle a {businessName} por Lulo CRM. " +
             $"Acepta la invitación para crear tus órdenes de compra con sus precios.\n\n" +
             $"{link}\n\n" +
             $"El enlace vence el {expiry}.\n";
 
         var htmlBody =
             $"<p>Hola.</p>" +
-            $"<p>{htmlWholesaler} quiere venderle a {htmlBusiness} por QEP. " +
+            $"<p>{htmlWholesaler} quiere venderle a {htmlBusiness} por Lulo CRM. " +
             $"Acepta la invitación para crear tus órdenes de compra con sus precios.</p>" +
             $"<p><a href=\"{htmlLink}\">Aceptar invitación</a></p>" +
             $"<p>El enlace vence el {expiry}.</p>";
