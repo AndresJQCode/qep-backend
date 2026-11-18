@@ -9,6 +9,8 @@ namespace Bootstrapper;
 /// mayorista fase 2, Task 7; O-7 y ruling W2). El <c>Instance</c> del ProblemDetails no cambia: vuelve a quien ya tiene el token.
 /// Con la barra final y sin distinguir mayúsculas: el enrutamiento de ASP.NET es insensible a ellas, así que <c>/API/V1/…</c>
 /// llega al mismo endpoint y también lleva el token.
+/// <para>La telemetría usa la misma regla (<see cref="SensitivePathTelemetry"/>): el <c>url.path</c> del span de OpenTelemetry y
+/// el scope <c>RequestPath</c> de cada log del request.</para>
 /// </summary>
 public static class SensitivePaths
 {
@@ -21,9 +23,11 @@ public static class SensitivePaths
     private static readonly string[] Prefixes = [WholesaleInvitationPrefix, MemberInvitationPrefix];
 
     /// <summary>La ruta con el segmento que sigue al prefijo cambiado por <c>***</c>; cualquier otra, tal cual.</summary>
-    public static string Mask(PathString path)
+    public static string Mask(PathString path) => Mask(path.Value);
+
+    /// <summary>Lo mismo sobre la ruta como texto, como llega en un atributo de span o en el scope <c>RequestPath</c> de un log.</summary>
+    public static string Mask(string? value)
     {
-        var value = path.Value;
         if (string.IsNullOrEmpty(value))
         {
             return "/";

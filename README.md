@@ -2460,7 +2460,8 @@ identidades que el `403` de login. Y el `422` distingue vencimiento de estado no
 aceptable porque sólo el primero se arregla pidiendo un link nuevo.
 
 Ni este token ni el del mayorista quedan en el servidor: `platform.request_failures` y su línea de log guardan la ruta con
-`SensitivePaths.Mask` (`/api/v1/invitations/***/accept`).
+`SensitivePaths.Mask` (`/api/v1/invitations/***/accept`). La telemetría usa la misma regla (`SensitivePathTelemetry`): el
+`url.path` de los spans de OpenTelemetry y el scope `RequestPath` de los logs del request.
 
 ### Mayorista: listas de precios, distribuidores e invitación
 
