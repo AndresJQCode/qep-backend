@@ -210,9 +210,7 @@ Orden:
      rompería la idempotencia). Antes se pasa a `Unknown` si tiene más de 24 h (transición perezosa al leer o reintentar,
      sin worker). La fila guarda la `version` del pedido al armar; si al confirmar el pedido ya no está en esa versión, la
      fila queda con `order_changed = true` y la pantalla lo muestra.
-   - `Created` con `send_to_dian` prendido y sin CUFE → se retoma en el paso 6 (enviar a la DIAN).
-   - `Created` en los demás casos, `Stamped`, `StampRejected`, `Mismatch`, `Unknown` → se devuelve tal cual, sin llamar
-     a Siigo.
+   - `Created`, `Stamped`, `StampRejected`, `Unknown` → se devuelve tal cual, sin llamar a Siigo.
    - `Rejected`, `Failed` o ninguna → se arma una fila nueva (pasos 2 y 3).
    - Conexión no operativa en Integrations al retomar → `409 siigo.connection_unavailable`, la fila no cambia.
 2. **Validación completa** (§6), que junta **todos** los faltantes y responde
@@ -220,33 +218,29 @@ Orden:
    tasa sin vínculo, cuenta sin forma de pago, cliente sin dato). Nada sale a Siigo.
 3. **Armar la petición** (§6.3) y guardar la fila `siigo.invoices` en `Pending` con la petición entera (`request_json`)
    y su `idempotency_key`. **Commit.** De acá en adelante, un reintento manda los mismos bytes con la misma clave.
-4. **Crear en Siigo sin enviar a la DIAN** **[decisión del diseño, por las retenciones: Siigo calcula su monto y QEP no
-   puede predecirlo]**: `POST /v1/invoices` **siempre con `stamp.send = false`**, fuera de la transacción y con
-   `Idempotency-Key`. Sin reintentos en el cliente HTTP (como `MaxRetries = 0` de los agentes): reintenta quien llama,
-   con la misma fila. `send_to_dian` de la conexión decide el paso 6, no esta llamada.
-5. **Resultado de la creación:**
-   - 2xx → se **verifica** lo que Siigo calculó contra el pedido (§6.4: total, IVA y retenciones, tolerancia 1 peso).
-     Si cuadra, fila `Created` con `siigo_invoice_id`, `number` (`name`, p. ej. `FV-1-123`) y `total` devuelto, y
-     **marca el pedido** (§5.5). Si no cuadra, fila `Mismatch` con los dos valores, **pedido sin marcar y sin enviar a la
-     DIAN**: la factura queda sin emitir en Siigo y alguien la borra allá y resuelve la fila (§5.6).
+4. **Crear en Siigo**: `POST /v1/invoices` con `stamp.send` = `send_to_dian` de la conexión (owner, 2026-11-18: el envío a
+   la DIAN lo manda la configuración del tenant), fuera de la transacción y con `Idempotency-Key`. Sin reintentos en el
+   cliente HTTP (como `MaxRetries = 0` de los agentes): reintenta quien llama, con la misma fila.
+5. **Resultado:**
+   - 2xx → fila `Created` (o `Stamped` si Siigo devuelve el CUFE) con `siigo_invoice_id`, `number` (`name`, p. ej.
+     `FV-1-123`) y `total` devuelto, y **marca el pedido** (§5.5).
    - 4xx de validación de Siigo → `Rejected` con el error de Siigo (códigos y campos, sin datos del cliente), pedido sin
-     marcar. Como Siigo no la creó, una nueva llamada crea otra fila.
+     marcar. Como Siigo no la creó, una nueva llamada crea otra fila. **Aquí cae un total que no cuadra** (§6.4): los
+     pagos los arma QEP y Siigo rechaza la factura si no suman lo que él calculó.
    - Timeout, 5xx, 429 o red → la fila queda `Pending`. La siguiente llamada al endpoint (o el botón «Reintentar»)
      reenvía **la misma petición con la misma clave**; Siigo devuelve la ya creada si existía. Una `Pending` de más de
      24 h pasa a `Unknown` **[decisión del diseño]**: la documentación no dice cuánto recuerda la clave, y pasado ese
      tiempo reenviar puede duplicar. `Unknown` no se reenvía sola: la resuelve una persona (§5.6).
-6. **Enviar a la DIAN**, sólo con la fila `Created` y `send_to_dian` prendido: `POST /v1/invoices/{id}/stamp`. Éxito →
-   fila `Stamped` (con el CUFE si Siigo lo devuelve). Fallo transitorio (red, 5xx, 429) → la fila sigue `Created` y el
-   envío se reintenta con «Reintentar envío a la DIAN». Con `send_to_dian` apagado la fila termina en `Created` y la
-   emite una persona en Siigo. Una vez emitida, la factura no se corrige con QEP (§2).
+6. Con `send_to_dian` apagado la fila termina en `Created` y la emite una persona en Siigo. Una vez emitida, la factura
+   no se corrige con QEP (§2).
 
 `idempotency_key`: los 30 primeros caracteres de la codificación base32 en minúsculas, sin relleno, del id de la fila
 (GUID v7 → 26 caracteres) **[decisión del diseño]**. Es única por intento, no por pedido: el candado y la regla del
 paso 1 dan la unicidad por pedido; la clave da la seguridad del reintento.
 
-DIAN rechaza: si la DIAN rechaza la factura ya creada, la fila queda `StampRejected` con los errores de
-`GET …/stamp/errors`. El pedido ya está marcado (la factura existe en Siigo, tiene número y cuadra) y la pantalla muestra
-el rechazo. `POST …/siigo-invoice/stamp` reintenta el envío (`POST /v1/invoices/{id}/stamp`) después de corregir en Siigo.
+DIAN rechaza: si Siigo crea la factura pero la DIAN la rechaza, la fila queda `StampRejected` con los errores de
+`GET …/stamp/errors`. El pedido **se marca** (la factura existe en Siigo y tiene número) y la pantalla muestra el
+rechazo. `POST …/siigo-invoice/stamp` reintenta el envío (`POST /v1/invoices/{id}/stamp`) después de corregir en Siigo.
 
 ### 5.5 Cambios en Quotations
 
@@ -265,26 +259,22 @@ el rechazo. `POST …/siigo-invoice/stamp` reintenta el envío (`POST /v1/invoic
 - `RevertOrderInvoicing` responde `422 order.order.invoiced_externally` si `invoice_provider` no es nulo. Revertir una
   factura de Siigo es una nota crédito y queda fuera (§2).
 - `InvoiceOrderHandler` (la marca manual) responde `409 order.order.external_invoice_pending` si hay una factura de Siigo
-  `Pending`, `Mismatch` o `Unknown` para el pedido. Lo pregunta por un puerto de Quotations con adaptador en Bootstrapper que lee
+  `Pending` o `Unknown` para el pedido. Lo pregunta por un puerto de Quotations con adaptador en Bootstrapper que lee
   `siigo.invoices` **[decisión del diseño]**: así nadie marca a mano mientras la factura real puede estar saliendo.
 
 ### 5.6 Estado y pantalla
 
 `siigo.invoices`: `id`, `tenant_id`, `connection_id`, `order_id`, `status` (`Pending` | `Created` | `Stamped` |
-`StampRejected` | `Mismatch` | `Rejected` | `Unknown` | `Failed`), `idempotency_key`, `request_json`, `siigo_invoice_id`,
-`number`, `cufe`, `siigo_total`, `mismatch_json` (las cifras de QEP y de Siigo, con cada retención, sólo en `Mismatch`),
-`error_code`, `error_detail` (de Siigo, recortado; sin datos del cliente), `attempts`, `created_by`, `created_at`,
-`updated_at`. Índice único parcial `(tenant_id, order_id) WHERE status NOT IN ('Rejected', 'Failed')`, traducido por
-nombre a `409 siigo.invoice.already_exists`: el candado da la respuesta amable, el índice cierra la carrera (precedente
-`IX_orders_tenant_external_key`). `Mismatch` **bloquea** a propósito: una nueva llamada crearía otra factura sin emitir
-en Siigo y gastaría otro consecutivo.
+`StampRejected` | `Rejected` | `Unknown` | `Failed`), `idempotency_key`, `request_json`, `siigo_invoice_id`,
+`number`, `cufe`, `siigo_total`, `error_code`, `error_detail` (de Siigo, recortado; sin datos del cliente), `attempts`,
+`created_by`, `created_at`, `updated_at`. Índice único parcial `(tenant_id, order_id) WHERE status NOT IN ('Rejected',
+'Failed')`, traducido por nombre a `409 siigo.invoice.already_exists`: el candado da la respuesta amable, el índice cierra
+la carrera (precedente `IX_orders_tenant_external_key`).
 
 - `GET …/orders/{orderId}/siigo-invoice` → la fila vigente o 404.
 - `POST …/orders/{orderId}/siigo-invoice/resolve` con `{ "outcome": "exists", "number": "FV-1-123" }` o
   `{ "outcome": "missing" }`, sólo desde `Unknown`: la persona miró en Siigo. `exists` marca el pedido con ese número;
-  `missing` pasa la fila a `Failed` y libera el pedido para facturar de nuevo. Desde `Mismatch` sólo vale
-  `{ "outcome": "missing" }`: la persona borró en Siigo la factura sin emitir (QEP no la borra: la API de borrado no está
-  verificada, V-7). Auditoría con quién lo resolvió.
+  `missing` pasa la fila a `Failed` y libera el pedido para facturar de nuevo. Auditoría con quién lo resolvió.
 
 ### 5.7 Permisos y auditoría
 
@@ -340,22 +330,27 @@ verificar con la empresa de prueba, V-3]**.
 
 ### 6.4 Cuadre de totales
 
-Decisión del owner (2026-11-18): **un pedido cuyos totales no cuadran con los que calcula Siigo no se factura.** Son dos
-revisiones, porque lo que Siigo calcula con las retenciones no se puede saber antes de crear:
+Decisión del owner (2026-11-18): **un pedido cuyos totales no cuadran con los que calcula Siigo no se factura**, y lo
+rechaza Siigo mismo: QEP arma los `payments` con sus valores (comprobantes y saldo) y, si no suman lo que Siigo calculó
+(ítems, IVA y retenciones), Siigo no crea la factura. Por eso `stamp.send` va con la configuración del tenant y no hay
+verificación posterior.
 
-1. **Antes de crear** (barata, evita errores): el armador calcula el subtotal, el IVA y el total de los ítems como Siigo
-   los va a redondear, sin retenciones. Si ya ahí difieren del pedido en más de 1 peso (tolerancia **[decisión del
-   diseño]**), `422 siigo.invoice.totals_mismatch` con los dos valores y nada sale a Siigo.
-2. **Después de crear, antes de enviar a la DIAN** (la que decide): se compara lo que Siigo devolvió (subtotal, IVA,
-   cada retención con su `value` y el total) con el pedido, retención por retención. Si algo difiere en más de 1 peso,
-   la fila queda `Mismatch`, el pedido sin marcar y la factura **sin emitir** (§5.4, paso 5). Como `stamp.send` siempre
-   va en `false` al crear, la factura de un pedido que no cuadra nunca llega a la DIAN.
+1. **Antes de crear** (barata, evita errores y peticiones fallidas, que cuentan para el bloqueo del 80 %): el armador
+   calcula el subtotal, el IVA y el total de los ítems como Siigo los va a redondear, sin retenciones. Si ya ahí difieren
+   del pedido en más de 1 peso (tolerancia **[decisión del diseño]**), `422 siigo.invoice.totals_mismatch` con los dos
+   valores y nada sale a Siigo.
+2. **En Siigo**: el rechazo de Siigo por pagos que no suman se traduce al mismo `siigo.invoice.totals_mismatch` (con el
+   código y el texto de Siigo en `details`), la fila queda `Rejected` y el pedido sin marcar. La causa típica es una
+   retención: Siigo y QEP no aplican la misma base mínima o el mismo redondeo; se corrige la configuración del impuesto en
+   Siigo o la tasa en QEP.
 
-No hay envío «con diferencia anotada». La causa típica es una retención: Siigo y QEP no aplican la misma base mínima
-o el mismo redondeo. La pantalla muestra las dos cifras por retención para que se corrija la configuración del impuesto
-en Siigo o la tasa en QEP. La regla de redondeo de Siigo y la forma en que calcula cada retención se fijan con la empresa
-de prueba (V-2, V-7) y quedan amarradas por pruebas con pedidos reales anonimizados (IVA incluido, descuento por escala,
-flete, ReteICA).
+**Esto depende de un hecho que la documentación no confirma** (V-7): que Siigo rechace una factura cuyos `payments` no
+suman su total. Si la empresa de prueba muestra que lo acepta, el rechazo no existe y emitir a la DIAN con
+`stamp.send = true` dejaría una factura legal con un total distinto al del pedido, que no se borra. **Plan B, si V-7
+falla:** crear siempre con `stamp.send = false`, comparar lo que Siigo devolvió (total y cada retención, tolerancia 1
+peso) y sólo entonces emitir con `POST /v1/invoices/{id}/stamp` si `send_to_dian` está prendido; lo que no cuadra queda
+sin emitir y sin marcar, con un estado `Mismatch` que bloquea un nuevo intento hasta que alguien borre la factura en
+Siigo. Se decide con el resultado de V-7, antes de escribir el cliente.
 
 ## 7. Seguridad
 
@@ -389,9 +384,12 @@ envían a la DIAN (`stamp.send = false`) y que se borran después. Nunca con la 
 - **V-4** (resuelta: `QuotationBillingAccount` no trae id de cuenta; la clave es banco + número, §5.2).
 - **V-5** Cuánto tiempo recuerda Siigo un `Idempotency-Key` (decide si 24 h para `Unknown` es corto o largo).
 - **V-6** Campos obligatorios para crear un cliente en la factura y códigos de departamento y ciudad (DANE o propios).
-- **V-7** Retenciones: qué devuelve `GET /v1/taxes` para cada tipo (ReteFuente incluida, que la tabla de la petición no
-  nombra); si Siigo aplica la base mínima configurada en el impuesto; cómo redondea el monto; si se puede mandar más de
-  una retención del mismo tipo; y si una factura creada sin emitir se puede borrar por API (`DELETE /v1/invoices/{id}`).
+- **V-7 (condiciona el diseño, §6.4).** Con una factura de prueba sin emitir (`stamp.send = false`): **(a)** si Siigo
+  rechaza una factura cuyos `payments` no suman su total, con y sin retenciones, y con qué código y texto; si no rechaza,
+  rige el plan B de §6.4. **(b)** Retenciones: qué devuelve `GET /v1/taxes` para cada tipo (ReteFuente incluida, que la
+  tabla de la petición no nombra); si Siigo aplica la base mínima configurada en el impuesto; cómo redondea el monto; si se
+  puede mandar más de una del mismo tipo. **(c)** Si una factura sin emitir se puede borrar por API
+  (`DELETE /v1/invoices/{id}`), para los casos de prueba.
 
 Conexión y empresa **[decisión del diseño]**: cambiar la empresa de una conexión se permite; las facturas ya emitidas
 conservan su `connection_id` y los pedidos nuevos se enrutan por la empresa vigente. Borrar la conexión en Integrations
@@ -417,9 +415,9 @@ después del backend; el backend no rompe nada sin él porque el módulo `siigo`
 - `SiigoLayerTests`, `SiigoNoLeakTests`, `MultiReplicaInventory`.
 - Fake de Siigo en las pruebas de integración (sin red). Ninguna prueba automática llama a Siigo: V-1…V-7 se hacen a
   mano contra la empresa de prueba (§9) y sus respuestas reales se copian a los fixtures del fake.
-- Dos pasos: creación que cuadra → `Created` → `Stamped`; creación con una retención que difiere → `Mismatch`, sin
-  llamada a `/stamp`, pedido sin marcar y el nuevo intento bloqueado hasta resolver; `stamp` con fallo de red → sigue
-  `Created` y se reintenta; `send_to_dian` apagado → termina en `Created` sin llamar a `/stamp`.
+- `stamp.send` sale con `send_to_dian` de la conexión (prendido y apagado); un rechazo de Siigo por pagos que no suman
+  → `Rejected` con `siigo.invoice.totals_mismatch`, pedido sin marcar y nuevo intento posible; una factura creada pero
+  rechazada por la DIAN → `StampRejected` con el pedido marcado.
 
 ## 12. Lo que queda para el builder
 
