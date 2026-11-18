@@ -87,7 +87,7 @@ public sealed class AddOrderItemsHandler(
             order.AddItem(
                 OrderItemId.New(), addition.VariantId, pricing.ProductId, addition.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage, costs, updatedBy, now);
+                pricing.Pricing.TaxPercentage, costs, updatedBy, now, pricing.Kind, pricing.SalesUnit);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                 OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.ItemsChanged,
                 updatedBy, OrderChangeSummary.ItemAdded(pricing.Name, addition.Quantity, format), now));

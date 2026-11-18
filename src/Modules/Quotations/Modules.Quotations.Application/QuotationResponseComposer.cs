@@ -341,7 +341,10 @@ public sealed class QuotationResponseComposer(
                     item.DiscountPercentage,
                     item.DiscountOrigin,
                     product.Scales,
-                    globalScaleFloor));
+                    globalScaleFloor),
+            // Los de la línea, nunca los del catálogo de hoy (spec 2026-11-18 §3.4).
+            item.Kind,
+            item.SalesUnit);
     }
 
     /// <summary>

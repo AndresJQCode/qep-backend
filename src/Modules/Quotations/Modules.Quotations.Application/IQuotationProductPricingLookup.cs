@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -43,6 +45,9 @@ public interface IQuotationProductPricingLookup
 /// <param name="TaxPercentage">La tasa de impuesto del producto
 /// (<c>Catalog.TaxRate.Percentage</c>). Null si el producto no tiene tasa asignada — se resuelve
 /// a 0% (RN-013, el gap que <c>Catalog.TaxRate</c> dejaba abierto a propósito).</param>
+/// <param name="Kind">Producto o servicio, del producto dueño (spec 2026-11-18 §3.4). La línea lo fija al nacer y no lo
+/// vuelve a leer. Último y con default para no tocar las construcciones que ya existen.</param>
+/// <param name="SalesUnit">La unidad de venta del producto, con la misma regla que <paramref name="Kind"/>.</param>
 public sealed record QuotationVariantPricingRef(
     Guid VariantId,
     Guid ProductId,
@@ -52,7 +57,9 @@ public sealed record QuotationVariantPricingRef(
     bool IsActive,
     IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyCollection<QuotationPriceScaleRef> Scales,
-    int? TaxPercentage);
+    int? TaxPercentage,
+    ProductKind Kind = ProductKind.Physical,
+    SalesUnit SalesUnit = SalesUnit.Unit);
 
 /// <summary>
 /// Espeja a <c>Catalog.Domain.PriceScaleRestriction</c> sin referenciarlo: este assembly no

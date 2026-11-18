@@ -30,7 +30,10 @@ public sealed record QuotationItemDto(
     /// líneas enviadas antes de que existieran. No viajan así al cliente HTTP: el composer los
     /// resuelve contra el catálogo con <see cref="QuotationItemProductLabel"/>.</summary>
     string? ProductCode,
-    string? ProductName);
+    string? ProductName,
+    /// <summary>El tipo y la unidad que la línea fijó al nacer (spec 2026-11-18 §3.4), por nombre.</summary>
+    string Kind,
+    string SalesUnit);
 
 public sealed record QuotationDto(
     Guid Id,
@@ -1044,7 +1047,12 @@ public sealed record QuotationItemResponse(
     string DiscountOrigin,
     /// <summary>Por qué el piso global no le dio su descuento a esta línea, o null si no hay nada
     /// que explicar. Con default para no tocar las construcciones que ya existen.</summary>
-    GlobalScaleFloorMissResponse? GlobalScaleFloorMiss = null);
+    GlobalScaleFloorMissResponse? GlobalScaleFloorMiss = null,
+    /// <summary>Producto o servicio (<c>Physical</c> | <c>Service</c>) y la unidad de venta (<c>Unit</c>, <c>Hour</c>…),
+    /// por nombre (spec 2026-11-18 §3.4). Son los que la línea fijó al nacer, no los del catálogo de hoy: la pantalla
+    /// pone la unidad junto a la cantidad con su propio diccionario. Con default por la misma razón que el anterior.</summary>
+    string Kind = "Physical",
+    string SalesUnit = "Unit");
 
 /// <summary>
 /// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No

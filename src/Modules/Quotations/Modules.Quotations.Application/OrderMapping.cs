@@ -151,7 +151,9 @@ internal static class OrderMapping
         item.Position,
         item.DiscountOrigin.ToString(),
         item.ProductCode,
-        item.ProductName);
+        item.ProductName,
+        item.Kind.ToString(),
+        item.SalesUnit.ToString());
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(
         proof.Id.Value, proof.FileId, proof.Amount, proof.UploadedAt, proof.PaidOn);

@@ -146,7 +146,9 @@ public sealed class BatchUpdateQuotationItemsHandler(
                 pricing.Pricing.DiscountPercentage,
                 pricing.Pricing.TaxPercentage,
                 updatedBy,
-                now);
+                now,
+                pricing.Kind,
+                pricing.SalesUnit);
 
             repository.AddHistoryEntry(QuotationHistoryEntry.Create(
                 QuotationHistoryEntryId.New(),

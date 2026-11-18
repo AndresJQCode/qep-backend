@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 
 namespace Modules.Quotations.Domain;
@@ -28,12 +29,16 @@ public sealed class QuotationItem
         int position,
         string currency,
         PriceRounding rounding,
+        ProductKind kind,
+        SalesUnit salesUnit,
         DateTimeOffset occurredAt)
     {
         Id = id;
         QuotationId = quotationId;
         VariantId = variantId;
         ProductId = productId;
+        Kind = kind;
+        SalesUnit = salesUnit;
         Position = position;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
@@ -55,6 +60,17 @@ public sealed class QuotationItem
     /// ningún módulo de negocio referencia las tablas de otro. Se conserva junto a
     /// <see cref="VariantId"/> para que un reporte pueda agrupar por producto.</summary>
     public Guid ProductId { get; private set; }
+
+    /// <summary>
+    /// Producto o servicio (spec 2026-11-18 §3.4), fijado al crear la línea con lo que decía el catálogo y nunca
+    /// releído: si el producto cambia de tipo después, la línea conserva el suyo. Se fija al nacer y no con la foto del
+    /// nombre, porque esa foto no existe en borrador y el borrador ya necesita saber si requiere envío. Las filas
+    /// anteriores a la columna son <c>Physical</c>, que reproduce lo de hoy.
+    /// </summary>
+    public ProductKind Kind { get; private set; }
+
+    /// <summary>La unidad de venta de la línea (spec §3.4), con la misma regla que <see cref="Kind"/>.</summary>
+    public SalesUnit SalesUnit { get; private set; }
 
     /// <summary>
     /// El código de la variante congelado cuando la cotización salió del borrador (owner,
@@ -186,10 +202,12 @@ public sealed class QuotationItem
         int position,
         string currency,
         PriceRounding rounding,
+        ProductKind kind,
+        SalesUnit salesUnit,
         DateTimeOffset occurredAt) =>
         new(
             id, quotationId, variantId, productId, quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat,
-            position, currency, rounding, occurredAt);
+            position, currency, rounding, kind, salesUnit, occurredAt);
 
     /// <summary>
     /// Congela código y nombre si la línea todavía no los tiene. Nunca los pisa: lo que el cliente

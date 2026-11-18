@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 
 namespace Modules.Quotations.Domain;
@@ -493,10 +494,12 @@ public sealed class Order
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
-            // La tasa del producto y la cuenta (con su IVA) se copian tal cual: no se relee la empresa (R2).
+            // La tasa del producto y la cuenta (con su IVA) se copian tal cual: no se relee la empresa (R2). El tipo y la
+            // unidad, también: son los de la línea de la cotización, no los que el producto tenga hoy (spec 2026-11-18 §3.4).
             var copy = OrderItem.Create(
                 OrderItemId.New(), order.Id, item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage,
-                item.ProductTaxRate, order.ChargesVat, order._items.Count + 1, order.Currency, order.PriceRounding, occurredAt);
+                item.ProductTaxRate, order.ChargesVat, order._items.Count + 1, order.Currency, order.PriceRounding,
+                item.Kind, item.SalesUnit, occurredAt);
             copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, order.PriceRounding, occurredAt);
             if (item.ProductCode is not null)
             {
@@ -712,7 +715,7 @@ public sealed class Order
         {
             order.AddItemCore(
                 OrderItemId.New(), line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
-                line.TaxPercentage, line.DiscountOrigin, line.Product, occurredAt);
+                line.TaxPercentage, line.DiscountOrigin, line.Product, line.Kind, line.SalesUnit, occurredAt);
         }
 
         order.EnsureCreatable();
@@ -1046,7 +1049,10 @@ public sealed class Order
         int taxPercentage,
         OrderLineCosts costs,
         MemberId updatedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        // Los del producto en el catálogo al agregar la línea (spec 2026-11-18 §3.4); default = el valor de hoy.
+        ProductKind kind = ProductKind.Physical,
+        SalesUnit salesUnit = SalesUnit.Unit)
     {
         ArgumentNullException.ThrowIfNull(costs);
         EnsureEditable("Products can only be added while the order is editable.");
@@ -1056,7 +1062,7 @@ public sealed class Order
         var unitCost = sold ? costs.For(variantId) : null;
         var item = AddItemCore(
             itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            QuotationDiscountOrigin.Own, null, occurredAt);
+            QuotationDiscountOrigin.Own, null, kind, salesUnit, occurredAt);
         if (sold)
         {
             item.FreezeCost(unitCost, occurredAt);
@@ -1090,6 +1096,8 @@ public sealed class Order
         int taxPercentage,
         QuotationDiscountOrigin origin,
         QuotationProductSnapshot? product,
+        ProductKind kind,
+        SalesUnit salesUnit,
         DateTimeOffset occurredAt)
     {
         // Una línea por variante (spec 2026-10-20 §4): dos tallas del mismo producto son dos líneas. El
@@ -1104,7 +1112,7 @@ public sealed class Order
         // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = OrderItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
-            _items.Count + 1, Currency, PriceRounding, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, kind, salesUnit, occurredAt);
         if (origin != QuotationDiscountOrigin.Own)
         {
             item.ApplyDiscount(discountPercentage, origin, Currency, PriceRounding, occurredAt);
@@ -2065,9 +2073,11 @@ public sealed class Order
         }
 
         return lines
+            // Las líneas de una plataforma externa nacen físicas y por unidad (spec 2026-11-18 §3.4).
             .Select((line, index) => OrderItem.Create(
                 OrderItemId.New(), Id, line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
-                line.TaxPercentage, ChargesVat, index + 1, Currency, PriceRounding, occurredAt))
+                line.TaxPercentage, ChargesVat, index + 1, Currency, PriceRounding, ProductKind.Physical, SalesUnit.Unit,
+                occurredAt))
             .ToArray();
     }
 

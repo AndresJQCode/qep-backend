@@ -182,7 +182,9 @@ internal static class QuotationMapping
         item.Position,
         item.DiscountOrigin.ToString(),
         item.ProductCode,
-        item.ProductName);
+        item.ProductName,
+        item.Kind.ToString(),
+        item.SalesUnit.ToString());
 
     /// <summary>El modo tal como viaja (nombre exacto del enum) al enum del dominio. El validador ya rechaza un
     /// nombre que no existe con el campo en <c>errors</c>; esto es el respaldo para quien llegue sin pasar por

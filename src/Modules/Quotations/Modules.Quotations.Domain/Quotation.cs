@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 
 namespace Modules.Quotations.Domain;
@@ -496,6 +497,10 @@ public sealed class Quotation
     /// aplicación contra la escala de precios del producto para <paramref name="quantity"/>
     /// (<c>IQuotationProductPricingLookup</c> + el resolver de escala) — el dominio no sabe nada
     /// de escalas de otro módulo, sólo valida y aplica el número que le llega.
+    ///
+    /// <paramref name="kind"/> y <paramref name="salesUnit"/> son los del producto en el catálogo al agregar la línea
+    /// (spec 2026-11-18 §3.4): la línea los fija ahora y no los vuelve a leer. Con default porque el valor de hoy es
+    /// <c>Physical</c>/<c>Unit</c>; todo camino de Application que lee la variante los pasa.
     /// </summary>
     public void AddItem(
         QuotationItemId itemId,
@@ -506,11 +511,13 @@ public sealed class Quotation
         decimal discountPercentage,
         int taxPercentage,
         MemberId updatedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        ProductKind kind = ProductKind.Physical,
+        SalesUnit salesUnit = SalesUnit.Unit)
     {
         EnsureEditable();
         AddItemCore(
-            itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, kind, salesUnit,
             updatedBy, occurredAt);
     }
 
@@ -623,6 +630,8 @@ public sealed class Quotation
         decimal unitPrice,
         decimal discountPercentage,
         int taxPercentage,
+        ProductKind kind,
+        SalesUnit salesUnit,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
@@ -642,7 +651,7 @@ public sealed class Quotation
         // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = QuotationItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
-            _items.Count + 1, Currency, PriceRounding, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, kind, salesUnit, occurredAt);
         _items.Add(item);
         Touch(updatedBy, occurredAt);
     }
