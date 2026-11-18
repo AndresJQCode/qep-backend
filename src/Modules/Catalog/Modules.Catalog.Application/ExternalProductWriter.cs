@@ -40,9 +40,16 @@ public sealed class ExternalProductWriter(
                 OptionValueIds = resolved.ValueIds[index],
                 Pricing = new ProductPricing
                 {
-                    Prices = new Dictionary<string, decimal>(StringComparer.Ordinal) { [currency] = variant.Price }
+                    Prices = variant.Price is { } price
+                        ? new Dictionary<string, decimal>(StringComparer.Ordinal) { [currency] = price }
+                        : new Dictionary<string, decimal>(StringComparer.Ordinal),
+                    AllowsNoPrice = variant.Price is null,
                 },
                 IsActive = true,
+                // ProductVariantCost exige un monto mayor que cero: sin eso, la variante nace sin costo (D-18).
+                Costs = variant.Cost is > 0m and var cost
+                    ? new Dictionary<string, decimal>(StringComparer.Ordinal) { [currency] = cost }
+                    : null,
             })
             .ToArray();
 
@@ -84,6 +91,11 @@ public sealed class ExternalProductWriter(
     {
         ArgumentNullException.ThrowIfNull(draft);
         ArgumentNullException.ThrowIfNull(existing);
+        // Sólo el alta deja un producto sin precio (D-16): una plataforma que actualiza siempre manda el suyo.
+        if (draft.Variants.Any(variant => variant.Price is null))
+        {
+            throw new ArgumentException("An update needs a price on every variant.", nameof(draft));
+        }
 
         var product = await repository.FindAsync(draft.TenantId, new ProductId(productId), cancellationToken)
             ?? throw ProductNotFound.For(productId);
@@ -137,7 +149,7 @@ public sealed class ExternalProductWriter(
                 // cambia sólo la moneda de la tienda; una nueva nace con ese único precio.
                 targets[index] is null
                     ? new ProductPricingRequest(
-                        new Dictionary<string, decimal>(StringComparer.Ordinal) { [currency] = variant.Price }, null, null)
+                        new Dictionary<string, decimal>(StringComparer.Ordinal) { [currency] = variant.Price!.Value }, null, null)
                     : null,
                 GalleryFileOf(product, targets[index]),
                 IsActive: true))
@@ -153,7 +165,7 @@ public sealed class ExternalProductWriter(
 
         var variants = ProductVariantChanges.Resolve(product, resolved.OptionIds, requests, library)
             .Select((input, index) => index < draft.Variants.Count && targets[index] is not null
-                ? input with { Pricing = input.Pricing with { Prices = WithPrice(input.Pricing.Prices, currency, draft.Variants[index].Price) } }
+                ? input with { Pricing = input.Pricing with { Prices = WithPrice(input.Pricing.Prices, currency, draft.Variants[index].Price!.Value) } }
                 : input)
             .ToArray();
 
@@ -305,6 +317,20 @@ public sealed class ExternalProductWriter(
         return new ExternalDefaultTaxRates(
             candidates.FirstOrDefault(rate => rate.Percentage == 19m)?.Id.Value,
             candidates.FirstOrDefault(rate => rate.Percentage == 0m)?.Id.Value);
+    }
+
+    public async Task<Guid?> FindVariantIdByCodeAsync(Guid tenantId, string code, CancellationToken cancellationToken)
+    {
+        var trimmed = code?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return null;
+        }
+
+        var product = await repository.FindVariantByCodeAsync(tenantId, trimmed, cancellationToken);
+        return product?.Variants
+            .FirstOrDefault(variant => string.Equals(variant.Code, trimmed, StringComparison.Ordinal))
+            ?.Id.Value;
     }
 
     private sealed record ResolvedOptions(
