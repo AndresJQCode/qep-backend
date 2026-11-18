@@ -34,7 +34,7 @@ public sealed class BillingTemplateOutboundTests
     private static ApprovedTemplate Named(string body) => new(
         TemplateName, "es", "UTILITY", "NAMED",
         TemplateComponentsBuilder.Components(
-            new TemplateDraft(TemplateName, "es", "UTILITY", null, body, null, [], new Dictionary<string, string>()), "4::handle").ToJsonString());
+            new TemplateDraft(TemplateName, "es", "UTILITY", null, body, null, [], new Dictionary<string, string>()), TemplateMediaHeader.Document("4::handle")).ToJsonString());
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

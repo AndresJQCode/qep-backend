@@ -17,9 +17,18 @@ public sealed record TemplateDraft(
     IReadOnlyList<TemplateButtonInput> Buttons,
     IReadOnlyDictionary<string, string> Examples);
 
+/// <summary>Un encabezado multimedia de crear: el <c>format</c> de Meta (<c>DOCUMENT</c>, <c>IMAGE</c>) y el <c>header_handle</c> que dio la
+/// subida de ejemplo. El PDF de cotización, pedido y respuesta formal es un documento; la imagen fija de una plantilla libre (spec 2026-11-17), una imagen.</summary>
+public sealed record TemplateMediaHeader(string Format, string Handle)
+{
+    public static TemplateMediaHeader Document(string handle) => new("DOCUMENT", handle);
+
+    public static TemplateMediaHeader Image(string handle) => new("IMAGE", handle);
+}
+
 /// <summary>
 /// Spec 2026-10-14 §4.4 «Crear»: el payload de <c>POST /{waba}/message_templates</c>. Variables con nombre (D-T9) con
-/// <c>body_text_named_params</c> en orden de aparición; encabezado de texto o de documento (<c>header_handle</c>, §4.5); pie; botones
+/// <c>body_text_named_params</c> en orden de aparición; encabezado de texto o multimedia (<c>header_handle</c>, §4.5; uno multimedia gana sobre el texto); pie; botones
 /// con el nombre de Meta. Sin <c>allow_category_change</c> (D-T10). Puro: lo usan la creación libre y la de cotización.
 /// </summary>
 public static class TemplateComponentsBuilder
@@ -33,7 +42,7 @@ public static class TemplateComponentsBuilder
         return TemplateCatalog.Placeholder().Matches(body).Select(match => match.Groups[1].Value).Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    public static JsonObject CreatePayload(TemplateDraft draft, string? documentHeaderHandle = null)
+    public static JsonObject CreatePayload(TemplateDraft draft, TemplateMediaHeader? mediaHeader = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         return new JsonObject
@@ -42,21 +51,21 @@ public static class TemplateComponentsBuilder
             ["language"] = draft.Language,
             ["category"] = draft.Category,
             ["parameter_format"] = Named,
-            ["components"] = Components(draft, documentHeaderHandle),
+            ["components"] = Components(draft, mediaHeader),
         };
     }
 
-    public static JsonArray Components(TemplateDraft draft, string? documentHeaderHandle = null)
+    public static JsonArray Components(TemplateDraft draft, TemplateMediaHeader? mediaHeader = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         var components = new JsonArray();
-        if (documentHeaderHandle is not null)
+        if (mediaHeader is not null)
         {
             components.Add(new JsonObject
             {
                 ["type"] = "HEADER",
-                ["format"] = "DOCUMENT",
-                ["example"] = new JsonObject { ["header_handle"] = new JsonArray(documentHeaderHandle) },
+                ["format"] = mediaHeader.Format,
+                ["example"] = new JsonObject { ["header_handle"] = new JsonArray(mediaHeader.Handle) },
             });
         }
         else if (!string.IsNullOrEmpty(draft.Header))
