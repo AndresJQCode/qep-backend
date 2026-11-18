@@ -64,7 +64,7 @@ public static class OrderTemplateDefinition
     /// <summary>Sin pie, como la cotización.</summary>
     public static TemplateDraft Draft(string name, string body) => new(name, Language, Category, null, body, null, [], Examples);
 
-    public static JsonObject Payload(string handle, string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body), handle);
+    public static JsonObject Payload(string handle, string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body), TemplateMediaHeader.Document(handle));
 
     /// <summary>D3: la misma forma que exige la cotización (encabezado de documento, sin botones, cuerpo no vacío) pero con las variables del
     /// pedido más las claves viejas; una con <c>vigencia</c> no es un pedido.</summary>
@@ -199,7 +199,7 @@ public sealed partial class ProvisionOrderTemplateHandler(
         var memberId = await callerMembership.FindAsync(command.TenantId, cancellationToken);
         var template = MessageTemplate.Pending(
             command.TenantId, command.ConnectionId, created.Id, name, OrderTemplateDefinition.Language, created.Category, TemplateComponentsBuilder.Named,
-            created.Status, TemplateComponentsBuilder.Components(OrderTemplateDefinition.Draft(name, body), handle).ToJsonString(), MessageTemplateKind.Order,
+            created.Status, TemplateComponentsBuilder.Components(OrderTemplateDefinition.Draft(name, body), TemplateMediaHeader.Document(handle)).ToJsonString(), MessageTemplateKind.Order,
             memberId, now);
         repository.Add(template);
         audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateOrderProvisioned, template.Id, now);

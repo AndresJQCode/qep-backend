@@ -19,7 +19,7 @@ public sealed class TemplateMirrorSyncTests
 
     private sealed record Rig(
         TemplateMirrorSync Sync, MirroredTemplateCatalog Catalog, FakeMessageTemplateRepository Repository, FakeWhatsAppClient Meta, FakeConnectionDirectory Connections,
-        FakeUnitOfWork UnitOfWork, FakeClock Clock, RecordingLogger<TemplateMirrorSync> Logger);
+        FakeUnitOfWork UnitOfWork, FakeClock Clock, RecordingLogger<TemplateMirrorSync> Logger, RecordingTemplateImageReleases Releases);
 
     private static Rig NewRig(params JsonElement[] listing)
     {
@@ -29,8 +29,16 @@ public sealed class TemplateMirrorSyncTests
         var unitOfWork = new FakeUnitOfWork();
         var clock = new FakeClock(Now);
         var logger = new RecordingLogger<TemplateMirrorSync>();
-        var sync = new TemplateMirrorSync(repository, meta, connections, unitOfWork, clock, logger);
-        return new Rig(sync, new MirroredTemplateCatalog(repository, sync, connections), repository, meta, connections, unitOfWork, clock, logger);
+        var releases = new RecordingTemplateImageReleases();
+        var sync = new TemplateMirrorSync(repository, meta, connections, unitOfWork, clock, releases, logger);
+        return new Rig(sync, new MirroredTemplateCatalog(repository, sync, connections), repository, meta, connections, unitOfWork, clock, logger, releases);
+    }
+
+    private static MessageTemplate MirroredWithImage(string metaTemplateId, string name, Guid fileId)
+    {
+        var template = MessageTemplate.Mirrored(TenantId, ConnectionId, metaTemplateId, name, "es", "MARKETING", "NAMED", "APPROVED", null, "[]", Now.AddDays(-1));
+        template.AttachHeaderImage(fileId, $"https://public.test/{fileId}.png", Now.AddDays(-1));
+        return template;
     }
 
     private static JsonElement Listed(string id, string name, string status = "APPROVED", string? rejectedReason = null, string category = "UTILITY", string body = "Hola {{1}}") =>
@@ -88,6 +96,51 @@ public sealed class TemplateMirrorSyncTests
         await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
 
         Assert.Equal(["ajena", "queda"], rig.Repository.Rows.Select(row => row.Name).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>Plan 2026-11-17 Task 8: la fila que Meta ya no lista se lleva su imagen. El aviso va en el mismo guardado que la eliminación
+    /// (el outbox de verdad lo prueba la integración); una fila sin imagen no avisa nada.</summary>
+    [Fact]
+    public async Task ASyncThatRemovesAnImageTemplatePublishesItsRelease()
+    {
+        var rig = NewRig(Listed("1", "queda"));
+        var fileId = Guid.CreateVersion7();
+        rig.Repository.Rows.Add(MirroredWithImage("2", "con_imagen", fileId));
+        rig.Repository.Rows.Add(MessageTemplate.Mirrored(TenantId, ConnectionId, "3", "sin_imagen", "es", "UTILITY", "POSITIONAL", "APPROVED", null, "[]", Now.AddDays(-1)));
+        var savesAtPublish = -1;
+        rig.Releases.OnPublish = () => savesAtPublish = rig.UnitOfWork.Saves;
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Equal("queda", Assert.Single(rig.Repository.Rows).Name);
+        Assert.Equal((TenantId, fileId, Now), Assert.Single(rig.Releases.Published));
+        Assert.Equal(0, savesAtPublish);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task AnImageTemplateMetaStillListsPublishesNothing()
+    {
+        var rig = NewRig(Listed("2", "con_imagen"));
+        rig.Repository.Rows.Add(MirroredWithImage("2", "con_imagen", Guid.CreateVersion7()));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Single(rig.Repository.Rows);
+        Assert.Empty(rig.Releases.Published);
+    }
+
+    [Fact]
+    public async Task AnIncompleteListingPublishesNoRelease()
+    {
+        var rig = NewRig();
+        rig.Meta.NextTemplates = new MessagingGraphResult<TemplateListing>(new TemplateListing([Listed("1", "queda")], Complete: false), null);
+        rig.Repository.Rows.Add(MirroredWithImage("2", "en_otra_pagina", Guid.CreateVersion7()));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Equal(2, rig.Repository.Rows.Count);
+        Assert.Empty(rig.Releases.Published);
     }
 
     /// <summary>Revisión final F4: el cliente corta en <c>MaxTemplatePages</c> o ante un <c>paging.next</c> que no sigue y lo dice con

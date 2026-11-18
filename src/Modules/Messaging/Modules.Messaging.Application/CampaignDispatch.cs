@@ -273,7 +273,8 @@ public sealed partial class CampaignDispatcher(
             return;
         }
 
-        var built = TemplateCatalog.BuildSend(template, await ResolveValuesAsync(recipient, cancellationToken));
+        // Spec 2026-11-17: la imagen fija guardada de la plantilla, leída del catálogo al enviar.
+        var built = TemplateCatalog.BuildSend(template, await ResolveValuesAsync(recipient, cancellationToken), TemplateCatalog.StoredHeaderOf(template));
 
         var prepared = await store.PrepareAsync(recipient, built.Text, built.DetailsJson, clock.UtcNow, cancellationToken);
         if (prepared is null)

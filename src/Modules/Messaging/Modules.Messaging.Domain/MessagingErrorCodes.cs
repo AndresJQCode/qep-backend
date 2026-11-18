@@ -154,6 +154,23 @@ public static class MessagingErrorCodes
     /// <summary>§4.5: la Resumable Upload del PDF de ejemplo falló. No queda fila; reintentar es seguro.</summary>
     public const string TemplateUploadFailed = "messaging.template.upload_failed";
 
+    /// <summary>Spec 2026-11-17: la imagen del encabezado no es JPEG ni PNG. En la sesión de subida va sin mapa <c>errors</c> (error del
+    /// formulario); al crear la plantilla marca <c>headerImageFileId</c>.</summary>
+    public const string TemplateHeaderImageUnsupported = "messaging.template.header_image_unsupported";
+
+    /// <summary>Spec 2026-11-17: la imagen del encabezado pasa de 5 MB, declarada o guardada. Mismo mapa que
+    /// <see cref="TemplateHeaderImageUnsupported"/>.</summary>
+    public const string TemplateHeaderImageTooLarge = "messaging.template.header_image_too_large";
+
+    /// <summary>Spec 2026-11-17: el <c>headerImageFileId</c> no existe, es de otro tenant o no es una imagen de plantilla.</summary>
+    public const string TemplateHeaderImageNotFound = "messaging.template.header_image_not_found";
+
+    /// <summary>Spec 2026-11-17: la sesión existe pero el PUT de la imagen todavía no llegó al bucket.</summary>
+    public const string TemplateHeaderImageNotUploaded = "messaging.template.header_image_not_uploaded";
+
+    /// <summary>Spec 2026-11-17: Storage rechazó el contenido (no es lo que dice, tamaño distinto o antivirus); quedó en cuarentena.</summary>
+    public const string TemplateHeaderImageRejected = "messaging.template.header_image_rejected";
+
     /// <summary>§4.5: la conexión ya tiene su plantilla de cotización en <c>PENDING</c>, <c>APPROVED</c> o <c>IN_APPEAL</c>.</summary>
     public const string TemplateQuotationExists = "messaging.template.quotation_exists";
 

@@ -26,6 +26,7 @@ public sealed partial class TemplateMirrorSync(
     IMessagingConnectionDirectory connections,
     IMessagingUnitOfWork unitOfWork,
     IClock clock,
+    ITemplateHeaderImageReleases imageReleases,
     ILogger<TemplateMirrorSync> logger)
 {
     public async Task RunAsync(Guid tenantId, Guid connectionId, MessagingTemplateSource source, CancellationToken cancellationToken)
@@ -90,6 +91,11 @@ public sealed partial class TemplateMirrorSync(
                 if (!seen.Contains(id) && !ChangedSince(template, listedAt))
                 {
                     repository.Remove(template);
+                    // Spec 2026-11-17: la imagen del encabezado se va con su fila, por el outbox y en este mismo guardado.
+                    if (template.HeaderImageFileId is { } fileId)
+                    {
+                        imageReleases.Publish(tenantId, fileId, now);
+                    }
                 }
             }
         }
@@ -161,7 +167,7 @@ public sealed class MirroredTemplateCatalog(IMessageTemplateRepository repositor
 
         var rows = await repository.ListApprovedAsync(tenantId, connectionId, cancellationToken);
         return rows
-            .Select(row => TemplateCatalog.FromStored(row.Name, row.Language, row.Category, row.ParameterFormat, row.ComponentsJson))
+            .Select(row => TemplateCatalog.FromStored(row.Name, row.Language, row.Category, row.ParameterFormat, row.ComponentsJson, row.HeaderImageUrl))
             .OrderBy(template => template.Name, StringComparer.Ordinal)
             .ThenBy(template => template.Language, StringComparer.Ordinal)
             .ToArray();

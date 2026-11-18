@@ -91,9 +91,9 @@ public sealed class FileOwnerModuleHandlersTests
     }
 
     [Fact]
-    public void SupportAttachmentsAreTheSystemOwnedFiles()
+    public void SupportAttachmentsAndTemplateImagesAreTheSystemOwnedFiles()
     {
-        Assert.Equal([FileOwnerType.SupportTicket], SystemOwnedFiles.OwnerTypes.Order());
+        Assert.Equal([FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate], SystemOwnedFiles.OwnerTypes.Order());
         Assert.True(SystemOwnedFiles.Includes(FileOwnerType.SupportTicket));
         Assert.False(SystemOwnedFiles.Includes(FileOwnerType.User));
     }

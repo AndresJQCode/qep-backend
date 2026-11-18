@@ -74,6 +74,11 @@ internal sealed class MessageTemplateRepository(MessagingDbContext dbContext) : 
                 && (campaign.Status == CampaignStatus.Scheduled || campaign.Status == CampaignStatus.Sending),
             cancellationToken);
 
+    // Una consulta a la base (AnyAsync no mira el tracker): la fila Added de una creación que no se pudo guardar no cuenta.
+    public Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.AsNoTracking().AnyAsync(
+            template => template.TenantId == tenantId && template.HeaderImageFileId == fileId, cancellationToken);
+
     public async Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
         var record = await dbContext.TemplateMirrorSyncs.AsNoTracking()

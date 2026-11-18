@@ -155,6 +155,9 @@ public sealed class MessageTemplate
     /// (<c>SupportFormalReply</c>, 18). Con 16 ese tipo no se podía guardar.</summary>
     public const int KindMaxLength = 32;
 
+    /// <summary>Spec 2026-11-17: el ancho de <c>header_image_url</c>, la URL pública de la imagen fija del encabezado.</summary>
+    public const int HeaderImageUrlMaxLength = 2048;
+
     private MessageTemplate()
     {
     }
@@ -192,6 +195,12 @@ public sealed class MessageTemplate
 
     /// <summary><c>null</c> hasta que un refresco la confirme contra Meta.</summary>
     public DateTimeOffset? SyncedAt { get; private set; }
+
+    /// <summary>Spec 2026-11-17: el archivo de Storage de la imagen fija del encabezado, si la plantilla se creó con una desde QEP.</summary>
+    public Guid? HeaderImageFileId { get; private set; }
+
+    /// <summary>Spec 2026-11-17: la URL pública de esa imagen. Es la que se manda en cada envío desde el chat y las campañas.</summary>
+    public string? HeaderImageUrl { get; private set; }
 
     public bool IsApproved => Status == MessageTemplateStatuses.Approved;
 
@@ -238,9 +247,34 @@ public sealed class MessageTemplate
         return template;
     }
 
+    /// <summary>Spec 2026-11-17: la imagen fija del encabezado, publicada antes de crear la plantilla en Meta. Se fija una sola vez.</summary>
+    public void AttachHeaderImage(Guid fileId, string publicUrl, DateTimeOffset now)
+    {
+        if (fileId == Guid.Empty)
+        {
+            throw new ArgumentException("The header image needs a file id.", nameof(fileId));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(publicUrl);
+        if (publicUrl.Length > HeaderImageUrlMaxLength)
+        {
+            throw new ArgumentException($"The header image URL takes at most {HeaderImageUrlMaxLength} characters.", nameof(publicUrl));
+        }
+
+        if (HeaderImageFileId is not null)
+        {
+            throw new ArgumentException("The template already has a header image.", nameof(fileId));
+        }
+
+        HeaderImageFileId = fileId;
+        HeaderImageUrl = publicUrl;
+        UpdatedAt = now;
+    }
+
     /// <summary>El webhook <c>message_template_status_update</c>: estado nuevo y su motivo («NONE» = ninguno).</summary>
     public void ApplyStatus(string? status, string? reason, DateTimeOffset now)
     {
+        // La imagen del encabezado no se toca: es dato de QEP, no de Meta.
         Status = MessageTemplateStatuses.Normalize(status);
         StatusReason = Reason(reason);
         UpdatedAt = now;
@@ -250,6 +284,8 @@ public sealed class MessageTemplate
     public void SyncFrom(string? status, string? reason, string category, string parameterFormat, string componentsJson, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(componentsJson);
+        // HeaderImageFileId/HeaderImageUrl no se tocan: son dato de QEP, no de Meta. El header_handle que Meta devuelve en los
+        // components es una URL suya, no la imagen publicada que se manda en cada envío.
         Status = MessageTemplateStatuses.Normalize(status);
         StatusReason = Reason(reason);
         Category = Truncate(category ?? string.Empty, CategoryMaxLength);

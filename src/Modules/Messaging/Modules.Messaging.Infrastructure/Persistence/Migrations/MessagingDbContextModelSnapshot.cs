@@ -824,6 +824,15 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("created_by_member_id");
 
+                    b.Property<Guid?>("HeaderImageFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("header_image_file_id");
+
+                    b.Property<string>("HeaderImageUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("header_image_url");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -884,6 +893,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Kind" }, "UX_message_templates_billing")
                         .IsUnique()
                         .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
+
+                    b.HasIndex(new[] { "HeaderImageFileId" }, "UX_message_templates_header_image")
+                        .IsUnique()
+                        .HasFilter("header_image_file_id IS NOT NULL");
 
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "MetaTemplateId" }, "UX_message_templates_meta_id")
                         .IsUnique();
@@ -1702,10 +1715,24 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("correlation_id");
+
                     b.Property<string>("EventName")
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("event_name");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
 
                     b.Property<DateTimeOffset>("OccurredAt")
                         .HasColumnType("timestamp with time zone")
@@ -1715,6 +1742,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb")
                         .HasColumnName("payload");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
 
                     b.HasKey("Id");
 

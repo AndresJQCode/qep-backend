@@ -82,11 +82,32 @@ public sealed class TemplateComponentsBuilderTests
     [Fact]
     public void ADocumentHeaderReplacesTheTextHeaderAndCarriesTheHandle()
     {
-        var components = Element(TemplateComponentsBuilder.Components(Draft(buttons: []), documentHeaderHandle: "4::handle")).EnumerateArray().ToArray();
+        var components = Element(TemplateComponentsBuilder.Components(Draft(buttons: []), TemplateMediaHeader.Document("4::handle"))).EnumerateArray().ToArray();
 
         var header = components[0];
         Assert.Equal(("HEADER", "DOCUMENT"), (header.GetProperty("type").GetString(), header.GetProperty("format").GetString()));
         Assert.False(header.TryGetProperty("text", out _));
         Assert.Equal(["4::handle"], header.GetProperty("example").GetProperty("header_handle").EnumerateArray().Select(handle => handle.GetString()));
+    }
+
+    // Spec 2026-11-17: la imagen fija del encabezado viaja como header_handle con formato IMAGE, y gana sobre el texto.
+    [Fact]
+    public void AnImageHeaderCarriesFormatImageAndTheHandle()
+    {
+        var components = Element(TemplateComponentsBuilder.Components(Draft(header: null, buttons: []), TemplateMediaHeader.Image("4::img"))).EnumerateArray().ToArray();
+
+        var header = components[0];
+        Assert.Equal(("HEADER", "IMAGE"), (header.GetProperty("type").GetString(), header.GetProperty("format").GetString()));
+        Assert.False(header.TryGetProperty("text", out _));
+        Assert.Equal(["4::img"], header.GetProperty("example").GetProperty("header_handle").EnumerateArray().Select(handle => handle.GetString()));
+    }
+
+    [Fact]
+    public void AMediaHeaderWinsOverATextHeaderInThePayload()
+    {
+        var payload = Element(TemplateComponentsBuilder.CreatePayload(Draft(buttons: []), TemplateMediaHeader.Image("4::img")));
+
+        var headers = payload.GetProperty("components").EnumerateArray().Where(component => component.GetProperty("type").GetString() == "HEADER").ToArray();
+        Assert.Equal("IMAGE", Assert.Single(headers).GetProperty("format").GetString());
     }
 }

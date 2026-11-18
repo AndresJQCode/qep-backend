@@ -84,7 +84,7 @@ public sealed class QuotationTemplateOutboundTests
                 "Este mensaje fue generado automáticamente.", [], new Dictionary<string, string>())
             : new TemplateDraft("qep_cotizacion_v2", "es", category, null, body, footer, [], new Dictionary<string, string>());
         return new ApprovedTemplate(
-            "qep_cotizacion_v2", "es", category, "NAMED", TemplateComponentsBuilder.Components(draft, "4::handle").ToJsonString());
+            "qep_cotizacion_v2", "es", category, "NAMED", TemplateComponentsBuilder.Components(draft, TemplateMediaHeader.Document("4::handle")).ToJsonString());
     }
 
     private static QuotationTemplateSend Send(

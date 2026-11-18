@@ -236,6 +236,9 @@ internal static class MessagingApiHarness
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Messaging— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        /// <summary>Spec 2026-11-17: la imagen del encabezado de plantilla no pasa por Storage ni por R2 en estas pruebas.</summary>
+        public FakeTemplateImageStore TemplateImages { get; } = new();
+
         public override async ValueTask DisposeAsync()
         {
             StartedHosts.TryRemove(this, out _);
@@ -310,6 +313,8 @@ internal static class MessagingApiHarness
             {
                 // Last registered, first stopped: frees the rate limiter that would otherwise keep this host alive (see the class).
                 services.AddHostedService<RateLimiterRelease>();
+                services.RemoveAll<IMessagingTemplateImageStore>();
+                services.AddSingleton<IMessagingTemplateImageStore>(TemplateImages);
                 services.AddHttpClient(IntegrationsGraphClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient(MessagingGraphClientName)
