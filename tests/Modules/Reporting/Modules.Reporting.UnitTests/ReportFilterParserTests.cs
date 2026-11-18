@@ -108,12 +108,22 @@ public sealed class ReportFilterParserTests
     public void TheRetiredPerCurrencyFieldsAreNoLongerValid(string value) =>
         Assert.False(ReportFilterParser.TryParsePriceChangeField(value, out _));
 
-    // El orden del enum es el de bySource en el resumen: un origen nuevo va al final, después de Pos.
+    // El orden del enum es el de bySource en el resumen: un origen nuevo va al final (Store después de Pos, Wholesale
+    // después de Store).
     [Fact]
-    public void StoreIsTheLastSourceAfterPos()
+    public void WholesaleIsTheLastSourceAfterStore()
     {
         var sources = Enum.GetValues<OrderSourceFilter>();
 
-        Assert.Equal((OrderSourceFilter.Store, OrderSourceFilter.Pos), (sources[^1], sources[^2]));
+        Assert.Equal(
+            (OrderSourceFilter.Pos, OrderSourceFilter.Store, OrderSourceFilter.Wholesale),
+            (sources[^3], sources[^2], sources[^1]));
+    }
+
+    [Fact]
+    public void WholesaleParsesAsASource()
+    {
+        Assert.True(ReportFilterParser.TryParseSource("Wholesale", out var parsed));
+        Assert.Equal(OrderSourceFilter.Wholesale, parsed);
     }
 }

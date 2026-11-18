@@ -594,6 +594,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     private static void ConfigureOrder(ModelBuilder modelBuilder)
     {
         var order = modelBuilder.Entity<Order>();
+        // Mayorista fase 3: el dominio ya tiene el enlace con la orden de compra, pero sus columnas llegan con la migración
+        // AddWholesaleOrderLink (plan, Task 7). Hasta entonces no se mapean; Task 7 cambia estos Ignore por el mapeo.
+        order.Ignore(value => value.BuyerTenantId);
+        order.Ignore(value => value.PurchaseOrderId);
+        order.Ignore(value => value.WholesaleApprovedAt);
+        order.Ignore(value => value.WholesaleApprovedBy);
         order.ToTable("orders", "quotations", table =>
         {
             table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store')");
@@ -848,6 +854,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     private static void ConfigureOrderItem(ModelBuilder modelBuilder)
     {
         var item = modelBuilder.Entity<OrderItem>();
+        // Mayorista fase 3: se mapea con la migración AddWholesaleOrderLink (plan, Task 7).
+        item.Ignore(value => value.SourcePurchaseOrderLineId);
         item.ToTable("order_items", "quotations");
         item.HasKey(value => value.Id);
         item.Property(value => value.Id)

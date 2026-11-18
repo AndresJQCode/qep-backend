@@ -16,7 +16,8 @@ public sealed record OrderHeader(
 /// <summary>Una línea ya preciada: Application resolvió precio, descuento y tasa contra el catálogo,
 /// igual que hace el cotizador. <see cref="Product"/> es la foto de código y nombre, si ya se tiene.
 /// <see cref="VariantId"/> es la clave de la línea (spec 2026-10-20 §4); <see cref="ProductId"/> es su
-/// producto, para agrupar por producto.</summary>
+/// producto, para agrupar por producto. <see cref="SourcePurchaseOrderLineId"/> es la línea de la orden de compra de la
+/// que salió, sólo en un pedido mayorista: con ella la aprobación vuelve a la orden línea por línea.</summary>
 public sealed record OrderLineInput(
     Guid VariantId,
     Guid ProductId,
@@ -25,4 +26,5 @@ public sealed record OrderLineInput(
     decimal DiscountPercentage,
     int TaxPercentage,
     QuotationProductSnapshot? Product = null,
-    QuotationDiscountOrigin DiscountOrigin = QuotationDiscountOrigin.Own);
+    QuotationDiscountOrigin DiscountOrigin = QuotationDiscountOrigin.Own,
+    Guid? SourcePurchaseOrderLineId = null);

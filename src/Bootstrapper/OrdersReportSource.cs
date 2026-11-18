@@ -602,13 +602,14 @@ internal sealed class OrdersReportSource(
     };
 
     // Mismo criterio que MapPaymentStatus. Pos no tiene equivalente en OrderSource: es una venta.
-    private static OrderSource? MapSource(OrderSourceFilter value) => value switch
+    internal static OrderSource? MapSource(OrderSourceFilter value) => value switch
     {
         OrderSourceFilter.Quotation => OrderSource.Quotation,
         OrderSourceFilter.Manual => OrderSource.Manual,
         OrderSourceFilter.Shopify => OrderSource.Shopify,
         OrderSourceFilter.Pos => null,
         OrderSourceFilter.Store => OrderSource.Store,
+        OrderSourceFilter.Wholesale => OrderSource.Wholesale,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown order source.")
     };
 

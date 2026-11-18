@@ -309,13 +309,14 @@ internal sealed class MarginReportSource(
         """;
 
     // Mismo criterio que OrdersReportSource.MapSource: sin default, un valor nuevo rompe acá.
-    private static OrderSource? MapSource(OrderSourceFilter value) => value switch
+    internal static OrderSource? MapSource(OrderSourceFilter value) => value switch
     {
         OrderSourceFilter.Quotation => OrderSource.Quotation,
         OrderSourceFilter.Manual => OrderSource.Manual,
         OrderSourceFilter.Shopify => OrderSource.Shopify,
         OrderSourceFilter.Pos => null,
         OrderSourceFilter.Store => OrderSource.Store,
+        OrderSourceFilter.Wholesale => OrderSource.Wholesale,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown order source.")
     };
 
