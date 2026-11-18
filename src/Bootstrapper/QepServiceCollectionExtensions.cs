@@ -533,6 +533,30 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Wholesale.Application.ListWholesaleCategoriesQuery, Modules.Wholesale.Application.WholesaleCategoriesResponse>,
             Modules.Wholesale.Application.ListWholesaleCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListDistributorsQuery, Modules.Wholesale.Application.DistributorsResponse>,
+            Modules.Wholesale.Application.ListDistributorsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetDistributorQuery, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.GetDistributorHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetDistributorOptionsQuery, Modules.Wholesale.Application.DistributorOptionsDto>,
+            Modules.Wholesale.Application.GetDistributorOptionsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.InviteDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.InviteDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.UpdateDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.UpdateDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.TransitionDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.TransitionDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.DeleteDistributorCommand, bool>,
+            Modules.Wholesale.Application.DeleteDistributorHandler>();
+        services.AddScoped<Modules.Wholesale.Application.DistributorComposer>();
+        // La invitación vista desde el link: sin IExecutionContext, el tenant del mayorista sale de la invitación.
+        services.AddScoped<Modules.Wholesale.Application.IDistributorInvitationService, Modules.Wholesale.Application.DistributorInvitationService>();
 
         // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
         // responde 500.

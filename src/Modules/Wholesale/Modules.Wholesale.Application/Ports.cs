@@ -70,6 +70,12 @@ public interface IWholesaleCatalogReader
 public interface IWholesaleUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Suelta lo rastreado sin guardar. Después de perder una carrera al guardar (412 o un índice único), la relectura tiene
+    /// que traer la fila de la base y no la copia modificada en memoria, ni reenviar la auditoría que chocó.
+    /// </summary>
+    void DiscardPendingChanges();
 }
 
 /// <summary>
@@ -87,4 +93,141 @@ public interface IWholesaleAuditPublisher
         string outcome,
         IReadOnlyCollection<string> changedFields,
         DateTimeOffset occurredAt);
+}
+
+/// <summary>
+/// Los distribuidores del mayorista. Toda lectura va acotada al tenant salvo <see cref="FindByTokenHashAsync"/>: el hash es la
+/// llave y quien abre el link no tiene tenant.
+/// </summary>
+public interface IDistributorRepository : IDistributorUsage
+{
+    Task<Distributor?> GetAsync(Guid tenantId, DistributorId id, CancellationToken cancellationToken);
+
+    /// <summary>Por el SHA-256 del token (nunca el token plano). Un token rotado o un distribuidor borrado dan <c>null</c>.</summary>
+    Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken);
+
+    /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13).</summary>
+    Task<bool> IdentificationExistsAsync(Guid tenantId, string identificationNumber, CancellationToken cancellationToken);
+
+    /// <summary>Si el tenant del distribuidor ya tiene relación con este mayorista.</summary>
+    Task<bool> IsLinkedAsync(Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken);
+
+    /// <summary>Los tenants distribuidores ya vinculados al mayorista, en una consulta.</summary>
+    Task<IReadOnlySet<Guid>> LinkedTenantIdsAsync(Guid wholesalerTenantId, CancellationToken cancellationToken);
+
+    /// <summary>Una página ordenada por <c>created_at DESC, id DESC</c>. <paramref name="search"/> busca en razón social,
+    /// documento o correo.</summary>
+    Task<(IReadOnlyList<Distributor> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        DistributorStatus? status,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>Cuántos hay por estado con <paramref name="search"/> y sin filtro de estado. Un estado sin filas no viene.</summary>
+    Task<IReadOnlyDictionary<DistributorStatus, int>> CountByStatusAsync(
+        Guid tenantId, string? search, CancellationToken cancellationToken);
+
+    void Add(Distributor distributor);
+
+    void Remove(Distributor distributor);
+}
+
+/// <summary>
+/// El evento <c>wholesale.distributor-invited.v1</c> hacia el correo. Es el único lugar por donde viaja el token plano; el
+/// adaptador lo escribe en el outbox del contexto del módulo, así que sale con el mismo commit que la invitación.
+/// </summary>
+public interface IWholesaleEventPublisher
+{
+    void DistributorInvited(
+        Guid tenantId,
+        Guid distributorId,
+        string email,
+        string businessName,
+        string token,
+        DateTimeOffset expiresAt,
+        string correlationId,
+        DateTimeOffset occurredAt);
+}
+
+/// <summary>
+/// Una empresa facturadora del mayorista con lo que el proveedor vinculado necesita (D-2). <c>DocumentType</c> va con el
+/// nombre del cable; <c>Eligible</c> dice si ese documento lo admite un proveedor (<c>NIT</c>, <c>CC</c>, <c>CE</c>,
+/// <c>PASAPORTE</c>).
+/// </summary>
+public sealed record WholesaleCompanyRef(
+    Guid Id,
+    string Name,
+    string DocumentType,
+    string DocumentNumber,
+    string Country,
+    Guid? CityId,
+    string? CityName,
+    string? Phone,
+    string? Email,
+    string? Address,
+    bool IsActive,
+    bool Eligible);
+
+/// <summary>Las empresas del mayorista; adaptador en Bootstrapper sobre Companies. Todo acotado al tenant.</summary>
+public interface IWholesaleCompanyLookup
+{
+    Task<WholesaleCompanyRef?> FindAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<WholesaleCompanyRef>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Una membresía activa con su nombre visible.</summary>
+public sealed record WholesaleMember(Guid MemberId, string Name);
+
+/// <summary>El padrón del mayorista; adaptador en Bootstrapper sobre Tenancy.</summary>
+public interface IWholesaleMemberDirectory
+{
+    /// <summary>Las membresías activas del tenant: quien puede ser asesor (D-15, sin filtro de rol).</summary>
+    Task<IReadOnlyList<WholesaleMember>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Nombres visibles en cualquier estado; una membresía sin nombre o que no existe no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// El nombre vigente de los tenants distribuidores, en lote (la lista pinta una página entera). Adaptador en Bootstrapper
+/// sobre Tenancy; <c>ITenantDirectory</c> sólo lee de a uno.
+/// </summary>
+public interface IWholesaleTenantDirectory
+{
+    Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
+        IReadOnlyCollection<Guid> tenantIds, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// El proveedor vinculado en el tenant del distribuidor (D-2, D-8); adaptador sobre Suppliers. Idempotente: por vínculo, por
+/// documento o nuevo. Devuelve el id del proveedor.
+/// </summary>
+public interface IWholesaleSupplierLinker
+{
+    Task<Guid> EnsureLinkedSupplierAsync(
+        Guid distributorTenantId,
+        Guid wholesalerTenantId,
+        string wholesalerName,
+        WholesaleCompanyRef company,
+        Guid actorUserId,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// El cliente del distribuidor en el tenant del mayorista (D-7); adaptador sobre Customers. Idempotente por documento: si ya
+/// existe se reutiliza. Devuelve el id del cliente.
+/// </summary>
+public interface IWholesaleCustomerProvisioning
+{
+    Task<Guid> EnsureCustomerAsync(
+        Guid wholesalerTenantId,
+        Guid actorUserId,
+        string businessName,
+        string identificationNumber,
+        string email,
+        CancellationToken cancellationToken);
 }

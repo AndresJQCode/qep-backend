@@ -183,6 +183,17 @@ internal sealed class FakeUnitOfWork : IWholesaleUnitOfWork
 {
     public int Saves { get; private set; }
 
+    public int Discards { get; private set; }
+
+    /// <summary>Lo que hace «soltar los cambios»: con EF, la próxima lectura trae la fila de la base.</summary>
+    public Action? OnDiscard { get; set; }
+
+    public void DiscardPendingChanges()
+    {
+        Discards++;
+        OnDiscard?.Invoke();
+    }
+
     /// <summary>Lo que lanza el próximo guardado (una carrera perdida en la base), una sola vez.</summary>
     public Exception? FailNextSaveWith { get; set; }
 
