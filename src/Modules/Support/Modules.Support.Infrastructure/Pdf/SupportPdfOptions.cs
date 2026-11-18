@@ -1,9 +1,10 @@
 namespace Modules.Support.Infrastructure.Pdf;
 
 /// <summary>
-/// Fase 4b (H12, spec §13.5): cómo llega Soporte a <c>qcode-pdf</c>. Sección y clave propias, nunca <c>Quotations:Pdf</c>: el servicio
-/// resuelve el cliente por el hash de la clave, así que compartirla mezclaría el tráfico de los dos en sus logs, y rotar una obligaría a
-/// tocar la otra. La URL va en el ConfigMap; la clave, en el Secret (<c>SUPPORT_PDF_API_KEY</c> del grupo <c>Backend-prod</c>).
+/// Fase 4b (H12, spec §13.5): cómo llega Soporte a <c>qcode-pdf</c>. Sección propia, para que el módulo no dependa de la configuración
+/// de cotizaciones, pero la clave es una sola para todo el backend de QEP (decisión del owner, 2026-11-17, que reemplaza la clave propia
+/// de §13.5): todas viven en el mismo pod, así que separarlas no aísla nada. En producción la URL y la clave salen de los mismos tokens
+/// que cotizaciones (<c>QUOTATIONS_PDF_BASE_URL</c> en el ConfigMap, <c>QUOTATIONS_PDF_API_KEY</c> en el Secret, grupo <c>Backend-prod</c>).
 /// </summary>
 public sealed class SupportPdfOptions
 {

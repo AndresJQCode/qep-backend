@@ -104,10 +104,12 @@ data:
   # —precios, cliente, totales— viaja en el cuerpo del POST. La API key es una credencial y vive
   # en prod-secret.yaml.
   Quotations__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
-  # Soporte fase 4b (H12): el mismo qcode-pdf, con sección propia para que la respuesta formal de Soporte no dependa de la
-  # configuración de cotizaciones. SupportPdfOptionsValidator exige HTTPS en todo ambiente: la carta, con los datos del solicitante,
-  # viaja en el cuerpo del POST. La API key es otra (la de Soporte) y vive en prod-secret.yaml.
-  Support__Pdf__BaseUrl: "#{SUPPORT_PDF_BASE_URL}#"
+  # Soporte y Compras usan el mismo qcode-pdf con sección propia (ningún módulo depende de la configuración de otro), pero el
+  # mismo token que cotizaciones (decisión del owner, 2026-11-17: una sola clave y una sola URL para todo el backend de QEP). Sus
+  # validadores exigen HTTPS en todo ambiente: la carta de Soporte y la orden de compra viajan enteras en el cuerpo del POST. La API
+  # key vive en prod-secret.yaml.
+  Support__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
+  Purchases__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
   # Spec 2026-10-08 (Integraciones): id (no secreto) de la llave con la que se cifran las credenciales
   # de las conexiones de cada tenant. Rotar = dos despliegues: declarar Keys__k2 con ésta todavía en
   # k1, y después cambiar ésta a k2 (README § Integraciones). La llave vive en prod-secret.yaml.

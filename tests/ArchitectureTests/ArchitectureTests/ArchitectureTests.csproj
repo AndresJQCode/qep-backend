@@ -50,6 +50,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Domain\Modules.Loans.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Api\Modules.Purchases.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Application\Modules.Purchases.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Domain\Modules.Purchases.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Purchases\Modules.Purchases.Infrastructure\Modules.Purchases.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Api\Modules.Support.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Application\Modules.Support.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Support\Modules.Support.Domain\Modules.Support.Domain.csproj" />

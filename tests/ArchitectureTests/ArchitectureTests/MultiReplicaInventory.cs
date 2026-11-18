@@ -279,6 +279,8 @@ public static class MultiReplicaInventory
             "Modules/Support/Modules.Support.Infrastructure/SupportInfrastructureExtensions.cs:48 — envuelve a HtmlSupportSanitizer, sin estado"),
         new("Modules.Support.Application.ISupportFormalReplyRenderer", "Modules.Support.Infrastructure.Pdf.SupportPdfRenderer",
             "Modules/Support/Modules.Support.Infrastructure/SupportInfrastructureExtensions.cs:62 — HttpClient propio y opciones, sin estado"),
+        new("Modules.Purchases.Application.IPurchaseOrderPdfRenderer", "Modules.Purchases.Infrastructure.Pdf.PurchaseOrderPdfRenderer",
+            "Modules/Purchases/Modules.Purchases.Infrastructure/PurchasesInfrastructureExtensions.cs:38 — HttpClient propio y opciones, sin estado"),
         new("Modules.Storage.Application.IFileScanner", "Modules.Storage.Infrastructure.Scanning.ClamAvFileScanner",
             "Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs:55-60 — con Storage:ClamAv:Enabled"),
         new("Modules.Storage.Application.IFileScanner", "Modules.Storage.Infrastructure.Scanning.NoopFileScanner",
