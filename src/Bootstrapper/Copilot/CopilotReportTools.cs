@@ -26,7 +26,6 @@ internal static class CopilotReportTools
         new ListQuotationsReportTool(),
         new GetCustomersSummaryTool(),
         new GetMarginSummaryTool(),
-        new GetPriceChangesSummaryTool(),
     ];
 
     /// <summary>El alcance real de un reporte de pedidos o cotizaciones: sin <c>reporting.all_advisors.read</c> el handler lo acotó al miembro.
