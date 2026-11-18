@@ -12,8 +12,8 @@ public sealed record PurchaseOrderPdfFile(byte[] Content, string FileName);
 
 /// <summary>
 /// El PDF de una orden en cualquier estado, con el permiso de leer. Arma el mismo detalle que <c>GET /{id}</c> (así el PDF no
-/// puede mostrar otros totales), le suma el documento del proveedor, el nombre del tenant y su formato regional, y fecha la
-/// emisión con el día del tenant.
+/// puede mostrar otros totales), le suma el documento del proveedor, el nombre del tenant y su formato regional, y fecha el
+/// documento con el día local del tenant en que la orden se envió (o se creó, si nunca se envió).
 /// </summary>
 public sealed class GetPurchaseOrderPdfHandler(
     IExecutionContext executionContext,
@@ -40,7 +40,7 @@ public sealed class GetPurchaseOrderPdfHandler(
         var regional = await tenants.GetRegionalSettingsAsync(tenantId, cancellationToken);
         var calendar = await tenantClock.GetAsync(query.TenantId, cancellationToken);
 
-        var document = PurchaseOrderPdfMapper.Map(detail, supplier, tenantName, regional, calendar.Today);
+        var document = PurchaseOrderPdfMapper.Map(detail, supplier, tenantName, regional, calendar.TimeZone);
         var content = await renderer.RenderAsync(document, cancellationToken);
 
         return new PurchaseOrderPdfFile(content, $"{order.Number}.pdf");

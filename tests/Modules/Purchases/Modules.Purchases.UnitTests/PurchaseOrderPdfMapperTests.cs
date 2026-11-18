@@ -6,7 +6,7 @@ namespace Modules.Purchases.UnitTests;
 /// <summary>Lo que la plantilla del PDF recibe: textos ya formateados con el formato del tenant (D-5 para los confirmados).</summary>
 public sealed class PurchaseOrderPdfMapperTests
 {
-    private static readonly DateOnly Today = new(2026, 11, 17);
+    private static readonly TimeZoneInfo Bogota = TimeZoneInfo.FindSystemTimeZoneById("America/Bogota");
 
     private static readonly PurchasesSupplierRef Supplier = new(
         PurchaseOrderTestData.SupplierId, "Textiles Andinos", "NIT", "900123456", true);
@@ -38,7 +38,9 @@ public sealed class PurchaseOrderPdfMapperTests
         string currency,
         IReadOnlyList<PurchaseOrderLineDto> lines,
         PurchaseOrderTotalsDto totals,
-        string status = "Draft") =>
+        string status = "Draft",
+        DateTimeOffset? createdAt = null,
+        IReadOnlyList<PurchaseOrderHistoryDto>? history = null) =>
         new(
             Guid.CreateVersion7(),
             "OC-0001",
@@ -49,11 +51,11 @@ public sealed class PurchaseOrderPdfMapperTests
             currency,
             "Entregar en bodega",
             new PurchaseOrderMemberDto(PurchaseOrderTestData.MemberId, "Ana Compras"),
-            PurchaseOrderTestData.Now,
+            createdAt ?? PurchaseOrderTestData.Now,
             lines,
             totals,
             totals.Total,
-            [],
+            history ?? [],
             []);
 
     [Fact]
@@ -64,13 +66,13 @@ public sealed class PurchaseOrderPdfMapperTests
             Supplier,
             "Mayorista S.A.S.",
             Regional(),
-            Today);
+            Bogota);
         var usd = PurchaseOrderPdfMapper.Map(
             Detail("USD", [Line(1m, 10.5m, 10.5m)], new PurchaseOrderTotalsDto(10.5m, 2m, 12.5m)),
             Supplier,
             "Mayorista S.A.S.",
             Regional(),
-            Today);
+            Bogota);
 
         Assert.Equal("$ 238", cop.Total);
         Assert.Equal(("$ 200", "$ 38"), (cop.Subtotal, cop.Tax));
@@ -90,13 +92,13 @@ public sealed class PurchaseOrderPdfMapperTests
             Supplier,
             "Mayorista",
             Regional("1,234.56", "yyyy-MM-dd"),
-            Today);
+            Bogota);
         var fallback = PurchaseOrderPdfMapper.Map(
             Detail("COP", [Line(1500m, 2000m, 3_000_000m)], new PurchaseOrderTotalsDto(3_000_000m, 570_000m, 3_570_000m)),
             Supplier,
             "Mayorista",
             null,
-            Today);
+            Bogota);
 
         Assert.Equal(("US$ 4,462.50", "2026-11-17", "1,500"), (dot.Total, dot.IssuedOn, Assert.Single(dot.Lines).Quantity));
         Assert.Equal(("$ 3.570.000", "17/11/2026"), (fallback.Total, fallback.IssuedOn));
@@ -115,7 +117,7 @@ public sealed class PurchaseOrderPdfMapperTests
             Supplier,
             "Mayorista",
             Regional(),
-            Today);
+            Bogota);
 
         var line = Assert.Single(document.Lines);
         Assert.Equal(("2", "$ 60", "$ 120"), (line.Quantity, line.UnitCost, line.Subtotal));
@@ -136,9 +138,91 @@ public sealed class PurchaseOrderPdfMapperTests
             Supplier,
             "Mayorista",
             Regional(),
-            Today);
+            Bogota);
 
         Assert.Equal(label, document.StatusLabel);
         Assert.False(document.ShowsConfirmedValues);
+    }
+
+    // R11: el PDF muestra la fecha de la orden, no la del día en que se descarga. En borrador, la del alta.
+    [Fact]
+    public void ADraftIsDatedByItsCreation()
+    {
+        var created = new DateTimeOffset(2026, 10, 3, 15, 0, 0, TimeSpan.Zero);
+
+        var document = PurchaseOrderPdfMapper.Map(
+            Detail("COP", [Line(2m, 100m, 200m)], new PurchaseOrderTotalsDto(200m, 38m, 238m), "Draft", created,
+                [new PurchaseOrderHistoryDto("Draft", created, "Ana Compras")]),
+            Supplier,
+            "Mayorista",
+            Regional(),
+            Bogota);
+
+        Assert.Equal("03/10/2026", document.IssuedOn);
+    }
+
+    // R11: una vez enviada, la fecha es la del envío, también después de confirmar, recibir o cancelar.
+    [Theory]
+    [InlineData("Sent")]
+    [InlineData("Confirmed")]
+    [InlineData("Received")]
+    [InlineData("Cancelled")]
+    public void AnOrderSentIsDatedByTheSendTransition(string status)
+    {
+        var created = new DateTimeOffset(2026, 10, 3, 15, 0, 0, TimeSpan.Zero);
+        var sent = new DateTimeOffset(2026, 10, 8, 15, 0, 0, TimeSpan.Zero);
+        var history = new List<PurchaseOrderHistoryDto>
+        {
+            new("Draft", created, "Ana Compras"),
+            new("Sent", sent, "Ana Compras"),
+        };
+        if (status != "Sent")
+        {
+            history.Add(new PurchaseOrderHistoryDto(status, sent.AddDays(5), "Ana Compras"));
+        }
+
+        var document = PurchaseOrderPdfMapper.Map(
+            Detail("COP", [Line(2m, 100m, 200m)], new PurchaseOrderTotalsDto(200m, 38m, 238m), status, created, history),
+            Supplier,
+            "Mayorista",
+            Regional(),
+            Bogota);
+
+        Assert.Equal("08/10/2026", document.IssuedOn);
+    }
+
+    // R11: una orden cancelada sin haberse enviado sigue con la fecha del alta.
+    [Fact]
+    public void AnOrderCancelledFromDraftKeepsItsCreationDate()
+    {
+        var created = new DateTimeOffset(2026, 10, 3, 15, 0, 0, TimeSpan.Zero);
+
+        var document = PurchaseOrderPdfMapper.Map(
+            Detail("COP", [Line(2m, 100m, 200m)], new PurchaseOrderTotalsDto(200m, 38m, 238m), "Cancelled", created,
+                [new("Draft", created, "Ana Compras"), new("Cancelled", created.AddDays(2), "Ana Compras")]),
+            Supplier,
+            "Mayorista",
+            Regional(),
+            Bogota);
+
+        Assert.Equal("03/10/2026", document.IssuedOn);
+    }
+
+    // R11: el día es el del tenant. 02:00 UTC del 9 es todavía el 8 en Bogotá (UTC-5).
+    [Fact]
+    public void TheDateIsTheTenantsLocalDay()
+    {
+        var created = new DateTimeOffset(2026, 10, 3, 15, 0, 0, TimeSpan.Zero);
+        var sent = new DateTimeOffset(2026, 10, 9, 2, 0, 0, TimeSpan.Zero);
+
+        var document = PurchaseOrderPdfMapper.Map(
+            Detail("COP", [Line(2m, 100m, 200m)], new PurchaseOrderTotalsDto(200m, 38m, 238m), "Sent", created,
+                [new("Draft", created, "Ana Compras"), new("Sent", sent, "Ana Compras")]),
+            Supplier,
+            "Mayorista",
+            Regional(),
+            Bogota);
+
+        Assert.Equal("08/10/2026", document.IssuedOn);
     }
 }
