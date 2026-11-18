@@ -2,6 +2,8 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Siigo.Application;
+using Modules.Siigo.Domain;
+using Npgsql;
 
 namespace Modules.Siigo.Infrastructure.Persistence;
 
@@ -43,10 +45,19 @@ internal sealed class SiigoUnitOfWork(SiigoDbContext dbContext) : ISiigoUnitOfWo
     /// <summary>La traducción sola, para probarla sin base. <c>null</c>: no es nuestra y sube tal cual.</summary>
     internal static Exception? Translate(Exception exception) => exception switch
     {
+        // Primero: DbUpdateConcurrencyException hereda de DbUpdateException.
         DbUpdateConcurrencyException => new RequestConcurrencyException(
             "concurrency.conflict", "The resource changed while the update was being committed.", exception),
+        // §5.3: otra conexión del tenant ya factura con esa empresa. Es un 409 al asesor, no una carrera que se reintente.
+        DbUpdateException update when IsUniqueViolation(update, SiigoDbContext.SettingsTenantCompanyIndex) => new ResourceConflictException(
+            SiigoErrorCodes.SettingsCompanyTaken, "Another Siigo connection of this tenant already invoices with that company.", exception),
         _ => null,
     };
+
+    private static bool IsUniqueViolation(DbUpdateException exception, string constraintName) =>
+        exception.InnerException is PostgresException postgres
+        && postgres.SqlState == PostgresErrorCodes.UniqueViolation
+        && string.Equals(postgres.ConstraintName, constraintName, StringComparison.Ordinal);
 
     private sealed class SiigoTransaction(IDbContextTransaction transaction) : ISiigoTransaction
     {
