@@ -209,7 +209,7 @@ OrderDetail.wholesale = { buyerTenant: { id, name }, purchaseOrderId, purchaseOr
 ```
 
 - Errores nuevos (422, `QuotationsDomainException`): `order.wholesale.source_invalid` (aprobar algo que no es `Wholesale`),
-  `order.wholesale.already_approved`, `order.item.unit_price_not_editable`; un pedido aprobado responde a `PUT` el
+  `order.wholesale.already_approved`, `order.item.unit_price_not_editable`, `quotation.order.awaiting_wholesale_approval` (`POST …/archive` de un `Wholesale` sin aprobar; el archivado automático lo salta); un pedido aprobado responde a `PUT` el
   `ExternalOrderErrors.NotEditable` de siempre. Aprobar un anulado: `OrderStateErrors.NotOpen` existente.
 - Reportes: `source=Wholesale` en los filtros que aceptan `OrderSourceFilter`.
 
@@ -230,7 +230,7 @@ empresa cobra IVA). `code`/`name` salen de la foto de la línea, que el camino `
 | --- | --- |
 | 403 | `wholesale.relationship.inactive` (en catálogo, alta, preview y envío vinculados) |
 | 409 | `purchases.order.not_cancellable`, `purchases.order.wholesaler_rejected` |
-| 422 | `wholesale.product.not_visible`, `purchases.order.supplier_not_linked`, `order.wholesale.source_invalid`, `order.wholesale.already_approved`, `order.item.unit_price_not_editable` |
+| 422 | `wholesale.product.not_visible`, `purchases.order.supplier_not_linked`, `order.wholesale.source_invalid`, `order.wholesale.already_approved`, `order.item.unit_price_not_editable`, `quotation.order.awaiting_wholesale_approval` (archivar a mano un pedido mayorista sin aprobar; el archivado automático lo salta) |
 
 ---
 

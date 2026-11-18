@@ -8,6 +8,10 @@ public static class WholesaleOrderErrors
 
     public const string AlreadyApproved = "order.wholesale.already_approved";
 
+    /// <summary>Archivar a mano un pedido mayorista que el mayorista todavía no aprueba: saldría de la cuenta de
+    /// pendientes y la orden de compra del comprador quedaría en <c>Sent</c> sin salida.</summary>
+    public const string AwaitingApproval = "quotation.order.awaiting_wholesale_approval";
+
     /// <summary>La anulación del comprador mayorista reusa el código de la tienda (convención de
     /// <see cref="Order.CancelByBuyer"/>): no viaja por HTTP, Application lo traduce.</summary>
     public const string NotCancellableByBuyer = BuyerOrderErrors.NotCancellableByBuyer;

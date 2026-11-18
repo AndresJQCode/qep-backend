@@ -222,6 +222,7 @@ public sealed class WholesaleOrderTests
             () => invoiced.CancelByWholesaleBuyer(BuyerTenantId, PurchaseOrderId, "Ya no", Later));
 
         var archived = NewWholesaleOrder();
+        archived.ApproveWholesale(Approver, Later);
         archived.Archive(Approver, Later);
         AssertCode(
             BuyerOrderErrors.NotCancellableByBuyer,
@@ -303,5 +304,62 @@ public sealed class WholesaleOrderTests
         order.ChangeItemUnitPrice(item.Id, 11_900m, Approver, Later);
 
         Assert.Equal((10_000m, 1_900m), (item.Subtotal, item.TaxAmount));
+    }
+
+    private static Order PaidAndPrepared(Order order)
+    {
+        order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Later);
+        order.Prepare(Advisor, Later);
+        return order;
+    }
+
+    [Fact]
+    public void AutoArchiveSkipsAWholesaleOrderAwaitingApproval()
+    {
+        var order = PaidAndPrepared(NewWholesaleOrder());
+        var version = order.Version;
+
+        Assert.False(order.ArchiveIfSettled(archivedBy: null, Later));
+
+        Assert.Equal(OrderStatus.Open, order.Status);
+        Assert.Equal(version, order.Version);
+    }
+
+    [Fact]
+    public void ManualArchiveOfAWholesaleOrderAwaitingApprovalIsRejected()
+    {
+        var order = NewWholesaleOrder();
+
+        AssertCode("quotation.order.awaiting_wholesale_approval", () => order.Archive(Approver, Later));
+
+        Assert.Equal(OrderStatus.Open, order.Status);
+    }
+
+    [Fact]
+    public void AnApprovedWholesaleOrderStillArchives()
+    {
+        var order = PaidAndPrepared(NewWholesaleOrder());
+        order.ApproveWholesale(Approver, Later);
+
+        Assert.True(order.ArchiveIfSettled(archivedBy: null, Later));
+        Assert.Equal(OrderStatus.Archived, order.Status);
+
+        var other = NewWholesaleOrder();
+        other.ApproveWholesale(Approver, Later);
+        other.Archive(Approver, Later);
+        Assert.Equal(OrderStatus.Archived, other.Status);
+    }
+
+    [Fact]
+    public void ANonWholesaleOrderArchivesAsBefore()
+    {
+        var order = PaidAndPrepared(NewManualOrder());
+
+        Assert.True(order.ArchiveIfSettled(archivedBy: null, Later));
+        Assert.Equal(OrderStatus.Archived, order.Status);
+
+        var other = NewManualOrder();
+        other.Archive(Approver, Later);
+        Assert.Equal(OrderStatus.Archived, other.Status);
     }
 }

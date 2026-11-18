@@ -1443,6 +1443,12 @@ public sealed class Order
             throw new QuotationsDomainException(OrderStateErrors.AlreadyArchived, "The order is already archived.");
         }
 
+        if (IsAwaitingWholesaleApproval)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.AwaitingApproval, "A wholesale order awaiting approval cannot be archived.");
+        }
+
         Status = OrderStatus.Archived;
         ArchivedBy = archivedBy;
         ArchivedAt = occurredAt;
@@ -1468,7 +1474,8 @@ public sealed class Order
     /// preparado; si no, devuelve <c>false</c> sin tocar nada.</summary>
     public bool ArchiveIfSettled(MemberId? archivedBy, DateTimeOffset occurredAt)
     {
-        if (Status != OrderStatus.Open || PaymentStatus != OrderPaymentStatus.FullPaymentReceived || !IsPrepared)
+        if (Status != OrderStatus.Open || PaymentStatus != OrderPaymentStatus.FullPaymentReceived || !IsPrepared
+            || IsAwaitingWholesaleApproval)
         {
             return false;
         }
