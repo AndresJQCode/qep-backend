@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Purchases.Application;
@@ -15,6 +16,8 @@ internal sealed class PurchasesCatalogLookup(
     ITaxRateRepository taxRates)
     : IPurchasesCatalogLookup
 {
+    private const int PurchasesNameMaxLength = 300;
+
     public async Task<IReadOnlyDictionary<Guid, PurchasesVariantRef>> FindVariantsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
     {
@@ -35,7 +38,8 @@ internal sealed class PurchasesCatalogLookup(
             pair => new PurchasesVariantRef(
                 pair.Variant.Id.Value,
                 pair.Variant.Code,
-                CatalogVariantReads.DisplayNameOf(pair.Product, pair.Variant, valueNames),
+                // La columna es varchar(300) y el nombre visible llega a 389: se recorta aquí, el camino común de la vista previa, el alta y la edición.
+                SnapshotText.Fit(CatalogVariantReads.DisplayNameOf(pair.Product, pair.Variant, valueNames), PurchasesNameMaxLength),
                 pair.Product.TaxRateId is { } id && percentages.TryGetValue(id, out var percentage) ? percentage : 0m));
     }
 }

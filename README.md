@@ -3250,7 +3250,7 @@ igual que la de cotizaciones, y un token del pipeline sin resolver (`#{…}#`) c
 La orden de compra (`GET …/purchases/orders/{id}/pdf`) va por el mismo camino con **su propia sección y clave**
 (`Purchases:Pdf:BaseUrl`, `Purchases:Pdf:ApiKey`, `Purchases:Pdf:TimeoutSeconds` por defecto 30; `PurchaseOrderPdfRenderer`, plantilla
 `purchase-order.typ` incrustada). `PurchasesPdfOptionsValidator` exige HTTPS siempre y la clave en producción; un token sin resolver
-cuenta como ausente: **sin `PURCHASES_PDF_API_KEY` en `Backend-prod` el pod no arranca.** Si `qcode-pdf` no devuelve el PDF, la
+cuenta como ausente: **sin `PURCHASES_PDF_BASE_URL` (en todos los entornos) o sin `PURCHASES_PDF_API_KEY` (en producción) en `Backend-prod`, el pod entero de la API no arranca**, no sólo el PDF de compras. Si `qcode-pdf` no devuelve el PDF, la
 respuesta es `502 purchases.order.pdf_render_failed`, sin el cuerpo del servicio.
 
 **Sin la API key el pod no arranca en producción.** A diferencia de WhatsApp, acá no hay
