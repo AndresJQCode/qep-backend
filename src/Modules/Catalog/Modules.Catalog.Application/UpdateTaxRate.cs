@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Taxes;
 using FluentValidation;
 using FluentValidation.Results;
 using Modules.Catalog.Domain;
@@ -13,26 +14,33 @@ public sealed record UpdateTaxRateCommand(
     string Name,
     decimal Percentage,
     bool KeepMinimumBase,
-    decimal? MinimumBase) : ICommand<TaxRateDto>;
+    decimal? MinimumBase,
+    WithholdingScope? AppliesTo = null) : ICommand<TaxRateDto>;
 
 public static class UpdateTaxRateRequestMapping
 {
     /// <summary>
     /// Ausente conserva la base, null la quita y un número la reemplaza. Cualquier otra cosa es un 422
-    /// <c>validation.failed</c> con el campo marcado: no se adivina qué quiso decir el cliente.
+    /// <c>validation.failed</c> con el campo marcado: no se adivina qué quiso decir el cliente. El alcance
+    /// (<c>appliesTo</c>) viaja por nombre; uno desconocido es el mismo 422.
     /// </summary>
-    public static UpdateTaxRateCommand ToCommand(this UpdateTaxRateRequest request, Guid tenantId, Guid taxRateId) =>
-        request.MinimumBase.ValueKind switch
+    public static UpdateTaxRateCommand ToCommand(this UpdateTaxRateRequest request, Guid tenantId, Guid taxRateId)
+    {
+        var appliesTo = CatalogEnumParsing.ParseOptional<WithholdingScope>(
+            request.AppliesTo, nameof(UpdateTaxRateRequest.AppliesTo));
+
+        return request.MinimumBase.ValueKind switch
         {
-            JsonValueKind.Undefined => new(tenantId, taxRateId, request.Name, request.Percentage, true, null),
-            JsonValueKind.Null => new(tenantId, taxRateId, request.Name, request.Percentage, false, null),
+            JsonValueKind.Undefined => new(tenantId, taxRateId, request.Name, request.Percentage, true, null, appliesTo),
+            JsonValueKind.Null => new(tenantId, taxRateId, request.Name, request.Percentage, false, null, appliesTo),
             JsonValueKind.Number when request.MinimumBase.TryGetDecimal(out var value) =>
-                new(tenantId, taxRateId, request.Name, request.Percentage, false, value),
+                new(tenantId, taxRateId, request.Name, request.Percentage, false, value, appliesTo),
             _ => throw new ValidationException(
             [
                 new ValidationFailure(nameof(UpdateTaxRateRequest.MinimumBase), "'Minimum Base' must be a number or null."),
             ]),
         };
+    }
 }
 
 public sealed class UpdateTaxRateValidator : AbstractValidator<UpdateTaxRateCommand>
@@ -69,6 +77,21 @@ public sealed class UpdateTaxRateHandler(
         var taxRate = await repository.FindAsync(
             command.TenantId, new TaxRateId(command.TaxRateId), cancellationToken)
             ?? throw TaxRateNotFound.For(command.TaxRateId);
+
+        // El alcance no se edita, como el tipo (spec 2026-11-18 §4.2): Companies y Customers lo leen por id al
+        // validar una selección, y cambiarlo la dejaría repetida o reteniendo dos veces. Para otro alcance se
+        // crea otra tasa.
+        if (command.AppliesTo is { } appliesTo && appliesTo != taxRate.AppliesTo)
+        {
+            throw new CatalogDomainException(
+                "catalog.tax_rate.applies_to_immutable",
+                "The scope of a tax rate cannot change; create another tax rate instead.",
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    [nameof(UpdateTaxRateCommand.AppliesTo)] =
+                        ["El alcance no se puede cambiar: crea otra tasa y desactiva esta."]
+                });
+        }
 
         var now = clock.UtcNow;
         taxRate.Update(

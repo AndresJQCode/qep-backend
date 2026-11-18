@@ -419,4 +419,40 @@ public sealed class TaxRateTests
 
         Assert.Equal("Unknown tax type 'Retirado' for country 'CO'.", error.Message);
     }
+
+    // Spec 2026-11-18 §4.2: una retención declara a qué líneas aplica, y lo conserva.
+    [Fact]
+    public void AWithholdingRateKeepsItsScope()
+    {
+        var taxRate = TaxRate.Create(
+            TaxRateId.New(), TenantId, "Retefuente servicios", 4m, "Retefuente", "CO", null, null, Now,
+            WithholdingScope.Services);
+
+        Assert.Equal(WithholdingScope.Services, taxRate.AppliesTo);
+
+        taxRate.Update("Retefuente servicios 2", 6m, null, Now.AddMinutes(1));
+
+        Assert.Equal(WithholdingScope.Services, taxRate.AppliesTo);
+    }
+
+    // Sólo una retención tiene alcance distinto de All: un IVA no se reparte por tipo de línea.
+    [Fact]
+    public void AVatRateWithAScopeIsRejected()
+    {
+        var error = Assert.Throws<CatalogDomainException>(() => TaxRate.Create(
+            TaxRateId.New(), TenantId, "IVA bienes", 19m, "IVA", "CO", null, null, Now, WithholdingScope.Goods));
+
+        Assert.Equal("catalog.tax_rate.applies_to_invalid", error.Code);
+    }
+
+    [Fact]
+    public void ARateWithoutScopeAppliesToAll()
+    {
+        var vat = TaxRate.Create(TaxRateId.New(), TenantId, "IVA", 19m, "IVA", "CO", null, null, Now);
+        var withholding = TaxRate.Create(
+            TaxRateId.New(), TenantId, "Retefuente", 2.5m, "Retefuente", "CO", null, null, Now);
+
+        Assert.Equal(WithholdingScope.All, vat.AppliesTo);
+        Assert.Equal(WithholdingScope.All, withholding.AppliesTo);
+    }
 }

@@ -1,4 +1,5 @@
 using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Domain;
 
@@ -420,6 +421,12 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // Sin FK a geography.cities a propósito: Catalog migra antes que Geography (spec ReteICA por empresa, A9). Que la
         // ciudad exista lo revisa CreateTaxRateHandler.
         taxRate.Property(value => value.CityId).HasColumnName("city_id");
+        // Spec 2026-11-18 §4.2: por nombre, text not null. El default es el de toda tasa de antes y coincide con el
+        // default CLR, así que no hace falta sentinel.
+        taxRate.Property(value => value.AppliesTo)
+            .HasColumnName("applies_to")
+            .HasConversion<string>()
+            .HasDefaultValue(WithholdingScope.All);
         taxRate.Ignore(value => value.Behavior);
         taxRate.Ignore(value => value.Scope);
         taxRate.Ignore(value => value.Withholds);

@@ -396,7 +396,8 @@ public sealed record TaxRateDto(
     string? MinimumBaseUnit,
     string Scope,
     Guid? CityId,
-    TaxRateCityDto? City);
+    TaxRateCityDto? City,
+    string AppliesTo);
 
 public sealed record TaxRateResponse(
     Guid Id,
@@ -412,7 +413,9 @@ public sealed record TaxRateResponse(
     string? MinimumBaseUnit,
     string Scope,
     Guid? CityId,
-    TaxRateCityDto? City);
+    TaxRateCityDto? City,
+    // Spec 2026-11-18 §4.2: "All" | "Goods" | "Services", por nombre. Sólo una retención vale distinto de "All".
+    string AppliesTo);
 
 /// <summary>La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y
 /// documentos.</summary>
@@ -428,20 +431,29 @@ public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items
 // y sin Country es CO (spec §9.2). IsActive no viaja acá, por la misma razón que en producto.
 //
 // CityId: obligatorio en un tipo municipal (ReteICA), prohibido en uno nacional (spec ReteICA por empresa §9.1).
+//
+// AppliesTo (spec 2026-11-18 §4.2): "All" | "Goods" | "Services". Ausente es "All", el valor de toda tasa de antes; distinto
+// de "All" sólo en una retención (422 catalog.tax_rate.applies_to_invalid).
 public sealed record CreateTaxRateRequest(
     string Name,
     decimal Percentage,
     string? Type = null,
     string? Country = null,
     decimal? MinimumBase = null,
-    Guid? CityId = null);
+    Guid? CityId = null,
+    string? AppliesTo = null);
 
 // Type, Country y CityId no se editan: si el cuerpo los trae, se ignoran. MinimumBase es un JsonElement porque
 // un decimal? no distingue «ausente» (conservar la base) de null (quitarla, «siempre aplica»).
+//
+// AppliesTo tampoco se edita, pero no se ignora: el formulario lo reenvía, y uno distinto del guardado es 422
+// catalog.tax_rate.applies_to_immutable en vez de un cambio perdido en silencio. Ausente o igual, pasa.
 public sealed record UpdateTaxRateRequest(
     string Name,
     decimal Percentage)
 {
+    public string? AppliesTo { get; init; }
+
     // Propiedad y no parámetro del constructor: con `JsonElement MinimumBase = default` el esquema de OpenAPI
     // (JsonSchemaExporter) intentaba escribir ese valor por defecto y /openapi/v1.json entero respondía 500.
     // Ausente queda en default (ValueKind Undefined), igual que antes.
