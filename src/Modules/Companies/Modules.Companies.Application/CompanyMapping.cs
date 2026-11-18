@@ -108,7 +108,8 @@ internal static class CompanyMapping
                 rate.IsActive,
                 rate.CityId is { } cityId && cities.TryGetValue(cityId, out var city)
                     ? new CompanyMunicipalityDto(city.CityId, city.CityName, city.DepartmentId, city.DepartmentName)
-                    : null))
+                    : null,
+                rate.AppliesTo.ToString()))
             .OrderBy(rate => rate.City?.DepartmentName ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(rate => rate.City?.Name ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(rate => rate.Type, StringComparer.Ordinal)

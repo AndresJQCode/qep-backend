@@ -307,6 +307,61 @@ public sealed class ProductExportApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, wildcard.StatusCode);
     }
 
+    /// <summary>
+    /// Spec 2026-11-18 servicios pendientes §1: `kind` filtra el export igual que el listado. La grilla tiene ese filtro, y sin
+    /// él el Excel traería productos y servicios aunque la pantalla muestre sólo uno de los dos. Un valor que no es del enum
+    /// responde el mismo 422 que el listado.
+    /// </summary>
+    [Fact]
+    public async Task ExportFiltersByKindLikeTheList()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = new QepApiFactory(database.GetConnectionString(), storage);
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        await SeedTenantAsync(factory);
+
+        await CreateProductAsync(client, "VS-001", "Vela de soja", []);
+        var service = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            new
+            {
+                name = "Instalación",
+                kind = "Service",
+                salesUnit = "Hour",
+                variants = new[]
+                {
+                    ProductBodies.Variant(
+                        null, "SRV-001", new { prices = new Dictionary<string, decimal> { ["COP"] = BaseCop } })
+                },
+            },
+            TestContext.Current.CancellationToken);
+        service.EnsureSuccessStatusCode();
+
+        async Task<string[]> ExportedCodesAsync(string query)
+        {
+            var response = await client.PostAsync(
+                $"{ExportUrl()}?{query}", content: null, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            Assert.NotNull(storage.Content);
+            using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+            var sheet = workbook.Worksheets.First();
+            return Enumerable.Range(2, sheet.LastRowUsed()!.RowNumber() - 1)
+                .Select(row => sheet.Cell(row, 1).GetString())
+                .ToArray();
+        }
+
+        Assert.Equal(["SRV-001"], await ExportedCodesAsync("kind=Service"));
+        Assert.Equal(["VS-001"], await ExportedCodesAsync("kind=Physical"));
+        Assert.Equal(["SRV-001", "VS-001"], await ExportedCodesAsync(string.Empty));
+
+        var invalid = await client.PostAsync(
+            $"{ExportUrl()}?kind=Gadget", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+        var problem = await invalid.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("validation.failed", problem, StringComparison.Ordinal);
+    }
+
     // Un tenant sin productos no produce un Excel de una sola fila de cabeceras ni un correo con
     // un archivo vacio: falla legible, mismo criterio que el export de clientes.
     [Fact]

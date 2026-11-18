@@ -172,6 +172,10 @@ public sealed record WithholdingDto(
 
 /// <summary>Una tasa de retención congelada en el documento, aplique o no: lo que prellena un selector. Con el porcentaje
 /// del catálogo y el municipio, porque el editor de porcentaje lee la fila aunque no haya aplicado (spec §9.4).</summary>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> con el que se congeló la tasa: <c>All</c>, <c>Goods</c> o
+/// <c>Services</c> (spec 2026-11-18 servicios pendientes §2). Sale de la foto del documento y no del catálogo: el selector
+/// dice «Retefuente (servicios)» aunque la tasa ya no esté en el catálogo activo. Va al final y con default para no tocar
+/// las construcciones existentes.</param>
 public sealed record WithholdingTaxRateDto(
     Guid Id,
     string Name,
@@ -180,7 +184,8 @@ public sealed record WithholdingTaxRateDto(
     decimal Percentage,
     decimal CatalogPercentage,
     bool PercentageOverridden,
-    Guid? CityId);
+    Guid? CityId,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// Por qué una tasa de la fuente vigente aplica o no (spec retenciones por UVT §5.1, §6): la tasa congelada, el motivo, la
@@ -906,7 +911,7 @@ public sealed record WithholdingResponse(
     Guid? CityId,
     string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
-/// <summary>Gemelo HTTP de <see cref="WithholdingTaxRateDto"/>.</summary>
+/// <summary>Gemelo HTTP de <see cref="WithholdingTaxRateDto"/>; <c>AppliesTo</c> significa lo mismo que allá.</summary>
 public sealed record WithholdingTaxRateResponse(
     Guid Id,
     string Name,
@@ -915,7 +920,8 @@ public sealed record WithholdingTaxRateResponse(
     decimal Percentage,
     decimal CatalogPercentage,
     bool PercentageOverridden,
-    Guid? CityId);
+    Guid? CityId,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de

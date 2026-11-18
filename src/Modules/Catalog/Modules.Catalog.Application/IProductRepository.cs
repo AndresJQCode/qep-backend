@@ -76,6 +76,7 @@ public interface IProductRepository
         string? name,
         string? code,
         bool? isActive,
+        ProductKind? kind,
         int skip,
         int take,
         CancellationToken cancellationToken);

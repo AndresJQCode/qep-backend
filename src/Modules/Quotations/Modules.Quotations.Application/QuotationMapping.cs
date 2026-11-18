@@ -105,7 +105,8 @@ internal static class QuotationMapping
         withholding.Percentage,
         withholding.CatalogPercentage,
         withholding.Overridden,
-        withholding.CityId);
+        withholding.CityId,
+        withholding.AppliesTo.ToString());
 
     /// <summary>La entrega por envío con forma fija, también en recogida (spec 2026-10-17 §7).</summary>
     public static ShippingDto ShippingDtoOf(this Quotation quotation) => new(
