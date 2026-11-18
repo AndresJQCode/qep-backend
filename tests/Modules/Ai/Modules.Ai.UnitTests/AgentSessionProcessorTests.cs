@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Ai.Application;
 using Modules.Ai.Domain;
@@ -97,8 +97,8 @@ public sealed class AgentSessionProcessorTests
         return agent;
     }
 
-    private static AiInboxItem Inbound(bool opened = true) =>
-        new(Guid.CreateVersion7(), Tenant, Connection, Conversation, opened, Now, 1, ReleaseRun: false);
+    private static AiInboxItem Inbound() =>
+        new(Guid.CreateVersion7(), Tenant, Connection, Conversation, Now, 1, ReleaseRun: false);
 
     private static AiConversationState State(
         string automation = "None", string? bot = null, Guid? agentId = null, bool windowOpen = true, Guid? customerId = null) =>
@@ -142,18 +142,42 @@ public sealed class AgentSessionProcessorTests
         Assert.Empty(world.Jobs.Added);
     }
 
+    // Spec 2026-10-26 D-1, que reemplazó D-M16 también para los agentes: cualquier entrante de una conversación abierta y sin asesor, no
+    // sólo el que la abrió. Antes el agente se quedaba callado en una conversación que ya estaba abierta sin dueño (producción, 2026-11-17).
     [Fact]
-    public async Task AnInboundThatDoesNotOpenTheConversationDoesNotStartTheAgent()
+    public async Task AnInboundInAnOpenUnassignedConversationStartsTheAgentEvenIfItDidNotOpenIt()
     {
         var world = new World();
-        world.Sessions.Serving = PublishedAgent();
+        var agent = PublishedAgent();
+        world.Sessions.Serving = agent;
         world.Conversations.State = State();
         world.Credentials.Available.Add("anthropic");
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(AiInboxOutcomes.Started, outcome);
+        Assert.Equal(agent.Id, world.Conversations.StartedAgent);
+        Assert.Single(world.Sessions.All);
+    }
+
+    // D-13b y D-6: una pausa Handoff (el agente la pasó a la bandeja) o Manual frena al bot; la regla la tiene Conversation.StartAutomation,
+    // que rechaza el arranque. Sin esto, el siguiente mensaje del cliente devolvería al agente la conversación que acaba de traspasar.
+    [Fact]
+    public async Task AConversationTheDomainRefusesToStartIsNotTakenAndSendsNothing()
+    {
+        var world = new World();
+        world.Sessions.Serving = PublishedAgent(greeting: "¡Hola!");
+        world.Conversations.State = State("Paused", "Agent");
+        world.Conversations.NextStartFailure = new AgentBlockSessionProcessorTests.TestDomainException("messaging.automation.not_available");
+        world.Credentials.Available.Add("anthropic");
+
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.Skipped, outcome);
+        Assert.Null(world.Conversations.StartedAgent);
         Assert.Empty(world.Sessions.All);
+        Assert.Empty(world.Outbound.Sends);
+        Assert.Empty(world.Jobs.Added);
     }
 
     [Fact]
@@ -181,7 +205,7 @@ public sealed class AgentSessionProcessorTests
         var pending = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, 1, Now, Now);
         world.Sessions.Pending = pending;
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.Continued, outcome);
         Assert.Equal(session.NextSeq - 1, pending.UpToSeq);
@@ -195,7 +219,7 @@ public sealed class AgentSessionProcessorTests
         var agent = PublishedAgent();
         var session = world.Sessions.Live(agent);
         world.Conversations.State = State("Active", "Agent", agent.Id);
-        var item = Inbound(opened: false);
+        var item = Inbound();
         session.MarkInbound(item.MessageId);
 
         Assert.Equal(AiInboxOutcomes.Duplicate, await world.Inbound().ProcessAsync(item, TestContext.Current.CancellationToken));
@@ -209,7 +233,7 @@ public sealed class AgentSessionProcessorTests
         var session = world.Sessions.Live(agent);
         world.Conversations.State = State("Paused", "Agent", agent.Id);
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.Interrupted, outcome);
         Assert.Equal(AgentSessionStatus.Interrupted, session.Status);
@@ -226,7 +250,7 @@ public sealed class AgentSessionProcessorTests
         world.Conversations.State = State("Active", "Agent", agent.Id);
         world.Modules.Enabled = false;
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.ModuleDisabled, outcome);
         Assert.Equal(AgentSessionStatus.Interrupted, session.Status);
@@ -506,7 +530,7 @@ public sealed class AgentSessionProcessorTests
         world.Sessions.Serving = agent;
         world.Conversations.State = State("Active", "Agent", agent.Id);
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.ProviderUnavailable, outcome);
         Assert.Empty(world.Sessions.All);
@@ -526,7 +550,7 @@ public sealed class AgentSessionProcessorTests
         world.Conversations.State = State("Active", "Agent", agent.Id);
         world.Credentials.Available.Add("anthropic");
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.HandedOff, outcome);
         Assert.Empty(world.Sessions.All);
@@ -542,7 +566,7 @@ public sealed class AgentSessionProcessorTests
         world.Conversations.State = State("Active", "Agent", Guid.CreateVersion7());
         world.Credentials.Available.Add("anthropic");
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.HandedOff, outcome);
         Assert.Empty(world.Sessions.All);
@@ -559,7 +583,7 @@ public sealed class AgentSessionProcessorTests
         world.Conversations.State = State("Active", "Agent", agent.Id);
         world.Modules.Enabled = false;
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false), TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound(), TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.ModuleDisabled, outcome);
         var handoff = Assert.Single(world.Conversations.Handoffs);
@@ -578,7 +602,7 @@ public sealed class AgentSessionProcessorTests
         var pending = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, 1, Now, Now);
         world.Sessions.Pending = pending;
 
-        var outcome = await world.Inbound().ProcessAsync(Inbound(opened: false) with { ReleaseRun = true }, TestContext.Current.CancellationToken);
+        var outcome = await world.Inbound().ProcessAsync(Inbound() with { ReleaseRun = true }, TestContext.Current.CancellationToken);
 
         Assert.Equal(AiInboxOutcomes.Interrupted, outcome);
         Assert.Equal(AgentSessionStatus.Interrupted, session.Status);
@@ -873,8 +897,17 @@ public sealed class AgentSessionProcessorTests
 
         public Task<AiConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(State);
 
+        /// <summary>Lo que lanza el próximo arranque, una sola vez (la regla de pausa de <c>Conversation.StartAutomation</c>).</summary>
+        public Exception? NextStartFailure { get; set; }
+
         public Task StartAsync(Guid tenantId, Guid conversationId, Guid agentId, CancellationToken cancellationToken)
         {
+            if (NextStartFailure is { } failure)
+            {
+                NextStartFailure = null;
+                throw failure;
+            }
+
             StartedAgent = agentId;
             State = State! with { AutomationStatus = "Active", AutomationBotKind = "Agent", AutomationAgentId = agentId };
             return Task.CompletedTask;

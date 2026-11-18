@@ -33,7 +33,7 @@ public sealed record AgentConfig(
 
     public static readonly IReadOnlyList<string> Tones = ["professional", "friendly", "casual", "formal"];
 
-    /// <summary>D-A9: con el entrante que abre o reabre la conversación, o sólo fuera de horario.</summary>
+    /// <summary>D-A9: con cualquier entrante de una conversación abierta y sin asesor, o sólo fuera de horario (spec 2026-10-26 D-1, D-1b).</summary>
     public static readonly IReadOnlyList<string> Triggers = ["NewConversation", "OutsideHours"];
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)

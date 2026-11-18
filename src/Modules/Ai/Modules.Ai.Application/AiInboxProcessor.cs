@@ -374,11 +374,13 @@ public sealed partial class AiInboxProcessor(
     private DateTimeOffset NowFor(AiConversationState? conversation) =>
         conversation?.AutomationResumedAt is { } resumedAt && resumedAt > clock.UtcNow ? resumedAt : clock.UtcNow;
 
-    /// <summary>D-A9 y D-M16: sólo el entrante que abre o reabre la conversación arranca un agente; con <c>OutsideHours</c>, además, fuera
-    /// del horario de la conexión.</summary>
+    /// <summary>D-A9 con el spec 2026-10-26 D-1 y D-1b, que reemplazaron D-M16 (la misma regla que <c>TriggerEvaluator</c> de los chatbots):
+    /// <c>NewConversation</c> arranca con cualquier entrante de una conversación abierta y sin asesor, la haya abierto o no; <c>OutsideHours</c>,
+    /// con cualquiera mientras la conexión esté fuera de horario. Una pausa <c>Manual</c> o <c>Handoff</c> (D-6, D-13b) la frena
+    /// <c>Conversation.StartAutomation</c>, que rechaza el arranque: no la repitas aquí.</summary>
     private async Task<bool> TriggerAppliesAsync(Agent agent, AiInboxItem item, CancellationToken cancellationToken)
     {
-        if (!item.Opened || agent.PublishedVersion is not { } version)
+        if (agent.PublishedVersion is not { } version)
         {
             return false;
         }
