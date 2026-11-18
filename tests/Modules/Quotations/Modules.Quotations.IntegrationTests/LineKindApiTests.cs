@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -93,6 +94,145 @@ public sealed class LineKindApiTests(SharedQuotationsHost sharedHost) : OrderApi
         Assert.Equal(
             [("Service", "Hour"), ("Physical", "Unit")],
             detail.Items.OrderBy(item => item.Position).Select(item => (item.Kind, item.SalesUnit)));
+    }
+
+    // ---- requiresShipping (spec 2026-11-18 §5) ----
+
+    // El detalle lo lee del agregado y el listado lo pregunta con un EXISTS: las dos respuestas tienen que coincidir.
+    [Fact]
+    public async Task ServicesOnlyOrderDoesNotRequireShippingInDetailAndList()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var service = await CreateServiceAsync(client, tenantId);
+        var physical = await CreateProductWithScalesAsync(client, tenantId);
+        var servicesOnly = await CreateManualOrderAsync(client, tenantId, clientId, service);
+        var mixed = await CreateManualOrderAsync(client, tenantId, clientId, service, physical);
+
+        var list = await client.GetFromJsonAsync<OrdersPageResponse>(
+            OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+
+        Assert.False(servicesOnly.Order.RequiresShipping);
+        Assert.True(mixed.Order.RequiresShipping);
+        Assert.NotNull(list);
+        Assert.False(Assert.Single(list.Items, row => row.Id == servicesOnly.Order.Id).RequiresShipping);
+        Assert.True(Assert.Single(list.Items, row => row.Id == mixed.Order.Id).RequiresShipping);
+    }
+
+    // Una cotización con una línea física y un servicio requiere envío; una vacía también (el estado de hoy); una de sólo
+    // servicios no.
+    [Fact]
+    public async Task MixedQuotationRequiresShippingInList()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var service = await CreateServiceAsync(client, tenantId);
+        var physical = await CreateProductWithScalesAsync(client, tenantId);
+        var mixed = await CreateQuotationWithLinesAsync(client, tenantId, clientId, service, physical);
+        var servicesOnly = await CreateQuotationWithLinesAsync(client, tenantId, clientId, service);
+        var empty = await CreateQuotationAsync(client, tenantId, clientId);
+
+        var list = await client.GetFromJsonAsync<QuotationsPageResponse>(
+            QuotationsUrl(tenantId), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(list);
+        Assert.Equal(
+            [(mixed.Id, true), (servicesOnly.Id, false), (empty.Id, true)],
+            new[] { mixed.Id, servicesOnly.Id, empty.Id }
+                .Select(id => (id, Assert.Single(list.Items, row => row.Id == id).RequiresShipping)));
+        Assert.Equal((true, false), (mixed.RequiresShipping, servicesOnly.RequiresShipping));
+    }
+
+    // Spec §5: la regla de la ciudad al facturar sólo aplica si el pedido se envía, y uno de sólo servicios nace con
+    // ShippingDetails.None. Se «presta» (prepare) y se marca pagado sin 422, para un cliente sin ciudad.
+    [Fact]
+    public async Task ServicesOnlyOrderMarksPaidWithoutShippingCity()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
+        using var _ = client;
+        await SetTenantCustomerFieldPolicyAsync(factory, tenantId, false, false, false, true);
+        var customerId = await CreateCustomerWithoutCityAsync(client, tenantId);
+        var service = await CreateServiceAsync(client, tenantId);
+        var order = await CreateManualOrderAsync(client, tenantId, customerId, service);
+
+        var prepared = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Order.Id)}/prepare", content: null, TestContext.Current.CancellationToken);
+        var paid = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Order.Id)}/mark-paid", content: null, TestContext.Current.CancellationToken);
+
+        Assert.True(prepared.IsSuccessStatusCode, await prepared.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(paid.IsSuccessStatusCode, await paid.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var after = await ReadOrderAsync(paid);
+        Assert.False(after.RequiresShipping);
+        Assert.NotNull(after.PaidMarkedAt);
+    }
+
+    private static async Task<OrderDetailResponse> CreateManualOrderAsync(
+        HttpClient client, Guid tenantId, Guid clientId, params Guid[] variantIds)
+    {
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var response = await client.PostAsJsonAsync(
+            OrdersUrl(tenantId),
+            new CreateOrderRequest(
+                clientId, "Transferencia", null, false, null, null,
+                new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                [.. variantIds.Select(variantId => new OrderEditItemRequest(variantId, 1m))],
+                []),
+            TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        return detail;
+    }
+
+    private static async Task<QuotationResponse> CreateQuotationWithLinesAsync(
+        HttpClient client, Guid tenantId, Guid clientId, params Guid[] variantIds)
+    {
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        HttpResponseMessage? last = null;
+        foreach (var variantId in variantIds)
+        {
+            last = await client.PostAsJsonAsync(
+                $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
+                new AddQuotationItemRequest(variantId, 1m),
+                TestContext.Current.CancellationToken);
+            Assert.True(last.IsSuccessStatusCode, await last.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        }
+
+        var body = await last!.Content.ReadFromJsonAsync<QuotationResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body;
+    }
+
+    /// <summary>Un cliente completo sin ciudad, como el de <c>BilledCustomerFieldsApiTests</c>.</summary>
+    private static async Task<Guid> CreateCustomerWithoutCityAsync(HttpClient client, Guid tenantId)
+    {
+        var classificationId = await CreateClassificationAsync(client, tenantId);
+        var created = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers",
+            new
+            {
+                name = "Verde Esencial S.A.S.",
+                identificationType = "NIT",
+                identificationNumber = "900.123.456-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                personType = (string?)null,
+                classificationId,
+                withRetention = false,
+                vatSurplus = false,
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        return body.RootElement.GetProperty("id").GetGuid();
     }
 
     // ---- Siembra por la API de Catalog ----

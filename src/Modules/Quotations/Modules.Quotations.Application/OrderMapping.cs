@@ -75,7 +75,8 @@ internal static class OrderMapping
         order.BuyerNotes,
         order.BuyerAccountId,
         [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)],
-        order.OrderDate);
+        order.OrderDate,
+        order.RequiresShipping);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
@@ -91,8 +92,10 @@ internal static class OrderMapping
         order.FreightTaxAmount,
         order.CashOnDelivery);
 
+    // requiresShipping llega resuelto por página: la búsqueda del listado no trae las líneas, así que order.Items acá
+    // está vacía y order.RequiresShipping diría siempre true.
     public static OrderListItemDto ToListItemDto(
-        this Order order, string? quotationNumber, string? clientName, string? advisorName) => new(
+        this Order order, string? quotationNumber, string? clientName, string? advisorName, bool requiresShipping) => new(
         order.Id.Value,
         order.OrderNumber,
         order.QuotationId?.Value,
@@ -112,7 +115,8 @@ internal static class OrderMapping
         order.Source.ToString(),
         order.ExternalReference,
         order.ShippingDtoOf(),
-        order.OrderDate);
+        order.OrderDate,
+        requiresShipping);
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
         entry.Id.Value,

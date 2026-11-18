@@ -137,7 +137,10 @@ public sealed record QuotationDto(
     Guid? OperationCityId = null,
     /// <summary>El veredicto de cada tasa de la fuente vigente, aplique o no, en su orden (spec retenciones por UVT §6).
     /// QuotationMapping.ToDto la llena siempre; null sólo en un DTO armado a mano, y el compositor lo lee como vacío.</summary>
-    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null);
+    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null,
+    /// <summary>Ver <c>Quotation.RequiresShipping</c> (spec 2026-11-18 §5). Con default por el mismo motivo que los de
+    /// arriba: QuotationMapping.ToDto la llena siempre.</summary>
+    bool RequiresShipping = true);
 
 /// <summary>Una retención que aplicó (spec impuestos por tipo §9.3): la tasa congelada, la base sobre la que se
 /// calculó y su monto. <c>Type</c> viaja como texto ("Retefuente", "ReteICA").</summary>
@@ -839,7 +842,12 @@ public sealed record QuotationResponse(
     IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings,
     /// <summary>Todas las tasas de la fuente vigente con su veredicto, apliquen o no, en su orden (spec retenciones por UVT
     /// §6). Aditivo: <see cref="Withholdings"/> sigue trayendo sólo las aplicadas.</summary>
-    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown);
+    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown,
+    /// <summary>Si la cotización vende algo que se despacha (spec 2026-11-18 §5): alguna línea <c>Physical</c>, o
+    /// ninguna línea. BFF: con false la pantalla oculta la sección de envío sin conocer el tipo de cada línea ni la
+    /// regla del documento vacío. El backend no pone ni borra el envío por esto. Con default para no tocar las
+    /// construcciones que ya existen; el compositor lo llena siempre.</summary>
+    bool RequiresShipping = true);
 
 /// <summary>Una referencia de municipio (spec ReteICA por empresa §9.1): la misma forma en tasas, empresas, clientes y
 /// documentos.</summary>
@@ -984,7 +992,10 @@ public sealed record QuotationListItemResponse(
     string? OrderStatus,
     /// <summary>La entrega por envío de la fila, misma forma que en el detalle: la grilla muestra
     /// transportadora y contraentrega sin pedir la cotización entera.</summary>
-    ShippingResponse Shipping);
+    ShippingResponse Shipping,
+    /// <summary>Mismo campo y mismo significado que en <see cref="QuotationResponse"/> (spec 2026-11-18 §5): la fila no
+    /// trae las líneas, así que viaja resuelto.</summary>
+    bool RequiresShipping);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>

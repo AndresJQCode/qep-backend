@@ -92,6 +92,16 @@ public interface IQuotationRepository
         IReadOnlyCollection<QuotationId> quotationIds,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// De los ids dados, cuáles requieren envío (spec 2026-11-18 §5): sin líneas o con alguna <c>Physical</c>, la regla
+    /// de <see cref="Quotation.RequiresShipping"/>. Para el listado, por el mismo motivo que
+    /// <see cref="FindIdsWithItemsAsync"/>.
+    /// </summary>
+    Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken);
+
     /// <summary>La cotización que creó una integración con esa clave (spec 2026-10-29 §8.3), sin rastreo, o <c>null</c>.
     /// Sólo ve el tenant pedido.</summary>
     Task<Quotation?> FindByExternalKeyAsync(

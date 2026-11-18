@@ -427,6 +427,13 @@ public sealed class Order
 
     public IReadOnlyCollection<OrderItem> Items => _items;
 
+    /// <summary>
+    /// Si el pedido vende algo que se despacha (spec 2026-11-18 §5), con la misma regla que
+    /// <see cref="Quotation.RequiresShipping"/>. Con false la pantalla oculta el envío y dice «Marcar como prestado»
+    /// en vez de «Preparar»; el dominio no cambia nada: <c>Prepare</c> y el resto siguen igual.
+    /// </summary>
+    public bool RequiresShipping => _items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical);
+
     public IReadOnlyCollection<OrderParty> Parties => _parties;
 
     public OrderParty? Billing => _parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);

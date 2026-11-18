@@ -266,6 +266,14 @@ public sealed class Quotation
 
     public IReadOnlyCollection<QuotationItem> Items => _items;
 
+    /// <summary>
+    /// Si la cotización vende algo que se despacha (spec 2026-11-18 §5): alguna línea <c>Physical</c>, o ninguna línea,
+    /// que es el estado de hoy y el del formulario vacío. Derivado, sin columna: el listado lo pregunta con un
+    /// <c>EXISTS</c> (<c>IQuotationRepository.FindIdsRequiringShippingAsync</c>), y las dos reglas son la misma. El
+    /// backend nunca pone ni borra el envío por esto; sólo se lo dice a la pantalla.
+    /// </summary>
+    public bool RequiresShipping => _items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical);
+
     /// <summary>A quién se le factura y a quién se le entrega, **sólo cuando no son los datos del
     /// cliente** (US-6): una parte ausente es "usá los del cliente". Ver
     /// <see cref="QuotationParty"/>.</summary>

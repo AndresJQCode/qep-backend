@@ -53,7 +53,10 @@ public sealed record OrderListItemDto(
     /// <summary>La entrega por envío, misma forma que en el detalle (ver <see cref="ShippingDto"/>).</summary>
     ShippingDto Shipping,
     /// <summary>La fecha del pedido (spec 2026-11-16 §4).</summary>
-    DateOnly OrderDate);
+    DateOnly OrderDate,
+    /// <summary>Ver <see cref="Order.RequiresShipping"/> (spec 2026-11-18 §5). Resuelto por página, porque la fila no trae
+    /// las líneas.</summary>
+    bool RequiresShipping);
 
 public sealed record OrderPage(
     IReadOnlyList<OrderListItemDto> Items,
@@ -115,7 +118,7 @@ public sealed class ListOrdersHandler(
             cancellationToken);
 
         var items = await OrderListing.ToListItemsAsync(
-            customerLookup, advisorLookup, quotationRepository, query.TenantId, rows, cancellationToken);
+            customerLookup, advisorLookup, quotationRepository, repository, query.TenantId, rows, cancellationToken);
         return new OrderPage(items, total, page, pageSize);
     }
 }

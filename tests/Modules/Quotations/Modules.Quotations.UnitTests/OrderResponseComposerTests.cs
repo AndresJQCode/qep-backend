@@ -340,7 +340,7 @@ public sealed class OrderResponseComposerTests
 
         Assert.Equal(order.OrderDate, dto.OrderDate);
         Assert.Equal(order.OrderDate, OrderResponses.ToResponse(dto, TaxUnitContext.None).OrderDate);
-        Assert.Equal(order.OrderDate, order.ToListItemDto(null, null, null).OrderDate);
+        Assert.Equal(order.OrderDate, order.ToListItemDto(null, null, null, requiresShipping: true).OrderDate);
     }
 
     // §3: el texto del historial, con fechas ISO sin depender de la cultura.

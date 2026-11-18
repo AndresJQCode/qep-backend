@@ -135,7 +135,8 @@ public sealed class QuotationResponseComposer(
             municipal.OperationCity,
             municipal.BillingCompanyCity,
             municipal.Entries,
-            ToBreakdownResponse(quotation.WithholdingBreakdown, taxUnits));
+            ToBreakdownResponse(quotation.WithholdingBreakdown, taxUnits),
+            quotation.RequiresShipping);
     }
 
     /// <summary>Los contactos de la empresa del cliente (spec 2026-11-10 §4.6), en una consulta por documento. Un cliente que no

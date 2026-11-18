@@ -54,7 +54,8 @@ internal static class QuotationMapping
         quotation.GlobalScaleFloor,
         quotation.IsRetail,
         quotation.OperationCityId,
-        [.. quotation.WithholdingVerdicts.Select(ToDto)]);
+        [.. quotation.WithholdingVerdicts.Select(ToDto)],
+        quotation.RequiresShipping);
 
     /// <summary>El veredicto de una tasa tal como viaja (spec retenciones por UVT §6); el motivo, con el nombre del enum. La
     /// usa también el pedido.</summary>
@@ -140,8 +141,8 @@ internal static class QuotationMapping
         party.CityName);
 
     /// <summary>
-    /// La fila del listado. <paramref name="hasItems"/> y <paramref name="order"/> llegan
-    /// resueltos por el handler y no se leen del agregado: la busqueda del listado no trae las
+    /// La fila del listado. <paramref name="hasItems"/>, <paramref name="requiresShipping"/> y <paramref name="order"/>
+    /// llegan resueltos por el handler y no se leen del agregado: la busqueda del listado no trae las
     /// lineas (la tabla no las pinta) y el pedido vive en otra tabla, asi que <c>quotation.Items</c>
     /// aca esta vacia aunque la cotizacion tenga lineas.
     /// </summary>
@@ -150,6 +151,7 @@ internal static class QuotationMapping
         string? clientName,
         string? advisorName,
         bool hasItems,
+        bool requiresShipping,
         Order? order) => new(
         quotation.Id.Value,
         quotation.QuotationNumber,
@@ -165,7 +167,8 @@ internal static class QuotationMapping
         hasItems && quotation.ValidUntil is not null && quotation.BillingAccount is not null,
         order?.Id.Value,
         order?.Status.ToString(),
-        quotation.ShippingDtoOf());
+        quotation.ShippingDtoOf(),
+        requiresShipping);
 
     private static QuotationItemDto ToDto(QuotationItem item, PriceRounding rounding) => new(
         item.Id.Value,
