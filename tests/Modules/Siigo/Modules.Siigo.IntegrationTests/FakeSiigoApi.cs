@@ -34,10 +34,25 @@ internal sealed class FakeSiigoApi
             "/v1/taxes",
             HttpStatusCode.OK,
             """[{"id":13156,"name":"IVA 19%","type":"IVA","percentage":19.0,"active":true},{"id":13158,"name":"Retefuente 2.5%","type":"Retefuente","percentage":2.5,"active":true}]""");
-        On("/v1/products", HttpStatusCode.OK, """{"pagination":{"page":1,"page_size":100,"total_results":0},"results":[]}""");
+        // Por defecto, el catálogo de productos que se arma con AddProduct; filtra por code= como Siigo.
+        OnRequest("/v1/products", ProductsAnswer);
     }
 
+    private readonly ConcurrentQueue<(string Id, string Code, string Name, bool Active)> _products = new();
+
     public IReadOnlyCollection<FakeSiigoCall> Calls => _calls;
+
+    /// <summary>Un producto de Siigo que <c>GET /v1/products</c> devuelve (por código, si la petición lo trae).</summary>
+    public void AddProduct(string id, string code, string name, bool active = true) => _products.Enqueue((id, code, name, active));
+
+    private HttpResponseMessage ProductsAnswer(FakeSiigoCall call)
+    {
+        var code = System.Web.HttpUtility.ParseQueryString(call.Query)["code"];
+        var found = _products.Where(product => code is null || string.Equals(product.Code, code, StringComparison.OrdinalIgnoreCase)).ToList();
+        var results = string.Join(",", found.Select(product =>
+            $$"""{"id":"{{product.Id}}","code":"{{product.Code}}","name":"{{product.Name}}","active":{{(product.Active ? "true" : "false")}}}"""));
+        return Respond(HttpStatusCode.OK, $$"""{"pagination":{"page":1,"page_size":100,"total_results":{{found.Count}}},"results":[{{results}}]}""");
+    }
 
     /// <summary>Cuántas veces se llamó a esa ruta (sin la query), con cualquier método.</summary>
     public int CallsTo(string path) => _calls.Count(call => call.Path == path);

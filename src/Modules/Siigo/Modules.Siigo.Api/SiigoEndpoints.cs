@@ -72,7 +72,7 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPut("/products/{variantId:guid}/link", LinkProductAsync)
-            .Produces<SiigoVariantLinkDto>()
+            .Produces<SiigoVariantLinkDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -109,8 +109,10 @@ public static class SiigoEndpoints
         SiigoProductLinkRequest request,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.SendAsync(
-            new LinkSiigoVariantCommand(tenantId, connectionId, variantId, request.SiigoProductId, request.Code, request.Name), cancellationToken));
+        Results.Json(
+            await dispatcher.SendAsync(
+                new LinkSiigoVariantCommand(tenantId, connectionId, variantId, request.SiigoProductId, request.Code, request.Name), cancellationToken),
+            statusCode: StatusCodes.Status201Created);
 
     private static async Task<IResult> UnlinkProductAsync(
         Guid tenantId, Guid connectionId, Guid variantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

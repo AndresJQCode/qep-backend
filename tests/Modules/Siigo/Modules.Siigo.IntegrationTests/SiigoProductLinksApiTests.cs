@@ -79,6 +79,7 @@ public sealed class SiigoProductLinksApiTests
         var one = await CreateProductAsync(world.Client, world.TenantId, "AB-1", "Producto uno", 10_000m, null);
         var two = await CreateProductAsync(world.Client, world.TenantId, "AB-2", "Producto dos", 10_000m, null);
         var three = await CreateProductAsync(world.Client, world.TenantId, "AB-3", "Producto tres", 10_000m, null);
+        world.Siigo.AddProduct("manual-3", "OTRO-3", "Elegido a mano");
         // AB-3 ya tiene un vínculo manual: el auto-vínculo no lo toca.
         (await world.Client.PutAsJsonAsync(
             Route(world.TenantId, world.ConnectionId, $"products/{three}/link"),
@@ -159,16 +160,17 @@ public sealed class SiigoProductLinksApiTests
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
         var one = await CreateProductAsync(world.Client, world.TenantId, "AB-1", "Producto uno", 10_000m, null);
-        world.Siigo.On("/v1/products", HttpStatusCode.OK, SiigoProductsPage(1, 100, 1, ("siigo-auto", "AB-1", "Automático", true)));
+        world.Siigo.On(
+            "/v1/products", HttpStatusCode.OK, SiigoProductsPage(1, 100, 2, ("siigo-auto", "AB-1", "Automático", true), ("siigo-manual", "ZZ-9", "Elegido a mano", true)));
         (await world.Client.PostAsync(Route(world.TenantId, world.ConnectionId, "products/auto-link"), content: null, Ct)).EnsureSuccessStatusCode();
         Assert.Equal("AutoCode", RowOf(await GetProductsAsync(world), one)["origin"]!.GetValue<string>());
 
         var manual = await world.Client.PutAsJsonAsync(
             Route(world.TenantId, world.ConnectionId, $"products/{one}/link"),
-            new { siigoProductId = "siigo-manual", code = "ZZ-9", name = "Elegido a mano" },
+            new { siigoProductId = "siigo-manual", code = "ZZ-9", name = "Nombre del cliente" },
             Ct);
 
-        Assert.Equal(HttpStatusCode.OK, manual.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, manual.StatusCode);
         var row = RowOf(await GetProductsAsync(world), one);
         Assert.Equal(("siigo-manual", "ZZ-9", "Elegido a mano", "Manual"), (
             row["siigoProduct"]!["id"]!.GetValue<string>(),
@@ -184,6 +186,7 @@ public sealed class SiigoProductLinksApiTests
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
         var one = await CreateProductAsync(world.Client, world.TenantId, "AB-1", "Producto uno", 10_000m, null);
+        world.Siigo.AddProduct("s-1", "AB-1", "Uno");
         (await world.Client.PutAsJsonAsync(
             Route(world.TenantId, world.ConnectionId, $"products/{one}/link"), new { siigoProductId = "s-1", code = "AB-1", name = "Uno" }, Ct)).EnsureSuccessStatusCode();
 
@@ -207,6 +210,7 @@ public sealed class SiigoProductLinksApiTests
         await CreateProductAsync(world.Client, world.TenantId, "AB-3", "Producto tres", 10_000m, null);
         foreach (var variant in new[] { one, two })
         {
+            world.Siigo.AddProduct($"s-{variant:N}", "C", "N");
             (await world.Client.PutAsJsonAsync(
                 Route(world.TenantId, world.ConnectionId, $"products/{variant}/link"), new { siigoProductId = $"s-{variant:N}", code = "C", name = "N" }, Ct)).EnsureSuccessStatusCode();
         }
@@ -227,6 +231,7 @@ public sealed class SiigoProductLinksApiTests
         using var world = await ArrangeAsync(database);
         var linked = await CreateProductAsync(world.Client, world.TenantId, "AB-1", "Producto uno", 10_000m, null);
         var free = await CreateProductAsync(world.Client, world.TenantId, "AB-2", "Producto dos", 10_000m, null);
+        world.Siigo.AddProduct("s-1", "AB-1", "Uno");
         (await world.Client.PutAsJsonAsync(
             Route(world.TenantId, world.ConnectionId, $"products/{linked}/link"), new { siigoProductId = "s-1", code = "AB-1", name = "Uno" }, Ct)).EnsureSuccessStatusCode();
 
@@ -282,5 +287,60 @@ public sealed class SiigoProductLinksApiTests
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal("siigo.connection_unavailable", (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>());
+    }
+
+    // Review I-1: el vínculo manual se valida contra Siigo. Un código viejo o mal escrito daría un 4xx al facturar, y esos fallos cuentan
+    // para el bloqueo del 80 % de Siigo.
+    [Fact]
+    public async Task ALinkToACodeSiigoDoesNotHaveIs422AndCreatesNoRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var one = await CreateProductAsync(world.Client, world.TenantId, "AB-1", "Producto uno", 10_000m, null);
+        world.Siigo.AddProduct("s-real", "AB-REAL", "Real");
+
+        var response = await world.Client.PutAsJsonAsync(
+            Route(world.TenantId, world.ConnectionId, $"products/{one}/link"), new { siigoProductId = "s-real", code = "AB-TYPO", name = "Real" }, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("siigo.product.not_found_in_siigo", (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>());
+        Assert.Equal(0L, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.variant_links"));
+    }
+
+    [Theory]
+    [InlineData("other-id", true)]
+    [InlineData("s-1", false)]
+    public async Task ALinkWithAnotherIdOrAnInactiveSiigoProductIs422(string sentId, bool active)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var one = await CreateProductAsync(world.Client, world.TenantId, "AB-1", "Producto uno", 10_000m, null);
+        world.Siigo.AddProduct("s-1", "AB-1", "Uno", active);
+
+        var response = await world.Client.PutAsJsonAsync(
+            Route(world.TenantId, world.ConnectionId, $"products/{one}/link"), new { siigoProductId = sentId, code = "AB-1", name = "Uno" }, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(0L, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.variant_links"));
+    }
+
+    [Fact]
+    public async Task AValidLinkIs201AndTakesCodeAndNameFromSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var one = await CreateProductAsync(world.Client, world.TenantId, "AB-1", "Producto uno", 10_000m, null);
+        world.Siigo.AddProduct("s-1", "ab-1", "Nombre en Siigo");
+
+        var response = await world.Client.PutAsJsonAsync(
+            Route(world.TenantId, world.ConnectionId, $"products/{one}/link"), new { siigoProductId = "s-1", code = "ab-1", name = "Nombre del cliente" }, Ct);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var row = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Equal(("s-1", "ab-1", "Nombre en Siigo", "Manual"), (
+            row["siigoProduct"]!["id"]!.GetValue<string>(),
+            row["siigoProduct"]!["code"]!.GetValue<string>(),
+            row["siigoProduct"]!["name"]!.GetValue<string>(),
+            row["origin"]!.GetValue<string>()));
     }
 }

@@ -20,15 +20,17 @@ public sealed class LinkSiigoVariantValidator : AbstractValidator<LinkSiigoVaria
         RuleFor(command => command.SiigoProductId)
             .NotEmpty().MaximumLength(SiigoVariantLink.ProductIdMaxLength).OverridePropertyName("siigoProductId");
         RuleFor(command => command.Code).NotEmpty().MaximumLength(SiigoVariantLink.CodeMaxLength).OverridePropertyName("code");
-        RuleFor(command => command.Name).NotEmpty().MaximumLength(SiigoVariantLink.NameMaxLength).OverridePropertyName("name");
+        // El nombre que llegue se ignora: se toma el de Siigo.
+        RuleFor(command => command.Name).MaximumLength(SiigoVariantLink.NameMaxLength).OverridePropertyName("name");
     }
 }
 
 /// <summary>
 /// Spec 2026-11-18 §5.3, paso 6: vínculo manual de una fila. Un vínculo manual <b>reemplaza</b> uno automático (queda <c>Manual</c>). La
-/// variante tiene que ser del tenant (422 <c>siigo.product.variant_not_found</c>); el producto de Siigo no se revalida contra Siigo: lo
-/// eligió la persona de la lista en vivo, y una llamada por vínculo gastaría peticiones que cuentan para el bloqueo del 80 %. Quién
-/// vinculó es su membresía activa. Sube la versión de la configuración y audita el paso <c>products</c>, sin valores.
+/// variante tiene que ser del tenant (422 <c>siigo.product.variant_not_found</c>). El producto <b>se valida contra Siigo</b>: se busca por
+/// código y tiene que volver uno <b>activo</b> con ese id y ese código (422 <c>siigo.product.not_found_in_siigo</c>); un código viejo o
+/// mal escrito daría un 4xx al facturar, y esos fallos cuentan para el bloqueo del 80 % de Siigo. El código y el nombre que se guardan
+/// son los de Siigo, no los del cliente. Una conexión que no se puede usar es 409. Quién vinculó es su membresía activa. Sube la versión de la configuración y audita el paso <c>products</c>, sin valores.
 /// </summary>
 public sealed class LinkSiigoVariantHandler(
     IExecutionContext executionContext,
@@ -36,6 +38,7 @@ public sealed class LinkSiigoVariantHandler(
     ISiigoConnectionDirectory connections,
     ISiigoSettingsRepository settingsRepository,
     ISiigoVariantCatalog catalog,
+    ISiigoApi api,
     IMembershipDirectory memberships,
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
@@ -54,11 +57,27 @@ public sealed class LinkSiigoVariantHandler(
         var variant = (await catalog.SearchAsync(command.TenantId, null, [command.VariantId], null, 0, 1, cancellationToken)).Items
             .SingleOrDefault()
             ?? throw new SiigoDomainException(SiigoErrorCodes.ProductVariantNotFound, "The variant does not exist in this tenant.");
+        var resolution = await connections.ResolveAsync(command.TenantId, command.ConnectionId, cancellationToken);
+        if (resolution.Credentials is not { } credentials)
+        {
+            throw new ResourceConflictException(
+                SiigoErrorCodes.ConnectionUnavailable,
+                $"The Siigo connection cannot be used right now ({resolution.UnavailableReason}).");
+        }
+
+        var wanted = SiigoCodeMatch.Normalize(command.Code);
+        var product = (await api.SearchProductsAsync(credentials, command.Code!.Trim(), 1, cancellationToken)).Items
+            .FirstOrDefault(candidate => candidate.Active
+                && string.Equals(candidate.Id, command.SiigoProductId!.Trim(), StringComparison.Ordinal)
+                && wanted is not null
+                && SiigoCodeMatch.Normalize(candidate.Code) == wanted)
+            ?? throw new SiigoDomainException(
+                SiigoErrorCodes.ProductNotFoundInSiigo, "Siigo has no active product with that id and code.");
         var settings = await settingsRepository.FindOrCreateAsync(command.TenantId, command.ConnectionId, withVariantLinks: true, cancellationToken)
             ?? throw SiigoAuthorization.Denied();
 
         settings.LinkVariant(
-            variant.VariantId, command.Code!, command.SiigoProductId!, command.Name!, SiigoLinkOrigin.Manual, memberId, clock.UtcNow);
+            variant.VariantId, product.Code, product.Id, product.Name, SiigoLinkOrigin.Manual, memberId, clock.UtcNow);
         SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoProductLinksSupport.StepName, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return SiigoProductLinksSupport.ToRow(variant, settings.VariantLinks.Single(link => link.VariantId == variant.VariantId));

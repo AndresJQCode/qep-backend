@@ -22,6 +22,9 @@ public static class SiigoErrorCodes
     /// <summary>422: la variante que se quiere vincular no existe en el catálogo del tenant.</summary>
     public const string ProductVariantNotFound = "siigo.product.variant_not_found";
 
+    /// <summary>422: Siigo no tiene un producto activo con ese id y ese código (el vínculo manual se valida contra Siigo).</summary>
+    public const string ProductNotFoundInSiigo = "siigo.product.not_found_in_siigo";
+
     /// <summary>409: la conexión no se puede usar (pausada, con la clave rechazada, ilegible…); el motivo viaja en <c>details</c>.</summary>
     public const string ConnectionUnavailable = "siigo.connection_unavailable";
 
