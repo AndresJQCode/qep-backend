@@ -558,6 +558,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wholesale.Application.DistributorComposer>();
         // La invitación vista desde el link: sin IExecutionContext, el tenant del mayorista sale de la invitación.
         services.AddScoped<Modules.Wholesale.Application.IDistributorInvitationService, Modules.Wholesale.Application.DistributorInvitationService>();
+        // Fase 3: la única puerta entre tenants al catálogo del mayorista (relación, visibilidad y precio de lista).
+        services.AddScoped<Modules.Wholesale.Application.WholesaleOffers>();
 
         // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
         // responde 500.

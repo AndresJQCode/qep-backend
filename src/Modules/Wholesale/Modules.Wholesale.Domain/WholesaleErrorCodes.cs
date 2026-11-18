@@ -48,6 +48,9 @@ public static class WholesaleErrorCodes
 
     public const string InvitationSelfLink = "wholesale.invitation.self_link";
 
+    // Fase 3: una variante fuera de la visibilidad de la lista, inactiva, ajena o sin precio en la moneda del mayorista.
+    public const string ProductNotVisible = "wholesale.product.not_visible";
+
     // 422 de guarda: los invariantes de la lista. El validador de Application los atrapa antes con el campo
     // (validation.failed), así que no forman parte del contrato; existen para que el agregado no confíe en quien lo llama
     // (mismo patrón que suppliers.supplier.name_required).

@@ -36,6 +36,11 @@ internal sealed class FakeDistributorRepository : IDistributorRepository
         Task.FromResult(Distributors.Any(item =>
             item.TenantId == tenantId && item.IdentificationNumber == identificationNumber.Trim()));
 
+    public Task<Distributor?> FindByTenantsAsync(
+        Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Distributors.FirstOrDefault(item =>
+            item.TenantId == wholesalerTenantId && item.DistributorTenantId == distributorTenantId));
+
     public Task<bool> IsLinkedAsync(Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken) =>
         Task.FromResult(Distributors.Any(item =>
             item.TenantId == wholesalerTenantId && item.DistributorTenantId == distributorTenantId));

@@ -43,6 +43,19 @@ public sealed record WholesaleCategoryNode(Guid Id, string Name, Guid? ParentId)
 /// <summary>Una variante vendible con su precio base en la moneda pedida y su nombre visible ya armado por el catálogo.</summary>
 public sealed record WholesaleSampleVariant(Guid VariantId, string Code, string Name, decimal BasePrice);
 
+/// <summary>
+/// Fase 3: una variante que el distribuidor puede pedir (variante y producto activos, con precio en la moneda pedida), con su
+/// tasa de IVA vigente y <paramref name="CategoryPath"/> = la categoría del producto y sus ancestros, para decidir la
+/// visibilidad «con descendientes» sin otra lectura del árbol.
+/// </summary>
+public sealed record WholesaleSellableVariant(
+    Guid VariantId,
+    string Code,
+    string Name,
+    decimal BasePrice,
+    decimal TaxRatePercent,
+    IReadOnlyList<Guid> CategoryPath);
+
 /// <summary>El catálogo del mayorista visto desde Mayorista; adaptador en Bootstrapper sobre Catalog. Todo acotado al tenant.</summary>
 public interface IWholesaleCatalogReader
 {
@@ -63,6 +76,24 @@ public interface IWholesaleCatalogReader
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
         int take,
+        CancellationToken cancellationToken);
+
+    /// <summary>En lote: un id inactivo, de producto inactivo, sin precio en <paramref name="currency"/> o ajeno no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, WholesaleSellableVariant>> FindSellableAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Una página de productos activos (nombre de producto y posición) con sus variantes vendibles en
+    /// <paramref name="currency"/>; <paramref name="search"/> busca en código o nombre. <paramref name="categoryIds"/> como en
+    /// <see cref="SampleAsync"/>. <c>Total</c> cuenta productos: la página es de productos, como el selector de cotizaciones.
+    /// </summary>
+    Task<(IReadOnlyList<WholesaleSellableVariant> Items, int Total)> SearchSellableAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        string? search,
+        int page,
+        int pageSize,
         CancellationToken cancellationToken);
 }
 
@@ -108,6 +139,13 @@ public interface IDistributorRepository : IDistributorUsage
 
     /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13).</summary>
     Task<bool> IdentificationExistsAsync(Guid tenantId, string identificationNumber, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fase 3: la relación entre los dos tenants, en cualquier estado, o <c>null</c>. Va acotada al mayorista: quien pregunta
+    /// por otro par no encuentra nada.
+    /// </summary>
+    Task<Distributor?> FindByTenantsAsync(
+        Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken);
 
     /// <summary>Si el tenant del distribuidor ya tiene relación con este mayorista.</summary>
     Task<bool> IsLinkedAsync(Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken);

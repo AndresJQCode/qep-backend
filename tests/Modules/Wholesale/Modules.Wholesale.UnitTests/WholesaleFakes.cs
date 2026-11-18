@@ -102,7 +102,8 @@ internal sealed record FakeCatalogProduct(
     string Name,
     Guid? CategoryId,
     IReadOnlyDictionary<string, decimal> Prices,
-    bool IsActive = true);
+    bool IsActive = true,
+    decimal TaxRatePercent = 0m);
 
 /// <summary>
 /// El catálogo del mayorista en memoria. <see cref="SampleAsync"/> filtra como el adaptador (activo, con precio en la moneda,
@@ -127,7 +128,16 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
         return id;
     }
 
-    public void AddProduct(string code, string name, Guid? categoryId, decimal? cop, decimal? usd = null, bool isActive = true)
+    public List<(string Currency, IReadOnlyCollection<Guid>? CategoryIds, string? Search, int Page, int PageSize)> SearchCalls { get; } = [];
+
+    public Guid AddProduct(
+        string code,
+        string name,
+        Guid? categoryId,
+        decimal? cop,
+        decimal? usd = null,
+        bool isActive = true,
+        decimal taxRatePercent = 0m)
     {
         var prices = new Dictionary<string, decimal>();
         if (cop is { } copPrice)
@@ -140,7 +150,60 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
             prices["USD"] = usdPrice;
         }
 
-        Products.Add(new FakeCatalogProduct(Guid.CreateVersion7(), code, name, categoryId, prices, isActive));
+        var product = new FakeCatalogProduct(Guid.CreateVersion7(), code, name, categoryId, prices, isActive, taxRatePercent);
+        Products.Add(product);
+        return product.VariantId;
+    }
+
+    /// <summary>La categoría y sus ancestros, como lo arma el lector real.</summary>
+    private List<Guid> PathOf(Guid? categoryId)
+    {
+        var path = new List<Guid>();
+        for (var current = categoryId; current is { } id && Categories.TryGetValue(id, out var node); current = node.ParentId)
+        {
+            path.Add(id);
+        }
+
+        return path;
+    }
+
+    private WholesaleSellableVariant Sellable(FakeCatalogProduct product, string currency) =>
+        new(product.VariantId, product.Code, product.Name, product.Prices[currency], product.TaxRatePercent, PathOf(product.CategoryId));
+
+    public Task<IReadOnlyDictionary<Guid, WholesaleSellableVariant>> FindSellableAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<Guid, WholesaleSellableVariant> found = Products
+            .Where(product => variantIds.Contains(product.VariantId) && product.IsActive && product.Prices.ContainsKey(currency))
+            .ToDictionary(product => product.VariantId, product => Sellable(product, currency));
+        return Task.FromResult(found);
+    }
+
+    /// <summary>Filtra como el adaptador: con categorías, las que tienen alguna en su camino (eso es «con descendientes»).</summary>
+    public Task<(IReadOnlyList<WholesaleSellableVariant> Items, int Total)> SearchSellableAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        SearchCalls.Add((currency, categoryIds, search, page, pageSize));
+        var matching = Products
+            .Where(product => product.IsActive && product.Prices.ContainsKey(currency))
+            .Where(product => categoryIds is null || PathOf(product.CategoryId).Any(categoryIds.Contains))
+            .Where(product => search is null
+                || product.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || product.Code.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(product => product.Name, StringComparer.Ordinal)
+            .ToList();
+        IReadOnlyList<WholesaleSellableVariant> items = matching
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(product => Sellable(product, currency))
+            .ToList();
+        return Task.FromResult((items, matching.Count));
     }
 
     public Task<IReadOnlyDictionary<Guid, WholesaleCategoryRef>> FindCategoriesAsync(

@@ -22,6 +22,13 @@ internal sealed class DistributorRepository(WholesaleDbContext dbContext) : IDis
             distributor => distributor.TenantId == tenantId && distributor.IdentificationNumber == trimmed, cancellationToken);
     }
 
+    // Sin rastreo: la fase 3 sólo lee la relación para decidir acceso y precio; nunca la escribe por acá.
+    public Task<Distributor?> FindByTenantsAsync(
+        Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken) =>
+        dbContext.Distributors.AsNoTracking().FirstOrDefaultAsync(
+            distributor => distributor.TenantId == wholesalerTenantId && distributor.DistributorTenantId == distributorTenantId,
+            cancellationToken);
+
     public Task<bool> IsLinkedAsync(Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken) =>
         dbContext.Distributors.AsNoTracking().AnyAsync(
             distributor => distributor.TenantId == wholesalerTenantId && distributor.DistributorTenantId == distributorTenantId,
