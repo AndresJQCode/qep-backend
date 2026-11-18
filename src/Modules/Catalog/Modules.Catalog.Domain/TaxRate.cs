@@ -42,6 +42,7 @@ public sealed class TaxRate
         string country,
         decimal? minimumBase,
         Guid? cityId,
+        WithholdingScope appliesTo,
         DateTimeOffset occurredAt)
     {
         Id = id;
@@ -52,6 +53,7 @@ public sealed class TaxRate
         Country = country;
         MinimumBase = minimumBase;
         CityId = cityId;
+        AppliesTo = appliesTo;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -92,6 +94,14 @@ public sealed class TaxRate
     /// cambia tras crear, como el tipo y el país.
     /// </summary>
     public Guid? CityId { get; private set; }
+
+    /// <summary>
+    /// A qué líneas aplica la tasa (spec 2026-11-18 §4.2): todas, sólo productos o sólo servicios. Distinto de
+    /// <c>All</c> sólo en un tipo que retiene. No cambia tras crear, como el tipo: una selección guardada en una
+    /// empresa o un cliente quedaría repetida o reteniendo dos veces si cambiara después. Para cambiarlo se crea
+    /// otra tasa.
+    /// </summary>
+    public WithholdingScope AppliesTo { get; private set; }
 
     /// <summary>Lo calcula el tipo, no se guarda: EF lo ignora.</summary>
     public TaxBehavior Behavior => Definition.Behavior;
@@ -142,7 +152,8 @@ public sealed class TaxRate
         string country,
         decimal? minimumBase,
         Guid? cityId,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        WithholdingScope appliesTo = WithholdingScope.All)
     {
         // El país sólo se normaliza; si no existe, FindType no halla el tipo y sale type_invalid.
         // country_not_available es de Application (spec §7.2).
@@ -161,6 +172,7 @@ public sealed class TaxRate
             normalizedCountry,
             EnsureValidMinimumBase(minimumBase, definition),
             EnsureValidCity(cityId, definition),
+            EnsureValidAppliesTo(appliesTo, definition),
             occurredAt);
     }
 
@@ -290,6 +302,22 @@ public sealed class TaxRate
             : throw new CatalogDomainException(
                 "catalog.tax_rate.city_not_allowed",
                 $"A {definition.Type} tax rate does not admit a city.");
+    }
+
+    // Un IVA se suma a todas las líneas: repartirlo por tipo de línea no es una regla que exista. Sólo una retención
+    // puede ser de bienes o de servicios (spec 2026-11-18 §4.2).
+    private static WithholdingScope EnsureValidAppliesTo(WithholdingScope appliesTo, TaxTypeDefinition definition)
+    {
+        if (!Enum.IsDefined(appliesTo))
+        {
+            throw new ArgumentOutOfRangeException(nameof(appliesTo), appliesTo, "Unknown withholding scope.");
+        }
+
+        return appliesTo == WithholdingScope.All || definition.Behavior == TaxBehavior.Withholds
+            ? appliesTo
+            : throw new CatalogDomainException(
+                "catalog.tax_rate.applies_to_invalid",
+                $"A {definition.Type} tax rate applies to every line; only a withholding can be limited to goods or services.");
     }
 
     // Recortar espacios es parte del invariante, no higiene del llamador: el índice único trata

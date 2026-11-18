@@ -17,7 +17,8 @@ public sealed record CreateTaxRateCommand(
     string Country,
     bool CountryExplicit,
     decimal? MinimumBase,
-    Guid? CityId = null)
+    Guid? CityId = null,
+    WithholdingScope? AppliesTo = null)
     : ICommand<TaxRateDto>;
 
 // El dominio hace cumplir las mismas reglas y tiraría un 422 con un solo código. El validador
@@ -81,7 +82,9 @@ public sealed class CreateTaxRateHandler(
             command.Country,
             command.MinimumBase,
             command.CityId,
-            now);
+            now,
+            // Ausente es All: lo de toda tasa de antes (spec 2026-11-18 §4.2).
+            command.AppliesTo ?? WithholdingScope.All);
 
         // Después del dominio, que ya dijo city_required o city_not_allowed según el alcance del tipo: acá sólo falta que
         // el municipio exista en Geography (que sólo tiene la DIVIPOLA, así que «existe» es «es de Colombia»).

@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -250,4 +251,21 @@ public sealed class OrderShippingTests
 
         Assert.Equal(((string?)null, (string?)null), (order.ExternalKey, order.ExternalShippingTitle));
     }
+
+    // ---- requiresShipping (spec 2026-11-18 §5) ----
+    // Un pedido no nace ni queda sin líneas (order.order.items_required), así que el caso vacío se prueba en la cotización.
+
+    private static OrderLineInput ServiceLine =>
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 80_000m, 0m, 19, Kind: ProductKind.Service, SalesUnit: SalesUnit.Hour);
+
+    private static Order NewOrderWith(params OrderLineInput[] lines) =>
+        Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001", Header, QuotationParties.Empty, Account, ShippingDetails.None, lines,
+            null, Advisor, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+
+    [Fact]
+    public void OnlyServicesDoesNotRequireShipping() => Assert.False(NewOrderWith(ServiceLine, ServiceLine).RequiresShipping);
+
+    [Fact]
+    public void MixedRequiresShipping() => Assert.True(NewOrderWith(Line, ServiceLine).RequiresShipping);
 }

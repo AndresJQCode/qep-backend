@@ -28,5 +28,7 @@ internal sealed class CompanyTaxRateLookup(ITaxRateRepository repository) : ICom
     }
 
     private static CompanyTaxRateRef ToRef(TaxRate rate) =>
-        new(rate.Id.Value, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.Withholds, rate.CityId);
+        new(
+            rate.Id.Value, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.Withholds, rate.CityId,
+            rate.AppliesTo);
 }

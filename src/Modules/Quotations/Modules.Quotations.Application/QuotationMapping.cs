@@ -54,7 +54,8 @@ internal static class QuotationMapping
         quotation.GlobalScaleFloor,
         quotation.IsRetail,
         quotation.OperationCityId,
-        [.. quotation.WithholdingVerdicts.Select(ToDto)]);
+        [.. quotation.WithholdingVerdicts.Select(ToDto)],
+        quotation.RequiresShipping);
 
     /// <summary>El veredicto de una tasa tal como viaja (spec retenciones por UVT §6); el motivo, con el nombre del enum. La
     /// usa también el pedido.</summary>
@@ -75,7 +76,8 @@ internal static class QuotationMapping
         verdict.MinimumBaseAmount,
         verdict.Rate.TaxUnitValue,
         verdict.Rate.TaxUnitYear,
-        verdict.Amount);
+        verdict.Amount,
+        verdict.Rate.AppliesTo.ToString());
 
     /// <summary>Una retención aplicada tal como viaja (spec impuestos por tipo §9.3). La usa también el pedido.</summary>
     internal static WithholdingDto ToDto(DocumentWithholding withholding) => new(
@@ -91,7 +93,8 @@ internal static class QuotationMapping
         withholding.Amount,
         withholding.CatalogPercentage,
         withholding.Overridden,
-        withholding.CityId);
+        withholding.CityId,
+        withholding.AppliesTo.ToString());
 
     /// <summary>Una tasa congelada, aplique o no: lo que prellena un selector.</summary>
     internal static WithholdingTaxRateDto ToRateDto(DocumentWithholding withholding) => new(
@@ -140,8 +143,8 @@ internal static class QuotationMapping
         party.CityName);
 
     /// <summary>
-    /// La fila del listado. <paramref name="hasItems"/> y <paramref name="order"/> llegan
-    /// resueltos por el handler y no se leen del agregado: la busqueda del listado no trae las
+    /// La fila del listado. <paramref name="hasItems"/>, <paramref name="requiresShipping"/> y <paramref name="order"/>
+    /// llegan resueltos por el handler y no se leen del agregado: la busqueda del listado no trae las
     /// lineas (la tabla no las pinta) y el pedido vive en otra tabla, asi que <c>quotation.Items</c>
     /// aca esta vacia aunque la cotizacion tenga lineas.
     /// </summary>
@@ -150,6 +153,7 @@ internal static class QuotationMapping
         string? clientName,
         string? advisorName,
         bool hasItems,
+        bool requiresShipping,
         Order? order) => new(
         quotation.Id.Value,
         quotation.QuotationNumber,
@@ -165,7 +169,8 @@ internal static class QuotationMapping
         hasItems && quotation.ValidUntil is not null && quotation.BillingAccount is not null,
         order?.Id.Value,
         order?.Status.ToString(),
-        quotation.ShippingDtoOf());
+        quotation.ShippingDtoOf(),
+        requiresShipping);
 
     private static QuotationItemDto ToDto(QuotationItem item, PriceRounding rounding) => new(
         item.Id.Value,
@@ -182,7 +187,9 @@ internal static class QuotationMapping
         item.Position,
         item.DiscountOrigin.ToString(),
         item.ProductCode,
-        item.ProductName);
+        item.ProductName,
+        item.Kind.ToString(),
+        item.SalesUnit.ToString());
 
     /// <summary>El modo tal como viaja (nombre exacto del enum) al enum del dominio. El validador ya rechaza un
     /// nombre que no existe con el campo en <c>errors</c>; esto es el respaldo para quien llegue sin pasar por

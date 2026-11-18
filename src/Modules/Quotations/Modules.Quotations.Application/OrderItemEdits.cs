@@ -95,7 +95,7 @@ internal static class OrderItemEdits
             order.AddItem(
                 OrderItemId.New(), line.VariantId, pricing.ProductId, line.Quantity,
                 unitPrice, wholesale ? 0m : pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage, costs, updatedBy, occurredAt);
+                pricing.Pricing.TaxPercentage, costs, updatedBy, occurredAt, pricing.Kind, pricing.SalesUnit);
             edits.Add(new OrderItemEdit(OrderItemEditKind.Added, line.VariantId, pricing.Name, null, line.Quantity));
         }
 

@@ -57,6 +57,9 @@ public sealed record OrderListItemDto(
     ShippingDto Shipping,
     /// <summary>La fecha del pedido (spec 2026-11-16 §4).</summary>
     DateOnly OrderDate,
+    /// <summary>Ver <see cref="Order.RequiresShipping"/> (spec 2026-11-18 §5). Resuelto por página, porque la fila no trae
+    /// las líneas.</summary>
+    bool RequiresShipping,
     /// <summary>Mayorista fase 3: número de la orden y aprobación; null fuera de un pedido mayorista.</summary>
     OrderListWholesaleDto? Wholesale = null);
 
@@ -138,7 +141,7 @@ public sealed class ListOrdersHandler(
             cancellationToken);
 
         var items = await OrderListing.ToListItemsAsync(
-            customerLookup, advisorLookup, quotationRepository, query.TenantId, rows, cancellationToken);
+            customerLookup, advisorLookup, quotationRepository, repository, query.TenantId, rows, cancellationToken);
         return new OrderPage(items, total, page, pageSize, pendingWholesaleApprovals);
     }
 }

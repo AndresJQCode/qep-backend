@@ -350,6 +350,15 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
                 ? new HashSet<Guid> { quotation.Id.Value }
                 : []);
 
+    public Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(
+            quotation.RequiresShipping && quotationIds.Contains(quotation.Id)
+                ? new HashSet<Guid> { quotation.Id.Value }
+                : []);
+
     public Task<Quotation?> FindByExternalKeyAsync(
         Guid tenantId, string externalKey, CancellationToken cancellationToken) =>
         Task.FromResult<Quotation?>(null);
@@ -698,6 +707,16 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
             quotations
                 .Where(quotation =>
                     quotation.Items.Count > 0 && quotationIds.Contains(quotation.Id))
+                .Select(quotation => quotation.Id.Value)
+                .ToHashSet());
+
+    public Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(
+            quotations
+                .Where(quotation => quotation.RequiresShipping && quotationIds.Contains(quotation.Id))
                 .Select(quotation => quotation.Id.Value)
                 .ToHashSet());
 
@@ -1056,6 +1075,12 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     public Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    // Desde las filas sembradas, que sí traen líneas: la misma regla que la consulta real.
+    public Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<Guid>>(
+            rows.Where(row => orderIds.Contains(row.Id) && row.RequiresShipping).Select(row => row.Id.Value).ToHashSet());
 
     public Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,

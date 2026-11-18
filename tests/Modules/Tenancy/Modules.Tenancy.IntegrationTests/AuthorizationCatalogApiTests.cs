@@ -99,14 +99,18 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
         Assert.Equal(
             expected,
             catalog.Permissions
-                .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal))
+                // Los pedidos de venta; las órdenes de compra (`purchases.order.*`) son otro módulo.
+                .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal)
+                    && !permission.Permission.StartsWith("purchases.", StringComparison.Ordinal))
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
         // Los únicos permisos de venta son los del punto de venta (spec 2026-10-07): la regla
         // sigue cuidando que ningún permiso de pedidos se llame "sale".
         Assert.DoesNotContain(
             catalog.Permissions,
             permission => permission.Permission.Contains("sale", StringComparison.Ordinal)
-                && !permission.Permission.StartsWith("pos.", StringComparison.Ordinal));
+                && !permission.Permission.StartsWith("pos.", StringComparison.Ordinal)
+                // «wholesale» contiene «sale» y es el módulo Mayorista, no un permiso de pedidos.
+                && !permission.Permission.StartsWith("wholesale.", StringComparison.Ordinal));
         // Spec 2026-09-16, decisión 5: anular es sólo de admin. Aprobar es de admin y facturación,
         // nunca del asesor: quien registra el pedido no es quien lo revisa. Facturar (spec
         // 2026-10-05, decisión 5) es de admin y facturación, y cubre también revertir.
@@ -208,7 +212,9 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
     [
         .. catalog.Roles.Single(item => item.Role == role).Permissions
-            .Where(permission => permission.Contains("order", StringComparison.Ordinal))
+            // Pedidos de venta; las órdenes de compra (`purchases.order.*`) son otro módulo.
+            .Where(permission => permission.Contains("order", StringComparison.Ordinal)
+                && !permission.StartsWith("purchases.", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal),
     ];
 

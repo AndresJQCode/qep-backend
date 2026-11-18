@@ -35,5 +35,5 @@ internal sealed class CustomerTaxRateLookup(ITaxRateRepository repository) : ICu
             .Select(ToRef)];
 
     private static CustomerTaxRateRef ToRef(TaxRate rate) =>
-        new(rate.Id.Value, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.Withholds);
+        new(rate.Id.Value, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.Withholds, rate.AppliesTo);
 }

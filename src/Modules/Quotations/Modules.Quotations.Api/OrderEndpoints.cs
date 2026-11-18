@@ -305,6 +305,7 @@ public static class OrderEndpoints
         order.ExternalReference,
         ShippingResponse.From(order.Shipping),
         order.OrderDate,
+        order.RequiresShipping,
         order.Wholesale);
 
     private static async Task<IResult> GetOrderAsync(

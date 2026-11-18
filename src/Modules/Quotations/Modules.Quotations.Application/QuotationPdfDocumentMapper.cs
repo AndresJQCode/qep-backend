@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildingBlocks.Domain.Catalog;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -47,7 +48,7 @@ public static class QuotationPdfDocumentMapper
             currency.Decimals,
             BillingAccountFor(quotation.BillingAccount),
             quotation.PaymentMethod,
-            [.. quotation.Items.Select(LineFor)],
+            LinesFor(quotation.Items),
             quotation.Subtotal,
             quotation.DiscountAmount,
             quotation.TaxPercentage,
@@ -104,7 +105,7 @@ public static class QuotationPdfDocumentMapper
             currency.Decimals,
             BillingAccountFor(order.BillingAccount),
             header.PaymentMethod,
-            [.. order.Items.Select(LineFor)],
+            LinesFor(order.Items),
             header.Subtotal,
             header.DiscountAmount,
             header.TaxPercentage,
@@ -136,8 +137,17 @@ public static class QuotationPdfDocumentMapper
         IReadOnlyList<WithholdingResponse> withholdings, string decimalSeparator) =>
         [
             .. withholdings.Select(withholding => new QuotationPdfWithholding(
-                withholding.Name, withholding.Amount, PercentageLabel(withholding.Percentage, decimalSeparator))),
+                ScopedName(withholding), withholding.Amount, PercentageLabel(withholding.Percentage, decimalSeparator))),
         ];
+
+    // Spec 2026-11-18 §4.4: dos tasas pueden compartir nombre y porcentaje si son de distinto alcance; el rótulo dice a qué
+    // líneas aplica. Una sin alcance (All) sale con su nombre, como antes.
+    private static string ScopedName(WithholdingResponse withholding) => withholding.AppliesTo switch
+    {
+        "Goods" => $"{withholding.Name} (bienes)",
+        "Services" => $"{withholding.Name} (servicios)",
+        _ => withholding.Name,
+    };
 
     // Plan P10: el mismo patrón que HistoryFormat.Percentage, con el separador decimal del tenant. Un porcentaje no lleva
     // miles, así que basta el decimal.
@@ -157,13 +167,25 @@ public static class QuotationPdfDocumentMapper
     /// columna propia. Tenerlo en un solo lado es lo que evita que el PDF y la pantalla impriman
     /// números distintos.
     /// </summary>
-    private static QuotationPdfLine LineFor(QuotationItemResponse item) =>
+    private static QuotationPdfLine LineFor(QuotationItemResponse item, bool withUnit) =>
         new(item.ProductName,
             item.Quantity,
             item.UnitPrice,
             item.DiscountPercentage,
             item.DiscountedUnitPrice,
-            Round(item.Quantity * item.UnitPrice) - item.DiscountAmount);
+            Round(item.Quantity * item.UnitPrice) - item.DiscountAmount,
+            withUnit ? SalesUnitLabels.Spanish(Enum.Parse<SalesUnit>(item.SalesUnit), item.Quantity) : null);
+
+    /// <summary>
+    /// Spec 2026-11-18 §6: con todas las líneas en <c>Unit</c> ninguna lleva unidad, para que el PDF de un tenant que no
+    /// usa unidades salga idéntico al de antes. Con una sola distinta, todas la llevan, también las de «unidad»: una
+    /// columna con la unidad en unas filas y en otras no se lee como un olvido.
+    /// </summary>
+    private static QuotationPdfLine[] LinesFor(IReadOnlyCollection<QuotationItemResponse> items)
+    {
+        var withUnit = items.Any(item => item.SalesUnit != nameof(SalesUnit.Unit));
+        return [.. items.Select(item => LineFor(item, withUnit))];
+    }
 
     private static decimal Round(decimal value) =>
         Math.Round(value, 2, MidpointRounding.AwayFromZero);

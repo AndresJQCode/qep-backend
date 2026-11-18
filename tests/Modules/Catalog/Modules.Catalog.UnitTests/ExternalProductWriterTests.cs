@@ -201,6 +201,7 @@ internal sealed class WriterProductRepository : IProductRepository
         string? code,
         bool? isActive,
         bool? visibleInStore,
+        BuildingBlocks.Domain.Catalog.ProductKind? kind,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,

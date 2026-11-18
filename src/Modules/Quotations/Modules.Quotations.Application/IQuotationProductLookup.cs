@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+
 namespace Modules.Quotations.Application;
 
 /// <summary>
@@ -31,10 +33,15 @@ public interface IQuotationProductLookup
 /// <param name="Code">El <c>Code</c> de la variante.</param>
 /// <param name="ImageUrl">URL pública de la foto de la variante, o de la principal del producto
 /// si la variante no eligió ninguna. Null si no hay ninguna disponible del tenant.</param>
+/// <param name="Kind">Producto o servicio, del producto dueño (spec 2026-11-18 §3.4). Último y con default para no
+/// tocar las construcciones que ya existen.</param>
+/// <param name="SalesUnit">La unidad de venta del producto.</param>
 public sealed record QuotationVariantRef(
     Guid VariantId,
     Guid ProductId,
     string Name,
     string Code,
     string? ImageUrl,
-    IReadOnlyCollection<QuotationPriceScaleRef> Scales);
+    IReadOnlyCollection<QuotationPriceScaleRef> Scales,
+    ProductKind Kind = ProductKind.Physical,
+    SalesUnit SalesUnit = SalesUnit.Unit);

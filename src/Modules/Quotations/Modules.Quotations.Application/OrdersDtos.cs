@@ -107,6 +107,8 @@ public sealed record OrderDto(
     /// <summary>La fecha del pedido en el calendario del tenant (spec 2026-11-16 §4), aparte de <see cref="ConvertedAt"/>,
     /// que no cambia. Lleva default sólo porque va después de los opcionales: <c>OrderMapping.ToDto</c> la escribe siempre.</summary>
     DateOnly OrderDate = default,
+    /// <summary>Ver <see cref="Order.RequiresShipping"/> (spec 2026-11-18 §5). Default por la misma razón que el anterior.</summary>
+    bool RequiresShipping = true,
     /// <summary>Mayorista fase 3: el vínculo con la orden del distribuidor, sin nombres resueltos. No viaja en
     /// <c>OrderResponse</c>: el compositor del detalle lo resuelve en la raíz (<see cref="OrderDetailResponse.Wholesale"/>).</summary>
     OrderWholesaleState? Wholesale = null);
@@ -451,7 +453,13 @@ public sealed record OrderResponse(
     /// también las de /approve, /cancel… (<see cref="IOrderResponseComposer.ComposeOrderAsync"/>).</summary>
     IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown,
     /// <summary>Ver <see cref="OrderDto.OrderDate"/>. Viaja como <c>"yyyy-MM-dd"</c>.</summary>
-    DateOnly OrderDate);
+    DateOnly OrderDate,
+    /// <summary>Si el pedido vende algo que se despacha (spec 2026-11-18 §5): alguna línea <c>Physical</c>. BFF: con false
+    /// la pantalla oculta el envío y cambia «Preparar» por «Marcar como prestado» sin conocer el tipo de cada línea. El
+    /// estado y la acción siguen siendo los de siempre (<c>Prepared</c>); el texto lo pone el frontend. Viaja acá y no en la
+    /// raíz de <see cref="OrderDetailResponse"/>, para que también lo traigan /approve, /cancel… Con default para no tocar
+    /// las construcciones que ya existen; el compositor lo llena siempre.</summary>
+    bool RequiresShipping = true);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
@@ -482,6 +490,9 @@ public sealed record OrderListItemResponse(
     ShippingResponse Shipping,
     /// <summary>La fecha del pedido (spec 2026-11-16 §4): la que filtra y ordena la lista.</summary>
     DateOnly OrderDate,
+    /// <summary>Mismo campo y mismo significado que en <see cref="OrderResponse"/> (spec 2026-11-18 §5): la grilla dice
+    /// «Prestado» en vez de «Preparado» sin pedir el detalle.</summary>
+    bool RequiresShipping,
     /// <summary>Mayorista fase 3: número de la orden y aprobación; null fuera de un pedido mayorista.</summary>
     OrderListWholesaleDto? Wholesale = null);
 

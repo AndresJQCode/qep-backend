@@ -239,6 +239,7 @@ public static class OrderResponses
             order.Balance,
             order.BuyerNotes,
             QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, context),
-            order.OrderDate);
+            order.OrderDate,
+            order.RequiresShipping);
     }
 }

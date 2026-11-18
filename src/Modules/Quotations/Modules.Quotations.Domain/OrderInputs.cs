@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>La cabecera que un pedido manual o externo trae resuelta desde Application (spec 2026-10-15 §4.4).
@@ -16,8 +18,10 @@ public sealed record OrderHeader(
 /// <summary>Una línea ya preciada: Application resolvió precio, descuento y tasa contra el catálogo,
 /// igual que hace el cotizador. <see cref="Product"/> es la foto de código y nombre, si ya se tiene.
 /// <see cref="VariantId"/> es la clave de la línea (spec 2026-10-20 §4); <see cref="ProductId"/> es su
-/// producto, para agrupar por producto. <see cref="SourcePurchaseOrderLineId"/> es la línea de la orden de compra de la
-/// que salió, sólo en un pedido mayorista: con ella la aprobación vuelve a la orden línea por línea.</summary>
+/// producto, para agrupar por producto. <see cref="Kind"/> y <see cref="SalesUnit"/> son los del producto en el
+/// catálogo (spec 2026-11-18 §3.4); una línea externa (Shopify) no los trae y nace <c>Physical</c>/<c>Unit</c>.
+/// <see cref="SourcePurchaseOrderLineId"/> es la línea de la orden de compra de la que salió, sólo en un pedido
+/// mayorista: con ella la aprobación vuelve a la orden línea por línea.</summary>
 public sealed record OrderLineInput(
     Guid VariantId,
     Guid ProductId,
@@ -27,4 +31,6 @@ public sealed record OrderLineInput(
     int TaxPercentage,
     QuotationProductSnapshot? Product = null,
     QuotationDiscountOrigin DiscountOrigin = QuotationDiscountOrigin.Own,
+    ProductKind Kind = ProductKind.Physical,
+    SalesUnit SalesUnit = SalesUnit.Unit,
     Guid? SourcePurchaseOrderLineId = null);

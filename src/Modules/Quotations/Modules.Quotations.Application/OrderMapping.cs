@@ -76,6 +76,7 @@ internal static class OrderMapping
         order.BuyerAccountId,
         [.. order.WithholdingVerdicts.Select(QuotationMapping.ToDto)],
         order.OrderDate,
+        order.RequiresShipping,
         WholesaleOf(order));
 
     /// <summary>Mayorista fase 3: el vínculo del pedido con la orden del distribuidor; null fuera de un pedido mayorista.</summary>
@@ -109,8 +110,10 @@ internal static class OrderMapping
         order.FreightTaxAmount,
         order.CashOnDelivery);
 
+    // requiresShipping llega resuelto por página: la búsqueda del listado no trae las líneas, así que order.Items acá
+    // está vacía y order.RequiresShipping diría siempre true.
     public static OrderListItemDto ToListItemDto(
-        this Order order, string? quotationNumber, string? clientName, string? advisorName) => new(
+        this Order order, string? quotationNumber, string? clientName, string? advisorName, bool requiresShipping) => new(
         order.Id.Value,
         order.OrderNumber,
         order.QuotationId?.Value,
@@ -131,6 +134,7 @@ internal static class OrderMapping
         order.ExternalReference,
         order.ShippingDtoOf(),
         order.OrderDate,
+        requiresShipping,
         WholesaleOf(order) is { } wholesale ? new OrderListWholesaleDto(wholesale.PurchaseOrderNumber, wholesale.Approval) : null);
 
     public static OrderHistoryEntryDto ToDto(this OrderHistoryEntry entry) => new(
@@ -171,6 +175,8 @@ internal static class OrderMapping
         item.DiscountOrigin.ToString(),
         item.ProductCode,
         item.ProductName,
+        item.Kind.ToString(),
+        item.SalesUnit.ToString(),
         item.SourcePurchaseOrderLineId);
 
     private static OrderPaymentProofDto ToDto(OrderPaymentProof proof) => new(

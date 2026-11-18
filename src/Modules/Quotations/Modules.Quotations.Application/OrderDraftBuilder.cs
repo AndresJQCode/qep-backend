@@ -193,7 +193,10 @@ public sealed class OrderDraftBuilder(
                 priced.Pricing.UnitPrice,
                 priced.Pricing.DiscountPercentage,
                 priced.Pricing.TaxPercentage,
-                product is null ? null : new QuotationProductSnapshot(product.Code, product.Name)));
+                product is null ? null : new QuotationProductSnapshot(product.Code, product.Name),
+                // Tipo y unidad del catálogo (spec 2026-11-18 §3.4), también para la tienda: es lo honesto.
+                Kind: priced.Kind,
+                SalesUnit: priced.SalesUnit));
         }
 
         return lines;

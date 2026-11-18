@@ -161,6 +161,7 @@ internal static class OrderListing
         IQuotationCustomerLookup customerLookup,
         IQuotationAdvisorLookup advisorLookup,
         IQuotationRepository quotationRepository,
+        IOrderRepository orderRepository,
         Guid tenantId,
         IReadOnlyList<Order> rows,
         CancellationToken cancellationToken)
@@ -182,11 +183,15 @@ internal static class OrderListing
         var quotationNumbers = quotationIds.Length == 0
             ? new Dictionary<QuotationId, string>()
             : await quotationRepository.FindNumbersAsync(tenantId, quotationIds, cancellationToken);
+        // Spec 2026-11-18 §5: la búsqueda no trae las líneas, así que se pregunta por toda la página de una vez.
+        var requiringShipping = await orderRepository.FindIdsRequiringShippingAsync(
+            tenantId, rows.Select(row => row.Id).ToArray(), cancellationToken);
         return rows
             .Select(row => row.ToListItemDto(
                 row.QuotationId is { } quotationId ? quotationNumbers.GetValueOrDefault(quotationId) : null,
                 clientNames.GetValueOrDefault(row.ClientId),
-                advisors.GetValueOrDefault(row.AdvisorId.Value)?.Label))
+                advisors.GetValueOrDefault(row.AdvisorId.Value)?.Label,
+                requiringShipping.Contains(row.Id.Value)))
             .ToArray();
     }
 }

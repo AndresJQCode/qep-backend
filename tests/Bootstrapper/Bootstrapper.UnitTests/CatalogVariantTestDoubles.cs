@@ -84,6 +84,7 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
         string? code,
         bool? isActive,
         bool? visibleInStore,
+        BuildingBlocks.Domain.Catalog.ProductKind? kind,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,

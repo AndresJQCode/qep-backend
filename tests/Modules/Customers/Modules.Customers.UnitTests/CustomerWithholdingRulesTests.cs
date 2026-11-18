@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using static Modules.Customers.UnitTests.CustomerWriteDoubles;
@@ -65,6 +66,40 @@ public sealed class CustomerWithholdingRulesTests
     {
         var first = Rate("Retefuente");
         var second = Rate("Retefuente");
+
+        var error = await Assert.ThrowsAsync<CustomersDomainException>(
+            () => Validate(new TaxRates(first, second), first.Id, second.Id));
+
+        Assert.Equal("customers.customer.withholding_type_repeated", error.Code);
+    }
+
+    // Spec 2026-11-18 §4.3: una Retefuente de bienes y una de servicios conviven; All con otra, o dos del mismo alcance, no.
+    [Fact]
+    public async Task GoodsAndServicesOfTheSameTypeAreAccepted()
+    {
+        var goods = Rate("Retefuente") with { AppliesTo = WithholdingScope.Goods };
+        var services = Rate("Retefuente") with { AppliesTo = WithholdingScope.Services };
+
+        await Validate(new TaxRates(goods, services), goods.Id, services.Id);
+    }
+
+    [Fact]
+    public async Task AllWithAnotherScopeIsRepeated()
+    {
+        var all = Rate("Retefuente");
+        var services = Rate("Retefuente") with { AppliesTo = WithholdingScope.Services };
+
+        var error = await Assert.ThrowsAsync<CustomersDomainException>(
+            () => Validate(new TaxRates(all, services), all.Id, services.Id));
+
+        Assert.Equal("customers.customer.withholding_type_repeated", error.Code);
+    }
+
+    [Fact]
+    public async Task TwoOfTheSameScopeAreRepeated()
+    {
+        var first = Rate("Retefuente") with { AppliesTo = WithholdingScope.Goods };
+        var second = Rate("Retefuente") with { AppliesTo = WithholdingScope.Goods };
 
         var error = await Assert.ThrowsAsync<CustomersDomainException>(
             () => Validate(new TaxRates(first, second), first.Id, second.Id));

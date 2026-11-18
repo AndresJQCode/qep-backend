@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Catalog;
 using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
@@ -18,6 +19,8 @@ namespace Modules.Catalog.Application;
 /// llamada. Es opt-in: la grilla del catálogo no necesita las variantes y no paga su costo. Con
 /// el parámetro, la página se topa en <see cref="ProductPaging.MaxPageSizeWithVariants"/>.
 ///
+/// <c>Kind</c> filtra productos o servicios (spec 2026-11-18 §3.3); null trae los dos.
+///
 /// <c>IsActive</c> es un filtro real contra la base — antes el `Select` de estado del listado
 /// filtraba en el cliente, sobre el catálogo entero ya traído, algo que dejó de alcanzar en
 /// cuanto el listado empezó a paginar server-side.
@@ -31,7 +34,8 @@ public sealed record ListProductsQuery(
     int Page,
     int PageSize,
     bool IncludeVariants = false,
-    bool? VisibleInStore = null) : IQuery<ProductPage>;
+    bool? VisibleInStore = null,
+    ProductKind? Kind = null) : IQuery<ProductPage>;
 
 /// <summary>Una página de productos con el total que la UI necesita para paginar.</summary>
 public sealed record ProductPage(
@@ -95,6 +99,7 @@ public sealed class ListProductsHandler(
             query.Code,
             query.IsActive,
             query.VisibleInStore,
+            query.Kind,
             categoryIds: null,
             page,
             pageSize,
@@ -144,6 +149,8 @@ public sealed class ListProductsHandler(
                 lookups.UrlOf(product.ImageFileId),
                 product.TaxRateId?.Value,
                 product.CategoryId?.Value,
+                product.Kind.ToString(),
+                product.SalesUnit.ToString(),
                 product.VariantCount,
                 // Catalogue order (spec D10), como los precios del detalle.
                 product.PriceRanges
