@@ -230,11 +230,13 @@ internal static class CustomerWithholdingRules
                 "A municipal withholding tax rate cannot be assigned to a customer.");
         }
 
-        if (rates.GroupBy(rate => (rate.Country, rate.Type)).Any(group => group.Count() > 1))
+        // Spec 2026-11-18 §4.3: del mismo país y tipo conviven sólo una de bienes y una de servicios.
+        if (rates.GroupBy(rate => (rate.Country, rate.Type))
+            .Any(group => WithholdingScopes.AnyOverlap([.. group.Select(rate => rate.AppliesTo)])))
         {
             throw new CustomersDomainException(
                 "customers.customer.withholding_type_repeated",
-                "A customer can have only one withholding tax rate per country and type.");
+                "A customer can have only one withholding tax rate per country, type and scope.");
         }
     }
 }

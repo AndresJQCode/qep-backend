@@ -75,6 +75,43 @@ public sealed class CompanyWithholdingTaxRatesApiTests
         await AssertCodeAsync(response, "companies.company.withholding_municipality_repeated");
     }
 
+    // Spec 2026-11-18 §4.3: en el mismo municipio conviven una ReteICA de bienes y una de servicios; una All con otra no.
+    // Las tasas se crean por la API de Catalog con su alcance.
+    [Fact]
+    public async Task CompanyAcceptsGoodsAndServicesOfTheSameType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateAdmin(factory);
+        var (first, _) = await TwoMunicipalitiesAsync(client);
+        var company = await CreateCompanyAsync(client, "Andes", "CTA-1", cityId: first.Id);
+        var goods = await CreateRateAsync(client, "ReteICA comercio", "ReteICA", first.Id, appliesTo: "Goods");
+        var services = await CreateRateAsync(client, "ReteICA servicios", "ReteICA", first.Id, appliesTo: "Services");
+
+        var response = await PutAsync(client, company.Id, first.Id, withholdingTaxRateIds: new[] { goods, services });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            new HashSet<Guid> { goods, services },
+            (await ReadAsync(response)).WithholdingTaxRates.Select(rate => rate.Id).ToHashSet());
+    }
+
+    [Fact]
+    public async Task CompanyRejectsAllWithAnotherScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateAdmin(factory);
+        var (first, _) = await TwoMunicipalitiesAsync(client);
+        var company = await CreateCompanyAsync(client, "Andes", "CTA-1", cityId: first.Id);
+        var all = await CreateRateAsync(client, "ReteICA general", "ReteICA", first.Id);
+        var services = await CreateRateAsync(client, "ReteICA servicios", "ReteICA", first.Id, appliesTo: "Services");
+
+        var response = await PutAsync(client, company.Id, first.Id, withholdingTaxRateIds: new[] { all, services });
+
+        await AssertCodeAsync(response, "companies.company.withholding_municipality_repeated");
+    }
+
     [Fact]
     public async Task RetefuenteIs422()
     {
@@ -277,11 +314,12 @@ public sealed class CompanyWithholdingTaxRatesApiTests
         return company;
     }
 
-    private static async Task<Guid> CreateRateAsync(HttpClient client, string name, string type, Guid? cityId)
+    private static async Task<Guid> CreateRateAsync(
+        HttpClient client, string name, string type, Guid? cityId, string appliesTo = "All")
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates",
-            new { name, percentage = 0.966m, type, country = "CO", cityId },
+            new { name, percentage = 0.966m, type, country = "CO", cityId, appliesTo },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));

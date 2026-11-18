@@ -12,7 +12,8 @@ public static class CompanyWithholdingRules
     /// <summary>
     /// Cada id existe en el tenant, retiene, es de un tipo municipal y del país de la empresa, y está activo —salvo que la
     /// empresa ya lo tuviera guardado (A16)—; si no, <c>companies.company.withholding_tax_rate_invalid</c>. Dos tasas del
-    /// mismo tipo y municipio son <c>companies.company.withholding_municipality_repeated</c>. El municipio propio de la
+    /// mismo tipo y municipio son <c>companies.company.withholding_municipality_repeated</c>, salvo una de bienes y una de
+    /// servicios (spec 2026-11-18 §4.3). El municipio propio de la
     /// empresa no restringe: puede tener tarifa donde presta servicios.
     /// </summary>
     public static void Validate(
@@ -40,9 +41,10 @@ public static class CompanyWithholdingRules
             rates.Add(rate);
         }
 
+        // Spec 2026-11-18 §4.3: en el mismo municipio y tipo conviven sólo una de bienes y una de servicios.
         var repeated = rates
             .GroupBy(rate => (rate.Type, rate.CityId))
-            .FirstOrDefault(group => group.Count() > 1);
+            .FirstOrDefault(group => WithholdingScopes.AnyOverlap([.. group.Select(rate => rate.AppliesTo)]));
         if (repeated is not null)
         {
             throw new CompaniesDomainException(

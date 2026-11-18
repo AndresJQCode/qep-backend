@@ -34,11 +34,13 @@ internal static class WithholdingSelectorRules
                 "A selected municipal withholding tax rate must belong to the operation city.");
         }
 
-        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal).Any(group => group.Count() > 1))
+        // Spec 2026-11-18 §4.3: una por tipo y alcance. Del mismo tipo conviven sólo una de bienes y una de servicios.
+        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal)
+            .Any(group => WithholdingScopes.AnyOverlap([.. group.Select(rate => rate.AppliesTo)])))
         {
             throw new QuotationsDomainException(
                 $"{codePrefix}.withholding_type_repeated",
-                "Only one withholding tax rate per type can be selected.");
+                "Only one withholding tax rate per type and scope can be selected.");
         }
     }
 }

@@ -1,9 +1,12 @@
+using BuildingBlocks.Domain.Taxes;
+
 namespace Modules.Customers.Application;
 
 /// <summary>
 /// Una tasa del catálogo de impuestos tal como Customers la necesita: para validar que se puede asignar a un cliente y para
 /// pintarla en su ficha. <c>Withholds</c> es «esta tasa resta del total»; <c>Type</c> viaja como texto (<c>"Retefuente"</c>,
-/// <c>"ReteICA"</c>, <c>"IVA"</c>).
+/// <c>"ReteICA"</c>, <c>"IVA"</c>). <c>AppliesTo</c> es su alcance (spec 2026-11-18 §4.3): entra por este puerto, como
+/// <c>Type</c>, porque la tasa no lo cambia después de crearse y la validación por id es estable.
 /// </summary>
 public sealed record CustomerTaxRateRef(
     Guid Id,
@@ -12,7 +15,8 @@ public sealed record CustomerTaxRateRef(
     string Country,
     decimal Percentage,
     bool IsActive,
-    bool Withholds);
+    bool Withholds,
+    WithholdingScope AppliesTo = WithholdingScope.All);
 
 /// <summary>
 /// Puerto de Customers hacia el catálogo de impuestos (spec impuestos por tipo §7.4). Customers nunca referencia Catalog: el

@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using Modules.Companies.Application;
 using Modules.Companies.Domain;
 
@@ -57,6 +58,39 @@ public sealed class CompanyWithholdingRulesTests
     {
         var first = Rate(cityId: Bogota);
         var second = Rate(cityId: Bogota);
+
+        Assert.Equal(
+            "companies.company.withholding_municipality_repeated",
+            Fails(() => Validate([first, second], [first.Id, second.Id])));
+    }
+
+    // Spec 2026-11-18 §4.3: en el mismo municipio conviven una de bienes y una de servicios; All con cualquier otra, o dos del
+    // mismo alcance, retendrían dos veces sobre las mismas líneas.
+    [Fact]
+    public void GoodsAndServicesOfTheSameTypeAreAccepted()
+    {
+        var goods = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Goods };
+        var services = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
+
+        Validate([goods, services], [goods.Id, services.Id]);
+    }
+
+    [Fact]
+    public void AllWithAnotherScopeIsRepeated()
+    {
+        var all = Rate(cityId: Bogota);
+        var services = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
+
+        Assert.Equal(
+            "companies.company.withholding_municipality_repeated",
+            Fails(() => Validate([all, services], [all.Id, services.Id])));
+    }
+
+    [Fact]
+    public void TwoOfTheSameScopeAreRepeated()
+    {
+        var first = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
+        var second = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
 
         Assert.Equal(
             "companies.company.withholding_municipality_repeated",

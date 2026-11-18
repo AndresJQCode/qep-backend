@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -67,6 +68,50 @@ public sealed class WithholdingSelectionTests
             [RetefuenteServicios.TaxRateId, RetefuenteCompras.TaxRateId], "CO", prefix));
 
         Assert.Equal($"{prefix}.billing.withholding_type_repeated", error.Code);
+    }
+
+    // Spec 2026-11-18 §4.3: una de bienes y una de servicios del mismo tipo conviven; All con otra, o dos del mismo
+    // alcance, son repetidas con el código de siempre.
+    private static readonly WithholdingRate RetefuenteGoods =
+        Rate("Retefuente bienes 2,5 %", "Retefuente", 2.5m) with { AppliesTo = WithholdingScope.Goods };
+
+    private static readonly WithholdingRate RetefuenteForServices =
+        Rate("Retefuente servicios 4 % (servicios)", "Retefuente", 4m) with { AppliesTo = WithholdingScope.Services };
+
+    private static readonly WithholdingRate OtherRetefuenteForServices =
+        Rate("Retefuente servicios 6 %", "Retefuente", 6m) with { AppliesTo = WithholdingScope.Services };
+
+    private static Task<IReadOnlyList<WithholdingRate>> ResolveScopedAsync(IReadOnlyCollection<Guid> ids, string prefix) =>
+        WithholdingSelection.ResolveAsync(
+            Catalog().WithRate(RetefuenteGoods).WithRate(RetefuenteForServices).WithRate(OtherRetefuenteForServices),
+            TenantId, ids, "CO", DocumentDate, MunicipalSelectorScope.None, prefix, TestContext.Current.CancellationToken);
+
+    [Fact]
+    public async Task GoodsAndServicesOfTheSameTypeAreAccepted()
+    {
+        var rates = await ResolveScopedAsync([RetefuenteGoods.TaxRateId, RetefuenteForServices.TaxRateId], "quotation");
+
+        Assert.Equal(new[] { RetefuenteGoods, RetefuenteForServices }, rates);
+    }
+
+    [Theory]
+    [InlineData("quotation")]
+    [InlineData("order")]
+    public async Task AllWithAnotherScopeIsRepeated(string prefix)
+    {
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ResolveScopedAsync(
+            [RetefuenteCompras.TaxRateId, RetefuenteForServices.TaxRateId], prefix));
+
+        Assert.Equal($"{prefix}.billing.withholding_type_repeated", error.Code);
+    }
+
+    [Fact]
+    public async Task TwoOfTheSameScopeAreRepeated()
+    {
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ResolveScopedAsync(
+            [RetefuenteForServices.TaxRateId, OtherRetefuenteForServices.TaxRateId], "order"));
+
+        Assert.Equal("order.billing.withholding_type_repeated", error.Code);
     }
 
     [Fact]

@@ -41,4 +41,16 @@ public sealed class WithholdingScopesTests
         Assert.True(WithholdingScopes.Overlap(WithholdingScope.Goods, WithholdingScope.Goods));
         Assert.True(WithholdingScopes.Overlap(WithholdingScope.Services, WithholdingScope.Services));
     }
+
+    // Spec §4.3: la regla de un grupo de tasas del mismo tipo, la que comparten los cuatro selectores.
+    [Theory]
+    [InlineData(new WithholdingScope[] { }, false)]
+    [InlineData(new[] { WithholdingScope.All }, false)]
+    [InlineData(new[] { WithholdingScope.Goods, WithholdingScope.Services }, false)]
+    [InlineData(new[] { WithholdingScope.All, WithholdingScope.Services }, true)]
+    [InlineData(new[] { WithholdingScope.Goods, WithholdingScope.Services, WithholdingScope.Goods }, true)]
+    public void AnyOverlapLooksAtEveryPair(WithholdingScope[] scopes, bool expected)
+    {
+        Assert.Equal(expected, WithholdingScopes.AnyOverlap(scopes));
+    }
 }
