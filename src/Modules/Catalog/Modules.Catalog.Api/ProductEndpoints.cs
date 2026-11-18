@@ -127,10 +127,15 @@ public static class ProductEndpoints
         string? search = null,
         string? name = null,
         string? code = null,
-        bool? isActive = null)
+        bool? isActive = null,
+        string? kind = null)
     {
+        // El mismo parseo que el listado: un valor fuera del enum es el mismo 422 con el mapa `errors`.
         var result = await dispatcher.SendAsync(
-            new ExportProductsCommand(tenantId, search, name, code, isActive), cancellationToken);
+            new ExportProductsCommand(
+                tenantId, search, name, code, isActive,
+                CatalogEnumParsing.ParseOptional<ProductKind>(kind, "kind")),
+            cancellationToken);
 
         // 202 y no 200: lo que se acepto es la exportacion. El archivo se sube durante el
         // request pero el correo lo manda el worker despues, asi que la respuesta no trae el

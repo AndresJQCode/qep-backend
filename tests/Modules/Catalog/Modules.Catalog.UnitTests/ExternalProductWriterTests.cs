@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 
@@ -183,7 +184,7 @@ internal sealed class WriterProductRepository : IProductRepository
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Product>> ListForExportAsync(
-        Guid tenantId, string? search, string? name, string? code, bool? isActive, int skip, int take,
+        Guid tenantId, string? search, string? name, string? code, bool? isActive, ProductKind? kind, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Product>> FindVariantsByIdsForUpdateAsync(
