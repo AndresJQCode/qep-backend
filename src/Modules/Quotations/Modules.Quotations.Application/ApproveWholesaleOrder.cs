@@ -22,7 +22,7 @@ public sealed class ApproveWholesaleOrderHandler(
     IClock clock)
     : ICommandHandler<ApproveWholesaleOrderCommand, OrderDto>
 {
-    internal const string AuditAction = "quotations.order.wholesale_approved";
+    internal const string AuditAction = "quotation.order.wholesale_approved";
 
     public async Task<OrderDto> HandleAsync(ApproveWholesaleOrderCommand command, CancellationToken cancellationToken)
     {

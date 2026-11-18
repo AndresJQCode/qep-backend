@@ -41,7 +41,7 @@ public sealed class ApproveWholesaleOrderTests
         Assert.Equal(
             [(sourceLine, fromOrder, 2m, 11_900m, 19m), ((Guid?)null, added, 1m, 5_000m, 0m)],
             approved.Select(line => (line.SourcePurchaseOrderLineId, line.VariantId, line.Quantity, line.UnitPrice, line.TaxPercentage)));
-        Assert.Equal(["quotations.order.wholesale_approved"], _audit.Actions);
+        Assert.Equal(["quotation.order.wholesale_approved"], _audit.Actions);
         var history = Assert.Single(orders.History);
         Assert.Equal((OrderHistoryEventType.WholesaleApproved, Approver), (history.EventType, history.MemberId!.Value.Value));
     }
