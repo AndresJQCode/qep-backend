@@ -154,14 +154,17 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         }
 
         var active = (await manager.GetFromJsonAsync<DistributorDetailDto>(url, Ct))!;
-        Assert.Equal(("Active", (IReadOnlyList<string>)["edit", "block"]), (active.Status, active.AllowedActions));
+        // Una tupla con una lista compara la lista por referencia: cada parte se compara por separado.
+        Assert.Equal("Active", active.Status);
+        Assert.Equal(["edit", "block"], active.AllowedActions);
 
         var blocked = await PostWithVersionAsync(manager, $"{url}/block", active.Version);
         var blockedDetail = (await blocked.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
         var unblocked = await PostWithVersionAsync(manager, $"{url}/unblock", blockedDetail.Version);
         var unblockedDetail = (await unblocked.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
 
-        Assert.Equal(("Blocked", (IReadOnlyList<string>)["edit", "unblock"]), (blockedDetail.Status, blockedDetail.AllowedActions));
+        Assert.Equal("Blocked", blockedDetail.Status);
+        Assert.Equal(["edit", "unblock"], blockedDetail.AllowedActions);
         Assert.Equal("Active", unblockedDetail.Status);
         var audits = await WholesaleApiHarness.RowsAsync<string>(
             Factory,
