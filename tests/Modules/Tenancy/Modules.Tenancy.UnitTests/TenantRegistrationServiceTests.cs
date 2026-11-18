@@ -176,6 +176,44 @@ public sealed class TenantRegistrationServiceTests
         Assert.Equal(InvitedModules.Count, invited.Modules.Added.Count);
     }
 
+    // Ruling W11 (a): la lista de módulos la arma otro módulo, así que el alta no confía en ella. Una clave repetida sería
+    // una violación de PK (500) y un conjunto sin sus dependencias dejaría un tenant inconsistente: las dos fallan antes del
+    // candado, sin escribir nada.
+    [Fact]
+    public async Task RegisterInvitedTenantRejectsARepeatedModuleWithoutWriting()
+    {
+        var invited = new InvitedFixture();
+
+        await Assert.ThrowsAsync<ArgumentException>(() => invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(),
+            Guid.CreateVersion7(),
+            Data,
+            [TenantModuleKeys.Catalog, TenantModuleKeys.Suppliers, TenantModuleKeys.Catalog],
+            "trace",
+            TestContext.Current.CancellationToken));
+
+        Assert.Empty(invited.Steps);
+        Assert.Empty(invited.Tenants.Added);
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantRejectsAModuleWithoutItsDependenciesWithoutWriting()
+    {
+        var invited = new InvitedFixture();
+
+        // purchases depende de suppliers y catalog; falta catalog.
+        await Assert.ThrowsAsync<ArgumentException>(() => invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(),
+            Guid.CreateVersion7(),
+            Data,
+            [TenantModuleKeys.Suppliers, TenantModuleKeys.Purchases],
+            "trace",
+            TestContext.Current.CancellationToken));
+
+        Assert.Empty(invited.Steps);
+        Assert.Empty(invited.Tenants.Added);
+    }
+
     private sealed class InvitedFixture
     {
         public InvitedFixture(ITenantModuleDefaults? defaults = null)

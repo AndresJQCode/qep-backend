@@ -12,6 +12,8 @@ public sealed class Distributor
     /// <summary>La misma vigencia que la invitación de un miembro (<c>Membership.DefaultInvitationTimeToLive</c>).</summary>
     public static readonly TimeSpan InvitationTimeToLive = TimeSpan.FromHours(72);
 
+    private const int TokenHashLength = 64;
+
     // EF Core materializa por acá; Invite es el único punto de entrada de código.
     private Distributor()
     {
@@ -84,7 +86,7 @@ public sealed class Distributor
         ArgumentException.ThrowIfNullOrWhiteSpace(businessName);
         ArgumentException.ThrowIfNullOrWhiteSpace(identificationNumber);
         ArgumentException.ThrowIfNullOrWhiteSpace(contactName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(tokenHash);
+        EnsureTokenHash(tokenHash);
         if (reservedTenantId == Guid.Empty)
         {
             throw new ArgumentException("The reserved tenant id cannot be empty.", nameof(reservedTenantId));
@@ -123,7 +125,7 @@ public sealed class Distributor
     /// aunque la invitación ya haya vencido: reenviar es como se renueva.</summary>
     public void ResendInvitation(string tokenHash, DateTimeOffset now)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tokenHash);
+        EnsureTokenHash(tokenHash);
         EnsureStatus(DistributorStatus.Invited);
         Invitation.Rotate(tokenHash, now);
         Touch(now);
@@ -193,6 +195,21 @@ public sealed class Distributor
     };
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+
+    /// <summary>
+    /// Ruling W11 (c): la última red sobre el campo más sensible de la invitación. Sólo se guarda la forma de
+    /// <c>InvitationTokens.HashOf</c> (SHA-256 en hex minúsculo, 64 caracteres); un token plano no la tiene, así que nunca
+    /// llega a la base aunque quien llama se equivoque de variable.
+    /// </summary>
+    private static void EnsureTokenHash(string tokenHash)
+    {
+        if (tokenHash is not { Length: TokenHashLength } || !tokenHash.All(IsLowercaseHex))
+        {
+            throw new ArgumentException("The token hash must be a lowercase hex SHA-256.", nameof(tokenHash));
+        }
+
+        static bool IsLowercaseHex(char value) => value is (>= '0' and <= '9') or (>= 'a' and <= 'f');
+    }
 
     private void EnsureStatus(DistributorStatus expected)
     {
