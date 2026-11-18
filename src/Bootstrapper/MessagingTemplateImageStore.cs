@@ -63,16 +63,17 @@ internal sealed class MessagingTemplateImageStore(
         switch (result.Outcome)
         {
             case SystemUploadOutcome.Available:
-                // Lo guardado, no lo declarado: el tipo y el tamaño que valen son los que Storage verificó.
+                // Lo guardado, no lo declarado: el tipo y el tamaño que valen son los que Storage verificó. La creación del archivo viaja
+                // para que Messaging no tome uno que el barrido diario ya podría soltar (TemplateHeaderImagePolicy.MaxUploadAge).
                 return await uploads.FindAvailableAsync(tenantId, fileId, OwnerType, tenantId, cancellationToken) is { } info
-                    ? new TemplateImageFile(TemplateImageState.Available, info.MimeType, info.SizeBytes)
-                    : new TemplateImageFile(TemplateImageState.NotFound, null, 0);
+                    ? new TemplateImageFile(TemplateImageState.Available, info.MimeType, info.SizeBytes, info.CreatedAt)
+                    : new TemplateImageFile(TemplateImageState.NotFound, null, 0, default);
             case SystemUploadOutcome.ObjectMissing:
-                return new TemplateImageFile(TemplateImageState.NotUploaded, null, 0);
+                return new TemplateImageFile(TemplateImageState.NotUploaded, null, 0, default);
             case SystemUploadOutcome.Rejected:
-                return new TemplateImageFile(TemplateImageState.Rejected, null, 0);
+                return new TemplateImageFile(TemplateImageState.Rejected, null, 0, default);
             default:
-                return new TemplateImageFile(TemplateImageState.NotFound, null, 0);
+                return new TemplateImageFile(TemplateImageState.NotFound, null, 0, default);
         }
     }
 

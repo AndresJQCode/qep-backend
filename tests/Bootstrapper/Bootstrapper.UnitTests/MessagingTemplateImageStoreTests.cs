@@ -73,14 +73,14 @@ public sealed class MessagingTemplateImageStoreTests
     [InlineData(SystemUploadOutcome.Rejected, TemplateImageState.Rejected)]
     public async Task CompleteMapsEachOutcome(SystemUploadOutcome outcome, TemplateImageState expected)
     {
-        var fileId = _uploads.Seed(TenantId, FileOwnerType.MessageTemplate, TenantId, outcome, "image/jpeg", 4096);
+        var fileId = _uploads.Seed(TenantId, FileOwnerType.MessageTemplate, TenantId, outcome, "image/jpeg", 4096, Now.AddHours(-3));
 
         var file = await NewStore().CompleteAsync(TenantId, fileId, Ct);
 
         Assert.Equal(expected, file.State);
         if (expected is TemplateImageState.Available)
         {
-            Assert.Equal(("image/jpeg", 4096L), (file.MimeType, file.SizeBytes));
+            Assert.Equal(("image/jpeg", 4096L, Now.AddHours(-3)), (file.MimeType, file.SizeBytes, file.CreatedAt));
         }
         else
         {

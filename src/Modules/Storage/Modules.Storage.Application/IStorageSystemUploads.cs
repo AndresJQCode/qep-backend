@@ -74,4 +74,4 @@ public enum SystemUploadOutcome
 
 public sealed record SystemUploadResult(SystemUploadOutcome Outcome);
 
-public sealed record SystemFileInfo(Guid FileId, string Name, string MimeType, long SizeBytes);
+public sealed record SystemFileInfo(Guid FileId, string Name, string MimeType, long SizeBytes, DateTimeOffset CreatedAt);

@@ -22,6 +22,10 @@ public sealed class FakeTemplateImageStore : IMessagingTemplateImageStore
 
         public byte[] Bytes { get; set; } = [];
 
+        /// <summary>Cuándo se abrió la sesión. El host de integración usa el reloj real, así que «recién subida» pasa la revisión de
+        /// <c>TemplateHeaderImagePolicy.MaxUploadAge</c>.</summary>
+        public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
         public bool Published { get; set; }
 
         public bool Released { get; set; }
@@ -61,8 +65,8 @@ public sealed class FakeTemplateImageStore : IMessagingTemplateImageStore
 
     public Task<TemplateImageFile> CompleteAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
         Task.FromResult(Find(tenantId, fileId) is { Released: false } file
-            ? new TemplateImageFile(file.State, file.State is TemplateImageState.Available ? file.MimeType : null, file.Size)
-            : new TemplateImageFile(TemplateImageState.NotFound, null, 0));
+            ? new TemplateImageFile(file.State, file.State is TemplateImageState.Available ? file.MimeType : null, file.Size, file.CreatedAt)
+            : new TemplateImageFile(TemplateImageState.NotFound, null, 0, default));
 
     public Task<byte[]> ReadAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
         Find(tenantId, fileId) is { State: TemplateImageState.Available, Released: false } file

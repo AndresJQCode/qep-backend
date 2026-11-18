@@ -118,7 +118,7 @@ public sealed class StorageSystemUploads(
     {
         var resource = await LoadOwnedAsync(tenantId, fileId, ownerType, ownerId, cancellationToken);
         return resource is { Status: FileResourceStatus.Available }
-            ? new SystemFileInfo(resource.Id.Value, resource.Name, resource.MimeType, resource.SizeBytes)
+            ? new SystemFileInfo(resource.Id.Value, resource.Name, resource.MimeType, resource.SizeBytes, resource.CreatedAt)
             : null;
     }
 
