@@ -161,7 +161,8 @@ public sealed class FileOwnerModuleHandlersTests
                 .HandleAsync(new IssueDownloadUrlCommand(tenantId, fileId), cancellationToken),
             "CompleteUpload" => new CompleteUploadHandler(
                     repository, modules, new UntouchableObjectStorage(), new UntouchableContentInspector(),
-                    new UntouchableVariantGenerator(), new UntouchablePaymentProofProcessor(), new UntouchableScanner(),
+                    new UntouchableVariantGenerator(), new UntouchablePaymentProofProcessor(),
+                    new UntouchableChatbotMediaProcessing(), new UntouchableScanner(),
                     effects.UnitOfWork, effects.Audit, context, clock)
                 .HandleAsync(new CompleteUploadCommand(tenantId, fileId), cancellationToken),
             "CancelUpload" => new CancelUploadHandler(

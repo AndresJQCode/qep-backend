@@ -304,6 +304,108 @@ public sealed class StorageSystemUploadsTests
         Assert.Null(fixture.Storage.LastDownloadName);
     }
 
+    // Spec 2026-11-18 (multimedia del chatbot): el inspector de la consola no conoce audio ni video. El contenido de un ChatbotMedia lo
+    // revisa el sniffer de Mensajería por el puerto, con la cabecera (64 bytes) y el nombre.
+    [Fact]
+    public async Task AChatbotMediaMp3IsCheckedByTheMediaSnifferNotTheConsoleInspector()
+    {
+        var fixture = new Fixture(contentMatches: false);
+        var content = Bytes(100, fill: 0x49);
+        var session = await fixture.OpenChatbotMediaAsync("jingle.mp3", "audio/mpeg", content);
+
+        var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Available, result.Outcome);
+        Assert.Equal(("jingle.mp3", 64), Assert.Single(fixture.Media.Checked));
+    }
+
+    [Fact]
+    public async Task AChatbotMediaFileWhoseHeaderDoesNotMatchIsRejected()
+    {
+        var fixture = new Fixture();
+        fixture.Media.Matching = false;
+        var session = await fixture.OpenChatbotMediaAsync("jingle.mp3", "audio/mpeg", Bytes(10, fill: 0x01));
+
+        var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Rejected, result.Outcome);
+        Assert.Equal(FileResourceStatus.Quarantined, Assert.Single(fixture.Repository.Items).Status);
+        Assert.Equal(("jingle.mp3", 10), Assert.Single(fixture.Media.Checked));
+        var audit = Assert.Single(fixture.Audit.Entries);
+        Assert.Equal(("storage.file.rejected", "content_type_mismatch", true), (audit.Action, audit.Outcome, audit.System));
+    }
+
+    // Meta no baja por link una imagen de más de 5 MB: se comprime antes de promover, y lo que queda en files/ es lo comprimido.
+    [Fact]
+    public async Task ASixMegabyteChatbotImageIsShrunkBeforePromotion()
+    {
+        var fixture = new Fixture();
+        var shrunk = Bytes(2048, fill: 0x7F);
+        fixture.Media.Shrunk = new ProcessedChatbotImage(shrunk, "image/jpeg", ".jpg");
+        var session = await fixture.OpenChatbotMediaAsync("catalogo.png", "image/png", Bytes(6 * 1024 * 1024, fill: 0x10));
+
+        var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Available, result.Outcome);
+        var resource = Assert.Single(fixture.Repository.Items);
+        Assert.Equal(("catalogo.jpg", "image/jpeg", (long)shrunk.Length),
+            (resource.Name, resource.MimeType, resource.SizeBytes));
+        Assert.StartsWith("files/", resource.StorageKey, StringComparison.Ordinal);
+        Assert.Equal(shrunk, await fixture.Storage.DownloadAsync(resource.StorageKey, Ct));
+        Assert.Equal(1, fixture.Media.ShrinkCalls);
+    }
+
+    [Fact]
+    public async Task AFourMegabyteChatbotImageIsKeptAsIs()
+    {
+        var fixture = new Fixture();
+        var content = Bytes(4 * 1024 * 1024, fill: 0x10);
+        var session = await fixture.OpenChatbotMediaAsync("catalogo.png", "image/png", content);
+
+        var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Available, result.Outcome);
+        var resource = Assert.Single(fixture.Repository.Items);
+        Assert.Equal(("catalogo.png", "image/png", (long)content.Length), (resource.Name, resource.MimeType, resource.SizeBytes));
+        Assert.Equal(content, await fixture.Storage.DownloadAsync(resource.StorageKey, Ct));
+        Assert.Equal(0, fixture.Media.ShrinkCalls);
+    }
+
+    [Fact]
+    public async Task AnUnreadableLargeChatbotImageIsRejected()
+    {
+        var fixture = new Fixture();
+        fixture.Media.Shrunk = null;
+        var session = await fixture.OpenChatbotMediaAsync("catalogo.jpg", "image/jpeg", Bytes(6 * 1024 * 1024, fill: 0x10));
+
+        var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Rejected, result.Outcome);
+        Assert.Equal(FileResourceStatus.Quarantined, Assert.Single(fixture.Repository.Items).Status);
+        var audit = Assert.Single(fixture.Audit.Entries);
+        Assert.Equal(("storage.file.rejected", "image_processing_failed", true), (audit.Action, audit.Outcome, audit.System));
+    }
+
+    // El tope guardado de un ChatbotMedia es el de su dueño (100 MB), no los 25 MB de la consola.
+    [Fact]
+    public async Task AFortyMegabyteChatbotPdfPassesTheStoredSizeCap()
+    {
+        var fixture = new Fixture();
+        var session = await fixture.OpenChatbotMediaAsync("lista.pdf", "application/pdf", Bytes(40 * 1024 * 1024, fill: 0x25));
+
+        var result = await fixture.Uploads.CompleteAsync(TenantId, session.FileId, FileOwnerType.ChatbotMedia, TenantId, Ct);
+
+        Assert.Equal(SystemUploadOutcome.Available, result.Outcome);
+        Assert.Equal(0, fixture.Media.ShrinkCalls);
+    }
+
+    private static byte[] Bytes(int length, byte fill)
+    {
+        var content = new byte[length];
+        Array.Fill(content, fill);
+        return content;
+    }
+
     private sealed class Fixture
     {
         public Fixture(bool contentMatches = true, FileScanResult verdict = FileScanResult.Clean)
@@ -311,9 +413,11 @@ public sealed class StorageSystemUploadsTests
             Inspector = new FixedContentInspector(contentMatches);
             Scanner = new FixedScanner(verdict);
             Uploads = new StorageSystemUploads(
-                Repository, FixedTenantModules.Simulated, Storage, Inspector, new NoVariants(), new NoProofProcessing(), Scanner,
-                UnitOfWork, Audit, new FixedClock(Now));
+                Repository, FixedTenantModules.Simulated, Storage, Inspector, new NoVariants(), new NoProofProcessing(), Media,
+                Scanner, UnitOfWork, Audit, new FixedClock(Now));
         }
+
+        public FakeChatbotMediaProcessing Media { get; } = new();
 
         public ListFileResourceRepository Repository { get; } = new();
 
@@ -337,6 +441,16 @@ public sealed class StorageSystemUploadsTests
             return session;
         }
 
+        /// <summary>Una sesión de multimedia de chatbot (dueño el tenant, tope de su dueño) con el contenido ya «subido».</summary>
+        public async Task<SystemUploadSession> OpenChatbotMediaAsync(string name, string mimeType, byte[] content)
+        {
+            var session = await Uploads.OpenAsync(
+                TenantId, FileOwnerType.ChatbotMedia, TenantId, name, mimeType, content.Length,
+                FileUploadPolicy.MaxSizeBytesFor(FileOwnerType.ChatbotMedia), Ct);
+            Storage.Put(Repository.Items.Single(item => item.Id.Value == session.FileId).StorageKey, content);
+            return session;
+        }
+
         /// <summary>Un archivo normal de la consola (dueño <c>User</c>), pendiente y ya «subido» al bucket.</summary>
         public Guid SeedConsoleUpload(byte[] content)
         {
@@ -349,8 +463,8 @@ public sealed class StorageSystemUploadsTests
         }
 
         public CompleteUploadHandler MemberHandler(IExecutionContext context) =>
-            new(Repository, FixedTenantModules.Simulated, Storage, Inspector, new NoVariants(), new NoProofProcessing(), Scanner,
-                UnitOfWork, Audit, context, new FixedClock(Now));
+            new(Repository, FixedTenantModules.Simulated, Storage, Inspector, new NoVariants(), new NoProofProcessing(), Media,
+                Scanner, UnitOfWork, Audit, context, new FixedClock(Now));
     }
 
     private sealed class PermissionContext(Guid tenantId, bool granted) : IExecutionContext
@@ -480,6 +594,31 @@ public sealed class StorageSystemUploadsTests
 
         public Task<IReadOnlyList<GeneratedFileVariant>> GenerateAsync(byte[] content, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    /// <summary>El puerto del sniffer y el compresor de Mensajería: dice si la cabecera casa y, al comprimir, devuelve lo configurado
+    /// (<c>null</c> = imagen ilegible).</summary>
+    internal sealed class FakeChatbotMediaProcessing : IChatbotMediaProcessing
+    {
+        public bool Matching { get; set; } = true;
+
+        public ProcessedChatbotImage? Shrunk { get; set; } = new([0xFF, 0xD8, 0xFF], "image/jpeg", ".jpg");
+
+        public List<(string Name, int HeaderLength)> Checked { get; } = [];
+
+        public int ShrinkCalls { get; private set; }
+
+        public bool Matches(string name, ReadOnlySpan<byte> header)
+        {
+            Checked.Add((name, header.Length));
+            return Matching;
+        }
+
+        public Task<ProcessedChatbotImage?> ShrinkAsync(byte[] content, CancellationToken cancellationToken)
+        {
+            ShrinkCalls++;
+            return Task.FromResult(Shrunk);
+        }
     }
 
     private sealed class NoProofProcessing : IPaymentProofImageProcessor

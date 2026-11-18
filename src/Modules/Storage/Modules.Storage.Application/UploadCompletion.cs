@@ -15,6 +15,7 @@ internal sealed class UploadCompletion(
     IFileContentInspector contentInspector,
     IImageVariantGenerator imageVariantGenerator,
     IPaymentProofImageProcessor paymentProofImageProcessor,
+    IChatbotMediaProcessing chatbotMediaProcessing,
     IFileScanner scanner,
     IStorageUnitOfWork unitOfWork,
     IStorageAuditPublisher auditPublisher,
@@ -32,8 +33,8 @@ internal sealed class UploadCompletion(
         resource.CompleteUpload(stored.Checksum, stored.SizeBytes, now);
 
         // El tamaño guardado tiene que ser el declarado: la URL firmada no lo acota, y el declarado ya pasó por el tope de quien abrió
-        // la sesión (25 MB en la consola, el suyo en una subida sin miembro).
-        if (stored.SizeBytes != declaredSizeBytes || stored.SizeBytes > FileUploadPolicy.MaxSizeBytes)
+        // la sesión (25 MB en la consola, el suyo en una subida sin miembro). El techo es el del dueño: 100 MB para un ChatbotMedia.
+        if (stored.SizeBytes != declaredSizeBytes || stored.SizeBytes > FileUploadPolicy.MaxSizeBytesFor(resource.OwnerType))
         {
             resource.Quarantine(now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -43,7 +44,7 @@ internal sealed class UploadCompletion(
         }
 
         var content = await objectStorage.DownloadAsync(resource.StorageKey, cancellationToken);
-        if (!contentInspector.Matches(resource.Name, resource.MimeType, content))
+        if (!ContentMatches(resource, content))
         {
             resource.Quarantine(now);
             Audit(resource, actorId, "storage.file.rejected", "content_type_mismatch", now);
@@ -61,6 +62,12 @@ internal sealed class UploadCompletion(
         }
         else if (verdict is FileScanResult.Clean)
         {
+            var promotedChecksum = stored.Checksum;
+            if (NeedsShrinking(resource, content))
+            {
+                (content, promotedChecksum) = await ShrinkChatbotImageAsync(resource, actorId, content, now, cancellationToken);
+            }
+
             var stagingKey = resource.StorageKey;
             var finalKey = StorageKey.FinalFor(resource.TenantId, resource.Id, resource.CreatedAt);
             IReadOnlyList<GeneratedFileVariant> variants;
@@ -76,7 +83,7 @@ internal sealed class UploadCompletion(
                 throw;
             }
             await objectStorage.PromoteAsync(
-                stagingKey, finalKey, stored.Checksum, cancellationToken);
+                stagingKey, finalKey, promotedChecksum, cancellationToken);
             foreach (var variant in variants)
             {
                 var variantKey = StorageKey.VariantFor(
@@ -109,6 +116,48 @@ internal sealed class UploadCompletion(
         {
             await objectStorage.DeleteAsync(promotedStagingKey, cancellationToken);
         }
+    }
+
+    // Spec 2026-11-18: el inspector de la consola no conoce video ni audio. Un ChatbotMedia lo revisa el sniffer de Mensajería (por el
+    // puerto) con su cabecera y la extensión del nombre; cualquier otro dueño, el inspector de siempre.
+    private bool ContentMatches(FileResource resource, byte[] content) =>
+        resource.OwnerType is FileOwnerType.ChatbotMedia
+            ? chatbotMediaProcessing.Matches(resource.Name, content.AsSpan(0, Math.Min(64, content.Length)))
+            : contentInspector.Matches(resource.Name, resource.MimeType, content);
+
+    // Spec 2026-11-18: Meta no baja por link una imagen de más de 5 MB. Una imagen de chatbot por encima se comprime antes de promover.
+    private static bool NeedsShrinking(FileResource resource, byte[] content) =>
+        resource.OwnerType is FileOwnerType.ChatbotMedia
+        && resource.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+        && content.LongLength > FileUploadPolicy.ChatbotMediaLinkImageMaxBytes;
+
+    // La imagen comprimida reemplaza a la original en la misma clave de staging, como un comprobante (D7): de ahí sale a variantes y a
+    // la promoción. Ilegible = cuarentena, igual que una imagen que el generador de variantes no puede leer.
+    private async Task<(byte[] Content, string Checksum)> ShrinkChatbotImageAsync(
+        FileResource resource,
+        Guid? actorId,
+        byte[] content,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var processed = await chatbotMediaProcessing.ShrinkAsync(content, cancellationToken);
+        if (processed is null)
+        {
+            await QuarantineUnprocessableImageAsync(resource, actorId, now, cancellationToken);
+            throw new StorageDomainException(
+                "storage.image.invalid",
+                "The uploaded image could not be decoded.");
+        }
+
+        await objectStorage.UploadAsync(resource.StorageKey, processed.Content, processed.MimeType, cancellationToken);
+        // El checksum es el que calcula el almacenamiento sobre lo que quedó guardado (ver KeepPaymentProofInStagingAsync).
+        var replaced = await objectStorage.StatAsync(resource.StorageKey, cancellationToken)
+            ?? throw new PreconditionRequiredException(
+                "storage.object.missing",
+                "The object has not been uploaded to storage yet.");
+        resource.ReplaceContentWithProcessedImage(
+            processed.MimeType, processed.Extension, replaced.Checksum, replaced.SizeBytes, now);
+        return (processed.Content, replaced.Checksum);
     }
 
     // Spec 2026-09-16, D4 y D8: un comprobante no se promueve a files/ ni lleva miniatura; espera en
