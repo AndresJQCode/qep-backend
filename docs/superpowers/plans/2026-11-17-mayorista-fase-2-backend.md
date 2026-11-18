@@ -1077,6 +1077,22 @@ Mandan sobre el texto de las tareas donde choquen.
 - **O-7 → se incluye en Task 7:** agregar la ruta de aceptación de la invitación de miembros a `SensitivePaths`, con su prueba. Es
   una línea y saca un token de los logs; el owner lo puede vetar.
 
+### Adenda al «Contrato HTTP» (tras el plan del frontend; manda sobre la sección del contrato)
+
+- **`DistributorSummary`** suma `version` y `invitation: { expiresAt, canResend } | null` (presente sólo con `Status = Invited`): la
+  fila pinta «Vence 20/11 · Reenviar» como el mockup.
+- **`PriceListSummary`** suma `createdAt` y `categories: [{ id, name }]` (vacío con `AllActive`): la fila pinta «Creada 02/10/2026»
+  y «2 categorías · Hogar, Cocina» sin otra llamada.
+- **«Último pedido» no está en fase 2**: no hay pedidos vinculados hasta la fase 3. La columna no se pinta.
+- **`GET /api/v1/tenants/{tenantId}/wholesale/categories`** (permiso `wholesale.price_list.manage`): árbol plano `{ id, name,
+  parentId }` de las categorías activas del tenant, para elegir la visibilidad sin exigir `catalog.product.read`. Mismo puerto de
+  lectura del catálogo que la vista previa.
+- **Elegibilidad de un tenant para vincular** (`linkable-tenants`): cada ítem suma `ineligibleReason: string | null` con un código
+  (`already_linked`, `same_tenant`, …), para que la pantalla diga por qué no se puede elegir. Sólo lista tenants que el usuario
+  administra como owner: es la regla de la aceptación, no un hueco.
+- **Proveedor vinculado en órdenes externas:** en fase 2 se puede elegir como cualquier proveedor (la orden es manual). La fase 3
+  cambia esa ruta.
+
 ## Pendiente del owner
 
 - **O-1 (D-2).** ¿La identidad del mayorista ante el distribuidor sale de la empresa facturadora elegida al invitar? Alternativa:
