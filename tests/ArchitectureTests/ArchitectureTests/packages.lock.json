@@ -502,6 +502,8 @@
           "Modules.ServiceContracts.Infrastructure": "[1.0.0, )",
           "Modules.Shopify.Api": "[1.0.0, )",
           "Modules.Shopify.Infrastructure": "[1.0.0, )",
+          "Modules.Siigo.Api": "[1.0.0, )",
+          "Modules.Siigo.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Api": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
           "Modules.Store.Api": "[1.0.0, )",
@@ -565,6 +567,8 @@
           "Modules.ServiceContracts.Infrastructure": "[1.0.0, )",
           "Modules.Shopify.Application": "[1.0.0, )",
           "Modules.Shopify.Infrastructure": "[1.0.0, )",
+          "Modules.Siigo.Application": "[1.0.0, )",
+          "Modules.Siigo.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Application": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
           "Modules.Store.Application": "[1.0.0, )",
@@ -1403,6 +1407,41 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Shopify.Application": "[1.0.0, )",
           "Modules.Shopify.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.siigo.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Siigo.Application": "[1.0.0, )",
+          "Modules.Siigo.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.siigo.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Siigo.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.siigo.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.siigo.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Siigo.Application": "[1.0.0, )",
+          "Modules.Siigo.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

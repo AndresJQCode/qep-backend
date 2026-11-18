@@ -64,6 +64,8 @@ using Modules.Reporting.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
+using Modules.Siigo.Application;
+using Modules.Siigo.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Store.Infrastructure;
@@ -1558,6 +1560,10 @@ public static class QepServiceCollectionExtensions
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
         services.AddShopifyInfrastructure(configuration);
+
+        // Siigo (spec 2026-11-18): la factura electrónica de un pedido en Siigo. Sólo ve Tenancy (y Audit para su auditoría
+        // atómica); conexión, pedido, cliente, producto, ciudad y empresa entran por adaptadores que llegan con cada caso de uso.
+        services.AddSiigoInfrastructure(configuration);
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
@@ -2347,6 +2353,9 @@ public static class QepServiceCollectionExtensions
                 WholesalePermissions.PriceListManage,
                 WholesalePermissions.DistributorRead,
                 WholesalePermissions.DistributorManage,
+                // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
+                SiigoPermissions.SettingsManage,
+                SiigoPermissions.InvoiceIssue,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
@@ -2466,7 +2475,10 @@ public static class QepServiceCollectionExtensions
                 ServiceContractsPermissions.Manage,
                 // Facturación cobra las cuotas de los préstamos: las ve y las marca pagadas (spec de préstamos, 2026-10-31).
                 LoansPermissions.Read,
-                LoansPermissions.Manage
+                LoansPermissions.Manage,
+                // Spec 2026-11-18 (integración Siigo) §5.7: facturación emite la factura en Siigo, como marca el pedido facturado
+                // (quotations.order.invoice). Configurar la conexión es de admin.
+                SiigoPermissions.InvoiceIssue
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -3361,6 +3373,28 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("wholesale.distributor", "Distribuidores", "manage"),
         });
+        // Spec 2026-11-18 (integración Siigo) §5.7: con [siigo], ModuleEntitlementMask quita el permiso al apagar el módulo y el
+        // editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            SiigoPermissions.SettingsManage,
+            "Configurar Siigo",
+            "Permite configurar las conexiones de Siigo: empresa, comprobante, impuestos, formas de pago y productos.",
+            "Siigo",
+            "high",
+            RequiredModules: [ModuleKeys.Siigo])
+        {
+            Shape = new("siigo.settings", "Configuración de Siigo", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SiigoPermissions.InvoiceIssue,
+            "Facturar en Siigo",
+            "Permite generar y reintentar la factura electrónica de un pedido en Siigo.",
+            "Siigo",
+            "high",
+            RequiredModules: [ModuleKeys.Siigo])
+        {
+            Shape = new("siigo.invoice", "Facturas en Siigo", "invoice"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -3891,6 +3925,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 WholesalePermissions.DistributorManage,
                 policy => AddPermissionRequirement(policy, WholesalePermissions.DistributorManage))
+            // Spec 2026-11-18 (integración Siigo): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SiigoPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SiigoPermissions.SettingsManage))
+            .AddPolicy(
+                SiigoPermissions.InvoiceIssue,
+                policy => AddPermissionRequirement(policy, SiigoPermissions.InvoiceIssue))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 ServiceContractsPermissions.Read,

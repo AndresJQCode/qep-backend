@@ -24,6 +24,8 @@
     <ProjectReference Include="..\Modules\Purchases\Modules.Purchases.Infrastructure\Modules.Purchases.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Wholesale\Modules.Wholesale.Api\Modules.Wholesale.Api.csproj" />
     <ProjectReference Include="..\Modules\Wholesale\Modules.Wholesale.Infrastructure\Modules.Wholesale.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Siigo\Modules.Siigo.Api\Modules.Siigo.Api.csproj" />
+    <ProjectReference Include="..\Modules\Siigo\Modules.Siigo.Infrastructure\Modules.Siigo.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Support\Modules.Support.Api\Modules.Support.Api.csproj" />
     <ProjectReference Include="..\Modules\Support\Modules.Support.Infrastructure\Modules.Support.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Store\Modules.Store.Api\Modules.Store.Api.csproj" />

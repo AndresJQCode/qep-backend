@@ -22,6 +22,7 @@ using Modules.Purchases.Application;
 using Modules.Reporting.Application;
 using Modules.ServiceContracts.Application;
 using Modules.Shopify.Application;
+using Modules.Siigo.Application;
 using Modules.Store.Application;
 using Modules.Suppliers.Application;
 using Modules.Support.Application;
@@ -323,9 +324,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista).</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheNinetyTwoConstants()
+    public void PermissionDiscoveryFindsTheNinetyFourConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -347,8 +348,9 @@ public sealed class CompositionRootTests
         // + los tres de soporte (support.*, spec 2026-11-14)
         // + los dos del copiloto (ai.copilot.use|manage, spec 2026-11-17)
         // + los dos de compras (purchases.order.read|manage, spec 2026-11-17)
-        // + los tres de mayorista (spec 2026-11-17).
-        Assert.Equal(92, PermissionConstants().Length);
+        // + los tres de mayorista (spec 2026-11-17)
+        // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18).
+        Assert.Equal(94, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -927,6 +929,32 @@ public sealed class CompositionRootTests
             Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
         }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-18 (integración Siigo): los dos permisos exigen el módulo <c>siigo</c>; admin lleva los dos y facturación sólo
+    /// emitir la factura. Configurar la conexión es de admin. Asesor y cajero, ninguno.
+    /// </summary>
+    [Fact]
+    public void TheSiigoPermissionsRequireTheSiigoModuleAndGoToAdminAndBilling()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        var all = new[] { SiigoPermissions.SettingsManage, SiigoPermissions.InvoiceIssue };
+
+        Assert.Equal(["siigo.settings.manage", "siigo.invoice.issue"], all);
+        foreach (var permission in all)
+        {
+            Assert.Equal([ModuleKeys.Siigo], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+
+        Assert.Contains(SiigoPermissions.InvoiceIssue, catalog.PermissionsFor("billing"));
+        Assert.DoesNotContain(SiigoPermissions.SettingsManage, catalog.PermissionsFor("billing"));
     }
 
     /// <summary>

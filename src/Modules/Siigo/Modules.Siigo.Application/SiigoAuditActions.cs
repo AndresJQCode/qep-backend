@@ -1,0 +1,14 @@
+namespace Modules.Siigo.Application;
+
+/// <summary>Spec 2026-11-18 §5.7: las acciones de auditoría de Siigo. Son contrato con la pantalla de auditoría: no se renombran.</summary>
+public static class SiigoAuditActions
+{
+    /// <summary>Se guardó un paso de la configuración de una conexión; lleva los pasos cambiados, sin valores de Siigo.</summary>
+    public const string SettingsUpdated = "siigo.settings.updated";
+
+    public const string InvoiceCreated = "siigo.invoice.created";
+
+    public const string InvoiceRejected = "siigo.invoice.rejected";
+
+    public const string InvoiceResolved = "siigo.invoice.resolved";
+}

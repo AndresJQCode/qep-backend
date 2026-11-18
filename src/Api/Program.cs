@@ -49,6 +49,8 @@ using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
 using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
+using Modules.Siigo.Api;
+using Modules.Siigo.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Api;
@@ -385,6 +387,8 @@ app.MapShopifyCustomLineMappingEndpoints();
 app.MapShopifyProductEndpoints();
 // Spec 2026-11-14 §6: los cambios de Shopify sobre pedidos importados («Cambios por revisar», aceptar, rechazar y revisar).
 app.MapShopifyOrderEditEndpoints();
+// Spec 2026-11-18: Siigo (configuración por conexión y factura electrónica de un pedido).
+app.MapSiigoEndpoints();
 app.MapMessagingEndpoints();
 // Spec 2026-10-30 §5.2: la API externa, autenticada con X-Api-Key. Después de Messaging, de cuyos handlers depende.
 app.MapExternalApi();
@@ -495,6 +499,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Shopify (spec 2026-10-15 §9): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, cliente,
     // pedido, asesor y empresa son referencias blandas.
     await services.InitializeShopifyDatabaseAsync(
+        cancellationToken);
+
+    // Siigo (spec 2026-11-18): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, pedido, cliente,
+    // producto y empresa son referencias blandas.
+    await services.InitializeSiigoDatabaseAsync(
         cancellationToken);
 
     // Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de
