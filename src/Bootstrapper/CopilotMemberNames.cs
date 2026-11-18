@@ -17,13 +17,24 @@ internal sealed class CopilotMemberNames(IMembershipRepository memberships, IUse
     {
         ArgumentNullException.ThrowIfNull(userIds);
         var names = new Dictionary<Guid, string>();
-        // Pocos miembros por tenant usan el copiloto en un mes: una lectura por miembro, como las notas de clientes.
+        // Pocos miembros por tenant usan el copiloto en un mes: una lectura de membresía por miembro, como las notas de clientes.
+        var found = new List<(Guid UserId, Membership? Membership)>();
         foreach (var userId in userIds.Distinct())
         {
-            var membership = await memberships.FindByUserAndTenantAsync(userId, new TenantId(tenantId), cancellationToken);
+            found.Add((userId, await memberships.FindByUserAndTenantAsync(userId, new TenantId(tenantId), cancellationToken)));
+        }
+
+        // Los correos de quienes no tienen nombre, en cambio, van en un solo viaje a Identity.
+        var emails = await users.GetEmailsAsync(
+            found.Where(item => string.IsNullOrWhiteSpace(item.Membership?.DisplayName))
+                .Select(item => item.UserId)
+                .ToList(),
+            cancellationToken);
+        foreach (var (userId, membership) in found)
+        {
             var name = !string.IsNullOrWhiteSpace(membership?.DisplayName)
                 ? membership.DisplayName
-                : await users.GetEmailAsync(userId, cancellationToken);
+                : emails.GetValueOrDefault(userId);
             if (!string.IsNullOrWhiteSpace(name))
             {
                 names[userId] = name;

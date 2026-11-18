@@ -97,11 +97,15 @@ public sealed class AddOrderPaymentProofsHandler(
             order,
             command.UpdatedProofs.Select(update => (update.ProofId, update.Amount)));
 
-        foreach (var proof in command.PaymentProofs)
-        {
-            await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, repository, command.TenantId, proof.FileId, exceptProofId: null, cancellationToken);
-        }
+        // Los comprobantes nuevos en dos lecturas, no dos por comprobante. Los reemplazos siguen de a uno: cada uno
+        // excluye su propio comprobante de la pregunta de uso, y el lote sólo admite una exclusión.
+        await OrderPaymentProofResolver.ResolveManyAsync(
+            fileLookup,
+            repository,
+            command.TenantId,
+            command.PaymentProofs.Select(proof => proof.FileId).ToArray(),
+            exceptProofId: null,
+            cancellationToken);
 
         foreach (var update in command.UpdatedProofs)
         {

@@ -133,31 +133,33 @@ public sealed class OrderPaymentProofResolverTests
 
     private static QuotationFileRef Pdf(Guid? tenantId = null, bool isPaymentProof = true) =>
         new(Guid.CreateVersion7(), tenantId ?? TenantId, "application/pdf", 1024, IsAvailable: true, isPaymentProof);
+}
 
-    private sealed class CountingFileLookup(params QuotationFileRef[] files) : IQuotationFileLookup
+/// <summary>Los archivos que siembra la prueba. Cuenta las lecturas de a uno y las de lote, para que una prueba afirme
+/// cuántos viajes a Storage costó un cuerpo.</summary>
+internal sealed class CountingFileLookup(params QuotationFileRef[] files) : IQuotationFileLookup
+{
+    public int FindCalls { get; private set; }
+
+    public int FindManyCalls { get; private set; }
+
+    public Task<QuotationFileRef?> FindAsync(
+        Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
-        public int FindCalls { get; private set; }
-
-        public int FindManyCalls { get; private set; }
-
-        public Task<QuotationFileRef?> FindAsync(
-            Guid tenantId, Guid fileId, CancellationToken cancellationToken)
-        {
-            FindCalls++;
-            return Task.FromResult(files.FirstOrDefault(file => file.FileId == fileId));
-        }
-
-        // Sin filtro de tenant a propósito: la regla de tenant del resolvedor se prueba aunque el adaptador ya la aplique.
-        public Task<IReadOnlyDictionary<Guid, QuotationFileRef>> FindManyAsync(
-            Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken)
-        {
-            FindManyCalls++;
-            return Task.FromResult<IReadOnlyDictionary<Guid, QuotationFileRef>>(
-                files.Where(file => fileIds.Contains(file.FileId)).ToDictionary(file => file.FileId));
-        }
-
-        public Task<string> CreateDownloadUrlAsync(
-            Guid tenantId, Guid fileId, string downloadFileName, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        FindCalls++;
+        return Task.FromResult(files.FirstOrDefault(file => file.FileId == fileId));
     }
+
+    // Sin filtro de tenant a propósito: la regla de tenant del resolvedor se prueba aunque el adaptador ya la aplique.
+    public Task<IReadOnlyDictionary<Guid, QuotationFileRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> fileIds, CancellationToken cancellationToken)
+    {
+        FindManyCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationFileRef>>(
+            files.Where(file => fileIds.Contains(file.FileId)).ToDictionary(file => file.FileId));
+    }
+
+    public Task<string> CreateDownloadUrlAsync(
+        Guid tenantId, Guid fileId, string downloadFileName, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
