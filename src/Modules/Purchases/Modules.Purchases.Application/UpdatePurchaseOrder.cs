@@ -40,10 +40,11 @@ public sealed class UpdatePurchaseOrderHandler(
         PurchasesConflicts.EnsureVersion(order, command.ExpectedVersion);
         PurchasesConflicts.EnsureAllowed(order, PurchaseOrderAction.Edit);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-        var lines = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
+        var build = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
 
+        // D-10: editar vuelve a fijar el modo con el proveedor de hoy; un borrador de fase 2 a un vinculado pasa a vinculado acá.
         var now = clock.UtcNow;
-        order.Replace(command.SupplierId, null, command.Currency, command.Notes, lines, now);
+        order.Replace(command.SupplierId, build.SupplierTenantId, build.Currency, command.Notes, build.Lines, now);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

@@ -6,8 +6,8 @@ using Modules.Suppliers.Infrastructure.Persistence;
 namespace Bootstrapper;
 
 /// <summary>
-/// Suppliers → Purchases: el proveedor de una orden es un id suelto y Compras sólo lee nombre, documento y si está activo. Todo
-/// acotado al tenant: un id de otro tenant llega como «no existe».
+/// Suppliers → Purchases: el proveedor de una orden es un id suelto y Compras sólo lee nombre, documento, si está activo y, desde
+/// la fase 3 de mayorista, el tenant con que está vinculado. Todo acotado al tenant: un id de otro tenant llega como «no existe».
 /// </summary>
 internal sealed class PurchasesSupplierLookup(SuppliersDbContext suppliers) : IPurchasesSupplierLookup
 {
@@ -38,12 +38,14 @@ internal sealed class PurchasesSupplierLookup(SuppliersDbContext suppliers) : IP
                 supplier.Identification.Type,
                 supplier.Identification.Number,
                 supplier.IsActive,
+                supplier.LinkedTenantId,
             })
             .ToListAsync(cancellationToken);
 
         return rows.ToDictionary(
             row => row.Id.Value,
-            row => new PurchasesSupplierRef(row.Id.Value, row.Name, row.Type.ToWire(), row.Number, row.IsActive));
+            row => new PurchasesSupplierRef(
+                row.Id.Value, row.Name, row.Type.ToWire(), row.Number, row.IsActive, row.LinkedTenantId));
     }
 
     public async Task<IReadOnlyList<Guid>> SearchIdsAsync(Guid tenantId, string search, int take, CancellationToken cancellationToken)

@@ -200,11 +200,12 @@ public sealed class PurchaseOrder
 
     /// <summary>
     /// El mayorista anuló el pedido: la orden se cancela desde cualquier estado salvo <c>Received</c> (D-21). Ya recibida o
-    /// ya cancelada devuelve false y no cambia nada.
+    /// ya cancelada devuelve false y no cambia nada; una orden externa también (ruling X8c: el evento de un mayorista no toca
+    /// lo que no es suyo).
     /// </summary>
     public bool ApplyWholesalerCancellation(DateTimeOffset now)
     {
-        if (Status is PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled)
+        if (!IsLinked || Status is PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled)
         {
             return false;
         }
@@ -226,13 +227,20 @@ public sealed class PurchaseOrder
 
     /// <summary>
     /// Enlaza una línea con la variante del catálogo propio que se encontró o se creó. No sube <see cref="Version"/>: es
-    /// efecto del sistema dentro de la misma transacción que la confirmación.
+    /// efecto del sistema dentro de la misma transacción que la confirmación. Sólo en una orden vinculada confirmada (ruling
+    /// X8c); fuera de eso devuelve false y no cambia nada.
     /// </summary>
-    public void LinkLineToCatalog(Guid lineId, Guid variantId, bool created)
+    public bool LinkLineToCatalog(Guid lineId, Guid variantId, bool created)
     {
         var line = _lines.FirstOrDefault(candidate => candidate.Id == lineId)
             ?? throw new ArgumentException($"La línea '{lineId}' no es de la orden.", nameof(lineId));
+        if (!IsLinked || Status != PurchaseOrderStatus.Confirmed)
+        {
+            return false;
+        }
+
         line.LinkToCatalog(variantId, created);
+        return true;
     }
 
     /// <summary>

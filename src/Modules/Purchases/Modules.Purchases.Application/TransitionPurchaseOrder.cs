@@ -18,6 +18,9 @@ public sealed record TransitionPurchaseOrderCommand(
 /// <summary>
 /// Un handler para enviar, recibir y cancelar. Enviar vuelve a mirar el proveedor: si lo desactivaron (o ya no está) después del
 /// alta, 422 <c>supplier_inactive</c> y la orden sigue en borrador. Recibir y cancelar no tienen reglas extra.
+/// <para>Mayorista fase 3: una orden vinculada (el modo fijado al guardar, D-10) se envía creando el pedido en el mayorista
+/// (<see cref="IWholesaleOrderIntake"/>, idempotente, D-8) y adopta sus líneas; cancelarla en <c>Sent</c> anula primero el
+/// pedido (D-12): si el mayorista ya lo aprobó, el 409 sale de ahí y la orden no cambia.</para>
 /// </summary>
 public sealed class TransitionPurchaseOrderHandler(
     IExecutionContext executionContext,
@@ -27,7 +30,8 @@ public sealed class TransitionPurchaseOrderHandler(
     IPurchaseOrderRepository orders,
     IPurchasesUnitOfWork unitOfWork,
     IPurchasesAuditPublisher auditPublisher,
-    PurchaseOrderComposer composer)
+    PurchaseOrderComposer composer,
+    IWholesaleOrderIntake wholesaleOrders)
     : ICommandHandler<TransitionPurchaseOrderCommand, PurchaseOrderDetailDto>
 {
     private static readonly string[] StatusField = ["status"];
@@ -60,19 +64,41 @@ public sealed class TransitionPurchaseOrderHandler(
             }
         }
 
-        var now = clock.UtcNow;
         switch (command.Action)
         {
+            case PurchaseOrderAction.Send when order.IsLinked:
+                var submitted = await wholesaleOrders.SubmitAsync(
+                    new WholesaleIntakeRequest(
+                        command.TenantId,
+                        order.SupplierTenantId!.Value,
+                        order.Id.Value,
+                        order.Number,
+                        order.Notes,
+                        order.Lines
+                            .Select(line => new WholesaleIntakeLine(line.Id, line.SupplierVariantId!.Value, line.Quantity!.Value))
+                            .ToList()),
+                    cancellationToken);
+                order.SendToWholesaler(submitted.OrderId, submitted.OrderNumber, submitted.Lines, memberId, clock.UtcNow);
+                break;
             case PurchaseOrderAction.Send:
-                order.Send(memberId, now);
+                order.Send(memberId, clock.UtcNow);
                 break;
             case PurchaseOrderAction.Receive:
-                order.Receive(memberId, now);
+                order.Receive(memberId, clock.UtcNow);
                 break;
             default:
-                order.Cancel(memberId, now);
+                if (order is { IsLinked: true, Status: PurchaseOrderStatus.Sent, LinkedOrderId: { } linkedOrderId })
+                {
+                    await wholesaleOrders.CancelAsync(
+                        command.TenantId, order.SupplierTenantId!.Value, order.Id.Value, order.Number, linkedOrderId,
+                        cancellationToken);
+                }
+
+                order.Cancel(memberId, clock.UtcNow);
                 break;
         }
+
+        var now = clock.UtcNow;
 
         auditPublisher.Publish(
             command.TenantId,

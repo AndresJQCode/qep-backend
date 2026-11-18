@@ -1,0 +1,156 @@
+using Modules.Purchases.Domain;
+
+namespace Modules.Purchases.Application;
+
+/// <summary>
+/// Una variante del mayorista como la ve el distribuidor (mayorista fase 3): precio base, descuento de su lista y precio de
+/// lista, todos con IVA incluido, y la tasa de IVA del producto. El costo de la orden sale de acá (D-9).
+/// </summary>
+public sealed record WholesaleCatalogItem(
+    Guid VariantId,
+    string Code,
+    string Name,
+    decimal BasePrice,
+    decimal DiscountPercent,
+    decimal ListPrice,
+    decimal TaxRatePercent);
+
+/// <summary>Una página del catálogo del mayorista con la lista que la precia (adenda del contrato: <c>priceList</c>).</summary>
+public sealed record WholesaleCatalogPage(
+    string Currency,
+    string PriceListName,
+    decimal DiscountPercent,
+    IReadOnlyList<WholesaleCatalogItem> Items,
+    int Total);
+
+/// <summary>
+/// El catálogo de un mayorista vinculado; adaptador en Bootstrapper sobre Wholesale (<c>WholesaleOffers</c>). Recibe los dos
+/// tenants y verifica en el servidor la relación <c>Active</c>: sin ella, 403 <c>wholesale.relationship.inactive</c>. Una
+/// variante fuera de la visibilidad, inactiva, ajena o sin precio es 422 <c>wholesale.product.not_visible</c>
+/// (<see cref="PurchasesErrorCodes.ProductNotVisible"/>).
+/// </summary>
+public interface IWholesaleCatalog
+{
+    Task<WholesaleCatalogPage> SearchAsync(
+        Guid buyerTenantId,
+        Guid wholesalerTenantId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>El precio de cada variante pedida en la moneda por defecto del mayorista; todas vienen o la llamada falla.</summary>
+    Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items)> PriceAsync(
+        Guid buyerTenantId,
+        Guid wholesalerTenantId,
+        IReadOnlyCollection<Guid> variantIds,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>Una línea de la orden que viaja al pedido del mayorista: su id, la variante del mayorista y la cantidad.</summary>
+public sealed record WholesaleIntakeLine(Guid PurchaseOrderLineId, Guid VariantId, decimal Quantity);
+
+/// <summary>Lo que «Enviar» entrega al mayorista. El comprador es el tenant de la ruta, nunca un dato del cuerpo.</summary>
+public sealed record WholesaleIntakeRequest(
+    Guid BuyerTenantId,
+    Guid WholesalerTenantId,
+    Guid PurchaseOrderId,
+    string PurchaseOrderNumber,
+    string? Notes,
+    IReadOnlyList<WholesaleIntakeLine> Lines);
+
+/// <summary>
+/// El pedido que quedó en el mayorista con sus líneas, ya convertidas a la foto de la orden (costo sin IVA, D-9). Con
+/// <c>AlreadyExisted</c> es el pedido que ya estaba (D-8) y la orden adopta esas líneas.
+/// </summary>
+public sealed record WholesaleIntakeResult(
+    Guid OrderId,
+    string OrderNumber,
+    string Currency,
+    IReadOnlyList<LinkedLineSnapshot> Lines,
+    bool AlreadyExisted);
+
+/// <summary>
+/// El pedido del mayorista visto desde la orden de compra; adaptador en Bootstrapper sobre Wholesale y Quotations. Cruza
+/// tenants: recibe los dos y verifica la relación. Un rechazo del motor de pedidos es 409
+/// <c>purchases.order.wholesaler_rejected</c> (D-15), sin el código interno del otro tenant.
+/// </summary>
+public interface IWholesaleOrderIntake
+{
+    Task<WholesaleIntakeResult> SubmitAsync(WholesaleIntakeRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// D-12: anula el pedido mientras el mayorista no lo apruebe. Aprobado, preparado, facturado o archivado: 409
+    /// <c>purchases.order.not_cancellable</c> (<c>ResourceConflictException</c>). Idempotente si ya estaba anulado.
+    /// </summary>
+    Task CancelAsync(
+        Guid buyerTenantId,
+        Guid wholesalerTenantId,
+        Guid purchaseOrderId,
+        string purchaseOrderNumber,
+        Guid orderId,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>La variante del catálogo propio que se encontró por código o se creó (D-18).</summary>
+public sealed record PurchasesCatalogEntry(Guid VariantId, bool Created);
+
+/// <summary>
+/// El catálogo del comprador para la confirmación del mayorista (D-18); adaptador en Bootstrapper sobre Catalog. Busca por
+/// <paramref name="code"/> exacto (ya recortado) en variantes de cualquier estado y, si no está, crea el producto sin precio
+/// de venta, sin categoría ni tasa, con costo <paramref name="unitCost"/> sin IVA sólo si es mayor que 0.
+/// <para>Exige la transacción de Compras abierta (la abre el procesador del inbox, Task 7). Una falla (índice único en carrera,
+/// nombre o código largo) lanza: quien llama la registra y sigue (ruling X2), así que el adaptador no puede dejar la
+/// transacción abortada ni la entidad fallida en el rastreador (punto de guardado por llamada).</para>
+/// </summary>
+public interface IPurchasesCatalogWriter
+{
+    Task<PurchasesCatalogEntry> EnsureVariantAsync(
+        Guid tenantId,
+        string code,
+        string name,
+        string currency,
+        decimal? unitCost,
+        DateTimeOffset now,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Una línea final del pedido aprobado (evento <c>quotations.order.wholesale-approved.v1</c>). <c>UnitPrice</c> lleva el IVA;
+/// <c>SourcePurchaseOrderLineId</c> es nulo si el mayorista la agregó.
+/// </summary>
+public sealed record WholesaleApprovedLine(
+    Guid? SourcePurchaseOrderLineId,
+    Guid VariantId,
+    string Code,
+    string Name,
+    decimal Quantity,
+    decimal UnitPrice,
+    decimal TaxPercentage);
+
+/// <summary>El evento de aprobación ya leído por el procesador del inbox: quién lo emite y a qué orden va.</summary>
+public sealed record WholesaleApproval(
+    Guid WholesalerTenantId,
+    Guid OrderId,
+    Guid BuyerTenantId,
+    Guid PurchaseOrderId,
+    IReadOnlyList<WholesaleApprovedLine> Lines);
+
+/// <summary>El evento de anulación (<c>quotations.order.wholesale-cancelled.v1</c>) ya leído por el procesador del inbox.</summary>
+public sealed record WholesaleCancellation(
+    Guid WholesalerTenantId,
+    Guid OrderId,
+    Guid BuyerTenantId,
+    Guid PurchaseOrderId);
+
+/// <summary>
+/// Lo que el procesador del inbox hace con el evento: <see cref="Applied"/> y <see cref="Ignored"/> lo marcan procesado (D-20:
+/// un evento ajeno no se arregla reintentando); <see cref="RetryLater"/> no (ruling X8b: la orden sigue en borrador porque el
+/// envío no terminó de guardarse).
+/// </summary>
+public enum WholesaleEventOutcome
+{
+    Applied,
+    Ignored,
+    RetryLater,
+}

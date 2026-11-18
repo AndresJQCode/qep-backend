@@ -511,6 +511,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
+        // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado y el aplicador de sus eventos (lo llama el
+        // procesador del inbox de Task 7, que también registra los adaptadores de los puertos mayoristas).
+        services.AddScoped<
+            IQueryHandler<Modules.Purchases.Application.ListSupplierCatalogQuery, Modules.Purchases.Application.SupplierCatalogPageDto>,
+            Modules.Purchases.Application.ListSupplierCatalogHandler>();
+        services.AddScoped<Modules.Purchases.Application.WholesaleOrderEventApplier>();
 
         // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.
         services.AddScoped<

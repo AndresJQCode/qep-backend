@@ -184,6 +184,30 @@ public sealed class WholesaleReconciliationTests
         Assert.Empty(OrderIn(PurchaseOrderStatus.Confirmed).LinesNeedingCatalog());
     }
 
+    // Ruling X8c: el evento del mayorista no puede tocar una orden externa.
+    [Fact]
+    public void AWholesalerCancellationOfAnExternalOrderDoesNothing()
+    {
+        var order = OrderIn(PurchaseOrderStatus.Sent);
+        var version = order.Version;
+
+        Assert.False(order.ApplyWholesalerCancellation(Later));
+        Assert.Equal((PurchaseOrderStatus.Sent, version), (order.Status, order.Version));
+    }
+
+    // Ruling X8c: enlazar con el catálogo sólo en una orden vinculada ya confirmada.
+    [Fact]
+    public void LinkingOutsideAConfirmedLinkedOrderDoesNothing()
+    {
+        var sent = SentLinkedOrder();
+        var external = OrderIn(PurchaseOrderStatus.Confirmed);
+
+        Assert.False(sent.LinkLineToCatalog(sent.Lines[0].Id, Guid.CreateVersion7(), created: true));
+        Assert.False(external.LinkLineToCatalog(external.Lines[0].Id, Guid.CreateVersion7(), created: true));
+        Assert.Null(sent.Lines[0].VariantId);
+        Assert.False(sent.Lines[0].CreatedInCatalog);
+    }
+
     [Fact]
     public void LinkLineToCatalogDoesNotBumpTheVersion()
     {

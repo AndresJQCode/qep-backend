@@ -19,9 +19,9 @@ internal sealed class FakeSupplierLookup : IPurchasesSupplierLookup
 
     public int FindManyCalls { get; private set; }
 
-    public PurchasesSupplierRef Add(Guid id, string name, bool isActive = true)
+    public PurchasesSupplierRef Add(Guid id, string name, bool isActive = true, Guid? linkedTenantId = null)
     {
-        var supplier = new PurchasesSupplierRef(id, name, "NIT", "900123456", isActive);
+        var supplier = new PurchasesSupplierRef(id, name, "NIT", "900123456", isActive, linkedTenantId);
         Suppliers[id] = supplier;
         return supplier;
     }
