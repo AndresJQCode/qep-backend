@@ -18,6 +18,9 @@ public static class WholesaleErrorCodes
 
     public const string InvitationNotTenantOwner = "wholesale.invitation.not_tenant_owner";
 
+    // Spec 2026-11-17 y ruling W18: 403 en todos lados; en esta fase, al aceptar una relación bloqueada.
+    public const string RelationshipInactive = "wholesale.relationship.inactive";
+
     // 409
     public const string PriceListInUse = "wholesale.price_list.in_use";
 
