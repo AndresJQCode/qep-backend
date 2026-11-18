@@ -52,6 +52,18 @@ public sealed class MessageMappingInteractiveTests
         Assert.Equal(new InteractiveCtaDto("Registrarme", "https://app.clasic.com.co/registro-clientes"), dto.Cta);
     }
 
+    // Spec 2026-11-18: el encabezado con el archivo no cambia la tarjeta; el archivo llega a la burbuja por MessageDto.Media.
+    [Fact]
+    public void AStoredCtaWithAMediaHeaderStillParses()
+    {
+        var dto = Map(new CtaUrlSend(
+            "Mira el catálogo", "Ver", new Uri("https://qcode.co/catalogo"),
+            MediaHeader: new InteractiveMediaHeader("image", new Uri("https://pub/x.jpg"), null)));
+
+        Assert.Equal("cta_url", dto!.Type);
+        Assert.Equal(new InteractiveCtaDto("Ver", "https://qcode.co/catalogo"), dto.Cta);
+    }
+
     [Fact]
     public void AnInboundInteractiveHasNoCard()
     {
