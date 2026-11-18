@@ -44,7 +44,7 @@ public sealed class LinkedRelationshipStatusTests
         // Una sola consulta por página, con los mayoristas de la página.
         var asked = Assert.Single(_relationships.Asked);
         Assert.Equal(Tenant, asked.Tenant);
-        Assert.Equal([Wholesaler, OtherWholesaler], asked.Wholesalers.Order());
+        Assert.Equal(new[] { Wholesaler, OtherWholesaler }.Order(), asked.Wholesalers.Order());
     }
 
     [Fact]
