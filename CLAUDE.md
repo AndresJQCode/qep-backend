@@ -1388,6 +1388,14 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   no de una variable propia: no hay `WholesaleInvitationUrl` que dar de alta en el pipeline. El token viaja sólo en el payload
   del outbox; `SensitivePaths.Mask` lo tapa en `platform.request_failures` y en su línea de log, también el de la invitación de
   miembros. Una ruta nueva con un secreto en un segmento se suma ahí.
+- **El aviso de WhatsApp de la invitación es un evento aparte y sin token** (`wholesale.distributor-invitation-notice.v1`); su
+  consumidor vive en Mayorista con inbox propio (`InvitationNoticeProcessor`, consumidor `wholesale.invitation-whatsapp-notice`)
+  y manda por `WholesaleInvitationNoticeSender` de Bootstrapper. El resultado se aplica sólo a la `generation` vigente y no sube
+  `version` (D-3, D-4); la `generation` es token de concurrencia, así que un resultado leído antes de un `PUT` o un «Reenviar» no
+  se escribe.
+- **El `clientId` del aviso es el id del mensaje del outbox**: no lo cambies por uno nuevo, o un reintento manda dos avisos
+  (D-5). Por lo mismo, una fila `Failed` con `RetryDisabled` es terminal en `PlainTemplateOutbound` (`not_retriable`): repetir el
+  `clientId` no la reenvía.
 - **«Por aprobar» de un pedido `Wholesale` es `WholesaleApprovedAt`, no un estado** (mayorista fase 3, D-1). `OrderStatus` sigue
   `Open/Archived/Cancelled`; pendiente es `Open` sin `wholesale_approved_at`. Aprobado deja de ser editable (`IsEditable`, D-3):
   la aprobación ya le llevó las líneas al distribuidor y una edición posterior nunca le llegaría. «Lo anuló el comprador» tampoco
