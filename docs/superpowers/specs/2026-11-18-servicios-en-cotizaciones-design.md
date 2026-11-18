@@ -35,7 +35,8 @@ Decisiones del owner (conversación del 2026-11-18):
 
 **No objetivos (fase 2 o de otro spec)**
 
-- Tienda pública, POS, Shopify y pedidos externos: siguen como hoy. Sus líneas nacen `Physical`/`Unit` (§3.4).
+- Checkout de la tienda pública, POS y Shopify: siguen como hoy. Las líneas de Shopify nacen `Physical`/`Unit`; las de
+  la tienda toman el tipo del catálogo porque comparten el código del pedido manual (§3.4).
 - Cobro recurrente de servicios: ya es `ServiceContracts` (`billing`).
 - Columnas nuevas en el Excel de pedidos (ERP) o en el de cotizaciones.
 - Inventario: el WMS (ramas `feature/wms-b`/`wms-d`, sin mergear) decide qué hace con una variante `Service` (§8).
@@ -107,19 +108,21 @@ hoy no se usa en QEP pero evita una migración de datos el día que el ERP lo pi
 ### 3.4 Foto en la línea
 
 `QuotationItem` y `OrderItem` ganan `Kind` y `SalesUnit`, columnas `not null` con default `'Physical'` y `'Unit'`
-(migración aditiva; las filas viejas quedan con el valor que reproduce lo de hoy). Entran por
-`IQuotationProductLookup`, que hoy ya trae código y nombre: el adaptador de Bootstrapper los lee del producto.
+(migración aditiva; las filas viejas quedan con el valor que reproduce lo de hoy).
 
-Todo camino que crea líneas desde el catálogo los copia: alta y batch de cotización, guardado de la lista completa,
-líneas de pedido manual y sus ediciones, conversión (copia de la línea de la cotización, no relectura del catálogo),
-borrador del agente de IA (`ExternalQuotationService`). Los pedidos externos (`IExternalOrderWriter`: Shopify) y los de
-la tienda nacen `Physical`/`Unit` (no objetivo). El builder enumera los caminos con un barrido por
-`QuotationProductSnapshot` y `IQuotationProductLookup`.
+**Se fijan al crear la línea, no con la foto del nombre** (corrección del 2026-11-18 al leer el código): la foto del
+nombre de una cotización no existe en borrador —se toma al enviar o convertir (`CaptureProductSnapshots`)—, y un
+borrador sin tipo daría `requiresShipping` y bases de retención falsas. Todo `AddItem` ya lee la variante por
+`IQuotationProductPricingLookup`; su `QuotationVariantPricingRef` trae `Kind` y `SalesUnit`, y también
+`QuotationVariantRef` (`IQuotationProductLookup`, que usan el pedido manual y el externo). Una línea cuya variante no
+cambia conserva los suyos en todo guardado (ningún camino de edición relee la variante de una línea existente); una
+línea con variante nueva es una línea nueva.
 
-Tipo y unidad siguen **exactamente la misma regla de refresco que el nombre de la foto** (`QuotationProductSnapshot`)
-en cada camino, incluido el guardado de la lista completa de un borrador: si ese camino hoy conserva el nombre de una
-línea cuya variante no cambió, conserva tipo y unidad; si lo relee, los relee. Una línea cuya variante cambia toma los
-de la variante nueva. Así no aparece una segunda regla de foto que diverja de la primera **[decisión del diseño]**.
+Caminos: alta, batch, guardado de la lista completa y alta de cotización (`QuotationItemEdits`, `QuotationDraftBuilder`,
+también el borrador del agente de IA); líneas y ediciones de pedido (`AddOrderItems`, `OrderItemEdits`); pedido manual
+y de la tienda (`OrderDraftBuilder.PriceLinesAsync`, compartido: la tienda toma los valores del catálogo, que es lo
+honesto, aunque su checkout no cambie); conversión (`Order.FromQuotation` copia los de la línea de la cotización).
+Los pedidos de Shopify (`ExternalOrderService`) nacen `Physical`/`Unit`.
 
 ## 4. Retenciones por tipo de línea (enfoque A)
 
@@ -191,17 +194,15 @@ suma `appliesTo`.
   ni Excel lo necesita **[decisión del diseño]**.
 - **Envío:** el backend no lo prohíbe en un documento sin líneas físicas **[decisión del diseño]**. La regla que hoy
   podría estorbar (ciudad de envío al marcar pagado o facturar) ya sólo aplica si el pedido se le envía al cliente
-  (`BilledCustomerFieldsRequired`, `ShippingDetails != None`), así que un pedido con `ShippingDetails.None` pasa. Lo
-  que cambia es el default: un pedido manual o una conversión de una cotización sin líneas físicas nace con
-  `ShippingDetails.None` si el cuerpo no trae envío. Prohibir el envío obligaría a borrarlo en silencio al quitar la
-  última línea física, y Odoo tampoco lo prohíbe.
-- **Sólo en la creación.** El default se aplica al crear el pedido (manual o por conversión) y nunca después: editar
-  líneas no reaplica ni borra el envío, en ningún sentido. Si un pedido de servicios gana una línea física, queda con
-  `None` y `requiresShipping = true`, y el asesor elige el envío en la sección que reaparece; si uno mixto pierde su
-  última línea física, conserva el envío y el flete que tenía (visibles hasta que el asesor los quite). El backend no
-  borra nada que el asesor haya puesto **[decisión del diseño]**. La cotización sigue la misma regla con su flete
-  (`FreightAmounts`): ni se anula ni se oculta en el backend. Cuál es el default de hoy para un pedido con líneas
-  físicas no cambia (lo ubica el builder en `ShippingResolver`/`OrderDraftBuilder`).
+  (`BilledCustomerFieldsRequired`, `ShippingDetails != None`), así que un pedido con `ShippingDetails.None` pasa.
+  Prohibir el envío obligaría a borrarlo en silencio al quitar la última línea física, y Odoo tampoco lo prohíbe.
+- **No hay default nuevo que construir** (corrección del 2026-11-18 al leer el código): un pedido manual sin envío en
+  el cuerpo ya nace con `ShippingDetails.None` (`OrderDraftBuilder.ResolveShippingAsync`), y la conversión copia el
+  envío de la cotización (`Order.FromQuotation`), que en una de sólo servicios es el que dejó el asesor, `None` si la
+  pantalla oculta la sección. El backend nunca pone ni borra envío por el tipo de las líneas, en ningún sentido: si un
+  pedido de servicios gana una línea física, queda con `None` y `requiresShipping = true`, y el asesor elige el envío
+  en la sección que reaparece; si uno mixto pierde su última línea física, conserva el envío y el flete que tenía.
+  La cotización, igual con su flete **[decisión del diseño]**.
 - **«Prestado»:** sin estado nuevo. `Prepare`, `UndoPreparation`, `IsEditable`, `ArchiveIfSettled` y la anulación del
   comprador no cambian: el pedido de servicios se marca «prestado» con el mismo endpoint y queda congelado igual, que
   es lo que hacen Odoo («entregado») y Alegra con un servicio prestado. Las entradas del historial y la auditoría
@@ -250,8 +251,6 @@ lleva perfil logístico ni saldo, y su línea de pedido no entra al picking.
 - Ubicar todos los caminos de alta y edición de líneas (§3.4) y los adaptadores de tasas de Companies y Customers
   (§4.3).
 - Nombres de migraciones y su orden por módulo (Catalog, Quotations, y Companies/Customers si guardan foto de tasas).
-- Dónde exactamente se resuelve el default de envío en el pedido manual y en la conversión (`ShippingResolver`,
-  `OrderDraftBuilder`).
 - Pruebas: unitarias de `DocumentTotals` (bases por alcance, umbral por base, `All` igual a hoy, `NoLinesOfScope`), de
   las cuatro reglas de repetición, de `Product` (empaques en servicio) y de la foto; integración de Catalog (alta,
-  edición, filtro), de cotización y pedido (foto, `requiresShipping`, default de envío, retención mixta) y del PDF.
+  edición, filtro), de cotización y pedido (foto, `requiresShipping`, envío sin cambios, retención mixta) y del PDF.
