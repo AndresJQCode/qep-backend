@@ -131,6 +131,20 @@ No public header image may outlive its template row.
   is removed.
 - An abandoned form leaves nothing: the frontend uploads only on submit.
 
+### Closing the residual gaps (owner, 2026-11-17, after the first merge)
+
+- **Public copies without a stored key.** Releasing a `MessageTemplate` file (immediately or from the outbox) removes
+  its public objects using the stored `PublicStorageKey` or, when none was saved, the deterministic
+  `StorageKey.PublicFor(tenantId, id, name)` plus its variants. A failed Storage save after the copy no longer leaves
+  public objects behind.
+- **Daily sweep as the final net.** A Storage worker lists live `MessageTemplate` files older than 24 h, asks Messaging
+  (through a Bootstrapper adapter) which file ids a template row still references, and releases the rest (public
+  copies removed, soft-deleted, system audit). It covers every path that only logs today: the in-use check failing,
+  the outbox write failing, and an upload whose create never arrived. The 24 h grace keeps it away from creates in
+  flight.
+- A commit whose acknowledgement is lost is already safe: the release re-checks the database first and skips a file
+  a saved row uses.
+
 ## Constraints
 
 - TDD, RED before GREEN with literal evidence (workspace rules).
