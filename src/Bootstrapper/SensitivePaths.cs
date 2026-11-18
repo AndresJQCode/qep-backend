@@ -7,8 +7,8 @@ namespace Bootstrapper;
 /// request (<c>platform.request_failures</c> y la línea de log de <c>RequestFailureLoggingMiddleware</c>) usa
 /// <see cref="Mask"/> en vez de la ruta cruda, así un <c>accept</c> fallido no deja el token en la base ni en el log (plan
 /// mayorista fase 2, Task 7; O-7 y ruling W2). El <c>Instance</c> del ProblemDetails no cambia: vuelve a quien ya tiene el token.
-/// Ordinal y con la barra final, como <see cref="WebhookPaths"/>: <c>/API/…</c> no lo enruta el mapa, así que no hay token que
-/// tapar.
+/// Con la barra final y sin distinguir mayúsculas: el enrutamiento de ASP.NET es insensible a ellas, así que <c>/API/V1/…</c>
+/// llega al mismo endpoint y también lleva el token.
 /// </summary>
 public static class SensitivePaths
 {
@@ -31,7 +31,7 @@ public static class SensitivePaths
 
         foreach (var prefix in Prefixes)
         {
-            if (!value.StartsWith(prefix, StringComparison.Ordinal))
+            if (!value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -41,7 +41,7 @@ public static class SensitivePaths
             var segmentLength = end < 0 ? rest.Length : end;
             return segmentLength == 0
                 ? value
-                : string.Concat(prefix, Masked, rest[segmentLength..]);
+                : string.Concat(value.AsSpan(0, prefix.Length), Masked, rest[segmentLength..]);
         }
 
         return value;

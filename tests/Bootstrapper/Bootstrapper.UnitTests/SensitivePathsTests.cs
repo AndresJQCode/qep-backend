@@ -14,6 +14,7 @@ public sealed class SensitivePathsTests
     [InlineData("/api/v1/wholesale-invitations/abc_DEF-1", "/api/v1/wholesale-invitations/***")]
     [InlineData("/api/v1/wholesale-invitations/abc_DEF-1/session-with-password", "/api/v1/wholesale-invitations/***/session-with-password")]
     [InlineData("/api/v1/wholesale-invitations/abc_DEF-1/", "/api/v1/wholesale-invitations/***/")]
+    [InlineData("/API/V1/Wholesale-Invitations/abc_DEF-1/accept", "/API/V1/Wholesale-Invitations/***/accept")]
     public void TheWholesaleInvitationTokenIsMasked(string path, string expected) =>
         Assert.Equal(expected, SensitivePaths.Mask(new PathString(path)));
 
@@ -21,6 +22,7 @@ public sealed class SensitivePathsTests
     [InlineData("/api/v1/invitations/abc_DEF-1", "/api/v1/invitations/***")]
     [InlineData("/api/v1/invitations/abc_DEF-1/accept", "/api/v1/invitations/***/accept")]
     [InlineData("/api/v1/invitations/abc_DEF-1/accept-with-password", "/api/v1/invitations/***/accept-with-password")]
+    [InlineData("/api/V1/Invitations/abc_DEF-1/accept", "/api/V1/Invitations/***/accept")]
     public void TheMemberInvitationTokenIsMasked(string path, string expected) =>
         Assert.Equal(expected, SensitivePaths.Mask(new PathString(path)));
 
@@ -29,7 +31,6 @@ public sealed class SensitivePathsTests
     [InlineData("/api/v1/tenants/0193a3c5-0000-7000-8000-000000000001/invitations")]
     [InlineData("/api/v1/wholesale-invitations")]
     [InlineData("/api/v1/wholesale-invitations/")]
-    [InlineData("/API/v1/wholesale-invitations/abc")]
     [InlineData("/api/v1/wholesale-invitationsx/abc")]
     [InlineData("/")]
     public void OtherPathsAreUntouched(string path) =>
