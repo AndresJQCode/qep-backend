@@ -73,6 +73,7 @@ using Modules.Support.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using Modules.Wholesale.Application;
+using Modules.Wholesale.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
@@ -1428,6 +1429,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
+        services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
         services.AddBuyersInfrastructure(configuration);
@@ -1834,6 +1836,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
+
+        // Wholesale, spec 2026-11-17: Catalog, Companies, Tenancy, Suppliers y Customers entran por puertos del módulo.
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCatalogReader, WholesaleCatalogReader>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCompanyLookup, WholesaleCompanyLookup>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleMemberDirectory, WholesaleMemberDirectory>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
 
         // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].

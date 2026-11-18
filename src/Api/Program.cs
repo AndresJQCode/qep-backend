@@ -68,6 +68,7 @@ using Modules.Buyers.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
+using Modules.Wholesale.Infrastructure;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -526,6 +527,10 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // membresías son referencias blandas.
     await services.InitializePurchasesDatabaseAsync(
         cancellationToken);
+
+    // Wholesale (spec 2026-11-17): después de Audit. Sin FKs a otros esquemas: listas, miembros, empresas, tenants y clientes
+    // son referencias blandas.
+    await services.InitializeWholesaleDatabaseAsync(cancellationToken);
 
     // Buyers (spec 2026-11-07): esquema propio, sin FKs a otros esquemas. Escribe en platform.outbox_messages (proyección).
     await services.InitializeBuyersDatabaseAsync(cancellationToken);
