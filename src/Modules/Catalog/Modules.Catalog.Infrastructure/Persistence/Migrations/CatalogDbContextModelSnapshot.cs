@@ -534,11 +534,11 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "Type", "CityId")
                         .HasDatabaseName("IX_tax_rates_tenant_type_city");
 
-                    b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase")
+                    b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase", "AppliesTo")
                         .IsUnique()
                         .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "Name", "Percentage", "MinimumBase", "AppliesTo"), false);
 
                     b.ToTable("tax_rates", "catalog");
                 });

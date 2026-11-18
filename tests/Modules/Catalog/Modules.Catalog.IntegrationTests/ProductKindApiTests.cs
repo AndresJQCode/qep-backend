@@ -131,6 +131,35 @@ public sealed class ProductKindApiTests(SharedCatalogHost sharedHost) : IClassFi
         Assert.Contains("\"PackagingUnits\"", content, StringComparison.Ordinal);
     }
 
+    // La regla también corre en la edición: volver servicio un producto que conserva empaques responde el mismo 422.
+    [Fact]
+    public async Task TurningAProductWithPackagingIntoAServiceIs422()
+    {
+        using var client = await ClientAsync();
+        var packaging = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m }, packagingUnits = PackagingOfTwelve };
+        var created = await ReadProductAsync(await PostAsync(client, new
+        {
+            name = "Caja de velas",
+            variants = new[] { ProductBodies.Variant(null, "CV-1", packaging) }
+        }));
+        Assert.Equal("Physical", created.Kind);
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            new
+            {
+                expectedVersion = created.Version,
+                name = "Caja de velas",
+                kind = "Service",
+                variants = new[] { ProductBodies.Variant(created.Only().Id, "CV-1", packaging) }
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("catalog.product.packaging_not_allowed_for_service", content, StringComparison.Ordinal);
+    }
+
     private static object ServiceBody(string name, string code, string kind, string salesUnit) =>
         new
         {

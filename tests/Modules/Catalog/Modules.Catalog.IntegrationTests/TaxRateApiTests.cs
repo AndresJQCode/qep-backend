@@ -931,6 +931,38 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         Assert.Equal(3.5m, updated.Percentage);
     }
 
+    // Cambiar el alcance es crear otra tasa (spec 2026-11-18 §4.2): la misma Retefuente para bienes y para servicios
+    // tiene que poder existir, así que el índice único cuenta el alcance.
+    [Fact]
+    public async Task TheSameNameAndPercentageCanExistForGoodsAndServices()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var goods = await PostTaxRateAsync(
+            client, new { name = "Retefuente 4%", percentage = 4m, type = "Retefuente", appliesTo = "Goods" });
+        var services = await PostTaxRateAsync(
+            client, new { name = "Retefuente 4%", percentage = 4m, type = "Retefuente", appliesTo = "Services" });
+        var repeated = await PostTaxRateAsync(
+            client, new { name = "Retefuente 4%", percentage = 4m, type = "Retefuente", appliesTo = "Services" });
+
+        Assert.Equal(HttpStatusCode.Created, goods.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, services.StatusCode);
+        using var _ = await AssertProblemCodeAsync(repeated, "catalog.tax_rate.name_taken");
+    }
+
+    [Fact]
+    public async Task AVatRateWithAScopeIs422()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await PostTaxRateAsync(client, new { name = "IVA bienes", percentage = 19, appliesTo = "Goods" });
+
+        using var _ = await AssertProblemCodeAsync(response, "catalog.tax_rate.applies_to_invalid");
+        Assert.Empty(await ListAsync(client, TenantId));
+    }
+
     private Task<HttpResponseMessage> PostTaxRateAsync(HttpClient client, object body) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/tax-rates", body, TestContext.Current.CancellationToken);

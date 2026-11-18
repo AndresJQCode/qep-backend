@@ -445,7 +445,10 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         //
         // Owner, 2026-11-15: el nombre se puede repetir; lo que no se repite es nombre + porcentaje + base mínima.
         // NULLS NOT DISTINCT porque minimum_base es nullable: sin él, dos tasas iguales sin base no chocarían.
-        taxRate.HasIndex(value => new { value.TenantId, value.Name, value.Percentage, value.MinimumBase })
+        // Spec 2026-11-18 §4.2: el alcance también distingue. Cambiar el alcance es crear otra tasa, así que la misma
+        // Retefuente para bienes y para servicios tiene que poder convivir. El nombre del índice no cambia: es el que
+        // CatalogUnitOfWork traduce a catalog.tax_rate.name_taken.
+        taxRate.HasIndex(value => new { value.TenantId, value.Name, value.Percentage, value.MinimumBase, value.AppliesTo })
             .IsUnique()
             .AreNullsDistinct(false)
             .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");
