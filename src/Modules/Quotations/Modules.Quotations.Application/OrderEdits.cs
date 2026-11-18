@@ -421,6 +421,8 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
         {
             item.RuleFor(line => line.VariantId).NotEmpty();
             item.RuleFor(line => line.Quantity).GreaterThan(0m);
+            // D-4: IVA incluido y nunca negativo; que el pedido sea mayorista lo decide el dominio con su código.
+            item.RuleFor(line => line.UnitPrice).GreaterThanOrEqualTo(0m).When(line => line.UnitPrice is not null);
         });
         RuleFor(edits => edits.Items)
             .Must(items => !HasDuplicates(items.Select(line => line.VariantId)))

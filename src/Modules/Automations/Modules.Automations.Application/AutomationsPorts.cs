@@ -1,6 +1,7 @@
 using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
+using Modules.Automations.Domain.Flow;
 
 namespace Modules.Automations.Application;
 
@@ -410,7 +411,15 @@ public interface IAutomationMessenger
 
     Task<BotSendOutcome> SendInteractiveAsync(
         Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, InteractiveMessage message, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-18: el archivo de un Mensaje por link; con botón, un solo <c>cta_url</c> con el archivo de encabezado.</summary>
+    Task<BotSendOutcome> SendMediaAsync(
+        Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, BotMediaMessage message, CancellationToken cancellationToken);
 }
+
+/// <summary>Spec 2026-11-18: lo que sale de un <c>Effect.SendMedia</c>. <see cref="File"/> es el archivo ya resuelto por tenant: su tipo, nombre
+/// y MIME son los de Storage, nunca los del flujo. <see cref="Caption"/> y <see cref="UrlButton"/> ya vienen interpolados.</summary>
+public sealed record BotMediaMessage(ChatbotMediaFile File, string? Caption, UrlButton? UrlButton);
 
 /// <summary>El adjunto de un entrante ya copiado al almacén: <see cref="Key"/> es la llave en R2.</summary>
 public sealed record StoredAttachment(string Key, string? FileName, string MimeType, long? SizeBytes);

@@ -48,7 +48,8 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationWithholdingLookup withholdingLookup,
     ITenantClock tenantClock,
     IOrderVariantCostLookup costLookup,
-    IQuotationGeographyLookup geographyLookup)
+    IQuotationGeographyLookup geographyLookup,
+    IWholesaleLinePricing wholesalePricing)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -77,7 +78,8 @@ public sealed class PreviewOrderEditsHandler(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
         var now = clock.UtcNow;
         await OrderItemEdits.ApplyAsync(
-            order, query.Items, pricingLookup, costLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
+            order, query.Items, pricingLookup, costLookup, wholesalePricing, query.TenantId, updatedBy, now, query.IsRetail,
+            cancellationToken);
         foreach (var proofId in query.Proofs.RemoveIds)
         {
             order.RemovePaymentProof(new OrderPaymentProofId(proofId), now);

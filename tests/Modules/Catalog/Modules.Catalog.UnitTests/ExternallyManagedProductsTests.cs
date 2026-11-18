@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 
@@ -212,5 +213,19 @@ public sealed class ExternallyManagedProductsTests
         var error = Rejected(product, CommandFor(product, optionIds: []));
 
         Assert.Equal(["OptionIds"], error.FieldErrors.Keys);
+    }
+
+    // Spec 2026-11-18 §3.1: el tipo de un producto de Shopify lo administra la tienda. Mandar el
+    // mismo tipo, o no mandarlo, no es un cambio.
+    [Fact]
+    public void AShopifyProductCannotChangeKind()
+    {
+        var product = NewProduct(Product.ShopifySource);
+
+        var error = Rejected(product, CommandFor(product) with { Kind = ProductKind.Service });
+
+        Assert.Equal(["Kind"], error.FieldErrors.Keys);
+        ExternallyManagedProducts.EnsureAllowed(product, CommandFor(product) with { Kind = ProductKind.Physical });
+        ExternallyManagedProducts.EnsureAllowed(product, CommandFor(product) with { Kind = null });
     }
 }

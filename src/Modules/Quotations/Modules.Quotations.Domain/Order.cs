@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 
 namespace Modules.Quotations.Domain;
@@ -146,6 +147,28 @@ public sealed class Order
     /// pedido con el correo mal escrito no serviría, porque el dueño de ese correo lo recuperaría al iniciar sesión.</summary>
     public bool BuyerAccountSetByMember { get; private set; }
 
+    /// <summary>Mayorista fase 3: el tenant distribuidor cuya orden de compra creó el pedido. Null fuera de
+    /// <see cref="OrderSource.Wholesale"/>.</summary>
+    public Guid? BuyerTenantId { get; private set; }
+
+    /// <summary>La orden de compra (en el tenant del distribuidor) que creó el pedido. Null fuera de
+    /// <see cref="OrderSource.Wholesale"/>.</summary>
+    public Guid? PurchaseOrderId { get; private set; }
+
+    /// <summary>D-1: «Por aprobar» es una marca, no un estado. Cuándo y quién aprobó el pedido mayorista; desde ahí deja
+    /// de ser editable (D-3) y la orden del distribuidor queda confirmada con estas líneas.</summary>
+    public DateTimeOffset? WholesaleApprovedAt { get; private set; }
+
+    public MemberId? WholesaleApprovedBy { get; private set; }
+
+    /// <summary>Un pedido mayorista abierto que nadie aprobó todavía.</summary>
+    public bool IsAwaitingWholesaleApproval =>
+        Source == OrderSource.Wholesale && Status == OrderStatus.Open && WholesaleApprovedAt is null;
+
+    /// <summary>Lo anuló el comprador (la tienda o el distribuidor): es la única anulación que no deja
+    /// <see cref="CancelledBy"/>, porque no hay un miembro del tenant detrás.</summary>
+    public bool CancelledByBuyer => Status == OrderStatus.Cancelled && CancelledAt is not null && CancelledBy is null;
+
     /// <summary>El comprador sólo anula lo que nadie ha tocado (spec 2026-11-10 §3.7): abierto, con el pago en
     /// PaymentPending, sin ningún comprobante registrado (un asesor puede dejar un comprobante con el pago aún en
     /// PaymentPending), sin preparar y sin facturar.</summary>
@@ -288,7 +311,7 @@ public sealed class Order
     public IReadOnlyList<WithholdingVerdict> WithholdingVerdicts =>
         DocumentWithholding.Explain(
             [.. _withholdings.OrderBy(withholding => withholding.Position)], BillsToFinalConsumer, BillingAccount, Currency,
-            OperationCityId, Subtotal);
+            OperationCityId, WithholdingBases.From(_items.Select(item => item.Amounts)));
 
     public decimal Subtotal { get; private set; }
 
@@ -343,8 +366,13 @@ public sealed class Order
     public bool IsPrepared => FulfillmentStatus == OrderFulfillmentStatus.Prepared;
 
     /// <summary>La única guarda de edición (spec 2026-11-10 §3.6): abierto, sin preparar y sin facturar. Pagado no
-    /// congela, como en Shopify.</summary>
-    public bool IsEditable => Status == OrderStatus.Open && !IsPrepared && !IsInvoiced;
+    /// congela, como en Shopify. Un pedido mayorista aprobado tampoco (D-3): la aprobación ya le llevó sus líneas al
+    /// distribuidor y una edición posterior nunca le llegaría.</summary>
+    public bool IsEditable =>
+        Status == OrderStatus.Open
+        && !IsPrepared
+        && !IsInvoiced
+        && !(Source == OrderSource.Wholesale && WholesaleApprovedAt is not null);
 
     /// <summary>Sin tope (plan 2026-10-15, P2): hereda las notas de la cotización, que no lo tienen.</summary>
     public string? Notes { get; private set; }
@@ -426,6 +454,13 @@ public sealed class Order
 
     public IReadOnlyCollection<OrderItem> Items => _items;
 
+    /// <summary>
+    /// Si el pedido vende algo que se despacha (spec 2026-11-18 §5), con la misma regla que
+    /// <see cref="Quotation.RequiresShipping"/>. Con false la pantalla oculta el envío y dice «Marcar como prestado»
+    /// en vez de «Preparar»; el dominio no cambia nada: <c>Prepare</c> y el resto siguen igual.
+    /// </summary>
+    public bool RequiresShipping => _items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical);
+
     public IReadOnlyCollection<OrderParty> Parties => _parties;
 
     public OrderParty? Billing => _parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);
@@ -493,10 +528,12 @@ public sealed class Order
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
-            // La tasa del producto y la cuenta (con su IVA) se copian tal cual: no se relee la empresa (R2).
+            // La tasa del producto y la cuenta (con su IVA) se copian tal cual: no se relee la empresa (R2). El tipo y la
+            // unidad, también: son los de la línea de la cotización, no los que el producto tenga hoy (spec 2026-11-18 §3.4).
             var copy = OrderItem.Create(
                 OrderItemId.New(), order.Id, item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage,
-                item.ProductTaxRate, order.ChargesVat, order._items.Count + 1, order.Currency, order.PriceRounding, occurredAt);
+                item.ProductTaxRate, order.ChargesVat, order._items.Count + 1, order.Currency, order.PriceRounding,
+                item.Kind, item.SalesUnit, occurredAt);
             copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, order.PriceRounding, occurredAt);
             if (item.ProductCode is not null)
             {
@@ -595,7 +632,7 @@ public sealed class Order
         OrderLineCosts costs,
         string? buyerNotes = null)
     {
-        if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store)
+        if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store or OrderSource.Wholesale)
         {
             throw new QuotationsDomainException(
                 ExternalOrderErrors.SourceInvalid,
@@ -657,6 +694,47 @@ public sealed class Order
         return order;
     }
 
+    /// <summary>La clave de idempotencia del envío de una orden de compra vinculada (D-8): un reintento encuentra el pedido
+    /// que ya existe en vez de crear otro. Lleva al comprador (rulings X1 y X8a): el id de la orden de otro comprador da otra
+    /// clave y nunca encuentra este pedido.</summary>
+    public static string WholesaleExternalKey(Guid buyerTenantId, Guid purchaseOrderId) =>
+        $"purchase-order:{buyerTenantId:D}:{purchaseOrderId:D}";
+
+    /// <summary>
+    /// El pedido que crea la orden de compra de un distribuidor vinculado (mayorista fase 3). Calca
+    /// <see cref="CreateFromStore"/>: pago pendiente, sin comprobantes ni envío, la nota del comprador en
+    /// <see cref="BuyerNotes"/>. La referencia externa es el número de la orden (D-7) y cada línea guarda la línea de la
+    /// orden de la que salió. Nace por aprobar (D-1).
+    /// </summary>
+    public static Order CreateFromWholesale(
+        OrderId id,
+        Guid tenantId,
+        string orderNumber,
+        OrderHeader header,
+        QuotationParties parties,
+        QuotationBillingAccount billingAccount,
+        IReadOnlyCollection<OrderLineInput> lines,
+        string? buyerNotes,
+        MemberId createdBy,
+        DateTimeOffset occurredAt,
+        DateOnly orderDate,
+        Guid buyerTenantId,
+        Guid purchaseOrderId,
+        string purchaseOrderNumber)
+    {
+        ArgumentNullException.ThrowIfNull(billingAccount);
+        ArgumentException.ThrowIfNullOrWhiteSpace(purchaseOrderNumber);
+        var order = Build(
+            id, tenantId, orderNumber, OrderSource.Wholesale, purchaseOrderNumber, header, parties, billingAccount,
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, buyerNotes, createdBy, [], occurredAt,
+            orderDate, OrderLineCosts.None);
+        order.ExternalKey = NormalizeExternalKey(WholesaleExternalKey(buyerTenantId, purchaseOrderId));
+        order.BuyerNotes = NormalizeNotes(buyerNotes);
+        order.BuyerTenantId = buyerTenantId;
+        order.PurchaseOrderId = purchaseOrderId;
+        return order;
+    }
+
     /// <summary>
     /// El cálculo de la tienda para el carrito (spec de la tienda §5.2): los totales con el mismo motor que un
     /// pedido, pero sin cliente, sin partes, con los indicadores del cliente apagados y sin cuenta de cobro,
@@ -710,9 +788,10 @@ public sealed class Order
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var line in lines)
         {
-            order.AddItemCore(
+            var item = order.AddItemCore(
                 OrderItemId.New(), line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
-                line.TaxPercentage, line.DiscountOrigin, line.Product, occurredAt);
+                line.TaxPercentage, line.DiscountOrigin, line.Product, line.Kind, line.SalesUnit, occurredAt);
+            item.LinkPurchaseOrderLine(line.SourcePurchaseOrderLineId);
         }
 
         order.EnsureCreatable();
@@ -1046,7 +1125,10 @@ public sealed class Order
         int taxPercentage,
         OrderLineCosts costs,
         MemberId updatedBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        // Los del producto en el catálogo al agregar la línea (spec 2026-11-18 §3.4); default = el valor de hoy.
+        ProductKind kind = ProductKind.Physical,
+        SalesUnit salesUnit = SalesUnit.Unit)
     {
         ArgumentNullException.ThrowIfNull(costs);
         EnsureEditable("Products can only be added while the order is editable.");
@@ -1056,7 +1138,7 @@ public sealed class Order
         var unitCost = sold ? costs.For(variantId) : null;
         var item = AddItemCore(
             itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            QuotationDiscountOrigin.Own, null, occurredAt);
+            QuotationDiscountOrigin.Own, null, kind, salesUnit, occurredAt);
         if (sold)
         {
             item.FreezeCost(unitCost, occurredAt);
@@ -1090,6 +1172,8 @@ public sealed class Order
         int taxPercentage,
         QuotationDiscountOrigin origin,
         QuotationProductSnapshot? product,
+        ProductKind kind,
+        SalesUnit salesUnit,
         DateTimeOffset occurredAt)
     {
         // Una línea por variante (spec 2026-10-20 §4): dos tallas del mismo producto son dos líneas. El
@@ -1104,7 +1188,7 @@ public sealed class Order
         // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = OrderItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
-            _items.Count + 1, Currency, PriceRounding, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, kind, salesUnit, occurredAt);
         if (origin != QuotationDiscountOrigin.Own)
         {
             item.ApplyDiscount(discountPercentage, origin, Currency, PriceRounding, occurredAt);
@@ -1130,6 +1214,21 @@ public sealed class Order
         EnsureEditable("Products can only be edited while the order is editable.");
         FindItem(itemId).UpdateQuantity(
             quantity, discountPercentage, taxPercentage, ChargesVat, Currency, PriceRounding, occurredAt);
+        Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>D-4: el precio por línea sólo se edita en un pedido mayorista, mientras sea editable. Cantidad, descuento y
+    /// tasa no cambian; el precio pasa por la regla de redondeo del pedido.</summary>
+    public void ChangeItemUnitPrice(OrderItemId itemId, decimal unitPrice, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        if (Source != OrderSource.Wholesale)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.UnitPriceNotEditable, "Only a wholesale order lets you change a line price.");
+        }
+
+        EnsureEditable("Prices can only be changed while the order is editable.");
+        FindItem(itemId).ChangeUnitPrice(unitPrice, ChargesVat, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -1359,6 +1458,12 @@ public sealed class Order
             throw new QuotationsDomainException(OrderStateErrors.AlreadyArchived, "The order is already archived.");
         }
 
+        if (IsAwaitingWholesaleApproval)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.AwaitingApproval, "A wholesale order awaiting approval cannot be archived.");
+        }
+
         Status = OrderStatus.Archived;
         ArchivedBy = archivedBy;
         ArchivedAt = occurredAt;
@@ -1384,7 +1489,8 @@ public sealed class Order
     /// preparado; si no, devuelve <c>false</c> sin tocar nada.</summary>
     public bool ArchiveIfSettled(MemberId? archivedBy, DateTimeOffset occurredAt)
     {
-        if (Status != OrderStatus.Open || PaymentStatus != OrderPaymentStatus.FullPaymentReceived || !IsPrepared)
+        if (Status != OrderStatus.Open || PaymentStatus != OrderPaymentStatus.FullPaymentReceived || !IsPrepared
+            || IsAwaitingWholesaleApproval)
         {
             return false;
         }
@@ -1472,17 +1578,69 @@ public sealed class Order
 
     public void CancelByBuyer(Guid buyerAccountId, DateTimeOffset occurredAt)
     {
-        if (BuyerAccountId != buyerAccountId || !CanBeCancelledByBuyer)
+        EnsureCancellableByBuyer(BuyerAccountId == buyerAccountId && CanBeCancelledByBuyer);
+        ApplyBuyerCancellation(BuyerOrderErrors.CancellationReason, occurredAt);
+    }
+
+    /// <summary>
+    /// D-12: el distribuidor anula su orden vinculada y, con ella, el pedido, mientras el mayorista no lo apruebe. Misma
+    /// convención que <see cref="CancelByBuyer"/> (pre-flight X4): sin miembro detrás (<see cref="CancelledBy"/> null, que
+    /// es lo que lee <see cref="CancelledByBuyer"/>), la misma guarda <see cref="CanBeCancelledByBuyer"/> y el mismo
+    /// código. Devuelve <c>false</c> sin cambiar nada si ya estaba anulado (un reintento); los ids se comprueban antes,
+    /// para que un comprador ajeno no aprenda nada del pedido.
+    /// </summary>
+    public bool CancelByWholesaleBuyer(Guid buyerTenantId, Guid purchaseOrderId, string reason, DateTimeOffset occurredAt)
+    {
+        EnsureCancellableByBuyer(
+            Source == OrderSource.Wholesale && BuyerTenantId == buyerTenantId && PurchaseOrderId == purchaseOrderId);
+        if (Status == OrderStatus.Cancelled)
+        {
+            return false;
+        }
+
+        EnsureCancellableByBuyer(WholesaleApprovedAt is null && CanBeCancelledByBuyer);
+        ApplyBuyerCancellation(NormalizeCancellationReason(reason), occurredAt);
+        return true;
+    }
+
+    /// <summary>D-1: el mayorista aprueba el pedido tal como quedó; desde ahí no se edita (D-3).</summary>
+    public void ApproveWholesale(MemberId approvedBy, DateTimeOffset occurredAt)
+    {
+        if (Source != OrderSource.Wholesale)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.SourceInvalid, "Only a wholesale order is approved.");
+        }
+
+        EnsureOpen("Only an open order can be approved.");
+        if (WholesaleApprovedAt is not null)
+        {
+            throw new QuotationsDomainException(
+                WholesaleOrderErrors.AlreadyApproved, "The wholesale order is already approved.");
+        }
+
+        WholesaleApprovedAt = occurredAt;
+        WholesaleApprovedBy = approvedBy;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    private static void EnsureCancellableByBuyer(bool cancellable)
+    {
+        if (!cancellable)
         {
             throw new QuotationsDomainException(
                 BuyerOrderErrors.NotCancellableByBuyer,
                 "The order cannot be cancelled by this buyer.");
         }
+    }
 
+    private void ApplyBuyerCancellation(string reason, DateTimeOffset occurredAt)
+    {
         Status = OrderStatus.Cancelled;
         CancelledBy = null;
         CancelledAt = occurredAt;
-        CancellationReason = BuyerOrderErrors.CancellationReason;
+        CancellationReason = reason;
         UpdatedAt = occurredAt;
         Version++;
     }
@@ -2065,9 +2223,11 @@ public sealed class Order
         }
 
         return lines
+            // Las líneas de una plataforma externa nacen físicas y por unidad (spec 2026-11-18 §3.4).
             .Select((line, index) => OrderItem.Create(
                 OrderItemId.New(), Id, line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
-                line.TaxPercentage, ChargesVat, index + 1, Currency, PriceRounding, occurredAt))
+                line.TaxPercentage, ChargesVat, index + 1, Currency, PriceRounding, ProductKind.Physical, SalesUnit.Unit,
+                occurredAt))
             .ToArray();
     }
 

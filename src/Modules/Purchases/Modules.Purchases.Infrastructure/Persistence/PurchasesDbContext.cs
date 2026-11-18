@@ -28,6 +28,12 @@ public sealed class PurchasesDbContext(DbContextOptions<PurchasesDbContext> opti
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    // Mayorista fase 3: el inbox del consumidor de los eventos del mayorista y la proyección de sólo lectura del outbox de
+    // plataforma (ExcludeFromMigrations), como Pipeline.
+    internal DbSet<PurchasesInboxMessage> Inbox => Set<PurchasesInboxMessage>();
+
+    internal DbSet<PurchasesOutboxRecord> Outbox => Set<PurchasesOutboxRecord>();
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         StampLineOrdinals();
@@ -46,6 +52,8 @@ public sealed class PurchasesDbContext(DbContextOptions<PurchasesDbContext> opti
         ConfigureOrder(modelBuilder);
         ConfigureLine(modelBuilder);
         ConfigureCounter(modelBuilder);
+        ConfigureInbox(modelBuilder);
+        ConfigureOutboxProjection(modelBuilder);
     }
 
     // Las líneas de una orden van en el orden del cuerpo: el índice en la lista del agregado es la posición que se guarda.
@@ -80,6 +88,11 @@ public sealed class PurchasesDbContext(DbContextOptions<PurchasesDbContext> opti
         order.Property(value => value.TenantId).HasColumnName("tenant_id");
         order.Property(value => value.Number).HasColumnName("number").HasMaxLength(20);
         order.Property(value => value.SupplierId).HasColumnName("supplier_id");
+        // Mayorista fase 3: el modo vinculado (D-10) y el pedido que la orden creó en el mayorista. Referencias blandas a otro
+        // tenant: sin FK.
+        order.Property(value => value.SupplierTenantId).HasColumnName("supplier_tenant_id");
+        order.Property(value => value.LinkedOrderId).HasColumnName("linked_order_id");
+        order.Property(value => value.LinkedOrderNumber).HasColumnName("linked_order_number").HasMaxLength(64);
         order.Property(value => value.Currency).HasColumnName("currency").HasColumnType("char(3)");
         order.Property(value => value.Notes).HasColumnName("notes").HasMaxLength(PurchaseOrder.NotesMaxLength);
         order.Property(value => value.Status)
@@ -104,6 +117,10 @@ public sealed class PurchasesDbContext(DbContextOptions<PurchasesDbContext> opti
             .HasDatabaseName("IX_purchase_orders_tenant_created");
         order.HasIndex(value => new { value.TenantId, value.Status }).HasDatabaseName("IX_purchase_orders_tenant_status");
         order.HasIndex(value => new { value.TenantId, value.SupplierId }).HasDatabaseName("IX_purchase_orders_tenant_supplier");
+        // Mayorista fase 3: la orden de un pedido del mayorista. Parcial: las órdenes externas y los borradores no lo tienen.
+        order.HasIndex(value => new { value.TenantId, value.LinkedOrderId })
+            .HasFilter("linked_order_id IS NOT NULL")
+            .HasDatabaseName("IX_purchase_orders_tenant_linked_order");
 
         order.HasMany(value => value.Lines)
             .WithOne()
@@ -150,7 +167,39 @@ public sealed class PurchasesDbContext(DbContextOptions<PurchasesDbContext> opti
         line.Property(value => value.ConfirmedQuantity).HasColumnName("confirmed_quantity").HasPrecision(10, 2);
         line.Property(value => value.ConfirmedUnitCost).HasColumnName("confirmed_unit_cost").HasPrecision(14, 2);
         line.Property(value => value.TaxRatePercent).HasColumnName("tax_rate_percent").HasPrecision(5, 2);
+        // Mayorista fase 3: la variante del mayorista y la foto de su lista (D-9), IVA incluido. VariantId y Quantity pasan a
+        // nulables (una línea vinculada no tiene variante propia hasta confirmar; una agregada por el mayorista no se pidió).
+        line.Property(value => value.SupplierVariantId).HasColumnName("supplier_variant_id");
+        line.Property(value => value.ListBasePrice).HasColumnName("list_base_price").HasPrecision(14, 2);
+        line.Property(value => value.ListDiscountPercent).HasColumnName("list_discount_percent").HasPrecision(5, 2);
+        line.Property(value => value.ListUnitPrice).HasColumnName("list_unit_price").HasPrecision(14, 2);
+        // Las filas que ya existen quedan en false: la migración agrega la columna con ese default.
+        line.Property(value => value.CreatedInCatalog).HasColumnName("created_in_catalog");
         line.HasIndex(OrderIdColumn, LineOrdinal).HasDatabaseName("IX_purchase_order_lines_order_ordinal");
+    }
+
+    private static void ConfigureInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<PurchasesInboxMessage>();
+        inbox.ToTable("inbox_messages", Schema);
+        inbox.HasKey(value => new { value.Consumer, value.MessageId });
+        inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(200);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id");
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        // Los nombres van a mano porque PurchasesInboxClaims los escribe en SQL crudo.
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
+    }
+
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<PurchasesOutboxRecord>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name");
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
     }
 
     private static void ConfigureCounter(ModelBuilder modelBuilder)

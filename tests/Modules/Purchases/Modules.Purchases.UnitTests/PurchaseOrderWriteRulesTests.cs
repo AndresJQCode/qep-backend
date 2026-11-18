@@ -197,6 +197,16 @@ public sealed class PurchaseOrderWriteRulesTests
         Assert.True(validator.Validate(List("")).IsValid);
     }
 
+    // D-11: con proveedor vinculado el costo no viaja. Que falte con un proveedor externo lo decide el armado de líneas, que sí
+    // sabe de qué proveedor se trata (LinkedPurchaseOrderHandlersTests.AnExternalLineWithoutUnitCostFailsOnTheField).
+    [Fact]
+    public void AnOmittedUnitCostPassesTheValidator()
+    {
+        var result = Validate(Create([new PurchaseOrderLineInput(Guid.CreateVersion7(), 1m, null)]));
+
+        Assert.True(result.IsValid, string.Join(", ", result.Errors.Select(error => error.PropertyName)));
+    }
+
     private static ValidationResult Validate(CreatePurchaseOrderCommand command) =>
         new CreatePurchaseOrderValidator().Validate(command);
 

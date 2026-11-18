@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Domain;
 
@@ -73,6 +75,16 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.Property(value => value.ExternalSource)
             .HasColumnName("external_source")
             .HasMaxLength(Product.ExternalSourceMaxLength);
+        // Spec 2026-11-18 §3.1-§3.2: por nombre, text not null. El default de la base es el valor de
+        // todo producto de antes, y coincide con el default CLR: no hace falta sentinel.
+        product.Property(value => value.Kind)
+            .HasColumnName("kind")
+            .HasConversion<string>()
+            .HasDefaultValue(ProductKind.Physical);
+        product.Property(value => value.SalesUnit)
+            .HasColumnName("sales_unit")
+            .HasConversion<string>()
+            .HasDefaultValue(SalesUnit.Unit);
         // El predicado de las lecturas de la tienda: sólo los publicados y activos. Incluye el nombre
         // porque la tienda ordena por él; con sólo tenant_id EF lo fundiría con IX_products_tenant.
         product.HasIndex(value => new { value.TenantId, value.Name })
@@ -409,6 +421,12 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // Sin FK a geography.cities a propósito: Catalog migra antes que Geography (spec ReteICA por empresa, A9). Que la
         // ciudad exista lo revisa CreateTaxRateHandler.
         taxRate.Property(value => value.CityId).HasColumnName("city_id");
+        // Spec 2026-11-18 §4.2: por nombre, text not null. El default es el de toda tasa de antes y coincide con el
+        // default CLR, así que no hace falta sentinel.
+        taxRate.Property(value => value.AppliesTo)
+            .HasColumnName("applies_to")
+            .HasConversion<string>()
+            .HasDefaultValue(WithholdingScope.All);
         taxRate.Ignore(value => value.Behavior);
         taxRate.Ignore(value => value.Scope);
         taxRate.Ignore(value => value.Withholds);
@@ -427,7 +445,10 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         //
         // Owner, 2026-11-15: el nombre se puede repetir; lo que no se repite es nombre + porcentaje + base mínima.
         // NULLS NOT DISTINCT porque minimum_base es nullable: sin él, dos tasas iguales sin base no chocarían.
-        taxRate.HasIndex(value => new { value.TenantId, value.Name, value.Percentage, value.MinimumBase })
+        // Spec 2026-11-18 §4.2: el alcance también distingue. Cambiar el alcance es crear otra tasa, así que la misma
+        // Retefuente para bienes y para servicios tiene que poder convivir. El nombre del índice no cambia: es el que
+        // CatalogUnitOfWork traduce a catalog.tax_rate.name_taken.
+        taxRate.HasIndex(value => new { value.TenantId, value.Name, value.Percentage, value.MinimumBase, value.AppliesTo })
             .IsUnique()
             .AreNullsDistinct(false)
             .HasDatabaseName("IX_tax_rates_tenant_name_percentage_base");

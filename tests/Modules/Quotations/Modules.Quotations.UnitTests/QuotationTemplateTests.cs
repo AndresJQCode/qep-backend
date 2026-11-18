@@ -421,6 +421,35 @@ public sealed partial class QuotationTemplateTests
     public async Task TheTemplateCompilesFractionalQuantitiesWithTheColombianDefaults() =>
         await AssertCompilesAsync(WithFractionalQuantities(Complete()));
 
+    // Spec 2026-11-18 §6: la unidad va junto a la cantidad como texto plano. Con texto que en Typst sería markup, sale literal.
+    [Fact]
+    public async Task TheTemplateCompilesWithUnits() =>
+        await AssertCompilesAsync(Complete() with
+        {
+            Items =
+            [
+                new QuotationPdfLine("Soporte técnico", 2m, 80000m, 0m, 80000m, 160000m, "horas"),
+                new QuotationPdfLine("Tornillo", 1m, 1500m, 0m, 1500m, 1500m, "unidad"),
+                new QuotationPdfLine("Raro", 1m, 1000m, 0m, 1000m, 1000m, "#pagebreak() $x$ [y]"),
+            ],
+        });
+
+    [Fact]
+    public async Task TheTemplatePrintsTheUnitNextToTheQuantity()
+    {
+        var withUnits = await RenderedTextAsync(Complete() with
+        {
+            Items = [new QuotationPdfLine("Soporte técnico", 2m, 80000m, 0m, 80000m, 160000m, "horas")],
+        });
+        var withoutUnits = await RenderedTextAsync(Complete() with
+        {
+            Items = [new QuotationPdfLine("Soporte técnico", 2m, 80000m, 0m, 80000m, 160000m)],
+        });
+
+        Assert.Contains("horas", withUnits, StringComparison.Ordinal);
+        Assert.DoesNotContain("horas", withoutUnits, StringComparison.Ordinal);
+    }
+
     private static QuotationPdfDocument WithFractionalQuantities(QuotationPdfDocument document) =>
         document with
         {

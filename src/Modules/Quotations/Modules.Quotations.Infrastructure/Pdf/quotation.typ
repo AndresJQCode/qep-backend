@@ -404,7 +404,10 @@
       } else {
         celdas.push([#importe(item.unitPrice)])
       }
-      celdas.push([#cantidad(item.quantity)])
+      // La unidad («2 horas», spec 2026-11-18 §6) llega en español y con el plural resuelto, como texto: se concatena a
+      // la cadena de la cantidad y se inserta como cadena, nunca como markup. Sin unidad (todas las líneas en «unidad»)
+      // la celda es la de antes.
+      celdas.push([#if item.unit == none { cantidad(item.quantity) } else { cantidad(item.quantity) + " " + item.unit }])
       celdas.push([#importe(item.lineTotal)])
       celdas
     })

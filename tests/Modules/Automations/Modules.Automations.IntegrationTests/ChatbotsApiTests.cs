@@ -564,6 +564,50 @@ public sealed partial class ChatbotsApiTests
         Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_versions"));
     }
 
+    // Spec 2026-11-18 «Editor response» (BFF): el editor trae los archivos del borrador con su URL pública; un id que no resuelve no viaja
+    // y bloquea publicar.
+    [Fact]
+    public async Task TheEditorListsTheDraftsMediaFiles()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var session = await factory.Media.OpenUploadAsync(setup.Tenant.TenantId, "catalogo.jpg", "image/jpeg", 2048, 25_000_000, Ct);
+        await factory.Media.CompleteAsync(setup.Tenant.TenantId, session.FileId, Ct);
+        var missing = Guid.CreateVersion7();
+        var editor = await CreateAsync(setup);
+
+        var saved = await SaveDraftAsync(setup, editor, MediaFlow(session.FileId, missing));
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+
+        var file = Assert.Single(reloaded.MediaFiles);
+        Assert.Equal(
+            (session.FileId, "image", "catalogo.jpg", "image/jpeg", 2048L, $"https://public.test/{session.FileId}/catalogo.jpg"),
+            (file.FileId, file.Kind, file.FileName, file.ContentType, file.SizeBytes, file.Url));
+        Assert.Equal(["m2"], reloaded.Issues.Where(issue => issue.Code == FlowIssueCodes.MessageMediaMissing).Select(issue => issue.NodeId));
+
+        var response = await ActAsync(setup.Client, setup, editor.Chatbot.Id, "publish", reloaded.Chatbot.Version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("automations.chatbot.invalid", problem.RootElement.GetProperty("code").GetString());
+        var flow = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.Contains(flow, item => item.StartsWith($"{FlowIssueCodes.MessageMediaMissing}: ", StringComparison.Ordinal));
+    }
+
+    private static string MediaFlow(Guid stored, Guid missing) =>
+        $$"""
+        { "schema": 1, "start": { "firstNodeId": "m1" }, "variables": [], "nodes": [
+          { "id": "m1", "kind": "message", "title": "Catálogo", "text": "", "urlButton": null,
+            "media": { "kind": "image", "fileId": "{{stored}}" }, "outputs": { "next": "m2" } },
+          { "id": "m2", "kind": "message", "title": "Folleto", "text": "", "urlButton": null,
+            "media": { "kind": "document", "fileId": "{{missing}}" }, "outputs": { "next": "h1" } },
+          { "id": "h1", "kind": "handoff", "title": "Asesor", "text": null, "outputs": {} } ] }
+        """;
+
     // Spec 2026-10-25 D-5: el editor trae la regla y los miembros que pueden responder (los de «Transferir»), no los que no.
     [Fact]
     public async Task TheEditorBringsTheRuleAndTheMembersWhoCanReply()

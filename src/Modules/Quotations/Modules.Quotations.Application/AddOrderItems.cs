@@ -6,7 +6,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <remarks>Por variante (spec 2026-10-20 §4): <c>VariantId</c> es la clave de la línea.</remarks>
-public sealed record OrderItemAddition(Guid VariantId, decimal Quantity);
+/// <summary>Una línea deseada. <c>UnitPrice</c> (IVA incluido) sólo vale en un pedido mayorista sin aprobar (D-4); ausente, la
+/// línea conserva su precio o, si es nueva, toma el de lista (D-5).</summary>
+public sealed record OrderItemAddition(Guid VariantId, decimal Quantity, decimal? UnitPrice = null);
 
 /// <summary>Suma productos a un pedido pendiente (a pedido, 2026-09). Desde el spec 2026-10-15 §4.5
 /// las líneas son del pedido: la cotización de origen no se toca.</summary>
@@ -44,7 +46,8 @@ public sealed class AddOrderItemsHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<AddOrderItemsCommand> validator,
-    IOrderVariantCostLookup costLookup)
+    IOrderVariantCostLookup costLookup,
+    IWholesaleLinePricing wholesalePricing)
     : ICommandHandler<AddOrderItemsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -77,6 +80,10 @@ public sealed class AddOrderItemsHandler(
         // Un pedido pagado sigue editable y lo que entra ya cuenta como vendido: congela al llegar (§4.3).
         var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
             costLookup, command.TenantId, order, command.ToAdd.Select(addition => addition.VariantId), cancellationToken);
+        // D-5: en un pedido mayorista la línea nueva toma el precio de lista del distribuidor, sin escala; sin lista, el base.
+        var listPrices = await OrderItemEdits.WholesaleListPricesAsync(
+            wholesalePricing, order, command.TenantId, command.ToAdd.Select(addition => addition.VariantId).ToArray(),
+            cancellationToken);
         foreach (var addition in command.ToAdd)
         {
             // Misma resolución que el cotizador: precio en la moneda del pedido, descuento por
@@ -84,10 +91,12 @@ public sealed class AddOrderItemsHandler(
             var pricing = QuotationProductPricingResolver.Resolve(
                 products.GetValueOrDefault(addition.VariantId), command.TenantId, addition.VariantId,
                 addition.Quantity, order.Currency, order.IsRetail);
+            var wholesale = order.Source == OrderSource.Wholesale;
             order.AddItem(
                 OrderItemId.New(), addition.VariantId, pricing.ProductId, addition.Quantity,
-                pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage, costs, updatedBy, now);
+                wholesale ? listPrices.GetValueOrDefault(addition.VariantId, pricing.Pricing.UnitPrice) : pricing.Pricing.UnitPrice,
+                wholesale ? 0m : pricing.Pricing.DiscountPercentage,
+                pricing.Pricing.TaxPercentage, costs, updatedBy, now, pricing.Kind, pricing.SalesUnit);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                 OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.ItemsChanged,
                 updatedBy, OrderChangeSummary.ItemAdded(pricing.Name, addition.Quantity, format), now));

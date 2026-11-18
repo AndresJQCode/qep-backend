@@ -73,6 +73,7 @@ using Modules.Support.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using Modules.Wholesale.Application;
+using Modules.Wholesale.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
@@ -510,6 +511,61 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
+        // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado y el aplicador de sus eventos (lo llama el
+        // procesador del inbox de Compras en su scope por mensaje; los adaptadores de los puertos mayoristas van más abajo).
+        services.AddScoped<
+            IQueryHandler<Modules.Purchases.Application.ListSupplierCatalogQuery, Modules.Purchases.Application.SupplierCatalogPageDto>,
+            Modules.Purchases.Application.ListSupplierCatalogHandler>();
+        services.AddScoped<Modules.Purchases.Application.WholesaleOrderEventApplier>();
+
+        // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListPriceListsQuery, Modules.Wholesale.Application.PriceListsResponse>,
+            Modules.Wholesale.Application.ListPriceListsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetPriceListQuery, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.GetPriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.CreatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.CreatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.UpdatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
+            Modules.Wholesale.Application.UpdatePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.DeletePriceListCommand, bool>,
+            Modules.Wholesale.Application.DeletePriceListHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.PreviewPriceListCommand, Modules.Wholesale.Application.PriceListPreviewDto>,
+            Modules.Wholesale.Application.PreviewPriceListHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListWholesaleCategoriesQuery, Modules.Wholesale.Application.WholesaleCategoriesResponse>,
+            Modules.Wholesale.Application.ListWholesaleCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListDistributorsQuery, Modules.Wholesale.Application.DistributorsResponse>,
+            Modules.Wholesale.Application.ListDistributorsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetDistributorQuery, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.GetDistributorHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.GetDistributorOptionsQuery, Modules.Wholesale.Application.DistributorOptionsDto>,
+            Modules.Wholesale.Application.GetDistributorOptionsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.InviteDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.InviteDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.UpdateDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.UpdateDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.TransitionDistributorCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.TransitionDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.DeleteDistributorCommand, bool>,
+            Modules.Wholesale.Application.DeleteDistributorHandler>();
+        services.AddScoped<Modules.Wholesale.Application.DistributorComposer>();
+        // La invitación vista desde el link: sin IExecutionContext, el tenant del mayorista sale de la invitación.
+        services.AddScoped<Modules.Wholesale.Application.IDistributorInvitationService, Modules.Wholesale.Application.DistributorInvitationService>();
+        // Fase 3: la única puerta entre tenants al catálogo del mayorista (relación, visibilidad y precio de lista).
+        services.AddScoped<Modules.Wholesale.Application.WholesaleOffers>();
 
         // Support, spec 2026-11-14. A mano y con ruta completa, como Loans: un handler olvidado compila, mapea su endpoint y
         // responde 500.
@@ -971,6 +1027,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<MarkOrderPaidCommand, OrderDto>, MarkOrderPaidHandler>();
         services.AddScoped<ICommandHandler<UnmarkOrderPaidCommand, OrderDto>, UnmarkOrderPaidHandler>();
         services.AddScoped<ICommandHandler<PrepareOrderCommand, OrderDto>, PrepareOrderHandler>();
+        // Mayorista fase 3 (D-1, D-2): aprobar el pedido de un distribuidor.
+        services.AddScoped<ICommandHandler<ApproveWholesaleOrderCommand, OrderDto>, ApproveWholesaleOrderHandler>();
         services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
         services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
         services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
@@ -1030,6 +1088,10 @@ public static class QepServiceCollectionExtensions
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
+        // Mayorista fase 3: el pedido de la orden de compra vinculada (lo usa el adaptador de Compras) y el precio de lista del
+        // distribuidor para la línea que el mayorista agrega al editar (D-5).
+        services.AddScoped<IWholesaleOrderGateway, WholesaleOrderGateway>();
+        services.AddScoped<IWholesaleLinePricing, QuotationsWholesaleLinePricing>();
         // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
         services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
         // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de
@@ -1267,6 +1329,9 @@ public static class QepServiceCollectionExtensions
         // Soporte fase 4b: la plantilla de la encuesta, con los tres botones fijos.
         services.AddScoped<ICommandHandler<ProvisionSupportSurveyTemplateCommand, ManagedTemplateDto>, ProvisionSupportSurveyTemplateHandler>();
         services.AddScoped<IQueryHandler<GetSupportSurveyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportSurveyTemplateDraftHandler>();
+        // Mayorista: la plantilla del aviso de invitación de distribuidor, calcada de la «Aviso de respuesta».
+        services.AddScoped<ICommandHandler<ProvisionWholesaleInvitationNoticeTemplateCommand, ManagedTemplateDto>, ProvisionWholesaleInvitationNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetWholesaleInvitationNoticeTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1343,6 +1408,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
         services.AddScoped<IQueryHandler<ExportChatbotQuery, ChatbotExportDto>, ExportChatbotHandler>();
         services.AddScoped<ICommandHandler<ImportChatbotCommand, ChatbotEditorDto>, ImportChatbotHandler>();
+        // Automations (spec 2026-11-18): subir y completar el archivo de un bloque «Mensaje».
+        services.AddScoped<ICommandHandler<CreateChatbotMediaSessionCommand, ChatbotMediaSessionDto>, CreateChatbotMediaSessionHandler>();
+        services.AddScoped<ICommandHandler<CompleteChatbotMediaCommand, ChatbotMediaFileDto>, CompleteChatbotMediaHandler>();
         // Automations (spec 2026-10-21 D-C8): el catálogo de plantillas, guardar un chatbot como plantilla y borrarla.
         services.AddScoped<IQueryHandler<ListChatbotTemplatesQuery, TemplateCatalogDto>, ListChatbotTemplatesHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotAsTemplateCommand, TemplateDto>, SaveChatbotAsTemplateHandler>();
@@ -1360,6 +1428,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
@@ -1380,6 +1449,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
+        services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
         services.AddBuyersInfrastructure(configuration);
@@ -1746,6 +1816,12 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-17: la imagen del encabezado de plantilla sobre Storage, con el mismo criterio que el logo: sin pasar por los
         // handlers de Storage ni por sus permisos (la autoriza messaging.template.manage).
         services.AddScoped<IMessagingTemplateImageStore, MessagingTemplateImageStore>();
+        // Spec 2026-11-18: el archivo de un bloque «Mensaje» de chatbot. La política es la columna WhatsApp de Mensajería, el archivo vive en
+        // Storage (dueño ChatbotMedia, sin pasar por sus handlers ni sus permisos: lo autoriza automations.chatbot.manage) y Storage lo
+        // revisa y comprime con el sniffer y el compresor de Mensajería.
+        services.AddScoped<IChatbotMediaPolicy, ChatbotMediaPolicy>();
+        services.AddScoped<IChatbotMediaStore, ChatbotMediaStore>();
+        services.AddScoped<IChatbotMediaProcessing, ChatbotMediaProcessing>();
         // Y al revés, para el barrido diario de Storage: qué imágenes de encabezado usa todavía una plantilla.
         services.AddScoped<ITemplateImageReferences, TemplateImageReferences>();
 
@@ -1786,6 +1862,30 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
+        // Mayorista fase 3: el catálogo del mayorista, su motor de pedidos (por un scope propio por llamada) y el catálogo propio
+        // para la confirmación, enrolado en la transacción del inbox de Compras.
+        services.AddScoped<Modules.Purchases.Application.IWholesaleCatalog, PurchasesWholesaleCatalog>();
+        services.AddScoped<Modules.Purchases.Application.IWholesaleOrderIntake, PurchasesWholesaleOrderIntake>();
+        services.AddScoped<IWholesaleIntakeDirectory, WholesaleIntakeDirectory>();
+        services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogWriter, PurchasesCatalogWriter>();
+        // Y la adenda del contrato: el estado de la relación con el mayorista en la lista y el detalle de proveedores.
+        services.AddScoped<ISupplierRelationshipLookup, SuppliersWholesaleRelationshipLookup>();
+
+        // Wholesale, spec 2026-11-17: Catalog, Companies, Tenancy, Suppliers y Customers entran por puertos del módulo.
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCatalogReader, WholesaleCatalogReader>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCompanyLookup, WholesaleCompanyLookup>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleMemberDirectory, WholesaleMemberDirectory>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
+        // Spec 2026-11-18: el aviso por WhatsApp de la invitación; Customers (teléfono), Integrations y Mensajería por puertos.
+        services.AddScoped<Modules.Wholesale.Application.IWholesalePhoneNormalizer, WholesalePhoneNormalizer>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleWhatsAppConnections, WholesaleWhatsAppConnections>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleInvitationNoticeSender, WholesaleInvitationNoticeSender>();
+        // Ruling W17: el paso de Identity de session-with-password, con la contraseña validada antes de crear al usuario.
+        services.AddScoped<WholesaleInvitationPasswordSession>();
+        // El paso de Identity de session con Google: aprovisiona sólo si la identidad no tiene usuario, y usa ese usuario.
+        services.AddScoped<WholesaleInvitationGoogleSession>();
 
         // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].

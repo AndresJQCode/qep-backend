@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Taxes;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>De dónde salió una tasa congelada: del cliente o de los selectores de facturación propia
@@ -67,6 +69,9 @@ public sealed class DocumentWithholding
     /// <summary>El porcentaje del catálogo al congelar; <see cref="Percentage"/> es el efectivo.</summary>
     public decimal CatalogPercentage { get; private set; }
 
+    /// <summary>A qué líneas aplica la tasa congelada (spec 2026-11-18 §4.2); All en las filas de antes.</summary>
+    public WithholdingScope AppliesTo { get; private set; }
+
     /// <summary>Si el asesor editó el porcentaje en este documento.</summary>
     public bool Overridden => Percentage != CatalogPercentage;
 
@@ -76,6 +81,7 @@ public sealed class DocumentWithholding
         {
             CatalogPercentage = CatalogPercentage,
             TaxUnitYear = TaxUnitYear,
+            AppliesTo = AppliesTo,
         };
 
     public decimal BaseAmount { get; private set; }
@@ -102,6 +108,7 @@ public sealed class DocumentWithholding
         TaxUnitYear = rate.TaxUnitYear;
         CityId = rate.CityId;
         CatalogPercentage = rate.CatalogPercentage;
+        AppliesTo = rate.AppliesTo;
         Settle(null);
     }
 
@@ -199,7 +206,7 @@ public sealed class DocumentWithholding
         QuotationBillingAccount? billingAccount,
         string currency,
         Guid? operationCityId,
-        decimal productsSubtotal)
+        WithholdingBases bases)
     {
         var amounts = activeRows.ToDictionary(row => row.TaxRateId, row => row.Amount);
         return
@@ -207,7 +214,7 @@ public sealed class DocumentWithholding
             .. WithholdingCandidates
                 .Explain(
                     activeRows.Select(row => row.Rate), billsToFinalConsumer, billingAccount, currency, operationCityId,
-                    productsSubtotal)
+                    bases)
                 .Select(verdict => verdict with { Amount = amounts[verdict.Rate.TaxRateId] }),
         ];
     }

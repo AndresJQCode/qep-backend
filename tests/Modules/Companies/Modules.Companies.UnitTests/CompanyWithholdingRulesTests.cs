@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using Modules.Companies.Application;
 using Modules.Companies.Domain;
 
@@ -57,6 +58,41 @@ public sealed class CompanyWithholdingRulesTests
     {
         var first = Rate(cityId: Bogota);
         var second = Rate(cityId: Bogota);
+
+        Assert.Equal(
+            "companies.company.withholding_municipality_repeated",
+            Fails(() => Validate([first, second], [first.Id, second.Id])));
+    }
+
+    // Spec 2026-11-18 §4.3: una tasa municipal es una por tipo y municipio, cualquiera sea su alcance (la edición del
+    // porcentaje y la re-resolución por ciudad identifican la fila por tipo).
+    [Fact]
+    public void GoodsAndServicesInTheSameMunicipalityAreRepeated()
+    {
+        var goods = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Goods };
+        var services = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
+
+        Assert.Equal(
+            "companies.company.withholding_municipality_repeated",
+            Fails(() => Validate([goods, services], [goods.Id, services.Id])));
+    }
+
+    [Fact]
+    public void AllWithAnotherScopeIsRepeated()
+    {
+        var all = Rate(cityId: Bogota);
+        var services = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
+
+        Assert.Equal(
+            "companies.company.withholding_municipality_repeated",
+            Fails(() => Validate([all, services], [all.Id, services.Id])));
+    }
+
+    [Fact]
+    public void TwoOfTheSameScopeAreRepeated()
+    {
+        var first = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
+        var second = Rate(cityId: Bogota) with { AppliesTo = WithholdingScope.Services };
 
         Assert.Equal(
             "companies.company.withholding_municipality_repeated",

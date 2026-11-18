@@ -59,7 +59,8 @@ public sealed class SaveOrderEditsHandler(
     IQuotationWithholdingLookup withholdingLookup,
     ITenantClock tenantClock,
     IOrderVariantCostLookup costLookup,
-    IQuotationGeographyLookup geographyLookup)
+    IQuotationGeographyLookup geographyLookup,
+    IWholesaleLinePricing wholesalePricing)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -142,7 +143,8 @@ public sealed class SaveOrderEditsHandler(
         try
         {
             var itemEdits = await OrderItemEdits.ApplyAsync(
-                order, command.Items, pricingLookup, costLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
+                order, command.Items, pricingLookup, costLookup, wholesalePricing, command.TenantId, updatedBy, now, command.IsRetail,
+                cancellationToken);
 
             foreach (var proofId in removedProofIds)
             {
@@ -451,6 +453,12 @@ public sealed class SaveOrderEditsHandler(
             {
                 summary = OrderChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value, format);
                 action = "quotation.order.item_added";
+            }
+            else if (edit.Kind == OrderItemEditKind.UnitPriceChanged)
+            {
+                summary = OrderChangeSummary.ItemUnitPriceChanged(
+                    edit.ProductName!, edit.PreviousUnitPrice!.Value, edit.UnitPrice!.Value, format);
+                action = "quotation.order.item_updated";
             }
             else if (edit.Kind == OrderItemEditKind.QuantityChanged)
             {

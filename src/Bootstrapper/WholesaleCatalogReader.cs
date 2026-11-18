@@ -1,0 +1,202 @@
+using Modules.Catalog.Application;
+using Modules.Catalog.Domain;
+using Modules.Wholesale.Application;
+
+namespace Bootstrapper;
+
+/// <summary>
+/// Catalog → Wholesale. Las categorías salen del árbol del tenant (una lectura); la muestra de la vista previa, de la búsqueda
+/// del listado con productos activos y las categorías expandidas a sus descendientes (D-9). De cada producto se toma la primera
+/// variante vendible (producto y variante activos, <see cref="CatalogVariantReads.IsSellable"/>) con precio en la moneda del
+/// mayorista; un producto sin ninguna no se ofrece (D-10), aunque cuenta en <c>TotalProducts</c>, que es el total de la búsqueda.
+/// <para>Fase 3: <see cref="FindSellableAsync"/> y <see cref="SearchSellableAsync"/> dan las variantes vendibles con su tasa de
+/// IVA (sin tasa o con una borrada, 0 %, como <see cref="PurchasesCatalogLookup"/>) y el camino de categorías de su producto
+/// (la categoría y sus ancestros), para que Wholesale decida la visibilidad sin otra lectura.</para>
+/// </summary>
+internal sealed class WholesaleCatalogReader(
+    IProductCategoryRepository categories,
+    IProductRepository products,
+    IOptionDefinitionRepository options,
+    ITaxRateRepository taxRates)
+    : IWholesaleCatalogReader
+{
+    public async Task<IReadOnlyDictionary<Guid, WholesaleCategoryRef>> FindCategoriesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, WholesaleCategoryRef>();
+        }
+
+        // La consulta va acotada al tenant: un id ajeno o borrado simplemente no aparece.
+        var wanted = ids.ToHashSet();
+        return (await categories.ListCategoriesWithParentsAsync(tenantId, cancellationToken))
+            .Where(node => wanted.Contains(node.Id.Value))
+            .ToDictionary(node => node.Id.Value, node => new WholesaleCategoryRef(node.Id.Value, node.Name));
+    }
+
+    public async Task<IReadOnlyList<WholesaleCategoryNode>> ListCategoriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await categories.ListCategoriesWithParentsAsync(tenantId, cancellationToken))
+            .Select(node => new WholesaleCategoryNode(node.Id.Value, node.Name, node.ParentId?.Value))
+            .ToList();
+
+    public async Task<(IReadOnlyList<WholesaleSampleVariant> Items, int TotalProducts)> SampleAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var expanded = await ExpandAsync(tenantId, categoryIds, cancellationToken);
+        if (expanded is { Count: 0 })
+        {
+            return ([], 0);
+        }
+
+        var (found, total) = await products.SearchAsync(
+            tenantId, null, null, null, isActive: true, expanded, page: 1, pageSize: take, cancellationToken);
+        var valueNames = await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, found, cancellationToken);
+
+        var items = new List<WholesaleSampleVariant>(found.Count);
+        foreach (var product in found.OrderBy(product => product.Name, StringComparer.CurrentCultureIgnoreCase))
+        {
+            // Variants ya viene por posición.
+            var variant = product.Variants.FirstOrDefault(candidate =>
+                CatalogVariantReads.IsSellable(product, candidate) && candidate.PriceIn(currency) is not null);
+            if (variant is null)
+            {
+                continue;
+            }
+
+            items.Add(new WholesaleSampleVariant(
+                variant.Id.Value,
+                variant.Code,
+                CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
+                variant.PriceIn(currency)!.Value));
+        }
+
+        return (items, total);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, WholesaleSellableVariant>> FindSellableAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        if (variantIds.Count == 0)
+        {
+            return new Dictionary<Guid, WholesaleSellableVariant>();
+        }
+
+        var wanted = variantIds.ToHashSet();
+        // Acotada al tenant: la variante de otro tenant no aparece, aunque el comprador mande su id.
+        var found = await products.FindVariantsByIdsAsync(
+            tenantId, wanted.Select(id => new VariantId(id)).ToArray(), cancellationToken);
+        var items = await ToSellableAsync(
+            tenantId, currency, found, product => product.Variants.Where(variant => wanted.Contains(variant.Id.Value)),
+            cancellationToken);
+        return items.ToDictionary(item => item.VariantId);
+    }
+
+    public async Task<(IReadOnlyList<WholesaleSellableVariant> Items, int Total)> SearchSellableAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var expanded = await ExpandAsync(tenantId, categoryIds, cancellationToken);
+        if (expanded is { Count: 0 })
+        {
+            return ([], 0);
+        }
+
+        var (found, total) = await products.SearchAsync(
+            tenantId,
+            string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+            null,
+            null,
+            isActive: true,
+            expanded,
+            page,
+            pageSize,
+            cancellationToken);
+        var ordered = found.OrderBy(product => product.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        // Variants ya viene por posición.
+        var items = await ToSellableAsync(tenantId, currency, ordered, product => product.Variants, cancellationToken);
+        return (items, total);
+    }
+
+    private async Task<HashSet<Guid>?> ExpandAsync(
+        Guid tenantId, IReadOnlyCollection<Guid>? categoryIds, CancellationToken cancellationToken)
+    {
+        if (categoryIds is null)
+        {
+            return null;
+        }
+
+        var tree = await categories.ListTreeAsync(tenantId, cancellationToken);
+        return categoryIds
+            .SelectMany(id => ProductCategoryTree.WithDescendants(tree, new ProductCategoryId(id)))
+            .Select(id => id.Value)
+            .ToHashSet();
+    }
+
+    private async Task<IReadOnlyList<WholesaleSellableVariant>> ToSellableAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyList<Product> found,
+        Func<Product, IEnumerable<ProductVariant>> variantsOf,
+        CancellationToken cancellationToken)
+    {
+        if (found.Count == 0)
+        {
+            return [];
+        }
+
+        var valueNames = await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, found, cancellationToken);
+        var percentages = await CatalogVariantReads.LoadTaxPercentagesAsync(taxRates, tenantId, found, cancellationToken);
+        var parents = (await categories.ListCategoriesWithParentsAsync(tenantId, cancellationToken))
+            .ToDictionary(node => node.Id.Value, node => node.ParentId?.Value);
+
+        var items = new List<WholesaleSellableVariant>();
+        foreach (var product in found)
+        {
+            var path = PathOf(product.CategoryId?.Value, parents);
+            var taxRate = product.TaxRateId is { } rateId && percentages.TryGetValue(rateId, out var percentage)
+                ? percentage
+                : 0m;
+            foreach (var variant in variantsOf(product))
+            {
+                if (!CatalogVariantReads.IsSellable(product, variant) || variant.PriceIn(currency) is not { } price)
+                {
+                    continue;
+                }
+
+                items.Add(new WholesaleSellableVariant(
+                    variant.Id.Value,
+                    variant.Code,
+                    CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
+                    price,
+                    taxRate,
+                    path));
+            }
+        }
+
+        return items;
+    }
+
+    // El árbol tiene a lo sumo ProductCategory.MaxDepth niveles; el tope corta un ciclo que la base no debería tener.
+    private static List<Guid> PathOf(Guid? categoryId, Dictionary<Guid, Guid?> parents)
+    {
+        var path = new List<Guid>();
+        for (var current = categoryId;
+             current is { } id && parents.TryGetValue(id, out var parent) && path.Count <= ProductCategory.MaxDepth;
+             current = parent)
+        {
+            path.Add(id);
+        }
+
+        return path;
+    }
+}

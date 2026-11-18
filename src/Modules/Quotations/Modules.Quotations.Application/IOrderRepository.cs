@@ -41,6 +41,12 @@ public interface IOrderRepository
     Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken);
 
+    /// <summary>De los ids dados, cuáles requieren envío (spec 2026-11-18 §5), con la regla de
+    /// <see cref="Order.RequiresShipping"/>. Para el listado, que no trae las líneas. Un id que no es del tenant no
+    /// aparece.</summary>
+    Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken);
+
     /// <summary>El pedido externo con esta clave de idempotencia (spec de Shopify D-S23), o null. La clave es
     /// única por <c>(tenant, source)</c>: la misma clave en otra plataforma es otro pedido.</summary>
     Task<Order?> FindByExternalKeyAsync(
@@ -70,8 +76,28 @@ public interface IOrderRepository
         DateOnly? orderDateTo,
         string? orderNumber,
         OrderSource? source,
+        bool? wholesaleApproved,
         int page,
         int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Mayorista fase 3 (adenda del contrato): cuántos pedidos mayoristas abiertos esperan aprobación con los mismos filtros
+    /// que la página, salvo el de estado (y el de aprobación, que es justo lo que se cuenta). Alimenta el aviso «N pedidos de
+    /// distribuidores esperan tu aprobación».
+    /// </summary>
+    Task<int> CountAwaitingWholesaleApprovalAsync(
+        Guid tenantId,
+        Guid? clientId,
+        IReadOnlyCollection<Guid>? clientIds,
+        MemberId? advisorId,
+        OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
+        DateOnly? orderDateFrom,
+        DateOnly? orderDateTo,
+        string? orderNumber,
+        OrderSource? source,
         CancellationToken cancellationToken);
 
     /// <summary>Los pedidos de un comprador de la tienda, del más reciente al más viejo, sin tracking.</summary>

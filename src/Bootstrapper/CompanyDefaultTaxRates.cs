@@ -60,8 +60,10 @@ internal sealed class CompanyDefaultTaxRates(
             foreach (var (name, percentage) in Defaults)
             {
                 // Una tasa con el mismo nombre y porcentaje, activa o no, chocaría con
-                // IX_tax_rates_tenant_name_percentage_base: se salta en vez de reactivarla, que es decisión del tenant.
-                if (existing.Any(rate => rate.Name == name && rate.Percentage == percentage && rate.MinimumBase is null))
+                // IX_tax_rates_tenant_name_percentage_base: se salta en vez de reactivarla, que es decisión del tenant. El
+                // índice cuenta también el alcance, y un IVA siempre es All.
+                if (existing.Any(rate => rate.Name == name && rate.Percentage == percentage && rate.MinimumBase is null
+                    && rate.AppliesTo == WithholdingScope.All))
                 {
                     continue;
                 }

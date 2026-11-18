@@ -187,6 +187,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("buyer_notes");
 
+                    b.Property<Guid?>("BuyerTenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("buyer_tenant_id");
+
                     b.Property<string>("CancellationReason")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -379,6 +383,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("prepared_by");
 
+                    b.Property<Guid?>("PurchaseOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("purchase_order_id");
+
                     b.Property<Guid?>("QuotationId")
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
@@ -437,6 +445,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
                         .HasColumnName("version");
+
+                    b.Property<DateTimeOffset?>("WholesaleApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("wholesale_approved_at");
+
+                    b.Property<Guid?>("WholesaleApprovedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("wholesale_approved_by");
 
                     b.Property<short?>("_priceRoundingDecimals")
                         .HasColumnType("smallint")
@@ -502,7 +518,7 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_orders_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
 
-                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store')");
+                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store','Wholesale')");
                         });
                 });
 
@@ -582,6 +598,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("discount_percentage");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Physical")
+                        .HasColumnName("kind");
+
                     b.Property<Guid>("OrderId")
                         .HasColumnType("uuid")
                         .HasColumnName("order_id");
@@ -612,6 +635,17 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasPrecision(10, 2)
                         .HasColumnType("numeric(10,2)")
                         .HasColumnName("quantity");
+
+                    b.Property<string>("SalesUnit")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Unit")
+                        .HasColumnName("sales_unit");
+
+                    b.Property<Guid?>("SourcePurchaseOrderLineId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_purchase_order_line_id");
 
                     b.Property<decimal>("Subtotal")
                         .HasPrecision(14, 2)
@@ -1131,6 +1165,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("discount_percentage");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Physical")
+                        .HasColumnName("kind");
+
                     b.Property<int>("Position")
                         .HasColumnType("integer")
                         .HasColumnName("position");
@@ -1161,6 +1202,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("QuotationId")
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
+
+                    b.Property<string>("SalesUnit")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Unit")
+                        .HasColumnName("sales_unit");
 
                     b.Property<decimal>("Subtotal")
                         .HasPrecision(14, 2)
@@ -1702,6 +1750,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 .HasColumnType("boolean")
                                 .HasColumnName("applied");
 
+                            b1.Property<string>("AppliesTo")
+                                .IsRequired()
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("text")
+                                .HasDefaultValue("All")
+                                .HasColumnName("applies_to");
+
                             b1.Property<decimal>("BaseAmount")
                                 .HasPrecision(14, 2)
                                 .HasColumnType("numeric(14,2)")
@@ -1930,6 +1985,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                             b1.Property<bool>("Applied")
                                 .HasColumnType("boolean")
                                 .HasColumnName("applied");
+
+                            b1.Property<string>("AppliesTo")
+                                .IsRequired()
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("text")
+                                .HasDefaultValue("All")
+                                .HasColumnName("applies_to");
 
                             b1.Property<decimal>("BaseAmount")
                                 .HasPrecision(14, 2)

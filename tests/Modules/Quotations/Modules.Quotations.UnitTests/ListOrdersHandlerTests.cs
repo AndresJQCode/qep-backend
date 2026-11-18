@@ -307,6 +307,53 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal(("NotPrepared", false), (row.FulfillmentStatus, row.Invoiced));
     }
 
+    // Fase 3 (Task 5): «Por aprobar» es la marca, no un estado (D-1). Pending y Approved filtran por ella; otro valor es 422 con
+    // el campo, como cualquier filtro mal escrito.
+    [Theory]
+    [InlineData("Pending", false)]
+    [InlineData("approved", true)]
+    [InlineData(null, null)]
+    public async Task ListFiltersByWholesaleApproval(string? approval, bool? approved)
+    {
+        var repository = new StubOrderListRepository();
+        var handler = NewHandler(NewCustomerLookup(), repository);
+
+        await handler.HandleAsync(NewQuery() with { Source = "Wholesale", WholesaleApproval = approval }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(approved, repository.LastWholesaleApproved);
+    }
+
+    [Fact]
+    public async Task AnInvalidWholesaleApprovalIsAValidationError()
+    {
+        var handler = NewHandler(NewCustomerLookup(), new StubOrderListRepository());
+
+        var error = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() => handler.HandleAsync(
+            NewQuery() with { WholesaleApproval = "Maybe" }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("WholesaleApproval", Assert.Single(error.Errors).PropertyName);
+    }
+
+    // Adenda del contrato: el aviso «N pedidos de distribuidores esperan tu aprobación» cuenta con los filtros vigentes salvo el
+    // de estado, y la fila mayorista dice su número de orden y su aprobación.
+    [Fact]
+    public async Task ListCountsPendingWholesaleApprovalsAndDescribesTheRow()
+    {
+        var pending = WholesaleOrderFixtures.Wholesale(WholesaleOrderFixtures.Line(Guid.CreateVersion7(), 1m, 8_500m));
+        var approved = WholesaleOrderFixtures.Wholesale(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), WholesaleOrderFixtures.Line(Guid.CreateVersion7(), 1m, 8_500m));
+        approved.ApproveWholesale(AdvisorId, Now);
+        var repository = new StubOrderListRepository(pending, approved);
+        var handler = NewHandler(NewCustomerLookup(), repository);
+
+        var page = await handler.HandleAsync(NewQuery() with { Status = "Archived" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, page.PendingWholesaleApprovals);
+        Assert.Equal(
+            [("OC-0007", "Pending"), ("OC-0007", "Approved")],
+            page.Items.Select(item => (item.Wholesale!.PurchaseOrderNumber, item.Wholesale.Approval)));
+    }
+
     private static ListOrdersQuery NewQuery() =>
         new(TenantId, null, null, null, null, null, null, null, null, Source: null, Page: 1, PageSize: 10);
 

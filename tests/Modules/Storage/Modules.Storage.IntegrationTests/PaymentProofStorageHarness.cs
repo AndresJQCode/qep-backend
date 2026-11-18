@@ -443,6 +443,16 @@ internal sealed class FixedPublicObjectReferenceProbe : IPublicObjectReferencePr
         Task.FromResult(_referenced.ContainsKey(publicStorageKey));
 }
 
+/// <summary>Spec 2026-11-18: el puerto del sniffer y el compresor de Mensajería, que implementa el Bootstrapper. Acá deja pasar todo y
+/// no comprime: las pruebas de Storage no prueban a Mensajería, y con él el host resuelve <see cref="IChatbotMediaProcessing"/>.</summary>
+internal sealed class PassThroughChatbotMediaProcessing : IChatbotMediaProcessing
+{
+    public bool Matches(string name, ReadOnlySpan<byte> header) => true;
+
+    public Task<ProcessedChatbotImage?> ShrinkAsync(byte[] content, CancellationToken cancellationToken) =>
+        Task.FromResult<ProcessedChatbotImage?>(new ProcessedChatbotImage(content, "image/jpeg", ".jpg"));
+}
+
 /// <summary>El host de la API con los dos buckets en memoria.</summary>
 internal sealed class StorageApiFactory(string connectionString, bool orphanCleanupDryRun = true)
     : WebApplicationFactory<Program>
@@ -489,6 +499,8 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
             services.AddSingleton<IPublicObjectStorage>(PublicObjectStorage);
             services.AddSingleton<IFileReferenceProbe>(FileReferences);
             services.AddSingleton<IPublicObjectReferenceProbe>(PublicReferences);
+            services.RemoveAll<IChatbotMediaProcessing>();
+            services.AddSingleton<IChatbotMediaProcessing>(new PassThroughChatbotMediaProcessing());
 
             // El worker de movimiento consulta el outbox cada 3 s: competiría con el lote que la
             // prueba corre a mano (RunMoveAsync) y la volvería no determinista.

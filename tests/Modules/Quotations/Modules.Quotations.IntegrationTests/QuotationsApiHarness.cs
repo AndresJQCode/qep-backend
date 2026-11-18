@@ -611,7 +611,8 @@ internal static class QuotationsApiHarness
         decimal percentage,
         decimal? minimumBase = null,
         string country = "CO",
-        Guid? cityId = null)
+        Guid? cityId = null,
+        string appliesTo = "All")
     {
         var id = Guid.CreateVersion7();
         await using var scope = factory.Services.CreateAsyncScope();
@@ -619,8 +620,10 @@ internal static class QuotationsApiHarness
         await dbContext.Database.ExecuteSqlAsync(
             $"""
             INSERT INTO catalog.tax_rates
-                (id, tenant_id, name, percentage, type, country, minimum_base, city_id, is_active, version, created_at, updated_at)
-            VALUES ({id}, {tenantId}, {name}, {percentage}, {type}, {country}, {minimumBase}, {cityId}, true, 1, now(), now())
+                (id, tenant_id, name, percentage, type, country, minimum_base, city_id, is_active, version, created_at, updated_at,
+                 applies_to)
+            VALUES ({id}, {tenantId}, {name}, {percentage}, {type}, {country}, {minimumBase}, {cityId}, true, 1, now(), now(),
+                    {appliesTo})
             """,
             TestContext.Current.CancellationToken);
         return id;

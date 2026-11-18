@@ -75,6 +75,16 @@ public sealed partial class AgentSessionJobProcessor(
         }
 
         var config = AgentConfig.FromJson(version.ConfigJson);
+        if (agent is { Status: AgentStatus.Paused })
+        {
+            // Owner, 2026-11-18 (revierte D-A6): pausar corta también las sesiones vivas. Sin llamar al modelo, la conversación pasa a una
+            // persona; si no, el agente pausado seguía contestando mientras la sesión estuviera viva.
+            await GiveUpAsync(
+                job, session.ConversationId, new AgentHandoffCause(HandoffCauseKind.AgentFailed, AgentHandoffCodes.AgentPaused, version.Provider),
+                DestinationOf(config.Handoff), cancellationToken);
+            return;
+        }
+
         if (job.Attempts > ModelJob.MaxClaims)
         {
             // Revisión final, hallazgo 2: un trabajo que se reclamó demasiadas veces no se retoma más; una persona sigue.

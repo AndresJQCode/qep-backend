@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Modules.Catalog.Domain;
 
 namespace Modules.Catalog.Application;
@@ -37,6 +38,7 @@ public interface IProductRepository
         string? code,
         bool? isActive,
         bool? visibleInStore,
+        ProductKind? kind,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
@@ -74,6 +76,7 @@ public interface IProductRepository
         string? name,
         string? code,
         bool? isActive,
+        ProductKind? kind,
         int skip,
         int take,
         CancellationToken cancellationToken);
@@ -261,6 +264,8 @@ public sealed record ProductSummary(
     string? Description,
     TaxRateId? TaxRateId,
     ProductCategoryId? CategoryId,
+    ProductKind Kind,
+    SalesUnit SalesUnit,
     Guid? ImageFileId,
     int VariantCount,
     string? Code,

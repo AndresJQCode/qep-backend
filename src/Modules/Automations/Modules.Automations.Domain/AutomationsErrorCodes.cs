@@ -67,4 +67,17 @@ public static class AutomationsErrorCodes
     /// <summary>Crear o editar un chatbot con una conexión que no es del tenant (o que Integrations ya borró). No está en §4.3: lo
     /// agrega la tarea 14 del plan.</summary>
     public const string ConnectionNotFound = "automations.connection.not_found";
+
+    /// <summary>Spec 2026-11-18: el archivo de un bloque «Mensaje» no es un tipo que el bot pueda mandar, el tipo declarado no es el
+    /// canónico de su extensión, o al completar su contenido no es lo que dice (o lo rechazó el antivirus).</summary>
+    public const string MediaUnsupportedType = "automations.media.unsupported_type";
+
+    /// <summary>Spec 2026-11-18: el archivo pasa el tope de su tipo en la política de Mensajería.</summary>
+    public const string MediaTooLarge = "automations.media.too_large";
+
+    /// <summary>Spec 2026-11-18: <c>complete</c> antes de que el PUT llegara al almacenamiento.</summary>
+    public const string MediaNotUploaded = "automations.media.not_uploaded";
+
+    /// <summary>Spec 2026-11-18: el id no es un archivo de chatbot de este tenant (o ya no existe).</summary>
+    public const string MediaNotFound = "automations.media.not_found";
 }

@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using BuildingBlocks.Domain.Pricing;
 
 namespace Modules.Quotations.Domain;
@@ -28,12 +29,16 @@ public sealed class OrderItem
         int position,
         string currency,
         PriceRounding rounding,
+        ProductKind kind,
+        SalesUnit salesUnit,
         DateTimeOffset occurredAt)
     {
         Id = id;
         OrderId = orderId;
         VariantId = variantId;
         ProductId = productId;
+        Kind = kind;
+        SalesUnit = salesUnit;
         Position = position;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
@@ -51,7 +56,19 @@ public sealed class OrderItem
     /// <summary>El producto dueño de <see cref="VariantId"/>, para agrupar por producto.</summary>
     public Guid ProductId { get; private set; }
 
+    /// <summary>Producto o servicio, fijado al crear la línea (spec 2026-11-18 §3.4), igual que
+    /// <see cref="QuotationItem.Kind"/>. Al convertir se copia el de la línea de la cotización, no el que el producto
+    /// tenga hoy; los pedidos de Shopify nacen <c>Physical</c>.</summary>
+    public ProductKind Kind { get; private set; }
+
+    /// <summary>La unidad de venta de la línea, con la misma regla que <see cref="Kind"/>.</summary>
+    public SalesUnit SalesUnit { get; private set; }
+
     public string? ProductCode { get; private set; }
+
+    /// <summary>La línea de la orden de compra vinculada de la que salió (mayorista fase 3). Null en cualquier otro pedido y
+    /// en una línea que el mayorista agregó al editar.</summary>
+    public Guid? SourcePurchaseOrderLineId { get; private set; }
 
     public string? ProductName { get; private set; }
 
@@ -119,8 +136,8 @@ public sealed class OrderItem
 
     public decimal UnitPriceWithoutTax => Round(UnitPrice * 100m / (100m + TaxPercentage));
 
-    /// <summary>Lo que la línea aporta a <see cref="DocumentTotals"/>.</summary>
-    public LineAmountsView Amounts => new(Subtotal, DiscountAmount, TaxAmount);
+    /// <summary>Lo que la línea aporta a <see cref="DocumentTotals"/>; el tipo decide su base de retención.</summary>
+    public LineAmountsView Amounts => new(Subtotal, DiscountAmount, TaxAmount, Kind);
 
     internal static OrderItem Create(
         OrderItemId id,
@@ -135,10 +152,24 @@ public sealed class OrderItem
         int position,
         string currency,
         PriceRounding rounding,
+        ProductKind kind,
+        SalesUnit salesUnit,
         DateTimeOffset occurredAt) =>
         new(
             id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat,
-            position, currency, rounding, occurredAt);
+            position, currency, rounding, kind, salesUnit, occurredAt);
+
+    internal void LinkPurchaseOrderLine(Guid? purchaseOrderLineId) => SourcePurchaseOrderLineId = purchaseOrderLineId;
+
+    /// <summary>D-4: el precio de lista de un pedido mayorista se corrige a mano. Reprecia con la cantidad, el descuento y la
+    /// tasa del producto que la línea ya tiene, igual que <see cref="UpdateQuantity"/>.</summary>
+    internal void ChangeUnitPrice(
+        decimal unitPrice,
+        bool chargesVat,
+        string currency,
+        PriceRounding rounding,
+        DateTimeOffset occurredAt) =>
+        Apply(Quantity, unitPrice, DiscountPercentage, ProductTaxRate, chargesVat, currency, rounding, occurredAt);
 
     internal void CaptureProduct(QuotationProductSnapshot product)
     {

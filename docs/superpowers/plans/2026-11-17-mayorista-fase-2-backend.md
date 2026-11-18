@@ -249,7 +249,7 @@ El link del correo es `{Notifications:WholesaleInvitationUrl}/{token}`, por defe
 ```
 InvitationSummary  { wholesalerName, businessName, contactName, email,
                      status: 'pending'|'accepted'|'expired', expiresAt, hasPassword }
-LinkableTenant     { tenantId, name, linkable, reason: null|'wholesaler'|'already_linked',
+LinkableTenant     { tenantId, name, linkable, ineligibleReason: null|'same_tenant'|'already_linked',
                      modulesToEnable: string[] }          // claves que faltan de catalog, suppliers, purchases
 AcceptInvitation   { mode: 'NewTenant', displayName, slug } | { mode: 'LinkTenant', tenantId }
 AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
@@ -262,7 +262,7 @@ AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
   (401 `identity.credentials.invalid`); en los dos casos marca el correo verificado (`IPasswordCredentials.AcceptInvitationAsync`).
   Las dos exigen invitación `pending`.
 - `GET /linkable-tenants`: los tenants `Active` donde la sesión es **owner** (`Tenant.OwnerMembershipId`), todos, con `linkable`
-  y `reason`; el del mayorista sale `wholesaler` y uno ya vinculado a este mayorista, `already_linked`. Exige el mismo correo.
+  e `ineligibleReason`; el del mayorista sale `same_tenant` y uno ya vinculado a este mayorista, `already_linked`. Exige el mismo correo.
 - `POST /accept` (D-3, D-16, D-17): correo de la sesión = correo de la invitación. `NewTenant`: crea el tenant con
   `InvitedDistributorModules` (`catalog, customers, companies, quotations, orders, reporting, suppliers, purchases`), aunque
   `Registration:PublicTenantSignupEnabled` esté apagado; quien acepta queda owner (rol `admin`). `displayName` y `slug` con las
@@ -271,9 +271,10 @@ AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
   vincular. Después de responder, la SPA relee `/auth/me`.
 - Errores: 404 `wholesale.invitation.not_found` (token desconocido, rotado o distribuidor borrado); 410
   `wholesale.invitation.expired`; 409 `wholesale.invitation.already_accepted` (otro usuario o ya consumida en `session*`),
-  `wholesale.invitation.unavailable` (el tenant del mayorista no está `Active` o apagó `wholesale`),
+  `wholesale.invitation.unavailable` (el tenant del mayorista no está `Active` o apagó `wholesale`, o su empresa facturadora
+  está inactiva o tiene un documento que el proveedor no admite; rulings W14 y W16),
   `wholesale.distributor.already_linked` (ese tenant ya tiene relación con este mayorista, P-1); 403
-  `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner`; 422 `wholesale.invitation.self_link`,
+  `wholesale.relationship.inactive` (la relación ya aceptada está bloqueada; rulings W16 y W18), `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner`; 422 `wholesale.invitation.self_link`,
   `tenancy.slug.invalid`, `tenancy.slug.taken`, `tenancy.settings.display_name.invalid`, `validation.failed` (`Mode`,
   `DisplayName`, `Slug`, `TenantId`); 401 sin sesión.
 
@@ -289,12 +290,13 @@ AcceptedInvitation { tenantId, tenantName, created, enabledModules: string[] }
 | Status | Códigos |
 | --- | --- |
 | 404 | `wholesale.price_list.not_found`, `wholesale.distributor.not_found`, `wholesale.invitation.not_found` |
-| 403 | `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner` |
+| 403 | `wholesale.invitation.email_mismatch`, `wholesale.invitation.not_tenant_owner`, `wholesale.relationship.inactive` (al aceptar, W16/W18) |
 | 409 | `wholesale.price_list.in_use`, `wholesale.price_list.name_taken`, `wholesale.distributor.identification_taken`, `wholesale.distributor.invalid_transition`, `wholesale.distributor.already_linked`, `wholesale.invitation.already_accepted`, `wholesale.invitation.unavailable` |
 | 410 | `wholesale.invitation.expired` |
 | 422 | `wholesale.price_list.category_not_found`, `wholesale.distributor.advisor_invalid`, `wholesale.distributor.company_invalid`, `wholesale.invitation.self_link`, `suppliers.supplier.linked_identity_locked` |
 
-`wholesale.relationship.inactive` y `wholesale.product.not_visible` del spec son de fase 3.
+`wholesale.product.not_visible` del spec es de fase 3; `wholesale.relationship.inactive` ya se usa al aceptar una relación
+bloqueada (403 como el spec, rulings W16 y W18), y fase 3 decide su uso en los pedidos.
 
 ---
 
@@ -759,7 +761,7 @@ AWholesalerWithoutTheModuleIs409Unavailable
 AcceptingTwiceBySameUserReturnsTheSameResult            // Review Focus 1
 RetryAfterAFailedCustomerStepReusesTheReservedTenant    // Review Focus 2: 1.ª llamada, EnsureCustomer lanza → invitación Pending; 2.ª, RegisterInvited devuelve false (ya existe) y termina; un solo tenant
 AReservedTenantThatExistsWinsOverTheRequestedMode       // D-17
-LinkableTenantsMarkTheWholesalerAndTheAlreadyLinked     // reason "wholesaler" / "already_linked"; modulesToEnable correcto
+LinkableTenantsMarkTheWholesalerAndTheAlreadyLinked     // ineligibleReason "same_tenant" / "already_linked"; modulesToEnable correcto
 ```
 
 - [ ] **Step 2: Corre y verifica que fallan**

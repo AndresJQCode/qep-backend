@@ -20,7 +20,8 @@ public sealed class CustomerWithholdingTaxRatesApiTests
         string type,
         decimal percentage,
         bool isActive = true,
-        string country = "CO")
+        string country = "CO",
+        string appliesTo = "All")
     {
         var id = Guid.CreateVersion7();
         await using var connection = new NpgsqlConnection(connectionString);
@@ -28,10 +29,12 @@ public sealed class CustomerWithholdingTaxRatesApiTests
         await using var command = new NpgsqlCommand(
             """
             INSERT INTO catalog.tax_rates
-                (id, tenant_id, name, percentage, type, country, minimum_base, is_active, version, created_at, updated_at)
-            VALUES (@id, @tenantId, @name, @percentage, @type, @country, NULL, @isActive, 1, now(), now())
+                (id, tenant_id, name, percentage, type, country, minimum_base, is_active, version, created_at, updated_at,
+                 applies_to)
+            VALUES (@id, @tenantId, @name, @percentage, @type, @country, NULL, @isActive, 1, now(), now(), @appliesTo)
             """,
             connection);
+        command.Parameters.AddWithValue("appliesTo", appliesTo);
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("tenantId", Guid.Parse(tenantId));
         command.Parameters.AddWithValue("name", name);
@@ -162,6 +165,79 @@ public sealed class CustomerWithholdingTaxRatesApiTests
         var second = await InsertRateAsync(database.GetConnectionString(), TenantId, "Retefuente 4", "Retefuente", 4m);
         var body = Body(city.CityId);
         body["withholdingTaxRateIds"] = new[] { first, second };
+
+        var response = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("customers.customer.withholding_type_repeated", await ProblemCodeAsync(response));
+    }
+
+    // Review Focus 5 (spec 2026-11-18 §4.3): una Retefuente de bienes y una de servicios conviven en el cliente, y la
+    // selección guardada sigue válida al reenviarla.
+    [Fact]
+    public async Task CustomerAcceptsGoodsAndServicesOfTheSameType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var goods = await InsertRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente compras", "Retefuente", 2.5m, appliesTo: "Goods");
+        var services = await InsertRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios", "Retefuente", 4m, appliesTo: "Services");
+        var body = Body(city.CityId);
+        body["withholdingTaxRateIds"] = new[] { goods, services };
+
+        var created = await CreateAsync(client, body);
+        var resent = await UpdateAsync(client, created.GetProperty("id").GetGuid(), body);
+
+        Assert.Equal([goods, services], RateIds(created));
+        Assert.Equal([goods, services], RateIds(resent));
+    }
+
+    // Spec 2026-11-18 servicios pendientes §2: cada tasa guardada trae su alcance, para que la ficha diga «Retefuente
+    // (servicios)» aunque la tasa ya no esté en el catálogo activo que la pantalla tiene a mano.
+    [Fact]
+    public async Task SavedRatesCarryTheirScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var goods = await InsertRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente compras", "Retefuente", 2.5m, appliesTo: "Goods");
+        var services = await InsertRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios", "Retefuente", 4m, appliesTo: "Services");
+        var body = Body(city.CityId);
+        body["withholdingTaxRateIds"] = new[] { goods, services };
+
+        var created = await CreateAsync(client, body);
+        var read = await ReadAsync(
+            await client.GetAsync(
+                $"{CustomersUrl()}/{created.GetProperty("id").GetGuid()}", TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+
+        foreach (var customer in new[] { created, read })
+        {
+            var scopes = customer.GetProperty("withholdingTaxRates").EnumerateArray()
+                .ToDictionary(rate => rate.GetProperty("id").GetGuid(), rate => rate.GetProperty("appliesTo").GetString());
+            Assert.Equal("Goods", scopes[goods]);
+            Assert.Equal("Services", scopes[services]);
+        }
+    }
+
+    [Fact]
+    public async Task CustomerRejectsAllWithAnotherScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var all = await InsertRateAsync(database.GetConnectionString(), TenantId, "Retefuente 2.5", "Retefuente", 2.5m);
+        var services = await InsertRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios", "Retefuente", 4m, appliesTo: "Services");
+        var body = Body(city.CityId);
+        body["withholdingTaxRateIds"] = new[] { all, services };
 
         var response = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
 

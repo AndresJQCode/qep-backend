@@ -18,6 +18,9 @@ public static class WholesaleErrorCodes
 
     public const string InvitationNotTenantOwner = "wholesale.invitation.not_tenant_owner";
 
+    // Spec 2026-11-17 y ruling W18: 403 en todos lados; en esta fase, al aceptar una relación bloqueada.
+    public const string RelationshipInactive = "wholesale.relationship.inactive";
+
     // 409
     public const string PriceListInUse = "wholesale.price_list.in_use";
 
@@ -43,7 +46,16 @@ public static class WholesaleErrorCodes
 
     public const string DistributorCompanyInvalid = "wholesale.distributor.company_invalid";
 
+    // Spec 2026-11-18 (aviso por WhatsApp): con teléfono y varias conexiones listas sin elegir una; y sin ninguna lista, o
+    // con una elegida que no lo está.
+    public const string DistributorWhatsAppConnectionRequired = "wholesale.distributor.whatsapp_connection_required";
+
+    public const string DistributorWhatsAppUnavailable = "wholesale.distributor.whatsapp_unavailable";
+
     public const string InvitationSelfLink = "wholesale.invitation.self_link";
+
+    // Fase 3: una variante fuera de la visibilidad de la lista, inactiva, ajena o sin precio en la moneda del mayorista.
+    public const string ProductNotVisible = "wholesale.product.not_visible";
 
     // 422 de guarda: los invariantes de la lista. El validador de Application los atrapa antes con el campo
     // (validation.failed), así que no forman parte del contrato; existen para que el agregado no confíe en quien lo llama

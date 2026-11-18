@@ -83,7 +83,7 @@ internal static class QuotationItemEdits
             quotation.AddItem(
                 QuotationItemId.New(), line.VariantId, pricing.ProductId, line.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage, updatedBy, occurredAt);
+                pricing.Pricing.TaxPercentage, updatedBy, occurredAt, pricing.Kind, pricing.SalesUnit);
             edits.Add(new QuotationItemEdit(
                 QuotationItemEditKind.Added, line.VariantId, pricing.Name, null, line.Quantity));
         }

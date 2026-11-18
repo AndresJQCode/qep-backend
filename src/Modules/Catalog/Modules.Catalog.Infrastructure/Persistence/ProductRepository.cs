@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
@@ -39,6 +40,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        ProductKind? kind,
         int skip,
         int take,
         CancellationToken cancellationToken)
@@ -59,6 +61,12 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         if (isActive is not null)
         {
             query = query.Where(product => product.IsActive == isActive);
+        }
+
+        // El mismo filtro de tipo que SearchSummariesAsync: se exporta lo que la grilla muestra.
+        if (kind is { } wanted)
+        {
+            query = query.Where(product => product.Kind == wanted);
         }
 
         // Los mismos filtros de texto que el listado: se exporta lo que la grilla está mostrando.
@@ -115,6 +123,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? code,
         bool? isActive,
         bool? visibleInStore,
+        ProductKind? kind,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
@@ -124,6 +133,11 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         if (visibleInStore is not null)
         {
             source = source.Where(product => product.VisibleInStore == visibleInStore);
+        }
+
+        if (kind is { } wanted)
+        {
+            source = source.Where(product => product.Kind == wanted);
         }
 
         var (ordered, total) = await SearchQueryAsync(
@@ -141,6 +155,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 product.Description,
                 product.TaxRateId,
                 product.CategoryId,
+                product.Kind,
+                product.SalesUnit,
                 ImageFileId = product.Gallery
                     .OrderBy(image => image.Position)
                     .Select(image => (Guid?)image.FileId)
@@ -212,6 +228,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.Description,
                 row.TaxRateId,
                 row.CategoryId,
+                row.Kind,
+                row.SalesUnit,
                 row.ImageFileId,
                 variantStats.GetValueOrDefault(row.Id)?.Count ?? 0,
                 variantStats.GetValueOrDefault(row.Id) is { } stats

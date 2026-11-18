@@ -208,6 +208,13 @@ public static class MessagingErrorCodes
     /// <summary>Soporte fase 4b: existe una <c>qep_soporte_encuesta</c> creada fuera de QEP con otro cuerpo o unos botones distintos.</summary>
     public const string TemplateSupportSurveyConflict = "messaging.template.support_survey_conflict";
 
+    /// <summary>Mayorista: la conexión ya tiene su plantilla de aviso de invitación viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_wholesale_invitation_notice</c>.</summary>
+    public const string TemplateWholesaleInvitationNoticeExists = "messaging.template.wholesale_invitation_notice_exists";
+
+    /// <summary>Mayorista: existe una <c>qep_mayorista_invitacion</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateWholesaleInvitationNoticeConflict = "messaging.template.wholesale_invitation_notice_conflict";
+
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
 

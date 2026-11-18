@@ -15,6 +15,9 @@ public sealed class PurchaseOrderComposer(
     /// <summary>Lo que se muestra cuando la membresía ya no existe o el proveedor no está en el directorio.</summary>
     public const string UnknownName = "Sin nombre";
 
+    /// <summary>D-19: el autor de la confirmación y la anulación que llegan del mayorista (sin miembro del comprador).</summary>
+    public const string WholesalerName = "El mayorista";
+
     public async Task<PurchaseOrderDetailDto> DetailAsync(PurchaseOrder order, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(order);
@@ -30,7 +33,7 @@ public sealed class PurchaseOrderComposer(
         // Un proveedor que no está es una referencia blanda rota (Suppliers no borra): se muestra sin nombre y como inactivo
         // antes que tumbar el detalle con un 500.
         var supplier = supplierMap.TryGetValue(order.SupplierId, out var found)
-            ? new PurchaseOrderSupplierDto(found.Id, found.Name, found.IsActive)
+            ? new PurchaseOrderSupplierDto(found.Id, found.Name, found.IsActive, found.LinkedTenantId is not null)
             : new PurchaseOrderSupplierDto(order.SupplierId, UnknownName, false);
         var totals = order.Totals();
 
@@ -50,9 +53,19 @@ public sealed class PurchaseOrderComposer(
             order.RequestedTotals().Total,
             order.History
                 .OrderBy(entry => entry.Sequence)
-                .Select(entry => new PurchaseOrderHistoryDto(entry.Status.ToString(), entry.OccurredAt, NameOf(names, entry.MemberId)))
+                .Select(entry => new PurchaseOrderHistoryDto(
+                    entry.Status.ToString(),
+                    entry.OccurredAt,
+                    order.IsLinked && entry.MemberId == Guid.Empty ? WholesalerName : NameOf(names, entry.MemberId)))
                 .ToList(),
-            AllowedActions(order));
+            AllowedActions(order),
+            ModeOf(order),
+            order.LinkedOrderNumber is { } linkedOrderNumber ? new PurchaseOrderLinkedDto(linkedOrderNumber) : null,
+            new PurchaseOrderChangesDto(
+                order.Lines.Count(line => line.Status == PurchaseOrderLineStatus.Changed),
+                order.Lines.Count(line => line.Status == PurchaseOrderLineStatus.Added),
+                order.Lines.Count(line => line.Status == PurchaseOrderLineStatus.Rejected),
+                order.Lines.Count(line => line.CreatedInCatalog)));
     }
 
     public async Task<IReadOnlyList<PurchaseOrderSummaryDto>> SummariesAsync(
@@ -79,7 +92,9 @@ public sealed class PurchaseOrderComposer(
                 order.Currency,
                 order.Totals().Total,
                 order.CreatedAt,
-                order.Lines.Count))
+                order.Lines.Count,
+                order.IsLinked,
+                ModeOf(order)))
             .ToList();
     }
 
@@ -102,7 +117,15 @@ public sealed class PurchaseOrderComposer(
         line.ConfirmedUnitCost,
         line.TaxRatePercent,
         line.Status.ToString(),
-        line.Subtotal);
+        line.Subtotal,
+        line.SupplierVariantId,
+        line is { ListBasePrice: { } basePrice, ListDiscountPercent: { } discount, ListUnitPrice: { } unitPrice }
+            ? new PurchaseOrderListPriceDto(basePrice, discount, unitPrice)
+            : null,
+        line.CreatedInCatalog);
+
+    private static string ModeOf(PurchaseOrder order) =>
+        order.IsLinked ? PurchaseOrderModes.Linked : PurchaseOrderModes.External;
 
     private static string NameOf(IReadOnlyDictionary<Guid, string> names, Guid memberId) =>
         names.TryGetValue(memberId, out var name) && !string.IsNullOrWhiteSpace(name) ? name : UnknownName;

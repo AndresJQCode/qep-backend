@@ -26,6 +26,8 @@ public sealed record ProductDto(
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    string Kind,
+    string SalesUnit,
     IReadOnlyList<ProductOptionResponse> Options,
     IReadOnlyList<ProductVariantResponse> Variants,
     IReadOnlyList<ProductGalleryImageResponse> Gallery,
@@ -53,6 +55,10 @@ public sealed record ProductResponse(
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    // Spec 2026-11-18 §3.3: "Physical" | "Service" y la unidad de venta ("Unit", "Hour"…), por nombre.
+    // La etiqueta la pone la pantalla, que tiene el diccionario.
+    string Kind,
+    string SalesUnit,
     // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
     IReadOnlyList<ProductOptionResponse> Options,
     // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
@@ -152,6 +158,9 @@ public sealed record ProductListItemDto(
     string? ImageUrl,
     Guid? TaxRateId,
     Guid? CategoryId,
+    // Por nombre, como en el detalle: la grilla y el selector distinguen productos de servicios.
+    string Kind,
+    string SalesUnit,
     int VariantCount,
     IReadOnlyDictionary<string, PriceRangeResponse> PriceRange,
     long Version,
@@ -266,6 +275,10 @@ public sealed record ProductsResponse(
 // Description/TaxRateId son opcionales, y en el PUT mandarlos en null los **limpia** — el verbo
 // reemplaza el recurso entero. Lo mismo OptionIds y Gallery: null es lista vacía.
 //
+// Kind y SalesUnit (spec 2026-11-18 §3.3) viajan por nombre ("Service", "Hour") y son opcionales:
+// ausentes en el POST son "Physical" y "Unit"; en el PUT conservan los guardados, como VisibleInStore.
+// Un nombre que no existe es 422 validation.failed.
+//
 // Con las variantes, Code y Pricing salieron del producto hacia cada variante, y ImageFileId hacia
 // Gallery (la primera foto es la principal). Un producto sin opciones manda una sola variante, sin
 // OptionValueIds.
@@ -277,7 +290,9 @@ public sealed record CreateProductRequest(
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
-    bool? VisibleInStore = null);
+    bool? VisibleInStore = null,
+    string? Kind = null,
+    string? SalesUnit = null);
 
 /// <summary>
 /// Una variante como la manda el formulario. En el PUT se empareja por <paramref name="Id"/>
@@ -360,7 +375,9 @@ public sealed record UpdateProductRequest(
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
     IReadOnlyList<Guid>? DeletedVariantIds = null,
-    bool? VisibleInStore = null);
+    bool? VisibleInStore = null,
+    string? Kind = null,
+    string? SalesUnit = null);
 
 // Scope viaja como texto ("National" | "Municipal"), como Behavior. CityId es null sólo en una tasa nacional; City trae el
 // municipio resuelto (backend for frontend): la lista de tasas pinta «Bogotá, D.C.» sin preguntarle a Geography. City es
@@ -379,7 +396,8 @@ public sealed record TaxRateDto(
     string? MinimumBaseUnit,
     string Scope,
     Guid? CityId,
-    TaxRateCityDto? City);
+    TaxRateCityDto? City,
+    string AppliesTo);
 
 public sealed record TaxRateResponse(
     Guid Id,
@@ -395,7 +413,9 @@ public sealed record TaxRateResponse(
     string? MinimumBaseUnit,
     string Scope,
     Guid? CityId,
-    TaxRateCityDto? City);
+    TaxRateCityDto? City,
+    // Spec 2026-11-18 §4.2: "All" | "Goods" | "Services", por nombre. Sólo una retención vale distinto de "All".
+    string AppliesTo);
 
 /// <summary>La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y
 /// documentos.</summary>
@@ -411,20 +431,29 @@ public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items
 // y sin Country es CO (spec §9.2). IsActive no viaja acá, por la misma razón que en producto.
 //
 // CityId: obligatorio en un tipo municipal (ReteICA), prohibido en uno nacional (spec ReteICA por empresa §9.1).
+//
+// AppliesTo (spec 2026-11-18 §4.2): "All" | "Goods" | "Services". Ausente es "All", el valor de toda tasa de antes; distinto
+// de "All" sólo en una retención (422 catalog.tax_rate.applies_to_invalid).
 public sealed record CreateTaxRateRequest(
     string Name,
     decimal Percentage,
     string? Type = null,
     string? Country = null,
     decimal? MinimumBase = null,
-    Guid? CityId = null);
+    Guid? CityId = null,
+    string? AppliesTo = null);
 
 // Type, Country y CityId no se editan: si el cuerpo los trae, se ignoran. MinimumBase es un JsonElement porque
 // un decimal? no distingue «ausente» (conservar la base) de null (quitarla, «siempre aplica»).
+//
+// AppliesTo tampoco se edita, pero no se ignora: el formulario lo reenvía, y uno distinto del guardado es 422
+// catalog.tax_rate.applies_to_immutable en vez de un cambio perdido en silencio. Ausente o igual, pasa.
 public sealed record UpdateTaxRateRequest(
     string Name,
     decimal Percentage)
 {
+    public string? AppliesTo { get; init; }
+
     // Propiedad y no parámetro del constructor: con `JsonElement MinimumBase = default` el esquema de OpenAPI
     // (JsonSchemaExporter) intentaba escribir ese valor por defecto y /openapi/v1.json entero respondía 500.
     // Ausente queda en default (ValueKind Undefined), igual que antes.

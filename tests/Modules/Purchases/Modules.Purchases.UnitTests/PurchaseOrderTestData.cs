@@ -19,15 +19,59 @@ internal static class PurchaseOrderTestData
         Guid? variantId = null) =>
         new(variantId ?? Guid.CreateVersion7(), "SKU-1", "Camiseta – M / Azul", quantity, unitCost, taxRatePercent);
 
+    public static readonly Guid SupplierTenantId = Guid.Parse("0196b8a0-0000-7000-8000-000000000004");
+
+    public static readonly Guid LinkedOrderId = Guid.Parse("0196b8a0-0000-7000-8000-000000000005");
+
+    /// <summary>Una línea de una orden vinculada: sin variante propia, con la foto de la lista del mayorista.</summary>
+    public static PurchaseOrderLineDraft LinkedLine(
+        decimal quantity = 2m,
+        decimal unitCost = 10000m,
+        decimal taxRatePercent = 19m,
+        string code = "SKU-1") =>
+        new(null, code, "Camiseta – M / Azul", quantity, unitCost, taxRatePercent,
+            new LinkedLinePrice(Guid.CreateVersion7(), 12500m, 4.8m, 11900m));
+
+    public static PurchaseOrder LinkedOrder(IReadOnlyList<PurchaseOrderLineDraft>? lines = null) =>
+        PurchaseOrder.Create(TenantId, "OC-0007", SupplierId, SupplierTenantId, "COP", null, lines ?? [LinkedLine()], MemberId, Now);
+
+    /// <summary>La foto que devuelve el pedido del mayorista: una línea por línea de la orden, con ids nuevos.</summary>
+    public static IReadOnlyList<LinkedLineSnapshot> SnapshotOf(PurchaseOrder order, decimal? quantity = null) =>
+        order.Lines
+            .Select(line => new LinkedLineSnapshot(
+                Guid.CreateVersion7(),
+                line.SupplierVariantId!.Value,
+                line.Code,
+                line.Name,
+                quantity ?? line.Quantity!.Value,
+                line.UnitCost,
+                line.TaxRatePercent,
+                line.ListBasePrice!.Value,
+                line.ListDiscountPercent!.Value,
+                line.ListUnitPrice!.Value))
+            .ToList();
+
+    /// <summary>Una orden vinculada ya enviada al mayorista (pedido <c>PED-0042</c>).</summary>
+    public static PurchaseOrder SentLinkedOrder(IReadOnlyList<PurchaseOrderLineDraft>? lines = null)
+    {
+        var order = LinkedOrder(lines);
+        order.SendToWholesaler(LinkedOrderId, "PED-0042", SnapshotOf(order), MemberId, Now);
+        return order;
+    }
+
+    /// <summary>La línea final del pedido aprobado que corresponde a <paramref name="line"/>.</summary>
+    public static WholesalerFinalLine FinalOf(PurchaseOrderLine line, decimal? quantity = null, decimal? unitCost = null) =>
+        new(line.Id, line.SupplierVariantId!.Value, line.Code, line.Name, quantity ?? line.Quantity!.Value, unitCost ?? line.UnitCost, line.TaxRatePercent);
+
     public static PurchaseOrder Order(
         IReadOnlyList<PurchaseOrderLineDraft>? lines = null,
         string currency = "COP",
         string? notes = null) =>
-        PurchaseOrder.Create(TenantId, "OC-0001", SupplierId, currency, notes, lines ?? [Line()], MemberId, Now);
+        PurchaseOrder.Create(TenantId, "OC-0001", SupplierId, null, currency, notes, lines ?? [Line()], MemberId, Now);
 
     /// <summary>Confirma cada línea con lo pedido: todas quedan <c>Unchanged</c>.</summary>
     public static IReadOnlyList<PurchaseOrderLineConfirmation> AsRequested(PurchaseOrder order) =>
-        order.Lines.Select(line => new PurchaseOrderLineConfirmation(line.Id, line.Quantity, line.UnitCost)).ToList();
+        order.Lines.Select(line => new PurchaseOrderLineConfirmation(line.Id, line.Quantity!.Value, line.UnitCost)).ToList();
 
     /// <summary>Una orden llevada hasta <paramref name="status"/> por el camino normal.</summary>
     public static PurchaseOrder OrderIn(PurchaseOrderStatus status)

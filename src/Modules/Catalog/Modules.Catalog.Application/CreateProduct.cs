@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Catalog;
 using FluentValidation;
 using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
@@ -14,7 +15,9 @@ public sealed record CreateProductCommand(
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
-    bool? VisibleInStore = null) : ICommand<ProductDto>, IProductWriteCommand;
+    bool? VisibleInStore = null,
+    ProductKind? Kind = null,
+    SalesUnit? SalesUnit = null) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
 // validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes. En el POST el precio de
@@ -99,7 +102,11 @@ public sealed class CreateProductHandler(
             {
                 Description = command.Description,
                 TaxRateId = taxRateId,
-                CategoryId = categoryId
+                CategoryId = categoryId,
+                // Ausentes, el valor de siempre: un cliente que no los conoce crea un producto físico
+                // por unidad (spec 2026-11-18 §3.3).
+                Kind = command.Kind ?? ProductKind.Physical,
+                SalesUnit = command.SalesUnit ?? SalesUnit.Unit
             },
             optionIds,
             variants,

@@ -30,7 +30,12 @@ public sealed record QuotationItemDto(
     /// líneas enviadas antes de que existieran. No viajan así al cliente HTTP: el composer los
     /// resuelve contra el catálogo con <see cref="QuotationItemProductLabel"/>.</summary>
     string? ProductCode,
-    string? ProductName);
+    string? ProductName,
+    /// <summary>El tipo y la unidad que la línea fijó al nacer (spec 2026-11-18 §3.4), por nombre.</summary>
+    string Kind,
+    string SalesUnit,
+    /// <summary>Mayorista fase 3: la línea de la orden de compra de la que salió, sólo en un pedido mayorista.</summary>
+    Guid? SourcePurchaseOrderLineId = null);
 
 public sealed record QuotationDto(
     Guid Id,
@@ -134,7 +139,10 @@ public sealed record QuotationDto(
     Guid? OperationCityId = null,
     /// <summary>El veredicto de cada tasa de la fuente vigente, aplique o no, en su orden (spec retenciones por UVT §6).
     /// QuotationMapping.ToDto la llena siempre; null sólo en un DTO armado a mano, y el compositor lo lee como vacío.</summary>
-    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null);
+    IReadOnlyList<WithholdingVerdictDto>? WithholdingBreakdown = null,
+    /// <summary>Ver <c>Quotation.RequiresShipping</c> (spec 2026-11-18 §5). Con default por el mismo motivo que los de
+    /// arriba: QuotationMapping.ToDto la llena siempre.</summary>
+    bool RequiresShipping = true);
 
 /// <summary>Una retención que aplicó (spec impuestos por tipo §9.3): la tasa congelada, la base sobre la que se
 /// calculó y su monto. <c>Type</c> viaja como texto ("Retefuente", "ReteICA").</summary>
@@ -157,10 +165,17 @@ public sealed record WithholdingDto(
     decimal CatalogPercentage,
     bool PercentageOverridden,
     /// <summary>El municipio de una municipal; null en las nacionales.</summary>
-    Guid? CityId);
+    Guid? CityId,
+    /// <summary>El nombre de <c>WithholdingScope</c> de la tasa (spec 2026-11-18 §4.4): con dos tasas del mismo nombre, una
+    /// por alcance, es lo que dice cuál retiene sobre bienes y cuál sobre servicios.</summary>
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>Una tasa de retención congelada en el documento, aplique o no: lo que prellena un selector. Con el porcentaje
 /// del catálogo y el municipio, porque el editor de porcentaje lee la fila aunque no haya aplicado (spec §9.4).</summary>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> con el que se congeló la tasa: <c>All</c>, <c>Goods</c> o
+/// <c>Services</c> (spec 2026-11-18 servicios pendientes §2). Sale de la foto del documento y no del catálogo: el selector
+/// dice «Retefuente (servicios)» aunque la tasa ya no esté en el catálogo activo. Va al final y con default para no tocar
+/// las construcciones existentes.</param>
 public sealed record WithholdingTaxRateDto(
     Guid Id,
     string Name,
@@ -169,7 +184,8 @@ public sealed record WithholdingTaxRateDto(
     decimal Percentage,
     decimal CatalogPercentage,
     bool PercentageOverridden,
-    Guid? CityId);
+    Guid? CityId,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// Por qué una tasa de la fuente vigente aplica o no (spec retenciones por UVT §5.1, §6): la tasa congelada, el motivo, la
@@ -177,11 +193,15 @@ public sealed record WithholdingTaxRateDto(
 /// dominio (<c>WithholdingVerdict</c>); el frontend sólo pinta.
 /// </summary>
 /// <param name="Reason">El nombre de <c>WithholdingReason</c>: <c>Applied</c>, <c>BelowMinimumBase</c>,
-/// <c>NoTaxUnitValue</c>, <c>FinalConsumer</c>, <c>NoBillingCompany</c>, <c>CurrencyWithoutTax</c> u
-/// <c>OtherMunicipality</c>.</param>
+/// <c>NoTaxUnitValue</c>, <c>FinalConsumer</c>, <c>NoBillingCompany</c>, <c>CurrencyWithoutTax</c>,
+/// <c>OtherMunicipality</c> o <c>NoLinesOfScope</c> (spec 2026-11-18 §4.2: una tasa de bienes o de servicios sin líneas de
+/// ese tipo).</param>
 /// <param name="MinimumBaseAmount">El umbral en dinero; null sin base mínima o con base en UVT y sin valor cargado.</param>
 /// <param name="TaxUnitYear">El año de la UVT congelada; null sin unidad o en una fila anterior que no casó (§8.2).</param>
 /// <param name="Amount">Lo que guardó el último recálculo; 0 si no aplicó.</param>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> de la tasa congelada (spec 2026-11-18 §4.4): <c>All</c>,
+/// <c>Goods</c> o <c>Services</c>. Viaja para que la pantalla diga sobre qué líneas se calculó <c>Base</c> sin deducirlo
+/// del nombre de la tasa.</param>
 public sealed record WithholdingVerdictDto(
     Guid TaxRateId,
     string Name,
@@ -199,7 +219,8 @@ public sealed record WithholdingVerdictDto(
     decimal? MinimumBaseAmount,
     decimal? TaxUnitValue,
     int? TaxUnitYear,
-    decimal Amount);
+    decimal Amount,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// Gemelo HTTP de <see cref="WithholdingVerdictDto"/> más <see cref="TaxUnitOutdated"/>, que sale del calendario del
@@ -230,7 +251,8 @@ public sealed record WithholdingBreakdownResponse(
     int? TaxUnitYear,
     bool TaxUnitOutdated,
     int? TaxUnitLatestYear,
-    decimal Amount);
+    decimal Amount,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
@@ -836,7 +858,12 @@ public sealed record QuotationResponse(
     IReadOnlyList<MunicipalWithholdingResponse> MunicipalWithholdings,
     /// <summary>Todas las tasas de la fuente vigente con su veredicto, apliquen o no, en su orden (spec retenciones por UVT
     /// §6). Aditivo: <see cref="Withholdings"/> sigue trayendo sólo las aplicadas.</summary>
-    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown);
+    IReadOnlyList<WithholdingBreakdownResponse> WithholdingBreakdown,
+    /// <summary>Si la cotización vende algo que se despacha (spec 2026-11-18 §5): alguna línea <c>Physical</c>, o
+    /// ninguna línea. BFF: con false la pantalla oculta la sección de envío sin conocer el tipo de cada línea ni la
+    /// regla del documento vacío. El backend no pone ni borra el envío por esto. Con default para no tocar las
+    /// construcciones que ya existen; el compositor lo llena siempre.</summary>
+    bool RequiresShipping = true);
 
 /// <summary>Una referencia de municipio (spec ReteICA por empresa §9.1): la misma forma en tasas, empresas, clientes y
 /// documentos.</summary>
@@ -881,9 +908,10 @@ public sealed record WithholdingResponse(
     decimal Amount,
     decimal CatalogPercentage,
     bool PercentageOverridden,
-    Guid? CityId);
+    Guid? CityId,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
-/// <summary>Gemelo HTTP de <see cref="WithholdingTaxRateDto"/>.</summary>
+/// <summary>Gemelo HTTP de <see cref="WithholdingTaxRateDto"/>; <c>AppliesTo</c> significa lo mismo que allá.</summary>
 public sealed record WithholdingTaxRateResponse(
     Guid Id,
     string Name,
@@ -892,7 +920,8 @@ public sealed record WithholdingTaxRateResponse(
     decimal Percentage,
     decimal CatalogPercentage,
     bool PercentageOverridden,
-    Guid? CityId);
+    Guid? CityId,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de
@@ -981,7 +1010,10 @@ public sealed record QuotationListItemResponse(
     string? OrderStatus,
     /// <summary>La entrega por envío de la fila, misma forma que en el detalle: la grilla muestra
     /// transportadora y contraentrega sin pedir la cotización entera.</summary>
-    ShippingResponse Shipping);
+    ShippingResponse Shipping,
+    /// <summary>Mismo campo y mismo significado que en <see cref="QuotationResponse"/> (spec 2026-11-18 §5): la fila no
+    /// trae las líneas, así que viaja resuelto.</summary>
+    bool RequiresShipping);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>
@@ -1044,7 +1076,15 @@ public sealed record QuotationItemResponse(
     string DiscountOrigin,
     /// <summary>Por qué el piso global no le dio su descuento a esta línea, o null si no hay nada
     /// que explicar. Con default para no tocar las construcciones que ya existen.</summary>
-    GlobalScaleFloorMissResponse? GlobalScaleFloorMiss = null);
+    GlobalScaleFloorMissResponse? GlobalScaleFloorMiss = null,
+    /// <summary>Producto o servicio (<c>Physical</c> | <c>Service</c>) y la unidad de venta (<c>Unit</c>, <c>Hour</c>…),
+    /// por nombre (spec 2026-11-18 §3.4). Son los que la línea fijó al nacer, no los del catálogo de hoy: la pantalla
+    /// pone la unidad junto a la cantidad con su propio diccionario. Con default por la misma razón que el anterior.</summary>
+    string Kind = "Physical",
+    string SalesUnit = "Unit",
+    /// <summary>Mayorista fase 3: en un pedido mayorista, si la línea vino de la orden de compra del distribuidor (false = la
+    /// agregó el mayorista). Null en cualquier otro documento.</summary>
+    bool? FromPurchaseOrder = null);
 
 /// <summary>
 /// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No

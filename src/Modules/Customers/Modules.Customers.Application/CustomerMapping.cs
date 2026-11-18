@@ -123,7 +123,7 @@ internal static class CustomerMapping
             .ThenBy(rate => rate.Type, StringComparer.Ordinal)
             .ThenBy(rate => rate.Name, StringComparer.Ordinal)
             .Select(rate => new CustomerWithholdingTaxRateDto(
-                rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive))];
+                rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.AppliesTo.ToString()))];
 
     /// <summary>
     /// Las tasas de todos los clientes dados, con una sola consulta al catálogo (el listado y el Excel no pueden ir de a una).

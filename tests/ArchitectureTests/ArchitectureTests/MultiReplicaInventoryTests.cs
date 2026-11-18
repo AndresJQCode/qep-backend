@@ -58,7 +58,7 @@ public sealed class MultiReplicaInventoryTests
     /// </summary>
     private static readonly string[] ReplayedProgramRegistrations =
     [
-        "AddProblemDetails", "AddExceptionHandler", "AddOpenApi", "AddQepPlatform", "AddScoped", "AddWebTelemetry",
+        "AddSensitivePathRedaction", "AddProblemDetails", "AddExceptionHandler", "AddOpenApi", "AddQepPlatform", "AddScoped", "AddWebTelemetry",
         "AddQepHealthChecks", "AddQepForwardedHeaders", "AddQepCors", "AddMessagingRealtime", "AddRateLimiter",
     ];
 
@@ -580,6 +580,9 @@ public sealed class MultiReplicaInventoryTests
     private static void ReplayProgramRegistrations(IServiceCollection services, IConfiguration configuration)
     {
         var api = typeof(global::Api.WebTelemetryMetrics).Assembly;
+        // Program.cs la llama después de AddQepLogging; acá no hay proveedores de log, así que sólo agrega la configuración del
+        // span de ASP.NET Core.
+        services.AddSensitivePathRedaction();
         services.AddProblemDetails();
         typeof(ExceptionHandlerServiceCollectionExtensions).GetMethods()
             .Single(method => method is { Name: "AddExceptionHandler", IsGenericMethodDefinition: true } && method.GetParameters().Length == 1)

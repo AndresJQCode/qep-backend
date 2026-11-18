@@ -38,6 +38,12 @@ public sealed record WithholdingRate(
     /// </summary>
     public int? TaxUnitYear { get; init; }
 
+    /// <summary>
+    /// A qué líneas aplica (spec 2026-11-18 §4.2): su base es el subtotal de las líneas de ese tipo. Se congela con la
+    /// tasa y no se edita en el catálogo, así que la foto nunca queda distinta de la tasa. All = como antes.
+    /// </summary>
+    public WithholdingScope AppliesTo { get; init; } = WithholdingScope.All;
+
     /// <summary>Si el asesor cambió el porcentaje del catálogo en este documento.</summary>
     public bool Overridden => Percentage != CatalogPercentage;
 

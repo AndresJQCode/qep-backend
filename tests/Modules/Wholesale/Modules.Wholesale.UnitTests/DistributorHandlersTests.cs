@@ -1,0 +1,520 @@
+using BuildingBlocks.Application;
+using Modules.Tenancy.Application;
+using Modules.Wholesale.Application;
+using Modules.Wholesale.Domain;
+
+namespace Modules.Wholesale.UnitTests;
+
+/// <summary>Spec 2026-11-17 (mayorista): invitar, editar, reenviar, bloquear y borrar distribuidores.</summary>
+public sealed class DistributorHandlersTests
+{
+    private static readonly System.Text.Json.JsonSerializerOptions WebJson = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private readonly DistributorWorld _world = new();
+
+    private static CancellationToken Ct => DistributorWorld.Ct;
+
+    [Fact]
+    public async Task InviteStoresOnlyTheHashAndPublishesTheTokenOnce()
+    {
+        var detail = await _world.InviteHandler().HandleAsync(_world.InviteCommand(email: "  Ana@Distri.CO "), Ct);
+
+        var published = Assert.Single(_world.Events.Invitations);
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.Equal(InvitationTokens.HashOf(published.Token), stored.Invitation.TokenHash);
+        Assert.NotEqual(published.Token, stored.Invitation.TokenHash);
+        Assert.Equal(
+            (_world.Tenant, stored.Id.Value, "ana@distri.co", "Distribuciones Norte SAS", DistributorWorld.Now.AddHours(72), "trace-1"),
+            (published.TenantId, published.DistributorId, published.Email, published.BusinessName, published.ExpiresAt, published.CorrelationId));
+        var audit = Assert.Single(_world.Audit.Entries);
+        Assert.Equal(("wholesale.distributor.invited", "distributor", stored.Id.ToString(), _world.Context.SubjectId),
+            (audit.Action, audit.ResourceType, audit.ResourceId, audit.ActorId));
+        Assert.DoesNotContain(audit.ChangedFields, field => field.Contains("token", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(published.Token, string.Join("|", audit.ChangedFields.Append(audit.ResourceId)));
+        Assert.Equal(_world.Context.SubjectId, stored.InvitedByUserId);
+        Assert.Equal(("Invited", 1L), (detail.Status, detail.Version));
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task InviteWithAnUnknownPriceListIs404()
+    {
+        var command = _world.InviteCommand() with { PriceListId = Guid.CreateVersion7() };
+
+        var error = await Assert.ThrowsAsync<ResourceNotFoundException>(() => _world.InviteHandler().HandleAsync(command, Ct));
+
+        Assert.Equal("wholesale.price_list.not_found", error.Code);
+        Assert.Empty(_world.Events.Invitations);
+    }
+
+    [Fact]
+    public async Task InviteWithAnInactiveAdvisorIs422AdvisorInvalid()
+    {
+        var gone = Guid.CreateVersion7();
+        _world.Members.Names[gone] = "Pedro Ido"; // tiene nombre, pero ya no es membresía activa
+        var command = _world.InviteCommand() with { AdvisorId = gone };
+
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() => _world.InviteHandler().HandleAsync(command, Ct));
+
+        Assert.Equal("wholesale.distributor.advisor_invalid", error.Code);
+        Assert.Empty(_world.Distributors.Distributors);
+        Assert.Empty(_world.Events.Invitations);
+    }
+
+    [Theory]
+    [InlineData("NIF", true)]
+    [InlineData("NIT", false)]
+    public async Task InviteWithANifCompanyIs422CompanyInvalid(string documentType, bool isActive)
+    {
+        // Un documento que el proveedor no admite (Eligible false) o una empresa inactiva.
+        var company = _world.Companies.Add("Otra", documentType, isActive);
+        var command = _world.InviteCommand() with { BillingCompanyId = company.Id };
+
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() => _world.InviteHandler().HandleAsync(command, Ct));
+
+        Assert.Equal("wholesale.distributor.company_invalid", error.Code);
+        Assert.Empty(_world.Distributors.Distributors);
+    }
+
+    [Fact]
+    public async Task InviteWithATakenIdentificationIs409()
+    {
+        _world.SeedActive("900123456");
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            _world.InviteHandler().HandleAsync(_world.InviteCommand(" 900123456 "), Ct));
+
+        Assert.Equal("wholesale.distributor.identification_taken", error.Code);
+        Assert.Single(_world.Distributors.Distributors);
+        Assert.Empty(_world.Events.Invitations);
+    }
+
+    [Fact]
+    public async Task UpdateRepeatsTheThreeChecksAndAudits()
+    {
+        var distributor = _world.SeedActive();
+        var otherList = _world.PriceLists.Seed(PriceList.Create(_world.Tenant, "Detal", 5m, PriceListVisibility.AllActive, [], DistributorWorld.Now));
+        var otherAdvisor = _world.Members.AddActive("Luis");
+        var nif = _world.Companies.Add("Extranjera", "NIF");
+
+        var invalid = await Assert.ThrowsAsync<WholesaleDomainException>(() => _world.UpdateHandler().HandleAsync(
+            new UpdateDistributorCommand(_world.Tenant, distributor.Id.Value, 2, otherList.Id.Value, otherAdvisor, nif.Id), Ct));
+        var detail = await _world.UpdateHandler().HandleAsync(
+            new UpdateDistributorCommand(_world.Tenant, distributor.Id.Value, 2, otherList.Id.Value, otherAdvisor, _world.Company.Id), Ct);
+
+        Assert.Equal("wholesale.distributor.company_invalid", invalid.Code);
+        Assert.Equal((otherList.Id.Value, "Luis", 3L), (detail.PriceList.Id, detail.Advisor.Name, detail.Version));
+        var audit = Assert.Single(_world.Audit.Entries);
+        Assert.Equal("wholesale.distributor.updated", audit.Action);
+        Assert.Equal(["priceListId", "advisorId", "billingCompanyId"], audit.ChangedFields);
+    }
+
+    [Fact]
+    public async Task UpdateWithAStaleVersionIs412()
+    {
+        var distributor = _world.SeedInvited();
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() => _world.UpdateHandler().HandleAsync(
+            new UpdateDistributorCommand(_world.Tenant, distributor.Id.Value, 9, _world.PriceList.Id.Value, _world.Advisor, _world.Company.Id), Ct));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+    }
+
+    [Fact]
+    public async Task ResendPublishesANewTokenAndAuditsInvitationResent()
+    {
+        var oldToken = InvitationTokens.Generate();
+        var distributor = _world.SeedInvited(tokenHash: InvitationTokens.HashOf(oldToken));
+        _world.Clock.UtcNow = DistributorWorld.Now.AddDays(5); // ya vencida: reenviar es como se renueva
+
+        var detail = await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, distributor.Id.Value, 1, DistributorAction.Resend, "trace-2"), Ct);
+
+        var published = Assert.Single(_world.Events.Invitations);
+        Assert.NotEqual(oldToken, published.Token);
+        Assert.Equal(InvitationTokens.HashOf(published.Token), distributor.Invitation.TokenHash);
+        Assert.Null(await _world.Distributors.FindByTokenHashAsync(InvitationTokens.HashOf(oldToken), Ct));
+        Assert.Equal((DistributorWorld.Now.AddDays(5).AddHours(72), "trace-2"), (published.ExpiresAt, published.CorrelationId));
+        Assert.Equal(("wholesale.distributor.invitation_resent", "distributor"),
+            (Assert.Single(_world.Audit.Entries).Action, _world.Audit.Entries[0].ResourceType));
+        Assert.False(detail.Invitation.Expired);
+        Assert.Equal(2L, detail.Version);
+    }
+
+    [Fact]
+    public async Task BlockAndUnblockAreAuditedAndOutOfStateIs409InvalidTransition()
+    {
+        var active = _world.SeedActive();
+        var invited = _world.SeedInvited("800999111");
+
+        var blocked = await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, active.Id.Value, 2, DistributorAction.Block, "t"), Ct);
+        var unblocked = await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, active.Id.Value, 3, DistributorAction.Unblock, "t"), Ct);
+        var outOfState = new List<ResourceConflictException>
+        {
+            await Assert.ThrowsAsync<ResourceConflictException>(() => _world.TransitionHandler().HandleAsync(
+                new TransitionDistributorCommand(_world.Tenant, invited.Id.Value, 1, DistributorAction.Block, "t"), Ct)),
+            await Assert.ThrowsAsync<ResourceConflictException>(() => _world.TransitionHandler().HandleAsync(
+                new TransitionDistributorCommand(_world.Tenant, active.Id.Value, 4, DistributorAction.Unblock, "t"), Ct)),
+            await Assert.ThrowsAsync<ResourceConflictException>(() => _world.TransitionHandler().HandleAsync(
+                new TransitionDistributorCommand(_world.Tenant, active.Id.Value, 4, DistributorAction.Resend, "t"), Ct)),
+            await Assert.ThrowsAsync<ResourceConflictException>(() =>
+                _world.DeleteHandler().HandleAsync(new DeleteDistributorCommand(_world.Tenant, active.Id.Value, 4), Ct)),
+        };
+
+        Assert.Equal(("Blocked", "Active"), (blocked.Status, unblocked.Status));
+        Assert.Equal(["unblock"], blocked.AllowedActions.Except(["edit"]));
+        Assert.Equal(
+            ["wholesale.distributor.blocked", "wholesale.distributor.unblocked"],
+            _world.Audit.Entries.Select(entry => entry.Action));
+        // El dominio lo diría como 422; el contrato es 409 y sale antes de mutar.
+        Assert.All(outOfState, error => Assert.Equal("wholesale.distributor.invalid_transition", error.Code));
+        Assert.Equal(DistributorStatus.Active, active.Status);
+        Assert.Empty(_world.Events.Invitations);
+    }
+
+    [Fact]
+    public async Task DeleteOnlyWhileInvitedAndThenTheTokenIsGone()
+    {
+        var token = InvitationTokens.Generate();
+        var distributor = _world.SeedInvited(tokenHash: InvitationTokens.HashOf(token));
+
+        var deleted = await _world.DeleteHandler().HandleAsync(
+            new DeleteDistributorCommand(_world.Tenant, distributor.Id.Value, 1), Ct);
+
+        Assert.True(deleted);
+        Assert.Null(await _world.Distributors.FindByTokenHashAsync(InvitationTokens.HashOf(token), Ct));
+        Assert.Equal("wholesale.distributor.deleted", Assert.Single(_world.Audit.Entries).Action);
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task AnUnknownDistributorIs404()
+    {
+        var error = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            _world.GetHandler().HandleAsync(new GetDistributorQuery(_world.Tenant, Guid.CreateVersion7()), Ct));
+
+        Assert.Equal("wholesale.distributor.not_found", error.Code);
+    }
+
+    [Fact]
+    public async Task CountsCarryTheFourKeysEvenAtZero()
+    {
+        _world.SeedInvited("1");
+        _world.SeedInvited("2");
+        _world.SeedActive("3");
+
+        var all = await _world.ListHandler().HandleAsync(new ListDistributorsQuery(_world.Tenant, "invited", null, 0, 0), Ct);
+        var none = await _world.ListHandler().HandleAsync(new ListDistributorsQuery(_world.Tenant, null, "no-existe", 1, 50), Ct);
+
+        Assert.Equal((2, 1, 0, 3), (all.Counts.Invited, all.Counts.Active, all.Counts.Blocked, all.Counts.All));
+        Assert.Equal((2, 1, 50), (all.Total, all.Page, all.PageSize));
+        Assert.All(all.Items, item => Assert.Equal("Invited", item.Status));
+        Assert.Equal((0, 0, 0, 0), (none.Counts.Invited, none.Counts.Active, none.Counts.Blocked, none.Counts.All));
+        Assert.Empty(none.Items);
+        var json = System.Text.Json.JsonSerializer.Serialize(all.Counts, WebJson);
+        Assert.Equal("{\"Invited\":2,\"Active\":1,\"Blocked\":0,\"all\":3}", json);
+    }
+
+    [Fact]
+    public async Task OptionsBringListsAdvisorsAndActiveCompaniesByName()
+    {
+        _world.PriceLists.Seed(PriceList.Create(_world.Tenant, "Alfa", 5m, PriceListVisibility.AllActive, [], DistributorWorld.Now));
+        _world.Members.AddActive("Beto");
+        _world.Companies.Add("Extranjera", "NIF");
+        _world.Companies.Add("Inactiva", "NIT", isActive: false);
+
+        var options = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+
+        Assert.Equal(["Alfa", "Mayoristas"], options.PriceLists.Select(list => list.Name));
+        Assert.Equal(["Ana Mayorista", "Beto"], options.Advisors.Select(advisor => advisor.Name));
+        Assert.Equal([("Extranjera", false), ("Mayorista SAS", true)], options.Companies.Select(company => (company.Name, company.Eligible)));
+    }
+
+    [Fact]
+    public async Task ReadersCannotWriteAndAnotherTenantIsForbidden()
+    {
+        _world.Context = new FakeExecutionContext(_world.Tenant, WholesalePermissions.DistributorRead);
+        var readerError = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            _world.InviteHandler().HandleAsync(_world.InviteCommand(), Ct));
+        var optionsError = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct));
+        _world.Context = new FakeExecutionContext(
+            Guid.CreateVersion7(), WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage);
+        var foreignError = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            _world.ListHandler().HandleAsync(new ListDistributorsQuery(_world.Tenant, null, null, 1, 50), Ct));
+
+        Assert.All([readerError, optionsError, foreignError], error => Assert.Equal("authorization.denied", error.Code));
+        Assert.Equal(0, _world.Distributors.Writes);
+    }
+
+    // ---- Spec 2026-11-18: aviso por WhatsApp de la invitación ----
+
+    private const string SavedPhone = "+573001234567";
+
+    // D-8: el flag va en changed_fields; el teléfono nunca entra a la auditoría ni el token al evento del aviso.
+    [Fact]
+    public async Task InviteWithAPhonePublishesTheEmailAndATokenlessNoticeAndAuditsTheFlag()
+    {
+        var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
+        var member = Guid.CreateVersion7();
+        _world.Memberships.Active[(_world.Context.SubjectId, _world.Tenant)] = member;
+
+        var detail = await _world.InviteHandler().HandleAsync(
+            _world.InviteCommand() with { Phone = " 300 123 4567 ", WhatsAppConnectionId = null }, Ct);
+
+        var email = Assert.Single(_world.Events.Invitations);
+        var notice = Assert.Single(_world.Events.Notices);
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.Equal(
+            (_world.Tenant, stored.Id.Value, SavedPhone, connection, member, "Ana Pérez", "ana@distri.co", 0, "trace-1",
+                DistributorWorld.Now),
+            (notice.TenantId, notice.DistributorId, notice.Phone, notice.ConnectionId, notice.SentByMemberId, notice.ContactName,
+                notice.Email, notice.Generation, notice.CorrelationId, notice.OccurredAt));
+        Assert.DoesNotContain(email.Token, notice.ToString());
+        Assert.Equal(("CO", " 300 123 4567 ".Trim()), (_world.Phones.Calls.Single().Country, _world.Phones.Calls.Single().Phone));
+        Assert.Equal((SavedPhone, (Guid?)connection), (stored.Phone, stored.WhatsAppConnectionId));
+        Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Pending, stored.Invitation.NoticeStatus);
+        var audit = Assert.Single(_world.Audit.Entries);
+        Assert.Contains("whatsAppNotice=true", audit.ChangedFields);
+        Assert.DoesNotContain(audit.ChangedFields, field => field.Contains("300", StringComparison.Ordinal));
+        Assert.Equal("Invited", detail.Status);
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+    }
+
+    // D-6: sin membresía activa de quien invita (stub de desarrollo), el autor del mensaje es el asesor.
+    [Fact]
+    public async Task InviteWithoutAMembershipSendsTheNoticeAsTheAdvisor()
+    {
+        _world.WhatsApp.AddReady("+57 300 999 0000");
+
+        await _world.InviteHandler().HandleAsync(_world.InviteCommand() with { Phone = "3001234567" }, Ct);
+
+        Assert.Equal(_world.Advisor, Assert.Single(_world.Events.Notices).SentByMemberId);
+    }
+
+    [Fact]
+    public async Task InviteWithoutAPhonePublishesOnlyTheEmailAndIgnoresTheConnection()
+    {
+        var command = _world.InviteCommand() with { Phone = "   ", WhatsAppConnectionId = Guid.CreateVersion7() };
+
+        await _world.InviteHandler().HandleAsync(command, Ct);
+
+        Assert.Single(_world.Events.Invitations);
+        Assert.Empty(_world.Events.Notices);
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.Null(stored.Phone);
+        Assert.Null(stored.WhatsAppConnectionId);
+        Assert.Null(stored.Invitation.NoticeStatus);
+        Assert.Equal(0, _world.WhatsApp.ListCalls);
+        Assert.Contains("whatsAppNotice=false", Assert.Single(_world.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task InviteWithTwoReadyConnectionsAndNoneChosenIs422ConnectionRequired()
+    {
+        _world.WhatsApp.AddReady("+57 300 000 0001");
+        _world.WhatsApp.AddReady("+57 300 000 0002");
+
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() =>
+            _world.InviteHandler().HandleAsync(_world.InviteCommand() with { Phone = "3001234567" }, Ct));
+
+        Assert.Equal("wholesale.distributor.whatsapp_connection_required", error.Code);
+        AssertNothingWritten();
+    }
+
+    [Fact]
+    public async Task InviteWithNoReadyConnectionIs422WhatsAppUnavailable()
+    {
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() =>
+            _world.InviteHandler().HandleAsync(_world.InviteCommand() with { Phone = "3001234567" }, Ct));
+
+        Assert.Equal("wholesale.distributor.whatsapp_unavailable", error.Code);
+        AssertNothingWritten();
+    }
+
+    [Fact]
+    public async Task InviteWithAConnectionThatIsNotReadyIs422WhatsAppUnavailable()
+    {
+        _world.WhatsApp.AddReady("+57 300 000 0001");
+        var command = _world.InviteCommand() with { Phone = "3001234567", WhatsAppConnectionId = Guid.CreateVersion7() };
+
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() => _world.InviteHandler().HandleAsync(command, Ct));
+
+        Assert.Equal("wholesale.distributor.whatsapp_unavailable", error.Code);
+        AssertNothingWritten();
+    }
+
+    [Fact]
+    public async Task InviteWithAPhoneThatDoesNotNormalizeIs422OnPhoneAndWritesNothing()
+    {
+        _world.WhatsApp.AddReady("+57 300 000 0001");
+
+        var error = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() =>
+            _world.InviteHandler().HandleAsync(_world.InviteCommand() with { Phone = "no es un teléfono" }, Ct));
+
+        Assert.Equal(("Phone", "The phone is not valid."),
+            (Assert.Single(error.Errors).PropertyName, error.Errors.Single().ErrorMessage));
+        AssertNothingWritten();
+        Assert.Equal(0, _world.WhatsApp.ListCalls);
+    }
+
+    [Fact]
+    public async Task InviteNormalizesThePhoneWithTheTenantCountry()
+    {
+        _world.Tenancy.Countries[_world.Tenant] = "MX";
+        _world.WhatsApp.AddReady("+52 55 0000 0000");
+
+        await _world.InviteHandler().HandleAsync(_world.InviteCommand() with { Phone = "5512345678" }, Ct);
+
+        Assert.Equal("MX", Assert.Single(_world.Phones.Calls).Country);
+        Assert.Equal("+525512345678", Assert.Single(_world.Distributors.Distributors).Phone);
+    }
+
+    // Review Focus 1 (D-9): el formulario reenvía el teléfono guardado con la conexión en null; eso no consulta Integrations,
+    // así que editar no falla aunque la conexión ya no esté lista, y la generación no cambia.
+    [Fact]
+    public async Task UpdateWithTheSamePhoneAndNullConnectionDoesNotResolveTheConnection()
+    {
+        var connection = Guid.CreateVersion7();
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: connection);
+        _world.WhatsApp.ThrowWhenCalled = true;
+
+        var detail = await _world.UpdateHandler().HandleAsync(UpdateCommand(distributor, "300 123 4567", null), Ct);
+
+        Assert.Equal(2L, detail.Version);
+        Assert.Equal((SavedPhone, (Guid?)connection, 0), (distributor.Phone, distributor.WhatsAppConnectionId, distributor.Invitation.Generation));
+        Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Pending, distributor.Invitation.NoticeStatus);
+    }
+
+    // P-3: no hay aviso para el número nuevo hasta el próximo «Reenviar».
+    [Fact]
+    public async Task UpdateThatChangesThePhoneBumpsTheGenerationAndClearsTheNotice()
+    {
+        var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: connection);
+
+        await _world.UpdateHandler().HandleAsync(UpdateCommand(distributor, "3109876543", null), Ct);
+
+        Assert.Equal(("+573109876543", (Guid?)connection, 1), (distributor.Phone, distributor.WhatsAppConnectionId, distributor.Invitation.Generation));
+        Assert.Null(distributor.Invitation.NoticeStatus);
+        Assert.Empty(_world.Events.Notices);
+        var audit = Assert.Single(_world.Audit.Entries);
+        Assert.Equal(["priceListId", "advisorId", "billingCompanyId", "phone", "whatsAppConnectionId"], audit.ChangedFields);
+    }
+
+    [Fact]
+    public async Task UpdateWithoutAPhoneDeletesPhoneAndConnection()
+    {
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: Guid.CreateVersion7());
+        _world.WhatsApp.ThrowWhenCalled = true;
+
+        await _world.UpdateHandler().HandleAsync(UpdateCommand(distributor, null, Guid.CreateVersion7()), Ct);
+
+        Assert.Null(distributor.Phone);
+        Assert.Null(distributor.WhatsAppConnectionId);
+        Assert.Null(distributor.Invitation.NoticeStatus);
+        Assert.Equal(1, distributor.Invitation.Generation);
+    }
+
+    // P-2: fuera de Invited el teléfono se ignora sin 422, aunque no normalice: el formulario reenvía todos los campos.
+    [Fact]
+    public async Task UpdateOutsideInvitedIgnoresThePhone()
+    {
+        var distributor = _world.SeedActive();
+        _world.WhatsApp.ThrowWhenCalled = true;
+
+        var detail = await _world.UpdateHandler().HandleAsync(UpdateCommand(distributor, "no es un teléfono", null), Ct);
+
+        Assert.Equal(3L, detail.Version);
+        Assert.Null(distributor.Phone);
+        Assert.Empty(_world.Phones.Calls);
+        Assert.Equal(["priceListId", "advisorId", "billingCompanyId"], Assert.Single(_world.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task ResendWithAReadyConnectionQueuesANewNoticeWithTheNewGeneration()
+    {
+        var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
+        var member = Guid.CreateVersion7();
+        _world.Memberships.Active[(_world.Context.SubjectId, _world.Tenant)] = member;
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: connection);
+
+        await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, distributor.Id.Value, 1, DistributorAction.Resend, "trace-3"), Ct);
+
+        var email = Assert.Single(_world.Events.Invitations);
+        var notice = Assert.Single(_world.Events.Notices);
+        Assert.Equal((SavedPhone, connection, member, 1, "trace-3"),
+            (notice.Phone, notice.ConnectionId, notice.SentByMemberId, notice.Generation, notice.CorrelationId));
+        Assert.DoesNotContain(email.Token, notice.ToString());
+        Assert.Equal((1, (InvitationNoticeStatus?)InvitationNoticeStatus.Pending),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus));
+        Assert.Contains("whatsAppNotice=true", Assert.Single(_world.Audit.Entries).ChangedFields);
+    }
+
+    // Un fallo del aviso nunca frena el correo: la conexión guardada ya no está lista y el aviso queda fallido sin encolarse.
+    [Fact]
+    public async Task ResendWithTheConnectionNoLongerReadySendsTheEmailAndFailsTheNotice()
+    {
+        _world.WhatsApp.AddReady("+57 300 999 0000");
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: Guid.CreateVersion7());
+
+        var detail = await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, distributor.Id.Value, 1, DistributorAction.Resend, "trace-3"), Ct);
+
+        Assert.Single(_world.Events.Invitations);
+        Assert.Empty(_world.Events.Notices);
+        Assert.Equal((1, (InvitationNoticeStatus?)InvitationNoticeStatus.Failed, "whatsapp_unavailable"),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus, distributor.Invitation.NoticeFailureCode));
+        Assert.Contains("whatsAppNotice=false", Assert.Single(_world.Audit.Entries).ChangedFields);
+        Assert.Equal(2L, detail.Version);
+    }
+
+    // Un fallo del aviso nunca frena el correo: si consultar las conexiones lanza, el reenvío sale y el aviso queda fallido.
+    [Fact]
+    public async Task ResendWhenListingTheConnectionsThrowsStillSendsTheEmailAndFailsTheNotice()
+    {
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: Guid.CreateVersion7());
+        _world.WhatsApp.ThrowWhenCalled = true;
+
+        var detail = await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, distributor.Id.Value, 1, DistributorAction.Resend, "trace-4"), Ct);
+
+        Assert.Equal(1, _world.WhatsApp.ListCalls);
+        Assert.Equal("trace-4", Assert.Single(_world.Events.Invitations).CorrelationId);
+        Assert.Empty(_world.Events.Notices);
+        Assert.Equal((1, (InvitationNoticeStatus?)InvitationNoticeStatus.Failed, "whatsapp_unavailable"),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus, distributor.Invitation.NoticeFailureCode));
+        Assert.Contains("whatsAppNotice=false", Assert.Single(_world.Audit.Entries).ChangedFields);
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(2L, detail.Version);
+    }
+
+    // Sin conexiones listas la lista llega vacía y el formulario no ofrece el aviso.
+    [Fact]
+    public async Task OptionsBringTheReadyWhatsAppConnections()
+    {
+        var none = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+        var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
+
+        var options = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+
+        Assert.Empty(none.WhatsAppConnections);
+        Assert.Equal([new DistributorWhatsAppConnectionDto(connection, "+57 300 999 0000")], options.WhatsAppConnections);
+    }
+
+    private UpdateDistributorCommand UpdateCommand(Distributor distributor, string? phone, Guid? connection) =>
+        new(_world.Tenant, distributor.Id.Value, distributor.Version, _world.PriceList.Id.Value, _world.Advisor, _world.Company.Id,
+            phone, connection);
+
+    private void AssertNothingWritten()
+    {
+        Assert.Empty(_world.Distributors.Distributors);
+        Assert.Empty(_world.Events.Invitations);
+        Assert.Empty(_world.Events.Notices);
+        Assert.Empty(_world.Audit.Entries);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+    }
+}

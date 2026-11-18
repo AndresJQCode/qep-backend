@@ -32,6 +32,7 @@ public sealed partial class RunEffects(
     IAutomationBusinessHours businessHours,
     IHttpBlockExecutor httpBlocks,
     IAutomationMedia media,
+    IChatbotMediaStore chatbotMedia,
     IAutomationsAuditRecorder audit,
     IAutomationDataConsents dataConsents,
     IChatbotRepository chatbots,
@@ -95,7 +96,7 @@ public sealed partial class RunEffects(
                 var effect = step.Effects[i];
                 switch (effect)
                 {
-                    case Effect.SendText or Effect.SendInteractive:
+                    case Effect.SendText or Effect.SendInteractive or Effect.SendMedia:
                         var clientId = DeterministicClientId.For(run.Id, unit.BaseStepNumber, sends++);
                         var outcome = await SendAsync(run, effect, clientId, cancellationToken);
                         // D-E5: el clientId que Mensajería recibió, también si no salió (la fila cuenta lo que se intentó).
@@ -350,8 +351,21 @@ public sealed partial class RunEffects(
     {
         Effect.SendText text => messenger.SendTextAsync(run.TenantId, run.ConversationId, run.ChatbotId, clientId, text.Text, cancellationToken),
         Effect.SendInteractive card => messenger.SendInteractiveAsync(run.TenantId, run.ConversationId, run.ChatbotId, clientId, card.Message, cancellationToken),
+        Effect.SendMedia send => SendMediaAsync(run, send, clientId, cancellationToken),
         _ => throw new ArgumentOutOfRangeException(nameof(effect), effect.GetType().Name, "No es un envío."),
     };
+
+    /// <summary>Spec 2026-11-18: el archivo se resuelve por tenant en el momento de enviar, y sale con el tipo, el nombre y el MIME de Storage,
+    /// nunca con los del flujo. Uno que ya no está (borrado, de otro tenant) es un envío rechazado: la corrida sigue el camino de siempre
+    /// (traspaso <c>SendFailed</c>) y nunca cae a mandar sólo el texto.</summary>
+    private async Task<BotSendOutcome> SendMediaAsync(ConversationRun run, Effect.SendMedia send, Guid clientId, CancellationToken cancellationToken)
+    {
+        var file = (await chatbotMedia.ResolveAsync(run.TenantId, [send.FileId], cancellationToken)).FirstOrDefault(found => found.FileId == send.FileId);
+        return file is null
+            ? new BotSendOutcome.Rejected(AutomationsErrorCodes.MediaNotFound)
+            : await messenger.SendMediaAsync(
+                run.TenantId, run.ConversationId, run.ChatbotId, clientId, new BotMediaMessage(file, send.Caption, send.UrlButton), cancellationToken);
+    }
 
     /// <summary>§5.2 paso 5: un envío que Mensajería no hizo corta la unidad. Spec 2026-10-24 §4.1 fila 3: un rechazo traspasa con el bloque
     /// cuyo mensaje no salió, la conexión de WhatsApp y su motivo, y el HTTP fallido que arrancó el paso.</summary>

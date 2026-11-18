@@ -1,4 +1,5 @@
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -30,7 +31,8 @@ public sealed class OrderResponseComposer(
     IQuotationWithholdingLookup withholdingLookup,
     IQuotationGeographyLookup geographyLookup,
     IQuotationBuyerAccountLookup buyerAccountLookup,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ITenantDirectory tenantDirectory)
     : IOrderResponseComposer
 {
     public async Task<OrderDetailResponse> ComposeAsync(
@@ -43,6 +45,7 @@ public sealed class OrderResponseComposer(
             .Where(entry => entry.MemberId is not null)
             .Select(entry => entry.MemberId!.Value)
             .Append(order.AdvisorId)
+            .Concat(order.Wholesale?.ApprovedBy is { } approvedBy ? [approvedBy] : [])
             .Distinct()
             .ToArray();
         var members = await advisorLookup.FindAsync(tenantId, memberIds, cancellationToken);
@@ -81,7 +84,11 @@ public sealed class OrderResponseComposer(
             advisor?.Email,
             QuotationResponseComposer.ToBillingResponse(order.BillingAccount, company),
             order.Items
-                .Select(item => QuotationResponseComposer.ToItemResponse(item, products, order.GlobalScaleFloor))
+                .Select(item => QuotationResponseComposer.ToItemResponse(item, products, order.GlobalScaleFloor) with
+                {
+                    // Mayorista fase 3: false = la agregó el mayorista; fuera de un pedido mayorista no aplica.
+                    FromPurchaseOrder = order.Wholesale is null ? null : item.SourcePurchaseOrderLineId is not null,
+                })
                 .ToArray(),
             // Sin el instante no se arma (spec 2026-11-16 F-8): CreatedAt no es opcional en el contrato, y un número sin
             // cotización detrás no tiene cuándo mostrar.
@@ -104,7 +111,32 @@ public sealed class OrderResponseComposer(
             municipal.OperationCity,
             municipal.BillingCompanyCity,
             municipal.Entries,
-            buyerAccount is null ? null : new BuyerAccountResponse(buyerAccount.Id, buyerAccount.Email));
+            buyerAccount is null ? null : new BuyerAccountResponse(buyerAccount.Id, buyerAccount.Email),
+            await WholesaleAsync(order.Wholesale, members, cancellationToken));
+    }
+
+    // D-7: el nombre del distribuidor es el de su tenant, el mismo que Distribuidores ya le muestra al mayorista.
+    private async Task<OrderWholesaleDto?> WholesaleAsync(
+        OrderWholesaleState? wholesale,
+        IReadOnlyDictionary<Guid, QuotationAdvisor> members,
+        CancellationToken cancellationToken)
+    {
+        if (wholesale is null)
+        {
+            return null;
+        }
+
+        var buyerName = await tenantDirectory.GetDisplayNameAsync(new TenantId(wholesale.BuyerTenantId), cancellationToken);
+        return new OrderWholesaleDto(
+            new OrderTenantRefDto(wholesale.BuyerTenantId, buyerName),
+            wholesale.PurchaseOrderId,
+            wholesale.PurchaseOrderNumber,
+            wholesale.Approval,
+            wholesale.ApprovedAt,
+            wholesale.ApprovedBy is { } approvedBy
+                ? new OrderMemberRefDto(approvedBy, members.GetValueOrDefault(approvedBy)?.Label)
+                : null,
+            wholesale.CancelledByBuyer);
     }
 
     public async Task<OrderResponse> ComposeOrderAsync(Guid tenantId, OrderDto order, CancellationToken cancellationToken)
@@ -207,6 +239,7 @@ public static class OrderResponses
             order.Balance,
             order.BuyerNotes,
             QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, context),
-            order.OrderDate);
+            order.OrderDate,
+            order.RequiresShipping);
     }
 }

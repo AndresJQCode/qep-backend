@@ -112,6 +112,69 @@ public sealed class PurchaseOrderComposerTests
         Assert.Equal("Sent", summaries[2].Status);
     }
 
+    // Mayorista fase 3 (contrato y adenda): modo, pedido del mayorista, precio de lista por línea, la línea agregada sin cantidad
+    // pedida y los conteos del banner.
+    [Fact]
+    public async Task LinkedDetailShowsListPriceAndAddedLines()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: PurchaseOrderTestData.SupplierTenantId);
+        var order = PurchaseOrderTestData.SentLinkedOrder(
+            [PurchaseOrderTestData.LinkedLine(code: "A"), PurchaseOrderTestData.LinkedLine(code: "B"), PurchaseOrderTestData.LinkedLine(code: "C")]);
+        var (kept, changed, rejected) = (order.Lines[0], order.Lines[1], order.Lines[2]);
+        order.ApplyWholesalerApproval(
+            [
+                PurchaseOrderTestData.FinalOf(kept),
+                PurchaseOrderTestData.FinalOf(changed, quantity: 1m),
+                PurchaseOrderTestData.FinalOf(rejected, quantity: 0m),
+                new WholesalerFinalLine(null, Guid.CreateVersion7(), "D", "Agregado", 4m, 500m, 19m),
+            ],
+            PurchaseOrderTestData.Now);
+        order.LinkLineToCatalog(kept.Id, Guid.CreateVersion7(), created: true);
+
+        var detail = await Composer(PurchasesPermissions.OrderRead).DetailAsync(order, CancellationToken.None);
+
+        Assert.Equal(("Linked", true), (detail.Mode, detail.Supplier.IsLinked));
+        Assert.Equal(new PurchaseOrderLinkedDto("PED-0042"), detail.Linked);
+        Assert.Equal(new PurchaseOrderChangesDto(1, 1, 1, 1), detail.Changes);
+        var first = detail.Lines[0];
+        Assert.Equal((kept.SupplierVariantId, true), (first.SupplierVariantId, first.CreatedInCatalog));
+        Assert.Equal(new PurchaseOrderListPriceDto(12500m, 4.8m, 11900m), first.ListPrice);
+        var added = detail.Lines[^1];
+        Assert.Equal(("Added", (decimal?)null, (PurchaseOrderListPriceDto?)null), (added.LineStatus, added.Quantity, added.ListPrice));
+    }
+
+    [Fact]
+    public async Task AnExternalDetailHasNoLinkedBlock()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle");
+
+        var detail = await Composer(PurchasesPermissions.OrderRead).DetailAsync(PurchaseOrderTestData.Order(), CancellationToken.None);
+        var summary = Assert.Single(await Composer(PurchasesPermissions.OrderRead)
+            .SummariesAsync(PurchaseOrderTestData.TenantId, [PurchaseOrderTestData.LinkedOrder()], CancellationToken.None));
+
+        Assert.Equal(("External", false), (detail.Mode, detail.Supplier.IsLinked));
+        Assert.Null(detail.Linked);
+        Assert.Null(detail.Lines[0].ListPrice);
+        Assert.Equal(("Linked", true), (summary.Mode, summary.IsLinked));
+    }
+
+    // D-19: lo que hizo el mayorista (sin miembro del comprador) se lee «El mayorista».
+    [Fact]
+    public async Task WholesalerHistoryEntriesReadElMayorista()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: PurchaseOrderTestData.SupplierTenantId);
+        _members.Names[PurchaseOrderTestData.MemberId] = "Ana Compras";
+        var order = PurchaseOrderTestData.SentLinkedOrder();
+        order.ApplyWholesalerApproval([PurchaseOrderTestData.FinalOf(order.Lines[0])], PurchaseOrderTestData.Now);
+        order.ApplyWholesalerCancellation(PurchaseOrderTestData.Now);
+
+        var detail = await Composer(PurchasesPermissions.OrderRead).DetailAsync(order, CancellationToken.None);
+
+        Assert.Equal(
+            [("Draft", "Ana Compras"), ("Sent", "Ana Compras"), ("Confirmed", "El mayorista"), ("Cancelled", "El mayorista")],
+            detail.History.Select(entry => (entry.Status, entry.ActorName)));
+    }
+
     private PurchaseOrderComposer Composer(params string[] permissions) =>
         new(new FakeExecutionContext(PurchaseOrderTestData.TenantId, permissions), _suppliers, _members);
 }

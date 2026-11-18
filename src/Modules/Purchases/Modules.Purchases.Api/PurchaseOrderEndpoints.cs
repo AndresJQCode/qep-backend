@@ -92,7 +92,35 @@ public static class PurchaseOrderEndpoints
         MapTransition(group, "/{orderId:guid}/receive", PurchaseOrderAction.Receive);
         MapTransition(group, "/{orderId:guid}/cancel", PurchaseOrderAction.Cancel);
 
+        // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado, para armar la orden (por eso exige gestionar). El
+        // mayorista sale del proveedor guardado en el tenant de la ruta: el de otro tenant es 404, uno no vinculado 422 y una
+        // relación que no está activa 403.
+        endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/purchases/suppliers")
+            .WithTags("Purchases")
+            .MapGet("/{supplierId:guid}/catalog", ListSupplierCatalogAsync)
+            .RequireAuthorization(PurchasesPermissions.OrderManage)
+            .Produces<SupplierCatalogPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> ListSupplierCatalogAsync(
+        Guid tenantId,
+        Guid supplierId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? search = null,
+        int page = 1,
+        int pageSize = 0)
+    {
+        var result = await dispatcher.QueryAsync(
+            new ListSupplierCatalogQuery(tenantId, supplierId, search, page, pageSize), cancellationToken);
+
+        return Results.Ok(result);
     }
 
     // Enviar, recibir y cancelar no llevan cuerpo y comparten handler; sólo cambia la acción.

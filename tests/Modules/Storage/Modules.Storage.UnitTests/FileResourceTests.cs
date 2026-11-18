@@ -170,6 +170,53 @@ public sealed class FileResourceTests
             resource.Publish("public/document.pdf", DateTimeOffset.UtcNow));
     }
 
+    // Spec 2026-11-18: el multimedia de un chatbot se manda por link, así que un PDF también se publica.
+    [Fact]
+    public void AChatbotMediaPdfCanBePublished()
+    {
+        var resource = NewChatbotMedia("catalogo.pdf", "application/pdf");
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        resource.Promote("files/catalogo", DateTimeOffset.UtcNow);
+
+        resource.Publish("public/catalogo.pdf", DateTimeOffset.UtcNow);
+
+        Assert.Equal("public/catalogo.pdf", resource.PublicStorageKey);
+    }
+
+    [Fact]
+    public void AProductPdfStillCannotBePublished()
+    {
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.Product,
+            "ficha.pdf", "application/pdf", 1024, "staging/ficha", DateTimeOffset.UtcNow);
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        resource.Promote("files/ficha", DateTimeOffset.UtcNow);
+
+        var error = Assert.Throws<StorageDomainException>(() =>
+            resource.Publish("public/ficha.pdf", DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.public_image_required", error.Code);
+    }
+
+    // Una imagen grande de un chatbot se reemplaza por su versión comprimida antes de quedar Available.
+    [Fact]
+    public void AChatbotMediaImageCanBeReplacedByItsProcessedVersion()
+    {
+        var resource = NewChatbotMedia("catalogo.png", "image/png");
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+
+        resource.ReplaceContentWithProcessedImage("image/jpeg", ".jpg", "shrunk", 512, DateTimeOffset.UtcNow);
+
+        Assert.Equal("catalogo.jpg", resource.Name);
+        Assert.Equal("image/jpeg", resource.MimeType);
+        Assert.Equal(512, resource.SizeBytes);
+    }
+
+    private static FileResource NewChatbotMedia(string name, string mimeType) =>
+        FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.ChatbotMedia,
+            name, mimeType, 1024, "staging/chatbot-media", DateTimeOffset.UtcNow);
+
     [Fact]
     public void OnlyAvailableIsDownloadable()
     {

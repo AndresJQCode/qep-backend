@@ -1312,11 +1312,13 @@ public sealed class OrderTests
     }
 
     // Spec 2026-11-16 §3 (F-6): la columna del historial guarda el nombre, así que el miembro nuevo va al final y no reordena.
+    // Mayorista fase 3 sumó WholesaleApproved después.
     [Fact]
-    public void OrderDateChangedIsTheLastHistoryEventType()
+    public void WholesaleApprovedIsTheLastHistoryEventType()
     {
-        Assert.Equal("OrderDateChanged", Enum.GetNames<OrderHistoryEventType>()[^1]);
-        Assert.Equal("BuyerAccountChanged", Enum.GetNames<OrderHistoryEventType>()[^2]);
+        Assert.Equal("WholesaleApproved", Enum.GetNames<OrderHistoryEventType>()[^1]);
+        Assert.Equal("OrderDateChanged", Enum.GetNames<OrderHistoryEventType>()[^2]);
+        Assert.Equal("BuyerAccountChanged", Enum.GetNames<OrderHistoryEventType>()[^3]);
     }
 
     [Fact]

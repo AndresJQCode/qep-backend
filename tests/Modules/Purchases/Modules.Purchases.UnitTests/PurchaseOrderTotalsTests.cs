@@ -72,4 +72,19 @@ public sealed class PurchaseOrderTotalsTests
         Assert.Equal(new PurchaseOrderTotals(10m, 1.90m, 11.90m), confirmed);
         Assert.Equal(confirmed, order.Totals());
     }
+
+    [Fact]
+    public void RequestedTotalsIgnoreAddedLines()
+    {
+        var order = SentLinkedOrder([LinkedLine(quantity: 2m, unitCost: 100m, taxRatePercent: 0m)]);
+        var sent = order.Lines[0];
+
+        order.ApplyWholesalerApproval(
+            [FinalOf(sent), new WholesalerFinalLine(null, Guid.CreateVersion7(), "NEW", "Nueva", 3m, 50m, 0m)],
+            Now);
+
+        Assert.Equal(0m, order.Lines[1].RequestedSubtotal);
+        Assert.Equal(new PurchaseOrderTotals(200m, 0m, 200m), order.RequestedTotals());
+        Assert.Equal(new PurchaseOrderTotals(350m, 0m, 350m), order.Totals());
+    }
 }

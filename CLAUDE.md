@@ -103,12 +103,12 @@ para todo texto que el sistema le muestra o le manda a una persona: correos, pla
 WhatsApp, mensajes de error legibles, avisos. **Pisa el estilo de salida del asistente**, que
 por defecto vosea: sin esta regla, cada sesión nueva vuelve al rioplatense.
 
-| Sí                                       | No (voseo)                                  |
-| ---------------------------------------- | ------------------------------------------- |
-| tienes, puedes, quieres                  | tenés, podés, querés                        |
-| elige, revisa, intenta de nuevo          | elegí, revisá, intentá de nuevo             |
-| dime, avísame, escríbenos                | decime, avisame, escribinos                 |
-| No tienes permiso para ver este reporte. | No tenés permiso para ver este reporte.     |
+| Sí                                       | No (voseo)                              |
+| ---------------------------------------- | --------------------------------------- |
+| tienes, puedes, quieres                  | tenés, podés, querés                    |
+| elige, revisa, intenta de nuevo          | elegí, revisá, intentá de nuevo         |
+| dime, avísame, escríbenos                | decime, avisame, escribinos             |
+| No tienes permiso para ver este reporte. | No tenés permiso para ver este reporte. |
 
 - Registro profesional y cercano: nada de modismos rioplatenses (`dale`, `che`, `laburo`), y
   tampoco regionalismos colombianos marcados (`parce`, `bacano`). "Listo", "claro" y "de una"
@@ -277,7 +277,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
   (spec 2026-10-07, «Despliegue»).
 - **Un rol que no concede ningún permiso ofrecido en el tenant no se agrega ni se invita** (spec 2026-11-15): `422
-  tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false`. Cajero sin `pos` es el caso típico,
+tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false`. Cajero sin `pos` es el caso típico,
   pero vale también para un rol custom de sólo permisos de un módulo apagado. Quien ya tiene el rol lo conserva: el `PUT`
   sólo rechaza los roles **agregados**, porque la pantalla reenvía todos al guardar. La regla vive en `RoleAssignability`
   y la comparten `/authorization/catalog` y `RoleReferenceValidator`; no la copies en un handler. Una prueba que invite o
@@ -335,7 +335,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `history_managed`, que se apaga con cualquier acción del asesor: el reporte no puede depender de una bandera que un «marcar
   leída» borra. `MessagingReportSource` la lee por nombre en SQL crudo: una conversación importada no arranca sesión al crearse
   (la arranca su primer entrante en vivo, salvo que ya la haya arrancado un `Reopened`), y un mensaje importado nunca es entrante
-  de arranque ni respuesta, porque su `created_at` es la hora de la importación y una parte tardía cae *después* del entrante en
+  de arranque ni respuesta, porque su `created_at` es la hora de la importación y una parte tardía cae _después_ del entrante en
   vivo. Para «primer entrante» sí cuenta, con `occurred_at`. Un camino nuevo que escriba historial en `messaging.messages` tiene
   que poner `imported = true`, o infla el reporte del día en que llega. Lo amarra `CoexistenceReportTests`. El `fromHistory` del
   resumen sale de `imported` y `last_inbound_at`, no de `history_managed`: tomarla, transferirla o marcarla leída apaga esa bandera
@@ -563,7 +563,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `ShopifyCashOnDeliveryGateways.Normalize` copia `CarrierName.Normalize`, amarrada por `ShopifyNormalizationParityTests`
   (2026-10-18, `e157d9c2`).
 - **`shopify.custom_line_mappings` es contrato con `lulo-crm-migrator`, que la siembra por SQL** (`INSERT … ON CONFLICT
-  (connection_id, title) DO NOTHING`, spec 2026-11-13). Renombrar una columna (`id`, `tenant_id`, `connection_id`, `title`,
+(connection_id, title) DO NOTHING`, spec 2026-11-13). Renombrar una columna (`id`, `tenant_id`, `connection_id`, `title`,
   `variant_id`, `created_at`, `created_by`) o el índice `IX_custom_line_mappings_connection_title` compila, pasa las pruebas de
   este repo y rompe la siembra de la migración de Lulo v1; se cambia junto con el spec del migrador. `title` va recortado y
   `created_by` es id de **membresía** activa, no de usuario (como `stores.updated_by`): el migrador siembra la del dueño. Y
@@ -625,7 +625,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `BatchQuotationItemAdditionRequest`, `QuotationEditItemRequest`, `OrderItemAdditionRequest`, `OrderEditItemRequest`,
   `PosSaleLineRequest`, `PosPreviewLineRequest`) llevan `variantId`, y la copia de escalas `sourceVariantId` /
   `targetVariantIds`. Un objeto anónimo con `productId` se deserializa con `VariantId = Guid.Empty` y responde `422
-  validation.failed` por el `VariantId` vacío, con la clave según la ruta: `VariantId` en `POST /quotations/{id}/items`,
+validation.failed` por el `VariantId` vacío, con la clave según la ruta: `VariantId` en `POST /quotations/{id}/items`,
   `ToAdd[i].VariantId` en el batch y en `POST /orders/{id}/items`, `Items[i].VariantId` en las listas completas
   (alta, guardado y preview de cotización y pedido) y `Lines[i].VariantId` en el POS. Una variante repetida en una lista
   completa sale en `errors.Items`, sin posición. El síntoma es una prueba que esperaba `Created`, no un error de nombre
@@ -732,7 +732,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `details` de un envío de plantilla (`TemplateDetailsJson`), el filtro deja de casar sin error y el bot vuelve a contestar los toques. El
   comentario libre no se filtra, a propósito. Lo amarra `AutomationInboxTests.ATapOnTheSurveyTemplateIsNotEnqueuedButATapOnAnotherTemplateIs`.
 - **El `clientId` de un mensaje del bot no depende del `attempts` de la fila.** Es `DeterministicClientId.For(runId,
-  baseStepNumber, effectIndex)` y el id de una corrida nueva sale del id del mensaje del inbox (`RunIdFor`), así un reintento de la
+baseStepNumber, effectIndex)` y el id de una corrida nueva sale del id del mensaje del inbox (`RunIdFor`), así un reintento de la
   fila —o un `Start` que se deshizo— reusa corrida y `clientId`s y Mensajería, idempotente por `clientId`, no duplica (P2-R5). El
   plan escribía `(runId, nodeId, índice, attempts)`: con `attempts` el reintento SÍ reenvía. El motor sube `StepNumber` en cada bloque
   que entra, también al reenviar uno que espera, para que dos unidades confirmadas nunca compartan base.
@@ -843,7 +843,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   lo escribe y `CitySynonymEventPayloads` lo lee por nombre: renombrar un campo compila, pasa las pruebas de cada lado por
   separado y deja el mensaje marcado como procesado sin trabajos sembrados. Se cambia en los dos lados y en las dos pruebas con el
   mismo literal, `GeographyEventPublisherTests` y `CitySynonymEventPayloadsTests`.
-- **Un trabajo de corrección de ciudad aplica la ciudad *actual* del sinónimo, y uno borrado salta lo pendiente.**
+- **Un trabajo de corrección de ciudad aplica la ciudad _actual_ del sinónimo, y uno borrado salta lo pendiente.**
   `ShopifyCityCorrectionProcessor` relee el sinónimo al procesar: si el operador lo corrigió entre el evento y el trabajo manda la
   ciudad nueva, y si lo borró, el trabajo termina `Skipped` con `synonym_deleted` y el pedido queda como estaba. Por eso borrar
   no publica nada ni deshace lo ya corregido, y por eso `IShopifyCitySynonymLookup` devuelve también los borrados: filtrarlos
@@ -1222,7 +1222,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`Support:Pdf:ApiKey` es una clave propia de `qcode-pdf`, nunca `Quotations:Pdf:ApiKey`**, y es obligatoria en `Production` (sin
   ella el pod no arranca). `qcode-pdf` identifica al cliente por el hash de la clave.
 - **Firma la respuesta formal el responsable del ticket, no quien envía** (owner 2026-11-16, Q-7). Sin responsable, `422
-  support.reply.formal_signer_required`. `ticket_reply_documents.signer_member_id` está en `SupportUserReferenceProbe`: un usuario que
+support.reply.formal_signer_required`. `ticket_reply_documents.signer_member_id` está en `SupportUserReferenceProbe`: un usuario que
   firmó una respuesta formal no se borra.
 - **Toda transición a Resuelto pide la encuesta en el dominio** (`SupportTicket.ChangeStatus`, H15): un camino nuevo a Resuelto la
   recibe gratis; uno que se salte `ChangeStatus` (SQL crudo) deja esa resolución sin encuesta. Un cambio de la encuesta **nunca sube la
@@ -1274,7 +1274,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Cuatro reglas de `ClaudeModelClient` que parecen simplificables y no lo son** (plan 2026-11-12). (1) **C-8:** herramientas con
   `strict: true` y sin `tool_choice` forzado: en Opus 5.5 y Sonnet 5.5, `any` o `tool` responde 400. Por eso un `end_turn` con texto y
   sin herramienta final se acepta como `send_reply` sin fuentes (`ToolsAreStrictSortedByNameAndNeverForced`,
-  `AnEndTurnWithTextComesBackAsASendReplyWithoutSources`). (2) **C-11:** la petición nunca termina en `assistant`, que es *prefill* y
+  `AnEndTurnWithTextComesBackAsASendReplyWithoutSources`). (2) **C-11:** la petición nunca termina en `assistant`, que es _prefill_ y
   responde 400; el saludo ya enviado va como mensaje `system` después del primer turno del cliente
   (`TheGreetingIsASystemMessageAfterTheFirstCustomerTurnAndTheRequestNeverEndsInAssistant`). (3) **C-12:** el `system` es idéntico byte a
   byte en la misma versión y lleva el único punto de caché; la fecha, la hora y la ventana van en `VolatileContext`, **después**
@@ -1335,8 +1335,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   hallazgo 4). Pasa cuando una persona se la devuelve: el siguiente entrante abre otra sesión sólo si el agente está `Active`, tiene versión
   legible y la cuenta de su proveedor; si no (pausado, borrado, sin cuenta, módulo apagado) `AiInboxProcessor` la traspasa. Devolver
   `null` sin traspaso la dejaba asignada a un agente que nunca contesta. Un trabajo cuyo agente se borró con la sesión viva (la carrera
-  con `DeleteAgentHandler`, que mira las sesiones sin el candado de la conversación) también termina en traspaso. Pausar un agente no
-  corta sus sesiones vivas (D-A6).
+  con `DeleteAgentHandler`, que mira las sesiones sin el candado de la conversación) también termina en traspaso. Pausar un agente
+  corta sus sesiones vivas (owner, 2026-11-18; revierte D-A6): `AgentSessionJobProcessor` no llama al modelo y traspasa con
+  `agent_paused`. Lo amarra `AJobOfAPausedAgentIsNotAnsweredAndTheConversationIsHandedOff`.
 - **La señal `ReleaseRun` lleva el `bot_kind` del bot que tenía la conversación antes del cambio** (revisión final, hallazgo 5).
   `ReleaseRunSignal.EnqueueIfAssisted` recibe el `AutomationBotKind` leído **antes** (resolver lo borra) y el autoasignado lo devuelve en su
   `RETURNING`. Con el default `1`, la señal de un agente la reclamaba el motor de chatbots y la sesión del agente seguía viva con su
@@ -1375,6 +1376,48 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   en `model_jobs.result` hasta su commit); nunca en logs, auditoría ni `tool_calls`. La auditoría (`ai.copilot.settings_updated`,
   `ai.copilot.thread_deleted`) es de metadatos: `IAiAuditRecorder.RecordCopilot` no tiene parámetro de texto libre. Borrar un hilo
   guarda su auditoría en la misma transacción del borrado (`CopilotRepository.DeleteThreadAsync`). Lo amarra `CopilotNoLeakTests`.
+- **La aceptación de una invitación de mayorista no es atómica entre módulos** (plan mayorista fase 2, D-3). Es idempotente por
+  el tenant reservado (`wholesale.distributor_invitations.reserved_tenant_id`), el proveedor (`LinkedTenantId` o documento) y el
+  cliente (documento); la invitación se consume en el último commit, el de `wholesale`. No la cambies a «consumir primero»: un
+  fallo a mitad dejaría la invitación gastada y la relación a medias, sin link para reintentar. Si otra pestaña crea el tenant
+  reservado mientras ésta valida el slug, el `slug.taken` es el propio y la aceptación termina sobre él
+  (`DistributorInvitationService`, Review Focus 1).
+- **`Supplier.LinkedTenantId` lo escribe sólo `ISupplierLinking`** (D-8). El formulario de proveedores no lo acepta (un
+  `linkedTenantId` en el cuerpo se ignora) y un proveedor vinculado no cambia de documento: 422
+  `suppliers.supplier.linked_identity_locked`.
+- **El link de la invitación de mayorista sale de `Notifications:AppBaseUrl`** (`AccountLinks.WholesaleInvitation`, ruling W1),
+  no de una variable propia: no hay `WholesaleInvitationUrl` que dar de alta en el pipeline. El token viaja sólo en el payload
+  del outbox; `SensitivePaths.Mask` lo tapa en `platform.request_failures` y en su línea de log, también el de la invitación de
+  miembros, y `SensitivePathTelemetry` (registrado en `Program.cs` después de `AddQepLogging`) con la misma regla en el
+  `url.path` de los spans de OpenTelemetry y en el scope `RequestPath` de cada log del request. Una ruta nueva con un secreto en
+  un segmento se suma ahí.
+  miembros. Una ruta nueva con un secreto en un segmento se suma ahí.
+- **El aviso de WhatsApp de la invitación es un evento aparte y sin token** (`wholesale.distributor-invitation-notice.v1`); su
+  consumidor vive en Mayorista con inbox propio (`InvitationNoticeProcessor`, consumidor `wholesale.invitation-whatsapp-notice`)
+  y manda por `WholesaleInvitationNoticeSender` de Bootstrapper. El resultado se aplica sólo a la `generation` vigente y no sube
+  `version` (D-3, D-4); la `generation` es token de concurrencia, así que un resultado leído antes de un `PUT` o un «Reenviar» no
+  se escribe.
+- **El `clientId` del aviso es el id del mensaje del outbox**: no lo cambies por uno nuevo, o un reintento manda dos avisos
+  (D-5). Por lo mismo, una fila `Failed` con `RetryDisabled` es terminal en `PlainTemplateOutbound` (`not_retriable`): repetir el
+  `clientId` no la reenvía.
+- **«Por aprobar» de un pedido `Wholesale` es `WholesaleApprovedAt`, no un estado** (mayorista fase 3, D-1). `OrderStatus` sigue
+  `Open/Archived/Cancelled`; pendiente es `Open` sin `wholesale_approved_at`. Aprobado deja de ser editable (`IsEditable`, D-3):
+  la aprobación ya le llevó las líneas al distribuidor y una edición posterior nunca le llegaría. «Lo anuló el comprador» tampoco
+  se guarda: se deriva de `cancelled_by` nulo (`Order.CancelledByBuyer`).
+- **La orden vinculada guarda costo sin IVA y congela la lista** (D-9). `UnitCost` es el precio de lista del mayorista sin IVA
+  (`PurchaseOrderMath.NetOfVat`); `list_base_price`, `list_discount_percent` y `list_unit_price` (con IVA) quedan como foto para
+  pintar «base y descuento». Los totales de la orden y del pedido pueden diferir en centavos. La moneda del pedido tiene que ser
+  la de la orden: si el mayorista cambió la suya, el envío es 409 `wholesaler_rejected` y una aprobación en otra moneda se
+  registra y no se aplica.
+- **Los eventos de vuelta del mayorista los consume Purchases con inbox propio, y la creación de productos va en su
+  transacción** (`WholesaleOrderEventsProcessor`, consumidor `purchases.wholesale-order-events`). `PurchasesCatalogWriter` enrola
+  el `CatalogDbContext` en la conexión y la transacción de `PurchasesDbContext` (calca `ShopifyCatalogWriter`) y abre un punto de
+  guardado por producto: en Postgres una sentencia fallida aborta la transacción entera, así que sin el punto de guardado un
+  alta fallida dejaría la confirmación sin guardar y el evento reintentando para siempre (ruling X2). Un evento que encuentra la
+  orden todavía en borrador (`RetryLater`) no se marca: vuelve cuando vence su reclamo.
+- **Un producto creado por Compras no tiene precio de venta (`AllowsNoPrice`) ni origen externo** (D-16, D-17). Nace sin
+  `ExternalSource` para que el distribuidor lo edite como cualquier otro, sin precio, y con costo sólo si es mayor que 0. No sale
+  en tienda, POS ni cotizaciones hasta que alguien le ponga precio; guardar el producto desde el formulario exige precio.
 
 ## Verificación
 

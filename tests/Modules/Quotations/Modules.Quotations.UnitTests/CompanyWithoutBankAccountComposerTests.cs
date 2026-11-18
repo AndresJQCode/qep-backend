@@ -66,7 +66,8 @@ public sealed class CompanyWithoutBankAccountComposerTests
             new StubQuotationWithholdingLookup(),
             new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
             new StubQuotationBuyerAccountLookup(),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            new StubTenantDirectory());
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
             new OrderHeader(ClientId, AdvisorId, "COP", null, IsRetail: false, null, CustomerVatSurplus: false, []),

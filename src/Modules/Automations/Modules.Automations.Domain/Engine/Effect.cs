@@ -12,6 +12,11 @@ public abstract record Effect(string NodeId)
 
     public sealed record SendInteractive(string NodeId, InteractiveMessage Message) : Effect(NodeId);
 
+    /// <summary>Spec 2026-11-18: el archivo de un Mensaje. <see cref="Kind"/> es uno de <see cref="ChatbotMediaKinds"/> y <see cref="FileId"/> el
+    /// id de Storage, que quien ejecuta resuelve por tenant. <see cref="Caption"/> y <see cref="UrlButton"/> ya vienen interpolados (un pie en
+    /// blanco es <c>null</c>); un audio nunca los lleva: su texto o su botón salen después, en otro efecto.</summary>
+    public sealed record SendMedia(string NodeId, string Kind, Guid FileId, string? Caption, UrlButton? UrlButton) : Effect(NodeId);
+
     public sealed record CallHttp(string NodeId, HttpNode Node) : Effect(NodeId);
 
     public sealed record CheckBusinessHours(string NodeId) : Effect(NodeId);

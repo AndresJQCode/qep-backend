@@ -200,8 +200,9 @@ public sealed class ProductVariant
 
     private void ApplyPricing(ProductPricing pricing)
     {
-        // Incondicional: toda variante necesita precio en al menos una moneda (CAT-09, spec D3).
-        if (pricing.Prices.Count == 0)
+        // Toda variante necesita precio en al menos una moneda (CAT-09, spec D3), salvo la que crea el sistema sin precio de
+        // venta y las copias de lo guardado de una variante así (D-16, X3).
+        if (pricing.Prices.Count == 0 && !pricing.AllowsNoPrice)
         {
             throw new CatalogDomainException(
                 "catalog.product.price_required",

@@ -49,7 +49,7 @@ public sealed class PurchaseOrderTests
         var previousIds = order.Lines.Select(line => line.Id).ToList();
         var later = Now.AddMinutes(5);
 
-        order.Replace(SupplierId, "usd", "nuevo", [Line(quantity: 7m), Line(), Line()], later);
+        order.Replace(SupplierId, null, "usd", "nuevo", [Line(quantity: 7m), Line(), Line()], later);
 
         Assert.Equal(2, order.Version);
         Assert.Equal(later, order.UpdatedAt);
@@ -66,7 +66,7 @@ public sealed class PurchaseOrderTests
     {
         var order = OrderIn(PurchaseOrderStatus.Sent);
 
-        AssertCode("purchases.order.not_draft", () => order.Replace(SupplierId, "COP", null, [Line()], Now));
+        AssertCode("purchases.order.not_draft", () => order.Replace(SupplierId, null, "COP", null, [Line()], Now));
     }
 
     [Fact]

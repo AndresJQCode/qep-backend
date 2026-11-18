@@ -630,6 +630,29 @@ public sealed class AgentSessionProcessorTests
         Assert.Equal(ModelJobStatus.Discarded, job.Status);
     }
 
+    // Owner, 2026-11-18: pausar un agente corta también sus sesiones vivas. El trabajo pendiente no llama al modelo ni envía: la
+    // conversación pasa a una persona y la sesión termina.
+    [Fact]
+    public async Task AJobOfAPausedAgentIsNotAnsweredAndTheConversationIsHandedOff()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        world.Credentials.Available.Add("anthropic");
+        agent.Pause(Now);
+        var job = ModelJob.ForSession(Guid.CreateVersion7(), Tenant, session.Id, session.NextSeq - 1, Now, Now);
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Empty(world.Model.Requests);
+        Assert.Empty(world.Outbound.Sends);
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal((HandoffCauseKind.AgentFailed, AgentHandoffCodes.AgentPaused), (handoff.Cause.Kind, handoff.Cause.Code));
+        Assert.Equal(AgentSessionStatus.Failed, session.Status);
+        Assert.Equal(ModelJobStatus.Failed, job.Status);
+    }
+
     private static AiModelResponse DraftCall() =>
         new(
             null,

@@ -202,6 +202,24 @@ public sealed class QuotationWithholdingLookupTests
         Assert.Empty(unknownCompany);
     }
 
+    // Spec 2026-11-18 §4.2: la foto lleva el alcance de la tasa, que es lo que decide su base en el documento. Una tasa
+    // sin alcance sale All.
+    [Fact]
+    public async Task ThePhotoCarriesTheRateScope()
+    {
+        var services = TaxRate.Create(
+            TaxRateId.New(), TenantId, "Retefuente servicios 4 %", 4m, "Retefuente", "CO", null, null, Now,
+            BuildingBlocks.Domain.Taxes.WithholdingScope.Services);
+        var lookup = Lookup(new FakeCustomerRepository(), [services, Retefuente]);
+
+        var candidates = await lookup.ForRatesAsync(
+            TenantId, [services.Id.Value, Retefuente.Id.Value], new DateOnly(2026, 6, 1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(BuildingBlocks.Domain.Taxes.WithholdingScope.Services, candidates[services.Id.Value].Rate.AppliesTo);
+        Assert.Equal(BuildingBlocks.Domain.Taxes.WithholdingScope.All, candidates[Retefuente.Id.Value].Rate.AppliesTo);
+    }
+
     [Fact]
     public async Task IsWithholdingAgentReadsTheCustomersList()
     {

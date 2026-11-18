@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -144,6 +145,11 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 {
                     w.WriteString("label", button.Label);
                     w.WriteString("url", button.Url);
+                });
+                WriteNullable(writer, "media", message.Media, (w, media) =>
+                {
+                    w.WriteString("kind", media.Kind);
+                    w.WriteString("fileId", media.FileId.ToString("D"));
                 });
                 break;
             case OpenQuestionNode question:
@@ -342,7 +348,7 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
         return kind switch
         {
             FlowNodeKinds.Message => new MessageNode(
-                id, title, outputs, JsonFields.Text(element, "text", where), ReadUrlButton(element, where)),
+                id, title, outputs, JsonFields.Text(element, "text", where), ReadUrlButton(element, where), ReadMedia(element, where)),
             FlowNodeKinds.OpenQuestion => new OpenQuestionNode(
                 id, title, outputs, JsonFields.Text(element, "text", where), JsonFields.Text(element, "saveTo", where),
                 ReadValidation(element, where), JsonFields.OptionalInt(element, "maxAttempts", where)),
@@ -413,6 +419,24 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
             ? new UrlButton(JsonFields.Text(value, "label", $"el botón URL {JsonFields.Of(where)}"), JsonFields.Text(value, "url", $"el botón URL {JsonFields.Of(where)}"))
             : null;
     }
+
+    // Spec 2026-11-18: el editor arma «media» solo (el admin elige un archivo, no escribe el id), así que una forma inesperada es un
+    // error del cliente: un kind fuera de la lista o un fileId que no es un id es flow.malformed. Ausente o null = sin archivo.
+    private static MessageMedia? ReadMedia(JsonElement element, string where)
+    {
+        if (JsonFields.OptionalObject(element, "media", where) is not { } media)
+        {
+            return null;
+        }
+
+        var context = $"el archivo {JsonFields.Of(where)}";
+        var kind = JsonFields.RequiredOneOf(media, "kind", context, MediaKinds);
+        var fileId = JsonFields.OptionalGuid(media, "fileId", context)
+            ?? throw JsonFields.Malformed($"Falta «fileId» en {context}.");
+        return new MessageMedia(kind, fileId);
+    }
+
+    private static readonly IReadOnlySet<string> MediaKinds = ChatbotMediaKinds.All.ToFrozenSet(StringComparer.Ordinal);
 
     private static QuestionValidation ReadValidation(JsonElement element, string where)
     {

@@ -114,6 +114,15 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnType("char(3)")
                         .HasColumnName("currency");
 
+                    b.Property<Guid?>("LinkedOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("linked_order_id");
+
+                    b.Property<string>("LinkedOrderNumber")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("linked_order_number");
+
                     b.Property<string>("Notes")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
@@ -135,6 +144,10 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("supplier_id");
 
+                    b.Property<Guid?>("SupplierTenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("supplier_tenant_id");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -149,6 +162,10 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnName("version");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "LinkedOrderId")
+                        .HasDatabaseName("IX_purchase_orders_tenant_linked_order")
+                        .HasFilter("linked_order_id IS NOT NULL");
 
                     b.HasIndex("TenantId", "Number")
                         .IsUnique()
@@ -189,6 +206,25 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("confirmed_unit_cost");
 
+                    b.Property<bool>("CreatedInCatalog")
+                        .HasColumnType("boolean")
+                        .HasColumnName("created_in_catalog");
+
+                    b.Property<decimal?>("ListBasePrice")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("list_base_price");
+
+                    b.Property<decimal?>("ListDiscountPercent")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("list_discount_percent");
+
+                    b.Property<decimal?>("ListUnitPrice")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("list_unit_price");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(300)
@@ -203,10 +239,14 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("ordinal");
 
-                    b.Property<decimal>("Quantity")
+                    b.Property<decimal?>("Quantity")
                         .HasPrecision(10, 2)
                         .HasColumnType("numeric(10,2)")
                         .HasColumnName("quantity");
+
+                    b.Property<Guid?>("SupplierVariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("supplier_variant_id");
 
                     b.Property<decimal>("TaxRatePercent")
                         .HasPrecision(5, 2)
@@ -218,7 +258,7 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("unit_cost");
 
-                    b.Property<Guid>("VariantId")
+                    b.Property<Guid?>("VariantId")
                         .HasColumnType("uuid")
                         .HasColumnName("variant_id");
 
@@ -243,6 +283,65 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId");
 
                     b.ToTable("order_number_counters", "purchases");
+                });
+
+            modelBuilder.Entity("Modules.Purchases.Infrastructure.Persistence.PurchasesInboxMessage", b =>
+                {
+                    b.Property<string>("Consumer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("consumer");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Consumer", "MessageId");
+
+                    b.ToTable("inbox_messages", "purchases");
+                });
+
+            modelBuilder.Entity("Modules.Purchases.Infrastructure.Persistence.PurchasesOutboxRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("event_name");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("outbox_messages", "platform", t =>
+                        {
+                            t.ExcludeFromMigrations();
+                        });
                 });
 
             modelBuilder.Entity("Modules.Purchases.Domain.PurchaseOrder", b =>

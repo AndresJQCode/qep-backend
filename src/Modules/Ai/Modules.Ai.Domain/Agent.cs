@@ -81,8 +81,8 @@ public sealed class Agent
         return version;
     }
 
-    /// <summary>D-A6: pausar no corta las sesiones vivas, que terminan con su versión; sólo deja de tomar conversaciones nuevas. La
-    /// conexión sigue ocupada (D-A10).</summary>
+    /// <summary>Pausar deja de tomar conversaciones nuevas y corta las sesiones vivas: su siguiente trabajo no contesta y la conversación
+    /// pasa a una persona (owner, 2026-11-18; revierte D-A6). La conexión sigue ocupada (D-A10).</summary>
     public void Pause(DateTimeOffset now)
     {
         switch (Status)

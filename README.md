@@ -131,6 +131,7 @@ local y por variable de entorno en k8s
 | `Registration:PublicTenantSignupEnabled`               | `true` en `appsettings.json`                                                                  | Alta pública de tenants. **Ausente ⇒ `false`**: se lee con `GetValue<bool>`                                         |
 | `Notifications:EmailProvider`                          | `log` en `appsettings.json`                                                                   | `log` o `infobip`. Con `infobip`, las tres claves `Notifications:Infobip:*` pasan a ser requeridas. **En `Production` `log` es rechazado**: el arranque falla en lugar de dar por entregada una invitación que nunca sale |
 | `Notifications:InvitationUrl`                          | `http://localhost:3002/invitations`                                                           | Base absoluta del deep-link de invitación; el email lleva `{InvitationUrl}/{token}`                                 |
+| `Notifications:AppBaseUrl`                             | `http://localhost:3002`                                                                       | Base del frontend para los links de cuenta (verificar, restablecer) y el de la invitación de mayorista, `{AppBaseUrl}/wholesale-invitations/{token}`. El mayorista no tiene variable propia |
 | `Audit:SecurityRetentionDays`                          | `2555` (~7 años)                                                                              | Ventana de retención de auditoría de seguridad. Debe ser positiva                                                   |
 | `Audit:OperationalRetentionDays`                       | `730` (2 años)                                                                                | Ventana de retención de auditoría operativa. Debe ser positiva                                                      |
 | `Storage:PresignedUrlMinutes`                          | `5`                                                                                           | Vigencia de la URL firmada. Debe ser positiva                                                                       |
@@ -851,9 +852,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai`, `support` y `purchases`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai`, `support`, `purchases` y `wholesale`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. `purchases` (las órdenes de compra a proveedores) exige `suppliers` y `catalog`; no viene con el signup y se prende por tenant. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. `purchases` (las órdenes de compra a proveedores) exige `suppliers` y `catalog`; no viene con el signup y se prende por tenant. `wholesale` (el mayorista: listas de precios y distribuidores invitados, ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación)) exige `orders`; no viene con el signup y se prende por tenant. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -1339,11 +1340,16 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
-| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `mark-paid`, `unmark-paid`, `prepare`, `unprepare`, `archive`, `unarchive`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` (`prepare`, `unprepare`, `archive`, `unarchive`) / `.approve` (`mark-paid`, `unmark-paid`) / `.cancel` / `.invoice` |
+| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `mark-paid`, `unmark-paid`, `prepare`, `unprepare`, `archive`, `unarchive`, `approve` (pedido `Wholesale`), `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional); el `GET` de la lista acepta `wholesaleApproval`=`Pending`\|`Approved` y responde `pendingWholesaleApprovals` (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual), [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp) y [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)) | `quotations.order.read` / `.manage` (`prepare`, `unprepare`, `archive`, `unarchive`, `approve`) / `.approve` (`mark-paid`, `unmark-paid`) / `.cancel` / `.invoice` |
 | `/api/v1/tenants/{tenantId}/orders-settings`       | `GET`, `PUT` (los tres ajustes del pedido; ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `tenancy.settings.read` / `.update` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
 | `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
 | `/api/v1/tenants/{tenantId}/purchases/orders` | `GET` (`status`=`Draft`\|`Sent`\|`Confirmed`\|`Received`\|`Cancelled` sin importar mayúsculas, `supplierId`, `search` en el número o el nombre del proveedor, `page`, `pageSize` por defecto 50, tope 200; de la más nueva a la más vieja; `counts` por estado más `all` con los mismos filtros salvo `status`), `POST` (201 + `Location`, en `Draft` con número `OC-0001` por tenant; un alta rechazada no gasta número), `preview` (`POST`, mismo cuerpo, no escribe; `purchases.order.manage`), y por orden `GET`, `pdf` (`GET`, `application/pdf`, `OC-0001.pdf`, en cualquier estado), `PUT` y `DELETE` (sólo `Draft`, `If-Match`), `send`, `confirm` (cuerpo `{ lines: [{ lineId, confirmedQuantity, confirmedUnitCost }] }` con cada línea una vez), `receive` y `cancel` (`POST`, `If-Match`). Costos sin IVA; el IVA se suma en `totals` con la tasa que la línea copió del catálogo al guardar el borrador. Módulo `purchases` (apagado por defecto). Errores propios: `purchases.order.not_found` (404), `.not_draft` y `.invalid_transition` (409), `.empty`, `.line_not_in_catalog`, `.supplier_inactive`, `.invalid_currency`, `.confirm_lines_mismatch` (422), `.pdf_render_failed` (502); proveedor inexistente: `suppliers.supplier.not_found` (404) | `purchases.order.read` (`GET`, `pdf`) / `purchases.order.manage` (`POST`, `preview`, `PUT`, `DELETE`, `send`, `confirm`, `receive`, `cancel`) |
+| `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog` | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive` | `purchases.order.manage` |
+| `/api/v1/tenants/{tenantId}/wholesale/price-lists` | `GET` (todas, por nombre, sin paginar), `POST` (201 + `Location`), `preview` (`POST`, la lista sin guardar: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `wholesale.price_list.in_use` si algún distribuidor la usa). Módulo `wholesale` | `wholesale.price_list.manage` |
+| `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `wholesale.price_list.manage` |
+| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`, manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone` y `whatsAppConnectionId`; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
+| `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
@@ -1351,7 +1357,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`) (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep)) | `messaging.template.manage` |
+| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)) | `messaging.template.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -2452,6 +2458,86 @@ lugar de reemplazarlo.
 El `403` no revela de quién es la invitación: mismo criterio de no filtrar
 identidades que el `403` de login. Y el `422` distingue vencimiento de estado no
 aceptable porque sólo el primero se arregla pidiendo un link nuevo.
+
+Ni este token ni el del mayorista quedan en el servidor: `platform.request_failures` y su línea de log guardan la ruta con
+`SensitivePaths.Mask` (`/api/v1/invitations/***/accept`). La telemetría usa la misma regla (`SensitivePathTelemetry`): el
+`url.path` de los spans de OpenTelemetry y el scope `RequestPath` de los logs del request.
+
+### Mayorista: listas de precios, distribuidores e invitación
+
+Módulo `wholesale` (spec `docs/superpowers/specs/2026-11-17-compras-y-mayorista-design.md`, plan
+`docs/superpowers/plans/2026-11-17-mayorista-fase-2-backend.md`, «Contrato HTTP»). El mayorista arma listas de precios
+(descuento sobre el precio del catálogo en su moneda por defecto, redondeado con su regla) e invita distribuidores por correo.
+El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}` (72 horas; reenviar rota el token y el link viejo
+pasa a `404`).
+
+| Método | Ruta                                                   | Autenticación                        | Límite        |
+| ------ | ------------------------------------------------------ | ------------------------------------ | ------------- |
+| `GET`  | `/api/v1/wholesale-invitations/{token}`                | Anónimo                              | `public`      |
+| `POST` | `/api/v1/wholesale-invitations/{token}/session`        | Bearer de Google (o stub)            | `credentials` |
+| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ password }`       | `credentials` |
+| `GET`  | `/api/v1/wholesale-invitations/{token}/linkable-tenants` | Sesión QEP                         | `public`      |
+| `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
+
+- Quien no tiene cuenta abre sesión con el link: `session` exige el correo de la invitación verificado por Google y
+  `session-with-password` crea la contraseña (o verifica la que ya existe). `session-with-password` aprovisiona el usuario por
+  ese correo; `session` usa el usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
+  (`WholesaleInvitationGoogleSession`). Una cuenta de Google ya vinculada a un usuario con otro correo es
+  `403 wholesale.invitation.email_mismatch`, sin crear nada.
+- `accept` recibe `{ mode: "NewTenant", displayName, slug }` (crea el tenant del distribuidor con
+  `catalog, customers, companies, quotations, orders, reporting, suppliers, purchases`, aunque el alta pública esté apagada) o
+  `{ mode: "LinkTenant", tenantId }` (un tenant del que la sesión es owner; prende `catalog`, `suppliers` y `purchases` si
+  faltan). En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista y deja la relación
+  `Active`. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
+- Errores: `404 wholesale.invitation.not_found`, `410 wholesale.invitation.expired`, `409 wholesale.invitation.already_accepted`,
+  `.unavailable` (el mayorista no está activo, apagó `wholesale` o su empresa facturadora no sirve) y
+  `wholesale.distributor.already_linked`; `403 wholesale.relationship.inactive` (la relación está bloqueada),
+  `wholesale.invitation.email_mismatch` y
+  `.not_tenant_owner`; `422 wholesale.invitation.self_link`, los de `register-tenant` y `validation.failed`
+  (`Mode`, `DisplayName`, `Slug`, `TenantId`).
+
+#### Aviso por WhatsApp de la invitación
+
+Spec `docs/superpowers/specs/2026-11-18-invitacion-distribuidor-whatsapp-design.md`, plan
+`docs/superpowers/plans/2026-11-18-aviso-whatsapp-invitacion-backend.md`, «Contrato HTTP». Con `phone` (y la conexión que
+resuelve el contrato) invitar y «Reenviar» escriben, además del correo, `wholesale.distributor-invitation-notice.v1`: un evento
+**sin token, sin link y sin vencimiento**, que dice que la invitación llegó al correo. Lo consume Mayorista con inbox propio
+(`wholesale.inbox_messages`, consumidor `wholesale.invitation-whatsapp-notice`, curva 5 s / 30 s / 5 min) y lo manda por
+`WholesaleInvitationNoticeSender` de Bootstrapper con la plantilla `qep_mayorista_invitacion` (`UTILITY`, `es`, variables
+`nombre_contacto`, `mayorista`, `correo`). El fallo del aviso nunca frena ni cambia el correo.
+
+- Campos nuevos: `POST` y `PUT` reciben `phone` (E.164 con el país del tenant) y `whatsAppConnectionId`; `options` suma
+  `whatsAppConnections` (activas con la plantilla aprobada); lista y detalle suman `phone`, y el detalle
+  `invitation.whatsAppNotice { status: Pending|Sent|Failed, failureCode, connectionLabel }` (`null` sin teléfono o tras un `PUT`
+  que cambió teléfono o conexión).
+- `failureCode`: `template_not_approved`, `connection_unavailable:<motivo>`, `send_failed:<código>` y, en el reenvío,
+  `whatsapp_unavailable`. Errores 422 `wholesale.distributor.whatsapp_connection_required` (varias listas, ninguna elegida) y
+  `wholesale.distributor.whatsapp_unavailable` (ninguna lista, o la elegida no lo está).
+- El resultado se aplica sólo a la `generation` vigente de la invitación y no sube `version`: un `PUT` o un «Reenviar» en el medio
+  deja el aviso viejo sin efecto, y el `If-Match` leído antes sigue valiendo.
+- Plantilla: `POST …/template-management/wholesale-invitation-notice` (cuerpo opcional `{ body }`, 201) y
+  `GET …/wholesale-invitation-notice/draft`; `TemplateManagementDto` suma `wholesaleInvitationNoticeTemplate`.
+
+### Mayorista: órdenes de compra vinculadas
+
+Mayorista fase 3 (plan `docs/superpowers/plans/2026-11-17-mayorista-fase-3-backend.md`, «Contrato HTTP» y su adenda). Una orden de
+compra a un proveedor vinculado (`mode: "Linked"`, fijado al guardar el borrador) se precia con la lista del mayorista y, al
+enviarla, crea el pedido en el tenant mayorista (`source: "Wholesale"`, `externalReference` = número de la orden).
+
+- **Catálogo:** `GET …/purchases/suppliers/{supplierId}/catalog` exige la relación `Active` entre los dos tenants y sólo muestra lo
+  visible en la lista del distribuidor. El costo de la orden es el precio de lista sin IVA; la línea congela base, descuento y
+  precio de lista con IVA.
+- **Enviar** es idempotente por la clave `purchase-order:{comprador}:{orden}`: un reintento adopta el pedido que ya existe con sus
+  líneas, sin revalidar. Si el motor de pedidos del mayorista lo rechaza, o su moneda ya no es la de la orden, `409
+  purchases.order.wholesaler_rejected` (el código interno queda en el log).
+- **Aprobar** (`POST /orders/{id}/approve`, `quotations.order.manage`) congela el pedido y publica
+  `quotations.order.wholesale-approved.v1` con las líneas finales. Compras lo consume con su inbox (`purchases.inbox_messages`,
+  consumidor `purchases.wholesale-order-events`) y confirma la orden línea por línea (`Unchanged`, `Changed`, `Rejected`,
+  `Added`), creando en el catálogo propio, en la misma transacción, los productos que no encuentra por código.
+- **Cancelar** una orden vinculada en `Sent` anula primero el pedido; aprobado o tocado, `409 purchases.order.not_cancellable`.
+  Cancelar o borrar un borrador vinculado también anula el pedido que haya dejado un envío que no terminó de guardarse. La
+  anulación del mayorista (`quotations.order.wholesale-cancelled.v1`) cancela la orden salvo si ya se recibió.
+- **Proveedores** suma `linkedRelationshipStatus` (`Active`, `Blocked`, `Invited` o `null`) en la lista y el detalle.
 
 ## Arquitectura y persistencia
 

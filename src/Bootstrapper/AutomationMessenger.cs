@@ -31,6 +31,48 @@ internal sealed class AutomationMessenger(IBotOutbound outbound) : IAutomationMe
         return Map(await outbound.SendAsync(new BotSend(tenantId, conversationId, chatbotId, clientId, null, send), cancellationToken));
     }
 
+    /// <summary>Spec 2026-11-18: el archivo va por link. Con botón es un solo <c>cta_url</c> con el archivo de encabezado y el pie de cuerpo (como lo
+    /// dibuja el editor); sin botón, el archivo con su pie. El botón con una URL que no es web absoluta se rechaza como en
+    /// <see cref="SendInteractiveAsync"/>. Un audio nunca llega con botón: el motor lo manda aparte.</summary>
+    public async Task<BotSendOutcome> SendMediaAsync(
+        Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, BotMediaMessage message, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        var file = message.File;
+        if (KindOf(file.Kind) is not { } kind)
+        {
+            return new BotSendOutcome.Rejected(MessagingErrorCodes.MessageRejected);
+        }
+
+        var media = new BotMediaSend(kind, file.Url, file.FileName, file.ContentType, file.SizeBytes, file.FileId);
+        if (message.UrlButton is not { } button)
+        {
+            return Map(await outbound.SendAsync(new BotSend(tenantId, conversationId, chatbotId, clientId, message.Caption, null, media), cancellationToken));
+        }
+
+        if (!IsWebUrl(button.Url, out var url))
+        {
+            return new BotSendOutcome.Rejected(InteractiveInvalid);
+        }
+
+        var header = new InteractiveMediaHeader(file.Kind, file.Url, kind == MessageKind.Document ? file.FileName : null);
+        var cta = new CtaUrlSend(message.Caption ?? string.Empty, button.Label, url, MediaHeader: header);
+        return Map(await outbound.SendAsync(new BotSend(tenantId, conversationId, chatbotId, clientId, null, cta, media), cancellationToken));
+    }
+
+    /// <summary>Los tipos del flujo en minúscula (<c>ChatbotMediaKinds</c>) al <see cref="MessageKind"/> de Mensajería.</summary>
+    private static MessageKind? KindOf(string kind) => kind switch
+    {
+        "image" => MessageKind.Image,
+        "video" => MessageKind.Video,
+        "audio" => MessageKind.Audio,
+        "document" => MessageKind.Document,
+        _ => null,
+    };
+
+    private static bool IsWebUrl(string value, out Uri url) =>
+        Uri.TryCreate(value, UriKind.Absolute, out url!) && (url.Scheme == Uri.UriSchemeHttps || url.Scheme == Uri.UriSchemeHttp);
+
     /// <summary><c>null</c> si el botón con URL no trae una URL web absoluta: sale de interpolar variables (D-I1) y un <c>{link}</c> vacío deja
     /// un texto que no es una URL. Se pide el esquema porque en Unix <c>Uri.TryCreate</c> lee <c>/p/1</c> como <c>file:///p/1</c>; que sea https
     /// lo valida Mensajería. La lista va en una sola sección sin título (§5.4: el bloque no tiene secciones).</summary>
@@ -39,9 +81,7 @@ internal sealed class AutomationMessenger(IBotOutbound outbound) : IAutomationMe
         InteractiveMessage.Buttons buttons => new ButtonsSend(buttons.Body, [.. buttons.Items.Select(item => new InteractiveButton(item.Id, item.Title))]),
         InteractiveMessage.List list => new ListSend(
             list.Body, list.ButtonLabel, [new ListSection(null, [.. list.Rows.Select(row => new ListRow(row.Id, row.Title, row.Description))])]),
-        InteractiveMessage.CtaUrl cta => Uri.TryCreate(cta.Url, UriKind.Absolute, out var url) && (url.Scheme == Uri.UriSchemeHttps || url.Scheme == Uri.UriSchemeHttp)
-            ? new CtaUrlSend(cta.Body, cta.Label, url)
-            : null,
+        InteractiveMessage.CtaUrl cta => IsWebUrl(cta.Url, out var url) ? new CtaUrlSend(cta.Body, cta.Label, url) : null,
         _ => throw new ArgumentOutOfRangeException(nameof(message), message.GetType().Name, "Mensaje interactivo desconocido."),
     };
 

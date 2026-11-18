@@ -55,6 +55,20 @@ public sealed class FileOwnerModulesTests
         Assert.True(SystemOwnedFiles.Includes(FileOwnerType.MessageTemplate));
     }
 
+    // Spec 2026-11-18 (multimedia del bloque «Mensaje»): el archivo es de los chatbots.
+    [Fact]
+    public void AChatbotMediaFileBelongsToAutomations()
+    {
+        Assert.Equal(TenantModuleKeys.Automations, FileOwnerModules.ModuleOf(FileOwnerType.ChatbotMedia));
+    }
+
+    // Sólo llega por la sesión del editor de chatbots: la consola de Storage no lo ve ni lo crea.
+    [Fact]
+    public void AChatbotMediaFileIsSystemOwned()
+    {
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.ChatbotMedia));
+    }
+
     // owner_type es character varying(20) y se persiste por nombre: un nombre más largo no cabe.
     [Fact]
     public void TheOwnerTypeNameFitsItsColumn()
@@ -73,7 +87,7 @@ public sealed class FileOwnerModulesTests
         // support no tiene dependencias: sólo sale con su propio módulo apagado.
         Assert.Equal(
             [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket,
-                FileOwnerType.MessageTemplate],
+                FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }

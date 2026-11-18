@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Purchases.Application;
+using Modules.Purchases.Infrastructure.Messaging;
 using Modules.Purchases.Infrastructure.Pdf;
 using Modules.Purchases.Infrastructure.Persistence;
 
@@ -30,6 +31,11 @@ public static class PurchasesInfrastructureExtensions
         services.AddScoped<IPurchaseOrderNumberGenerator, PurchaseOrderNumberGenerator>();
         services.AddScoped<IPurchasesUnitOfWork, PurchasesUnitOfWork>();
         services.AddScoped<IPurchasesAuditPublisher, PurchasesAuditPublisher>();
+
+        // Mayorista fase 3: el consumidor de los eventos del pedido mayorista (aprobado, anulado), con reclamo e inbox propio.
+        // El aplicador y los adaptadores entre módulos los registra Bootstrapper.
+        services.AddSingleton<WholesaleOrderEventsProcessor>();
+        services.AddHostedService<WholesaleOrderEventsWorker>();
 
         // El PDF de la orden, con sección y clave propias de qcode-pdf. Sin la clave en Production el pod no arranca
         // (ValidateOnStart). Singleton por fábrica con un HttpClient propio y su timeout, como SupportPdfRenderer: sin estado.

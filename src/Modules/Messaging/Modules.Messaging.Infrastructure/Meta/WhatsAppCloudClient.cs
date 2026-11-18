@@ -274,6 +274,33 @@ internal sealed partial class WhatsAppCloudClient(
         return PostMessageAsync(sender, MessagePayload(target, "document", content, callbackData, contextWamid), cancellationToken);
     }
 
+    public Task<SendResult> SendMediaLinkAsync(
+        MessagingSender sender, SendTarget target, MediaLink media, string? caption, string callbackData, string? contextWamid,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(media);
+        var type = media.Kind switch
+        {
+            MessageKind.Image => "image",
+            MessageKind.Video => "video",
+            MessageKind.Audio => "audio",
+            MessageKind.Document => "document",
+            _ => throw new ArgumentOutOfRangeException(nameof(media), media.Kind, "Tipo de archivo que no se manda por link."),
+        };
+        var content = new JsonObject { ["link"] = media.Url.AbsoluteUri };
+        if (caption is not null && media.Kind != MessageKind.Audio)
+        {
+            content["caption"] = caption;
+        }
+
+        if (media.Kind == MessageKind.Document && media.FileName is not null)
+        {
+            content["filename"] = media.FileName;
+        }
+
+        return PostMessageAsync(sender, MessagePayload(target, type, content, callbackData, contextWamid), cancellationToken);
+    }
+
     public Task<MessagingGraphResult<string>> UploadMediaAsync(
         MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken) =>
         UploadAsync(sender, new ReadOnlyMemoryContent(content), mimeType, VoiceFileName, UploadHttpClientName, cancellationToken);

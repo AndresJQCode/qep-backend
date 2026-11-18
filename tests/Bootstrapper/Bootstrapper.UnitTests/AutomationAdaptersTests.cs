@@ -252,6 +252,54 @@ public sealed class AutomationAdaptersTests
         Assert.Equal(("Hola", (InteractiveSend?)null), (outbound.Sends[3].Text, outbound.Sends[3].Interactive));
     }
 
+    // Spec 2026-11-18: el archivo del bloque «Mensaje», ya resuelto por RunEffects.
+    private static ChatbotMediaFile MediaFile(string kind, string fileName, string contentType) =>
+        new(Guid.CreateVersion7(), kind, fileName, contentType, 2048, new Uri($"https://public.test/f/{fileName}"));
+
+    [Theory]
+    [InlineData("image", null)]
+    [InlineData("document", "Lista.pdf")]
+    public async Task AnImageWithButtonBecomesACtaWithAMediaHeader(string kind, string? headerFileName)
+    {
+        var outbound = new RecordingBotOutbound(new BotSendResult.Sent(Guid.CreateVersion7(), AlreadySent: false));
+        var file = MediaFile(kind, "Lista.pdf", kind == "image" ? "image/jpeg" : "application/pdf");
+
+        var outcome = await new AutomationMessenger(outbound).SendMediaAsync(
+            TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            new BotMediaMessage(file, "Mira el catálogo", new Modules.Automations.Domain.Flow.UrlButton("Ver", "https://qcode.co/catalogo")), Ct);
+
+        Assert.IsType<BotSendOutcome.Sent>(outcome);
+        var send = Assert.Single(outbound.Sends);
+        Assert.Null(send.Text);
+        var cta = Assert.IsType<CtaUrlSend>(send.Interactive);
+        Assert.Equal(("Mira el catálogo", "Ver", new Uri("https://qcode.co/catalogo")), (cta.Body, cta.DisplayText, cta.Url));
+        Assert.Equal(new InteractiveMediaHeader(kind, file.Url, headerFileName), cta.MediaHeader);
+        var expectedKind = kind == "image" ? Modules.Messaging.Domain.MessageKind.Image : Modules.Messaging.Domain.MessageKind.Document;
+        Assert.Equal(new BotMediaSend(expectedKind, file.Url, file.FileName, file.ContentType, file.SizeBytes, file.FileId), send.Media);
+    }
+
+    [Fact]
+    public async Task AnAudioBecomesAPlainMediaSend()
+    {
+        var outbound = new RecordingBotOutbound(new BotSendResult.Sent(Guid.CreateVersion7(), AlreadySent: false));
+        var file = MediaFile("audio", "saludo.mp3", "audio/mpeg");
+        var image = MediaFile("image", "catalogo.jpg", "image/jpeg");
+        var messenger = new AutomationMessenger(outbound);
+
+        await messenger.SendMediaAsync(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), new BotMediaMessage(file, null, null), Ct);
+        await messenger.SendMediaAsync(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), new BotMediaMessage(image, "Mira", null), Ct);
+        var refused = await messenger.SendMediaAsync(
+            TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            new BotMediaMessage(image, "Mira", new Modules.Automations.Domain.Flow.UrlButton("Ver", "/p/1")), Ct);
+
+        Assert.Equal(2, outbound.Sends.Count);
+        Assert.Null(outbound.Sends[0].Text);
+        Assert.Null(outbound.Sends[0].Interactive);
+        Assert.Equal(new BotMediaSend(Modules.Messaging.Domain.MessageKind.Audio, file.Url, "saludo.mp3", "audio/mpeg", 2048, file.FileId), outbound.Sends[0].Media);
+        Assert.Equal(("Mira", (InteractiveSend?)null, Modules.Messaging.Domain.MessageKind.Image), (outbound.Sends[1].Text, outbound.Sends[1].Interactive, outbound.Sends[1].Media!.Kind));
+        Assert.Equal(new BotSendOutcome.Rejected("messaging.interactive.invalid"), refused);
+    }
+
     [Fact]
     public async Task ACtaUrlThatIsNotAnAbsoluteUriIsRejectedWithoutSending()
     {

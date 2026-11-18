@@ -90,7 +90,7 @@ conversaciones desde el agente; métricas de `reports/messaging`; otros proveedo
 | ID | Decisión | Motivo |
 | --- | --- | --- |
 | D-A5 | **Borrador + versiones publicadas**, como D-C1: el borrador es un documento `config` (jsonb) en el agregado; publicar lo copia a `ai.agent_versions` con número correlativo; la sesión guarda `agent_version_id` y **termina con la versión con que empezó**. | Spec de producto §3.1 (`status` con `version` e `If-Match`, guardar ≠ publicar) y §3.2 («una conversación en curso termina con el bot con que empezó»). |
-| D-A6 | **Estados** `Draft`, `Active`, `Paused`, como D-C5. Pausar no corta sesiones vivas; las deja terminar. | Mismo criterio que los chatbots. |
+| D-A6 | **Estados** `Draft`, `Active`, `Paused`, como D-C5. Pausar corta también las sesiones vivas: su siguiente trabajo no llama al modelo y la conversación pasa a una persona con el código `agent_paused` (owner, 2026-11-18; revierte la decisión original de dejarlas terminar). | Un agente pausado que sigue contestando contradice lo que el tenant pidió. |
 | D-A7 | **Guardar siempre guarda** (`PUT …/draft` responde la lista de problemas); **publicar** responde 422 `ai.agent.invalid` con los errores. Errores: sin instrucciones, sin conexión, modelo fuera de la lista, `tools.quotationDraft` sin asesor configurado (si el owner lo resuelve así, §15), traspaso a un miembro que no puede responder. | D-C3. |
 | D-A8 | **Sin clave válida no se publica:** 422 `ai.provider.not_configured` si el tenant no tiene conexión `openai` `Active`. | Spec de producto D-4. |
 | D-A9 | **Disparador** `NewConversation` u `OutsideHours`, con la regla de los chatbots del spec 2026-10-26 D-1 y D-1b, que reemplazó D-M16: **cualquier** entrante de una conversación abierta y sin asesor, la haya abierto o no; `OutsideHours`, cualquiera fuera de horario. Una pausa `Manual` o `Handoff` frena el arranque (D-6, D-13b; lo rechaza `Conversation.StartAutomation`). *Corregido el 2026-11-18: hasta entonces el agente seguía con D-M16 y no tomaba una conversación ya abierta sin dueño.* | Spec de producto §3.1 («mismas opciones que el chatbot»). |
@@ -453,7 +453,7 @@ corta y el turno queda marcado `truncated`.
 | El asesor la toma después de que el agente creó un borrador de cotización | El borrador queda: lo revisa un asesor de todas formas (D-5). La herramienta no se deshace. |
 | El cliente escribe mientras el modelo piensa | D-A14. |
 | El worker muere a mitad | El lease vence, otro worker retoma; las llamadas al modelo se repiten (se registran de nuevo), los envíos no (D-A16), las escrituras no (clave externa). |
-| Se pausa el agente | Las sesiones vivas siguen hasta terminar (D-A6). |
+| Se pausa el agente | Las sesiones vivas se cortan: el siguiente trabajo no contesta y la conversación pasa a una persona (`agent_paused`, D-A6). |
 | Se despublica o borra el agente | Borrar exige sin sesiones vivas (409). |
 | El contacto está bloqueado | `IBotOutbound` devuelve `Blocked` (`BotOutbound.cs:71-74`): la sesión termina `Interrupted` en silencio, como los chatbots. |
 
