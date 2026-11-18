@@ -7,13 +7,15 @@ public sealed record GetDistributorOptionsQuery(Guid TenantId) : IQuery<Distribu
 
 /// <summary>
 /// Lo que el formulario de invitar o editar puede elegir: listas, asesores activos (D-15) y empresas activas con su
-/// elegibilidad (D-2), todo por nombre. Exige <c>wholesale.distributor.manage</c>: sólo sirve para escribir.
+/// elegibilidad (D-2), todo por nombre, y los números de WhatsApp listos para el aviso (spec 2026-11-18). Exige
+/// <c>wholesale.distributor.manage</c>: sólo sirve para escribir.
 /// </summary>
 public sealed class GetDistributorOptionsHandler(
     IExecutionContext executionContext,
     IPriceListRepository priceLists,
     IWholesaleMemberDirectory members,
-    IWholesaleCompanyLookup companies)
+    IWholesaleCompanyLookup companies,
+    IWholesaleWhatsAppConnections whatsAppConnections)
     : IQueryHandler<GetDistributorOptionsQuery, DistributorOptionsDto>
 {
     public async Task<DistributorOptionsDto> HandleAsync(GetDistributorOptionsQuery query, CancellationToken cancellationToken)
@@ -22,6 +24,7 @@ public sealed class GetDistributorOptionsHandler(
         var lists = await priceLists.ListAsync(query.TenantId, cancellationToken);
         var advisors = await members.ListActiveAsync(query.TenantId, cancellationToken);
         var active = await companies.ListActiveAsync(query.TenantId, cancellationToken);
+        var ready = await whatsAppConnections.ListReadyAsync(query.TenantId, cancellationToken);
 
         return new DistributorOptionsDto(
             lists
@@ -36,6 +39,7 @@ public sealed class GetDistributorOptionsHandler(
                 .OrderBy(company => company.Name, StringComparer.CurrentCultureIgnoreCase)
                 .Select(company => new DistributorCompanyOptionDto(
                     company.Id, company.Name, company.DocumentType, company.DocumentNumber, company.Eligible))
-                .ToList());
+                .ToList(),
+            ready.Select(connection => new DistributorWhatsAppConnectionDto(connection.Id, connection.Label)).ToList());
     }
 }

@@ -34,6 +34,9 @@ public interface IMessageTemplateRepository
     /// <summary>Soporte fase 4b: la única fila <c>SupportSurvey</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindSupportSurveyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Mayorista: la única fila <c>WholesaleInvitationNotice</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindWholesaleInvitationNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Todas, con tracking, por nombre e idioma en orden ordinal: el refresco las recorre y las modifica.</summary>
     Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -93,6 +96,14 @@ public interface ISupportFormalReplyTemplateReadiness
 /// <summary>Soporte fase 4b (H16): la señal de la plantilla de la encuesta, hermana de <see cref="ISupportReplyTemplateReadiness"/>. Devuelve la
 /// fila <c>SupportSurvey</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>.</summary>
 public interface ISupportSurveyTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Mayorista: la señal de la plantilla del aviso de invitación de distribuidor, hermana de <see cref="ISupportReplyTemplateReadiness"/>.
+/// Devuelve la fila <c>WholesaleInvitationNotice</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen las opciones de
+/// conexión de Mayorista y el envío del aviso (<c>IWholesaleInvitationNoticeOutbound</c>).</summary>
+public interface IWholesaleInvitationNoticeReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

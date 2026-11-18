@@ -27,6 +27,9 @@ public enum MessageTemplateKind
 
     /// <summary>Soporte fase 4b (H16): la encuesta de satisfacción, con tres botones de respuesta rápida fijos.</summary>
     SupportSurvey,
+
+    /// <summary>Mayorista: el aviso por WhatsApp de una invitación de distribuidor, sólo cuerpo (se guarda por nombre: va al final).</summary>
+    WholesaleInvitationNotice,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -119,6 +122,11 @@ public static partial class MessageTemplateName
 
     public const string SupportSurveyPrefix = "qep_soporte_encuesta_";
 
+    /// <summary>Mayorista: <c>qep_mayorista_invitacion</c> y sus versiones (<c>qep_mayorista_invitacion_v2</c>…).</summary>
+    public const string WholesaleInvitationNoticeName = "qep_mayorista_invitacion";
+
+    public const string WholesaleInvitationNoticePrefix = "qep_mayorista_invitacion_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
@@ -131,7 +139,9 @@ public static partial class MessageTemplateName
             || string.Equals(name, SupportFormalReplyName, StringComparison.Ordinal)
             || name.StartsWith(SupportFormalReplyPrefix, StringComparison.Ordinal)
             || string.Equals(name, SupportSurveyName, StringComparison.Ordinal)
-            || name.StartsWith(SupportSurveyPrefix, StringComparison.Ordinal));
+            || name.StartsWith(SupportSurveyPrefix, StringComparison.Ordinal)
+            || string.Equals(name, WholesaleInvitationNoticeName, StringComparison.Ordinal)
+            || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -152,7 +162,7 @@ public sealed class MessageTemplate
     public const int StatusReasonMaxLength = 64;
 
     /// <summary>La columna guarda el nombre del <see cref="MessageTemplateKind"/>: tiene que alcanzar para el más largo
-    /// (<c>SupportFormalReply</c>, 18). Con 16 ese tipo no se podía guardar.</summary>
+    /// (<c>WholesaleInvitationNotice</c>, 25). Con 16 <c>SupportFormalReply</c> (18) no se podía guardar.</summary>
     public const int KindMaxLength = 32;
 
     /// <summary>Spec 2026-11-17: el ancho de <c>header_image_url</c>, la URL pública de la imagen fija del encabezado.</summary>
@@ -352,6 +362,19 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.SupportSurvey;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Mayorista: lo mismo que <see cref="AdoptAsSupportReply"/> para una <c>qep_mayorista_invitacion</c> creada en la consola de Meta.</summary>
+    public void AdoptAsWholesaleInvitationNotice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateWholesaleInvitationNoticeConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.WholesaleInvitationNotice;
         UpdatedAt = now;
     }
 

@@ -49,6 +49,23 @@ public sealed class DistributorWriteRulesTests
             new UpdateDistributorValidator().Validate(update).Errors.Select(error => error.PropertyName).Distinct());
     }
 
+    // Spec 2026-11-18: el teléfono se recorta y llega con a lo sumo 32 caracteres; la conexión vacía sólo cuenta con teléfono.
+    [Fact]
+    public void ThePhoneHasAtMost32CharactersAndAnEmptyConnectionOnlyCountsWithAPhone()
+    {
+        Assert.Empty(Failed(Invite() with { Phone = " " + new string('1', 32) + " ", WhatsAppConnectionId = Guid.CreateVersion7() }));
+        Assert.Equal(["Phone"], Failed(Invite() with { Phone = new string('1', 33) }));
+        Assert.Equal(["WhatsAppConnectionId"], Failed(Invite() with { Phone = "3001234567", WhatsAppConnectionId = Guid.Empty }));
+        Assert.Empty(Failed(Invite() with { Phone = "  ", WhatsAppConnectionId = Guid.Empty }));
+
+        var update = new UpdateDistributorCommand(
+            Tenant, Guid.CreateVersion7(), 1, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(),
+            new string('1', 33), Guid.Empty);
+        Assert.Equal(
+            ["Phone", "WhatsAppConnectionId"],
+            new UpdateDistributorValidator().Validate(update).Errors.Select(error => error.PropertyName).Distinct());
+    }
+
     [Theory]
     [InlineData("paused", false)]
     [InlineData("1", false)]

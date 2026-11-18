@@ -7,7 +7,7 @@ namespace Modules.Wholesale.Application;
 /// <summary>
 /// Arma los DTOs de distribuidores. Listas, nombres de miembros y nombres de tenants se resuelven en lote (una llamada por
 /// puerto, nunca una por fila), y <c>allowedActions</c> y <c>canResend</c> cruzan el estado con
-/// <c>wholesale.distributor.manage</c>.
+/// <c>wholesale.distributor.manage</c>. El label de la conexión del aviso sólo se pide en el detalle y sólo si hay aviso (D-7).
 /// </summary>
 public sealed class DistributorComposer(
     IExecutionContext executionContext,
@@ -15,7 +15,8 @@ public sealed class DistributorComposer(
     IPriceListRepository priceLists,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
-    IWholesaleTenantDirectory tenants)
+    IWholesaleTenantDirectory tenants,
+    IWholesaleWhatsAppConnections whatsAppConnections)
 {
     /// <summary>Lo que se muestra cuando la membresía, la lista, la empresa o el tenant ya no se encuentran.</summary>
     public const string UnknownName = "Sin nombre";
@@ -28,6 +29,7 @@ public sealed class DistributorComposer(
         var names = await members.FindNamesAsync(distributor.TenantId, [distributor.AdvisorMemberId], cancellationToken);
         var company = await companies.FindAsync(distributor.TenantId, distributor.BillingCompanyId, cancellationToken);
         var tenantNames = await TenantNamesAsync([distributor], cancellationToken);
+        var notice = await NoticeOfAsync(distributor, cancellationToken);
         var now = clock.UtcNow;
         var invitation = distributor.Invitation;
 
@@ -39,12 +41,14 @@ public sealed class DistributorComposer(
             distributor.IdentificationNumber,
             distributor.ContactName,
             distributor.Email,
+            distributor.Phone,
             PriceListOf(distributor, lists),
             AdvisorOf(distributor, names),
             new DistributorCompanyDto(distributor.BillingCompanyId, company?.Name ?? UnknownName),
             TenantOf(distributor, tenantNames),
             distributor.CustomerId,
-            new DistributorInvitationDto(invitation.SentAt, invitation.ExpiresAt, IsExpired(distributor, now), invitation.AcceptedAt),
+            new DistributorInvitationDto(
+                invitation.SentAt, invitation.ExpiresAt, IsExpired(distributor, now), invitation.AcceptedAt, notice),
             distributor.CreatedAt,
             distributor.ActivatedAt,
             AllowedActions(distributor));
@@ -76,6 +80,7 @@ public sealed class DistributorComposer(
                 distributor.IdentificationNumber,
                 distributor.ContactName,
                 distributor.Email,
+                distributor.Phone,
                 PriceListOf(distributor, lists),
                 AdvisorOf(distributor, names),
                 TenantOf(distributor, tenantNames),
@@ -96,6 +101,18 @@ public sealed class DistributorComposer(
             .Distinct()
             .ToArray();
         return ids.Length == 0 ? new Dictionary<Guid, string>() : await tenants.FindNamesAsync(ids, cancellationToken);
+    }
+
+    private async Task<DistributorWhatsAppNoticeDto?> NoticeOfAsync(
+        Distributor distributor, CancellationToken cancellationToken)
+    {
+        if (distributor.Invitation.NoticeStatus is not { } status || distributor.WhatsAppConnectionId is not { } connectionId)
+        {
+            return null;
+        }
+
+        var label = await whatsAppConnections.FindLabelAsync(distributor.TenantId, connectionId, cancellationToken);
+        return new DistributorWhatsAppNoticeDto(status.ToString(), distributor.Invitation.NoticeFailureCode, label ?? UnknownName);
     }
 
     private static bool IsExpired(Distributor distributor, DateTimeOffset now) =>

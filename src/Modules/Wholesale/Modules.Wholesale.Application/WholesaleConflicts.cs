@@ -67,6 +67,16 @@ internal static class WholesaleConflicts
         new(WholesaleErrorCodes.DistributorCompanyInvalid,
             "La empresa no existe, está inactiva o su documento no sirve para el proveedor del distribuidor.");
 
+    /// <summary>Spec 2026-11-18: con teléfono, varias conexiones listas para el aviso y ninguna elegida.</summary>
+    public static WholesaleDomainException WhatsAppConnectionRequired() =>
+        new(WholesaleErrorCodes.DistributorWhatsAppConnectionRequired,
+            "Elige desde qué número de WhatsApp se manda el aviso.");
+
+    /// <summary>Spec 2026-11-18: ninguna conexión lista para el aviso, o la elegida no lo está.</summary>
+    public static WholesaleDomainException WhatsAppUnavailable() =>
+        new(WholesaleErrorCodes.DistributorWhatsAppUnavailable,
+            "No hay un número de WhatsApp con la plantilla del aviso aprobada para mandarlo.");
+
     public static ResourceConflictException InvitationAlreadyAccepted() =>
         new(WholesaleErrorCodes.InvitationAlreadyAccepted, "The invitation was already accepted.");
 

@@ -1329,6 +1329,9 @@ public static class QepServiceCollectionExtensions
         // Soporte fase 4b: la plantilla de la encuesta, con los tres botones fijos.
         services.AddScoped<ICommandHandler<ProvisionSupportSurveyTemplateCommand, ManagedTemplateDto>, ProvisionSupportSurveyTemplateHandler>();
         services.AddScoped<IQueryHandler<GetSupportSurveyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportSurveyTemplateDraftHandler>();
+        // Mayorista: la plantilla del aviso de invitación de distribuidor, calcada de la «Aviso de respuesta».
+        services.AddScoped<ICommandHandler<ProvisionWholesaleInvitationNoticeTemplateCommand, ManagedTemplateDto>, ProvisionWholesaleInvitationNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetWholesaleInvitationNoticeTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1866,6 +1869,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
+        // Spec 2026-11-18: el aviso por WhatsApp de la invitación; Customers (teléfono), Integrations y Mensajería por puertos.
+        services.AddScoped<Modules.Wholesale.Application.IWholesalePhoneNormalizer, WholesalePhoneNormalizer>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleWhatsAppConnections, WholesaleWhatsAppConnections>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleInvitationNoticeSender, WholesaleInvitationNoticeSender>();
         // Ruling W17: el paso de Identity de session-with-password, con la contraseña validada antes de crear al usuario.
         services.AddScoped<WholesaleInvitationPasswordSession>();
         // El paso de Identity de session con Google: aprovisiona sólo si la identidad no tiene usuario, y usa ese usuario.

@@ -107,9 +107,37 @@ internal sealed record PublishedInvitation(
     string CorrelationId,
     DateTimeOffset OccurredAt);
 
+internal sealed record PublishedNotice(
+    Guid TenantId,
+    Guid DistributorId,
+    string Phone,
+    Guid ConnectionId,
+    Guid SentByMemberId,
+    string ContactName,
+    string Email,
+    int Generation,
+    string CorrelationId,
+    DateTimeOffset OccurredAt);
+
 internal sealed class FakeEventPublisher : IWholesaleEventPublisher
 {
     public List<PublishedInvitation> Invitations { get; } = [];
+
+    public List<PublishedNotice> Notices { get; } = [];
+
+    public void InvitationNoticeRequested(
+        Guid tenantId,
+        Guid distributorId,
+        string phone,
+        Guid connectionId,
+        Guid sentByMemberId,
+        string contactName,
+        string email,
+        int generation,
+        string correlationId,
+        DateTimeOffset occurredAt) =>
+        Notices.Add(new PublishedNotice(
+            tenantId, distributorId, phone, connectionId, sentByMemberId, contactName, email, generation, correlationId, occurredAt));
 
     public void DistributorInvited(
         Guid tenantId,
@@ -292,7 +320,86 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
 
     public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+    /// <summary>El país del tenant (la fila de configuración regional); sin entrada, el tenant no tiene fila.</summary>
+    public Dictionary<Guid, string> Countries { get; } = [];
+
     public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Countries.TryGetValue(tenantId.Value, out var country)
+            ? new TenantRegionalSettings("America/Bogota", "dd/MM/yyyy", "COP", "es-CO", country)
+            : null);
+}
+
+/// <summary>Un normalizador de mentira: sólo dígitos, espacios y un «+» inicial; antepone el indicativo del país (57 o 52)
+/// salvo que ya venga con «+». Anota el país con que lo llamaron.</summary>
+internal sealed class FakePhoneNormalizer : IWholesalePhoneNormalizer
+{
+    public List<(string Phone, string Country)> Calls { get; } = [];
+
+    public string? ToE164(string phone, string country)
+    {
+        Calls.Add((phone, country));
+        if (phone.Any(character => !char.IsAsciiDigit(character) && character is not (' ' or '+')))
+        {
+            return null;
+        }
+
+        var digits = new string(phone.Where(char.IsAsciiDigit).ToArray());
+        if (phone.StartsWith('+'))
+        {
+            return "+" + digits;
+        }
+
+        return (country == "MX" ? "+52" : "+57") + digits;
+    }
+}
+
+/// <summary>Las conexiones listas para el aviso. Con <see cref="ThrowWhenCalled"/>, cualquier consulta falla: la prueba de
+/// que un <c>PUT</c> sin cambio no resuelve nada (D-9).</summary>
+internal sealed class FakeWhatsAppConnections : IWholesaleWhatsAppConnections
+{
+    public List<WholesaleWhatsAppConnection> Ready { get; } = [];
+
+    /// <summary>Labels de conexiones activas, listas o no.</summary>
+    public Dictionary<Guid, string> Labels { get; } = [];
+
+    public bool ThrowWhenCalled { get; set; }
+
+    public int ListCalls { get; private set; }
+
+    public Guid AddReady(string label)
+    {
+        var id = Guid.CreateVersion7();
+        Ready.Add(new WholesaleWhatsAppConnection(id, label));
+        Labels[id] = label;
+        return id;
+    }
+
+    public Task<IReadOnlyList<WholesaleWhatsAppConnection>> ListReadyAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        ListCalls++;
+        return ThrowWhenCalled
+            ? throw new InvalidOperationException("The connections should not be resolved.")
+            : Task.FromResult<IReadOnlyList<WholesaleWhatsAppConnection>>(Ready.ToList());
+    }
+
+    public Task<string?> FindLabelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        ThrowWhenCalled
+            ? throw new InvalidOperationException("The connections should not be resolved.")
+            : Task.FromResult(Labels.GetValueOrDefault(connectionId));
+}
+
+/// <summary>La membresía activa de cada usuario en cada tenant (D-6).</summary>
+internal sealed class FakeMembershipDirectory : IMembershipDirectory
+{
+    public Dictionary<(Guid UserId, Guid TenantId), Guid> Active { get; } = [];
+
+    public Task<Guid?> FindActiveMembershipIdAsync(Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Active.TryGetValue((userId, tenantId), out var member) ? (Guid?)member : null);
+
+    public Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(Guid userId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 }
 

@@ -16,6 +16,9 @@ public static class DistributorTextLimits
     public const int ContactName = 160;
 
     public const int Email = 254;
+
+    /// <summary>Spec 2026-11-18: el teléfono como lo escribe el mayorista, recortado, antes de normalizar a E.164.</summary>
+    public const int Phone = 32;
 }
 
 public sealed class InviteDistributorValidator : AbstractValidator<InviteDistributorCommand>
@@ -35,6 +38,10 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
         RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);
         RuleFor(command => command.AdvisorId).NotEqual(Guid.Empty);
         RuleFor(command => command.BillingCompanyId).NotEqual(Guid.Empty);
+        RuleFor(command => command.Phone).NoticePhone();
+        RuleFor(command => command.WhatsAppConnectionId)
+            .NotEqual(Guid.Empty)
+            .When(command => !string.IsNullOrWhiteSpace(command.Phone));
     }
 
     // Lo mismo que EmailAddress() de FluentValidation (una @ que no está en los extremos), sin el chequeo que no recorta.
@@ -52,11 +59,22 @@ public sealed class UpdateDistributorValidator : AbstractValidator<UpdateDistrib
         RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);
         RuleFor(command => command.AdvisorId).NotEqual(Guid.Empty);
         RuleFor(command => command.BillingCompanyId).NotEqual(Guid.Empty);
+        RuleFor(command => command.Phone).NoticePhone();
+        RuleFor(command => command.WhatsAppConnectionId)
+            .NotEqual(Guid.Empty)
+            .When(command => !string.IsNullOrWhiteSpace(command.Phone));
     }
 }
 
 internal static class DistributorTextRules
 {
+    /// <summary>Opcional; si viene, a lo sumo <see cref="DistributorTextLimits.Phone"/> caracteres recortado. Que sea un número
+    /// válido lo decide el handler, con el país del tenant.</summary>
+    public static IRuleBuilderOptions<T, string?> NoticePhone<T>(this IRuleBuilder<T, string?> rule) =>
+        rule
+            .Must(phone => phone is null || phone.Trim().Length <= DistributorTextLimits.Phone)
+            .WithMessage($"The phone has at most {DistributorTextLimits.Phone} characters.");
+
     public static IRuleBuilderOptions<T, string> TrimmedText<T>(this IRuleBuilder<T, string> rule, int maxLength) =>
         rule
             .Must(text => !string.IsNullOrWhiteSpace(text))

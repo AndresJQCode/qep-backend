@@ -153,6 +153,7 @@ public sealed class SupportReplyTemplateDefinitionTests
     [Fact]
     public void TheKindIsStoredByNameAtTheEnd() =>
         Assert.Equal(
-            ["Free", "Quotation", "External", "BillingReminder", "BillingOverdue", "Order", "SupportReply", "SupportFormalReply", "SupportSurvey"],
+            ["Free", "Quotation", "External", "BillingReminder", "BillingOverdue", "Order", "SupportReply", "SupportFormalReply", "SupportSurvey",
+                "WholesaleInvitationNotice"],
             Enum.GetNames<MessageTemplateKind>());
 }
