@@ -490,3 +490,17 @@ The spec (Q1) puts Instagram in scope, but the code does not let a chatbot reach
 5. **A rejected upload** (content mismatch or antivirus) is `automations.media.unsupported_type`: the spec has no fifth code.
 6. **Instagram** is not reachable by a chatbot today (Block D header).
 7. **Memory:** Storage's completion reads the whole object (up to 100 MB for a document) to sniff and scan, as it does today up to 25 MB.
+
+## Owner rulings after the plan (2026-11-18, binding — they override the sections above)
+
+1. **Block D is not executed.** A chatbot cannot be attached to an Instagram connection today
+   (`Chatbots.cs:310`) and `BotOutbound` refuses chatbot sends on Instagram (`BotOutbound.cs:91-93`).
+   Instagram media for bots waits until chatbots support Instagram at all; it is a separate future spec.
+   `BotOutbound` with `Media` on any channel other than WhatsApp stays `Rejected(MessageRejected)` (Task 9).
+2. **Inbox history keeps its files.** Task 11's in-use check also counts `message_media.storage_file_id`
+   (bot messages that reference a `ChatbotMedia` file) as referenced, reached through a Messaging port
+   in the same Bootstrapper adapter. A file stays public while any chatbot, version, saved template **or
+   conversation message** references it. Add the test `AFileShownInAConversationIsNotReleased` to Task 11
+   and `DeletingTheChatbotKeepsAFileTheInboxShows` to Task 12.
+3. **`kind` is lower case** everywhere (`image`, `video`, `audio`, `document`): flow, `complete`,
+   `mediaFiles`, simulator transcript — as Task 5 already says.

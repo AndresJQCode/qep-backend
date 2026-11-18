@@ -126,8 +126,7 @@ policy says at build time; the owner's open decisions there apply here too.
   - audio → the audio by link; then, if there is text or a button, a second message (text, or the
     `cta_url` interactive).
   - The Meta client gains link variants of the media sends where it only has media-id variants today.
-- Instagram: the attachment by URL (as `SendMediaMessage` already does), then the caption as a separate
-  text message, and the button as today's Instagram fallback.
+- Instagram: not applicable — chatbots do not run on Instagram today (see «Builder questions, settled» 1).
 - A failed media send follows today's bot failure path (the run's existing error handling for a send
   that Meta rejects). No silent fallback to text.
 - The send is recorded in the conversation as an outbound media message so the inbox draws it. It
@@ -147,7 +146,8 @@ button cases produce the same sequence of entries the real send produces.
 ### Lifecycle — no orphaned public files
 
 A `ChatbotMedia` file is **in use** while the draft or any published version of any chatbot of the
-tenant references its id.
+tenant, a saved chatbot template, or a conversation message shown in the inbox references its id
+(owner, 2026-11-18: inbox history never loses its media).
 
 - Upload never attaches anything: the draft's autosave stores the id.
 - Removing or replacing the media in the editor does not delete the file immediately — undo must be
@@ -193,11 +193,9 @@ tenant references its id.
 
 ## Builder questions, settled
 
-1. **Instagram is in scope.** `BotOutbound` is text-only for Instagram today («sólo con texto»); this
-   work adds an Instagram media send to the **bot** path with the same claim, window, idempotency and
-   failure handling as its text send — not by calling the advisor's `SendMediaMessage`. Instagram gets
-   the attachment by URL, then the caption as text, then the button through today's Instagram button
-   fallback. Plan it as its own task block so its risk is reviewed on its own.
+1. **Instagram is out of scope** (corrected 2026-11-18 by the plan): a chatbot cannot be attached to an
+   Instagram connection (`Chatbots.cs:310`) and `BotOutbound` refuses chatbot sends there
+   (`BotOutbound.cs:91-93`). Bot media on Instagram waits for chatbots on Instagram, a future spec.
 2. **Media header on `cta_url` is wanted** (one message, as drawn). Extend the interactive send (DTO,
    builder, validator header rules, Meta client) with an image / video / document header, and the inbox
    parser so the inbox draws it as **media with the button under it**, one bubble.
