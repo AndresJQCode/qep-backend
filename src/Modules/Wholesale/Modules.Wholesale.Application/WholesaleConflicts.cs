@@ -76,6 +76,10 @@ internal static class WholesaleConflicts
     public static ResourceConflictException InvitationUnavailable() =>
         new(WholesaleErrorCodes.InvitationUnavailable, "The wholesaler cannot take distributors right now.");
 
+    /// <summary>Ruling W16: el mayorista bloqueó la relación; volver a aceptar no la reactiva ni es un doble clic.</summary>
+    public static ResourceConflictException RelationshipInactive() =>
+        new(WholesaleErrorCodes.RelationshipInactive, "The wholesaler blocked this relationship.");
+
     public static RequestForbiddenException EmailMismatch() =>
         new(WholesaleErrorCodes.InvitationEmailMismatch, "The invitation was sent to another email address.");
 

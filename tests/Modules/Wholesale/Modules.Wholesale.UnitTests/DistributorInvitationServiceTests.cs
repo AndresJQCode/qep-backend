@@ -220,6 +220,34 @@ public sealed class DistributorInvitationServiceTests
         AssertNothingWritten();
     }
 
+    // Ruling W16 (a): la empresa facturadora sigue siendo elegible por documento pero la desactivaron después de invitar.
+    [Fact]
+    public async Task AnInactiveBillingCompanyIs409Unavailable()
+    {
+        var index = _world.Companies.Companies.FindIndex(company => company.Id == _world.Company.Id);
+        _world.Companies.Companies[index] = _world.Company with { IsActive = false };
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+
+        Assert.Equal("wholesale.invitation.unavailable", error.Code);
+        AssertNothingWritten();
+    }
+
+    // Ruling W16 (b): el mayorista bloqueó la relación; volver a aceptar no es el doble clic de D-16.
+    [Fact]
+    public async Task AcceptingABlockedRelationshipIs409Inactive()
+    {
+        await AcceptAsync(new NewTenantChoice(NewTenantData));
+        _invitation.Block(DistributorWorld.Now);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+
+        Assert.Equal("wholesale.relationship.inactive", error.Code);
+        Assert.Single(_tenancy.Registered);
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(DistributorStatus.Blocked, _invitation.Status);
+    }
+
     // Review Focus 1 y ruling W9: el doble clic termina con un solo tenant, un proveedor y un cliente; la segunda respuesta
     // es 200 sobre el mismo tenant, con created=false y sin módulos prendidos, y no escribe nada.
     [Fact]

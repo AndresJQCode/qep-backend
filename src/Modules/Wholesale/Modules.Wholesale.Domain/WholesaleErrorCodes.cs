@@ -33,6 +33,9 @@ public static class WholesaleErrorCodes
 
     public const string InvitationUnavailable = "wholesale.invitation.unavailable";
 
+    // Ruling W16: el spec lo lista como 403 para fase 3; al aceptar es el estado de la relación, no un permiso.
+    public const string RelationshipInactive = "wholesale.relationship.inactive";
+
     // 410
     public const string InvitationExpired = "wholesale.invitation.expired";
 

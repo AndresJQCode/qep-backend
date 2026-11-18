@@ -143,9 +143,10 @@ public sealed class DistributorInvitationService(
 
         var wholesalerName = await tenantDirectory.GetDisplayNameAsync(wholesaler, cancellationToken)
             ?? throw WholesaleConflicts.InvitationUnavailable();
-        // D-2: sin una empresa facturadora utilizable no hay identidad para el proveedor; lo arregla el mayorista.
+        // D-2 y ruling W16: sin una empresa facturadora activa y con documento admitido no hay identidad para el proveedor;
+        // lo arregla el mayorista.
         var company = await companies.FindAsync(distributor.TenantId, distributor.BillingCompanyId, cancellationToken);
-        if (company is not { Eligible: true })
+        if (company is not { Eligible: true, IsActive: true })
         {
             throw WholesaleConflicts.InvitationUnavailable();
         }
@@ -281,6 +282,12 @@ public sealed class DistributorInvitationService(
         if (distributor.Invitation.AcceptedByUserId != userId || distributor.DistributorTenantId is not { } tenantId)
         {
             throw WholesaleConflicts.InvitationAlreadyAccepted();
+        }
+
+        // Ruling W16: con la relación bloqueada no hay «el mismo resultado» que devolver.
+        if (distributor.Status == DistributorStatus.Blocked)
+        {
+            throw WholesaleConflicts.RelationshipInactive();
         }
 
         var name = await tenantDirectory.GetDisplayNameAsync(new TenantId(tenantId), cancellationToken);
