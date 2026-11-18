@@ -1,4 +1,6 @@
 using Modules.Suppliers.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Suppliers.Application;
 
@@ -7,9 +9,11 @@ internal static class SupplierMapping
     /// <summary>
     /// Del agregado al detalle, con la ciudad ya resuelta por el llamador (<c>null</c> fuera de
     /// Colombia). No la resuelve esta función: cada handler decide cómo (una consulta puntual en
-    /// Get/Create/Update, un lote en List) y esto sólo ensambla.
+    /// Get/Create/Update, un lote en List) y esto sólo ensambla. Lo mismo con el mayorista vinculado (<c>null</c> si no lo
+    /// hay): <see cref="ResolveLinkedTenantAsync"/>.
     /// </summary>
-    public static SupplierResponse ToResponse(this Supplier supplier, SupplierCityRef? city) => new(
+    public static SupplierResponse ToResponse(
+        this Supplier supplier, SupplierCityRef? city, SupplierLinkedTenantDto? linkedTenant) => new(
         supplier.Id.Value,
         supplier.Name,
         supplier.BusinessName,
@@ -33,7 +37,8 @@ internal static class SupplierMapping
             new SupplierContactPayload(contact.Name, contact.Role, contact.Phone, contact.Email))],
         supplier.IsActive,
         supplier.CreatedAt,
-        supplier.UpdatedAt);
+        supplier.UpdatedAt,
+        linkedTenant);
 
     /// <summary>
     /// La versión de un solo proveedor: resuelve su ciudad (sólo si la tiene) y arma el detalle. La
@@ -44,18 +49,41 @@ internal static class SupplierMapping
     public static async Task<SupplierResponse> ToResponseAsync(
         this Supplier supplier,
         ISupplierGeographyLookup geographyLookup,
+        ITenantDirectory tenantDirectory,
         CancellationToken cancellationToken)
     {
+        var linkedTenant = await supplier.ResolveLinkedTenantAsync(tenantDirectory, cancellationToken);
         if (supplier.CityId is not { } cityId)
         {
-            return supplier.ToResponse(null);
+            return supplier.ToResponse(null, linkedTenant);
         }
 
         var city = await geographyLookup.FindCityAsync(cityId, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"City '{cityId}' referenced by supplier '{supplier.Id}' was not found.");
 
-        return supplier.ToResponse(city);
+        return supplier.ToResponse(city, linkedTenant);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista): el mayorista vinculado con su nombre vigente, o <c>null</c> para un proveedor externo. Los
+    /// tenants no se borran (sólo se suspenden), así que un vínculo sin tenant es corrupción de datos: 500, como la ciudad.
+    /// </summary>
+    public static async Task<SupplierLinkedTenantDto?> ResolveLinkedTenantAsync(
+        this Supplier supplier,
+        ITenantDirectory tenantDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (supplier.LinkedTenantId is not { } linkedTenantId)
+        {
+            return null;
+        }
+
+        var name = await tenantDirectory.GetDisplayNameAsync(new TenantId(linkedTenantId), cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"Tenant '{linkedTenantId}' linked to supplier '{supplier.Id}' was not found.");
+
+        return new SupplierLinkedTenantDto(linkedTenantId, name);
     }
 
     public static SupplierListItemResponse ToListItem(this Supplier supplier, SupplierCityRef? city) => new(
@@ -70,7 +98,8 @@ internal static class SupplierMapping
         supplier.PaymentTermDays,
         [.. supplier.BankAccounts.Select(account =>
             new SupplierListBankAccount(account.BankName, account.AccountNumber))],
-        supplier.IsActive);
+        supplier.IsActive,
+        supplier.LinkedTenantId is not null);
 
     /// <summary>
     /// Sólo un proveedor colombiano tiene ciudad DIVIPOLA que resolver. El validador ya se aseguró

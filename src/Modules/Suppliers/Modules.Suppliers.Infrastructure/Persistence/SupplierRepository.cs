@@ -79,6 +79,26 @@ internal sealed class SupplierRepository(SuppliersDbContext dbContext) : ISuppli
 
     public void Add(Supplier supplier) => dbContext.Suppliers.Add(supplier);
 
+    public Task<Supplier?> FindByLinkedTenantAsync(
+        Guid tenantId,
+        Guid linkedTenantId,
+        CancellationToken cancellationToken) =>
+        dbContext.Suppliers.FirstOrDefaultAsync(
+            supplier => supplier.TenantId == tenantId && supplier.LinkedTenantId == linkedTenantId,
+            cancellationToken);
+
+    // Igualdad exacta sobre el número recortado: es como lo guarda SupplierIdentification y como lo compara el índice único.
+    public Task<Supplier?> FindByIdentificationAsync(
+        Guid tenantId,
+        IdentificationType type,
+        string number,
+        CancellationToken cancellationToken) =>
+        dbContext.Suppliers.FirstOrDefaultAsync(
+            supplier => supplier.TenantId == tenantId &&
+                supplier.Identification.Type == type &&
+                supplier.Identification.Number == number,
+            cancellationToken);
+
     public async Task<(IReadOnlyList<Supplier> Items, int Total)> SearchAsync(
         Guid tenantId,
         string? search,

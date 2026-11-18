@@ -134,6 +134,9 @@ public sealed class ListTenantHistoryHandlerTests
             return Task.FromResult(emails.GetValueOrDefault(userId));
         }
 
+        public Task<Guid?> FindUserIdByEmailAsync(string email, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public int BatchCalls { get; private set; }
 
         public IReadOnlyList<Guid> Batched { get; private set; } = [];

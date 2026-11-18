@@ -91,6 +91,7 @@ public sealed class CreateSupplierHandler(
         // único y SuppliersUnitOfWork traduce su violación a identification_taken.
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return supplier.ToResponse(city);
+        // Un proveedor del formulario nunca nace vinculado: sólo la aceptación de una invitación lo vincula.
+        return supplier.ToResponse(city, linkedTenant: null);
     }
 }

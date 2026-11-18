@@ -12,4 +12,7 @@ public static class SupplierAuditActions
     public const string Deactivated = "suppliers.supplier.deactivated";
 
     public const string Exported = "suppliers.supplier.exported";
+
+    /// <summary>Spec 2026-11-17 (mayorista), D-24: el proveedor quedó vinculado a un mayorista al aceptar su invitación.</summary>
+    public const string Linked = "suppliers.supplier.linked";
 }

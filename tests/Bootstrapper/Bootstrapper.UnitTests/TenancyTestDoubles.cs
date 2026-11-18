@@ -94,6 +94,9 @@ internal sealed class StubUserDirectory(IReadOnlyDictionary<Guid, string> emails
         return Task.FromResult(emails.TryGetValue(userId, out var email) ? email : null);
     }
 
+    public Task<Guid?> FindUserIdByEmailAsync(string email, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     // Propio y no el de la interfaz, que itera llamando GetEmailAsync: así el contador de a uno no cuenta las del lote.
     public Task<IReadOnlyDictionary<Guid, string>> GetEmailsAsync(
         IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken)
