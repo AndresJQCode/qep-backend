@@ -102,12 +102,15 @@ public sealed class SaveOrderEditsHandler(
 
         // El neto de antes de tocar nada: el recálculo del pago compara contra él (spec 2026-11-10 §3.2).
         var previousNetTotal = order.NetTotal;
-        foreach (var addition in command.Proofs.Add)
-        {
-            await OrderPaymentProofResolver.ResolveAsync(
-                fileLookup, orderRepository, command.TenantId, addition.FileId!.Value, exceptProofId: null,
-                cancellationToken);
-        }
+        // Los comprobantes nuevos en dos lecturas, no dos por comprobante. Los reemplazos siguen de a uno: cada uno
+        // excluye su propio comprobante de la pregunta de uso, y el lote sólo admite una exclusión.
+        await OrderPaymentProofResolver.ResolveManyAsync(
+            fileLookup,
+            orderRepository,
+            command.TenantId,
+            command.Proofs.Add.Select(addition => addition.FileId!.Value).ToArray(),
+            exceptProofId: null,
+            cancellationToken);
 
         foreach (var update in command.Proofs.Update)
         {
