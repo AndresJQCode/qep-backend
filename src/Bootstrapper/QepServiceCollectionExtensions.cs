@@ -1,3 +1,4 @@
+using Bootstrapper.ApiKeys;
 using Bootstrapper.Authentication;
 using Bootstrapper.Copilot;
 using Bootstrapper.Deployment;
@@ -18,7 +19,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Bootstrapper.ApiKeys;
 using Modules.Ai.Application;
 using Modules.Ai.Infrastructure;
 using Modules.ApiAccess.Application;
@@ -30,6 +30,7 @@ using Modules.Automations.Application;
 using Modules.Automations.Application.Engine;
 using Modules.Automations.Infrastructure;
 using Modules.Automations.Infrastructure.Http;
+using Modules.Buyers.Infrastructure;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
@@ -44,6 +45,7 @@ using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Infrastructure;
 using Modules.Integrations.Infrastructure.ExternalApi;
+using Modules.Loans.Infrastructure;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
@@ -54,30 +56,29 @@ using Modules.Platform.Infrastructure;
 using Modules.Pos.Application;
 using Modules.Pos.Infrastructure;
 using Modules.Purchases.Application;
+using Modules.Purchases.Infrastructure;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
+using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
-using Modules.Loans.Infrastructure;
-using Modules.Purchases.Infrastructure;
-using Modules.Support.Infrastructure;
-using Modules.ServiceContracts.Infrastructure;
-using Modules.Suppliers.Application;
 using Modules.Store.Infrastructure;
-using Modules.Buyers.Infrastructure;
+using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
+using Modules.Support.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
+using Modules.Wholesale.Application;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
+using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
+using StorePermissions = Modules.Store.Application.StorePermissions;
 using SupportPermissions = Modules.Support.Application.SupportPermissions;
 using SupportPolicies = Modules.Support.Application.SupportPolicies;
-using StorePermissions = Modules.Store.Application.StorePermissions;
-using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
-using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Bootstrapper;
 
@@ -2260,6 +2261,10 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-17 (compras): las órdenes de compra las administra quien administra la empresa (P-3, propuesta).
                 PurchasesPermissions.OrderRead,
                 PurchasesPermissions.OrderManage,
+                // Spec 2026-11-17 (mayorista), P-3 aprobada: listas de precios y distribuidores las administra quien administra la empresa.
+                WholesalePermissions.PriceListManage,
+                WholesalePermissions.DistributorRead,
+                WholesalePermissions.DistributorManage,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
@@ -2340,7 +2345,10 @@ public static class QepServiceCollectionExtensions
                 PipelinePermissions.DealManage,
                 // Spec 2026-11-14 (soporte, C1): el asesor atiende los tickets; configurar los tipos y el umbral es de admin.
                 SupportPermissions.Read,
-                SupportPermissions.Manage
+                SupportPermissions.Manage,
+                // Spec 2026-11-17 (mayorista), P-3 aprobada: el asesor ve los distribuidores (es el asesor asignado); invitar,
+                // editar y bloquear, y las listas de precios, son de admin.
+                WholesalePermissions.DistributorRead
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -3239,6 +3247,38 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("purchases.order", "Órdenes de compra", "manage"),
         });
+        // Spec 2026-11-17 (mayorista): con [wholesale], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
+        // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            WholesalePermissions.PriceListManage,
+            "Gestionar listas de precios",
+            "Permite crear, editar y borrar las listas de precios de distribuidores.",
+            "Mayorista",
+            "medium",
+            RequiredModules: [ModuleKeys.Wholesale])
+        {
+            Shape = new("wholesale.price_list", "Listas de precios", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WholesalePermissions.DistributorRead,
+            "Ver distribuidores",
+            "Permite ver los distribuidores, su lista de precios y su asesor.",
+            "Mayorista",
+            "low",
+            RequiredModules: [ModuleKeys.Wholesale])
+        {
+            Shape = new("wholesale.distributor", "Distribuidores", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WholesalePermissions.DistributorManage,
+            "Gestionar distribuidores",
+            "Permite invitar, editar, bloquear y desbloquear distribuidores.",
+            "Mayorista",
+            "medium",
+            RequiredModules: [ModuleKeys.Wholesale])
+        {
+            Shape = new("wholesale.distributor", "Distribuidores", "manage"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -3759,6 +3799,16 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 PurchasesPermissions.OrderManage,
                 policy => AddPermissionRequirement(policy, PurchasesPermissions.OrderManage))
+            // Spec 2026-11-17 (mayorista): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                WholesalePermissions.PriceListManage,
+                policy => AddPermissionRequirement(policy, WholesalePermissions.PriceListManage))
+            .AddPolicy(
+                WholesalePermissions.DistributorRead,
+                policy => AddPermissionRequirement(policy, WholesalePermissions.DistributorRead))
+            .AddPolicy(
+                WholesalePermissions.DistributorManage,
+                policy => AddPermissionRequirement(policy, WholesalePermissions.DistributorManage))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 ServiceContractsPermissions.Read,

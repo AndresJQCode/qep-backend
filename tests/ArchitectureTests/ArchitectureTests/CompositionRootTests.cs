@@ -1,6 +1,7 @@
 using System.Reflection;
 using Bootstrapper;
 using BuildingBlocks.Application;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -8,24 +9,24 @@ using Microsoft.Extensions.Hosting;
 using Modules.Ai.Application;
 using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
-using Microsoft.AspNetCore.Authorization;
 using Modules.Automations.Application;
 using Modules.Catalog.Application;
-using Modules.Reporting.Application;
-using Modules.Loans.Application;
-using Modules.ServiceContracts.Application;
-using Modules.Store.Application;
 using Modules.Customers.Application;
 using Modules.Geography.Application;
 using Modules.Integrations.Application;
+using Modules.Loans.Application;
 using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
 using Modules.Pos.Application;
 using Modules.Purchases.Application;
+using Modules.Reporting.Application;
+using Modules.ServiceContracts.Application;
 using Modules.Shopify.Application;
+using Modules.Store.Application;
 using Modules.Suppliers.Application;
 using Modules.Support.Application;
 using Modules.Tenancy.Application;
+using Modules.Wholesale.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace ArchitectureTests;
@@ -322,9 +323,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista).</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheEightyNineConstants()
+    public void PermissionDiscoveryFindsTheNinetyTwoConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -345,8 +346,9 @@ public sealed class CompositionRootTests
         // + los dos de agentes IA (ai.agent.read|manage, spec 2026-10-29)
         // + los tres de soporte (support.*, spec 2026-11-14)
         // + los dos del copiloto (ai.copilot.use|manage, spec 2026-11-17)
-        // + los dos de compras (purchases.order.read|manage, spec 2026-11-17).
-        Assert.Equal(89, PermissionConstants().Length);
+        // + los dos de compras (purchases.order.read|manage, spec 2026-11-17)
+        // + los tres de mayorista (spec 2026-11-17).
+        Assert.Equal(92, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -925,6 +927,34 @@ public sealed class CompositionRootTests
             Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
         }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-17 (mayorista, P-3 aprobada): los tres permisos exigen el módulo <c>wholesale</c> y van a admin; el asesor
+    /// sólo ve los distribuidores. Facturación y cajero, ninguno.
+    /// </summary>
+    [Fact]
+    public void TheWholesalePermissionsRequireTheWholesaleModuleAndGoToAdminAndReadToAdvisor()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        var all = new[] { WholesalePermissions.PriceListManage, WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage };
+
+        Assert.Equal(["wholesale.price_list.manage", "wholesale.distributor.read", "wholesale.distributor.manage"], all);
+        foreach (var permission in all)
+        {
+            Assert.Equal("Mayorista", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Wholesale], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+
+        Assert.Contains(WholesalePermissions.DistributorRead, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(WholesalePermissions.DistributorManage, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(WholesalePermissions.PriceListManage, catalog.PermissionsFor("advisor"));
     }
 
     /// <summary>

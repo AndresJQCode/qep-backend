@@ -65,6 +65,7 @@ public static class PermissionVocabulary
         ["Préstamos"] = "Préstamos",
         ["Soporte"] = "Soporte",
         ["Compras"] = "Compras",
+        ["Mayorista"] = "Mayorista",
         ["Tienda"] = "Tienda",
         ["uncategorized"] = "Sin categoría",
     };
