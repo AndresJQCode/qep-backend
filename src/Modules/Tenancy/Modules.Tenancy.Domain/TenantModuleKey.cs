@@ -101,8 +101,13 @@ public static class TenantModuleKeys
     /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Purchases = TenantModuleKey.Define("purchases");
 
+    /// <summary>Spec 2026-11-17 (mayorista): listas de precios, distribuidores e invitaciones. Depende de <see cref="Orders"/>
+    /// (el pedido del distribuidor es un <c>Order</c>) y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por
+    /// tenant.</summary>
+    public static readonly TenantModuleKey Wholesale = TenantModuleKey.Define("wholesale");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -129,6 +134,8 @@ public static class TenantModuleKeys
         [Ai] = [Messaging],
         // Spec 2026-11-17 (compras): la orden se emite a un proveedor del directorio y cada línea es una variante del catálogo.
         [Purchases] = [Suppliers, Catalog],
+        // Spec 2026-11-17 (mayorista): el pedido del distribuidor es un Order del mayorista.
+        [Wholesale] = [Orders],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>

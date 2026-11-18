@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -135,13 +135,22 @@ public sealed class TenantModuleKeysTests
     }
 
     // Spec 2026-11-17 (compras): la línea es una variante del catálogo y el proveedor sale del directorio; se prende por
-    // tenant.
+    // tenant. Ya no es la última: mayorista va después.
     [Fact]
-    public void PurchasesIsLastDependsOnSuppliersAndCatalogAndIsOffForNewTenants()
+    public void PurchasesDependsOnSuppliersAndCatalogAndIsOffForNewTenants()
     {
-        Assert.Equal("purchases", TenantModuleKeys.All[^1].Value);
         Assert.Equal([TenantModuleKeys.Suppliers, TenantModuleKeys.Catalog], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Purchases));
         Assert.DoesNotContain(TenantModuleKeys.Purchases, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-17 (mayorista): el pedido del distribuidor es un Order; se prende por tenant.
+    [Fact]
+    public void WholesaleIsLastDependsOnOrdersAndIsOffForNewTenants()
+    {
+        Assert.Equal("wholesale", TenantModuleKeys.All[^1].Value);
+        Assert.Equal(21, TenantModuleKeys.All.Count);
+        Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Wholesale));
+        Assert.DoesNotContain(TenantModuleKeys.Wholesale, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]
