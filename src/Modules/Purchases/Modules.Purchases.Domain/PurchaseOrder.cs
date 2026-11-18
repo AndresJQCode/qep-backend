@@ -34,6 +34,20 @@ public sealed class PurchaseOrder
     /// <summary>FK blanda al directorio de proveedores: Guid y no un id tipado, como en el resto de módulos.</summary>
     public Guid SupplierId { get; private set; }
 
+    /// <summary>
+    /// Tenant mayorista detrás del proveedor, fijado al guardar el borrador (D-10). Con valor, la orden es vinculada: se
+    /// envía como pedido al mayorista y la confirma su aprobación, no una persona.
+    /// </summary>
+    public Guid? SupplierTenantId { get; private set; }
+
+    public bool IsLinked => SupplierTenantId is not null;
+
+    /// <summary>Pedido que la orden creó en el tenant mayorista al enviarse; nulo antes de enviar.</summary>
+    public Guid? LinkedOrderId { get; private set; }
+
+    /// <summary>Número de ese pedido en el mayorista (<c>PED-0042</c>), para pintarlo sin cruzar tenants.</summary>
+    public string? LinkedOrderNumber { get; private set; }
+
     /// <summary>ISO 4217 en mayúsculas. El dominio sólo valida la forma; el catálogo de monedas lo valida Application.</summary>
     public string Currency { get; private set; }
 
@@ -61,6 +75,7 @@ public sealed class PurchaseOrder
         Guid tenantId,
         string number,
         Guid supplierId,
+        Guid? supplierTenantId,
         string currency,
         string? notes,
         IReadOnlyList<PurchaseOrderLineDraft> lines,
@@ -80,29 +95,145 @@ public sealed class PurchaseOrder
             UpdatedAt = now,
             Version = 1,
         };
-        order.Apply(supplierId, currency, notes, lines);
+        order.Apply(supplierId, supplierTenantId, currency, notes, lines);
         order.AppendHistory(PurchaseOrderStatus.Draft, memberId, now);
         return order;
     }
 
-    /// <summary>Reemplaza proveedor, moneda, notas y líneas (con ids nuevos). Sólo en <c>Draft</c>.</summary>
+    /// <summary>
+    /// Reemplaza proveedor, modo (vinculado o externo), moneda, notas y líneas (con ids nuevos). Sólo en <c>Draft</c>.
+    /// </summary>
     public void Replace(
         Guid supplierId,
+        Guid? supplierTenantId,
         string currency,
         string? notes,
         IReadOnlyList<PurchaseOrderLineDraft> lines,
         DateTimeOffset now)
     {
         EnsureDraft();
-        Apply(supplierId, currency, notes, lines);
+        Apply(supplierId, supplierTenantId, currency, notes, lines);
         Touch(now);
     }
 
     /// <summary>Borrar es definitivo y sólo vale para un borrador.</summary>
     public void EnsureDeletable() => EnsureDraft();
 
-    public void Send(Guid memberId, DateTimeOffset now) =>
+    /// <summary>Envío de una orden externa: el proveedor la recibe por fuera (PDF) y alguien registra su respuesta.</summary>
+    public void Send(Guid memberId, DateTimeOffset now)
+    {
+        if (IsLinked)
+        {
+            throw new InvalidOperationException("Una orden vinculada se envía con SendToWholesaler.");
+        }
+
         MoveTo(PurchaseOrderStatus.Sent, PurchaseOrderAction.Send, memberId, now);
+    }
+
+    /// <summary>
+    /// Envío de una orden vinculada, ya con el pedido creado en el mayorista. Las líneas pasan a ser las del pedido, con
+    /// sus ids (D-8): en un reintento después de que el pedido ya existía, la orden adopta lo que el pedido guardó.
+    /// </summary>
+    public void SendToWholesaler(
+        Guid linkedOrderId,
+        string linkedOrderNumber,
+        IReadOnlyList<LinkedLineSnapshot> lines,
+        Guid memberId,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        ArgumentException.ThrowIfNullOrWhiteSpace(linkedOrderNumber);
+        EnsureLinked();
+        EnsureAllowed(PurchaseOrderAction.Send);
+        if (lines.Count == 0)
+        {
+            throw new PurchasesDomainException(PurchasesErrorCodes.Empty, "La orden necesita al menos una línea.");
+        }
+
+        LinkedOrderId = linkedOrderId;
+        LinkedOrderNumber = linkedOrderNumber;
+        _lines.Clear();
+        _lines.AddRange(lines.Select(PurchaseOrderLine.From));
+        MoveTo(PurchaseOrderStatus.Sent, PurchaseOrderAction.Send, memberId, now);
+    }
+
+    /// <summary>
+    /// Aplica las líneas finales del pedido que aprobó el mayorista (D-21) y confirma la orden. Sólo actúa sobre una orden
+    /// vinculada en <c>Sent</c>: repetir el evento, o recibirlo con la orden cancelada, devuelve false y no cambia nada.
+    /// El historial lo firma el mayorista (<see cref="Guid.Empty"/>, D-19).
+    /// </summary>
+    public bool ApplyWholesalerApproval(IReadOnlyList<WholesalerFinalLine> lines, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        if (!IsLinked || Status != PurchaseOrderStatus.Sent)
+        {
+            return false;
+        }
+
+        var pending = _lines.ToDictionary(line => line.Id);
+        var added = new List<PurchaseOrderLine>();
+        foreach (var final in lines)
+        {
+            // Un id que no es de la orden, o que ya se usó, es una línea que el mayorista agregó.
+            if (final.SourceLineId is { } sourceId && pending.Remove(sourceId, out var line))
+            {
+                line.Confirm(final.Quantity, final.UnitCost);
+            }
+            else
+            {
+                added.Add(PurchaseOrderLine.Added(final));
+            }
+        }
+
+        foreach (var dropped in pending.Values)
+        {
+            dropped.Confirm(0m, dropped.UnitCost);
+        }
+
+        _lines.AddRange(added);
+        ConfirmedWithChanges = _lines.Any(line => line.Status != PurchaseOrderLineStatus.Unchanged);
+        Status = PurchaseOrderStatus.Confirmed;
+        AppendHistory(PurchaseOrderStatus.Confirmed, Guid.Empty, now);
+        Touch(now);
+        return true;
+    }
+
+    /// <summary>
+    /// El mayorista anuló el pedido: la orden se cancela desde cualquier estado salvo <c>Received</c> (D-21). Ya recibida o
+    /// ya cancelada devuelve false y no cambia nada.
+    /// </summary>
+    public bool ApplyWholesalerCancellation(DateTimeOffset now)
+    {
+        if (Status is PurchaseOrderStatus.Received or PurchaseOrderStatus.Cancelled)
+        {
+            return false;
+        }
+
+        Status = PurchaseOrderStatus.Cancelled;
+        AppendHistory(PurchaseOrderStatus.Cancelled, Guid.Empty, now);
+        Touch(now);
+        return true;
+    }
+
+    /// <summary>
+    /// Líneas confirmadas de una orden vinculada que todavía no tienen variante en el catálogo propio. Las rechazadas no
+    /// se compran, así que no hacen falta.
+    /// </summary>
+    public IReadOnlyList<PurchaseOrderLine> LinesNeedingCatalog() =>
+        IsLinked && Status == PurchaseOrderStatus.Confirmed
+            ? _lines.Where(line => line.ConfirmedQuantity > 0m && line.VariantId is null).ToList()
+            : [];
+
+    /// <summary>
+    /// Enlaza una línea con la variante del catálogo propio que se encontró o se creó. No sube <see cref="Version"/>: es
+    /// efecto del sistema dentro de la misma transacción que la confirmación.
+    /// </summary>
+    public void LinkLineToCatalog(Guid lineId, Guid variantId, bool created)
+    {
+        var line = _lines.FirstOrDefault(candidate => candidate.Id == lineId)
+            ?? throw new ArgumentException($"La línea '{lineId}' no es de la orden.", nameof(lineId));
+        line.LinkToCatalog(variantId, created);
+    }
 
     /// <summary>
     /// Registra lo que confirmó el proveedor. El cuerpo trae cada línea de la orden exactamente una vez; si falta una, se
@@ -146,7 +277,7 @@ public sealed class PurchaseOrder
     /// Lo que el estado permite, en el orden del contrato. No mira permisos: sin <c>purchases.order.manage</c> la
     /// respuesta HTTP lo vacía (D-4).
     /// </summary>
-    public IReadOnlyList<PurchaseOrderAction> AllowedActions() => Status switch
+    public IReadOnlyList<PurchaseOrderAction> AllowedActions() => IsLinked ? LinkedAllowedActions() : Status switch
     {
         PurchaseOrderStatus.Draft =>
             [PurchaseOrderAction.Edit, PurchaseOrderAction.Delete, PurchaseOrderAction.Send, PurchaseOrderAction.Cancel],
@@ -163,12 +294,38 @@ public sealed class PurchaseOrder
     public PurchaseOrderTotals RequestedTotals() =>
         PurchaseOrderMath.Sum(_lines.Select(line => (line.RequestedSubtotal, line.RequestedTax)));
 
-    private void Apply(Guid supplierId, string currency, string? notes, IReadOnlyList<PurchaseOrderLineDraft> lines)
+    // D-13: la confirmación la hace la aprobación del mayorista, y la cancelación después de confirmar también es suya.
+    private IReadOnlyList<PurchaseOrderAction> LinkedAllowedActions() => Status switch
+    {
+        PurchaseOrderStatus.Draft =>
+            [PurchaseOrderAction.Edit, PurchaseOrderAction.Delete, PurchaseOrderAction.Send, PurchaseOrderAction.Cancel],
+        PurchaseOrderStatus.Sent => [PurchaseOrderAction.Cancel],
+        PurchaseOrderStatus.Confirmed => [PurchaseOrderAction.Receive],
+        _ => [],
+    };
+
+    private void Apply(
+        Guid supplierId,
+        Guid? supplierTenantId,
+        string currency,
+        string? notes,
+        IReadOnlyList<PurchaseOrderLineDraft> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
         if (lines.Count == 0)
         {
             throw new PurchasesDomainException(PurchasesErrorCodes.Empty, "La orden necesita al menos una línea.");
+        }
+
+        // Application arma los borradores según el modo; uno mezclado es un error de programación, no del usuario.
+        var linked = supplierTenantId is not null;
+        if (lines.Any(line => linked ? line.Listing is null || line.VariantId is not null : line.Listing is not null || line.VariantId is null))
+        {
+            throw new ArgumentException(
+                linked
+                    ? "Una orden vinculada lleva la lista del mayorista en cada línea y ninguna variante propia."
+                    : "Una orden externa lleva la variante en cada línea y ninguna lista de mayorista.",
+                nameof(lines));
         }
 
         var normalizedCurrency = (currency ?? string.Empty).Trim().ToUpperInvariant();
@@ -180,6 +337,7 @@ public sealed class PurchaseOrder
         }
 
         SupplierId = supplierId;
+        SupplierTenantId = supplierTenantId;
         Currency = normalizedCurrency;
         Notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
         _lines.Clear();
@@ -193,6 +351,16 @@ public sealed class PurchaseOrder
             throw new PurchasesDomainException(
                 PurchasesErrorCodes.NotDraft,
                 "Sólo se puede editar o borrar una orden en borrador.");
+        }
+    }
+
+    private void EnsureLinked()
+    {
+        if (!IsLinked)
+        {
+            throw new PurchasesDomainException(
+                PurchasesErrorCodes.SupplierNotLinked,
+                "La orden no es de un proveedor vinculado.");
         }
     }
 

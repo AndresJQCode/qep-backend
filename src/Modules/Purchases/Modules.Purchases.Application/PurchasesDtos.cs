@@ -20,10 +20,10 @@ public sealed record PurchaseOrderMemberDto(Guid MemberId, string Name);
 /// </summary>
 public sealed record PurchaseOrderLineDto(
     Guid Id,
-    Guid VariantId,
+    Guid? VariantId,
     string Code,
     string Name,
-    decimal Quantity,
+    decimal? Quantity,
     decimal? ConfirmedQuantity,
     decimal UnitCost,
     decimal? ConfirmedUnitCost,

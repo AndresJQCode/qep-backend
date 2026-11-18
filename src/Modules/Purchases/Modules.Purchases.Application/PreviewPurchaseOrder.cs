@@ -35,7 +35,8 @@ public sealed class PreviewPurchaseOrderHandler(
 
         var lines = drafts
             .Select(draft => new PurchaseOrderPreviewLineDto(
-                draft.VariantId,
+                // El constructor de líneas de una orden externa siempre trae la variante propia.
+                draft.VariantId!.Value,
                 draft.Code,
                 draft.Name,
                 draft.TaxRatePercent,

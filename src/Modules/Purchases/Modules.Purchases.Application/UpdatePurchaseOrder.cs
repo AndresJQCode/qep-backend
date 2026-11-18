@@ -43,7 +43,7 @@ public sealed class UpdatePurchaseOrderHandler(
         var lines = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
 
         var now = clock.UtcNow;
-        order.Replace(command.SupplierId, command.Currency, command.Notes, lines, now);
+        order.Replace(command.SupplierId, null, command.Currency, command.Notes, lines, now);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

@@ -49,6 +49,7 @@ public sealed class CreatePurchaseOrderHandler(
                 command.TenantId,
                 $"OC-{sequence:D4}",
                 command.SupplierId,
+                null,
                 command.Currency,
                 command.Notes,
                 lines,
