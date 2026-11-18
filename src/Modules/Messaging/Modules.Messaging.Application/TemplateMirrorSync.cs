@@ -161,7 +161,7 @@ public sealed class MirroredTemplateCatalog(IMessageTemplateRepository repositor
 
         var rows = await repository.ListApprovedAsync(tenantId, connectionId, cancellationToken);
         return rows
-            .Select(row => TemplateCatalog.FromStored(row.Name, row.Language, row.Category, row.ParameterFormat, row.ComponentsJson))
+            .Select(row => TemplateCatalog.FromStored(row.Name, row.Language, row.Category, row.ParameterFormat, row.ComponentsJson, row.HeaderImageUrl))
             .OrderBy(template => template.Name, StringComparer.Ordinal)
             .ThenBy(template => template.Language, StringComparer.Ordinal)
             .ToArray();

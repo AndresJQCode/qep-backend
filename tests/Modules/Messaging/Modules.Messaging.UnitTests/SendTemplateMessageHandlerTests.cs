@@ -332,4 +332,32 @@ public sealed class SendTemplateMessageHandlerTests
         Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
         Assert.Equal("token_expired", Assert.Single(bed.Connections.Reported).FailureCode);
     }
+    // Spec 2026-11-17: una plantilla con la imagen fija guardada sale con ese enlace; el chat nunca la manda.
+    [Fact]
+    public async Task AStoredImageTravelsAsTheHeaderLinkAndInTheDetails()
+    {
+        const string url = "https://public.test/imagen.png";
+        var bed = new MessagingTestBed();
+        bed.Templates.Catalog.Add(FakeMessageTemplates.Hello() with { HeaderMedia = TemplateHeaderMedia.Image, HeaderImageUrl = url });
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 72);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.img", null, null);
+
+        await bed.SendTemplateHandler().HandleAsync(Command(bed, conversation), Ct);
+
+        Assert.Equal(TemplateHeader.ByLink("image", url, null), Assert.Single(bed.Meta.TemplateSends).Template.Header);
+        using var details = System.Text.Json.JsonDocument.Parse(Assert.Single(bed.Outbound.Claims).Draft.DetailsJson!);
+        Assert.Equal(url, details.RootElement.GetProperty("template").GetProperty("header").GetProperty("link").GetString());
+    }
+
+    [Fact]
+    public async Task WithoutAStoredImageNoHeaderTravels()
+    {
+        var bed = BedWithHello();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 72);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.txt", null, null);
+
+        await bed.SendTemplateHandler().HandleAsync(Command(bed, conversation), Ct);
+
+        Assert.Null(Assert.Single(bed.Meta.TemplateSends).Template.Header);
+    }
 }

@@ -1323,4 +1323,47 @@ public sealed class CampaignDispatchTests
             VALUES (@id, @campaign, @tenant, @customer, @name, @wa, 'Pending', 0, now() - interval '1 hour')
             """,
             ("id", Guid.CreateVersion7()), ("campaign", campaignId), ("tenant", f.Tenant.TenantId), ("customer", customerId ?? Guid.CreateVersion7()), ("name", name), ("wa", waId));
+    // Spec 2026-11-17: el worker manda la imagen fija guardada de la plantilla, leída del catálogo al enviar.
+    [Fact]
+    public async Task ACampaignOfAnImageTemplateSendsTheStoredLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        const string url = "https://public.test/banner.png";
+        f.Pod.MetaHandler.Reset();
+        f.Pod.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, """
+            {"data":[
+              {"id":"3","name":"banner","language":"es","status":"APPROVED","category":"MARKETING",
+               "components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Hola {{1}}, mira la oferta"}]}
+            ]}
+            """);
+        ScriptSends(f.Pod.MetaHandler);
+        using var reader = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ReadPermissions);
+        // La primera lectura llena el espejo; después QEP guarda la imagen en la fila, como al crearla.
+        await reader.GetFromJsonAsync<JsonElement>($"/api/v1/tenants/{f.Tenant.TenantId}/messaging/connections/{f.ConnectionId}/templates", Ct);
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.message_templates SET header_image_file_id = @file, header_image_url = @url WHERE name = 'banner'",
+            ("file", Guid.CreateVersion7()), ("url", url));
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, [("Ana Ruiz", "300 111 2222")]);
+        var id = await LaunchAsync(f, new
+        {
+            name = "Banner",
+            connectionId = f.ConnectionId,
+            template = new { name = "banner", language = "es" },
+            parameters = new Dictionary<string, object> { ["1"] = new { source = "customerName" } },
+            audience = new { tagIds = Array.Empty<Guid>(), customerIds = customers.ToArray() },
+        });
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal("Completed", await CampaignStatusAsync(f, id));
+        var send = Assert.Single(f.Pod.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        using var payload = JsonDocument.Parse(send.Body!);
+        var header = payload.RootElement.GetProperty("template").GetProperty("components")[0];
+        Assert.Equal("header", header.GetProperty("type").GetString());
+        Assert.Equal(url, header.GetProperty("parameters")[0].GetProperty("image").GetProperty("link").GetString());
+        Assert.Equal(url, await ScalarAsync<string>(f.ConnectionString,
+            "SELECT details->'template'->'header'->>'link' FROM messaging.messages WHERE direction = 2"));
+    }
 }

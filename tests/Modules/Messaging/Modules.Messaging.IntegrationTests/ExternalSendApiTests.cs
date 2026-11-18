@@ -1070,4 +1070,32 @@ public sealed class ExternalSendApiTests
 
         Assert.Equal(JsonValueKind.Null, template.GetProperty("header").ValueKind);
     }
+    // Review Focus 5 (spec 2026-11-17): la API externa no cambia. Con la imagen guardada en la fila sigue exigiendo su propio encabezado,
+    // y manda el enlace de quien llama, no el nuestro.
+    [Fact]
+    public async Task TheExternalApiIgnoresTheStoredImage()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        const string stored = "https://public.test/logo-guardado.png";
+        // El primer envío llena el espejo desde Meta.
+        await AssertProblemAsync(
+            await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", null)),
+            HttpStatusCode.UnprocessableEntity, "messaging.template.header_mismatch");
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.message_templates SET header_image_file_id = @file, header_image_url = @url WHERE name = 'aviso_logo'",
+            ("file", Guid.CreateVersion7()), ("url", stored));
+
+        var withoutHeader = await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", null));
+        var withHeader = await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink }));
+
+        await AssertProblemAsync(withoutHeader, HttpStatusCode.UnprocessableEntity, "messaging.template.header_mismatch");
+        Assert.Equal(HttpStatusCode.Created, withHeader.StatusCode);
+        Assert.Equal(1, SendCalls(f));
+        var image = TemplateOfLastSend(f).GetProperty("components")[0].GetProperty("parameters")[0].GetProperty("image");
+        Assert.Equal(LogoLink, image.GetProperty("link").GetString());
+        Assert.DoesNotContain(stored, TemplateOfLastSend(f).GetRawText(), StringComparison.Ordinal);
+    }
 }

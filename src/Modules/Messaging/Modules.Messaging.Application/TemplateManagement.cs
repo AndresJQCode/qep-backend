@@ -34,7 +34,9 @@ internal static class ManagedTemplateMapping
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(memberNames);
-        var described = TemplateCatalog.FromStored(template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson);
+        // Con la imagen guardada, la pantalla dice «enviable» igual que el catálogo del chat (spec 2026-11-17).
+        var described = TemplateCatalog.FromStored(
+            template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson, template.HeaderImageUrl);
         return new ManagedTemplateDto(
             template.Id,
             template.MetaTemplateId,
