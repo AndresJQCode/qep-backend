@@ -824,6 +824,15 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("created_by_member_id");
 
+                    b.Property<Guid?>("HeaderImageFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("header_image_file_id");
+
+                    b.Property<string>("HeaderImageUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("header_image_url");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasMaxLength(32)

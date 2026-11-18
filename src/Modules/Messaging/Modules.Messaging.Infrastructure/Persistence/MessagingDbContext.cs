@@ -817,6 +817,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.Property(value => value.CreatedAt).HasColumnName("created_at");
         template.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         template.Property(value => value.SyncedAt).HasColumnName("synced_at");
+        // Spec 2026-11-17: la imagen fija del encabezado; nulas en toda plantilla sin una.
+        template.Property(value => value.HeaderImageFileId).HasColumnName("header_image_file_id");
+        template.Property(value => value.HeaderImageUrl).HasColumnName("header_image_url").HasMaxLength(MessageTemplate.HeaderImageUrlMaxLength);
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.MetaTemplateId }, MessageTemplateMetaIdIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Name, value.Language }, MessageTemplateNameLanguageIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
