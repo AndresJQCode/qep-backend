@@ -187,6 +187,23 @@ public interface IWholesaleEventPublisher
         DateTimeOffset expiresAt,
         string correlationId,
         DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// Spec 2026-11-18: <c>wholesale.distributor-invitation-notice.v1</c>, el aviso por WhatsApp de la invitación. Sale en el
+    /// mismo commit que la invitación y lo procesa el worker del aviso. Sin token, sin link y sin vencimiento: el aviso sólo
+    /// dice que la invitación llegó al correo. <paramref name="generation"/> es la de la invitación al encolarlo (D-4).
+    /// </summary>
+    void InvitationNoticeRequested(
+        Guid tenantId,
+        Guid distributorId,
+        string phone,
+        Guid connectionId,
+        Guid sentByMemberId,
+        string contactName,
+        string email,
+        int generation,
+        string correlationId,
+        DateTimeOffset occurredAt);
 }
 
 /// <summary>

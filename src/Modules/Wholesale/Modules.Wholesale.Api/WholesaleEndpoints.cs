@@ -263,7 +263,9 @@ public static class WholesaleEndpoints
                 request.PriceListId,
                 request.AdvisorId,
                 request.BillingCompanyId,
-                httpContext.TraceIdentifier),
+                httpContext.TraceIdentifier,
+                request.Phone,
+                request.WhatsAppConnectionId),
             cancellationToken);
 
         return Results.Created($"/api/v1/tenants/{tenantId}/wholesale/distributors/{distributor.Id}", distributor);
@@ -280,7 +282,14 @@ public static class WholesaleEndpoints
         var version = WholesaleIfMatch.RequireVersion(httpContext, DistributorResource);
         var distributor = await dispatcher.SendAsync(
             new UpdateDistributorCommand(
-                tenantId, distributorId, version, request.PriceListId, request.AdvisorId, request.BillingCompanyId),
+                tenantId,
+                distributorId,
+                version,
+                request.PriceListId,
+                request.AdvisorId,
+                request.BillingCompanyId,
+                request.Phone,
+                request.WhatsAppConnectionId),
             cancellationToken);
 
         return Results.Ok(distributor);
@@ -323,7 +332,8 @@ public sealed record PriceListWriteRequest(
 /// <summary>La lista sin guardar para «Así lo ve el distribuidor»: los términos sin el nombre.</summary>
 public sealed record PriceListPreviewRequest(decimal DiscountPercent, string Visibility, IReadOnlyList<Guid>? CategoryIds);
 
-/// <summary>Invitar a un distribuidor: sus datos y lo que el mayorista elige para la relación.</summary>
+/// <summary>Invitar a un distribuidor: sus datos y lo que el mayorista elige para la relación. Con <c>Phone</c> sale también
+/// el aviso por WhatsApp (spec 2026-11-18) por <c>WhatsAppConnectionId</c>, o por la única conexión lista si no viene.</summary>
 public sealed record DistributorInviteRequest(
     string Email,
     string BusinessName,
@@ -331,7 +341,15 @@ public sealed record DistributorInviteRequest(
     string ContactName,
     Guid PriceListId,
     Guid AdvisorId,
-    Guid BillingCompanyId);
+    Guid BillingCompanyId,
+    string? Phone = null,
+    Guid? WhatsAppConnectionId = null);
 
-/// <summary>Lo que se edita de una relación en cualquier estado; los datos del distribuidor no cambian.</summary>
-public sealed record DistributorUpdateRequest(Guid PriceListId, Guid AdvisorId, Guid BillingCompanyId);
+/// <summary>Lo que se edita de una relación en cualquier estado; los datos del distribuidor no cambian. <c>Phone</c> y
+/// <c>WhatsAppConnectionId</c> sólo cuentan mientras está invitada, y <c>Phone</c> ausente o <c>null</c> los borra.</summary>
+public sealed record DistributorUpdateRequest(
+    Guid PriceListId,
+    Guid AdvisorId,
+    Guid BillingCompanyId,
+    string? Phone = null,
+    Guid? WhatsAppConnectionId = null);

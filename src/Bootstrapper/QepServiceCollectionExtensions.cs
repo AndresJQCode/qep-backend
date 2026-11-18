@@ -1869,6 +1869,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
+        // Spec 2026-11-18: el aviso por WhatsApp de la invitación; Customers (teléfono), Integrations y Mensajería por puertos.
+        services.AddScoped<Modules.Wholesale.Application.IWholesalePhoneNormalizer, WholesalePhoneNormalizer>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleWhatsAppConnections, WholesaleWhatsAppConnections>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleInvitationNoticeSender, WholesaleInvitationNoticeSender>();
         // Ruling W17: el paso de Identity de session-with-password, con la contraseña validada antes de crear al usuario.
         services.AddScoped<WholesaleInvitationPasswordSession>();
 
