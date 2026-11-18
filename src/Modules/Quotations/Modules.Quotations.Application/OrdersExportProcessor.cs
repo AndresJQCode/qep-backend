@@ -400,13 +400,30 @@ public sealed class OrdersExportProcessor(
     /// <summary>
     /// La tarifa efectiva de ese tipo en porcentaje, tal como está guardada (spec 2026-11-16); 0 si ninguna aplicó. La
     /// ReteICA tampoco se escala a por mil (owner, 2026-11-16): 2,8 % sale 2.8, no 28. Con varias aplicadas del mismo
-    /// tipo sale la primera por <c>Position</c>: límite conocido, el owner confirmó que no se da hoy.
+    /// tipo sin alcance sale la primera por <c>Position</c>: límite conocido, el owner confirmó que no se da hoy.
+    /// Con alguna de alcance <c>Goods</c> o <c>Services</c> (spec 2026-11-18 §4) su base no es el subtotal y puede haber
+    /// dos del tipo: sale la tarifa que da el monto de la columna sobre el subtotal del pedido, a tres decimales, para que
+    /// el ERP que la multiplica por el subtotal llegue al mismo monto.
     /// </summary>
-    private static ExportCell WithholdingRateCell(Order order, string type) =>
-        ExportCell.OfNumber(order.AppliedWithholdings
-            .FirstOrDefault(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal)) is { } applied
-            ? applied.Percentage
-            : 0m);
+    private static ExportCell WithholdingRateCell(Order order, string type)
+    {
+        var applied = order.AppliedWithholdings
+            .Where(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal))
+            .ToList();
+        if (applied.Count == 0)
+        {
+            return ExportCell.OfNumber(0m);
+        }
+
+        if (applied.All(withholding => withholding.AppliesTo == WithholdingScope.All))
+        {
+            return ExportCell.OfNumber(applied[0].Percentage);
+        }
+
+        return ExportCell.OfNumber(order.Subtotal == 0m
+            ? 0m
+            : Math.Round(applied.Sum(withholding => withholding.Amount) / order.Subtotal * 100m, 3, MidpointRounding.AwayFromZero));
+    }
 
     private static ExportCell PaymentMethodCell(
         IReadOnlyList<OrderExportPaymentProof> proofs, int index, string bankAndAccount) =>

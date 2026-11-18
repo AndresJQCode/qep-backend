@@ -94,6 +94,28 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(1503848.57m, document.NetTotal);
     }
 
+    // Spec 2026-11-18 §4.4: con dos tasas del mismo nombre y porcentaje (una por alcance), el rótulo dice a qué líneas
+    // aplica; una sin alcance (All) sale como siempre.
+    [Fact]
+    public void AScopedWithholdingSaysWhichLinesItCovers()
+    {
+        var response = Response() with
+        {
+            Withholdings =
+            [
+                WithholdingRow("Retefuente 2,5 %", "Retefuente", 7_500m) with { AppliesTo = "Goods" },
+                WithholdingRow("Retefuente 2,5 %", "Retefuente", 2_500m) with { AppliesTo = "Services" },
+                WithholdingRow("ReteICA Bogotá", "ReteICA", 2_898m, 0.966m),
+            ],
+        };
+
+        var document = Map(response);
+
+        Assert.Equal(
+            ["Retefuente 2,5 % (bienes)", "Retefuente 2,5 % (servicios)", "ReteICA Bogotá"],
+            document.Withholdings.Select(withholding => withholding.Name));
+    }
+
     // Spec impuestos por tipo §9.3 (F-1): una fila por retención que aplicó, rotulada con el nombre de la tasa; el
     // JSON que recibe Typst trae `withholdings: [{ name, amount, percentageLabel }]` (spec ReteICA por empresa §7.9).
     [Fact]

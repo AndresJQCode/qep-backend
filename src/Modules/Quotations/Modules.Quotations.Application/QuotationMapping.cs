@@ -93,7 +93,8 @@ internal static class QuotationMapping
         withholding.Amount,
         withholding.CatalogPercentage,
         withholding.Overridden,
-        withholding.CityId);
+        withholding.CityId,
+        withholding.AppliesTo.ToString());
 
     /// <summary>Una tasa congelada, aplique o no: lo que prellena un selector.</summary>
     internal static WithholdingTaxRateDto ToRateDto(DocumentWithholding withholding) => new(

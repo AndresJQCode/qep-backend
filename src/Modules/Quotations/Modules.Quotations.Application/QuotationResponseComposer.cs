@@ -242,7 +242,8 @@ public sealed class QuotationResponseComposer(
         withholding.Amount,
         withholding.CatalogPercentage,
         withholding.PercentageOverridden,
-        withholding.CityId);
+        withholding.CityId,
+        withholding.AppliesTo);
 
     internal static WithholdingTaxRateResponse ToWithholdingTaxRateResponse(WithholdingTaxRateDto rate) =>
         new(rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.CatalogPercentage, rate.PercentageOverridden,

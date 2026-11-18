@@ -191,8 +191,11 @@ puerto por el que hoy llega `Type` (el builder lo ubica).
 
 ### 4.4 Lo que se ve
 
-El desglose de retenciones del detalle y del PDF muestra la base de cada tasa (ya viaja `Base`). El DTO de la tasa
-suma `appliesTo`.
+El desglose de retenciones del detalle muestra la base de cada tasa (ya viaja `Base`), y la retención aplicada suma
+`appliesTo`. En el PDF, una tasa de alcance `Goods`/`Services` se rotula con «(bienes)»/«(servicios)» después del
+nombre; una `All` sale como antes. En el Excel de pedidos (ERP), si alguna retención aplicada del tipo tiene alcance,
+la tarifa es la efectiva sobre el subtotal del pedido (suma de montos ÷ subtotal, tres decimales), para que tarifa y
+monto cuadren; con sólo tasas `All`, la de siempre (corrección del 2026-11-18, revisión final).
 
 ## 5. Pedido: envío y «Prestado»
 

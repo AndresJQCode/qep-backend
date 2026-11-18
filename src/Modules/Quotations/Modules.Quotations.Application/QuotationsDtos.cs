@@ -163,7 +163,10 @@ public sealed record WithholdingDto(
     decimal CatalogPercentage,
     bool PercentageOverridden,
     /// <summary>El municipio de una municipal; null en las nacionales.</summary>
-    Guid? CityId);
+    Guid? CityId,
+    /// <summary>El nombre de <c>WithholdingScope</c> de la tasa (spec 2026-11-18 §4.4): con dos tasas del mismo nombre, una
+    /// por alcance, es lo que dice cuál retiene sobre bienes y cuál sobre servicios.</summary>
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>Una tasa de retención congelada en el documento, aplique o no: lo que prellena un selector. Con el porcentaje
 /// del catálogo y el municipio, porque el editor de porcentaje lee la fila aunque no haya aplicado (spec §9.4).</summary>
@@ -898,7 +901,8 @@ public sealed record WithholdingResponse(
     decimal Amount,
     decimal CatalogPercentage,
     bool PercentageOverridden,
-    Guid? CityId);
+    Guid? CityId,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <summary>Gemelo HTTP de <see cref="WithholdingTaxRateDto"/>.</summary>
 public sealed record WithholdingTaxRateResponse(

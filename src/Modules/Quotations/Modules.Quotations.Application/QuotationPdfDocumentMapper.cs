@@ -137,8 +137,17 @@ public static class QuotationPdfDocumentMapper
         IReadOnlyList<WithholdingResponse> withholdings, string decimalSeparator) =>
         [
             .. withholdings.Select(withholding => new QuotationPdfWithholding(
-                withholding.Name, withholding.Amount, PercentageLabel(withholding.Percentage, decimalSeparator))),
+                ScopedName(withholding), withholding.Amount, PercentageLabel(withholding.Percentage, decimalSeparator))),
         ];
+
+    // Spec 2026-11-18 §4.4: dos tasas pueden compartir nombre y porcentaje si son de distinto alcance; el rótulo dice a qué
+    // líneas aplica. Una sin alcance (All) sale con su nombre, como antes.
+    private static string ScopedName(WithholdingResponse withholding) => withholding.AppliesTo switch
+    {
+        "Goods" => $"{withholding.Name} (bienes)",
+        "Services" => $"{withholding.Name} (servicios)",
+        _ => withholding.Name,
+    };
 
     // Plan P10: el mismo patrón que HistoryFormat.Percentage, con el separador decimal del tenant. Un porcentaje no lleva
     // miles, así que basta el decimal.
