@@ -349,6 +349,14 @@ public sealed partial class CreateTemplateHandler(
             return await ToDtoAsync(command, template, cancellationToken);
         }
 
+        // Revisión del bloque C: un archivo que ya es la imagen de una plantilla guardada (doble envío, un fileId reenviado) no se toma.
+        // Si se tomara, el fallo de esta creación liberaría la imagen de la otra, que sigue enviándose. No se toca el archivo.
+        if (await repository.IsHeaderImageInUseAsync(command.TenantId, fileId, cancellationToken))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateHeaderImageRejected, "The header image already belongs to another template.", fieldErrors: HeaderImageField);
+        }
+
         var mimeType = await EnsureUsableImageAsync(command.TenantId, fileId, cancellationToken);
         var publicUrl = await images.PublishAsync(command.TenantId, fileId, cancellationToken);
         // Desde acá la imagen es pública. Hasta que la fila quede guardada, cualquier salida la libera, también una cancelación del
@@ -446,9 +454,26 @@ public sealed partial class CreateTemplateHandler(
     /// depender del request que se está cayendo. Si Storage no la libera (R2 caído), deja el aviso
     /// <see cref="MessagingIntegrationEvents.TemplateHeaderImageReleased"/> en el outbox y Storage la libera con reintentos (plan 2026-11-17
     /// Task 8). El aviso se guarda solo: antes se descarta lo que el tracker tenía (la fila y la auditoría que no se pudieron guardar, si el
-    /// fallo fue al guardar), para que no viaje con él. Si eso también falla, se registra y sale el error original.</summary>
+    /// fallo fue al guardar), para que no viaje con él. Si eso también falla, se registra y sale el error original.
+    /// <para>Revisión del bloque C: antes de liberar (por cualquiera de los dos caminos) se pregunta a la base si una plantilla guardada usa
+    /// el archivo. Si una lo usa (otra creación con el mismo fileId ganó entre la revisión de arriba y este fallo), no se libera: es su
+    /// imagen. Si la pregunta misma falla, tampoco: una imagen pública de más es mejor que quitarle la suya a una plantilla viva.</para></summary>
     private async Task ReleaseOrDeferAsync(Guid tenantId, Guid fileId)
     {
+        try
+        {
+            if (await repository.IsHeaderImageInUseAsync(tenantId, fileId, CancellationToken.None))
+            {
+                LogReleaseSkippedInUse(logger, tenantId, fileId);
+                return;
+            }
+        }
+        catch (Exception exception)
+        {
+            LogReleaseFailed(logger, exception, tenantId, fileId);
+            return;
+        }
+
         try
         {
             await images.ReleaseAsync(tenantId, fileId, CancellationToken.None);
@@ -475,6 +500,11 @@ public sealed partial class CreateTemplateHandler(
         Level = LogLevel.Warning,
         Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released now; the release goes through the outbox.")]
     private static partial void LogReleaseDeferred(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} is not released: a saved template uses it.")]
+    private static partial void LogReleaseSkippedInUse(ILogger logger, Guid tenantId, Guid fileId);
 
     [LoggerMessage(
         Level = LogLevel.Warning,

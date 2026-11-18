@@ -234,6 +234,13 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
     public Task<bool> IsReferencedByActiveCampaignAsync(Guid tenantId, Guid connectionId, string name, string language, CancellationToken cancellationToken) =>
         Task.FromResult(ActiveCampaignTemplates.Contains((name, language)));
 
+    /// <summary>Las imágenes de encabezado de plantillas ya guardadas, por tenant. Aparte de <see cref="Rows"/> porque <see cref="Add"/>
+    /// agrega antes de guardar, y la consulta real lee sólo lo guardado.</summary>
+    public HashSet<(Guid TenantId, Guid FileId)> SavedHeaderImages { get; } = [];
+
+    public Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+        Task.FromResult(SavedHeaderImages.Contains((tenantId, fileId)));
+
     public Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Syncs.TryGetValue((tenantId, connectionId), out var at) ? at : (DateTimeOffset?)null);
 

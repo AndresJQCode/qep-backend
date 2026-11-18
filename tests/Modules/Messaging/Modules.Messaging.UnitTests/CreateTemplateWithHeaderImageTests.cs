@@ -198,6 +198,44 @@ public sealed class CreateTemplateWithHeaderImageTests
         Assert.Contains(rig.Logger.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains(fileId.ToString(), StringComparison.Ordinal));
     }
 
+    // Revisión del bloque C: un fileId que ya es la imagen de una plantilla guardada (doble envío) se rechaza sin tocar el archivo.
+    [Fact]
+    public async Task AFileAlreadyOnASavedTemplateIsRejectedBeforePublishing()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        rig.Repository.SavedHeaderImages.Add((rig.Bed.TenantId, fileId));
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.CreateAsync(fileId));
+
+        Assert.Equal(MessagingErrorCodes.TemplateHeaderImageRejected, error.Code);
+        Assert.Equal([TemplateMessages.HeaderImage], error.FieldErrors["headerImageFileId"]);
+        Assert.DoesNotContain("Publish", rig.Images.Calls);
+        Assert.DoesNotContain("Release", rig.Images.Calls);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Releases.Published);
+    }
+
+    // Otra creación con el mismo fileId se guarda entre la publicación y el fallo de ésta: la imagen ya es suya y no se libera, ni en el
+    // momento ni por el outbox.
+    [Fact]
+    public async Task AFailedCreateDoesNotReleaseAFileThatASavedTemplateUses()
+    {
+        var rig = new Rig();
+        var fileId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+        rig.Images.OnPublish = () => rig.Repository.SavedHeaderImages.Add((rig.Bed.TenantId, fileId));
+        rig.Bed.Meta.NextCreatedTemplate = new MessagingGraphResult<CreatedTemplate>(null, MetaRejection);
+        rig.Images.ReleaseFailure = new InvalidOperationException("R2 is down");
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.CreateAsync(fileId));
+
+        Assert.Equal(MessagingErrorCodes.TemplateRejectedByMeta, error.Code);
+        Assert.DoesNotContain("Release", rig.Images.Calls);
+        Assert.Empty(rig.Releases.Published);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+        Assert.Contains(rig.Logger.Entries, entry => entry.Level == LogLevel.Warning && entry.Message.Contains("saved template uses it", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task ASuccessfulReleaseWritesNoOutboxRelease()
     {
