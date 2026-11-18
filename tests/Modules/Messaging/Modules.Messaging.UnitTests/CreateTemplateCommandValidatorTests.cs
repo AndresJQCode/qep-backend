@@ -143,4 +143,18 @@ public sealed class CreateTemplateCommandValidatorTests
 
     [Fact]
     public void ANameThatOnlyStartsWithTheReservedWordIsNotReserved() => Assert.Empty(Keys(Valid(name: "qep_cotizaciones")));
+
+    // Spec 2026-11-17: el encabezado es de texto o es una imagen, nunca los dos.
+    [Fact]
+    public void HeaderAndHeaderImageTogetherFailOnHeader()
+    {
+        var errors = Validator.Validate(Valid(header: "Oferta") with { HeaderImageFileId = Guid.CreateVersion7() }).Errors;
+
+        var error = Assert.Single(errors);
+        Assert.Equal(("header", TemplateMessages.HeaderExclusive), (error.PropertyName, error.ErrorMessage));
+    }
+
+    [Fact]
+    public void AHeaderImageWithoutATextHeaderIsValid() =>
+        Assert.Empty(Keys(Valid(header: null) with { HeaderImageFileId = Guid.CreateVersion7() }));
 }

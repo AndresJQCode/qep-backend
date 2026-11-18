@@ -155,7 +155,8 @@ internal static class TemplateManagementEndpoints
                 new CreateTemplateCommand(
                     tenantId, connectionId, request.Name, request.Language, request.Category, request.Header, request.Body, request.Footer,
                     request.Buttons?.Select(button => new TemplateButtonInput(button.Type, button.Text, button.Url, button.PhoneNumber)).ToArray(),
-                    request.Examples),
+                    request.Examples,
+                    request.HeaderImageFileId),
                 cancellationToken));
 
     private static async Task<IResult> CreateHeaderImageSessionAsync(
@@ -235,7 +236,7 @@ internal static class TemplateManagementEndpoints
 
 /// <summary>Spec 2026-10-14 §4.7: el cuerpo de crear una plantilla libre. Todo opcional para que lo que falte salga 422 con su clave en
 /// <c>errors</c>, no 400 del binder. Las variables se declaran en <c>body</c> como <c>{{nombre}}</c> y <c>examples</c> trae exactamente
-/// esas claves.</summary>
+/// esas claves. <c>headerImageFileId</c> (spec 2026-11-17) es la imagen fija del encabezado ya subida; excluye a <c>header</c>.</summary>
 public sealed record CreateTemplateRequest(
     string? Name,
     string? Language,
@@ -244,7 +245,8 @@ public sealed record CreateTemplateRequest(
     string? Body,
     string? Footer,
     List<TemplateButtonRequest>? Buttons,
-    Dictionary<string, string?>? Examples);
+    Dictionary<string, string?>? Examples,
+    Guid? HeaderImageFileId = null);
 
 /// <summary>El cuerpo editado de la plantilla de cotización. Son opcionales la propiedad <c>Body</c> y también el cuerpo HTTP entero: sin
 /// ellos se crea el texto base (backend desplegado antes que el frontend).</summary>
