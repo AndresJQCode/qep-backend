@@ -79,6 +79,55 @@ public sealed class FilePublicationTests
         Assert.Empty(storage.DeletedKeys);
     }
 
+    // Spec 2026-11-17, «Closing the residual gaps»: si el guardado de Storage falla después de copiar, la fila no tiene
+    // PublicStorageKey pero las copias existen. La clave es determinista, así que se retira igual.
+    [Fact]
+    public async Task RemovingWithoutAStoredKeyDeletesTheComputedKeyAndVariants()
+    {
+        var resource = AvailableImageWithVariant();
+        var storage = new RecordingPublicObjectStorage();
+        var publication = new FilePublication(storage, new FixedClock(Now));
+        // StorageKey es internal: la clave se escribe a mano, y así queda fijada (PublicFor y PublicVariantFor).
+        var computedKey = $"tenants/{TenantId:N}/media/{resource.Id.Value:N}/original.png";
+        var variantKey = $"tenants/{TenantId:N}/media/{resource.Id.Value:N}/variants/thumb.png";
+
+        await publication.RemovePublicCopiesAsync(resource, TestContext.Current.CancellationToken);
+
+        Assert.Equal([computedKey, variantKey], storage.DeletedKeys);
+        Assert.Null(resource.PublicStorageKey);
+        Assert.Null(resource.PublishedAt);
+    }
+
+    [Fact]
+    public async Task RemovingWithAStoredKeyDeletesThatKey()
+    {
+        var resource = AvailableImageWithVariant();
+        var storage = new RecordingPublicObjectStorage();
+        var publication = new FilePublication(storage, new FixedClock(Now));
+        var publicKey = await publication.PublishAsync(resource, TestContext.Current.CancellationToken);
+
+        await publication.RemovePublicCopiesAsync(resource, TestContext.Current.CancellationToken);
+
+        Assert.Equal(publicKey, storage.DeletedKeys[0]);
+        Assert.Equal(2, storage.DeletedKeys.Count);
+        Assert.Null(resource.PublicStorageKey);
+    }
+
+    // Borrar una clave que no existe no falla en R2: repetir el retiro (reintento del outbox, barrido) no rompe nada.
+    [Fact]
+    public async Task RemovingIsIdempotentWhenTheObjectsAreGone()
+    {
+        var resource = AvailableImageWithVariant();
+        var storage = new MissingObjectsPublicObjectStorage();
+        var publication = new FilePublication(storage, new FixedClock(Now));
+
+        await publication.RemovePublicCopiesAsync(resource, TestContext.Current.CancellationToken);
+        await publication.RemovePublicCopiesAsync(resource, TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, storage.DeleteCalls);
+        Assert.Null(resource.PublicStorageKey);
+    }
+
     private static FileResource AvailableImage()
     {
         var resource = FileResource.CreatePendingUpload(
@@ -115,6 +164,31 @@ public sealed class FilePublicationTests
 
         public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public string GetUrl(string publicKey) => throw new NotSupportedException();
+
+        public Task<PublicObjectPage> ListAsync(
+            string prefix, string? continuationToken, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    // Un bucket sin objetos: borrar no encuentra nada y no falla, como DeleteObject de R2 (204 aunque la clave no exista).
+    private sealed class MissingObjectsPublicObjectStorage : IPublicObjectStorage
+    {
+        public int DeleteCalls { get; private set; }
+
+        public bool IsConfigured => true;
+
+        public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task DeleteAsync(string publicKey, CancellationToken cancellationToken)
+        {
+            DeleteCalls++;
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> ExistsAsync(string publicKey, CancellationToken cancellationToken) => Task.FromResult(false);
 
         public string GetUrl(string publicKey) => throw new NotSupportedException();
 

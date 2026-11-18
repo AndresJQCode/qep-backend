@@ -159,6 +159,21 @@ public sealed class MessagingTemplateImageStoreTests
         Assert.Equal(2, _unitOfWork.Saves);
     }
 
+    // Spec 2026-11-17, «Closing the residual gaps»: publicar copió los objetos pero el guardado de Storage falló, así que la fila no
+    // tiene PublicStorageKey. Liberar retira igual la clave determinista.
+    [Fact]
+    public async Task ReleaseRemovesPublicCopiesWithoutAStoredKey()
+    {
+        var file = AvailableImage(TenantId, TenantId, FileOwnerType.MessageTemplate);
+        var computedKey = $"tenants/{TenantId:N}/media/{file.Id.Value:N}/original.png";
+
+        await NewStore(file).ReleaseAsync(TenantId, file.Id.Value, Ct);
+
+        Assert.Equal([computedKey], _publicStorage.DeletedKeys);
+        Assert.Equal(FileResourceStatus.Deleted, file.Status);
+        Assert.Equal(1, _unitOfWork.Saves);
+    }
+
     [Fact]
     public async Task ReleaseIsANoOpForADeletedOrForeignFile()
     {

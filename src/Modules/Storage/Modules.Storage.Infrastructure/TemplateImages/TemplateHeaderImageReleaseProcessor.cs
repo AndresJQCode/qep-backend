@@ -132,7 +132,7 @@ internal sealed partial class TemplateHeaderImageReleaseProcessor(
         }
 
         var now = clock.UtcNow;
-        await filePublication.UnpublishAsync(resource, cancellationToken);
+        await filePublication.RemovePublicCopiesAsync(resource, cancellationToken);
         resource.SoftDelete(now);
         auditPublisher.PublishSystem(resource.TenantId, "storage.file.deleted", "file", resource.Id.ToString(), Reason, now);
         LogImageReleased(logger, rawFileId);

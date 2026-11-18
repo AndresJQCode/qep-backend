@@ -106,7 +106,7 @@ internal sealed class MessagingTemplateImageStore(
             return;
         }
 
-        await filePublication.UnpublishAsync(resource, cancellationToken);
+        await filePublication.RemovePublicCopiesAsync(resource, cancellationToken);
         resource.SoftDelete(clock.UtcNow);
         auditPublisher.Publish(
             tenantId, executionContext.SubjectId, "storage.file.deleted", resource.Id.ToString(), "success", clock.UtcNow);
