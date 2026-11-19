@@ -72,6 +72,14 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // El selector de la modal «Vincular»: los productos activos que Siigo tiene hoy. `refresh=true` se salta la copia de 60 s.
+        group.MapGet("/siigo-products", SearchSiigoProductsAsync)
+            .Produces<SiigoProductCandidatesPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         group.MapPut("/products/{variantId:guid}/link", LinkProductAsync)
             .Produces<SiigoVariantLinkDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -169,6 +177,17 @@ public static class SiigoEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListSiigoVariantLinksQuery(tenantId, connectionId, search, filter, page), cancellationToken));
+
+    private static async Task<IResult> SearchSiigoProductsAsync(
+        Guid tenantId,
+        Guid connectionId,
+        string? search,
+        int? page,
+        bool? refresh,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new SearchSiigoProductsQuery(tenantId, connectionId, search, page, refresh ?? false), cancellationToken));
 
     private static async Task<IResult> LinkProductAsync(
         Guid tenantId,

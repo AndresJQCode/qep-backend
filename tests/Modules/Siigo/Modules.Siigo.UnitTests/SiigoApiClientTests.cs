@@ -373,6 +373,63 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.False(page.Items[1].Active);
     }
 
+    private static string ProductsJson(int page, int total, params (string Id, string Code, string Name, bool Active)[] items) =>
+        "{\"pagination\":{\"page\":" + page + ",\"page_size\":2,\"total_results\":" + total + "},\"results\":["
+        + string.Join(",", items.Select(item =>
+            $"{{\"id\":\"{item.Id}\",\"code\":\"{item.Code}\",\"name\":\"{item.Name}\",\"active\":{(item.Active ? "true" : "false")}}}"))
+        + "]}";
+
+    [Fact]
+    public async Task ActiveProductsWalkEveryPageAndKeepOnlyTheActiveOnes()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.OnSequence(
+            "/v1/products",
+            (HttpStatusCode.OK, ProductsJson(1, 3, ("p1", "AB-1", "Uno", true), ("p2", "AB-2", "Dos", false))),
+            (HttpStatusCode.OK, ProductsJson(2, 3, ("p3", "AB-3", "Tres", true))));
+
+        var products = await _client.ListActiveProductsAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["AB-1", "AB-3"], products.Select(product => product.Code));
+        Assert.Equal(2, _api.Requests.Count(request => request.Path == "/v1/products"));
+    }
+
+    [Fact]
+    public async Task ActiveProductsAreCachedAndRefreshReadsSiigoAgain()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.OnSequence(
+            "/v1/products",
+            (HttpStatusCode.OK, ProductsJson(1, 1, ("p1", "AB-1", "Uno", true))),
+            (HttpStatusCode.OK, ProductsJson(1, 2, ("p1", "AB-1", "Uno", true), ("p9", "NEW-9", "Recién creado", true))));
+
+        var first = await _client.ListActiveProductsAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+        var cached = await _client.ListActiveProductsAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+        Assert.Single(first);
+        Assert.Same(first, cached);
+        Assert.Single(_api.Requests, request => request.Path == "/v1/products");
+
+        // Un producto creado en Siigo hace un momento tiene que aparecer: `refresh` se salta la caché y la repuebla.
+        var refreshed = await _client.ListActiveProductsAsync(Credentials, refresh: true, TestContext.Current.CancellationToken);
+        Assert.Equal(["AB-1", "NEW-9"], refreshed.Select(product => product.Code));
+        var afterRefresh = await _client.ListActiveProductsAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+        Assert.Same(refreshed, afterRefresh);
+        Assert.Equal(2, _api.Requests.Count(request => request.Path == "/v1/products"));
+    }
+
+    [Fact]
+    public async Task ActiveProductsAreCachedPerConnection()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/products", HttpStatusCode.OK, ProductsJson(1, 1, ("p1", "AB-1", "Uno", true)));
+
+        await _client.ListActiveProductsAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+        await _client.ListActiveProductsAsync(
+            Credentials with { ConnectionId = Guid.CreateVersion7() }, refresh: false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, _api.Requests.Count(request => request.Path == "/v1/products"));
+    }
+
     [Fact]
     public async Task AFoundCustomerIsReturnedAndAnEmptySearchIsNull()
     {

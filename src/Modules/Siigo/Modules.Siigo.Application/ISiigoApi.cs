@@ -128,6 +128,12 @@ public interface ISiigoApi
     Task<SiigoPage<SiigoProductOption>> SearchProductsAsync(
         SiigoCredentials credentials, string? code, int page, CancellationToken cancellationToken);
 
+    /// <summary>Todos los productos <b>activos</b> de la conexión (recorre cada página de <c>GET /v1/products</c>), para el selector del
+    /// paso 6. Se guardan 60 s por conexión, sólo para que escribir y paginar no recorra Siigo en cada tecla; <paramref name="refresh"/>
+    /// se salta la copia y la repuebla, para que un producto recién creado en Siigo aparezca al abrir el selector.</summary>
+    Task<IReadOnlyList<SiigoProductOption>> ListActiveProductsAsync(
+        SiigoCredentials credentials, bool refresh, CancellationToken cancellationToken);
+
     /// <summary><c>GET /v1/customers?identification=</c>: el cliente activo, o <c>null</c>. Nunca se cachea.</summary>
     Task<SiigoCustomerRef?> FindCustomerAsync(SiigoCredentials credentials, string identification, CancellationToken cancellationToken);
 
