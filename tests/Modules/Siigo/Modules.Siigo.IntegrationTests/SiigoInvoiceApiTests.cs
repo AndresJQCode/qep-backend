@@ -295,6 +295,21 @@ public sealed class SiigoInvoiceApiTests
         AssertRejectedCode(manual, HttpStatusCode.Conflict, "order.order.external_invoice_pending", await manual.Content.ReadAsStringAsync(Ct));
     }
 
+    // Con el módulo apagado no hay pantalla ni endpoint (403) para resolver una factura Pending: no puede seguir bloqueando la marca manual.
+    [Fact]
+    public async Task WithTheModuleOffALiveSiigoInvoiceNoLongerBlocksTheManualMark()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await ReadAsync(await PostAsync(world));
+        await ExecuteAsync(world.ConnectionString, "UPDATE tenancy.tenant_modules SET status = 'inactive' WHERE module_key = 'siigo'");
+
+        var manual = await world.Client.PostAsync($"/api/v1/tenants/{world.TenantId}/orders/{world.OrderId}/invoice", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, manual.StatusCode);
+    }
+
     // I1: la factura ya existe en Siigo; si el pedido quedó marcado a mano (o anulado) antes de que se pudiera marcar, el POST no falla.
     [Fact]
     public async Task AnOrderMarkedByHandAfterTheSendReturnsTheCreatedRowWithAWarningAndNeverA422()
