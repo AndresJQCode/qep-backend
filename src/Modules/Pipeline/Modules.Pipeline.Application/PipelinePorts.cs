@@ -102,7 +102,18 @@ public interface IPipelineUnitOfWork
 /// transacción que el cambio. Lo del worker va con <paramref name="bySystem"/> y actor vacío.</summary>
 public interface IPipelineAuditRecorder
 {
-    void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt);
+    /// <param name="source">Who acts when it is not Pipeline itself (the chatbot's CRM action sends
+    /// <see cref="PipelineAuditSources.Chatbot"/>); <c>null</c> keeps <c>"pipeline"</c>.</param>
+    void Record(
+        Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt,
+        string? source = null);
+}
+
+/// <summary>The <c>source</c> values other entry points hand to <see cref="IPipelineAuditRecorder"/>.</summary>
+public static class PipelineAuditSources
+{
+    /// <summary>Chatbot CRM action spec (2026-11-19): a deal the chatbot moves.</summary>
+    public const string Chatbot = "chatbot";
 }
 
 public static class PipelineAuditActions

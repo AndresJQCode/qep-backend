@@ -44,8 +44,9 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         string action,
         string resourceId,
         string outcome,
-        DateTimeOffset occurredAt) =>
-        Add(tenantId, Guid.Empty, "System", action, resourceId, outcome, occurredAt, source: null, []);
+        DateTimeOffset occurredAt,
+        string? source = null) =>
+        Add(tenantId, Guid.Empty, "System", action, resourceId, outcome, occurredAt, source, []);
 
     private void Add(
         Guid tenantId,

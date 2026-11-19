@@ -174,6 +174,8 @@ internal sealed class RecordingPipelineAudit : IPipelineAuditRecorder
 {
     public List<(string Action, Guid ResourceId, bool BySystem)> Entries { get; } = [];
 
-    public void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt) =>
+    public void Record(
+        Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt,
+        string? source = null) =>
         Entries.Add((action, resourceId, bySystem));
 }
