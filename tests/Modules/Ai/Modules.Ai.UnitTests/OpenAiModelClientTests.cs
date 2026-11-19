@@ -64,6 +64,16 @@ public sealed class OpenAiModelClientTests : IDisposable
     }
 
     [Fact]
+    public async Task ANonStrictToolGoesWithStrictFalse()
+    {
+        await CompleteAsync(Request() with { Tools = [Tool("send_reply"), Tool("list_orders_report") with { Strict = false }] });
+
+        var tools = _server.Last.Body.GetProperty("tools").EnumerateArray().ToDictionary(tool => tool.GetProperty("name").GetString()!);
+        Assert.True(tools["send_reply"].GetProperty("strict").GetBoolean());
+        Assert.False(tools["list_orders_report"].GetProperty("strict").GetBoolean());
+    }
+
+    [Fact]
     public async Task ToolsAreStrictFunctionsSortedByNameAndNeverForced()
     {
         await CompleteAsync(Request() with { Tools = [Tool("send_reply"), Tool("handoff_to_human"), Tool("search_catalog")] });

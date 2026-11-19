@@ -69,7 +69,10 @@ public sealed record AiToolResult(string CallId, string ContentJson, bool IsErro
 
 /// <summary>Una herramienta neutral: <paramref name="InputSchemaJson"/> es JSON Schema con <c>additionalProperties: false</c> y todos los
 /// campos en <c>required</c>; cada adaptador lo traduce a su API.</summary>
-public sealed record AiToolDefinition(string Name, string Description, string InputSchemaJson);
+/// <param name="Strict">C-8: el proveedor garantiza que los argumentos cumplen el esquema. Anthropic acepta a lo sumo 20 herramientas
+/// estrictas por request (y 24 parámetros opcionales y 16 uniones entre todas), así que estrictas van sólo las que escriben o cierran el
+/// turno. Las de lectura que crecen con los módulos (las del copiloto) van sin strict y validan sus argumentos al correr.</param>
+public sealed record AiToolDefinition(string Name, string Description, string InputSchemaJson, bool Strict = true);
 
 /// <param name="ArgumentsJson">Los argumentos tal como los mandó el modelo, como objeto JSON.</param>
 public sealed record AiToolCall(string Id, string Name, string ArgumentsJson);

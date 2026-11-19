@@ -200,8 +200,9 @@ public sealed partial class OpenAiModelClient(
             ["description"] = tool.Description,
             ["parameters"] = JsonNode.Parse(tool.InputSchemaJson)
                 ?? throw new InvalidOperationException($"The schema of tool '{tool.Name}' is empty."),
-            // C-8: strict con additionalProperties false y todo en required, como lo declara el esquema neutral.
-            ["strict"] = true,
+            // C-8: strict con additionalProperties false y todo en required, como lo declara el esquema neutral, salvo la que se declara no
+            // estricta (AiToolDefinition.Strict).
+            ["strict"] = tool.Strict,
         };
 
     private AiModelResponse Read(string body, string model, string? requestId)

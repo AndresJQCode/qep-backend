@@ -51,6 +51,21 @@ public sealed class CopilotToolExecutorTests
         Assert.Equal(["margin_probe", "product_probe", "who_am_i"], available!.Select(tool => tool.Name));
     }
 
+    // Un tenant con todos los módulos ve más de 20 herramientas. No se recorta: el tope de 20 de Anthropic es de las estrictas, y las del
+    // copiloto no lo son.
+    [Fact]
+    public async Task MoreThanTwentyToolsAreAllOffered()
+    {
+        _authorization.Permissions = ["reporting.orders.read"];
+        var many = Enumerable.Range(1, 25).Select(index => new ProbeTool($"probe_{index:D2}", "reporting.orders.read", TenantModuleKeys.Reporting));
+        var executor = new CopilotToolExecutor(
+            _authorization, _modules, Services().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), [.. many]);
+
+        var available = await executor.ListAvailableAsync(Principal, Ct);
+
+        Assert.Equal(25, available!.Count);
+    }
+
     [Fact]
     public async Task WithoutAnActiveMembershipThereIsNoList()
     {

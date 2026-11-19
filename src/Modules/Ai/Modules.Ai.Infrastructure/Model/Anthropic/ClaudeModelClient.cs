@@ -215,8 +215,9 @@ public sealed partial class ClaudeModelClient(
         {
             Name = tool.Name,
             Description = tool.Description,
-            // C-8: strict con additionalProperties false y todo en required, como lo declara el esquema neutral.
-            Strict = true,
+            // C-8: strict con additionalProperties false y todo en required, como lo declara el esquema neutral. Tope de Anthropic: 20
+            // estrictas por request; las de lectura del copiloto se declaran no estrictas (AiToolDefinition.Strict).
+            Strict = tool.Strict,
             InputSchema = InputSchema.FromRawUnchecked(
                 JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(tool.InputSchemaJson)
                 ?? throw new InvalidOperationException($"The schema of tool '{tool.Name}' is empty.")),

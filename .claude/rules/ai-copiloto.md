@@ -118,8 +118,14 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Las herramientas del copiloto sólo despachan consultas, y la misma del endpoint** (D-C4). `CopilotToolsTests` (ArchitectureTests) lee
   el IL de `Bootstrapper.Copilot`: ningún `IRequestDispatcher.SendAsync`, ningún `ICommand<>`, nada de Integrations ni consultas
   `Operator*`, y cada herramienta despacha algún `IQuery<>`. Una herramienta nueva usa la constante de permiso del módulo (no un texto
-  copiado), el módulo de su endpoint, esquema estricto, tope de 20 filas con `total`/`truncated`, y un `kind` de cita que el frontend
+  copiado), el módulo de su endpoint, esquema con forma estricta, tope de 20 filas con `total`/`truncated`, y un `kind` de cita que el frontend
   sepa enrutar (`citationRoute`; `charge` no tiene pantalla y sale como cita sin enlace). El tenant sale del hilo, nunca de un argumento.
+- **Las herramientas del copiloto van sin `strict` y no se recortan** (2026-11-18). Anthropic acepta a lo sumo **20 herramientas con
+  `strict: true` por request** (y 24 parámetros opcionales y 16 uniones, `["string","null"]` incluida, sumando todas); el tenant dueño de la
+  plataforma, con todos los módulos, ya pasaba de 20 y la llamada respondía 400. `CopilotReportTools.Contract` las declara
+  `Strict: false` y `CopilotArguments` valida cada argumento (`invalid_arguments`). Estrictas quedan sólo las finales y las que escriben
+  (`AiToolDefinition.Strict`, por defecto `true`). No vuelvas a un `.Take(20)`: dejaba sin herramientas, en silencio, a los módulos
+  que caen al final del orden alfabético. Lo amarran `NoCopilotToolIsStrict` y `MoreThanTwentyToolsAreAllOffered`.
 - **La garantía de permisos del copiloto es la de un request, no instantánea** (D-C3). Cada llamada a una herramienta resuelve los
   permisos del miembro, pero con `Valkey:Areas:Permissions` prendido pasa por `CachedAuthorizationService`: lo que sube la versión de
   acceso del tenant se ve en la llamada siguiente; lo que no, en ≤ 60 s.
