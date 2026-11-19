@@ -283,6 +283,7 @@ public interface IWholesaleCustomerProvisioning
         Guid wholesalerTenantId,
         Guid actorUserId,
         string businessName,
+        string country,
         string identificationType,
         string identificationNumber,
         string email,

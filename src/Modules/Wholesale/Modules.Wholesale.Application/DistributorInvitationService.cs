@@ -162,6 +162,7 @@ public sealed class DistributorInvitationService(
             distributor.TenantId,
             distributor.InvitedByUserId,
             distributor.BusinessName,
+            distributor.Country,
             distributor.IdentificationType,
             distributor.IdentificationNumber,
             distributor.Email,

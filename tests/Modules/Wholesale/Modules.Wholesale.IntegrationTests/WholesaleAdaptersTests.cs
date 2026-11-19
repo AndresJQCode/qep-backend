@@ -126,14 +126,14 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
         await using (var scope = Factory.Services.CreateAsyncScope())
         {
             first = await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "NIT", "900123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", "NIT", "900123456", "ana@distri.co", Ct);
         }
 
         Guid second;
         await using (var scope = Factory.Services.CreateAsyncScope())
         {
             second = await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "NIT", "900123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", "NIT", "900123456", "ana@distri.co", Ct);
         }
 
         Assert.Equal(first, second);
@@ -156,7 +156,7 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
         {
             await using var scope = Factory.Services.CreateAsyncScope();
             return await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", type, "123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", type, "123456", "ana@distri.co", Ct);
         }
 
         var ce = await EnsureAsync("CE");
@@ -172,6 +172,25 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
             WHERE tenant_id = {tenant.TenantId} AND identification_number = '123456' ORDER BY identification_type
             """);
         Assert.Equal(2, types.Count);
+    }
+
+    // Un distribuidor de afuera: el cliente nace con su país y su tipo, no como colombiano.
+    [Fact]
+    public async Task CustomerProvisioningCreatesAForeignCustomerWithItsCountry()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
+            tenant.TenantId, tenant.SubjectId, "Distri Madrid SL", "ES", "NIF", "B12345678", "ana@distri.es", Ct);
+
+        var rows = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""
+            SELECT country AS "Value" FROM customers.customers
+            WHERE tenant_id = {tenant.TenantId} AND identification_number = 'B12345678'
+            """);
+        Assert.Equal(["ES"], rows);
     }
 
     // D-8: la primera vez crea el proveedor vinculado; la segunda devuelve el mismo, sin otro.

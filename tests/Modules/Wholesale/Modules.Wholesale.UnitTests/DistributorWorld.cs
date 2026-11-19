@@ -96,13 +96,14 @@ internal sealed class DistributorWorld
         DateTimeOffset? at = null,
         string? phone = null,
         Guid? whatsAppConnectionId = null,
-        string identificationType = "NIT")
+        string identificationType = "NIT",
+        string country = "CO")
     {
         var distributor = Distributor.Invite(
             Tenant,
             "ana@distri.co",
             "Distribuciones " + identification,
-            "CO",
+            country,
             identificationType,
             identification,
             "Ana Pérez",

@@ -73,7 +73,18 @@ public sealed class DistributorInvitationServiceTests
         await Service().AcceptAsync(token, _user, "ana@distri.co", new NewTenantChoice(NewTenantData), "trace-accept", Ct);
 
         var customer = Assert.Single(_customers.Calls);
-        Assert.Equal(("CE", "X-123"), (customer.IdentificationType, customer.Identification));
+        Assert.Equal(("CO", "CE", "X-123"), (customer.Country, customer.IdentificationType, customer.Identification));
+    }
+
+    [Fact]
+    public async Task AcceptCreatesTheCustomerWithTheDistributorCountry()
+    {
+        var token = InvitationTokens.Generate();
+        _world.SeedInvited("B12345678", tokenHash: InvitationTokens.HashOf(token), identificationType: "NIF", country: "ES");
+
+        await Service().AcceptAsync(token, _user, "ana@distri.co", new NewTenantChoice(NewTenantData), "trace-accept", Ct);
+
+        Assert.Equal(("ES", "NIF"), (Assert.Single(_customers.Calls).Country, _customers.Calls[0].IdentificationType));
     }
 
     [Fact]
@@ -91,8 +102,8 @@ public sealed class DistributorInvitationServiceTests
             (supplier.DistributorTenantId, supplier.WholesalerTenantId, supplier.WholesalerName, supplier.Company, supplier.Actor));
         var customer = Assert.Single(_customers.Calls);
         // D-7: el cliente nace en el mayorista con quien invitó como actor, no con quien acepta.
-        Assert.Equal((_world.Tenant, _invitation.InvitedByUserId, _invitation.BusinessName, "NIT", "900123456", "ana@distri.co"),
-            (customer.WholesalerTenantId, customer.Actor, customer.BusinessName, customer.IdentificationType, customer.Identification, customer.Email));
+        Assert.Equal((_world.Tenant, _invitation.InvitedByUserId, _invitation.BusinessName, "CO", "NIT", "900123456", "ana@distri.co"),
+            (customer.WholesalerTenantId, customer.Actor, customer.BusinessName, customer.Country, customer.IdentificationType, customer.Identification, customer.Email));
         Assert.Equal(
             (DistributorStatus.Active, (Guid?)reserved, (Guid?)_customers.CustomerId, (Guid?)_user),
             (_invitation.Status, _invitation.DistributorTenantId, _invitation.CustomerId, _invitation.Invitation.AcceptedByUserId));
