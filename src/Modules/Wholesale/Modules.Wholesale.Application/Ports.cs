@@ -209,8 +209,8 @@ public interface IWholesaleEventPublisher
 
 /// <summary>
 /// Una empresa facturadora del mayorista con lo que el proveedor vinculado necesita (D-2). <c>DocumentType</c> va con el
-/// nombre del cable; <c>Eligible</c> dice si ese documento lo admite un proveedor (<c>NIT</c>, <c>CC</c>, <c>CE</c>,
-/// <c>PASAPORTE</c>).
+/// nombre del cable; <c>Eligible</c> dice si ese documento lo admite un proveedor (hoy los siete códigos: no hay
+/// documento que deje a una empresa fuera).
 /// </summary>
 public sealed record WholesaleCompanyRef(
     Guid Id,

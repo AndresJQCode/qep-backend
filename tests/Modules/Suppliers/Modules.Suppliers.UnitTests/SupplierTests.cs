@@ -329,6 +329,19 @@ public sealed class SupplierTests
             CodeOf(() => Create(Data(identificationType: "RUT"))));
     }
 
+    // Un mayorista puede ser de cualquier país: el proveedor vinculado acepta los siete códigos de documento del producto.
+    [Theory]
+    [InlineData("NIF", IdentificationType.Nif)]
+    [InlineData("NIE", IdentificationType.Nie)]
+    [InlineData("TAX_ID", IdentificationType.TaxId)]
+    public void IdentificationTypeParserAcceptsTheForeignDocumentTypes(string wire, IdentificationType expected)
+    {
+        Assert.Equal(expected, IdentificationTypeParser.Parse(wire.ToLowerInvariant()));
+        Assert.Equal(wire, expected.ToWire());
+        Assert.Contains(wire, IdentificationTypeParser.SupportedWireValues);
+        Assert.Equal(expected, Create(Data(identificationType: wire)).Identification.Type);
+    }
+
     [Fact]
     public void IdentificationNumberKeepsDotsAndDashesAndRejectsOver32()
     {

@@ -6,8 +6,8 @@ namespace Bootstrapper;
 
 /// <summary>
 /// Companies → Wholesale: la empresa facturadora que da la identidad del proveedor vinculado (D-2). <c>Eligible</c> dice si su
-/// documento lo admite un proveedor (los de <c>IdentificationTypeParser.SupportedWireValues</c> de Suppliers: <c>NIT</c>,
-/// <c>CC</c>, <c>CE</c>, <c>PASAPORTE</c>).
+/// documento lo admite un proveedor (los de <c>IdentificationTypeParser.SupportedWireValues</c> de Suppliers: los siete códigos,
+/// así que una empresa de cualquier país puede ser mayorista).
 /// </summary>
 internal sealed class WholesaleCompanyLookup(ICompanyRepository companies) : IWholesaleCompanyLookup
 {
