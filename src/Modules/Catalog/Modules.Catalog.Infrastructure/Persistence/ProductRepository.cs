@@ -433,8 +433,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             query = query.Where(product => product.IsActive == isActive);
         }
 
-        // null = sin filtro; una colección vacía no devuelve filas. Lo usa el POS; el listado de
-        // productos no lo expone todavía (spec 2026-10-26 §3.3).
+        // null = sin filtro; una colección vacía no devuelve filas. Lo usan el POS y el listado de
+        // productos (`categoryId`, spec 2026-11-19 catalogo-productos-filtro-categoria), los dos con la
+        // categoría ya expandida a sus descendientes.
         if (categoryIds is not null)
         {
             // Los ids con el tipo exacto de la propiedad, ProductCategoryId? (nullable), y el Contains sobre
