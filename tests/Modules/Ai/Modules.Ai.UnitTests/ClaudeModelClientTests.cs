@@ -46,6 +46,17 @@ public sealed class ClaudeModelClientTests : IDisposable
         Assert.False(body.TryGetProperty("tool_choice", out _));
     }
 
+    // Tope de Anthropic: 20 herramientas strict por request. Una herramienta que se declara no estricta va sin strict.
+    [Fact]
+    public async Task ANonStrictToolGoesWithoutStrict()
+    {
+        await CompleteAsync(Request() with { Tools = [Tool("send_reply"), Tool("list_orders_report") with { Strict = false }] });
+
+        var tools = _server.Last.Body.GetProperty("tools").EnumerateArray().ToDictionary(tool => tool.GetProperty("name").GetString()!);
+        Assert.True(tools["send_reply"].GetProperty("strict").GetBoolean());
+        Assert.False(tools["list_orders_report"].TryGetProperty("strict", out var strict) && strict.GetBoolean());
+    }
+
     [Fact]
     public async Task AnEndTurnWithTextComesBackAsASendReplyWithoutSources()
     {

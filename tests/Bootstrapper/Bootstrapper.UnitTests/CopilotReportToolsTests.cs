@@ -58,7 +58,20 @@ public sealed class CopilotReportToolsTests
         Assert.Equal(ReportingPermissions.PriceChangeRead, permissions["get_price_changes_summary"]);
     }
 
-    // C-8: estrictas. Todos los campos en required y sin propiedades extra.
+    // Anthropic acepta a lo sumo 20 herramientas strict por request (24 opcionales, 16 uniones), y las del copiloto crecen con cada módulo.
+    // Ninguna escribe (D-C4) y CopilotArguments valida cada argumento, así que van sin strict. Strict quedan las finales.
+    [Fact]
+    public void NoCopilotToolIsStrict()
+    {
+        var all = CopilotReportTools.All()
+            .Concat(CopilotDocumentTools.All())
+            .Concat(CopilotDirectoryTools.All())
+            .Concat(CopilotFinanceTools.All());
+
+        Assert.All(all, tool => Assert.False(tool.Contract.Definition.Strict, tool.Contract.Name));
+    }
+
+    // El esquema conserva la forma C-8 (todo en required, sin propiedades extra): le dice al modelo qué campos aceptan null.
     [Fact]
     public void EverySchemaIsStrict()
     {
