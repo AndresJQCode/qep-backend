@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Flow;
@@ -177,14 +178,40 @@ public sealed class ChatbotEditorBuilderTests
         Assert.Equal(0, crm.Reads);
     }
 
+    /// <summary>A broken CRM module never fails the editor GET: the catalog degrades to empty lists, as with both modules off.</summary>
+    [Fact]
+    public async Task AThrowingDirectoryDegradesToEmptyLists()
+    {
+        var crm = new CrmDirectory(FullCatalog()) { Failure = new InvalidOperationException("Customers is broken.") };
+
+        var editor = await Builder(new Directory([]), aiEnabled: false, crm: crm).BuildAsync(WithCrm("addTag", KnownTag, null), Ct);
+
+        Assert.Empty(editor.Crm.Tags);
+        Assert.Empty(editor.Crm.Stages);
+        Assert.False(editor.Crm.CustomersEnabled);
+        Assert.False(editor.Crm.PipelineEnabled);
+    }
+
+    /// <summary>«Not yet» is not «broken»: a cancellation or a conflict still goes up.</summary>
+    [Fact]
+    public async Task ATransientDirectoryFailureStillPropagates()
+    {
+        var crm = new CrmDirectory(FullCatalog()) { Failure = new OperationCanceledException() };
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => Builder(new Directory([]), aiEnabled: false, crm: crm).BuildAsync(NewChatbot(), Ct));
+    }
+
     private sealed class CrmDirectory(CrmCatalog catalog) : IAutomationsCrmDirectory
     {
         public int Reads { get; private set; }
 
+        public Exception? Failure { get; init; }
+
         public Task<CrmCatalog> ReadAsync(Guid tenantId, CancellationToken cancellationToken)
         {
             Reads++;
-            return Task.FromResult(catalog);
+            return Failure is null ? Task.FromResult(catalog) : Task.FromException<CrmCatalog>(Failure);
         }
     }
 
@@ -216,7 +243,8 @@ public sealed class ChatbotEditorBuilderTests
 
     private static ChatbotEditorBuilder Builder(Directory directory, bool aiEnabled, Media? media = null, CrmDirectory? crm = null) =>
         new(new NoConnections(), new NoExternalApis(), new NoMembers(), new NoHours(), new NoRuns(), new BogotaClock(), new NoSlots(), directory,
-            new Modules(aiEnabled), media ?? new Media(), crm ?? new CrmDirectory(new CrmCatalog(false, false, [], [])));
+            new Modules(aiEnabled), media ?? new Media(), crm ?? new CrmDirectory(new CrmCatalog(false, false, [], [])),
+            NullLogger<ChatbotEditorBuilder>.Instance);
 
     private sealed class Media : IChatbotMediaStore
     {

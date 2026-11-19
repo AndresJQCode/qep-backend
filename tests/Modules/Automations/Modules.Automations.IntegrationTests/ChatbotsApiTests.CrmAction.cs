@@ -5,6 +5,7 @@ using Modules.Automations.Application;
 using Modules.Automations.Domain.Flow;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Pipeline.Application;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
 namespace Modules.Automations.IntegrationTests;
@@ -57,12 +58,27 @@ public sealed partial class ChatbotsApiTests
             ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
             """,
             ("tenantId", setup.Tenant.TenantId));
+        var beforeProvisioning = await GetAsync(setup, withoutPipeline.Chatbot.Id);
+
+        // Opening the editor only reads: a pipeline nobody opened yet has no stages to offer, and none is created.
+        Assert.True(beforeProvisioning.Crm.PipelineEnabled);
+        Assert.Empty(beforeProvisioning.Crm.Stages);
+        Assert.Equal(0L, await PipelineCountAsync(connectionString, setup.Tenant.TenantId));
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IPipelineProvisioner>().EnsureAsync(setup.Tenant.TenantId, Ct);
+        }
+
         var editor = await GetAsync(setup, withoutPipeline.Chatbot.Id);
 
-        Assert.True(editor.Crm.PipelineEnabled);
         // The default pipeline's open stages, in its order; «Ganado» and «Perdido» are closed and never offered.
         Assert.Equal(["Nuevo", "Calificado", "Cotizado", "Negociación"], editor.Crm.Stages.Select(stage => stage.Name));
+        Assert.Equal(1L, await PipelineCountAsync(connectionString, setup.Tenant.TenantId));
     }
+
+    private static Task<long> PipelineCountAsync(string connectionString, Guid tenantId) =>
+        ScalarAsync<long>(connectionString, "SELECT count(*) FROM pipeline.pipelines WHERE tenant_id = @tenantId", ("tenantId", tenantId));
 
     /// <summary>Review Focus (tenant isolation): a flow imported from another tenant names a tag this tenant does not have; it is an error
     /// on the block and publishing is refused, until the person picks a tag of this tenant.</summary>

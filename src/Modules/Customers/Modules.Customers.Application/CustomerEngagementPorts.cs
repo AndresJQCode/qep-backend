@@ -26,6 +26,10 @@ public interface ICustomerTagRepository
     /// <summary>Todas las del tenant, por nombre sin distinguir mayúsculas.</summary>
     Task<IReadOnlyList<TagWithCount>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 
+    /// <summary>Las mismas y en el mismo orden que <see cref="ListAsync"/>, sin tracking y sin contar clientes: para quien sólo las
+    /// nombra (el editor de chatbots).</summary>
+    Task<IReadOnlyList<Tag>> ListWithoutCountsAsync(Guid tenantId, CancellationToken cancellationToken);
+
     /// <summary>Las de un cliente, con el mismo orden y el mismo conteo que <see cref="ListAsync"/>.</summary>
     Task<IReadOnlyList<TagWithCount>> ListForCustomerAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken);
 
@@ -120,6 +124,10 @@ public interface ICustomerTagLookup
 {
     Task<IReadOnlyList<CustomerTagRef>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken);
 
+    /// <summary>Chatbot CRM action spec (2026-11-19): every tag of the tenant, by name, without counting customers (the editor's
+    /// palette opens on every editor GET).</summary>
+    Task<IReadOnlyList<CustomerTagRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken);
+
     /// <summary>Spec qep-frontend 2026-10-15: los clientes con la etiqueta, para el filtro de la bandeja (con tope).</summary>
     Task<IReadOnlyList<Guid>> FindCustomerIdsAsync(Guid tenantId, Guid tagId, int cap, CancellationToken cancellationToken);
 
@@ -141,6 +149,10 @@ public sealed class CustomerTagLookup(ICustomerTagRepository tags) : ICustomerTa
         var found = await tags.ListByIdsAsync(tenantId, [.. tagIds.Select(id => new TagId(id))], cancellationToken);
         return [.. found.Select(tag => new CustomerTagRef(tag.Id.Value, tag.Name, tag.Color.ToWireValue()))];
     }
+
+    public async Task<IReadOnlyList<CustomerTagRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        [.. (await tags.ListWithoutCountsAsync(tenantId, cancellationToken))
+            .Select(tag => new CustomerTagRef(tag.Id.Value, tag.Name, tag.Color.ToWireValue()))];
 
     public async Task<IReadOnlyList<Guid>> FindCustomerIdsAsync(Guid tenantId, Guid tagId, int cap, CancellationToken cancellationToken) =>
         [.. (await tags.ListCustomerIdsAsync(tenantId, new TagId(tagId), cap, cancellationToken)).Select(id => id.Value)];

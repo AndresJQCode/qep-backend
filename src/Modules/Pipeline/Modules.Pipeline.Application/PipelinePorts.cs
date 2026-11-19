@@ -9,6 +9,19 @@ public interface IPipelineProvisioner
     Task<SalesPipeline> EnsureAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>An open stage of the tenant's pipeline, named for whoever offers it without being Pipeline.</summary>
+public sealed record PipelineStageRef(Guid Id, string Name);
+
+/// <summary>
+/// Chatbot CRM action spec (2026-11-19): the open stages of the tenant's pipeline in its order, read only. Unlike
+/// <see cref="IPipelineProvisioner"/>, a tenant whose pipeline was never opened gets an empty list and nothing is inserted: the
+/// chatbot editor reads it on every GET.
+/// </summary>
+public interface IPipelineStageLookup
+{
+    Task<IReadOnlyList<PipelineStageRef>> ListOpenAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
 /// <summary>Todo método recibe <c>tenantId</c>: un id de otro tenant responde igual que uno inexistente.</summary>
 public interface IDealRepository
 {

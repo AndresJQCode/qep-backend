@@ -218,6 +218,10 @@ public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string 
                 Tags.Where(tag => tag.TenantId == tenantId)
                     .OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase).Select(WithCount).ToList());
 
+        public Task<IReadOnlyList<Tag>> ListWithoutCountsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Tag>>(
+                [.. Tags.Where(tag => tag.TenantId == tenantId).OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase)]);
+
         public Task<IReadOnlyList<TagWithCount>> ListForCustomerAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
         {
             var ids = Assignments.Where(assignment => assignment.CustomerId == customerId).Select(assignment => assignment.TagId).ToHashSet();

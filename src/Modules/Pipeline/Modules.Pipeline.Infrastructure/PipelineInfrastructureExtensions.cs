@@ -40,6 +40,8 @@ public static class PipelineInfrastructureExtensions
         services.AddScoped<QuotationEventApplier>();
         // Chatbot CRM action spec (2026-11-19): the chatbot moves the conversation's deal as the system.
         services.AddScoped<IChatbotDealMover, ChatbotDealMover>();
+        // ...and its editor lists the open stages without provisioning the pipeline.
+        services.AddScoped<IPipelineStageLookup, PipelineStageLookup>();
         // Spec 2026-10-13 D6: el consumidor de los eventos de Quotations, con reclamo e inbox propio.
         services.AddSingleton<QuotationEventsProcessor>();
         services.AddHostedService<QuotationEventsWorker>();

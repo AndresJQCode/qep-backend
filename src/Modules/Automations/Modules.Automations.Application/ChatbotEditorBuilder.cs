@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Flow;
 using Modules.Tenancy.Application;
@@ -11,7 +13,7 @@ namespace Modules.Automations.Application;
 /// externa» y los horarios llegan por los puertos; el chatbot que ocupa cada conexión sale de una sola proyección
 /// (<see cref="IChatbotRepository.ListServingConnectionsAsync"/>), nunca uno por conexión. El validador recibe el contexto real del chatbot (D-C2).
 /// </summary>
-public sealed class ChatbotEditorBuilder(
+public sealed partial class ChatbotEditorBuilder(
     IAutomationConnections connections,
     IAutomationExternalApis externalApis,
     IAutomationMembers members,
@@ -22,8 +24,13 @@ public sealed class ChatbotEditorBuilder(
     IAutomationsAgentDirectory agents,
     ITenantModules tenantModules,
     IChatbotMediaStore media,
-    IAutomationsCrmDirectory crmDirectory)
+    IAutomationsCrmDirectory crmDirectory,
+    ILogger<ChatbotEditorBuilder> logger)
 {
+    // Only the exception type: its message may carry customer data.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The CRM catalog of tenant {TenantId} could not be read for the chatbot editor ({ExceptionType}); it opens without it.")]
+    private static partial void LogCrmCatalogUnavailable(ILogger logger, Guid tenantId, string exceptionType);
+
     /// <summary>Canal que se supone mientras el chatbot no tiene conexiones: hoy el motor sólo atiende WhatsApp (D-M6).</summary>
     private const string DefaultChannel = "WhatsApp";
 
@@ -53,7 +60,7 @@ public sealed class ChatbotEditorBuilder(
         // Spec 2026-11-17 §7: el editor siempre trae los agentes (el selector del bloque), así que la misma lectura valida.
         var ai = await AiOfAsync(chatbot.TenantId, cancellationToken);
         // Spec 2026-11-19 (chatbot CRM action): the same for the «Acción de CRM» palette (tags and open stages): read once, validates too.
-        var crm = await crmDirectory.ReadAsync(chatbot.TenantId, cancellationToken);
+        var crm = await EditorCrmAsync(chatbot.TenantId, cancellationToken);
 
         var (flow, problem) = ParseStored(chatbot);
         var files = flow is null ? [] : await MediaOfAsync(chatbot.TenantId, flow, cancellationToken);
@@ -139,6 +146,25 @@ public sealed class ChatbotEditorBuilder(
         flow.Nodes.Any(node => node is CrmActionNode) ? await crmDirectory.ReadAsync(tenantId, cancellationToken) : NoCrm;
 
     private static readonly CrmCatalog NoCrm = new(false, false, [], []);
+
+    /// <summary>
+    /// The editor GET's catalog: a broken Customers or Pipeline never keeps the editor from opening. A failure that is not «not yet»
+    /// (<see cref="TransientFailures.MustPropagate"/>) degrades to <see cref="NoCrm"/>, as with both modules off, and is logged without
+    /// customer data. Saving and publishing still read through <see cref="CrmOfAsync"/> and fail: they must not validate against a
+    /// catalog that was not read.
+    /// </summary>
+    private async Task<CrmCatalog> EditorCrmAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await crmDirectory.ReadAsync(tenantId, cancellationToken);
+        }
+        catch (Exception exception) when (!TransientFailures.MustPropagate(exception))
+        {
+            LogCrmCatalogUnavailable(logger, tenantId, exception.GetType().Name);
+            return NoCrm;
+        }
+    }
 
     /// <summary>Spec 2026-11-18: los archivos de los bloques «Mensaje», en una sola lectura y sólo si el flujo tiene alguno (como <see cref="AiOfAsync(Guid, FlowDefinition, CancellationToken)"/>).
     /// La resolución es por tenant: un id de otro tenant (un flujo pegado o importado) no vuelve y el validador lo marca.</summary>
