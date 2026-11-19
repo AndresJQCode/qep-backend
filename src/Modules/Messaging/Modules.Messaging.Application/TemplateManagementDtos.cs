@@ -52,6 +52,10 @@ public sealed record SupportFormalReplyTemplateStatusDto(Guid TemplateId, string
 /// ignora.</summary>
 public sealed record SupportSurveyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
+/// <summary>Mayorista: el estado de la plantilla del aviso de invitación de distribuidor. <c>null</c> = no aprovisionada. Un frontend viejo
+/// lo ignora.</summary>
+public sealed record WholesaleInvitationNoticeTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
 /// <summary>
 /// §4.3: la pantalla de plantillas de una conexión en una llamada: la conexión (nombre y número), el estado de la plantilla de
 /// cotización, cuándo se sincronizó el espejo por última vez (<c>null</c> = nunca) y todas las plantillas, sin paginar, por nombre e
@@ -65,4 +69,5 @@ public sealed record TemplateManagementDto(
     IReadOnlyList<ManagedTemplateDto> Templates,
     SupportReplyTemplateStatusDto? SupportReplyTemplate,
     SupportFormalReplyTemplateStatusDto? SupportFormalReplyTemplate = null,
-    SupportSurveyTemplateStatusDto? SupportSurveyTemplate = null);
+    SupportSurveyTemplateStatusDto? SupportSurveyTemplate = null,
+    WholesaleInvitationNoticeTemplateStatusDto? WholesaleInvitationNoticeTemplate = null);

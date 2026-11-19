@@ -31,15 +31,20 @@ public sealed class DistributorTests
         var distributor = Invite();
 
         Assert.Throws<ArgumentException>(() =>
-            distributor.ResendInvitation("Zx0pQ9mW3rT7yU1iO5aS8dF2gH6jK4lZ0xC3vB7nM1q", Now.AddHours(1)));
+            distributor.ResendInvitation("Zx0pQ9mW3rT7yU1iO5aS8dF2gH6jK4lZ0xC3vB7nM1q", noticeQueued: false, Now.AddHours(1)));
         Assert.Equal(Hash1, distributor.Invitation.TokenHash);
         Assert.Equal(1, distributor.Version);
     }
 
-    private static Distributor Invite(string email = "ana@distri.co", string tokenHash = Hash1) =>
+    private const string Phone = "+573001234567";
+    private static readonly Guid Connection = Guid.CreateVersion7();
+
+    private static Distributor Invite(
+        string email = "ana@distri.co", string tokenHash = Hash1, string? phone = null, Guid? connection = null) =>
         Distributor.Invite(
             Tenant, email, "  Distribuciones Norte SAS ", " 900123456 ", " Ana Pérez ", PriceListId.New(),
-            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), tokenHash, Guid.CreateVersion7(), Now);
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), tokenHash, Guid.CreateVersion7(), phone,
+            connection, Now);
 
     private static Distributor Active()
     {
@@ -66,7 +71,7 @@ public sealed class DistributorTests
 
         var distributor = Distributor.Invite(
             Tenant, " Ana@Distri.CO ", "  Distribuciones Norte SAS ", " 900123456 ", " Ana Pérez ", priceList, advisor,
-            company, invitedBy, Hash1, reserved, Now);
+            company, invitedBy, Hash1, reserved, null, null, Now);
 
         Assert.NotEqual(Guid.Empty, distributor.Id.Value);
         Assert.Equal((Tenant, "ana@distri.co", "Distribuciones Norte SAS", "900123456", "Ana Pérez"),
@@ -96,7 +101,7 @@ public sealed class DistributorTests
         var reserved = distributor.Invitation.ReservedTenantId;
         var later = Now.AddHours(100);
 
-        distributor.ResendInvitation(Hash2, later);
+        distributor.ResendInvitation(Hash2, noticeQueued: false, later);
 
         Assert.Equal((Hash2, later, later.AddHours(72), reserved),
             (distributor.Invitation.TokenHash, distributor.Invitation.SentAt, distributor.Invitation.ExpiresAt, distributor.Invitation.ReservedTenantId));
@@ -109,7 +114,7 @@ public sealed class DistributorTests
     {
         var distributor = Active();
 
-        var error = Assert.Throws<WholesaleDomainException>(() => distributor.ResendInvitation(Hash2, Now.AddHours(3)));
+        var error = Assert.Throws<WholesaleDomainException>(() => distributor.ResendInvitation(Hash2, noticeQueued: true, Now.AddHours(3)));
 
         Assert.Equal(WholesaleErrorCodes.DistributorInvalidTransition, error.Code);
     }
@@ -264,5 +269,140 @@ public sealed class DistributorTests
         Assert.Equal(InvitationViewState.Expired, distributor.InvitationState(Now.AddDays(10)));
         Assert.Equal(DistributorStatus.Invited, distributor.Status);
         Assert.Equal([DistributorAction.Edit, DistributorAction.Resend, DistributorAction.Delete], distributor.AllowedActions());
+    }
+
+    // Spec 2026-11-18 (aviso por WhatsApp): con teléfono el aviso nace pendiente en la generación 0; sin él no hay aviso.
+    [Fact]
+    public void InviteWithAPhoneStartsTheNoticePendingAtGenerationZero()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+
+        Assert.Equal((Phone, (Guid?)Connection), (distributor.Phone, distributor.WhatsAppConnectionId));
+        Assert.Equal((0, (InvitationNoticeStatus?)InvitationNoticeStatus.Pending, (string?)null),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus, distributor.Invitation.NoticeFailureCode));
+    }
+
+    [Fact]
+    public void InviteWithoutAPhoneHasNoNotice()
+    {
+        var distributor = Invite(connection: Connection);
+
+        Assert.Null(distributor.Phone);
+        Assert.Null(distributor.WhatsAppConnectionId);
+        Assert.Equal(0, distributor.Invitation.Generation);
+        Assert.Null(distributor.Invitation.NoticeStatus);
+        Assert.Null(distributor.Invitation.NoticeFailureCode);
+    }
+
+    [Fact]
+    public void ResendBumpsTheGenerationAndQueuesOrFailsTheNotice()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+
+        distributor.ResendInvitation(Hash2, noticeQueued: false, Now.AddHours(1));
+
+        Assert.Equal((1, (InvitationNoticeStatus?)InvitationNoticeStatus.Failed, (string?)"whatsapp_unavailable"),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus, distributor.Invitation.NoticeFailureCode));
+
+        distributor.ResendInvitation(Hash1, noticeQueued: true, Now.AddHours(2));
+
+        Assert.Equal((2, (InvitationNoticeStatus?)InvitationNoticeStatus.Pending, (string?)null),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus, distributor.Invitation.NoticeFailureCode));
+
+        var withoutPhone = Invite();
+        withoutPhone.ResendInvitation(Hash2, noticeQueued: true, Now.AddHours(1));
+
+        Assert.Equal(1, withoutPhone.Invitation.Generation);
+        Assert.Null(withoutPhone.Invitation.NoticeStatus);
+    }
+
+    // P-3: cambiar teléfono o conexión deja el aviso en null hasta el próximo «Reenviar»; sin cambio no pasa nada.
+    [Fact]
+    public void ChangeNoticeTargetBumpsTheGenerationOnlyWhenSomethingChanges()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+        var version = distributor.Version;
+
+        Assert.False(distributor.ChangeNoticeTarget(Phone, Connection));
+        Assert.Equal((0, (InvitationNoticeStatus?)InvitationNoticeStatus.Pending),
+            (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus));
+
+        Assert.True(distributor.ChangeNoticeTarget("+573009876543", Connection));
+        Assert.Equal(("+573009876543", 1), (distributor.Phone, distributor.Invitation.Generation));
+        Assert.Null(distributor.Invitation.NoticeStatus);
+
+        var otherConnection = Guid.CreateVersion7();
+        Assert.True(distributor.ChangeNoticeTarget("+573009876543", otherConnection));
+        Assert.Equal(((Guid?)otherConnection, 2), (distributor.WhatsAppConnectionId, distributor.Invitation.Generation));
+
+        // La versión la sube ChangeTerms en el mismo PUT, no este método.
+        Assert.Equal(version, distributor.Version);
+    }
+
+    [Fact]
+    public void ChangeNoticeTargetWithANullPhoneClearsPhoneAndConnection()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+
+        Assert.True(distributor.ChangeNoticeTarget(null, Guid.CreateVersion7()));
+
+        Assert.Null(distributor.Phone);
+        Assert.Null(distributor.WhatsAppConnectionId);
+        Assert.Null(distributor.Invitation.NoticeStatus);
+        Assert.Equal(1, distributor.Invitation.Generation);
+        Assert.False(distributor.ChangeNoticeTarget(null, null));
+    }
+
+    // P-2: fuera de Invited el teléfono y la conexión se ignoran, sin error.
+    [Fact]
+    public void ChangeNoticeTargetOutsideInvitedIsIgnored()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+        distributor.Accept(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Now.AddHours(1));
+        var generation = distributor.Invitation.Generation;
+
+        Assert.False(distributor.ChangeNoticeTarget("+573009876543", Guid.CreateVersion7()));
+        Assert.False(distributor.ChangeNoticeTarget(null, null));
+
+        Assert.Equal((Phone, (Guid?)Connection, generation),
+            (distributor.Phone, distributor.WhatsAppConnectionId, distributor.Invitation.Generation));
+    }
+
+    // Review Focus 2 (D-4): un resultado de una generación vieja, o sin aviso que esperar, no pisa nada.
+    [Fact]
+    public void AStaleGenerationResultChangesNothing()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+        distributor.ResendInvitation(Hash2, noticeQueued: true, Now.AddHours(1));
+
+        Assert.False(distributor.RecordInvitationNotice(0, InvitationNoticeStatus.Sent, null));
+        Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Pending, distributor.Invitation.NoticeStatus);
+
+        distributor.ChangeNoticeTarget("+573009876543", Connection);
+
+        Assert.False(distributor.RecordInvitationNotice(1, InvitationNoticeStatus.Failed, "send_failed:x"));
+        Assert.False(distributor.RecordInvitationNotice(2, InvitationNoticeStatus.Sent, null));
+        Assert.Null(distributor.Invitation.NoticeStatus);
+        Assert.Null(distributor.Invitation.NoticeFailureCode);
+    }
+
+    // Review Focus 3 (D-3): registrar el resultado no sube Version ni UpdatedAt; el If-Match leído antes sigue valiendo.
+    [Fact]
+    public void RecordingTheNoticeKeepsVersionAndUpdatedAt()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+        var (version, updatedAt) = (distributor.Version, distributor.UpdatedAt);
+
+        Assert.True(distributor.RecordInvitationNotice(0, InvitationNoticeStatus.Failed, "connection_unavailable:paused"));
+
+        Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Failed, distributor.Invitation.NoticeStatus);
+        Assert.Equal("connection_unavailable:paused", distributor.Invitation.NoticeFailureCode);
+        Assert.Equal((version, updatedAt), (distributor.Version, distributor.UpdatedAt));
+
+        Assert.True(distributor.RecordInvitationNotice(0, InvitationNoticeStatus.Sent, null));
+
+        Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Sent, distributor.Invitation.NoticeStatus);
+        Assert.Null(distributor.Invitation.NoticeFailureCode);
+        Assert.Equal((version, updatedAt), (distributor.Version, distributor.UpdatedAt));
     }
 }

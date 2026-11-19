@@ -77,6 +77,9 @@ using Scalar.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Logging.AddQepLogging();
+// Después de AddQepLogging, porque envuelve su proveedor: el token de una invitación no sale en el scope RequestPath de los
+// logs ni en el url.path de los spans (SensitivePaths).
+builder.Services.AddSensitivePathRedaction();
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();

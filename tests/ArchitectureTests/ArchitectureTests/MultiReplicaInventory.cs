@@ -88,6 +88,8 @@ public static class MultiReplicaInventory
             "Modules/Pipeline/Modules.Pipeline.Infrastructure/Persistence/PipelineInbox.cs:50-55 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
         new("Modules.Purchases.Infrastructure.Messaging.WholesaleOrderEventsWorker", WorkerClassification.Claimed,
             "Modules/Purchases/Modules.Purchases.Infrastructure/Persistence/PurchasesInbox.cs:49-54 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
+        new("Modules.Wholesale.Infrastructure.Messaging.InvitationNoticeWorker", WorkerClassification.Claimed,
+            "Modules/Wholesale/Modules.Wholesale.Infrastructure/Persistence/WholesaleInbox.cs:37-42 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
         new("Modules.Shopify.Infrastructure.Workers.CitySynonymEventsWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyInbox.cs:49-54 — ShopifyClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
         new("Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeWorker", WorkerClassification.Claimed,

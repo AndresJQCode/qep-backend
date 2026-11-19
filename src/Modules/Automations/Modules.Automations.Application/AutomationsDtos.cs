@@ -60,6 +60,9 @@ public sealed record ChatbotEditorAgentDto(Guid Id, string Name, string Status, 
 /// y para pintar «agente pausado». Viaja acá y no en una ruta de Ai porque quien edita un chatbot tiene <c>automations.chatbot.manage</c> y
 /// no necesariamente <c>ai.agent.read</c>. Sin el módulo <c>ai</c> llega vacío.</param>
 /// <param name="AiEnabled">D-B16: el tenant tiene el módulo <c>ai</c>; sin él el editor no ofrece el bloque.</param>
+/// <param name="MediaFiles">Spec 2026-11-18 (BFF): los archivos de los bloques «Mensaje» del borrador que resuelven para el tenant, en una sola
+/// lectura. El editor dibuja archivos que no subió en esta sesión (un borrador reabierto, un chatbot duplicado) sin un request por archivo.
+/// Nunca <c>null</c>: <c>[]</c> sin archivos o con un borrador que no se puede leer; un id que no resuelve no viaja y el validador lo marca.</param>
 public sealed record ChatbotEditorDto(
     ChatbotSummaryDto Chatbot,
     IReadOnlyList<string> Keywords,
@@ -75,7 +78,8 @@ public sealed record ChatbotEditorDto(
     Guid? ExhaustedMemberId,
     IReadOnlyList<ChatbotMemberDto> Members,
     IReadOnlyList<ChatbotEditorAgentDto> Agents,
-    bool AiEnabled);
+    bool AiEnabled,
+    IReadOnlyList<ChatbotMediaFileDto> MediaFiles);
 
 public sealed record DraftSavedDto(long Version, DateTimeOffset UpdatedAt, IReadOnlyList<FlowIssueDto> Issues);
 

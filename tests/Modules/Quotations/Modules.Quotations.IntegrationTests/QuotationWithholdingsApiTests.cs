@@ -99,6 +99,27 @@ public sealed class QuotationWithholdingsApiTests
         Assert.True(saved.BillingWithRetention);
     }
 
+    // Spec 2026-11-18 servicios pendientes §2: las tasas congeladas del cliente y de la facturación propia viajan con su
+    // alcance, tomado de la foto del documento, para que el selector diga «Retefuente (servicios)» sin el catálogo activo.
+    [Fact]
+    public async Task SavedRatesCarryTheirFrozenScope()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var compras = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente compras", "Retefuente", 2.5m, appliesTo: "Goods");
+        var servicios = await InsertWithholdingRateAsync(
+            factory, setup.TenantId, "Retefuente servicios", "Retefuente", 4m, appliesTo: "Services");
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [compras]);
+        var created = await CreateWithLinesAsync(setup, clientId, quantity: 1m);
+
+        var saved = await ReadAsync(await PutAsync(setup, created, OwnBilling(setup, withholdingTaxRateIds: [servicios])));
+
+        Assert.Equal("Goods", Assert.Single(saved.CustomerWithholdingTaxRates).AppliesTo);
+        Assert.Equal("Services", Assert.Single(saved.BillingWithholdingTaxRates).AppliesTo);
+    }
+
     // D17/D24: la tasa elegida queda congelada al elegirla. Reenviar los mismos selectores (lo que hace todo guardado)
     // no vuelve a leer el catálogo: un porcentaje editado después no pisa la foto.
     [Fact]

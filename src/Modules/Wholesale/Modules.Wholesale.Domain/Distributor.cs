@@ -66,7 +66,19 @@ public sealed class Distributor
 
     public long Version { get; private set; }
 
+    /// <summary>
+    /// El celular del contacto para el aviso por WhatsApp de la invitación (spec 2026-11-18), en E.164 con «+». Llega
+    /// normalizado por Application; <c>null</c> = sin aviso.
+    /// </summary>
+    public string? Phone { get; private set; }
+
+    /// <summary>El número de WhatsApp del mayorista que manda el aviso; sólo existe junto a <see cref="Phone"/>.</summary>
+    public Guid? WhatsAppConnectionId { get; private set; }
+
     public DistributorInvitation Invitation { get; private set; }
+
+    /// <summary>E.164: «+» y hasta 15 dígitos.</summary>
+    public const int PhoneMaxLength = 16;
 
     public static Distributor Invite(
         Guid tenantId,
@@ -80,6 +92,8 @@ public sealed class Distributor
         Guid invitedByUserId,
         string tokenHash,
         Guid reservedTenantId,
+        string? phone,
+        Guid? whatsAppConnectionId,
         DateTimeOffset now)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
@@ -91,6 +105,8 @@ public sealed class Distributor
         {
             throw new ArgumentException("The reserved tenant id cannot be empty.", nameof(reservedTenantId));
         }
+
+        var (noticePhone, noticeConnection) = NoticeTarget(phone, whatsAppConnectionId);
 
         return new Distributor
         {
@@ -108,8 +124,50 @@ public sealed class Distributor
             CreatedAt = now,
             UpdatedAt = now,
             Version = 1,
-            Invitation = DistributorInvitation.Issue(tokenHash, reservedTenantId, now),
+            Phone = noticePhone,
+            WhatsAppConnectionId = noticeConnection,
+            Invitation = DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
         };
+    }
+
+    /// <summary>
+    /// Teléfono y conexión del aviso, sólo mientras está invitada (P-2: afuera no hace nada y devuelve <c>false</c>). Con
+    /// <paramref name="phone"/> nulo borra los dos (P-3). Si algo cambia sube la generación y deja el aviso en <c>null</c>
+    /// hasta el próximo «Reenviar», y devuelve <c>true</c>. No sube <see cref="Version"/>: lo hace
+    /// <see cref="ChangeTerms"/>, que corre en el mismo <c>PUT</c>.
+    /// </summary>
+    public bool ChangeNoticeTarget(string? phone, Guid? whatsAppConnectionId)
+    {
+        if (Status != DistributorStatus.Invited)
+        {
+            return false;
+        }
+
+        var (noticePhone, noticeConnection) = NoticeTarget(phone, whatsAppConnectionId);
+        if (noticePhone == Phone && noticeConnection == WhatsAppConnectionId)
+        {
+            return false;
+        }
+
+        Phone = noticePhone;
+        WhatsAppConnectionId = noticeConnection;
+        Invitation.ForgetNotice();
+        return true;
+    }
+
+    /// <summary>
+    /// Registra el resultado del envío del aviso. Sin efecto (y <c>false</c>) si es de otra generación o si no hay aviso en
+    /// curso (D-4). No sube <see cref="Version"/> ni toca <see cref="UpdatedAt"/> (D-3): el formulario abierto no da 412.
+    /// </summary>
+    public bool RecordInvitationNotice(int generation, InvitationNoticeStatus status, string? failureCode)
+    {
+        if (generation != Invitation.Generation || Invitation.NoticeStatus is null)
+        {
+            return false;
+        }
+
+        Invitation.SetNotice(status, failureCode);
+        return true;
     }
 
     /// <summary>Lista, asesor y empresa facturadora; en cualquier estado.</summary>
@@ -122,12 +180,27 @@ public sealed class Distributor
     }
 
     /// <summary>Token y vigencia nuevos (72 h desde ahora); el link anterior deja de existir. Sólo mientras está invitada,
-    /// aunque la invitación ya haya vencido: reenviar es como se renueva.</summary>
-    public void ResendInvitation(string tokenHash, DateTimeOffset now)
+    /// aunque la invitación ya haya vencido: reenviar es como se renueva. Sube la generación del aviso: con teléfono queda
+    /// pendiente si <paramref name="noticeQueued"/> (se escribió su evento) y si no, fallido con <c>whatsapp_unavailable</c>
+    /// (la conexión guardada ya no está lista); sin teléfono no hay aviso.</summary>
+    public void ResendInvitation(string tokenHash, bool noticeQueued, DateTimeOffset now)
     {
         EnsureTokenHash(tokenHash);
         EnsureStatus(DistributorStatus.Invited);
         Invitation.Rotate(tokenHash, now);
+        if (Phone is null)
+        {
+            Invitation.SetNotice(null, null);
+        }
+        else if (noticeQueued)
+        {
+            Invitation.SetNotice(InvitationNoticeStatus.Pending, null);
+        }
+        else
+        {
+            Invitation.SetNotice(InvitationNoticeStatus.Failed, DistributorInvitation.WhatsAppUnavailableCode);
+        }
+
         Touch(now);
     }
 
@@ -195,6 +268,22 @@ public sealed class Distributor
     };
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+
+    // Sin teléfono no hay conexión; con teléfono la conexión es obligatoria (la resuelve Application antes de llegar acá).
+    private static (string? Phone, Guid? ConnectionId) NoticeTarget(string? phone, Guid? whatsAppConnectionId)
+    {
+        if (phone is null)
+        {
+            return (null, null);
+        }
+
+        if (phone.Length is 0 or > PhoneMaxLength || whatsAppConnectionId is null || whatsAppConnectionId == Guid.Empty)
+        {
+            throw new ArgumentException("A notice phone must be E.164 and come with its WhatsApp connection.", nameof(phone));
+        }
+
+        return (phone, whatsAppConnectionId);
+    }
 
     /// <summary>
     /// Ruling W11 (c): la última red sobre el campo más sensible de la invitación. Sólo se guarda la forma de

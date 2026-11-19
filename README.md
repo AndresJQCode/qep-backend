@@ -1348,7 +1348,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog` | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive` | `purchases.order.manage` |
 | `/api/v1/tenants/{tenantId}/wholesale/price-lists` | `GET` (todas, por nombre, sin paginar), `POST` (201 + `Location`), `preview` (`POST`, la lista sin guardar: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `wholesale.price_list.in_use` si algún distribuidor la usa). Módulo `wholesale` | `wholesale.price_list.manage` |
 | `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `wholesale.price_list.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores y empresas facturadoras), `POST` (invita: 201 + `Location`, manda el correo), y por distribuidor `GET`, `PUT` (lista, asesor y empresa; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
+| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`, manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone` y `whatsAppConnectionId`; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
 | `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
@@ -1357,7 +1357,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`) (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep)) | `messaging.template.manage` |
+| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)) | `messaging.template.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -2460,7 +2460,8 @@ identidades que el `403` de login. Y el `422` distingue vencimiento de estado no
 aceptable porque sólo el primero se arregla pidiendo un link nuevo.
 
 Ni este token ni el del mayorista quedan en el servidor: `platform.request_failures` y su línea de log guardan la ruta con
-`SensitivePaths.Mask` (`/api/v1/invitations/***/accept`).
+`SensitivePaths.Mask` (`/api/v1/invitations/***/accept`). La telemetría usa la misma regla (`SensitivePathTelemetry`): el
+`url.path` de los spans de OpenTelemetry y el scope `RequestPath` de los logs del request.
 
 ### Mayorista: listas de precios, distribuidores e invitación
 
@@ -2479,7 +2480,10 @@ pasa a `404`).
 | `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
 
 - Quien no tiene cuenta abre sesión con el link: `session` exige el correo de la invitación verificado por Google y
-  `session-with-password` crea la contraseña (o verifica la que ya existe). Las dos aprovisionan el usuario por ese correo.
+  `session-with-password` crea la contraseña (o verifica la que ya existe). `session-with-password` aprovisiona el usuario por
+  ese correo; `session` usa el usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
+  (`WholesaleInvitationGoogleSession`). Una cuenta de Google ya vinculada a un usuario con otro correo es
+  `403 wholesale.invitation.email_mismatch`, sin crear nada.
 - `accept` recibe `{ mode: "NewTenant", displayName, slug }` (crea el tenant del distribuidor con
   `catalog, customers, companies, quotations, orders, reporting, suppliers, purchases`, aunque el alta pública esté apagada) o
   `{ mode: "LinkTenant", tenantId }` (un tenant del que la sesión es owner; prende `catalog`, `suppliers` y `purchases` si
@@ -2491,6 +2495,28 @@ pasa a `404`).
   `wholesale.invitation.email_mismatch` y
   `.not_tenant_owner`; `422 wholesale.invitation.self_link`, los de `register-tenant` y `validation.failed`
   (`Mode`, `DisplayName`, `Slug`, `TenantId`).
+
+#### Aviso por WhatsApp de la invitación
+
+Spec `docs/superpowers/specs/2026-11-18-invitacion-distribuidor-whatsapp-design.md`, plan
+`docs/superpowers/plans/2026-11-18-aviso-whatsapp-invitacion-backend.md`, «Contrato HTTP». Con `phone` (y la conexión que
+resuelve el contrato) invitar y «Reenviar» escriben, además del correo, `wholesale.distributor-invitation-notice.v1`: un evento
+**sin token, sin link y sin vencimiento**, que dice que la invitación llegó al correo. Lo consume Mayorista con inbox propio
+(`wholesale.inbox_messages`, consumidor `wholesale.invitation-whatsapp-notice`, curva 5 s / 30 s / 5 min) y lo manda por
+`WholesaleInvitationNoticeSender` de Bootstrapper con la plantilla `qep_mayorista_invitacion` (`UTILITY`, `es`, variables
+`nombre_contacto`, `mayorista`, `correo`). El fallo del aviso nunca frena ni cambia el correo.
+
+- Campos nuevos: `POST` y `PUT` reciben `phone` (E.164 con el país del tenant) y `whatsAppConnectionId`; `options` suma
+  `whatsAppConnections` (activas con la plantilla aprobada); lista y detalle suman `phone`, y el detalle
+  `invitation.whatsAppNotice { status: Pending|Sent|Failed, failureCode, connectionLabel }` (`null` sin teléfono o tras un `PUT`
+  que cambió teléfono o conexión).
+- `failureCode`: `template_not_approved`, `connection_unavailable:<motivo>`, `send_failed:<código>` y, en el reenvío,
+  `whatsapp_unavailable`. Errores 422 `wholesale.distributor.whatsapp_connection_required` (varias listas, ninguna elegida) y
+  `wholesale.distributor.whatsapp_unavailable` (ninguna lista, o la elegida no lo está).
+- El resultado se aplica sólo a la `generation` vigente de la invitación y no sube `version`: un `PUT` o un «Reenviar» en el medio
+  deja el aviso viejo sin efecto, y el `If-Match` leído antes sigue valiendo.
+- Plantilla: `POST …/template-management/wholesale-invitation-notice` (cuerpo opcional `{ body }`, 201) y
+  `GET …/wholesale-invitation-notice/draft`; `TemplateManagementDto` suma `wholesaleInvitationNoticeTemplate`.
 
 ### Mayorista: órdenes de compra vinculadas
 

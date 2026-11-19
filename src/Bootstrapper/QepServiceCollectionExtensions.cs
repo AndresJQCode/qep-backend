@@ -1338,6 +1338,9 @@ public static class QepServiceCollectionExtensions
         // Soporte fase 4b: la plantilla de la encuesta, con los tres botones fijos.
         services.AddScoped<ICommandHandler<ProvisionSupportSurveyTemplateCommand, ManagedTemplateDto>, ProvisionSupportSurveyTemplateHandler>();
         services.AddScoped<IQueryHandler<GetSupportSurveyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportSurveyTemplateDraftHandler>();
+        // Mayorista: la plantilla del aviso de invitación de distribuidor, calcada de la «Aviso de respuesta».
+        services.AddScoped<ICommandHandler<ProvisionWholesaleInvitationNoticeTemplateCommand, ManagedTemplateDto>, ProvisionWholesaleInvitationNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetWholesaleInvitationNoticeTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1414,6 +1417,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
         services.AddScoped<IQueryHandler<ExportChatbotQuery, ChatbotExportDto>, ExportChatbotHandler>();
         services.AddScoped<ICommandHandler<ImportChatbotCommand, ChatbotEditorDto>, ImportChatbotHandler>();
+        // Automations (spec 2026-11-18): subir y completar el archivo de un bloque «Mensaje».
+        services.AddScoped<ICommandHandler<CreateChatbotMediaSessionCommand, ChatbotMediaSessionDto>, CreateChatbotMediaSessionHandler>();
+        services.AddScoped<ICommandHandler<CompleteChatbotMediaCommand, ChatbotMediaFileDto>, CompleteChatbotMediaHandler>();
         // Automations (spec 2026-10-21 D-C8): el catálogo de plantillas, guardar un chatbot como plantilla y borrarla.
         services.AddScoped<IQueryHandler<ListChatbotTemplatesQuery, TemplateCatalogDto>, ListChatbotTemplatesHandler>();
         services.AddScoped<ICommandHandler<SaveChatbotAsTemplateCommand, TemplateDto>, SaveChatbotAsTemplateHandler>();
@@ -1851,6 +1857,12 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-17: la imagen del encabezado de plantilla sobre Storage, con el mismo criterio que el logo: sin pasar por los
         // handlers de Storage ni por sus permisos (la autoriza messaging.template.manage).
         services.AddScoped<IMessagingTemplateImageStore, MessagingTemplateImageStore>();
+        // Spec 2026-11-18: el archivo de un bloque «Mensaje» de chatbot. La política es la columna WhatsApp de Mensajería, el archivo vive en
+        // Storage (dueño ChatbotMedia, sin pasar por sus handlers ni sus permisos: lo autoriza automations.chatbot.manage) y Storage lo
+        // revisa y comprime con el sniffer y el compresor de Mensajería.
+        services.AddScoped<IChatbotMediaPolicy, ChatbotMediaPolicy>();
+        services.AddScoped<IChatbotMediaStore, ChatbotMediaStore>();
+        services.AddScoped<IChatbotMediaProcessing, ChatbotMediaProcessing>();
         // Y al revés, para el barrido diario de Storage: qué imágenes de encabezado usa todavía una plantilla.
         services.AddScoped<ITemplateImageReferences, TemplateImageReferences>();
 
@@ -1907,8 +1919,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
+        // Spec 2026-11-18: el aviso por WhatsApp de la invitación; Customers (teléfono), Integrations y Mensajería por puertos.
+        services.AddScoped<Modules.Wholesale.Application.IWholesalePhoneNormalizer, WholesalePhoneNormalizer>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleWhatsAppConnections, WholesaleWhatsAppConnections>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleInvitationNoticeSender, WholesaleInvitationNoticeSender>();
         // Ruling W17: el paso de Identity de session-with-password, con la contraseña validada antes de crear al usuario.
         services.AddScoped<WholesaleInvitationPasswordSession>();
+        // El paso de Identity de session con Google: aprovisiona sólo si la identidad no tiene usuario, y usa ese usuario.
+        services.AddScoped<WholesaleInvitationGoogleSession>();
 
         // `support` (spec 2026-11-14): clientes, responsables y el calendario son de otros módulos y Soporte sólo declara puertos. El
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].

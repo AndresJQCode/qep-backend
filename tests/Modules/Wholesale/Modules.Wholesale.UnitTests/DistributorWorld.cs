@@ -43,6 +43,15 @@ internal sealed class DistributorWorld
 
     public FakeEventPublisher Events { get; } = new();
 
+    /// <summary>Tenancy para el país del tenant (spec 2026-11-18: el teléfono se normaliza con él).</summary>
+    public FakeTenancy Tenancy { get; } = new();
+
+    public FakePhoneNormalizer Phones { get; } = new();
+
+    public FakeWhatsAppConnections WhatsApp { get; } = new();
+
+    public FakeMembershipDirectory Memberships { get; } = new();
+
     public PriceList PriceList { get; }
 
     public Guid Advisor { get; }
@@ -51,18 +60,19 @@ internal sealed class DistributorWorld
 
     public static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public DistributorComposer Composer() => new(Context, Clock, PriceLists, Members, Companies, TenantNames);
+    public DistributorComposer Composer() => new(Context, Clock, PriceLists, Members, Companies, TenantNames, WhatsApp);
 
     public InviteDistributorHandler InviteHandler() => new(
-        Context, Clock, PriceLists, Distributors, Members, Companies, UnitOfWork, Audit, Events, Composer(),
-        new InviteDistributorValidator());
+        Context, Clock, PriceLists, Distributors, Members, Companies, Tenancy, Phones, WhatsApp, Memberships, UnitOfWork, Audit,
+        Events, Composer(), new InviteDistributorValidator());
 
     public UpdateDistributorHandler UpdateHandler() => new(
-        Context, Clock, PriceLists, Distributors, Members, Companies, UnitOfWork, Audit, Composer(),
+        Context, Clock, PriceLists, Distributors, Members, Companies, Tenancy, Phones, WhatsApp, UnitOfWork, Audit, Composer(),
         new UpdateDistributorValidator());
 
     public TransitionDistributorHandler TransitionHandler() =>
-        new(Context, Clock, Distributors, UnitOfWork, Audit, Events, Composer());
+        new(Context, Clock, Distributors, WhatsApp, Memberships, UnitOfWork, Audit, Events, Composer(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<TransitionDistributorHandler>.Instance);
 
     public DeleteDistributorHandler DeleteHandler() => new(Context, Clock, Distributors, UnitOfWork, Audit);
 
@@ -70,13 +80,18 @@ internal sealed class DistributorWorld
 
     public ListDistributorsHandler ListHandler() => new(Context, Distributors, Composer(), new ListDistributorsValidator());
 
-    public GetDistributorOptionsHandler OptionsHandler() => new(Context, PriceLists, Members, Companies);
+    public GetDistributorOptionsHandler OptionsHandler() => new(Context, PriceLists, Members, Companies, WhatsApp);
 
     public InviteDistributorCommand InviteCommand(string identification = "900123456", string email = "ana@distri.co") =>
         new(Tenant, email, "Distribuciones Norte SAS", identification, "Ana Pérez", PriceList.Id.Value, Advisor, Company.Id, "trace-1");
 
     /// <summary>Un distribuidor sembrado sin pasar por el handler, con un hash de token conocido.</summary>
-    public Distributor SeedInvited(string identification = "900123456", string? tokenHash = null, DateTimeOffset? at = null)
+    public Distributor SeedInvited(
+        string identification = "900123456",
+        string? tokenHash = null,
+        DateTimeOffset? at = null,
+        string? phone = null,
+        Guid? whatsAppConnectionId = null)
     {
         var distributor = Distributor.Invite(
             Tenant,
@@ -90,6 +105,8 @@ internal sealed class DistributorWorld
             Context.SubjectId,
             tokenHash ?? InvitationTokens.HashOf(InvitationTokens.Generate()),
             Guid.CreateVersion7(),
+            phone,
+            whatsAppConnectionId,
             at ?? Now);
         return Distributors.Seed(distributor);
     }

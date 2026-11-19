@@ -27,7 +27,8 @@ public sealed record MessageRow(
     bool RetryDisabled = false,
     Guid? SentByAgentId = null);
 
-public sealed record MessageMediaRow(string MimeType, string? FileName);
+/// <summary>Spec 2026-11-18: <c>PublicUrl</c> sólo en el archivo de un chatbot, que se dibuja desde Storage y no desde R2 de Mensajería.</summary>
+public sealed record MessageMediaRow(string MimeType, string? FileName, string? PublicUrl = null);
 
 /// <summary>Spec 2026-10-10 §8.6: lo justo del mensaje citado para la burbuja y para validar un <c>replyTo</c> saliente.</summary>
 public sealed record ReplyTargetRow(Guid Id, Guid ConversationId, MessageDirection Direction, MessageKind Kind, string? Text, string? Caption, string? Wamid);

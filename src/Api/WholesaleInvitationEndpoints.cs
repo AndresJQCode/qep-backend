@@ -21,9 +21,6 @@ namespace Api;
 /// </summary>
 public static class WholesaleInvitationEndpoints
 {
-    // El único proveedor externo (ADR 0014), igual que en AuthSessionEndpoints.
-    private const string Provider = "google";
-
     private const string Route = "/api/v1/wholesale-invitations/{token}";
 
     private static readonly AcceptWholesaleInvitationValidator AcceptValidator = new();
@@ -115,14 +112,13 @@ public static class WholesaleInvitationEndpoints
     }
 
     // Orden fijo: invitación aceptable (404 → 410 → 409) → correo del token verificado y el invitado (403) → bajo el lock de
-    // ciclo de vida del usuario, aprovisionar y vincular → commit → sesión. El correo se mira antes de tocar Identity.
+    // ciclo de vida del usuario, vincular y, sólo si la identidad no tiene usuario, aprovisionar (WholesaleInvitationGoogleSession)
+    // → el usuario es el del correo invitado (403) → commit → sesión de ese usuario. El correo se mira antes de tocar Identity.
     private static async Task<IResult> SessionAsync(
         string token,
         HttpContext httpContext,
         IDistributorInvitationService invitations,
-        ITenancyUnitOfWork tenancyUnitOfWork,
-        IIdentityProvisioning identityProvisioning,
-        IProviderLinking providerLinking,
+        WholesaleInvitationGoogleSession googleSession,
         SessionEstablisher establisher,
         CancellationToken cancellationToken)
     {
@@ -141,27 +137,19 @@ public static class WholesaleInvitationEndpoints
         var emailVerified = string.Equals(principal.FindFirstValue("email_verified"), "true", StringComparison.OrdinalIgnoreCase);
         if (!emailVerified || !invitation.InvitedEmailMatches(email))
         {
-            throw EmailMismatch();
+            throw WholesaleInvitationGoogleSession.EmailMismatch();
         }
 
-        Guid userId;
-        await using (var lifecycle = await tenancyUnitOfWork.BeginUserLifecycleScopeAsync(invitation.Email, cancellationToken))
+        var outcome = await googleSession.OpenAsync(invitation.Email, subject, email!, cancellationToken);
+        if (outcome.IsDenied)
         {
-            await identityProvisioning.GetOrProvisionInvitedUserAsync(invitation.Email, cancellationToken);
-            var outcome = await providerLinking.LinkAndActivateAsync(Provider, subject, email, emailVerified, cancellationToken);
-            if (outcome.IsDenied)
-            {
-                return Results.Problem(
-                    statusCode: StatusCodes.Status403Forbidden,
-                    title: "Login denied.",
-                    detail: outcome.DenialReason);
-            }
-
-            await lifecycle.CommitAsync(cancellationToken);
-            userId = outcome.UserId!.Value;
+            return Results.Problem(
+                statusCode: StatusCodes.Status403Forbidden,
+                title: "Login denied.",
+                detail: outcome.DenialReason);
         }
 
-        return await establisher.EstablishAsync(httpContext, userId, invitation.Email, cancellationToken);
+        return await establisher.EstablishAsync(httpContext, outcome.UserId!.Value, invitation.Email, cancellationToken);
     }
 
     // Orden fijo: cuerpo (400) → invitación aceptable → contraseña con las reglas del registro (422, W17) → bajo el lock,
@@ -246,9 +234,6 @@ public static class WholesaleInvitationEndpoints
 
         return Results.Ok(accepted);
     }
-
-    private static RequestForbiddenException EmailMismatch() =>
-        new(WholesaleErrorCodes.InvitationEmailMismatch, "The invitation was sent to another email address.");
 
     // Mismo criterio que InvitationEndpoints.RequireUserId: primero qep_sub (la cookie de sesión) y "sub" de respaldo, porque el
     // stub de desarrollo pone ahí el subject QEP. Con un bearer real "sub" no es un Guid y no pasa.

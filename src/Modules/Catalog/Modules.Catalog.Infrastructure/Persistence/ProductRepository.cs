@@ -40,6 +40,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        ProductKind? kind,
         int skip,
         int take,
         CancellationToken cancellationToken)
@@ -60,6 +61,12 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         if (isActive is not null)
         {
             query = query.Where(product => product.IsActive == isActive);
+        }
+
+        // El mismo filtro de tipo que SearchSummariesAsync: se exporta lo que la grilla muestra.
+        if (kind is { } wanted)
+        {
+            query = query.Where(product => product.Kind == wanted);
         }
 
         // Los mismos filtros de texto que el listado: se exporta lo que la grilla está mostrando.

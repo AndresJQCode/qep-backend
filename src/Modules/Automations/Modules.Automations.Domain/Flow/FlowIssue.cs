@@ -16,11 +16,13 @@ public sealed record FlowIssue(FlowIssueSeverity Severity, string Code, string? 
 /// y si todas las conexiones del chatbot tienen horario asignado. <see cref="HandoffMembers"/> son los miembros que hoy pueden responder
 /// conversaciones del tenant (spec 2026-10-25 D-5): el destino de un traspaso fuera de ese conjunto es un error. Spec 2026-11-17 §5.2:
 /// <see cref="AiEnabled"/> dice si el tenant tiene el módulo <c>ai</c> y <see cref="Agents"/> son sus agentes con su estado; sin ellos, un
-/// bloque «Agente IA» no se puede publicar.
+/// bloque «Agente IA» no se puede publicar. Spec 2026-11-18: <see cref="MediaFiles"/> son los archivos de los bloques «Mensaje» que resolvieron
+/// para este tenant (id → tipo en minúscula); <c>null</c> = ninguno. Un id ausente, o con otro tipo, es <c>message.media_missing</c>.
 /// </summary>
 public sealed record FlowValidationContext(
     IReadOnlySet<string> Channels, IReadOnlySet<Guid> ActiveExternalApis, IReadOnlySet<Guid> PausedExternalApis,
-    bool AllConnectionsHaveBusinessHours, IReadOnlySet<Guid> HandoffMembers, bool AiEnabled = false, IReadOnlyList<FlowAgentRef>? Agents = null);
+    bool AllConnectionsHaveBusinessHours, IReadOnlySet<Guid> HandoffMembers, bool AiEnabled = false, IReadOnlyList<FlowAgentRef>? Agents = null,
+    IReadOnlyDictionary<Guid, string>? MediaFiles = null);
 
 /// <summary>Los códigos de §4.3, más <c>node.output_unconnected_optional</c>, <c>list.channel_not_supported</c>, <c>buttons.id_invalid</c> y
 /// <c>list.row_id_invalid</c> del brief de la tarea 11 y su revisión.</summary>
@@ -71,6 +73,17 @@ public static class FlowIssueCodes
     public const string ListNoRows = "list.no_rows";
     public const string ListDynamicIncomplete = "list.dynamic_incomplete";
     public const string MessageUrlInvalid = "message.url_invalid";
+
+    // Spec 2026-11-18: el archivo de un bloque «Mensaje».
+
+    /// <summary>Error: el archivo no existe, no es de este tenant, no se terminó de subir o es de otro tipo.</summary>
+    public const string MessageMediaMissing = "message.media_missing";
+
+    /// <summary>Aviso: un audio no lleva pie; el texto sale en un mensaje aparte, después del audio.</summary>
+    public const string MessageAudioCaptionSeparate = "message.audio_caption_separate";
+
+    /// <summary>Aviso: un audio no lleva botón; el botón sale en un interactivo aparte, después del audio.</summary>
+    public const string MessageAudioButtonSeparate = "message.audio_button_separate";
     public const string HttpTimeoutInvalid = "http.timeout_invalid";
     public const string QuestionMaxAttemptsInvalid = "question.max_attempts_invalid";
     public const string QuestionPatternInvalid = "question.pattern_invalid";

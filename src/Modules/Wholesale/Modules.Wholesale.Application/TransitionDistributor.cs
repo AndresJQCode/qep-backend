@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Tenancy.Application;
 using Modules.Wholesale.Domain;
 
@@ -15,20 +16,23 @@ public sealed record TransitionDistributorCommand(
 
 /// <summary>
 /// Reenviar rota token y vigencia (el link anterior pasa a 404) y vuelve a publicar el correo; bloquear y desbloquear sólo
-/// cambian el estado. Fuera de su estado: 409 <c>invalid_transition</c>, antes de tocar el dominio.
+/// cambian el estado. Fuera de su estado: 409 <c>invalid_transition</c>, antes de tocar el dominio. Con teléfono (spec
+/// 2026-11-18), reenviar encola un aviso nuevo si la conexión guardada sigue lista; si no, el aviso queda fallido con
+/// <c>whatsapp_unavailable</c> y el correo sale igual, también si consultar las conexiones falla.
 /// </summary>
-public sealed class TransitionDistributorHandler(
+public sealed partial class TransitionDistributorHandler(
     IExecutionContext executionContext,
     IClock clock,
     IDistributorRepository distributors,
+    IWholesaleWhatsAppConnections whatsAppConnections,
+    IMembershipDirectory memberships,
     IWholesaleUnitOfWork unitOfWork,
     IWholesaleAuditPublisher auditPublisher,
     IWholesaleEventPublisher eventPublisher,
-    DistributorComposer composer)
+    DistributorComposer composer,
+    ILogger<TransitionDistributorHandler> logger)
     : ICommandHandler<TransitionDistributorCommand, DistributorDetailDto>
 {
-    private static readonly string[] InvitationField = ["invitation"];
-
     private static readonly string[] StatusField = ["status"];
 
     public async Task<DistributorDetailDto> HandleAsync(TransitionDistributorCommand command, CancellationToken cancellationToken)
@@ -54,7 +58,8 @@ public sealed class TransitionDistributorHandler(
         {
             case DistributorAction.Resend:
                 var token = InvitationTokens.Generate();
-                distributor.ResendInvitation(InvitationTokens.HashOf(token), now);
+                var noticeQueued = await NoticeConnectionIsReadyAsync(distributor, cancellationToken);
+                distributor.ResendInvitation(InvitationTokens.HashOf(token), noticeQueued, now);
                 eventPublisher.DistributorInvited(
                     command.TenantId,
                     distributor.Id.Value,
@@ -64,7 +69,14 @@ public sealed class TransitionDistributorHandler(
                     distributor.Invitation.ExpiresAt,
                     command.CorrelationId,
                     now);
-                changedFields = InvitationField;
+                if (noticeQueued)
+                {
+                    await DistributorWhatsAppNotice.QueueAsync(
+                        eventPublisher, memberships, executionContext.SubjectId, distributor, command.CorrelationId, now,
+                        cancellationToken);
+                }
+
+                changedFields = ["invitation", DistributorWhatsAppNotice.AuditFlag(noticeQueued)];
                 break;
             case DistributorAction.Block:
                 distributor.Block(now);
@@ -89,4 +101,30 @@ public sealed class TransitionDistributorHandler(
 
         return await composer.DetailAsync(distributor, cancellationToken);
     }
+
+    // Sin teléfono no hay aviso y no se consulta Integrations.
+    private async Task<bool> NoticeConnectionIsReadyAsync(Distributor distributor, CancellationToken cancellationToken)
+    {
+        if (distributor.Phone is null || distributor.WhatsAppConnectionId is not { } connectionId)
+        {
+            return false;
+        }
+
+        // Un fallo del aviso nunca frena el correo: si Integrations falla (base, catálogo, un secreto que no descifra), el aviso
+        // queda como no listo (Failed whatsapp_unavailable) y el reenvío sigue. El log lleva sólo ids, nunca el teléfono.
+        try
+        {
+            var ready = await whatsAppConnections.ListReadyAsync(distributor.TenantId, cancellationToken);
+            return ready.Any(connection => connection.Id == connectionId);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogConnectionsUnavailable(logger, exception, distributor.TenantId, distributor.Id.Value, connectionId);
+            return false;
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not list the WhatsApp connections ready for the invitation notice of distributor {DistributorId} of tenant {TenantId} (connection {ConnectionId}); the notice fails and the email goes out.")]
+    private static partial void LogConnectionsUnavailable(
+        ILogger logger, Exception exception, Guid tenantId, Guid distributorId, Guid connectionId);
 }

@@ -63,10 +63,13 @@ public static class AgentHandoffCodes
     /// <summary>P-4: el cliente de la conversación no existe o no se puede cotizar; no hay borrador.</summary>
     public const string QuotationCustomerNotReady = "quotation_customer_not_ready";
 
+    /// <summary>El tenant pausó el agente con la sesión viva (owner, 2026-11-18): deja de contestar y la conversación pasa a una persona.</summary>
+    public const string AgentPaused = "agent_paused";
+
     /// <summary>Todos los códigos que un traspaso de agente puede llevar, para la prueba de paridad.</summary>
     public static IReadOnlyList<string> All { get; } =
     [
-        InvalidResponse, ModelCallsExceeded, ToolCallsExceeded, JobTimedOut, MaxRepliesWithoutHuman, SendFailed, QuotationDraftCreated,
+        InvalidResponse, ModelCallsExceeded, ToolCallsExceeded, JobTimedOut, MaxRepliesWithoutHuman, SendFailed, QuotationDraftCreated, AgentPaused,
         QuotationCustomerNotReady,
         AiModelErrorCodes.ProviderUnavailable, AiModelErrorCodes.RateLimited, AiModelErrorCodes.QuotaExhausted,
         AiModelErrorCodes.CredentialsRejected, AiModelErrorCodes.PermissionDenied, AiModelErrorCodes.ModelUnavailable,

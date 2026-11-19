@@ -161,12 +161,12 @@ internal sealed class FakeStorageSystemUploads : IStorageSystemUploads
     /// <summary>Un archivo que, al completarse, termina en <paramref name="outcome"/>.</summary>
     public Guid Seed(
         Guid tenantId, FileOwnerType ownerType, Guid ownerId, SystemUploadOutcome outcome, string mimeType = "image/png", long sizeBytes = 2048,
-        DateTimeOffset createdAt = default)
+        DateTimeOffset createdAt = default, Guid? fileId = null)
     {
-        var fileId = Guid.CreateVersion7();
-        _files[fileId] = new Seeded(
-            tenantId, ownerType, ownerId, outcome, new SystemFileInfo(fileId, "banner.png", mimeType, sizeBytes, createdAt));
-        return fileId;
+        var id = fileId ?? Guid.CreateVersion7();
+        _files[id] = new Seeded(
+            tenantId, ownerType, ownerId, outcome, new SystemFileInfo(id, "banner.png", mimeType, sizeBytes, createdAt));
+        return id;
     }
 
     public Task<SystemUploadSession> OpenAsync(
@@ -174,7 +174,7 @@ internal sealed class FakeStorageSystemUploads : IStorageSystemUploads
         CancellationToken cancellationToken)
     {
         // La misma declaración que valida StorageSystemUploads.OpenAsync: un nombre que no casa con su tipo no abre nada.
-        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes);
+        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes, ownerType);
         Opens.Add(new Opened(tenantId, ownerType, ownerId, name, mimeType, sizeBytes, maxSizeBytes));
         return Task.FromResult(Session);
     }

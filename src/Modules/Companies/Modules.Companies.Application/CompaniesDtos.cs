@@ -29,6 +29,10 @@ public sealed record CompanyMunicipalityDto(Guid Id, string Name, Guid Departmen
 /// «ReteICA Bogotá · Bogotá, D.C. · 0,966 %» sin pedirle nada a Catalog ni a Geography. <c>City</c> es null sólo si la
 /// ciudad ya no se encontró.
 /// </summary>
+/// <param name="AppliesTo">El nombre de <c>WithholdingScope</c> de la tasa: <c>All</c>, <c>Goods</c> o <c>Services</c> (spec
+/// 2026-11-18 servicios pendientes §2). Viaja con la tasa guardada para que la ficha diga «ReteICA (servicios)» aunque la
+/// tasa ya no esté en el catálogo activo que tiene la pantalla; sin él tendrías que cruzar el id con ese catálogo, y una
+/// tasa desactivada se quedaría sin etiqueta. Va al final y con default para no tocar las construcciones existentes.</param>
 public sealed record CompanyWithholdingTaxRateDto(
     Guid Id,
     string Name,
@@ -36,7 +40,8 @@ public sealed record CompanyWithholdingTaxRateDto(
     string Country,
     decimal Percentage,
     bool IsActive,
-    CompanyMunicipalityDto? City);
+    CompanyMunicipalityDto? City,
+    string AppliesTo = nameof(BuildingBlocks.Domain.Taxes.WithholdingScope.All));
 
 /// <param name="WithholdingTaxRates">Las tasas municipales de la empresa, ordenadas por departamento, municipio y tipo
 /// (spec ReteICA por empresa §9.2). Nunca null.</param>

@@ -20,7 +20,8 @@ public sealed class ChatbotEditorBuilder(
     ITenantClock tenantClock,
     IChatbotConnectionSlots slots,
     IAutomationsAgentDirectory agents,
-    ITenantModules tenantModules)
+    ITenantModules tenantModules,
+    IChatbotMediaStore media)
 {
     /// <summary>Canal que se supone mientras el chatbot no tiene conexiones: hoy el motor sólo atiende WhatsApp (D-M6).</summary>
     private const string DefaultChannel = "WhatsApp";
@@ -52,7 +53,8 @@ public sealed class ChatbotEditorBuilder(
         var ai = await AiOfAsync(chatbot.TenantId, cancellationToken);
 
         var (flow, problem) = ParseStored(chatbot);
-        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames, ai);
+        var files = flow is null ? [] : await MediaOfAsync(chatbot.TenantId, flow, cancellationToken);
+        var issues = flow is null ? [problem!] : Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames, ai, files);
         var published = chatbot.PublishedVersionId is { } publishedId
             ? chatbot.Versions.FirstOrDefault(version => version.Id == publishedId)
             : null;
@@ -73,7 +75,8 @@ public sealed class ChatbotEditorBuilder(
             chatbot.ExhaustedMemberId,
             [.. assignable.Select(member => new ChatbotMemberDto(member.Id, member.Name))],
             [.. ai.Agents.Select(agent => new ChatbotEditorAgentDto(agent.Id, agent.Name, agent.Status, agent.Provider, agent.Model))],
-            ai.Enabled);
+            ai.Enabled,
+            [.. files.Select(ChatbotMediaFileDto.From)]);
     }
 
     /// <summary>`GET /connections` (§4.4): las mismas conexiones que trae el editor, armadas por el mismo código.</summary>
@@ -117,7 +120,17 @@ public sealed class ChatbotEditorBuilder(
             chatbot.TenantId, [.. chatbot.Connections.Select(connection => connection.ConnectionId)], cancellationToken);
         var apis = await externalApis.ListAsync(chatbot.TenantId, cancellationToken);
         var assignable = await members.ListAsync(chatbot.TenantId, cancellationToken);
-        return Validate(chatbot, flow, tenantConnections, apis, assignable, scheduleNames, await AiOfAsync(chatbot.TenantId, flow, cancellationToken));
+        return Validate(
+            chatbot, flow, tenantConnections, apis, assignable, scheduleNames, await AiOfAsync(chatbot.TenantId, flow, cancellationToken),
+            await MediaOfAsync(chatbot.TenantId, flow, cancellationToken));
+    }
+
+    /// <summary>Spec 2026-11-18: los archivos de los bloques «Mensaje», en una sola lectura y sólo si el flujo tiene alguno (como <see cref="AiOfAsync(Guid, FlowDefinition, CancellationToken)"/>).
+    /// La resolución es por tenant: un id de otro tenant (un flujo pegado o importado) no vuelve y el validador lo marca.</summary>
+    private async Task<IReadOnlyList<ChatbotMediaFile>> MediaOfAsync(Guid tenantId, FlowDefinition flow, CancellationToken cancellationToken)
+    {
+        var fileIds = FlowMedia.FileIdsOf(flow);
+        return fileIds.Count == 0 ? [] : await media.ResolveAsync(tenantId, fileIds, cancellationToken);
     }
 
     /// <summary>Spec 2026-11-17 §5.2: el módulo <c>ai</c> y los agentes del tenant, que sólo pregunta un flujo con un bloque «Agente IA»: el resto
@@ -210,7 +223,8 @@ public sealed class ChatbotEditorBuilder(
         IReadOnlyList<ExternalApiRef> apis,
         IReadOnlyList<AutomationMemberRef> assignable,
         IReadOnlyDictionary<Guid, string?> scheduleNames,
-        AiContext ai)
+        AiContext ai,
+        IReadOnlyList<ChatbotMediaFile> files)
     {
         var own = chatbot.Connections.Select(connection => connection.ConnectionId).ToHashSet();
         var channels = tenantConnections.Where(connection => own.Contains(connection.Id)).Select(connection => connection.Channel).ToHashSet(StringComparer.Ordinal);
@@ -227,7 +241,8 @@ public sealed class ChatbotEditorBuilder(
             own.All(id => scheduleNames.GetValueOrDefault(id) is not null),
             replyingMembers,
             ai.Enabled,
-            [.. ai.Agents.Select(agent => new FlowAgentRef(agent.Id, agent.Name, agent.Status))]);
+            [.. ai.Agents.Select(agent => new FlowAgentRef(agent.Id, agent.Name, agent.Status))],
+            files.ToDictionary(file => file.FileId, file => file.Kind));
         var issues = FlowValidator.Validate(flow, context)
             .Select(issue => new FlowIssueDto(issue.Severity.ToString(), issue.Code, issue.NodeId, issue.Message))
             .ToList();

@@ -143,6 +143,28 @@ public sealed class TemplateParametersTests
         Assert.Equal("Chao de {param.missing}.", Assert.IsType<ResolveNode>(flow.Nodes[8]).Text);
     }
 
+    // Spec 2026-11-18: instalar una plantilla reconstruye cada bloque; el archivo del mensaje viaja tal cual.
+    [Fact]
+    public void ApplyKeepsTheMedia()
+    {
+        const string json = """
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "m1" },
+              "variables": [],
+              "nodes": [
+                { "id": "m1", "kind": "message", "title": "Catálogo", "text": "Mira {param.site}", "urlButton": null,
+                  "media": { "kind": "video", "fileId": "7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11" }, "outputs": { "next": null } }
+              ]
+            }
+            """;
+
+        var message = Assert.IsType<MessageNode>(Assert.Single(FlowJson.Parse(TemplateParameters.Apply(json, Values)).Nodes));
+
+        Assert.Equal("Mira https://clasic.co", message.Text);
+        Assert.Equal(new MessageMedia(ChatbotMediaKinds.Video, Guid.Parse("7d2f0c55-1a4e-4c1f-9b0e-3f6a2d8e9c11")), message.Media);
+    }
+
     [Fact]
     public void ResolveUsesTheDefaultAndIgnoresUndeclaredKeys()
     {

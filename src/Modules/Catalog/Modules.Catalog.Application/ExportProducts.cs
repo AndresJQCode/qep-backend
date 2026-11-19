@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Catalog;
 using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
 
@@ -18,14 +19,16 @@ namespace Modules.Catalog.Application;
 /// Los filtros son los mismos que <see cref="ListProductsQuery"/> a proposito: se exporta lo que se
 /// esta viendo en la grilla. Sin ninguno, se exporta el catalogo entero. <c>Search</c> incluido: la
 /// grilla filtra con esa caja (nombre, codigo o codigo de barras), y sin el el Excel traeria mas de
-/// lo que se ve.
+/// lo que se ve. <c>Kind</c> tambien (spec 2026-11-18 servicios pendientes §1): la grilla filtra productos o servicios, y
+/// sin el el Excel traeria los dos aunque la pantalla muestre uno solo; null trae los dos.
 /// </summary>
 public sealed record ExportProductsCommand(
     Guid TenantId,
     string? Search,
     string? Name,
     string? Code,
-    bool? IsActive) : ICommand<ExportProductsResult>;
+    bool? IsActive,
+    ProductKind? Kind = null) : ICommand<ExportProductsResult>;
 
 /// <summary>
 /// Lo que el request devuelve. `ProductCount` cuenta **productos**, no filas: es lo que el correo
@@ -149,6 +152,7 @@ public sealed class ExportProductsHandler(
                 command.Name,
                 command.Code,
                 command.IsActive,
+                command.Kind,
                 all.Count,
                 BatchSize,
                 cancellationToken);

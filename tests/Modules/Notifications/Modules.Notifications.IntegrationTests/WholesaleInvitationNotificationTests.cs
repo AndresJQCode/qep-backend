@@ -38,7 +38,7 @@ public sealed class WholesaleInvitationNotificationTests
         // El inbox del consumidor impide un segundo correo para el mismo mensaje en los ticks siguientes.
         await Task.Delay(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
         var message = Assert.Single(channel.Sent, sent => sent.ToAddress == email);
-        Assert.Equal("Notifications Delivery Org te invita a comprarle en QEP", message.Subject);
+        Assert.Equal("Notifications Delivery Org te invita a comprarle en Lulo CRM", message.Subject);
         Assert.Contains($"{AppBaseUrl}/wholesale-invitations/{token}", message.TextBody, StringComparison.Ordinal);
         Assert.Single(await NotificationsDeliveryHarness.NotificationsForAsync(
             database.GetConnectionString(), distributorId, WholesaleInvitationEmailTemplate.TemplateRef));

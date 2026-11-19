@@ -24,7 +24,7 @@ public sealed class SystemOwnedFilesApiTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static TheoryData<FileOwnerType> SystemOwners => new(FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate);
+    public static TheoryData<FileOwnerType> SystemOwners => new(FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia);
 
     // Un dueño de sistema nuevo tiene que entrar a SystemOwners: si no, estas pruebas dejan de cubrirlo sin ponerse rojas.
     [Fact]
@@ -66,8 +66,9 @@ public sealed class SystemOwnedFilesApiTests
         Assert.Contains(normal.FileId, all);
         Assert.DoesNotContain(attachment.FileId, all);
         Assert.Empty(filtered);
-        // El dueño de una imagen de plantilla es el tenant, que la respuesta no lleva; el de un adjunto es un secreto que no se filtra.
-        if (ownerType is not FileOwnerType.MessageTemplate)
+        // El dueño de una imagen de plantilla o de un archivo de chatbot es el tenant, que la respuesta no lleva; el de un adjunto es un
+        // secreto que no se filtra.
+        if (ownerType is not (FileOwnerType.MessageTemplate or FileOwnerType.ChatbotMedia))
         {
             Assert.DoesNotContain(attachment.OwnerId.ToString(), await (await client.GetAsync(FilesUrl, Ct)).Content.ReadAsStringAsync(Ct),
                 StringComparison.OrdinalIgnoreCase);
@@ -133,11 +134,11 @@ public sealed class SystemOwnedFilesApiTests
     }
 
     /// <summary>Un archivo disponible de un dueño de sistema, subido por el camino sin miembro con una imagen: también se podría publicar.
-    /// El dueño de un adjunto de Soporte es un secreto aleatorio; el de una imagen de plantilla, el tenant.</summary>
+    /// El dueño de un adjunto de Soporte es un secreto aleatorio; el de una imagen de plantilla o de un archivo de chatbot, el tenant.</summary>
     private static async Task<(Guid FileId, Guid OwnerId)> SystemOwnedFileAsync(
         StorageApiFactory factory, string connectionString, FileOwnerType ownerType)
     {
-        var ownerId = ownerType is FileOwnerType.MessageTemplate ? TenantId : Guid.NewGuid();
+        var ownerId = ownerType is FileOwnerType.MessageTemplate or FileOwnerType.ChatbotMedia ? TenantId : Guid.NewGuid();
         var content = await PngAsync(32, 32);
         await using var scope = factory.Services.CreateAsyncScope();
         var uploads = scope.ServiceProvider.GetRequiredService<IStorageSystemUploads>();

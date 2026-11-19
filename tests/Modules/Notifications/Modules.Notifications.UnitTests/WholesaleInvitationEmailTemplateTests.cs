@@ -19,7 +19,7 @@ public sealed class WholesaleInvitationEmailTemplateTests
         var message = Render("Mayorista Central", "Distribuciones Norte SAS");
 
         Assert.Equal("ana@distri.co", message.ToAddress);
-        Assert.Equal("Mayorista Central te invita a comprarle en QEP", message.Subject);
+        Assert.Equal("Mayorista Central te invita a comprarle en Lulo CRM", message.Subject);
         Assert.Equal("wholesale-invitation", WholesaleInvitationEmailTemplate.TemplateRef);
     }
 
@@ -30,7 +30,7 @@ public sealed class WholesaleInvitationEmailTemplateTests
 
         foreach (var body in new[] { message.HtmlBody, message.TextBody })
         {
-            Assert.Contains("Mayorista Central quiere venderle a Distribuciones Norte SAS por QEP.", body, StringComparison.Ordinal);
+            Assert.Contains("Mayorista Central quiere venderle a Distribuciones Norte SAS por Lulo CRM.", body, StringComparison.Ordinal);
             Assert.Contains("Acepta la invitación para crear tus órdenes de compra con sus precios.", body, StringComparison.Ordinal);
             Assert.Contains("El enlace vence el 20/11/2026 09:30.", body, StringComparison.Ordinal);
             Assert.Contains(Link, body, StringComparison.Ordinal);

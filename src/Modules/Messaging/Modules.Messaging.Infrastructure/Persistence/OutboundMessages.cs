@@ -286,7 +286,9 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         /// <summary>Spec 2026-10-11 §6.5 y §7: con <c>stored_at</c> no nulo la fila queda fuera de
         /// <c>IX_message_media_pending</c> y el <c>MediaCopyWorker</c> no la toma. <c>meta_media_id</c> es
         /// <c>NOT NULL</c>: sin id de Meta se guarda <c>''</c> (D-V2). La clave es la de <see cref="MessageId"/>, que en
-        /// un reintento es la de la fila <c>Failed</c>: R2 sobrescribe el mismo objeto.</summary>
+        /// un reintento es la de la fila <c>Failed</c>: R2 sobrescribe el mismo objeto. Spec 2026-11-18: con <c>PublicUrl</c> (el archivo de un
+        /// chatbot) no hay objeto en R2 de Mensajería: <c>storage_key</c> nulo (el borrado de un cliente lo salta), <c>meta_media_id</c> vacío y
+        /// <c>stored_at</c> lleno, así la copia no lo toma.</summary>
         private async Task UpsertMediaAsync(DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
         {
             if (draft.Media is not { } media)
@@ -294,15 +296,18 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 return;
             }
 
-            var key = MessagingMediaKeys.For(draft.TenantId, MessageId);
-            var mediaId = metaMediaId ?? string.Empty;
+            var key = media.PublicUrl is null ? MessagingMediaKeys.For(draft.TenantId, MessageId) : null;
+            var mediaId = media.PublicUrl is null ? metaMediaId ?? string.Empty : string.Empty;
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, size_bytes, storage_key, stored_at, attempts, next_attempt_at, last_error)
-                VALUES ({MessageId}, {media.MimeType}, {media.FileName}, {mediaId}, {media.Sha256Hex}, {media.SizeBytes}, {key}, {occurredAt}, 0, {occurredAt}, NULL)
+                INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, size_bytes, storage_key, stored_at, attempts, next_attempt_at, last_error,
+                    storage_file_id, public_url)
+                VALUES ({MessageId}, {media.MimeType}, {media.FileName}, {mediaId}, {media.Sha256Hex}, {media.SizeBytes}, {key}, {occurredAt}, 0, {occurredAt}, NULL,
+                    {media.StorageFileId}, {media.PublicUrl})
                 ON CONFLICT (message_id) DO UPDATE SET
                     mime_type = EXCLUDED.mime_type, file_name = EXCLUDED.file_name, meta_media_id = EXCLUDED.meta_media_id, sha256 = EXCLUDED.sha256, size_bytes = EXCLUDED.size_bytes,
-                    storage_key = EXCLUDED.storage_key, stored_at = EXCLUDED.stored_at, attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at, last_error = NULL
+                    storage_key = EXCLUDED.storage_key, stored_at = EXCLUDED.stored_at, attempts = 0, next_attempt_at = EXCLUDED.next_attempt_at, last_error = NULL,
+                    storage_file_id = EXCLUDED.storage_file_id, public_url = EXCLUDED.public_url
                 """, cancellationToken);
         }
 

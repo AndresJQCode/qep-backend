@@ -150,6 +150,11 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("invited_by_user_id");
 
+                    b.Property<string>("Phone")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("phone");
+
                     b.Property<Guid>("PriceListId")
                         .HasColumnType("uuid")
                         .HasColumnName("price_list_id");
@@ -172,6 +177,10 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
                         .HasColumnName("version");
+
+                    b.Property<Guid?>("WhatsAppConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("whatsapp_connection_id");
 
                     b.HasKey("Id");
 
@@ -260,6 +269,36 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                     b.ToTable("price_lists", "wholesale");
                 });
 
+            modelBuilder.Entity("Modules.Wholesale.Infrastructure.Persistence.WholesaleInboxMessage", b =>
+                {
+                    b.Property<string>("Consumer")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("consumer");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Consumer", "MessageId");
+
+                    b.ToTable("inbox_messages", "wholesale");
+                });
+
             modelBuilder.Entity("Modules.Wholesale.Infrastructure.Persistence.WholesaleOutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -334,6 +373,23 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                             b1.Property<DateTimeOffset>("ExpiresAt")
                                 .HasColumnType("timestamp with time zone")
                                 .HasColumnName("expires_at");
+
+                            b1.Property<int>("Generation")
+                                .IsConcurrencyToken()
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("integer")
+                                .HasDefaultValue(0)
+                                .HasColumnName("generation");
+
+                            b1.Property<string>("NoticeFailureCode")
+                                .HasMaxLength(128)
+                                .HasColumnType("character varying(128)")
+                                .HasColumnName("notice_failure_code");
+
+                            b1.Property<string>("NoticeStatus")
+                                .HasMaxLength(16)
+                                .HasColumnType("character varying(16)")
+                                .HasColumnName("notice_status");
 
                             b1.Property<Guid>("ReservedTenantId")
                                 .HasColumnType("uuid")

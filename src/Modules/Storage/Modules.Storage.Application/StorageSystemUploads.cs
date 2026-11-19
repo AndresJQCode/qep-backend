@@ -16,6 +16,7 @@ public sealed class StorageSystemUploads(
     IFileContentInspector contentInspector,
     IImageVariantGenerator imageVariantGenerator,
     IPaymentProofImageProcessor paymentProofImageProcessor,
+    IChatbotMediaProcessing chatbotMediaProcessing,
     IFileScanner scanner,
     IStorageUnitOfWork unitOfWork,
     IStorageAuditPublisher auditPublisher,
@@ -29,6 +30,7 @@ public sealed class StorageSystemUploads(
         contentInspector,
         imageVariantGenerator,
         paymentProofImageProcessor,
+        chatbotMediaProcessing,
         scanner,
         unitOfWork,
         auditPublisher,
@@ -44,7 +46,7 @@ public sealed class StorageSystemUploads(
         long maxSizeBytes,
         CancellationToken cancellationToken)
     {
-        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes);
+        FileUploadPolicy.ValidateDeclaration(name, mimeType, sizeBytes, maxSizeBytes, ownerType);
 
         var id = FileResourceId.New();
         var key = StorageKey.StagingFor(tenantId, id);

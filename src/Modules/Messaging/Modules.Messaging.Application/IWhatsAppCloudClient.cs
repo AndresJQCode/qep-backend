@@ -48,6 +48,11 @@ public sealed record TemplateListing(IReadOnlyList<System.Text.Json.JsonElement>
 
 public sealed record MediaInfo(Uri Url, string MimeType, string? Sha256, long FileSize);
 
+/// <summary>Spec 2026-11-18: un archivo que Meta descarga de <see cref="Url"/> (la URL pública de Storage) en vez de una subida previa.
+/// <see cref="Kind"/> es <see cref="MessageKind.Image"/>, <see cref="MessageKind.Video"/>, <see cref="MessageKind.Audio"/> o
+/// <see cref="MessageKind.Document"/>; <see cref="FileName"/> sólo viaja con documento (<c>document.filename</c>).</summary>
+public sealed record MediaLink(MessageKind Kind, Uri Url, string? FileName);
+
 /// <summary>Decisión 3: el cliente de Graph de Messaging (<c>messaging.meta-graph</c>). Nunca registra el token ni la URL firmada.</summary>
 public interface IWhatsAppCloudClient
 {
@@ -92,6 +97,12 @@ public interface IWhatsAppCloudClient
     /// <c>caption</c>: WhatsApp no lo admite en audio. Devuelve el mismo <see cref="SendResult"/> que el texto.</summary>
     Task<SendResult> SendAudioAsync(
         MessagingSender sender, SendTarget target, string mediaId, bool voice, string callbackData, string? contextWamid, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-18: <c>type: &lt;kind&gt;</c> con <c>{ link, caption?, filename? }</c>, para el archivo de un chatbot. Un audio nunca
+    /// lleva <c>caption</c> (WhatsApp no lo admite); <c>filename</c> sólo con documento. Mismo <see cref="SendResult"/> que el texto.</summary>
+    Task<SendResult> SendMediaLinkAsync(
+        MessagingSender sender, SendTarget target, MediaLink media, string? caption, string callbackData, string? contextWamid,
+        CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-11 §5.1: <c>GET /{waba_id}/message_templates</c> con los campos que lee el normalizador, de a 100 y
     /// siguiendo <c>paging.next</c> hasta 10 páginas. Devuelve cada plantilla tal cual la mandó Meta (ya clonada, sin ligar al
