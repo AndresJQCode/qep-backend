@@ -59,7 +59,8 @@ public sealed partial class EngineEndToEndTests
 
     private static async Task<Fixture> ArrangeAsync(
         TestDatabase database, string trigger = "NewConversation", string[]? keywords = null, bool enqueue = true, string flowJson = FlowJson,
-        int? inboxBatchSize = null, IReadOnlyDictionary<string, string>? settings = null)
+        int? inboxBatchSize = null, IReadOnlyDictionary<string, string>? settings = null,
+        Func<WebApplicationFactory<Program>, RegisteredTenant, Task<string>>? flowOf = null)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString, enqueueAutomation: enqueue);
@@ -85,6 +86,12 @@ public sealed partial class EngineEndToEndTests
         await EnableAutomationsAsync(connectionString, tenant.TenantId);
         var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio", PhoneNumberId, "222");
         using var admin = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        // A flow that names tenant data (a tag, a stage) seeds it and is written once the tenant exists, before publishing validates it.
+        if (flowOf is not null)
+        {
+            flowJson = await flowOf(host, tenant);
+        }
+
         var chatbotId = await PublishChatbotAsync(admin, tenant.TenantId, flowJson, connectionId, trigger, keywords ?? []);
         var meta = new BotMeta(factory.MetaHandler);
         return new Fixture(factory, host, connectionString, tenant, connectionId, chatbotId, host.CreateClient(), notifier, meta);
