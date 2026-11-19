@@ -93,15 +93,20 @@ El owner dejó el cómo en manos de quien diseña; A es decisión de este diseñ
 ### 3. Qué ve quien abre el link
 
 `GET /wholesale-invitations/{token}` sigue anónimo y devuelve mayorista, razón social, contacto, estado y vigencia. Además
-devuelve el correo **enmascarado** (no completo), porque el link ya no prueba el buzón. Quien tiene sesión ve, aparte, su
-tenant actual y sus tenants donde puede aceptar.
+devuelve el correo **completo**, como hoy (D-20): el flujo del owner lo necesita para precargar el formulario, y enmascararlo lo
+rompería. El costo es que quien tenga el link ve el correo que escribió el mayorista; el link ya iba a ese correo. Quien tiene
+sesión ve, aparte, su tenant actual y sus tenants donde puede aceptar.
 
 ### 4. Distribuidor nuevo
 
 1. El distribuidor escribe un correo (precargado con el del mayorista), contraseña y marca los términos.
-2. Se manda un código de un solo uso a **ese** correo (Identity, propósito nuevo en `EmailTokenPurpose`). Hasta que no se
-   confirma no se crea usuario, tenant ni vínculo, y no se toca el correo del mayorista.
-3. Con el código confirmado, se hace la aceptación idempotente: usuario (`GetOrProvisionInvitedUserAsync` con el correo
+2. Se manda un código de un solo uso a **ese** correo. No sirve `EmailTokenPurpose`: `identity.email_tokens` cuelga de un
+   usuario (`TryConsumeAsync` devuelve el `userId`) y aquí todavía no hay usuario. Identity guarda el desafío aparte, por
+   correo (hash del código, intentos, vigencia). Hasta que no se confirma no se crea usuario, tenant ni vínculo, y no se toca
+   el correo del mayorista.
+3. El código se consume **en la misma llamada** que crea el usuario y la contraseña (`session-with-password`), de modo que no
+   hay prueba que guardar entre pasos. Si algo falla después, el usuario ya existe y el reintento es un inicio de sesión
+   normal con su contraseña; no hace falta otro código. Luego, la aceptación idempotente: usuario (`GetOrProvisionInvitedUserAsync` con el correo
    **confirmado**), tenant reservado (`RegisterInvitedTenantAsync`) con `DisplayName` = razón social, `Slug` generado de la
    razón social con sufijo numérico si está tomado, y los defaults del registro público; proveedor, cliente y commit final.
 4. La aceptación de términos se **registra** con quién, cuándo y qué versión (ver «Pendiente del owner»).
@@ -139,9 +144,9 @@ Salen de la revisión del diseño; el owner puede cambiarlas.
 - **Cuenta existente y correo distinto:** iniciar sesión basta como prueba del correo de la cuenta. Identity no activa a un
   usuario hasta verificar su correo (`MarkEmailVerified` + `Activate`), así que quien inicia sesión ya lo demostró. No hay
   segundo código. El correo nuevo es el de la cuenta que inició sesión.
-- **Prueba del correo confirmado:** el código se consume una vez y entrega una **prueba firmada de vida corta** (30 min) ligada
-  al token de la invitación y al correo. Un reintento tras un fallo a mitad usa esa prueba, no pide otro código; vencida, pide
-  uno nuevo. La aceptación sigue siendo idempotente sobre el tenant reservado.
+- **Prueba del correo confirmado:** no hay prueba que guardar. El código se consume en la llamada que crea el usuario (ver §4);
+  un reintento tras un fallo a mitad es un inicio de sesión normal. La aceptación sigue siendo idempotente sobre el tenant
+  reservado.
 - **Términos:** la aceptación es **por usuario** (quién, cuándo, qué versión), en Identity, también en el camino de «crear un
   tenant nuevo con tu sesión». La versión sale de configuración; sin ella configurada el flujo falla cerrado, no acepta con
   una versión inventada.
@@ -152,7 +157,8 @@ Salen de la revisión del diseño; el owner puede cambiarlas.
 - **«Admin» para vincular:** sólo el rol de sistema `admin` en una membresía **activa** de ese tenant, además del owner. Un rol
   personalizado con permisos parecidos no cuenta; suspendidas o pendientes tampoco. Es una consulta nueva de Tenancy (junto a
   `TenantOwnershipQuery`), no un cruce directo con Authorization.
-- **Correo enmascarado:** primera letra del usuario y dominio completo (`a***@empresa.com`).
+- **Cuenta sin contraseña o sin usuario siempre exige el código.** Con el link como única llave, sin esto bastaría el link más
+  el correo de otra persona para fijarle una contraseña a su cuenta. Sólo quien ya tiene contraseña entra sin código.
 - **WhatsApp con link:** hereda de la conexión elegida las reglas de ventana y consentimiento que ya aplica el envío de
   plantillas. El token no puede guardarse en el mensaje de Mensajería; cómo se enmascara al guardar es trabajo del plan y puede
   salir como ítem aparte.
