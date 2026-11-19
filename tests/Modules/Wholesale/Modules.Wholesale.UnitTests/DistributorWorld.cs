@@ -80,7 +80,7 @@ internal sealed class DistributorWorld
 
     public ListDistributorsHandler ListHandler() => new(Context, Distributors, Composer(), new ListDistributorsValidator());
 
-    public GetDistributorOptionsHandler OptionsHandler() => new(Context, PriceLists, Members, Companies, WhatsApp);
+    public GetDistributorOptionsHandler OptionsHandler() => new(Context, PriceLists, Members, Companies, WhatsApp, Tenancy);
 
     public InviteDistributorCommand InviteCommand(
         string identification = "900123456",

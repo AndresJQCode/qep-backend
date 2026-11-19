@@ -243,6 +243,17 @@ public sealed class DistributorHandlersTests
     }
 
     [Fact]
+    public async Task OptionsReturnTheTenantCountryAndFallBackToCO()
+    {
+        var withoutSettings = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+        _world.Tenancy.Countries[_world.Tenant] = "ES";
+        var withSettings = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+
+        Assert.Equal("CO", withoutSettings.DefaultCountry);
+        Assert.Equal("ES", withSettings.DefaultCountry);
+    }
+
+    [Fact]
     public async Task ReadersCannotWriteAndAnotherTenantIsForbidden()
     {
         _world.Context = new FakeExecutionContext(_world.Tenant, WholesalePermissions.DistributorRead);
