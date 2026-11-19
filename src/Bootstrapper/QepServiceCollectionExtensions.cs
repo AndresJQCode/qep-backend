@@ -1901,6 +1901,7 @@ public static class QepServiceCollectionExtensions
         // `purchases` (spec 2026-11-17): proveedor, variante y membresías son ids sueltos de otros módulos; Compras sólo declara
         // puertos y el composition root los cablea contra Suppliers, Catalog y Tenancy.
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
+        services.AddScoped<Modules.Purchases.Application.IPurchaseOrderEmail, PurchaseOrderEmailSender>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
         // Mayorista fase 3: el catálogo del mayorista, su motor de pedidos (por un scope propio por llamada) y el catálogo propio
