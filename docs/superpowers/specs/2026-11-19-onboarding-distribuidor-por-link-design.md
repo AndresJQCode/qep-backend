@@ -177,6 +177,9 @@ Salen de la revisión del diseño; el owner puede cambiarlas.
 - **Términos:** el texto, la URL y la versión que se registra. El código no tiene aceptación de términos en el registro, así que
   esta es una pieza nueva, y el dónde guardarla (Identity, Tenancy) lo decide el diseño del plan.
 - **Retirar el aviso sin link** una vez que el WhatsApp con link esté en producción.
+- **Rastro de los términos al purgar un usuario:** `identity.terms_acceptances` tiene `ON DELETE CASCADE` hacia
+  `identity.users`, así que purgar un usuario (por ejemplo, `OrphanUserCleanupWorker`) borra el registro de quién aceptó qué
+  versión de los términos. Mantenerlo así o cambiarlo (conservar la fila sin FK, o anonimizarla) lo decide el owner.
 
 ## Lo que queda al constructor
 

@@ -2484,7 +2484,8 @@ Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.
 prueba el buzón, y el correo no tiene que ser el invitado.
 
 - `email-code` manda un código de 6 dígitos al correo que escribió el distribuidor (vence a los 10 minutos, 5 intentos; uno
-  nuevo cada 60 s como mucho). Responde `202` siempre: no dice si el correo tiene cuenta ni si la invitación sigue pendiente, y
+  nuevo cada 60 s como mucho y 5 por correo en 24 h móviles). Cada código nuevo invalida el anterior y sólo cuenta el más
+  reciente. Responde `202` siempre: no dice si el correo tiene cuenta ni si la invitación sigue pendiente, y
   sólo emite con la invitación pendiente.
 - `session-with-password` (sin `email`, el invitado): si ese correo ya tiene contraseña, es un login normal
   (`IPasswordLogin`: `401 identity.credentials.invalid`, o `403 identity.email.not_verified` con el correo sin verificar; el
@@ -2515,8 +2516,10 @@ prueba el buzón, y el correo no tiene que ser el invitado.
 
 Spec `docs/superpowers/specs/2026-11-18-invitacion-distribuidor-whatsapp-design.md`, plan
 `docs/superpowers/plans/2026-11-18-aviso-whatsapp-invitacion-backend.md`, «Contrato HTTP». Con `phone` (y la conexión que
-resuelve el contrato) invitar y «Reenviar» escriben, además del correo, `wholesale.distributor-invitation-notice.v1`: un evento
-**sin token, sin link y sin vencimiento**, que dice que la invitación llegó al correo. Lo consume Mayorista con inbox propio
+resuelve el contrato) invitar y «Reenviar» escriben, además del correo, `wholesale.distributor-invitation-link.v1` (spec
+2026-11-19 §2): un evento **con el token** de la invitación, que viaja sólo en el payload del outbox. Reemplaza a
+`wholesale.distributor-invitation-notice.v1`, sin token, que ya no se escribe y sólo se drena. El mensaje de WhatsApp todavía
+**sale sin el link**: dice que la invitación llegó al correo. Los dos los consume Mayorista con inbox propio
 (`wholesale.inbox_messages`, consumidor `wholesale.invitation-whatsapp-notice`, curva 5 s / 30 s / 5 min) y lo manda por
 `WholesaleInvitationNoticeSender` de Bootstrapper con la plantilla `qep_mayorista_invitacion` (`UTILITY`, `es`, variables
 `nombre_contacto`, `mayorista`, `correo`). El fallo del aviso nunca frena ni cambia el correo.
