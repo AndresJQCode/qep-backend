@@ -313,6 +313,44 @@ public sealed class SiigoSettingsApiTests
     }
 
     [Fact]
+    public async Task TheTaxesStepOffersTheNationalWithholdingsEvenWhenTheCompanyHasNoneAssigned()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        using var client = Manager(factory, world.Tenant);
+        // Retefuente is national (the same for every company), so no company is ever assigned one: the step must offer it anyway.
+        await CreateCompanyAsync(client, world.TenantId, "Empresa base");
+        var retefuente = await CreateTaxRateAsync(client, world.TenantId, "Retefuente compras 2,5", 2.5m, type: "Retefuente", country: "CO");
+        // A municipal rate nobody assigned to the chosen company stays out.
+        await CreateTaxRateAsync(
+            client, world.TenantId, "ReteICA sin asignar", 9.66m, type: "ReteICA", country: "CO", cityId: await AnyCityIdAsync(client));
+        var company = await CreateCompanyAsync(client, world.TenantId);
+        await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
+        (await PutAsync(client, SettingsRoute(world.TenantId, world.ConnectionId, "company"), new { companyId = company.Id }, "\"0\"")).EnsureSuccessStatusCode();
+
+        var settings = (await client.GetFromJsonAsync<JsonObject>(SettingsRoute(world.TenantId, world.ConnectionId), Ct))!;
+
+        var rate = Assert.Single(settings["taxes"]!["withholdings"]!.AsArray())!.AsObject();
+        Assert.Equal(retefuente.ToString(), rate["taxRateId"]!.GetValue<string>());
+        Assert.Equal("Retefuente", rate["type"]!.GetValue<string>());
+
+        // It saves like any other link.
+        var put = await PutAsync(
+            client,
+            SettingsRoute(world.TenantId, world.ConnectionId, "taxes"),
+            new
+            {
+                vat = new object[] { new { taxPercentage = 0, siigoTaxId = (string?)null } },
+                withholdings = new[] { new { taxRateId = retefuente, siigoTaxId = "13160" } },
+            },
+            "\"1\"");
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        var saved = (await put.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Equal("13160", saved["taxes"]!["withholdings"]![0]!["siigoTaxId"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task ThePaymentsStepOffersTheCompanyAccountsAndKeepsTheLinks()
     {
         await using var database = await StartDatabaseAsync();
