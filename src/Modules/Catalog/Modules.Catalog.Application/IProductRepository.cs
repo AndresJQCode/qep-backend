@@ -13,8 +13,8 @@ public interface IProductRepository
     /// cuando se llenan los dos); `search` es el criterio OR original sobre los mismos dos
     /// campos, para el combobox de productos de `quotes`. `isActive` es un filtro real de la
     /// consulta, no un post-filtro en memoria. `categoryIds`: null no filtra; no nulo deja sólo
-    /// los productos de esas categorías (una colección vacía no devuelve filas). Lo usa el POS;
-    /// `GET /catalog/products` no lo expone todavía (spec 2026-10-26 §3.3).
+    /// los productos de esas categorías (una colección vacía no devuelve filas). Lo usan el POS y
+    /// `GET /catalog/products?categoryId=` (spec 2026-11-19 catalogo-productos-filtro-categoria).
     /// </summary>
     Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
         Guid tenantId,
