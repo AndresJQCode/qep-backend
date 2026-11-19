@@ -19,7 +19,7 @@ public sealed class DistributorInvitationNoticesTests
 
     private static Distributor Invite() =>
         Distributor.Invite(
-            Tenant, "ana@distri.co", "Distribuciones Norte SAS", "900123456", "Ana Pérez", PriceListId.New(),
+            Tenant, "ana@distri.co", "Distribuciones Norte SAS", "CO", "NIT", "900123456", "Ana Pérez", PriceListId.New(),
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Hash1, Guid.CreateVersion7(), Phone,
             Guid.CreateVersion7(), Now);
 

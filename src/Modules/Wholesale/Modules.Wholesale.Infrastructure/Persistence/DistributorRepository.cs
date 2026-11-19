@@ -15,11 +15,15 @@ internal sealed class DistributorRepository(WholesaleDbContext dbContext) : IDis
         dbContext.Distributors.FirstOrDefaultAsync(
             distributor => distributor.Invitation.TokenHash == tokenHash, cancellationToken);
 
-    public Task<bool> IdentificationExistsAsync(Guid tenantId, string identificationNumber, CancellationToken cancellationToken)
+    public Task<bool> IdentificationExistsAsync(
+        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken)
     {
         var trimmed = identificationNumber.Trim();
         return dbContext.Distributors.AsNoTracking().AnyAsync(
-            distributor => distributor.TenantId == tenantId && distributor.IdentificationNumber == trimmed, cancellationToken);
+            distributor => distributor.TenantId == tenantId
+                && distributor.IdentificationType == identificationType
+                && distributor.IdentificationNumber == trimmed,
+            cancellationToken);
     }
 
     // Sin rastreo: la fase 3 sólo lee la relación para decidir acceso y precio; nunca la escribe por acá.

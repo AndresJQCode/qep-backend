@@ -32,9 +32,12 @@ internal sealed class FakeDistributorRepository : IDistributorRepository
     public Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken) =>
         Task.FromResult(Distributors.FirstOrDefault(item => item.Invitation.TokenHash == tokenHash));
 
-    public Task<bool> IdentificationExistsAsync(Guid tenantId, string identificationNumber, CancellationToken cancellationToken) =>
+    public Task<bool> IdentificationExistsAsync(
+        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken) =>
         Task.FromResult(Distributors.Any(item =>
-            item.TenantId == tenantId && item.IdentificationNumber == identificationNumber.Trim()));
+            item.TenantId == tenantId
+            && item.IdentificationType == identificationType
+            && item.IdentificationNumber == identificationNumber.Trim()));
 
     public Task<Distributor?> FindByTenantsAsync(
         Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken) =>
@@ -429,7 +432,7 @@ internal sealed class FakeSupplierLinker : IWholesaleSupplierLinker
 
 internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
 {
-    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Identification, string Email)> Calls { get; } = [];
+    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email)> Calls { get; } = [];
 
     public Guid CustomerId { get; } = Guid.CreateVersion7();
 
@@ -440,6 +443,8 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
         Guid wholesalerTenantId,
         Guid actorUserId,
         string businessName,
+        string country,
+        string identificationType,
         string identificationNumber,
         string email,
         CancellationToken cancellationToken)
@@ -450,7 +455,7 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
             throw new InvalidOperationException("Customers is down.");
         }
 
-        Calls.Add((wholesalerTenantId, actorUserId, businessName, identificationNumber, email));
+        Calls.Add((wholesalerTenantId, actorUserId, businessName, country, identificationType, identificationNumber, email));
         return Task.FromResult(CustomerId);
     }
 }

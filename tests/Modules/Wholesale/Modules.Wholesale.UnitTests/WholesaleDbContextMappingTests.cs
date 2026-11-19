@@ -64,6 +64,24 @@ public sealed class WholesaleDbContextMappingTests
         Assert.Equal(["token_hash"], tokenColumns);
     }
 
+    [Fact]
+    public void TheDistributorCountryAndTypeAreRequiredAndTheIndexCoversTheType()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var distributors = context.Model.FindEntityType(typeof(Distributor))!;
+
+        var country = distributors.FindProperty(nameof(Distributor.Country))!;
+        Assert.Equal(("country", (int?)2, false), (country.GetColumnName(), country.GetMaxLength(), country.IsNullable));
+        var type = distributors.FindProperty(nameof(Distributor.IdentificationType))!;
+        Assert.Equal(("identification_type", (int?)16, false), (type.GetColumnName(), type.GetMaxLength(), type.IsNullable));
+
+        var index = distributors.GetIndexes()
+            .Single(item => item.GetDatabaseName() == WholesaleDbContext.DistributorIdentificationIndex);
+        Assert.Equal(
+            [nameof(Distributor.TenantId), nameof(Distributor.IdentificationType), nameof(Distributor.IdentificationNumber)],
+            index.Properties.Select(property => property.Name));
+    }
+
     // Spec 2026-11-18 (aviso por WhatsApp): el destino del aviso en el distribuidor y su estado en la invitación, todo
     // nullable salvo la generación, que arranca en 0 para las filas existentes.
     [Fact]

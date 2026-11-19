@@ -138,7 +138,8 @@ public interface IDistributorRepository : IDistributorUsage
     Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken);
 
     /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13).</summary>
-    Task<bool> IdentificationExistsAsync(Guid tenantId, string identificationNumber, CancellationToken cancellationToken);
+    Task<bool> IdentificationExistsAsync(
+        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken);
 
     /// <summary>
     /// Fase 3: la relación entre los dos tenants, en cualquier estado, o <c>null</c>. Va acotada al mayorista: quien pregunta
@@ -282,6 +283,8 @@ public interface IWholesaleCustomerProvisioning
         Guid wholesalerTenantId,
         Guid actorUserId,
         string businessName,
+        string country,
+        string identificationType,
         string identificationNumber,
         string email,
         CancellationToken cancellationToken);

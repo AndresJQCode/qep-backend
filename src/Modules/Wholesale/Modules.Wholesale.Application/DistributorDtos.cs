@@ -47,6 +47,8 @@ public sealed record DistributorSummaryDto(
     string Status,
     long Version,
     string BusinessName,
+    string Country,
+    string IdentificationType,
     string IdentificationNumber,
     string ContactName,
     string Email,
@@ -69,6 +71,8 @@ public sealed record DistributorDetailDto(
     string Status,
     long Version,
     string BusinessName,
+    string Country,
+    string IdentificationType,
     string IdentificationNumber,
     string ContactName,
     string Email,
@@ -110,12 +114,15 @@ public sealed record DistributorCompanyOptionDto(Guid Id, string Name, string Do
 public sealed record DistributorWhatsAppConnectionDto(Guid Id, string Label);
 
 /// <summary>Todo lo que el formulario de invitar o editar necesita elegir, en una llamada y por nombre.
-/// <c>WhatsAppConnections</c> son las listas para el aviso (spec 2026-11-18); vacía = el formulario no ofrece el aviso.</summary>
+/// <c>WhatsAppConnections</c> son las listas para el aviso (spec 2026-11-18); vacía = el formulario no ofrece el aviso.
+/// <c>DefaultCountry</c> es el país con que arranca «Invitar» (spec 2026-11-18, país y documento): el de la configuración regional
+/// del tenant, o Colombia sin fila.</summary>
 public sealed record DistributorOptionsDto(
     IReadOnlyList<DistributorPriceListDto> PriceLists,
     IReadOnlyList<DistributorAdvisorDto> Advisors,
     IReadOnlyList<DistributorCompanyOptionDto> Companies,
-    IReadOnlyList<DistributorWhatsAppConnectionDto> WhatsAppConnections);
+    IReadOnlyList<DistributorWhatsAppConnectionDto> WhatsAppConnections,
+    string DefaultCountry);
 
 /// <summary>
 /// La invitación vista desde el link, sin sesión (D-20). <c>Status</c> es <c>pending</c>, <c>accepted</c> o <c>expired</c>,

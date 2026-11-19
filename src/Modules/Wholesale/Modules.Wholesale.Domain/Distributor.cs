@@ -19,6 +19,8 @@ public sealed class Distributor
     {
         BusinessName = string.Empty;
         IdentificationNumber = string.Empty;
+        Country = string.Empty;
+        IdentificationType = string.Empty;
         ContactName = string.Empty;
         Email = string.Empty;
         Invitation = null!;
@@ -31,7 +33,13 @@ public sealed class Distributor
 
     public string BusinessName { get; private set; }
 
-    /// <summary>El documento (NIT) del distribuidor; uno por mayorista en cualquier estado (D-13).</summary>
+    /// <summary>ISO 3166-1 alfa-2 en mayúsculas: el país del distribuidor decide qué tipos de documento admite.</summary>
+    public string Country { get; private set; }
+
+    /// <summary>Código de cable del tipo de documento (<c>DocumentTypesByCountry.All</c>), en mayúsculas.</summary>
+    public string IdentificationType { get; private set; }
+
+    /// <summary>El número del documento del distribuidor; único por mayorista y tipo, en cualquier estado (D-13).</summary>
     public string IdentificationNumber { get; private set; }
 
     public string ContactName { get; private set; }
@@ -84,6 +92,8 @@ public sealed class Distributor
         Guid tenantId,
         string email,
         string businessName,
+        string country,
+        string identificationType,
         string identificationNumber,
         string contactName,
         PriceListId priceListId,
@@ -98,6 +108,8 @@ public sealed class Distributor
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
         ArgumentException.ThrowIfNullOrWhiteSpace(businessName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(country);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identificationType);
         ArgumentException.ThrowIfNullOrWhiteSpace(identificationNumber);
         ArgumentException.ThrowIfNullOrWhiteSpace(contactName);
         EnsureTokenHash(tokenHash);
@@ -114,6 +126,8 @@ public sealed class Distributor
             TenantId = tenantId,
             Email = NormalizeEmail(email),
             BusinessName = businessName.Trim(),
+            Country = country.Trim().ToUpperInvariant(),
+            IdentificationType = identificationType.Trim().ToUpperInvariant(),
             IdentificationNumber = identificationNumber.Trim(),
             ContactName = contactName.Trim(),
             PriceListId = priceListId,

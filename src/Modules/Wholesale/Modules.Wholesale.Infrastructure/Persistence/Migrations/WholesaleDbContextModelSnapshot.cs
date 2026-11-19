@@ -122,6 +122,12 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(160)")
                         .HasColumnName("contact_name");
 
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -145,6 +151,12 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_number");
+
+                    b.Property<string>("IdentificationType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("identification_type");
 
                     b.Property<Guid>("InvitedByUserId")
                         .HasColumnType("uuid")
@@ -191,10 +203,6 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_distributors_tenant_distributor_tenant")
                         .HasFilter("distributor_tenant_id IS NOT NULL");
 
-                    b.HasIndex("TenantId", "IdentificationNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_distributors_tenant_identification");
-
                     b.HasIndex("TenantId", "PriceListId")
                         .HasDatabaseName("IX_distributors_tenant_price_list");
 
@@ -204,6 +212,10 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "CreatedAt", "Id")
                         .IsDescending(false, true, true)
                         .HasDatabaseName("IX_distributors_tenant_created");
+
+                    b.HasIndex("TenantId", "IdentificationType", "IdentificationNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_distributors_tenant_identification");
 
                     b.ToTable("distributors", "wholesale");
                 });
