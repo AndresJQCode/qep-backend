@@ -32,9 +32,12 @@ internal sealed class FakeDistributorRepository : IDistributorRepository
     public Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken) =>
         Task.FromResult(Distributors.FirstOrDefault(item => item.Invitation.TokenHash == tokenHash));
 
-    public Task<bool> IdentificationExistsAsync(Guid tenantId, string identificationNumber, CancellationToken cancellationToken) =>
+    public Task<bool> IdentificationExistsAsync(
+        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken) =>
         Task.FromResult(Distributors.Any(item =>
-            item.TenantId == tenantId && item.IdentificationNumber == identificationNumber.Trim()));
+            item.TenantId == tenantId
+            && item.IdentificationType == identificationType
+            && item.IdentificationNumber == identificationNumber.Trim()));
 
     public Task<Distributor?> FindByTenantsAsync(
         Guid wholesalerTenantId, Guid distributorTenantId, CancellationToken cancellationToken) =>

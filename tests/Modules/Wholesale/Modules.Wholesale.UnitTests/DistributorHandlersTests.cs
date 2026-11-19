@@ -77,6 +77,16 @@ public sealed class DistributorHandlersTests
     }
 
     [Fact]
+    public async Task InviteAllowsTheSameNumberWithAnotherType()
+    {
+        _world.SeedActive("900123456");
+
+        await _world.InviteHandler().HandleAsync(_world.InviteCommand("900123456", identificationType: "CC"), Ct);
+
+        Assert.Equal(["NIT", "CC"], _world.Distributors.Distributors.Select(item => item.IdentificationType));
+    }
+
+    [Fact]
     public async Task InviteWithATakenIdentificationIs409()
     {
         _world.SeedActive("900123456");
