@@ -149,6 +149,10 @@ data:
   # Cada cuánto la conciliación trae de Shopify lo que el webhook no entregó y reintenta lo que espera (spec §5.3). Repite el
   # default de la imagen, como ApiVersion: es el tiempo que tarda en entrar un pedido cuyo producto se acaba de crear.
   Shopify__Reconcile__IntervalMinutes: "10"
+  # Partner-Id de QEP ante Siigo (spec 2026-11-18 §8): un valor global que Siigo pide en cada petición para identificar a la
+  # plataforma, no a un tenant. No es un secreto. En Production el pod no arranca sin él (SiigoOptionsValidator), y un token
+  # #{…}# sin reemplazar cuenta como ausente: define SIIGO_PARTNER_ID en el pipeline antes de desplegar.
+  Siigo__PartnerId: "#{SIIGO_PARTNER_ID}#"
   # Copia pública de cada comprobante de pago nuevo, para que el Excel de pedidos lo enlace (spec
   # 2026-09-15). Literal y no token: no es un secreto ni cambia por despliegue. Exige
   # Storage__R2__PublicBucket y Storage__R2__PublicBaseUrl, de arriba: sin ellos

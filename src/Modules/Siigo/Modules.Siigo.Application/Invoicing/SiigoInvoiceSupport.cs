@@ -91,9 +91,19 @@ internal static class SiigoInvoiceSupport
             : "siigo.invoice.rejected";
     }
 
-    /// <summary>El detalle de Siigo, <c>código: mensaje</c> por error. Sin datos del cliente: Siigo nombra campos y valores del pedido.</summary>
+    /// <summary>
+    /// El detalle de Siigo para la fila y la pantalla: los códigos de error, sin su mensaje. Siigo repite en el mensaje los valores que
+    /// rechaza (documento, dirección, nombre del cliente) y la fila se guarda y se devuelve: el spec (§5.6) pide «sin datos del cliente»
+    /// y <c>SiigoNoLeakTests</c> lo amarra. La única excepción es <c>invalid_total_payments</c>, cuyo mensaje es el total esperado
+    /// (un valor del negocio, no del cliente) que la pantalla muestra junto al de QEP.
+    /// </summary>
     public static string ErrorDetailOf(IReadOnlyList<SiigoError> errors) =>
-        string.Join("; ", errors.Select(error => string.IsNullOrWhiteSpace(error.Message) ? error.Code : $"{error.Code}: {error.Message}"));
+        string.Join(
+            "; ",
+            errors.Select(error =>
+                string.IsNullOrWhiteSpace(error.Message) || !string.Equals(error.Code, SiigoApiErrors.InvalidTotalPayments, StringComparison.OrdinalIgnoreCase)
+                    ? error.Code
+                    : $"{error.Code}: {error.Message}"));
 
     /// <summary>Auditoría atómica, en el mismo guardado que el cambio. Lleva el id del pedido, el tipo y, si hay, el número y el código
     /// de error: nunca la petición, el cliente ni la clave.</summary>

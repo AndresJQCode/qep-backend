@@ -5312,6 +5312,70 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    | `shop.contactEmail` existe y es el correo que el comercio ve como de contacto | El mismo `GET …/setup`: `company.suggested.email` |
    | `productVariants(first: 1, query: "taxable:true")` distingue una tienda con variantes gravadas de una sin | Marcar todas las variantes como no gravadas y ver `suggestedChargesVat: false`; marcar una y ver `true` |
 
+### Integración con Siigo
+
+Un pedido de QEP se factura en Siigo con un clic (spec `2026-11-18-integracion-siigo-design.md`): QEP arma la factura de venta
+con las líneas, los impuestos, las retenciones y los comprobantes de pago del pedido, la crea en Siigo y marca el pedido como
+facturado con su número (`FV-1-123`). Módulo `siigo` (depende de `orders`, no está en `DefaultForNewTenants`: se prende desde la
+consola de operador, como `pos`), esquema `siigo` (`settings`, los vínculos de impuestos, formas de pago y productos, e
+`invoices`), y del lado de Integrations el proveedor `siigo`. Recibos de caja y notas crédito quedan fuera (fase 2).
+
+**Conexión.** El tenant crea la conexión `siigo` en Integrations con su usuario y su clave de acceso (cifrada, como las demás); el
+probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage`, bajo
+`/api/v1/tenants/{tenantId}/siigo/connections/{connectionId}`: tipo de documento, vendedor, centro de costo, bodega, empresa de QEP
+que factura, impuestos, formas de pago y vínculos de productos. Los `PUT` llevan `If-Match` (sin él, 428; con una versión vieja,
+412). El asistente propone cada paso con lo que lee de Siigo (`/options/{lista}`) y el auto-vínculo casa variantes y productos por
+código, sin distinguir mayúsculas ni espacios.
+
+**Generar la factura.** `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (permiso `siigo.invoice.issue`, y el
+handler revalida tenant y permiso: 403, nunca 404). `GET …/preview` devuelve la factura armada, los faltantes y la propuesta de
+pagos sin llamar a Siigo.
+
+- Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
+  bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
+  `Rejected` y `Failed` arman una fila nueva. Una `Pending` de más de 24 h pasa a `Unknown` y la resuelve una persona
+  (`POST …/resolve` con `exists` o `missing`).
+- Si falta algo (variante sin vínculo, impuesto sin vínculo, cuenta sin forma de pago, cliente sin dato) responde
+  `422 siigo.invoice.not_ready` con `details.missing` y nada sale a Siigo.
+- Cada comprobante de pago del pedido es un pago de la factura; el saldo va a contraentrega o a crédito. Los `payments` suman el
+  neto (con las retenciones ya descontadas).
+- **Cuadre de totales.** Un pedido cuyos totales no cuadran con los de Siigo no se factura. Antes de enviar, el armador compara
+  subtotal, IVA y total de los ítems con los del pedido (tolerancia de 1 peso: `422 siigo.invoice.totals_mismatch`); en Siigo, si
+  los pagos no suman, rechaza con `invalid_total_payments` y la fila queda `Rejected` con el total esperado en
+  `expectedPaymentsTotal`. **No se reintenta solo con el total que propone Siigo.**
+- «Enviar a la DIAN» nace **apagado** en cada conexión. Con el interruptor apagado la factura queda creada y sin emitir, y una
+  persona la revisa en Siigo antes de prenderlo. Una factura emitida no se borra, y no hay empresa de pruebas de Siigo: es la única red.
+- El flete va como un ítem de la factura del pedido o, si la conexión lo pide (`freight_separate_invoice`), en su propia factura.
+- Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
+  Un pedido facturado en Siigo no se revierte con QEP (`422 order.order.invoiced_externally`): revertir es una nota crédito.
+
+**Seguridad.** La clave de acceso y el token de Siigo no salen a logs, auditoría ni respuestas; `request_json` (con el documento y
+la dirección del cliente) no lo devuelve ningún `GET`, y `error_detail` guarda los códigos de Siigo, no sus mensajes (salvo el
+total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
+
+**Despliegue.**
+
+1. `Siigo__PartnerId` va en el ConfigMap como `"#{SIIGO_PARTNER_ID}#"`: define `SIIGO_PARTNER_ID` en el pipeline **antes** de
+   desplegar. En `Production` el pod no arranca sin él, y un token sin reemplazar cuenta como ausente.
+2. Migraciones, todas aditivas y sin corte: `AddSiigoProvider` (Integrations), `InitialSiigo` y `AddSiigoInvoices` (Siigo),
+   `AddOrderInvoiceProvider` (Quotations) y `AddSiigoModuleKey` (Tenancy). Sus `Down` no se corren en producción: el de
+   Integrations borra las conexiones `siigo` con sus secretos, y `siigo.invoices` es el registro de un documento legal.
+3. Prende el módulo al tenant desde la consola de operador, crea la conexión, recorre el asistente y deja «Enviar a la DIAN»
+   apagado en las primeras facturas.
+
+**Lo que se mira en las primeras facturas reales** (no hay empresa de pruebas: se resuelve con ellas, y con el interruptor
+apagado ninguna puede salir mal sin que se vea):
+
+| | Qué | Cómo se cierra |
+| --- | --- | --- |
+| V-1 | Límite de peticiones de Siigo | Mirar los 429 en las primeras facturas |
+| V-2 | Redondeo por ítem con descuento y cuándo conviene `price` y cuándo `taxed_price` | Comparar el total de Siigo (`siigoTotal`) con el del pedido |
+| V-3 | Documento del consumidor final | Facturar un pedido de consumidor final y ver que Siigo lo acepta |
+| V-5 | Cuánto recuerda Siigo un `Idempotency-Key` | Decide si 24 h para `Unknown` es corto o largo |
+| V-6 | Si una factura electrónica exige `fiscal_responsibilities` y `vat_responsible` en el cliente, y el formato de `person_type` | Mirar el rechazo con un cliente persona jurídica |
+| V-7 | Código y texto de `invalid_total_payments` con y sin retenciones; base mínima (UVT) y redondeo de cada retención; ReteIVA y autorretención; borrado de una factura sin emitir por API | Con la primera factura real sin emitir (`stamp.send = false`) |
+| V-8 | Cuándo exige Siigo la bodega en un ítem y si un servicio la rechaza | Facturar un producto con control de inventario y un servicio |
+
 ### Contratos de servicio (cobros recurrentes)
 
 Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana ante cualquier discrepancia). Módulo
