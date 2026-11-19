@@ -193,6 +193,21 @@ public interface IAutomationCrm
     Task<string> MoveDealAsync(CrmActionContext context, Guid stageId, CancellationToken cancellationToken);
 }
 
+public sealed record CrmTagRef(Guid Id, string Name);
+
+public sealed record CrmStageRef(Guid Id, string Name);
+
+/// <summary>Spec 2026-11-19 (chatbot CRM action): what the «Acción de CRM» block can pick. <see cref="OpenStages"/> are the open stages of
+/// the tenant's pipeline in pipeline order. Each list is empty when its module is off.</summary>
+public sealed record CrmCatalog(bool CustomersEnabled, bool PipelineEnabled, IReadOnlyList<CrmTagRef> Tags, IReadOnlyList<CrmStageRef> OpenStages);
+
+/// <summary>Spec 2026-11-19: the tenant's tag catalog and open stages (adapter in Bootstrapper over Customers and Pipeline), for the editor
+/// and the validator.</summary>
+public interface IAutomationsCrmDirectory
+{
+    Task<CrmCatalog> ReadAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
 /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.2 y §7: un agente de IA del tenant. <see cref="Status"/> es el nombre del
 /// <c>AgentStatus</c> de Ai (<c>Draft</c>, <c>Active</c>, <c>Paused</c>); <see cref="Provider"/> y <see cref="Model"/> son los de la versión
 /// publicada, o los del borrador si todavía no tiene.</summary>

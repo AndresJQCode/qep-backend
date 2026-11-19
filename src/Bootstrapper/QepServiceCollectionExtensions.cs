@@ -1766,6 +1766,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationMembers, AutomationMembers>();
         // Spec 2026-11-17 §5.2: los agentes de IA del tenant para el bloque «Agente IA», leídos de Ai.
         services.AddScoped<IAutomationsAgentDirectory, AutomationsAgentDirectory>();
+        // Spec 2026-11-19 (chatbot CRM action): the tags and open stages for the «Acción de CRM» block, read from Customers and Pipeline.
+        services.AddScoped<IAutomationsCrmDirectory, AutomationsCrmDirectory>();
         // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
         services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
         // Spec 2026-11-19 (chatbot CRM action): the conversation's customer, shared with «Política de datos», and the «Acción de CRM»

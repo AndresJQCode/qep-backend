@@ -70,6 +70,8 @@ public sealed record ChatbotEditorAgentDto(Guid Id, string Name, string Status, 
 /// <param name="MediaFiles">Spec 2026-11-18 (BFF): los archivos de los bloques «Mensaje» del borrador que resuelven para el tenant, en una sola
 /// lectura. El editor dibuja archivos que no subió en esta sesión (un borrador reabierto, un chatbot duplicado) sin un request por archivo.
 /// Nunca <c>null</c>: <c>[]</c> sin archivos o con un borrador que no se puede leer; un id que no resuelve no viaja y el validador lo marca.</param>
+/// <param name="Crm">Spec 2026-11-19 (chatbot CRM action, BFF): the tags and open stages the «Acción de CRM» block can pick, and whether the
+/// tenant has Customers and Pipeline. Older frontends ignore it.</param>
 public sealed record ChatbotEditorDto(
     ChatbotSummaryDto Chatbot,
     IReadOnlyList<string> Keywords,
@@ -86,7 +88,14 @@ public sealed record ChatbotEditorDto(
     IReadOnlyList<ChatbotMemberDto> Members,
     IReadOnlyList<ChatbotEditorAgentDto> Agents,
     bool AiEnabled,
-    IReadOnlyList<ChatbotMediaFileDto> MediaFiles);
+    IReadOnlyList<ChatbotMediaFileDto> MediaFiles,
+    ChatbotEditorCrmDto Crm);
+
+public sealed record ChatbotEditorCrmRefDto(Guid Id, string Name);
+
+/// <summary>Spec 2026-11-19: <see cref="Stages"/> are the open stages in pipeline order; each list is empty when its module is off.</summary>
+public sealed record ChatbotEditorCrmDto(
+    IReadOnlyList<ChatbotEditorCrmRefDto> Tags, IReadOnlyList<ChatbotEditorCrmRefDto> Stages, bool CustomersEnabled, bool PipelineEnabled);
 
 public sealed record DraftSavedDto(long Version, DateTimeOffset UpdatedAt, IReadOnlyList<FlowIssueDto> Issues);
 
