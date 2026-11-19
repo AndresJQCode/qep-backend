@@ -42,6 +42,16 @@ internal sealed class DealRepository(PipelineDbContext dbContext) : IDealReposit
         dbContext.Deals.AsNoTracking()
             .AnyAsync(deal => deal.TenantId == tenantId && deal.ClosedAt == null && deal.OriginConversationId == conversationId, cancellationToken);
 
+    public async Task<Deal?> FindOpenFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        // Two are enough to know it is not one: nothing in the schema forbids a race from leaving several.
+        var found = await dbContext.Deals
+            .Where(deal => deal.TenantId == tenantId && deal.ClosedAt == null && deal.OriginConversationId == conversationId)
+            .Take(2)
+            .ToListAsync(cancellationToken);
+        return found.Count == 1 ? found[0] : null;
+    }
+
     public async Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken)
     {
         var found = await dbContext.Deals.AsNoTracking()

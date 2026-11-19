@@ -21,6 +21,10 @@ public abstract record Effect(string NodeId)
 
     public sealed record CheckBusinessHours(string NodeId) : Effect(NodeId);
 
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the «Acción de CRM» block asks for its operation, as the system; it comes back as
+    /// <see cref="EngineInput.CrmResult"/>. The simulator answers it without touching the CRM.</summary>
+    public sealed record CrmAction(string NodeId, CrmActionNode Node) : Effect(NodeId);
+
     /// <summary><see cref="StepTitle"/> es el título del bloque: lo que la bandeja muestra como paso del asistente.</summary>
     public sealed record WaitForCustomer(string NodeId, string StepTitle) : Effect(NodeId);
 

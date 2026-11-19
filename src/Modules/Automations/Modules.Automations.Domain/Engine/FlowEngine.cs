@@ -29,6 +29,7 @@ public static class FlowEngine
             EngineInput.HttpResult result => OnHttpResult(flow, state, result, now),
             EngineInput.BusinessHours hours => OnBusinessHours(flow, state, hours, now),
             EngineInput.DataConsent consent => OnDataConsent(flow, state, consent, now),
+            EngineInput.CrmResult result => OnCrmResult(flow, state, result, now),
             EngineInput.CustomerMessage message => OnCustomerMessage(flow, settings, state, message, now),
             EngineInput.AgentResult result => OnAgentResult(flow, state, result, now),
             _ => throw new ArgumentOutOfRangeException(nameof(input), input.GetType().Name, "Entrada del motor desconocida."),
@@ -136,6 +137,20 @@ public static class FlowEngine
         }
 
         return walk.Leave(node, result.Ok ? FlowOutputs.Ok : FlowOutputs.Error);
+    }
+
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): like <see cref="OnHttpResult"/>, only with the run still pending at that block. The code
+    /// is stored in <c>{saveTo}.result</c> (also an unknown one, which leaves by <c>error</c>).</summary>
+    private static StepResult OnCrmResult(FlowDefinition flow, RunState state, EngineInput.CrmResult result, DateTimeOffset now)
+    {
+        if (PendingAt<CrmActionNode>(flow, state, result.NodeId) is not { } node)
+        {
+            return Unchanged(state);
+        }
+
+        var walk = new Walk(flow, state, now);
+        walk.Save(node.SaveTo, new JsonObject { ["result"] = result.Code });
+        return walk.Leave(node, CrmResultCodes.OutputOf(result.Code));
     }
 
     private static StepResult OnBusinessHours(FlowDefinition flow, RunState state, EngineInput.BusinessHours hours, DateTimeOffset now) =>
@@ -537,6 +552,9 @@ public static class FlowEngine
                     return Stop(node, RunStatus.Running, TraceOutcomes.Pending);
                 case HttpNode http:
                     effects.Add(new Effect.CallHttp(node.Id, http));
+                    return Stop(node, RunStatus.Running, TraceOutcomes.Pending);
+                case CrmActionNode crm:
+                    effects.Add(new Effect.CrmAction(node.Id, crm));
                     return Stop(node, RunStatus.Running, TraceOutcomes.Pending);
                 case HandoffNode handoff:
                     SendOptional(node.Id, handoff.Text);

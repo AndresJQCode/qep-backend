@@ -39,7 +39,7 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         {
         }
 
-        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
+        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null)
         {
         }
     }

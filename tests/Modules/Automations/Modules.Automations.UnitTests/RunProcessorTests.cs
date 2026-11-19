@@ -1186,9 +1186,12 @@ public sealed partial class RunProcessorTests
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
         IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
         EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation,
-        bool hoursOpen = true, bool resolvedAfterRun = false, bool aiEnabled = true, IChatbotMediaStore? chatbotMedia = null)
+        bool hoursOpen = true, bool resolvedAfterRun = false, bool aiEnabled = true, IChatbotMediaStore? chatbotMedia = null,
+        RecordingCrm? crm = null)
     {
         public RecordingInbox Inbox { get; } = new();
+
+        public RecordingCrm Crm { get; } = crm ?? new();
 
         public RecordingDataConsents DataConsents { get; } = dataConsents ?? new(DataConsentCheck.NotAccepted);
 
@@ -1210,7 +1213,7 @@ public sealed partial class RunProcessorTests
             var files = media ?? new NoMedia();
             var effects = new RunEffects(
                 Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, chatbotMedia ?? new MemoryChatbotMedia(), audit, DataConsents,
-                new ServingChatbots(flow, engineSettings, trigger),
+                Crm, new ServingChatbots(flow, engineSettings, trigger),
                 new ModuleStatus(moduleEnabled, aiEnabled), NullLogger<RunEffects>.Instance);
             return new RunProcessor(
                 Unit, Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,

@@ -49,10 +49,20 @@ public interface ICustomersAuditPublisher
     /// Spec 2026-10-26 D-9: lo que registra el sistema sin persona detrás ni integración externa (la respuesta al bot de la
     /// política de datos). Va con actor vacío y tipo <c>System</c>.
     /// </summary>
+    /// <param name="source">Who acts through the system when it is not the module itself (the chatbot's CRM action sends
+    /// <see cref="CustomerAuditSources.Chatbot"/>); <c>null</c> keeps <c>"customers"</c>.</param>
     void PublishBySystem(
         Guid tenantId,
         string action,
         string resourceId,
         string outcome,
-        DateTimeOffset occurredAt);
+        DateTimeOffset occurredAt,
+        string? source = null);
+}
+
+/// <summary>The <c>source</c> values other modules hand to <see cref="ICustomersAuditPublisher"/>.</summary>
+public static class CustomerAuditSources
+{
+    /// <summary>Chatbot CRM action spec (2026-11-19): a tag the chatbot adds or removes.</summary>
+    public const string Chatbot = "chatbot";
 }

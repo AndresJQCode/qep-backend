@@ -125,6 +125,9 @@ internal sealed class InMemoryDeals : IDealRepository
     public Task<bool> HasOpenDealFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         Task.FromResult(Items.Any(deal => deal.TenantId == tenantId && !deal.IsClosed && deal.OriginConversationId == conversationId));
 
+    public Task<Deal?> FindOpenFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<Guid>>(Items.Select(deal => deal.StageId).ToHashSet());
 
@@ -174,6 +177,8 @@ internal sealed class RecordingPipelineAudit : IPipelineAuditRecorder
 {
     public List<(string Action, Guid ResourceId, bool BySystem)> Entries { get; } = [];
 
-    public void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt) =>
+    public void Record(
+        Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt,
+        string? source = null) =>
         Entries.Add((action, resourceId, bySystem));
 }

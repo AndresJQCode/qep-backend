@@ -63,7 +63,7 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                     case Effect.WaitForCustomer:
                         // El estado ya dice en qué bloque espera: currentNodeId es lo que el lienzo marca.
                         break;
-                    case Effect.CheckBusinessHours or Effect.CallHttp or Effect.CheckDataConsent:
+                    case Effect.CheckBusinessHours or Effect.CallHttp or Effect.CheckDataConsent or Effect.CrmAction:
                         // P2-R40: el mismo tope de reentradas que el procesador.
                         if (++external > EngineReentries.Max)
                         {
@@ -76,6 +76,7 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
                             Effect.CallHttp call => await CallHttpAsync(call, state.Variables, context, lines, cancellationToken),
                             // Spec 2026-10-26 D-11: el simulador no consulta el registro: siempre pregunta.
                             Effect.CheckDataConsent => new EngineInput.DataConsent(effect.NodeId, Accepted: false),
+                            Effect.CrmAction crm => SimulateCrmAction(crm, lines),
                             _ => new EngineInput.BusinessHours(
                                 effect.NodeId, await businessHours.IsOpenAsync(context.TenantId, context.ConnectionId, cancellationToken)),
                         };
@@ -133,6 +134,22 @@ public sealed class SimulationRunner(IHttpBlockExecutor http, IAutomationBusines
         lines.Bot(
             send.NodeId, send.Caption ?? string.Empty, send.UrlButton is { } button ? new TranscriptUrlButton(button.Label, button.Url) : null,
             file is null ? null : new TranscriptMedia(file.Kind, file.Url.AbsoluteUri, file.FileName, file.ContentType));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-19 (chatbot CRM action): the simulator never writes to the CRM (it has no CRM dependency). It says what it would do in a
+    /// system line and answers with the operation's success code, so the conditions after the block can be tested. The node only carries
+    /// ids, so the line uses generic wording; tag and stage names are a frontend concern.
+    /// </summary>
+    private static EngineInput.CrmResult SimulateCrmAction(Effect.CrmAction crm, Lines lines)
+    {
+        lines.System(crm.NodeId, crm.Node.Operation switch
+        {
+            CrmOperations.AddTag => "Simulación: se etiquetaría al cliente",
+            CrmOperations.RemoveTag => "Simulación: se quitaría la etiqueta al cliente",
+            _ => "Simulación: se movería el negocio de la conversación",
+        });
+        return new EngineInput.CrmResult(crm.NodeId, CrmResultCodes.SuccessCodeOf(crm.Node.Operation));
     }
 
     /// <summary>Spec 2026-10-26 repetir R-6: el destino de hoy y, si el traspaso es por «No acepto», cuántas veces no aceptó. El motor no

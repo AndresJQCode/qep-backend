@@ -1525,6 +1525,27 @@ public sealed class CompositionRootTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Engine.ManualRunStarter>());
     }
 
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the CRM port and catalog of Automations resolve to their Bootstrapper adapters, over
+    /// the system entry points of Customers and Pipeline; the engine and the editor builder resolve with them.</summary>
+    [Fact]
+    public void TheContainerBuildsTheChatbotCrmAction()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.Equal("AutomationCrm", scope.ServiceProvider.GetRequiredService<IAutomationCrm>().GetType().Name);
+        Assert.Equal("AutomationsCrmDirectory", scope.ServiceProvider.GetRequiredService<IAutomationsCrmDirectory>().GetType().Name);
+        Assert.IsType<Modules.Customers.Application.ChatbotCustomerTags>(
+            scope.ServiceProvider.GetRequiredService<Modules.Customers.Application.IChatbotCustomerTags>());
+        Assert.IsType<Modules.Pipeline.Application.ChatbotDealMover>(
+            scope.ServiceProvider.GetRequiredService<Modules.Pipeline.Application.IChatbotDealMover>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Engine.RunEffects>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ChatbotEditorBuilder>());
+    }
+
     [Fact]
     public void TheContainerCanBuildTheEntitlementMask()
     {

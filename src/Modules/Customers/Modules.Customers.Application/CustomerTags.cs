@@ -169,6 +169,7 @@ public sealed class ListCustomerTagsHandler(
 
 public sealed class SetCustomerTagsHandler(
     ICustomerRepository customers,
+    ICustomerDataConsentRepository customerLocks,
     ICustomerTagRepository tags,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
@@ -181,6 +182,14 @@ public sealed class SetCustomerTagsHandler(
     {
         CustomersAuthorization.EnsureAuthorized(executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+
+        // Cada return o throw sin CommitAsync deshace la transacción al liberarla. El mismo FOR UPDATE del cliente que toma el
+        // chatbot (ChatbotCustomerTags): sin él, guardar 20 mientras el bot agrega una deja 21, porque cada uno contó antes del
+        // commit del otro. Con él se encolan, y el conjunto actual se lee con la fila tomada.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        _ = await customerLocks.LockCustomerAsync(command.TenantId, command.CustomerId, cancellationToken)
+            ?? throw CustomerNotFound.For(command.CustomerId);
+
         var customerId = new CustomerId(command.CustomerId);
         var customer = await customers.FindAsync(command.TenantId, customerId, cancellationToken)
             ?? throw CustomerNotFound.For(command.CustomerId);
@@ -221,6 +230,8 @@ public sealed class SetCustomerTagsHandler(
                 command.TenantId, executionContext.SubjectId, CustomerAuditActions.TagsChanged, customerId.ToString(), "success", now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
+
+        await transaction.CommitAsync(cancellationToken);
 
         // La colección entera y en orden, que es lo que la pantalla repinta (BFF): se relee después de guardar.
         return (await tags.ListForCustomerAsync(command.TenantId, customerId, cancellationToken)).Select(item => item.ToDto()).ToArray();

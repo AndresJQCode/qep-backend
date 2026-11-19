@@ -1,6 +1,3 @@
-using System.Data.Common;
-using BuildingBlocks.Application;
-using Microsoft.Extensions.Logging;
 using Modules.Automations.Application;
 using Modules.Automations.Domain.Engine;
 using Modules.Customers.Application;
@@ -19,23 +16,12 @@ namespace Bootstrapper;
 /// preguntar (una fusión o una reasignación en el medio). Los logs llevan sólo tenant y conversación, nunca datos del cliente.
 /// </para>
 /// </summary>
-internal sealed partial class AutomationDataConsents(
+internal sealed class AutomationDataConsents(
     IConversationQueries queries,
-    IConversationRepository conversations,
-    IMessagingCustomerDirectory customers,
+    ConversationCustomerResolver resolver,
     IAutomationInbox inbox,
-    ICustomerDataConsents consents,
-    IMessagingNotifier notifier,
-    IClock clock,
-    ILogger<AutomationDataConsents> logger) : IAutomationDataConsents
+    ICustomerDataConsents consents) : IAutomationDataConsents
 {
-    // Sólo el tipo de la excepción: su mensaje puede traer el BSUID o el teléfono (el detalle de una violación de índice, por ejemplo).
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The customer of conversation {ConversationId} of tenant {TenantId} could not be ensured or linked ({ExceptionType}); its data consent is unavailable.")]
-    private static partial void LogCustomerUnavailable(ILogger logger, Guid tenantId, Guid conversationId, string exceptionType);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Live notification for conversation {ConversationId} of tenant {TenantId} failed after its customer was linked.")]
-    private static partial void LogNotifyFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId);
-
     public async Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
         if (await queries.FindAsync(tenantId, conversationId, cancellationToken) is not { } row
@@ -102,76 +88,6 @@ internal sealed partial class AutomationDataConsents(
 
     /// <summary>D-7: el cliente de la conversación; sin él y con BSUID, se crea (o encuentra) y se cuelga. <c>null</c> = no hay cliente ni
     /// identidad de canal, o crearlo o colgarlo falló: el bot sale por «No acepto» sin preguntar.</summary>
-    private async Task<Guid?> CustomerOfAsync(ConversationRow row, CancellationToken cancellationToken)
-    {
-        if (row.UserId is null)
-        {
-            return null;
-        }
-
-        if (row.CustomerId is { } linked)
-        {
-            return linked;
-        }
-
-        MessagingEnsuredCustomer ensured;
-        Guid? current;
-        try
-        {
-            ensured = await customers.EnsureAsync(
-                row.TenantId, new MessagingContact(row.UserId, row.WaId, row.ProfileName, row.Username, row.Channel), cancellationToken);
-            current = await conversations.LinkCustomerAsync(
-                row.TenantId, row.Id, ensured.CustomerId, ensured.Created, clock.UtcNow, cancellationToken);
-        }
-        catch (Exception exception) when (!MustPropagate(exception))
-        {
-            LogCustomerUnavailable(logger, row.TenantId, row.Id, exception.GetType().Name);
-            return null;
-        }
-
-        // La conversación no tenía cliente al leerla y quedó con éste: lo colgó esta llamada (o la ingesta, a la vez, con el mismo, y
-        // entonces el aviso se repite sin daño). La bandeja se entera como cuando la ingesta lo cuelga.
-        if (current == ensured.CustomerId)
-        {
-            await NotifyAsync(row.TenantId, row.Id, cancellationToken);
-        }
-
-        return current;
-    }
-
-    /// <summary>
-    /// Lo que no es «no se pudo» sino «todavía no»: la cancelación (el worker que se apaga), un conflicto de concurrencia y un fallo
-    /// transitorio de la base (conexión caída, timeout, deadlock o serialización: <see cref="DbException.IsTransient"/>, que Npgsql
-    /// marca). Suben y la unidad del motor se reintenta, en vez de registrar que el titular salió por «No acepto» sin que se le preguntara.
-    /// </summary>
-    private static bool MustPropagate(Exception exception)
-    {
-        if (exception is OperationCanceledException or RequestConcurrencyException)
-        {
-            return true;
-        }
-
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is DbException { IsTransient: true })
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>Ruling P2-R22: el vínculo ya se confirmó; un aviso que falla se registra y no sube. La cancelación sí sube.</summary>
-    private async Task NotifyAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            LogNotifyFailed(logger, exception, tenantId, conversationId);
-        }
-    }
+    private async Task<Guid?> CustomerOfAsync(ConversationRow row, CancellationToken cancellationToken) =>
+        await resolver.ResolveAsync(row, cancellationToken) is ConversationCustomer.Linked linked ? linked.CustomerId : null;
 }

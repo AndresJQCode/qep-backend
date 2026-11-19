@@ -111,6 +111,9 @@ public sealed class MessagingCustomerDirectoryAudienceTests
         public Task<IReadOnlyList<CustomerTagRef>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> tagIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<CustomerTagRef>>(Tags.Where(tag => tagIds.Contains(tag.Id)).ToList());
 
+        public Task<IReadOnlyList<CustomerTagRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<CustomerTagRef>>(Tags);
+
         public Task<IReadOnlyList<Guid>> FindCustomerIdsAsync(Guid tenantId, Guid tagId, int cap, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Guid>>([]);
 
