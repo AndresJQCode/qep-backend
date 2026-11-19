@@ -160,11 +160,12 @@ which modules are on), as it does for members and agents.
 
 ### Duplicate, templates, export / import
 
-Duplicate and «guardar como plantilla» in the same tenant keep the ids. Export keeps them; an import or paste into
-another tenant fails `crm.tag_missing` / `crm.stage_missing` until the person picks the new tenant's tag or stage
-(the editor shows it as an error on the block). `TemplateParameters.Apply` must carry the new node through, and
-`Templates.cs` must treat `tagId` / `stageId` like it treats the HTTP block's `ConnectionId` (tenant-specific ids); `Chatbots.cs`
-import/duplicate remapping needs nothing unless ids get remapped.
+Duplicate in the same tenant keeps the ids. «Guardar como plantilla» clears `tagId` / `stageId`, as it clears the HTTP
+block's `ConnectionId`: they are tenant-specific ids, and a template is meant to be used elsewhere. A chatbot created from
+that template has the block without a tag or stage and fails `crm.tag_missing` / `crm.stage_missing` until the person
+picks one. Export keeps the ids; an import or paste into another tenant fails `crm.tag_missing` / `crm.stage_missing`
+the same way (the editor shows it as an error on the block). `TemplateParameters.Apply` carries the new node through;
+`Chatbots.cs` import/duplicate remapping needs nothing unless ids get remapped.
 
 ### Where a new node kind must be handled (checklist)
 
