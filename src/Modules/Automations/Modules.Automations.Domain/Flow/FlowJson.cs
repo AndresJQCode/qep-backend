@@ -310,6 +310,12 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 writer.WriteNumber("idleMinutes", agent.IdleMinutes);
                 writer.WriteString("saveTo", agent.SaveTo);
                 break;
+            case CrmActionNode crm:
+                writer.WriteString("operation", crm.Operation);
+                WriteGuid(writer, "tagId", crm.TagId);
+                WriteGuid(writer, "stageId", crm.StageId);
+                writer.WriteString("saveTo", crm.SaveTo);
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(value), value.Kind, "Bloque sin escritura definida.");
         }
@@ -385,6 +391,11 @@ internal sealed class FlowNodeJsonConverter : JsonConverter<FlowNode>
                 JsonFields.Text(element, "context", where),
                 JsonFields.OptionalOneOf(element, "firstTurn", where, AiAgentFirstTurns.All) ?? AiAgentFirstTurns.LastMessage,
                 JsonFields.OptionalInt(element, "idleMinutes", where) ?? AiAgentLimits.DefaultIdleMinutes, JsonFields.Text(element, "saveTo", where)),
+            // Spec 2026-11-19: the operation is a closed list (the editor sets it); a missing tag or stage is a draft the validator flags.
+            FlowNodeKinds.CrmAction => new CrmActionNode(
+                id, title, outputs, JsonFields.RequiredOneOf(element, "operation", where, CrmOperations.All),
+                JsonFields.OptionalGuid(element, "tagId", where), JsonFields.OptionalGuid(element, "stageId", where),
+                JsonFields.Text(element, "saveTo", where)),
             _ => throw new ArgumentOutOfRangeException(nameof(element), kind, "Tipo de bloque sin lectura definida."),
         };
     }

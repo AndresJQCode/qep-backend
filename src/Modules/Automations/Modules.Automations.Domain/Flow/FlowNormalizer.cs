@@ -27,6 +27,12 @@ public static class FlowNormalizer
             Outputs = WithoutHidden(consent.Outputs, FlowOutputs.Rejected, consent.OnReject == DataConsentRejectActions.RejectedOutput),
             OnRejectMemberId = consent.OnReject == DataConsentRejectActions.RejectedOutput ? null : consent.OnRejectMemberId,
         },
+        // Spec 2026-11-19: only the id of the chosen operation counts.
+        CrmActionNode crm => crm with
+        {
+            TagId = CrmOperations.IsTagOperation(crm.Operation) ? crm.TagId : null,
+            StageId = crm.Operation == CrmOperations.MoveDeal ? crm.StageId : null,
+        },
         _ => node,
     };
 

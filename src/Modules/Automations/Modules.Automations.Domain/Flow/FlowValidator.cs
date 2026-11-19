@@ -65,7 +65,11 @@ public static partial class FlowValidator
         [FlowOutputs.Human] = "pidió un asesor",
         [FlowOutputs.NoAnswer] = "no supo responder",
         [FlowOutputs.Idle] = "inactivo",
+        [FlowOutputs.Skipped] = "Sin nada que hacer",
     }.ToFrozenDictionary(StringComparer.Ordinal);
+
+    /// <summary>Spec 2026-11-19: the field of <c>{saveTo}</c> that the «Acción de CRM» block writes.</summary>
+    private const string CrmResultField = "result";
 
     /// <summary>Spec 2026-11-17 §5.1: los campos de <c>{saveTo}</c> que escribe el bloque «Agente IA», en el orden en que el editor los lista.</summary>
     private static readonly string[] AiAgentFields = ["summary", "reason", "quotationNumber"];
@@ -152,7 +156,9 @@ public static partial class FlowValidator
 
                 // Spec 2026-11-17 D-B12: en «Agente IA» las cinco son aviso; sin conectar, las de problema traspasan y las otras terminan.
                 var message = $"La salida «{OutputLabel(node, output)}» de «{node.Title}» no está conectada.";
+                // Spec 2026-11-19: in «Acción de CRM» skipped and error are secondary exits; unconnected, the run ends there.
                 issues.Add(OptionalOutputs.Contains(output) || node is AiAgentNode
+                           || node is CrmActionNode && output is FlowOutputs.Skipped or FlowOutputs.Error
                     ? Warning(FlowIssueCodes.NodeOutputUnconnectedOptional, node.Id, message)
                     : Error(FlowIssueCodes.NodeOutputUnconnected, node.Id, message));
             }
@@ -297,7 +303,37 @@ public static partial class FlowValidator
             case AiAgentNode agent:
                 CheckAiAgent(agent, context, issues);
                 break;
+            case CrmActionNode crm:
+                CheckCrmAction(crm, context, issues);
+                break;
         }
+    }
+
+    /// <summary>Spec 2026-11-19 «Validation»: the module first (without it the catalog is empty and would only add noise), then the tag or
+    /// stage against the tenant's catalog, then <c>saveTo</c>.</summary>
+    private static void CheckCrmAction(CrmActionNode crm, FlowValidationContext context, List<FlowIssue> issues)
+    {
+        var isTagOperation = CrmOperations.IsTagOperation(crm.Operation);
+        if (isTagOperation ? !context.CustomersEnabled : !context.PipelineEnabled)
+        {
+            issues.Add(Error(
+                FlowIssueCodes.CrmModuleOff, crm.Id,
+                isTagOperation
+                    ? $"«{crm.Title}» usa las etiquetas de clientes, y tu empresa no tiene activo el módulo de clientes."
+                    : $"«{crm.Title}» mueve un negocio, y tu empresa no tiene activo el módulo de embudo de ventas."));
+        }
+        else if (isTagOperation && (crm.TagId is not { } tagId || context.CrmTagIds?.Contains(tagId) != true))
+        {
+            issues.Add(Error(FlowIssueCodes.CrmTagMissing, crm.Id, $"Elige la etiqueta de «{crm.Title}»: la que tenía ya no existe o no la has elegido."));
+        }
+        else if (!isTagOperation && (crm.StageId is not { } stageId || context.CrmOpenStageIds?.Contains(stageId) != true))
+        {
+            issues.Add(Error(
+                FlowIssueCodes.CrmStageMissing, crm.Id,
+                $"Elige la etapa de «{crm.Title}»: la que tenía ya no existe, está cerrada o no la has elegido."));
+        }
+
+        CheckName(crm, crm.SaveTo, issues);
     }
 
     /// <summary>Spec 2026-11-17 §5.2: el agente, el objetivo, la inactividad, el módulo y el canal. El objetivo y el contexto miden
@@ -761,6 +797,10 @@ public static partial class FlowValidator
                     // §5.1: la raíz; las referencias se revisan por su raíz ({asesorIa.summary} → asesorIa).
                     yield return agent.SaveTo;
                     break;
+                case CrmActionNode crm:
+                    // Spec 2026-11-19: {saveTo}.result; references are checked by their root.
+                    yield return crm.SaveTo;
+                    break;
             }
         }
     }
@@ -779,6 +819,16 @@ public static partial class FlowValidator
                     {
                         yield return $"{agent.SaveTo}.{field}";
                     }
+                }
+
+                continue;
+            }
+
+            if (node is CrmActionNode crm)
+            {
+                if (!string.IsNullOrWhiteSpace(crm.SaveTo))
+                {
+                    yield return $"{crm.SaveTo}.{CrmResultField}";
                 }
 
                 continue;

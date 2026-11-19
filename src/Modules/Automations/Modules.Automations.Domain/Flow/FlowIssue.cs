@@ -18,11 +18,15 @@ public sealed record FlowIssue(FlowIssueSeverity Severity, string Code, string? 
 /// <see cref="AiEnabled"/> dice si el tenant tiene el módulo <c>ai</c> y <see cref="Agents"/> son sus agentes con su estado; sin ellos, un
 /// bloque «Agente IA» no se puede publicar. Spec 2026-11-18: <see cref="MediaFiles"/> son los archivos de los bloques «Mensaje» que resolvieron
 /// para este tenant (id → tipo en minúscula); <c>null</c> = ninguno. Un id ausente, o con otro tipo, es <c>message.media_missing</c>.
+/// Spec 2026-11-19 (chatbot CRM action): <see cref="CustomersEnabled"/> and <see cref="PipelineEnabled"/> say whether the tenant has those
+/// modules; <see cref="CrmTagIds"/> is the tenant's tag catalog and <see cref="CrmOpenStageIds"/> the open stages of its pipeline
+/// (<c>null</c> = empty).
 /// </summary>
 public sealed record FlowValidationContext(
     IReadOnlySet<string> Channels, IReadOnlySet<Guid> ActiveExternalApis, IReadOnlySet<Guid> PausedExternalApis,
     bool AllConnectionsHaveBusinessHours, IReadOnlySet<Guid> HandoffMembers, bool AiEnabled = false, IReadOnlyList<FlowAgentRef>? Agents = null,
-    IReadOnlyDictionary<Guid, string>? MediaFiles = null);
+    IReadOnlyDictionary<Guid, string>? MediaFiles = null, bool CustomersEnabled = false, bool PipelineEnabled = false,
+    IReadOnlySet<Guid>? CrmTagIds = null, IReadOnlySet<Guid>? CrmOpenStageIds = null);
 
 /// <summary>Los códigos de §4.3, más <c>node.output_unconnected_optional</c>, <c>list.channel_not_supported</c>, <c>buttons.id_invalid</c> y
 /// <c>list.row_id_invalid</c> del brief de la tarea 11 y su revisión.</summary>
@@ -123,4 +127,15 @@ public static class FlowIssueCodes
 
     /// <summary>Error: una conexión del chatbot es de un canal donde el motor no corre (hoy Instagram, OB-2).</summary>
     public const string AiAgentChannelNotSupported = "ai_agent.channel_not_supported";
+
+    // Spec 2026-11-19 (chatbot CRM action).
+
+    /// <summary>Error: the tag operation has no tag, or the tag is not in the tenant's catalog (also after an import into another tenant).</summary>
+    public const string CrmTagMissing = "crm.tag_missing";
+
+    /// <summary>Error: <c>moveDeal</c> has no stage, or the stage is not an open stage of the tenant's pipeline.</summary>
+    public const string CrmStageMissing = "crm.stage_missing";
+
+    /// <summary>Error: the operation needs a module the tenant does not have (tags: Customers; deals: Pipeline).</summary>
+    public const string CrmModuleOff = "crm.module_off";
 }

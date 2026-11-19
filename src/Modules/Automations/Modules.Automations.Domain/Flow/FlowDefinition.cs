@@ -160,6 +160,30 @@ public sealed record FlowAgentRef(Guid Id, string Name, string Status)
     public const string Paused = "Paused";
 }
 
+/// <summary>
+/// Spec 2026-11-19 (chatbot CRM action): one operation on the tenant's CRM, as the system. <see cref="Operation"/> is one of
+/// <see cref="CrmOperations"/>; <see cref="TagId"/> only counts for the tag operations and <see cref="StageId"/> only for
+/// <c>moveDeal</c> (<see cref="FlowNormalizer"/> clears the other one). <see cref="SaveTo"/> is the object variable where the block
+/// leaves <c>result</c>, one of <see cref="CrmResultCodes"/>. Both ids are tenant-specific: a flow imported into another tenant fails
+/// validation until a tag or stage of that tenant is chosen.
+/// </summary>
+public sealed record CrmActionNode(
+    string Id, string Title, IReadOnlyDictionary<string, string?> Outputs, string Operation, Guid? TagId, Guid? StageId, string SaveTo)
+    : FlowNode(Id, FlowNodeKinds.CrmAction, Title, Outputs);
+
+/// <summary>Spec 2026-11-19: the operations of the «Acción de CRM» block, one per block.</summary>
+public static class CrmOperations
+{
+    public const string AddTag = "addTag";
+    public const string RemoveTag = "removeTag";
+    public const string MoveDeal = "moveDeal";
+
+    public static readonly IReadOnlySet<string> All = new[] { AddTag, RemoveTag, MoveDeal }.ToFrozenSet(StringComparer.Ordinal);
+
+    /// <summary>The tag operations act on the customer (module Customers); <c>moveDeal</c> acts on a deal (module Pipeline).</summary>
+    public static bool IsTagOperation(string operation) => operation is AddTag or RemoveTag;
+}
+
 public sealed record KeyValue(string Key, string Value);
 
 /// <summary>
