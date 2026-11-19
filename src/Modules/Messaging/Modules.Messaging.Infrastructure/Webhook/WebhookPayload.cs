@@ -52,8 +52,17 @@ internal sealed record CoexistenceMessage(
     InboundMedia? Media,
     bool IsMediaPlaceholder);
 
-/// <summary>Spec 2026-10-29: <c>smb_message_echoes</c>, lo que el negocio escribe desde la app. El <c>WaId</c> es el destinatario.</summary>
-internal sealed record SmbEchoesChange(string PhoneNumberId, IReadOnlyList<(string WaId, CoexistenceMessage Message)> Echoes) : WebhookChange;
+/// <summary>
+/// Spec 2026-10-29: <c>smb_message_echoes</c>, lo que el negocio escribe desde la app. <c>Echoes</c> lleva el destinatario por teléfono
+/// (<c>to</c>). <c>UserEchoes</c> lleva el de un contacto que sólo usa username: Meta no manda <c>to</c> y sí <c>to_user_id</c> (BSUID;
+/// producción 2026-11-18, delivery 75687). <c>Unattributable</c> cuenta los ecos que no traen ni teléfono ni BSUID válido: antes se
+/// perdían sin rastro.
+/// </summary>
+internal sealed record SmbEchoesChange(
+    string PhoneNumberId,
+    IReadOnlyList<(string WaId, CoexistenceMessage Message)> Echoes,
+    IReadOnlyList<(string UserId, CoexistenceMessage Message)> UserEchoes,
+    int Unattributable) : WebhookChange;
 
 /// <summary>Spec 2026-10-29: <c>smb_app_state_sync</c>, los contactos de la app del negocio.</summary>
 internal sealed record ContactsSyncChange(string PhoneNumberId, IReadOnlyList<SyncedContact> Contacts) : WebhookChange;

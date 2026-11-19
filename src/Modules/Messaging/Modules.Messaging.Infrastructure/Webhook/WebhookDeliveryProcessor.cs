@@ -290,9 +290,17 @@ internal sealed partial class WebhookDeliveryProcessor(
         var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
         if (route is null)
         {
-            LogDiscarded(logger, deliveryId, change.Echoes.Count, change.PhoneNumberId, "unknown-route");
-            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnknownRoute, change.Echoes.Count);
+            var total = change.Echoes.Count + change.UserEchoes.Count;
+            LogDiscarded(logger, deliveryId, total, change.PhoneNumberId, "unknown-route");
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.UnknownRoute, total);
             return DeliveryOutcome.Processed;
+        }
+
+        if (change.Unattributable > 0)
+        {
+            // Sin teléfono ni BSUID válido no hay hilo al que atribuir el eco; antes se perdía sin rastro (producción, 2026-11-18).
+            LogSkippedWithoutUserId(logger, deliveryId, change.Unattributable, change.PhoneNumberId);
+            metrics.RecordDiscarded(WebhookDiscardProviders.WhatsApp, WebhookDiscardReasons.WithoutUserId, change.Unattributable);
         }
 
         var now = clock.UtcNow;
@@ -315,19 +323,39 @@ internal sealed partial class WebhookDeliveryProcessor(
             }
         }
 
+        // Un contacto que sólo usa username: Meta manda `to_user_id` y no `to`. Se crea el cliente por BSUID, igual que la ingesta en vivo
+        // (sin teléfono, sin nombre: el eco no trae ninguno de los dos).
+        index = 0;
+        while (index < change.UserEchoes.Count)
+        {
+            var userId = change.UserEchoes[index].UserId;
+            var group = new List<CoexistenceMessage>();
+            while (index < change.UserEchoes.Count && change.UserEchoes[index].UserId == userId)
+            {
+                group.Add(change.UserEchoes[index++].Message);
+            }
+
+            var customer = await customers.EnsureAsync(route.TenantId, new MessagingContact(userId, null, null, null), cancellationToken);
+            if (!await IngestCoexistenceThreadAsync(
+                    deliveryId, route, ThreadKey.ForUser(userId), group, customer.CustomerId, CoexistenceSource.Echo, null, now, cancellationToken))
+            {
+                outcome = DeliveryOutcome.RetryLater;
+            }
+        }
+
         return outcome;
     }
 
     /// <summary>Un hilo de coexistencia; <c>false</c> si el cliente se borró mientras la ingesta esperaba el candado (A-12 y P4): su
     /// transacción ya se deshizo, y el reintento de la entrega crea el cliente y la conversación nuevos (D-4).</summary>
     private async Task<bool> IngestCoexistenceThreadAsync(
-        long deliveryId, MessagingRoute route, string waId, IReadOnlyList<CoexistenceMessage> messages, Guid customerId, CoexistenceSource source,
+        long deliveryId, MessagingRoute route, ThreadKey thread, IReadOnlyList<CoexistenceMessage> messages, Guid customerId, CoexistenceSource source,
         DateTimeOffset? connectedAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
         try
         {
             await CoexistenceIngestion.IngestThreadAsync(
-                dbContext, route.TenantId, route.ConnectionId, waId, messages, customerId, source, connectedAt, now, cancellationToken);
+                dbContext, route.TenantId, route.ConnectionId, thread, messages, customerId, source, connectedAt, now, cancellationToken);
             return true;
         }
         catch (CustomerVanishedException)
