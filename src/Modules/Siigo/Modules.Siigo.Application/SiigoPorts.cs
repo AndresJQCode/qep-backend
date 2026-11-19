@@ -76,6 +76,10 @@ public interface ISiigoSettingsRepository
     /// </summary>
     Task<SiigoSettings?> FindByCompanyAsync(
         Guid tenantId, Guid companyId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
+
+    /// <summary>Marks the row for deletion on the next save; its links go with it (cascade). Only for settings whose connection no longer
+    /// exists: <c>siigo.settings</c> has no FK to Integrations, so deleting a connection leaves its row behind.</summary>
+    void Remove(SiigoSettings settings);
 }
 
 /// <summary>Las facturas de Siigo (<c>siigo.invoices</c>). Con tracking: el llamador modifica y guarda con <see cref="ISiigoUnitOfWork"/>.

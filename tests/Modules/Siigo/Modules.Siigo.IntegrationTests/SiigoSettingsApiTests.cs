@@ -144,6 +144,30 @@ public sealed class SiigoSettingsApiTests
     }
 
     [Fact]
+    public async Task ACompanyHeldByADeletedConnectionCanBeTakenAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        using var client = Manager(factory, world.Tenant);
+        var company = await CreateCompanyAsync(client, world.TenantId);
+        var second = await LinkSiigoConnectionAsync(factory, world.TenantId, "Siigo secundario");
+        await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
+        await client.GetAsync(SettingsRoute(world.TenantId, second), Ct);
+        var first = await PutAsync(client, SettingsRoute(world.TenantId, world.ConnectionId, "company"), new { companyId = company.Id }, "\"0\"");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        // Integrations does not clean siigo.settings (soft reference, no FK): the row outlives its connection.
+        await ExecuteAsync(world.ConnectionString, "DELETE FROM integrations.connections WHERE id = @id", ("id", world.ConnectionId));
+
+        var response = await PutAsync(client, SettingsRoute(world.TenantId, second, "company"), new { companyId = company.Id }, "\"0\"");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            0L,
+            await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.settings WHERE connection_id = @id", ("id", world.ConnectionId)));
+    }
+
+    [Fact]
     public async Task ACompanyThatDoesNotExistIs422()
     {
         await using var database = await StartDatabaseAsync();
