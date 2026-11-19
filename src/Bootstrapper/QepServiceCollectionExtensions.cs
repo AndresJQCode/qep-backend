@@ -514,6 +514,11 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Purchases.Application.GetPurchaseOrderPdfQuery, Modules.Purchases.Application.PurchaseOrderPdfFile>,
             Modules.Purchases.Application.GetPurchaseOrderPdfHandler>();
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
+        // El documento de la orden lo comparten la descarga del PDF y el correo al proveedor.
+        services.AddScoped<
+            Modules.Purchases.Application.IPurchaseOrderDocumentBuilder,
+            Modules.Purchases.Application.PurchaseOrderDocumentBuilder>();
+        services.AddScoped<Modules.Purchases.Application.PurchaseOrderEmailDelivery>();
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
         // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado y el aplicador de sus eventos (lo llama el
