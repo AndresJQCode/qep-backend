@@ -66,6 +66,14 @@ public sealed class PurchaseOrder
 
     public long Version { get; private set; }
 
+    /// <summary>Resultado del último correo al proveedor; nulo mientras no haya habido intento.</summary>
+    public PurchaseOrderEmailStatus? LastEmailStatus { get; private set; }
+
+    /// <summary>Dirección a la que salió (o habría salido) ese correo, tal como estaba en el proveedor.</summary>
+    public string? LastEmailTo { get; private set; }
+
+    public DateTimeOffset? LastEmailAt { get; private set; }
+
     public IReadOnlyList<PurchaseOrderLine> Lines => _lines;
 
     /// <summary>Pasos del ciclo en orden cronológico, desde el <c>Draft</c> del alta.</summary>
@@ -114,6 +122,24 @@ public sealed class PurchaseOrder
         EnsureDraft();
         Apply(supplierId, supplierTenantId, currency, notes, lines);
         Touch(now);
+    }
+
+    /// <summary>
+    /// Anota cómo salió el correo al proveedor. No es un cambio de la orden: no sube <see cref="Version"/> (un reenvío no
+    /// puede dejar a otro miembro con un <c>If-Match</c> viejo) ni <see cref="UpdatedAt"/>.
+    /// </summary>
+    public void RecordEmail(PurchaseOrderEmailStatus status, string? to, DateTimeOffset at)
+    {
+        if (Status is PurchaseOrderStatus.Draft or PurchaseOrderStatus.Cancelled)
+        {
+            throw new PurchasesDomainException(
+                PurchasesErrorCodes.EmailNotAllowed,
+                "El correo al proveedor sólo vale en una orden enviada, confirmada o recibida.");
+        }
+
+        LastEmailStatus = status;
+        LastEmailTo = to;
+        LastEmailAt = at;
     }
 
     /// <summary>Borrar es definitivo y sólo vale para un borrador.</summary>

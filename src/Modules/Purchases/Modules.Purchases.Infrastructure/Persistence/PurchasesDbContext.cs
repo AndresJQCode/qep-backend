@@ -100,6 +100,13 @@ public sealed class PurchasesDbContext(DbContextOptions<PurchasesDbContext> opti
             .HasConversion<string>()
             .HasMaxLength(16);
         order.Property(value => value.ConfirmedWithChanges).HasColumnName("confirmed_with_changes");
+        // Expand/contract: columnas nulables; un pod anterior ni las lee ni las escribe.
+        order.Property(value => value.LastEmailStatus)
+            .HasColumnName("last_email_status")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        order.Property(value => value.LastEmailTo).HasColumnName("last_email_to").HasMaxLength(254);
+        order.Property(value => value.LastEmailAt).HasColumnName("last_email_at");
         order.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
         order.Property(value => value.CreatedAt).HasColumnName("created_at");
         order.Property(value => value.UpdatedAt).HasColumnName("updated_at");
