@@ -18,6 +18,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
 
+    public DbSet<EmailChallenge> EmailChallenges => Set<EmailChallenge>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IdentityInboxMessage> Inbox => Set<IdentityInboxMessage>();
@@ -31,6 +33,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ConfigureSession(modelBuilder);
         ConfigurePasswordCredential(modelBuilder);
         ConfigureEmailToken(modelBuilder);
+        ConfigureEmailChallenge(modelBuilder);
         ConfigureUserPreference(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías de emisión/revocación de sesión
@@ -154,6 +157,33 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .WithMany()
             .HasForeignKey(value => value.UserId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-19 (onboarding por link): sin clave foránea a <c>users</c> porque el correo todavía no es de nadie. Los
+    /// nombres de columna van a mano porque <c>EmailChallengeRepository.TryConsumeAsync</c> los escribe en SQL crudo.
+    /// <c>code_hash</c> no es único: dos correos pueden recibir el mismo código de seis dígitos.
+    /// </summary>
+    private static void ConfigureEmailChallenge(ModelBuilder modelBuilder)
+    {
+        var challenge = modelBuilder.Entity<EmailChallenge>();
+        challenge.ToTable("email_challenges", "identity");
+        challenge.HasKey(value => value.Id);
+        challenge.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new EmailChallengeId(value))
+            .ValueGeneratedNever();
+        challenge.Property(value => value.EmailHash)
+            .HasColumnName("email_hash")
+            .HasMaxLength(64);
+        challenge.Property(value => value.CodeHash)
+            .HasColumnName("code_hash")
+            .HasMaxLength(64);
+        challenge.Property(value => value.Attempts).HasColumnName("attempts");
+        challenge.Property(value => value.ExpiresAt).HasColumnName("expires_at");
+        challenge.Property(value => value.UsedAt).HasColumnName("used_at");
+        challenge.Property(value => value.CreatedAt).HasColumnName("created_at");
+        challenge.HasIndex(value => new { value.EmailHash, value.UsedAt });
     }
 
     private static void ConfigureProviderLink(ModelBuilder modelBuilder)

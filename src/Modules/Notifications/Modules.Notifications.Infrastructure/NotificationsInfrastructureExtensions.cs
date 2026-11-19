@@ -50,6 +50,8 @@ public static class NotificationsInfrastructureExtensions
         services.AddSingleton<OutboxDeliveryWorker, EmailVerificationDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, PasswordResetDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, ExistingAccountDeliveryWorker>();
+        // Spec 2026-11-19 (onboarding por link): el código que confirma un correo sin usuario; sin enlace, sin AppBaseUrl.
+        services.AddSingleton<OutboxDeliveryWorker, EmailChallengeDeliveryWorker>();
         // Correos de la cuenta de comprador: el destinatario viene en el payload del evento.
         services.AddSingleton<OutboxDeliveryWorker, BuyerVerificationDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, BuyerExistingAccountDeliveryWorker>();

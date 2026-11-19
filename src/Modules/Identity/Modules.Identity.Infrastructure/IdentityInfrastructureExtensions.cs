@@ -27,6 +27,9 @@ public static class IdentityInfrastructureExtensions
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IPasswordCredentialRepository, PasswordCredentialRepository>();
         services.AddScoped<IEmailTokenRepository, EmailTokenRepository>();
+        // Spec 2026-11-19 (onboarding por link): el código que confirma un correo antes de que exista el usuario.
+        services.AddScoped<IEmailChallengeRepository, EmailChallengeRepository>();
+        services.AddScoped<IEmailChallenges, EmailChallengeService>();
         services.AddScoped<IEmailTokenIssuer, EmailTokenIssuer>();
         // Sin estado por request: el hash ficticio se calcula una vez por proceso.
         services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
