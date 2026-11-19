@@ -49,7 +49,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 
 ## Bloque A — Tenancy e Identity
 
-### Tarea 1: Tenants donde el usuario es owner o admin
+### Task 1: Tenants donde el usuario es owner o admin
 
 **Archivos:**
 - Modificar: `src/Modules/Tenancy/Modules.Tenancy.Application/ITenantOwnership.cs`
@@ -67,7 +67,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 - [ ] **Paso 4: GREEN** — `dotnet test tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests --filter "FullyQualifiedName~TenantOwnershipQueryTests"`: todas pasan.
 - [ ] **Paso 5: commit** `feat(tenancy): list tenants administered by owner or admin role`.
 
-### Tarea 2: Slug sugerido para el tenant del distribuidor
+### Task 2: Slug sugerido para el tenant del distribuidor
 
 **Archivos:**
 - Crear: `src/Modules/Tenancy/Modules.Tenancy.Application/ITenantSlugSuggestions.cs` (interfaz + `TenantSlugs.Normalize`)
@@ -84,7 +84,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 - [ ] **Paso 4: GREEN** — `--filter "FullyQualifiedName~TenantSlug"` en los dos proyectos.
 - [ ] **Paso 5: commit** `feat(tenancy): suggest a free slug from a business name`.
 
-### Tarea 3: Desafío de correo por código (Identity)
+### Task 3: Desafío de correo por código (Identity)
 
 **Archivos:**
 - Crear: `src/Modules/Identity/Modules.Identity.Domain/EmailChallenge.cs`, `Modules.Identity.Application/IEmailChallenges.cs` (+ `EmailChallengeService`), `Modules.Identity.Infrastructure/Persistence/EmailChallengeRepository.cs` y su migración (`identity.email_challenges`)
@@ -102,7 +102,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 - [ ] **Paso 4: GREEN** — `--filter "FullyQualifiedName~EmailChallenge"` en Identity (unit e integration) y la prueba del worker en `Modules.Notifications.UnitTests`.
 - [ ] **Paso 5: commit** `feat(identity): email challenge by one-time code`.
 
-### Tarea 4: Aceptación de términos (Identity)
+### Task 4: Aceptación de términos (Identity)
 
 **Archivos:**
 - Crear: `Modules.Identity.Domain/TermsAcceptance.cs`, `Modules.Identity.Application/ITermsAcceptances.cs` (+ `TermsAcceptanceService`, `TermsOptions` con `Terms:CurrentVersion`), repositorio y migración (`identity.terms_acceptances`, único en `(user_id, version)`)
@@ -121,7 +121,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 
 ## Bloque B — Wholesale
 
-### Tarea 5: Correo del distribuidor y reglas de aceptación
+### Task 5: Correo del distribuidor y reglas de aceptación
 
 **Archivos:**
 - Modificar: `Modules.Wholesale.Domain/Distributor.cs`, `Modules.Wholesale.Application/DistributorInvitationService.cs`, `Ports.cs` (`IWholesaleEventPublisher`), `WholesaleAuditActions.cs`, `Modules.Wholesale.Infrastructure/Persistence/WholesaleEventPublisher.cs`
@@ -137,7 +137,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 - [ ] **Paso 4: GREEN** — `dotnet test tests/Modules/Wholesale/Modules.Wholesale.UnitTests` completo (rápido, sin contenedores).
 - [ ] **Paso 5: commit** `feat(wholesale): accept with any email and link tenants administered by admins`.
 
-### Tarea 6: Link copiable
+### Task 6: Link copiable
 
 **Archivos:**
 - Modificar: `Modules.Wholesale.Domain/Distributor.cs`, `Modules.Wholesale.Application/DistributorDtos.cs`, `InviteDistributor.cs`, `Ports.cs`, `WholesaleAuditActions.cs`; crear `RotateInvitationLink.cs`; `Modules.Wholesale.Api/WholesaleEndpoints.cs`; `src/Bootstrapper` (implementación de `IWholesaleInvitationLinks` con `AccountLinks.WholesaleInvitation`)
@@ -154,7 +154,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 - [ ] **Paso 2: RED** por compilación. **Paso 3:** implementar. **Paso 4: GREEN** — unit completo del módulo y `--filter "FullyQualifiedName~DistributorApiTests"`.
 - [ ] **Paso 5: commit** `feat(wholesale): copyable invitation link that rotates on demand`.
 
-### Tarea 7: Aviso de correo cambiado
+### Task 7: Aviso de correo cambiado
 
 **Archivos:**
 - Crear: `src/Modules/Notifications/Modules.Notifications.Infrastructure/Messaging/WholesaleEmailChangedDeliveryWorker.cs` (calca `WholesaleInvitationDeliveryWorker.cs`); evento `wholesale.distributor-email-changed.v1` en `WholesaleEventPublisher.cs`
@@ -168,7 +168,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 - [ ] **Paso 2: RED. Paso 3:** implementar. **Paso 4: GREEN** con `--filter "FullyQualifiedName~WholesaleEmailChanged"`.
 - [ ] **Paso 5: commit** `feat(notifications): tell both parties when a distributor email changes`.
 
-### Tarea 8: WhatsApp con link
+### Task 8: WhatsApp con link
 
 **Archivos:**
 - Modificar: `Modules.Wholesale.Application/DistributorWhatsAppNotice.cs`, `DistributorInvitationNotices.cs`, `Modules.Wholesale.Infrastructure/Messaging/InvitationNoticeProcessor.cs`, `WholesaleEventPublisher.cs`, y el envío de `WholesaleInvitationNoticeSender` en `src/Bootstrapper`
@@ -186,7 +186,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 
 ## Bloque C — Composición y documentación
 
-### Tarea 9: Endpoints de la invitación
+### Task 9: Endpoints de la invitación
 
 **Archivos:**
 - Modificar: `src/Api/WholesaleInvitationEndpoints.cs`, `src/Bootstrapper/WholesaleInvitationPasswordSession.cs`, `WholesaleInvitationGoogleSession.cs`
@@ -204,7 +204,7 @@ Entradas que el spec implica y ninguna tarea cubriría sola; cada una tiene su p
 - [ ] **Paso 3:** implementar. **Paso 4: GREEN** — `Bootstrapper.UnitTests` filtrado a `WholesaleInvitation*` y `--filter "FullyQualifiedName~InvitationAcceptanceApiTests"`. Barrer las pruebas de integración que arman el cuerpo de `session-with-password` o `accept` a mano.
 - [ ] **Paso 5: commit** `feat(wholesale): onboard distributors from the invitation link`.
 
-### Tarea 10: Reglas y spec anterior
+### Task 10: Reglas y spec anterior
 
 **Archivos:** `.claude/rules/mayorista-compras.md`, `.claude/rules/tenancy-y-servicios.md`, `docs/superpowers/specs/2026-11-18-invitacion-distribuidor-whatsapp-design.md`
 
