@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain;
 using FluentValidation;
 using Modules.Siigo.Domain;
 using Modules.Tenancy.Application;
@@ -74,10 +75,18 @@ public sealed class IssueSiigoInvoiceHandler(
         }
 
         await EnsureOrderMarkedAsync(prepared, cancellationToken);
-        return [.. SiigoInvoiceSupport.Current(prepared.Rows).Select(SiigoInvoiceDto.From)];
+        return
+        [
+            .. SiigoInvoiceSupport.Current(prepared.Rows)
+                .Select(row => SiigoInvoiceDto.From(row, prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order)),
+        ];
     }
 
-    private sealed record Prepared(Guid TenantId, Guid OrderId, List<SiigoInvoice> Rows, List<SiigoInvoice> ToSend, SiigoCredentials? Credentials);
+    private sealed record Prepared(Guid TenantId, Guid OrderId, List<SiigoInvoice> Rows, List<SiigoInvoice> ToSend, SiigoCredentials? Credentials)
+    {
+        /// <summary>El pedido no se pudo marcar aunque la factura exista (anulado o marcado a mano): se avisa en la fila del pedido.</summary>
+        public bool OrderMarkFailed { get; set; }
+    }
 
     // El tramo con el candado: decide, arma, crea el cliente y guarda las filas Pending. Todo o nada hasta el commit.
     private async Task<Prepared> PrepareAsync(IssueSiigoInvoiceCommand command, Guid memberId, CancellationToken cancellationToken)
@@ -246,8 +255,7 @@ public sealed class IssueSiigoInvoiceHandler(
                 await unitOfWork.SaveChangesAsync(cancellationToken);
                 if (row.Kind == SiigoInvoiceKind.Order)
                 {
-                    await orders.MarkInvoicedAsync(
-                        prepared.TenantId, prepared.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), row.CreatedBy, cancellationToken);
+                    await TryMarkAsync(prepared, row, cancellationToken);
                 }
 
                 return true;
@@ -297,8 +305,22 @@ public sealed class IssueSiigoInvoiceHandler(
         });
         if (row is not null)
         {
+            await TryMarkAsync(prepared, row, cancellationToken);
+        }
+    }
+
+    // La factura ya existe en Siigo: que el pedido no se pueda marcar (se anuló o alguien lo marcó a mano en medio) no deshace nada ni
+    // debe dejar el POST fallando para siempre. La fila queda Created, la respuesta lleva el aviso y el siguiente POST reintenta sólo la marca.
+    private async Task TryMarkAsync(Prepared prepared, SiigoInvoice row, CancellationToken cancellationToken)
+    {
+        try
+        {
             await orders.MarkInvoicedAsync(
                 prepared.TenantId, prepared.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), row.CreatedBy, cancellationToken);
+        }
+        catch (DomainException)
+        {
+            prepared.OrderMarkFailed = true;
         }
     }
 }

@@ -7,7 +7,8 @@ namespace Modules.Siigo.Application.Invoicing;
 /// Una factura de Siigo tal como la pantalla la dibuja (spec 2026-11-18 §5.6). BFF: <c>errorCode</c> viaja ya traducido a un código
 /// <c>siigo.invoice.*</c> (los pagos que no suman llegan como <c>siigo.invoice.totals_mismatch</c> con <c>expectedPaymentsTotal</c>, para que
 /// la pantalla muestre el total de Siigo junto al de QEP) y <c>orderChanged</c> dice que el pedido ya no estaba en la versión armada.
-/// <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
+/// <c>orderMarkFailed</c> avisa que la factura existe pero el pedido no se pudo marcar (se anuló o alguien lo marcó a mano): la pantalla
+/// lo muestra y el siguiente «Generar» reintenta sólo la marca. <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
 /// </summary>
 public sealed record SiigoInvoiceDto(
     Guid Id,
@@ -22,9 +23,10 @@ public sealed record SiigoInvoiceDto(
     bool OrderChanged,
     int Attempts,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt,
+    bool OrderMarkFailed = false)
 {
-    public static SiigoInvoiceDto From(SiigoInvoice invoice) =>
+    public static SiigoInvoiceDto From(SiigoInvoice invoice, bool orderMarkFailed = false) =>
         new(
             invoice.Id,
             invoice.Kind.ToString(),
@@ -38,7 +40,8 @@ public sealed record SiigoInvoiceDto(
             invoice.OrderChanged,
             invoice.Attempts,
             invoice.CreatedAt,
-            invoice.UpdatedAt);
+            invoice.UpdatedAt,
+            orderMarkFailed);
 }
 
 /// <summary>Un pago de la factura armada. <paramref name="ProofId"/> dice de qué comprobante sale; <c>null</c> es el saldo.</summary>

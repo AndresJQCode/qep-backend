@@ -1,3 +1,4 @@
+using Modules.Siigo.Application;
 using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
@@ -292,6 +293,122 @@ public sealed class SiigoInvoiceApiTests
         var manual = await world.Client.PostAsync($"/api/v1/tenants/{world.TenantId}/orders/{world.OrderId}/invoice", null, Ct);
 
         AssertRejectedCode(manual, HttpStatusCode.Conflict, "order.order.external_invoice_pending", await manual.Content.ReadAsStringAsync(Ct));
+    }
+
+    // I1: la factura ya existe en Siigo; si el pedido quedó marcado a mano (o anulado) antes de que se pudiera marcar, el POST no falla.
+    [Fact]
+    public async Task AnOrderMarkedByHandAfterTheSendReturnsTheCreatedRowWithAWarningAndNeverA422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ =>
+        {
+            ExecuteAsync(
+                world.ConnectionString,
+                "UPDATE quotations.orders SET invoiced_at = now(), invoiced_by = @by WHERE id = @id",
+                ("by", Guid.CreateVersion7()), ("id", world.OrderId)).GetAwaiter().GetResult();
+            return Created("FV-1-123", "id-1", 0m);
+        });
+
+        var first = (await ReadAsync(await PostAsync(world)))[0];
+        var second = (await ReadAsync(await PostAsync(world)))[0];
+
+        foreach (var row in new[] { first, second })
+        {
+            Assert.Equal("Created", row.GetProperty("status").GetString());
+            Assert.Equal("FV-1-123", row.GetProperty("number").GetString());
+            Assert.True(row.GetProperty("orderMarkFailed").GetBoolean());
+        }
+
+        Assert.Single(InvoiceCalls(world.Siigo));
+        Assert.Null((await GetOrderAsync(world)).GetProperty("invoiceProvider").GetString());
+    }
+
+    // I2: la política, el grupo de rutas y la revalidación del handler.
+    [Fact]
+    public async Task WithoutThePermissionTheInvoiceEndpointsAre403AndNothingIsCreatedOrCalled()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        using var other = CreateClient(world.Factory, world.Tenant.OwnerUserId, world.TenantId, SiigoPermissions.SettingsManage);
+
+        var responses = new[]
+        {
+            await other.PostAsync(world.BaseRoute, null, Ct),
+            await other.GetAsync(world.BaseRoute, Ct),
+            await other.GetAsync(world.BaseRoute + "/preview", Ct),
+            await other.PostAsync(world.BaseRoute + "/stamp", null, Ct),
+        };
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode));
+        await AssertUntouchedAsync(world);
+    }
+
+    [Fact]
+    public async Task WithTheModuleOffTheInvoiceEndpointsAre403AndNothingIsCreatedOrCalled()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ExecuteAsync(world.ConnectionString, "UPDATE tenancy.tenant_modules SET status = 'inactive' WHERE module_key = 'siigo'");
+
+        var post = await PostAsync(world);
+        var preview = await world.Client.GetAsync(world.BaseRoute + "/preview", Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, post.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, preview.StatusCode);
+        await AssertUntouchedAsync(world);
+    }
+
+    [Fact]
+    public async Task ARouteOfAnotherTenantIs403AndAForeignOrderIsNeverServed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var intruder = await RegisterTenantAsync(world.Factory);
+        await EnableSiigoAsync(world.ConnectionString, intruder.TenantId);
+        using var client = CreateClient(world.Factory, intruder.OwnerUserId, intruder.TenantId, InvoicerPermissions);
+        var foreign = $"/api/v1/tenants/{world.TenantId}/orders/{world.OrderId}/siigo-invoice";
+        var own = $"/api/v1/tenants/{intruder.TenantId}/orders/{world.OrderId}/siigo-invoice";
+
+        var viaForeignRoute = await client.PostAsync(foreign, null, Ct);
+        var viaOwnRoute = await client.PostAsync(own, null, Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, viaForeignRoute.StatusCode);
+        Assert.NotEqual(HttpStatusCode.OK, viaOwnRoute.StatusCode);
+        await AssertUntouchedAsync(world);
+    }
+
+    // I3: un proceso que murió a mitad de envío. Dentro del reclamo no se reenvía; pasado, se reenvía lo mismo.
+    [Fact]
+    public async Task APendingWhoseSendLeaseExpiredIsResentWithTheSameBytesAndKeyAndOneInsideTheLeaseIsNot()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await ReadAsync(await PostAsync(world));
+        // Murió a mitad de envío: el reclamo sigue puesto.
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '30 seconds'");
+        world.Siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "id-1", 0m));
+
+        var inside = (await ReadAsync(await PostAsync(world)))[0];
+
+        Assert.Equal("Pending", inside.GetProperty("status").GetString());
+        Assert.Single(InvoiceCalls(world.Siigo));
+
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '3 minutes'");
+        var expired = (await ReadAsync(await PostAsync(world)))[0];
+
+        Assert.Equal("Created", expired.GetProperty("status").GetString());
+        var calls = InvoiceCalls(world.Siigo);
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(calls[0].Body, calls[1].Body);
+        Assert.Equal(calls[0].Header("Idempotency-Key"), calls[1].Header("Idempotency-Key"));
+    }
+
+    private static async Task AssertUntouchedAsync(InvoicingWorld world)
+    {
+        Assert.Equal(0, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers");
     }
 
     [Fact]

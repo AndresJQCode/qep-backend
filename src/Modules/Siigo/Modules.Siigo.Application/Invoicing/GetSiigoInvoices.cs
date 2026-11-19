@@ -42,6 +42,6 @@ public sealed class GetSiigoInvoicesHandler(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        return [.. SiigoInvoiceSupport.Current(rows).Select(SiigoInvoiceDto.From)];
+        return [.. SiigoInvoiceSupport.Current(rows).Select(row => SiigoInvoiceDto.From(row))];
     }
 }

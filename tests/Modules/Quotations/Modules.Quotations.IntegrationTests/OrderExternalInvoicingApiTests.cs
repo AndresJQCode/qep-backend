@@ -83,6 +83,37 @@ public sealed class OrderExternalInvoicingApiTests(SharedQuotationsHost sharedHo
         Assert.False(fetched!.Order.Invoiced);
     }
 
+    // I1: anular mientras la factura de Siigo está saliendo (o creada y sin marcar) dejaría el POST de Siigo fallando para siempre.
+    [Fact]
+    public async Task CancellingAnOrderWithAnOpenExternalInvoiceIs409AndLeavesItOpen()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        string[] permissions = [.. InvoicerPermissions, OrdersPermissions.OrderCancel];
+        var (tenantId, ownerUserId, setupClient) = await RegisterTenantAsync(factory, permissions);
+        using var _ = setupClient;
+        var approved = await CreateApprovedOrderAsync(setupClient, factory, tenantId);
+        using var withOpenInvoice = factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IExternalInvoiceStatus>();
+            services.AddScoped<IExternalInvoiceStatus, AlwaysOpenExternalInvoice>();
+        }));
+        using var client = withOpenInvoice.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Subject-Id", ownerUserId.ToString());
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString());
+        client.DefaultRequestHeaders.Add("X-Permissions", string.Join(',', permissions));
+
+        var response = await client.PostAsJsonAsync(
+            OrderCancelUrl(tenantId, approved.Id), new CancelOrderRequest("Duplicado"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("order.order.external_invoice_pending", json.RootElement.GetProperty("code").GetString());
+        var fetched = await setupClient.GetFromJsonAsync<OrderDetailResponse>(
+            OrderByIdUrl(tenantId, approved.Id), TestContext.Current.CancellationToken);
+        Assert.Equal("Open", fetched!.Order.Status);
+    }
+
     [Fact]
     public async Task GetForInvoicingResolvesTheBilledPartyFromTheCustomer()
     {

@@ -28,7 +28,8 @@ public sealed class CancelOrderHandler(
     IQuotationLifecycleEventPublisher lifecycleEvents,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IExternalInvoiceStatus externalInvoices)
     : ICommandHandler<CancelOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(
@@ -42,6 +43,15 @@ public sealed class CancelOrderHandler(
         var order = await repository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
+
+        // Spec 2026-11-18 §5.5: con una factura de Siigo viva (saliendo, sin resolver o creada), anular dejaría la factura sin pedido al que
+        // marcar. Es un 409, como la marca manual: se resuelve la factura de Siigo primero.
+        if (await externalInvoices.HasOpenInvoiceAsync(command.TenantId, command.OrderId, cancellationToken))
+        {
+            throw new ResourceConflictException(
+                OrderStateErrors.ExternalInvoicePending,
+                "An external invoice for this order is still being issued or exists; resolve it before cancelling the order.");
+        }
 
         // CancelledBy es un id de membresía, como InvoicedBy: el módulo nunca guarda el usuario.
         var cancelledBy = await QuotationAdvisorResolver.ResolveAsync(
