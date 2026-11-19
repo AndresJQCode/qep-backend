@@ -51,6 +51,18 @@ public sealed class DistributorWriteRulesTests
     }
 
     [Fact]
+    public void InviteRequiresTheCountryToBeTwoLettersAndJudgesTheTypeOnlyAgainstARealOne()
+    {
+        // Un país mal escrito falla sólo en el país: el tipo no se juzga contra un código que no existe.
+        Assert.Equal(["Country"], Failed(Invite(country: "12")));
+        Assert.Equal(["Country"], Failed(Invite(country: "COL")));
+        Assert.Equal(["Country"], Failed(Invite(country: "C ")));
+
+        var errors = new InviteDistributorValidator().Validate(Invite(country: "CO", identificationType: "NIF")).Errors;
+        Assert.Equal("The identification type is not valid for the country.", Assert.Single(errors).ErrorMessage);
+    }
+
+    [Fact]
     public void InviteAndUpdateRequireTheThreeReferences()
     {
         var invite = new InviteDistributorCommand(

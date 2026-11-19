@@ -33,13 +33,13 @@ public sealed class Distributor
 
     public string BusinessName { get; private set; }
 
-    /// <summary>El documento (NIT) del distribuidor; uno por mayorista en cualquier estado (D-13).</summary>
     /// <summary>ISO 3166-1 alfa-2 en mayúsculas: el país del distribuidor decide qué tipos de documento admite.</summary>
     public string Country { get; private set; }
 
     /// <summary>Código de cable del tipo de documento (<c>DocumentTypesByCountry.All</c>), en mayúsculas.</summary>
     public string IdentificationType { get; private set; }
 
+    /// <summary>El número del documento del distribuidor; único por mayorista y tipo, en cualquier estado (D-13).</summary>
     public string IdentificationNumber { get; private set; }
 
     public string ContactName { get; private set; }

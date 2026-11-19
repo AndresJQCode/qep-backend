@@ -64,8 +64,6 @@ public sealed class WholesaleDbContextMappingTests
         Assert.Equal(["token_hash"], tokenColumns);
     }
 
-    // Spec 2026-11-18 (aviso por WhatsApp): el destino del aviso en el distribuidor y su estado en la invitación, todo
-    // nullable salvo la generación, que arranca en 0 para las filas existentes.
     [Fact]
     public void TheDistributorCountryAndTypeAreRequiredAndTheIndexCoversTheType()
     {
@@ -84,6 +82,8 @@ public sealed class WholesaleDbContextMappingTests
             index.Properties.Select(property => property.Name));
     }
 
+    // Spec 2026-11-18 (aviso por WhatsApp): el destino del aviso en el distribuidor y su estado en la invitación, todo
+    // nullable salvo la generación, que arranca en 0 para las filas existentes.
     [Fact]
     public void TheInvitationNoticeColumnsHaveTheirTypesAndLengths()
     {

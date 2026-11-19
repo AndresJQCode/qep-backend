@@ -34,6 +34,10 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                 nullable: false,
                 defaultValue: "NIT");
 
+            // El default sólo rellena las filas que ya existían: el modelo no lo tiene, y toda escritura manda los dos.
+            migrationBuilder.Sql("ALTER TABLE wholesale.distributors ALTER COLUMN country DROP DEFAULT;");
+            migrationBuilder.Sql("ALTER TABLE wholesale.distributors ALTER COLUMN identification_type DROP DEFAULT;");
+
             migrationBuilder.CreateIndex(
                 name: "IX_distributors_tenant_identification",
                 schema: "wholesale",
@@ -60,6 +64,7 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                 schema: "wholesale",
                 table: "distributors");
 
+            // Falla si ya hay el mismo número con dos tipos: el índice viejo no los distingue. Quien revierta lo resuelve antes.
             migrationBuilder.CreateIndex(
                 name: "IX_distributors_tenant_identification",
                 schema: "wholesale",
