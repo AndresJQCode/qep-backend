@@ -35,6 +35,13 @@ public sealed record ChatbotDraftDto(JsonElement Flow, JsonElement Layout, DateT
 
 public sealed record ChatbotPublishedDto(int Number, DateTimeOffset At);
 
+/// <summary>Spec 2026-11-18: una publicación en el historial. Sin el flujo: el editor sólo necesita reconocerla y restaurarla.
+/// <paramref name="PublishedByName"/> es <c>null</c> si el miembro ya no se puede asignar.</summary>
+public sealed record ChatbotVersionDto(
+    int Number, DateTimeOffset PublishedAt, Guid PublishedBy, string? PublishedByName, bool IsLive, int BlockCount);
+
+public sealed record ChatbotVersionListResponse(IReadOnlyList<ChatbotVersionDto> Items);
+
 public sealed record FlowIssueDto(string Severity, string Code, string? NodeId, string Message);
 
 /// <summary>Quién atiende la conexión (spec 2026-10-29 §4.3): un chatbot o un agente IA, leído de la tabla neutral de Mensajería.</summary>

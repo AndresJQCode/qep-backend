@@ -66,6 +66,16 @@ internal static class ChatbotEndpoints
             .WithActionContract()
             .Produces<ChatbotEditorDto>();
 
+        chatbots.MapGet("/{chatbotId:guid}/versions", ListVersionsAsync)
+            .RequireAuthorization(AutomationsPermissions.ChatbotRead)
+            .Produces<ChatbotVersionListResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        chatbots.MapPost("/{chatbotId:guid}/versions/{number:int}/restore", RestoreVersionAsync)
+            .WithActionContract()
+            .Produces<ChatbotEditorDto>();
+
         chatbots.MapPost("/{chatbotId:guid}/duplicate", DuplicateAsync)
             .RequireAuthorization(AutomationsPermissions.ChatbotManage)
             .Produces<ChatbotEditorDto>(StatusCodes.Status201Created)
@@ -274,6 +284,14 @@ internal static class ChatbotEndpoints
         Guid tenantId, Guid chatbotId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new ResumeChatbotCommand(tenantId, chatbotId, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ListVersionsAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListChatbotVersionsQuery(tenantId, chatbotId), cancellationToken));
+
+    private static async Task<IResult> RestoreVersionAsync(
+        Guid tenantId, Guid chatbotId, int number, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RestoreChatbotVersionCommand(tenantId, chatbotId, number, AutomationsEndpoints.RequireVersion(httpContext)), cancellationToken));
 
     // Sin Location, como crear: el editor abre con la copia que vuelve.
     private static async Task<IResult> DuplicateAsync(Guid tenantId, Guid chatbotId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
