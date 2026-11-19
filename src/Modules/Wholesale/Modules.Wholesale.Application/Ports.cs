@@ -205,6 +205,19 @@ public interface IWholesaleEventPublisher
         int generation,
         string correlationId,
         DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// Spec 2026-11-19 §6: <c>wholesale.distributor-email-changed.v1</c>. Al aceptar quedó el correo de la cuenta en lugar del que
+    /// escribió el mayorista; Notifications avisa a las dos direcciones. Sale en el mismo commit que la aceptación. Sin token.
+    /// </summary>
+    void DistributorEmailChanged(
+        Guid tenantId,
+        Guid distributorId,
+        string previousEmail,
+        string newEmail,
+        string businessName,
+        string correlationId,
+        DateTimeOffset now);
 }
 
 /// <summary>

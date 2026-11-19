@@ -23,6 +23,9 @@ public static class WholesaleAuditActions
 
     public const string DistributorAccepted = "wholesale.distributor.accepted";
 
+    /// <summary>Spec 2026-11-19 §6: el correo cambió al aceptar. El campo es <c>email</c>; los correos no van en la auditoría.</summary>
+    public const string DistributorEmailChanged = "wholesale.distributor.email_changed";
+
     public static class Resources
     {
         public const string PriceList = "price_list";

@@ -15,6 +15,8 @@ internal sealed class WholesaleEventPublisher(WholesaleDbContext dbContext) : IW
 
     public const string InvitationNoticeEvent = "wholesale.distributor-invitation-notice.v1";
 
+    public const string DistributorEmailChangedEvent = "wholesale.distributor-email-changed.v1";
+
     public void DistributorInvited(
         Guid tenantId,
         Guid distributorId,
@@ -55,7 +57,34 @@ internal sealed class WholesaleEventPublisher(WholesaleDbContext dbContext) : IW
             OccurredAt = occurredAt,
         });
 
+    public void DistributorEmailChanged(
+        Guid tenantId,
+        Guid distributorId,
+        string previousEmail,
+        string newEmail,
+        string businessName,
+        string correlationId,
+        DateTimeOffset now) =>
+        dbContext.Outbox.Add(new WholesaleOutboxMessage
+        {
+            Id = Guid.CreateVersion7(),
+            EventName = DistributorEmailChangedEvent,
+            PayloadJson = JsonSerializer.Serialize(
+                new DistributorEmailChangedPayload(tenantId, distributorId, previousEmail, newEmail, businessName, now)),
+            CorrelationId = correlationId,
+            OccurredAt = now,
+        });
+
     // Nombres en minúscula como el resto de los payloads del outbox: el consumidor los lee por nombre.
+    // Sin token ni link: el aviso de correo cambiado sólo cuenta qué pasó (spec 2026-11-19 §6).
+    private sealed record DistributorEmailChangedPayload(
+        Guid tenantId,
+        Guid distributorId,
+        string previousEmail,
+        string newEmail,
+        string businessName,
+        DateTimeOffset changedAt);
+
     private sealed record DistributorInvitedPayload(
         Guid tenantId,
         Guid distributorId,

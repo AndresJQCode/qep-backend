@@ -122,11 +122,33 @@ internal sealed record PublishedNotice(
     string CorrelationId,
     DateTimeOffset OccurredAt);
 
+internal sealed record PublishedEmailChange(
+    Guid TenantId,
+    Guid DistributorId,
+    string PreviousEmail,
+    string NewEmail,
+    string BusinessName,
+    string CorrelationId,
+    DateTimeOffset OccurredAt);
+
 internal sealed class FakeEventPublisher : IWholesaleEventPublisher
 {
     public List<PublishedInvitation> Invitations { get; } = [];
 
     public List<PublishedNotice> Notices { get; } = [];
+
+    public List<PublishedEmailChange> EmailChanges { get; } = [];
+
+    public void DistributorEmailChanged(
+        Guid tenantId,
+        Guid distributorId,
+        string previousEmail,
+        string newEmail,
+        string businessName,
+        string correlationId,
+        DateTimeOffset now) =>
+        EmailChanges.Add(new PublishedEmailChange(
+            tenantId, distributorId, previousEmail, newEmail, businessName, correlationId, now));
 
     public void InvitationNoticeRequested(
         Guid tenantId,

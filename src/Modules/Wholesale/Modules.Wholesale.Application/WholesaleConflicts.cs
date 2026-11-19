@@ -95,7 +95,7 @@ internal static class WholesaleConflicts
         new(WholesaleErrorCodes.InvitationEmailMismatch, "The invitation was sent to another email address.");
 
     public static RequestForbiddenException NotTenantOwner() =>
-        new(WholesaleErrorCodes.InvitationNotTenantOwner, "Only the owner of the organization can link it.");
+        new(WholesaleErrorCodes.InvitationNotTenantOwner, "Only an owner or admin of the organization can link it.");
 
     public static WholesaleDomainException SelfLink() =>
         new(WholesaleErrorCodes.InvitationSelfLink, "No puedes vincular la organización del mayorista como su distribuidor.");

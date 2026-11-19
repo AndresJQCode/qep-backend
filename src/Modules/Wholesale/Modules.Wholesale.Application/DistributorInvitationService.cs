@@ -7,7 +7,7 @@ namespace Modules.Wholesale.Application;
 
 /// <summary>
 /// La invitación vista desde el link, fuera del tenant del mayorista: la consultan sin sesión, la usan las rutas
-/// <c>session*</c> antes de tocar Identity y la acepta quien tiene la sesión del correo invitado. El tenant del mayorista sale
+/// <c>session*</c> antes de tocar Identity y la acepta quien tiene una sesión, con cualquier correo. El tenant del mayorista sale
 /// de la invitación, no de un <c>IExecutionContext</c>: quien llama todavía no es miembro de nada.
 /// </summary>
 public interface IDistributorInvitationService
@@ -18,7 +18,8 @@ public interface IDistributorInvitationService
     /// <summary>La invitación todavía aceptable: 404 → 410 <c>expired</c> → 409 <c>already_accepted</c>, en ese orden.</summary>
     Task<Distributor> RequirePendingAsync(string token, CancellationToken cancellationToken);
 
-    /// <summary>Los tenants que el usuario administra como owner, con si se pueden vincular y qué módulos prendería.</summary>
+    /// <summary>Los tenants que el usuario administra como owner o admin, con si se pueden vincular y qué módulos prendería.
+    /// <paramref name="userEmail"/> ya no se compara con el invitado (spec 2026-11-19).</summary>
     Task<IReadOnlyList<LinkableTenantDto>> ListLinkableTenantsAsync(
         string token, Guid userId, string? userEmail, CancellationToken cancellationToken);
 
@@ -36,9 +37,11 @@ public interface IDistributorInvitationService
 /// La aceptación son pasos idempotentes sin transacción común (D-3): tenant (con el id reservado), módulos, proveedor en el
 /// distribuidor, cliente en el mayorista y, al final, el commit de <c>wholesale</c> que consume la invitación. Un fallo a mitad
 /// deja la invitación pendiente y el reintento termina sobre el mismo tenant.
-/// <para>Orden fijo: 1) invitación por hash (404); 2) correo de la sesión (403, antes de revelar nada más); 3) ya aceptada:
-/// mismo usuario → el resultado otra vez (D-16, ruling W9), otro → 409; vencida → 410; 4) mayorista <c>Active</c> con
-/// <c>wholesale</c> prendido (409 <c>unavailable</c>); 5) destino; 6) proveedor; 7) cliente; 8) activar, auditar y guardar.</para>
+/// <para>Orden fijo: 1) invitación por hash (404); 2-3) ya aceptada: mismo usuario → el resultado otra vez (D-16, ruling W9),
+/// otro → 409; vencida → 410; 4) mayorista <c>Active</c> con <c>wholesale</c> prendido (409 <c>unavailable</c>); 5) destino;
+/// 6) proveedor; 7) cliente; 8) correo de la cuenta, activar, auditar y guardar. Spec 2026-11-19: el link identifica la
+/// invitación y el correo ya no es una llave; <c>userEmail</c> es el de la cuenta que acepta y, si es otro, reemplaza al
+/// invitado en el mismo guardado.</para>
 /// </summary>
 public sealed class DistributorInvitationService(
     IClock clock,
@@ -52,7 +55,8 @@ public sealed class DistributorInvitationService(
     IWholesaleSupplierLinker supplierLinker,
     IWholesaleCustomerProvisioning customerProvisioning,
     IWholesaleUnitOfWork unitOfWork,
-    IWholesaleAuditPublisher auditPublisher)
+    IWholesaleAuditPublisher auditPublisher,
+    IWholesaleEventPublisher eventPublisher)
     : IDistributorInvitationService
 {
     public const string SameTenantReason = "same_tenant";
@@ -60,6 +64,9 @@ public sealed class DistributorInvitationService(
     public const string AlreadyLinkedReason = "already_linked";
 
     private static readonly string[] AcceptedFields = ["status", "distributorTenantId", "customerId"];
+
+    // Spec 2026-11-19 §6: el campo, nunca los correos.
+    private static readonly string[] EmailChangedFields = ["email"];
 
     public async Task<InvitationSummaryDto> FindAsync(string token, CancellationToken cancellationToken)
     {
@@ -86,13 +93,12 @@ public sealed class DistributorInvitationService(
         string token, Guid userId, string? userEmail, CancellationToken cancellationToken)
     {
         var distributor = await FindByTokenAsync(token, cancellationToken);
-        EnsureEmail(distributor, userEmail);
         EnsurePending(distributor, clock.UtcNow);
 
-        var owned = await ownership.ListOwnedActiveTenantsAsync(userId, cancellationToken);
+        var administered = await ownership.ListAdministeredActiveTenantsAsync(userId, cancellationToken);
         var linked = await distributors.LinkedTenantIdsAsync(distributor.TenantId, cancellationToken);
-        var result = new List<LinkableTenantDto>(owned.Count);
-        foreach (var tenant in owned)
+        var result = new List<LinkableTenantDto>(administered.Count);
+        foreach (var tenant in administered)
         {
             var reason = tenant.TenantId == distributor.TenantId ? SameTenantReason
                 : linked.Contains(tenant.TenantId) ? AlreadyLinkedReason
@@ -121,7 +127,6 @@ public sealed class DistributorInvitationService(
 
         // 1-3
         var distributor = await FindByTokenAsync(token, cancellationToken);
-        EnsureEmail(distributor, userEmail);
         if (distributor.Status != DistributorStatus.Invited)
         {
             return await RepeatedAsync(distributor, userId, cancellationToken);
@@ -155,7 +160,8 @@ public sealed class DistributorInvitationService(
         var (target, created, enabled) = await ResolveTargetAsync(
             distributor, userId, wholesalerName, choice, correlationId, cancellationToken);
 
-        // 6-7: idempotentes; un reintento devuelve el mismo proveedor y el mismo cliente.
+        // 6-7: idempotentes; un reintento devuelve el mismo proveedor y el mismo cliente. El cliente nace con el correo que queda
+        // en el distribuidor (el de la cuenta, si vino), no con el que se va a reemplazar.
         await supplierLinker.EnsureLinkedSupplierAsync(
             target, distributor.TenantId, wholesalerName, company, userId, cancellationToken);
         var customerId = await customerProvisioning.EnsureCustomerAsync(
@@ -165,10 +171,12 @@ public sealed class DistributorInvitationService(
             distributor.Country,
             distributor.IdentificationType,
             distributor.IdentificationNumber,
-            distributor.Email,
+            string.IsNullOrWhiteSpace(userEmail) ? distributor.Email : userEmail.Trim().ToLowerInvariant(),
             cancellationToken);
 
-        // 8
+        // 8: el correo de la cuenta, la activación, sus auditorías y el evento van en el mismo guardado (spec 2026-11-19 §6): si
+        // el commit falla no cambia nada.
+        ReplaceEmail(distributor, userId, userEmail, correlationId, now);
         distributor.Accept(userId, target, customerId, now);
         auditPublisher.Publish(
             distributor.TenantId,
@@ -242,7 +250,9 @@ public sealed class DistributorInvitationService(
                 return (reserved, true, WholesaleModuleSets.InvitedDistributor);
 
             case LinkTenantChoice link:
-                if (owned.All(tenant => tenant.TenantId != link.TenantId))
+                // Spec 2026-11-19 §5: owner o rol de sistema admin en una membresía activa. El código sigue siendo el de siempre.
+                var administered = await ownership.ListAdministeredActiveTenantsAsync(userId, cancellationToken);
+                if (administered.All(tenant => tenant.TenantId != link.TenantId))
                 {
                     throw WholesaleConflicts.NotTenantOwner();
                 }
@@ -326,12 +336,34 @@ public sealed class DistributorInvitationService(
             ?? throw WholesaleConflicts.InvitationNotFound();
     }
 
-    private static void EnsureEmail(Distributor distributor, string? userEmail)
+    /// <summary>
+    /// Decisión del owner (2026-11-19): prevalece el correo de la cuenta que acepta, sin aprobación y con aviso a las dos partes.
+    /// Sin correo de cuenta (no debería pasar: toda cuenta tiene uno) se conserva el invitado.
+    /// </summary>
+    private void ReplaceEmail(Distributor distributor, Guid userId, string? userEmail, string correlationId, DateTimeOffset now)
     {
-        if (!distributor.InvitedEmailMatches(userEmail))
+        if (string.IsNullOrWhiteSpace(userEmail))
         {
-            throw WholesaleConflicts.EmailMismatch();
+            return;
         }
+
+        var previous = distributor.Email;
+        if (!distributor.ReplaceEmail(userEmail, now))
+        {
+            return;
+        }
+
+        auditPublisher.Publish(
+            distributor.TenantId,
+            userId,
+            WholesaleAuditActions.DistributorEmailChanged,
+            WholesaleAuditActions.Resources.Distributor,
+            distributor.Id.ToString(),
+            "success",
+            EmailChangedFields,
+            now);
+        eventPublisher.DistributorEmailChanged(
+            distributor.TenantId, distributor.Id.Value, previous, distributor.Email, distributor.BusinessName, correlationId, now);
     }
 
     /// <summary>El dominio diría 422; el contrato es 410 para la vencida y 409 para la aceptada.</summary>
