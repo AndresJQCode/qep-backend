@@ -99,11 +99,12 @@ sesión ve, aparte, su tenant actual y sus tenants donde puede aceptar.
 
 ### 3b. Formulario «¿Con qué empresa le compras a …?» (decisión del owner, 2026-11-19)
 
-El formulario de nombre e identificador del tenant nuevo **llega prellenado** con lo que escribió el mayorista, para que el
-distribuidor no lo diligencie de nuevo, y **puede corregirlo**. El nombre es `businessName` (ya viaja en el `GET`) y el
-identificador es `suggestedSlug`, un campo nuevo del `GET` que sale de `ITenantSlugSuggestions`. Si el cliente no manda nombre ni
-identificador al aceptar, el servidor usa esos mismos valores. El backend sigue validando lo que llegue (formato, reservados,
-slug libre); sólo el frontend decide cómo se pinta.
+El formulario **no pide nombre ni identificador**: se quitan los dos campos. El nombre del tenant es la razón social
+(`businessName`) tal como la creó el mayorista, y el identificador (slug) lo genera el servidor con `ITenantSlugSuggestions`.
+El distribuidor sólo elige entre crear la empresa nueva o vincular una donde sea owner o admin, y acepta. El servidor ignora
+cualquier `DisplayName` o `Slug` que llegue en el cuerpo de `accept`. Esto reemplaza una decisión de hace unas horas (formulario
+prellenado y editable): el owner prefirió quitar los campos. Si el slug generado se toma en una carrera, el servidor reintenta
+con otro sufijo (hasta 3 veces); no hay nada que corregir a mano.
 
 ### 4. Distribuidor nuevo
 
