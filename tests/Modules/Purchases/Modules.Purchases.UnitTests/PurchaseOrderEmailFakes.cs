@@ -12,8 +12,16 @@ internal sealed class FakePurchaseOrderEmail : IPurchaseOrderEmail
 
     public bool Throw { get; set; }
 
+    /// <summary>El timeout de un HttpClient: <c>TaskCanceledException</c> sin que nadie haya cancelado el token de la petición.</summary>
+    public bool TimeOut { get; set; }
+
     public Task<PurchaseOrderEmailResult> SendAsync(PurchaseOrderEmailRequest request, CancellationToken cancellationToken)
     {
+        if (TimeOut)
+        {
+            throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.");
+        }
+
         if (Throw)
         {
             throw new InvalidOperationException("channel down");

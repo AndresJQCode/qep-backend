@@ -37,7 +37,9 @@ public sealed class PurchaseOrderEmailDelivery(
             result = await email.SendAsync(
                 new PurchaseOrderEmailRequest(to, bundle.Document, bundle.Pdf, bundle.FileName), cancellationToken);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        // Sólo la cancelación del cliente se propaga: el timeout de un HttpClient también es un OperationCanceledException, y
+        // tumbar acá una orden que ya quedó en Sent haría creer que el envío falló.
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             // La orden ya está enviada: el detalle de la falla vive en el log del adaptador, no acá.
         }
@@ -57,7 +59,7 @@ public sealed class PurchaseOrderEmailDelivery(
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             // El correo ya salió o ya falló: la respuesta lleva el resultado aunque no haya quedado guardado.
         }

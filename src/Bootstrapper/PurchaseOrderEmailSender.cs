@@ -43,7 +43,9 @@ internal sealed partial class PurchaseOrderEmailSender(IEmailChannel channel, IL
                 cancellationToken);
             return PurchaseOrderEmailResult.Sent;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        // El timeout del HttpClient de Infobip (30 s) llega como TaskCanceledException: es un fallo del envío, no una cancelación
+        // del cliente. Sólo ésta se propaga.
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
             LogSendFailed(logger, exception.GetType().Name);
             return PurchaseOrderEmailResult.Failed;

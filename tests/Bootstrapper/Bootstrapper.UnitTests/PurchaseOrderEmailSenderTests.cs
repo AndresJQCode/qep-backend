@@ -62,6 +62,26 @@ public sealed class PurchaseOrderEmailSenderTests
         Assert.DoesNotContain(FakeChannel.FailureMessage, entry.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task AChannelTimeoutWithoutAClientCancellationBecomesFailed()
+    {
+        var sender = new PurchaseOrderEmailSender(new FakeChannel { TimeOut = true }, new ListLogger<PurchaseOrderEmailSender>());
+
+        var result = await sender.SendAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(PurchaseOrderEmailResult.Failed, result);
+    }
+
+    [Fact]
+    public async Task ACancelledRequestStillPropagatesTheCancellation()
+    {
+        var sender = new PurchaseOrderEmailSender(new FakeChannel { TimeOut = true }, new ListLogger<PurchaseOrderEmailSender>());
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sender.SendAsync(Request(), cancelled.Token));
+    }
+
     private sealed class FakeChannel : IEmailChannel
     {
         public const string FailureMessage = "provider said ventas@textiles.co is blocked";
@@ -70,8 +90,15 @@ public sealed class PurchaseOrderEmailSenderTests
 
         public bool Throw { get; init; }
 
+        public bool TimeOut { get; init; }
+
         public Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
         {
+            if (TimeOut)
+            {
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.");
+            }
+
             if (Throw)
             {
                 throw new InvalidOperationException(FailureMessage);

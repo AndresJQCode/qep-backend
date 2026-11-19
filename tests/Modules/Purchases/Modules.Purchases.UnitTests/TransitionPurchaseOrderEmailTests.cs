@@ -130,6 +130,34 @@ public sealed class TransitionPurchaseOrderEmailTests
         Assert.Equal("Failed", detail.Email!.Status);
     }
 
+    // Revisión final: el timeout de Infobip (30 s) es un TaskCanceledException, que es un OperationCanceledException; sin que el
+    // cliente haya cancelado nada no puede tumbar un envío que ya se guardó.
+    [Fact]
+    public async Task SendWhenTheChannelTimesOutStoresFailedAndDoesNotThrow()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle", email: SupplierEmail);
+        _email.TimeOut = true;
+        var order = _orders.Seed(PurchaseOrderTestData.Order());
+
+        var detail = await Transition(order, PurchaseOrderAction.Send);
+
+        Assert.Equal(PurchaseOrderStatus.Sent, order.Status);
+        Assert.Equal("Failed", detail.Email!.Status);
+    }
+
+    [Fact]
+    public async Task SendWhenTheClientCancelsTheRequestStillPropagatesTheCancellation()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle", email: SupplierEmail);
+        _email.TimeOut = true;
+        var order = _orders.Seed(PurchaseOrderTestData.Order());
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Handler().HandleAsync(
+            new TransitionPurchaseOrderCommand(TenantId, order.Id.Value, order.Version, PurchaseOrderAction.Send), cancelled.Token));
+    }
+
     [Fact]
     public async Task SendWhenSavingTheEmailResultFailsStillReturnsTheResult()
     {
