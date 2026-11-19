@@ -301,7 +301,7 @@ public sealed class SiigoApiClientTests : IDisposable
 
         Assert.Equal("?type=FV", _api.Requests.Last().Query);
         var option = Assert.Single(options);
-        Assert.Equal(new SiigoOption("24446", "Factura de venta"), option);
+        Assert.Equal(new SiigoOption("24446", "Factura de venta", "Factura de venta electrónica"), option);
     }
 
     [Fact]

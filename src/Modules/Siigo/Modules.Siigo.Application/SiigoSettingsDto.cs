@@ -58,5 +58,5 @@ public sealed record SiigoAccountLinkDto(string BankAccountKey, string? BankName
 /// falta.</summary>
 public sealed record SiigoStepReadinessDto(string Step, bool Complete, IReadOnlyList<string> MissingCodes);
 
-/// <summary>Una opción de una lista de Siigo para un selector. <c>Type</c> y <c>Percentage</c> sólo viajan en la lista de impuestos.</summary>
-public sealed record SiigoOptionDto(string Id, string Name, string? Type, decimal? Percentage);
+/// <summary>Una opción de una lista de Siigo para un selector. <c>Type</c> y <c>Percentage</c> sólo viajan en la lista de impuestos; <c>Description</c>, cuando Siigo la trae (tipos de documento).</summary>
+public sealed record SiigoOptionDto(string Id, string Name, string? Type, decimal? Percentage, string? Description = null);

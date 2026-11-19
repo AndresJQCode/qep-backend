@@ -67,6 +67,6 @@ public sealed class ListSiigoOptionsHandler(
             SiigoOptionLists.Warehouses => await api.ListWarehousesAsync(credentials, cancellationToken),
             _ => await api.ListPaymentTypesAsync(credentials, cancellationToken),
         };
-        return [.. options.Select(option => new SiigoOptionDto(option.Id, option.Name, null, null))];
+        return [.. options.Select(option => new SiigoOptionDto(option.Id, option.Name, null, null, option.Description))];
     }
 }

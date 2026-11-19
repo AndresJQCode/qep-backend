@@ -10,7 +10,7 @@ public sealed record SiigoCredentials(Guid ConnectionId, string Username, string
 }
 
 /// <summary>Una opción de una lista de Siigo (comprobante, vendedor, centro de costo, bodega, forma de pago).</summary>
-public sealed record SiigoOption(string Id, string Name);
+public sealed record SiigoOption(string Id, string Name, string? Description = null);
 
 /// <summary>Un impuesto de <c>GET /v1/taxes</c>. <paramref name="Type"/> llega como <c>IVA</c>, <c>Retefuente</c>, <c>ReteICA</c>…; el
 /// porcentaje de ReteICA viene por mil.</summary>

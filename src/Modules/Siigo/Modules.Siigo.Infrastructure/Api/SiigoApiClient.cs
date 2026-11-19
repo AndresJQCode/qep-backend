@@ -235,7 +235,7 @@ internal sealed class SiigoApiClient(
         [
             .. SiigoJson.Items(reply.Body)
                 .Where(item => SiigoJson.Bool(item, "active", fallback: true))
-                .Select(item => new SiigoOption(SiigoJson.Text(item, "id") ?? string.Empty, SiigoJson.NameOf(item)))
+                .Select(item => new SiigoOption(SiigoJson.Text(item, "id") ?? string.Empty, SiigoJson.NameOf(item), SiigoJson.Text(item, "description")))
                 .Where(option => option.Id.Length > 0),
         ];
     }
