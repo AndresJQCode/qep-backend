@@ -52,4 +52,6 @@ internal sealed class SiigoSettingsRepository(SiigoDbContext dbContext) : ISiigo
 
         return settings;
     }
+
+    public void Remove(SiigoSettings settings) => dbContext.Settings.Remove(settings);
 }
