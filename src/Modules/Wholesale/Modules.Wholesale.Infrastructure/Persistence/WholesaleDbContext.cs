@@ -114,6 +114,9 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
         distributor.Property(value => value.BusinessName)
             .HasColumnName("business_name")
             .HasMaxLength(DistributorTextLimits.BusinessName);
+        // Spec 2026-11-18: el país decide qué tipos de documento admite; el tipo entra en la unicidad.
+        distributor.Property(value => value.Country).HasColumnName("country").HasMaxLength(2);
+        distributor.Property(value => value.IdentificationType).HasColumnName("identification_type").HasMaxLength(16);
         distributor.Property(value => value.IdentificationNumber)
             .HasColumnName("identification_number")
             .HasMaxLength(DistributorTextLimits.IdentificationNumber);
@@ -150,7 +153,7 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
             .OnDelete(DeleteBehavior.Restrict)
             .HasConstraintName(DistributorPriceListForeignKey);
 
-        distributor.HasIndex(value => new { value.TenantId, value.IdentificationNumber })
+        distributor.HasIndex(value => new { value.TenantId, value.IdentificationType, value.IdentificationNumber })
             .IsUnique()
             .HasDatabaseName(DistributorIdentificationIndex);
         distributor.HasIndex(value => new { value.TenantId, value.DistributorTenantId })

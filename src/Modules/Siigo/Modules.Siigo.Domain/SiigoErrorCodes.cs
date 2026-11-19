@@ -1,0 +1,64 @@
+namespace Modules.Siigo.Domain;
+
+/// <summary>Los códigos de error de Siigo (<c>siigo.*</c>). Son contrato con el frontend, que traduce por ellos: no se renombran. El
+/// status lo decide el mapeo central (<c>ApiExceptionHandler</c>), nunca un handler.</summary>
+public static class SiigoErrorCodes
+{
+    /// <summary>409: otra conexión del tenant ya factura con esa empresa (<c>IX_settings_tenant_company</c>).</summary>
+    public const string SettingsCompanyTaken = "siigo.settings.company_taken";
+
+    /// <summary>422: la empresa no existe en el tenant o está inactiva.</summary>
+    public const string SettingsCompanyInvalid = "siigo.settings.company_invalid";
+
+    /// <summary>422: una lista de vínculos repite su clave (porcentaje, tasa o cuenta).</summary>
+    public const string SettingsDuplicateLink = "siigo.settings.duplicate_link";
+
+    /// <summary>422: los días de crédito no van sin su forma de pago, o están fuera de rango.</summary>
+    public const string SettingsCreditInvalid = "siigo.settings.credit_invalid";
+
+    /// <summary>422: un valor de la configuración pasa del largo de su columna (los validadores lo frenan antes con el campo).</summary>
+    public const string SettingsValueTooLong = "siigo.settings.value_too_long";
+
+    /// <summary>422: la variante que se quiere vincular no existe en el catálogo del tenant.</summary>
+    public const string ProductVariantNotFound = "siigo.product.variant_not_found";
+
+    /// <summary>422: Siigo no tiene un producto activo con ese id y ese código (el vínculo manual se valida contra Siigo).</summary>
+    public const string ProductNotFoundInSiigo = "siigo.product.not_found_in_siigo";
+
+    /// <summary>409: la conexión no se puede usar (pausada, con la clave rechazada, ilegible…); el motivo viaja en <c>details</c>.</summary>
+    public const string ConnectionUnavailable = "siigo.connection_unavailable";
+
+    /// <summary>503: Siigo no contestó o respondió un error transitorio.</summary>
+    public const string Unavailable = "siigo.unavailable";
+
+    /// <summary>422: el pedido no está listo para facturar; <c>details.missing</c> trae todo lo que falta (spec §5.4, paso 2).</summary>
+    public const string InvoiceNotReady = "siigo.invoice.not_ready";
+
+    /// <summary>422: los ítems no cuadran con el total del pedido (más de un peso), o Siigo rechazó los pagos por no sumar su total
+    /// (spec §6.4).</summary>
+    public const string InvoiceTotalsMismatch = "siigo.invoice.totals_mismatch";
+
+    /// <summary>422: los comprobantes de pago suman más que el neto del pedido.</summary>
+    public const string InvoicePaymentsExceedTotal = "siigo.invoice.payments_exceed_total";
+
+    /// <summary>422: el cuerpo nombra un comprobante que no es del pedido.</summary>
+    public const string InvoicePaymentsMismatch = "siigo.invoice.payments_mismatch";
+
+    /// <summary>422: sólo se factura en pesos colombianos.</summary>
+    public const string InvoiceCurrencyUnsupported = "siigo.invoice.currency_unsupported";
+
+    /// <summary>422: la cuenta de cobro del pedido no tiene empresa.</summary>
+    public const string InvoiceNoCompany = "siigo.invoice.no_company";
+
+    /// <summary>422: la empresa del pedido no tiene una conexión de Siigo configurada.</summary>
+    public const string InvoiceNoConnection = "siigo.invoice.no_connection";
+
+    /// <summary>409: el índice único parcial de <c>siigo.invoices</c> (una factura vigente por pedido y tipo).</summary>
+    public const string InvoiceAlreadyExists = "siigo.invoice.already_exists";
+
+    /// <summary>422: la factura no está en el estado que la acción exige (resolver sólo desde <c>Unknown</c>, estampar sólo una creada).</summary>
+    public const string InvoiceStateInvalid = "siigo.invoice.state_invalid";
+
+    /// <summary>404: el pedido no tiene factura de Siigo de ese tipo.</summary>
+    public const string InvoiceNotFound = "siigo.invoice.not_found";
+}

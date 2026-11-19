@@ -51,7 +51,7 @@ internal static class EngagementTestBed
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             Events.Add((tenantId, Guid.Empty, action, resourceId));
 
-        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             Events.Add((tenantId, Guid.Empty, action, resourceId));
     }
 
@@ -217,6 +217,10 @@ public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string 
             Task.FromResult<IReadOnlyList<TagWithCount>>(
                 Tags.Where(tag => tag.TenantId == tenantId)
                     .OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase).Select(WithCount).ToList());
+
+        public Task<IReadOnlyList<Tag>> ListWithoutCountsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Tag>>(
+                [.. Tags.Where(tag => tag.TenantId == tenantId).OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase)]);
 
         public Task<IReadOnlyList<TagWithCount>> ListForCustomerAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
         {

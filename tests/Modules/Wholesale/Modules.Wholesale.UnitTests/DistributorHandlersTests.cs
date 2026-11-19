@@ -77,6 +77,16 @@ public sealed class DistributorHandlersTests
     }
 
     [Fact]
+    public async Task InviteAllowsTheSameNumberWithAnotherType()
+    {
+        _world.SeedActive("900123456");
+
+        await _world.InviteHandler().HandleAsync(_world.InviteCommand("900123456", identificationType: "CC"), Ct);
+
+        Assert.Equal(["NIT", "CC"], _world.Distributors.Distributors.Select(item => item.IdentificationType));
+    }
+
+    [Fact]
     public async Task InviteWithATakenIdentificationIs409()
     {
         _world.SeedActive("900123456");
@@ -230,6 +240,17 @@ public sealed class DistributorHandlersTests
         Assert.Equal(["Alfa", "Mayoristas"], options.PriceLists.Select(list => list.Name));
         Assert.Equal(["Ana Mayorista", "Beto"], options.Advisors.Select(advisor => advisor.Name));
         Assert.Equal([("Extranjera", false), ("Mayorista SAS", true)], options.Companies.Select(company => (company.Name, company.Eligible)));
+    }
+
+    [Fact]
+    public async Task OptionsReturnTheTenantCountryAndFallBackToCO()
+    {
+        var withoutSettings = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+        _world.Tenancy.Countries[_world.Tenant] = "ES";
+        var withSettings = await _world.OptionsHandler().HandleAsync(new GetDistributorOptionsQuery(_world.Tenant), Ct);
+
+        Assert.Equal("CO", withoutSettings.DefaultCountry);
+        Assert.Equal("ES", withSettings.DefaultCountry);
     }
 
     [Fact]

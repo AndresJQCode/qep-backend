@@ -24,6 +24,14 @@ internal static class PurchasesConflicts
     public static ResourceConflictException InvalidTransition() =>
         new(PurchasesErrorCodes.InvalidTransition, "The purchase order status does not allow this action.");
 
+    /// <summary>409: reenviar el correo sólo vale desde que la orden se envió y mientras no esté cancelada.</summary>
+    public static ResourceConflictException EmailNotAllowed() =>
+        new(PurchasesErrorCodes.EmailNotAllowed, "The purchase order status does not allow resending its email.");
+
+    /// <summary>422: no hay a quién escribirle. El proveedor se corrige en su ficha, no acá.</summary>
+    public static PurchasesDomainException SupplierEmailMissing() =>
+        new(PurchasesErrorCodes.SupplierEmailMissing, "The supplier has no email address.");
+
     public static RequestConcurrencyException Stale() =>
         new("concurrency.conflict", "The purchase order changed after it was loaded.");
 

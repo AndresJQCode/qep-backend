@@ -15,6 +15,32 @@ public sealed class IntegrationCatalogTests
         [new FieldDefinition("apiKey", "Clave", FieldKind.Secret, required: true, maxLength: 64, pattern: null, invalidMessage: "Revisa la clave.")],
         maxConnections: 1);
 
+    // Spec 2026-11-18 (integración Siigo): la fila literal del proveedor nuevo.
+    [Fact]
+    public void SiigoIsInTheCatalogWithItsFieldsAndOnboarding()
+    {
+        var provider = IntegrationProviders.Siigo;
+
+        Assert.Equal("siigo", provider.Key);
+        Assert.Equal("Siigo", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Accounting, provider.Category);
+        Assert.Equal([TenantModuleKeys.Siigo], provider.ConsumingModules);
+        Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Equal(["username", "accessKey", "accountName"], provider.Fields.Select(field => field.Key));
+        Assert.True(provider.FindField("username")!.Required);
+        Assert.Equal(256, provider.FindField("username")!.MaxLength);
+        Assert.Null(provider.FindField("username")!.Pattern);
+        Assert.True(provider.FindField("accessKey")!.IsSecret);
+        Assert.True(provider.FindField("accessKey")!.Required);
+        Assert.Equal(512, provider.FindField("accessKey")!.MaxLength);
+        Assert.Equal(@"^[\x21-\x7E]{1,512}\z", provider.FindField("accessKey")!.Pattern!.ToString());
+        Assert.Equal(4, provider.FindField("accessKey")!.RevealSuffix);
+        Assert.False(provider.FindField("accountName")!.Required);
+        Assert.Equal(256, provider.FindField("accountName")!.MaxLength);
+    }
+
     // Spec 2026-10-09 §6.1: la fila literal del proveedor nuevo.
     [Fact]
     public void WhatsAppCloudIsInTheCatalogWithItsFieldsAndOnboarding()
@@ -39,7 +65,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
         Assert.Equal(
-            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic, IntegrationProviders.OpenAi],
+            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic, IntegrationProviders.OpenAi, IntegrationProviders.Siigo],
             IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
     }
@@ -226,7 +252,7 @@ public sealed class IntegrationCatalogTests
     [Fact]
     public void OnlyTheModelProviderKeysRevealASuffix() =>
         Assert.Equal(
-            ["anthropic.apiKey", "openai.apiKey"],
+            ["anthropic.apiKey", "openai.apiKey", "siigo.accessKey"],
             IntegrationProviders.All
                 .SelectMany(provider => provider.Fields.Where(field => field.RevealSuffix > 0).Select(field => $"{provider.Key}.{field.Key}")));
 

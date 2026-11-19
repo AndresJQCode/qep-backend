@@ -32,7 +32,8 @@ public sealed class InvoiceOrderHandler(
     IClock clock,
     IQuotationSettingsStore settingsStore,
     ITenantDirectory tenantDirectory,
-    IQuotationCustomerLookup customerLookup)
+    IQuotationCustomerLookup customerLookup,
+    IExternalInvoiceStatus externalInvoices)
     : ICommandHandler<InvoiceOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(
@@ -46,6 +47,15 @@ public sealed class InvoiceOrderHandler(
         var order = await repository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
+
+        // Spec 2026-11-18 §5.5: con una factura de Siigo saliendo (Pending) o sin resolver (Unknown), la marca manual esperaría a un
+        // duplicado. Es un 409: la persona resuelve la factura de Siigo y después decide.
+        if (await externalInvoices.HasOpenInvoiceAsync(command.TenantId, command.OrderId, cancellationToken))
+        {
+            throw new ResourceConflictException(
+                OrderStateErrors.ExternalInvoicePending,
+                "An external invoice for this order is still being issued or needs to be resolved; mark it manually after that.");
+        }
 
         // InvoicedBy es un id de membresía, como CancelledBy: el módulo nunca guarda el usuario.
         var invoicedBy = await QuotationAdvisorResolver.ResolveAsync(

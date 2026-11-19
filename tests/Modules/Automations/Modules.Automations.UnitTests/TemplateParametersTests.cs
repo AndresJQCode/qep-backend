@@ -74,6 +74,58 @@ public sealed class TemplateParametersTests
         Assert.Equal(["accepted", "rejected"], consent.Outputs.Keys);
     }
 
+    // Spec 2026-11-19 (chatbot CRM action): only the title is text; the operation, the ids and saveTo stay literal.
+    [Fact]
+    public void ApplyCarriesACrmActionNode()
+    {
+        const string json = """
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "c1" },
+              "variables": [],
+              "nodes": [
+                { "id": "c1", "kind": "crmAction", "title": "Etiquetar {param.option1}", "operation": "moveDeal",
+                  "tagId": null, "stageId": "5e5e5e5e-5e5e-5e5e-5e5e-5e5e5e5e5e5e", "saveTo": "{param.option1}",
+                  "outputs": { "ok": "c1", "skipped": null, "error": null } }
+              ]
+            }
+            """;
+
+        var flow = FlowJson.Parse(TemplateParameters.Apply(json, Values));
+
+        var crm = Assert.IsType<CrmActionNode>(Assert.Single(flow.Nodes));
+        Assert.Equal(
+            ("Etiquetar Ventas", "moveDeal", (Guid?)null, (Guid?)Guid.Parse("5e5e5e5e-5e5e-5e5e-5e5e-5e5e5e5e5e5e"), "{param.option1}"),
+            (crm.Title, crm.Operation, crm.TagId, crm.StageId, crm.SaveTo));
+        Assert.Equal(["ok", "skipped", "error"], crm.Outputs.Keys);
+    }
+
+    // «Guardar como plantilla»: tags and stages are tenant data, like the HTTP block's connection (D-C14).
+    [Fact]
+    public void SavingAsTemplateClearsTagAndStageIds()
+    {
+        const string json = """
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "c1" },
+              "variables": [],
+              "nodes": [
+                { "id": "c1", "kind": "crmAction", "title": "Etiquetar", "operation": "addTag",
+                  "tagId": "7a7a7a7a-7a7a-7a7a-7a7a-7a7a7a7a7a7a", "stageId": null, "saveTo": "crm",
+                  "outputs": { "ok": "c2", "skipped": null, "error": null } },
+                { "id": "c2", "kind": "crmAction", "title": "Mover", "operation": "moveDeal",
+                  "tagId": null, "stageId": "5e5e5e5e-5e5e-5e5e-5e5e-5e5e5e5e5e5e", "saveTo": "crm2",
+                  "outputs": { "ok": null, "skipped": null, "error": null } }
+              ]
+            }
+            """;
+
+        var nodes = FlowJson.Parse(SaveChatbotAsTemplateHandler.WithoutTenantReferences(json)).Nodes.Cast<CrmActionNode>().ToList();
+
+        Assert.All(nodes, node => Assert.Equal(((Guid?)null, (Guid?)null), (node.TagId, node.StageId)));
+        Assert.Equal(["addTag", "moveDeal"], nodes.Select(node => node.Operation));
+    }
+
     [Fact]
     public void ADataConsentKeepsItsRejectSettings()
     {

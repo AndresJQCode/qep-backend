@@ -70,6 +70,22 @@ public sealed class CustomerDocumentCountryTests
                 CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Nif, "12345678Z"),
                 "3001234567", Now, new FakeNormalizer())).Code);
 
+    // Wholesale distributors can be foreign (spec 2026-11-18): the register takes the country the caller names.
+    [Fact]
+    public void TheRegisterTakesTheTypesOfTheCountryItIsGiven()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Distri ES", Identification(IdentificationType.Nif, "B12345678"),
+            null, Now, new FakeNormalizer(), country: "es");
+
+        Assert.Equal("ES", customer.Country);
+        Assert.Equal(
+            NotAllowed,
+            Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+                CustomerId.New(), TenantId, "Distri ES", Identification(IdentificationType.Nit, "900123456"),
+                null, Now, new FakeNormalizer(), country: "ES")).Code);
+    }
+
     [Theory]
     [InlineData(IdentificationType.Nit, "CO", true)]
     [InlineData(IdentificationType.Nif, "ES", true)]

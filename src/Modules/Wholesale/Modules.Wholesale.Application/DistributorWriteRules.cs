@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 
 namespace Modules.Wholesale.Application;
@@ -33,6 +34,17 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
             .Must(email => string.IsNullOrWhiteSpace(email) || IsEmail(email.Trim()))
             .WithMessage("The email is not valid.");
         RuleFor(command => command.BusinessName).TrimmedText(DistributorTextLimits.BusinessName);
+        RuleFor(command => command.Country)
+            .Must(IsCountryCode)
+            .WithMessage("The country is required, as a two-letter code.");
+        // El país mal escrito ya falla en su propia regla: el tipo sólo se juzga contra un país que tiene forma de país.
+        RuleFor(command => command.IdentificationType)
+            .NotEmpty()
+            .WithMessage("The identification type is required.");
+        RuleFor(command => command.IdentificationType)
+            .Must((command, type) => DocumentTypesByCountry.IsAllowed(type, command.Country))
+            .When(command => IsCountryCode(command.Country) && !string.IsNullOrWhiteSpace(command.IdentificationType))
+            .WithMessage("The identification type is not valid for the country.");
         RuleFor(command => command.IdentificationNumber).TrimmedText(DistributorTextLimits.IdentificationNumber);
         RuleFor(command => command.ContactName).TrimmedText(DistributorTextLimits.ContactName);
         RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);
@@ -43,6 +55,9 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
             .NotEqual(Guid.Empty)
             .When(command => !string.IsNullOrWhiteSpace(command.Phone));
     }
+
+    private static bool IsCountryCode(string? country) =>
+        country is not null && country.Trim() is { Length: 2 } code && code.All(char.IsAsciiLetter);
 
     // Lo mismo que EmailAddress() de FluentValidation (una @ que no está en los extremos), sin el chequeo que no recorta.
     private static bool IsEmail(string email)

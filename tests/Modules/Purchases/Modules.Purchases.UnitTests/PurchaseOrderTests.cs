@@ -78,6 +78,29 @@ public sealed class PurchaseOrderTests
     }
 
     [Fact]
+    public void RecordEmailStoresTheResultWithoutBumpingTheVersion()
+    {
+        var order = OrderIn(PurchaseOrderStatus.Sent);
+        var version = order.Version;
+        var updatedAt = order.UpdatedAt;
+        var at = Now.AddHours(2);
+
+        order.RecordEmail(PurchaseOrderEmailStatus.Sent, "ventas@proveedor.co", at);
+
+        Assert.Equal(PurchaseOrderEmailStatus.Sent, order.LastEmailStatus);
+        Assert.Equal("ventas@proveedor.co", order.LastEmailTo);
+        Assert.Equal(at, order.LastEmailAt);
+        Assert.Equal(version, order.Version);
+        Assert.Equal(updatedAt, order.UpdatedAt);
+    }
+
+    [Fact]
+    public void RecordEmailOnADraftThrowsEmailNotAllowed() =>
+        AssertCode(
+            "purchases.order.email_not_allowed",
+            () => OrderIn(PurchaseOrderStatus.Draft).RecordEmail(PurchaseOrderEmailStatus.Sent, "a@b.co", Now));
+
+    [Fact]
     public void SendMovesDraftToSentAndAppendsHistory()
     {
         var order = Order();

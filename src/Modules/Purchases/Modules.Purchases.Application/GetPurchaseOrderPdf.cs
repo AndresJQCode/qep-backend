@@ -1,7 +1,6 @@
 using BuildingBlocks.Application;
 using Modules.Purchases.Domain;
 using Modules.Tenancy.Application;
-using Modules.Tenancy.Domain;
 
 namespace Modules.Purchases.Application;
 
@@ -12,17 +11,15 @@ public sealed record PurchaseOrderPdfFile(byte[] Content, string FileName);
 
 /// <summary>
 /// El PDF de una orden en cualquier estado, con el permiso de leer. Arma el mismo detalle que <c>GET /{id}</c> (así el PDF no
-/// puede mostrar otros totales), le suma el documento del proveedor, el nombre del tenant y su formato regional, y fecha el
-/// documento con el día local del tenant en que la orden se envió (o se creó, si nunca se envió).
+/// puede mostrar otros totales) y le suma el documento del proveedor; el resto (nombre del tenant, formato regional, día local)
+/// lo resuelve <see cref="IPurchaseOrderDocumentBuilder"/>, el mismo que arma el correo al proveedor.
 /// </summary>
 public sealed class GetPurchaseOrderPdfHandler(
     IExecutionContext executionContext,
     IPurchaseOrderRepository orders,
     IPurchasesSupplierLookup suppliers,
     PurchaseOrderComposer composer,
-    ITenantDirectory tenants,
-    ITenantClock tenantClock,
-    IPurchaseOrderPdfRenderer renderer)
+    IPurchaseOrderDocumentBuilder documents)
     : IQueryHandler<GetPurchaseOrderPdfQuery, PurchaseOrderPdfFile>
 {
     public async Task<PurchaseOrderPdfFile> HandleAsync(GetPurchaseOrderPdfQuery query, CancellationToken cancellationToken)
@@ -35,14 +32,8 @@ public sealed class GetPurchaseOrderPdfHandler(
         // Un proveedor que ya no está se imprime con el nombre del detalle y sin documento, como lo muestra la pantalla.
         var supplier = await suppliers.FindAsync(query.TenantId, order.SupplierId, cancellationToken)
             ?? new PurchasesSupplierRef(order.SupplierId, detail.Supplier.Name, string.Empty, string.Empty, false);
-        var tenantId = new TenantId(query.TenantId);
-        var tenantName = await tenants.GetDisplayNameAsync(tenantId, cancellationToken) ?? string.Empty;
-        var regional = await tenants.GetRegionalSettingsAsync(tenantId, cancellationToken);
-        var calendar = await tenantClock.GetAsync(query.TenantId, cancellationToken);
 
-        var document = PurchaseOrderPdfMapper.Map(detail, supplier, tenantName, regional, calendar.TimeZone);
-        var content = await renderer.RenderAsync(document, cancellationToken);
-
-        return new PurchaseOrderPdfFile(content, $"{order.Number}.pdf");
+        var bundle = await documents.BuildAsync(order, detail, supplier, cancellationToken);
+        return new PurchaseOrderPdfFile(bundle.Pdf, bundle.FileName);
     }
 }

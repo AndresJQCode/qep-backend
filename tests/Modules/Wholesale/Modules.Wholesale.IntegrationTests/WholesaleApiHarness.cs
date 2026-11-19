@@ -285,6 +285,8 @@ internal static class WholesaleApiHarness
             {
                 email,
                 businessName = "Distribuciones Norte SAS",
+                country = "CO",
+                identificationType = "NIT",
                 identificationNumber,
                 contactName = "Ana Pérez",
                 priceListId,

@@ -86,8 +86,50 @@ public sealed class PurchaseOrderComposerTests
         var received = await composer.DetailAsync(PurchaseOrderTestData.OrderIn(PurchaseOrderStatus.Received), CancellationToken.None);
 
         Assert.Equal(["edit", "delete", "send", "cancel"], draft.AllowedActions);
-        Assert.Equal(["confirm", "cancel"], sent.AllowedActions);
-        Assert.Empty(received.AllowedActions);
+        Assert.Equal(["confirm", "cancel", "resend_email"], sent.AllowedActions);
+        Assert.Equal(["resend_email"], received.AllowedActions);
+    }
+
+    [Fact]
+    public async Task ResendEmailIsAllowedFromSentOnAndNeverOnDraftOrCancelled()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle");
+        var manage = Composer(PurchasesPermissions.OrderRead, PurchasesPermissions.OrderManage);
+        var read = Composer(PurchasesPermissions.OrderRead);
+
+        var confirmed = await manage.DetailAsync(PurchaseOrderTestData.OrderIn(PurchaseOrderStatus.Confirmed), CancellationToken.None);
+        var cancelled = await manage.DetailAsync(PurchaseOrderTestData.OrderIn(PurchaseOrderStatus.Cancelled), CancellationToken.None);
+        var draft = await manage.DetailAsync(PurchaseOrderTestData.Order(), CancellationToken.None);
+        var sentWithoutManage = await read.DetailAsync(PurchaseOrderTestData.OrderIn(PurchaseOrderStatus.Sent), CancellationToken.None);
+
+        Assert.Contains("resend_email", confirmed.AllowedActions);
+        Assert.DoesNotContain("resend_email", cancelled.AllowedActions);
+        Assert.DoesNotContain("resend_email", draft.AllowedActions);
+        Assert.Empty(sentWithoutManage.AllowedActions);
+    }
+
+    [Fact]
+    public async Task DetailExposesTheRecipientAndTheLastEmailResult()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle", email: "ventas@textiles.co");
+        var order = PurchaseOrderTestData.OrderIn(PurchaseOrderStatus.Sent);
+        var at = PurchaseOrderTestData.Now.AddHours(1);
+        order.RecordEmail(PurchaseOrderEmailStatus.Failed, "ventas@textiles.co", at);
+
+        var detail = await Composer(PurchasesPermissions.OrderRead).DetailAsync(order, CancellationToken.None);
+
+        Assert.Equal(new PurchaseOrderEmailDto("Failed", "ventas@textiles.co", at, "ventas@textiles.co"), detail.Email);
+    }
+
+    [Fact]
+    public async Task DetailWithoutAnEmailAttemptHasNullStatusAndTheCurrentRecipient()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle");
+
+        var detail = await Composer(PurchasesPermissions.OrderRead)
+            .DetailAsync(PurchaseOrderTestData.Order(), CancellationToken.None);
+
+        Assert.Equal(new PurchaseOrderEmailDto(null, null, null, null), detail.Email);
     }
 
     [Fact]

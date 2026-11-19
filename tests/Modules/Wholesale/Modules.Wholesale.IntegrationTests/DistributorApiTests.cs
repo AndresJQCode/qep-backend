@@ -12,6 +12,47 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
     private WholesaleApiHarness.QepApiFactory Factory => host.Factory;
 
     [Fact]
+    public async Task InviteWithATypeNotAllowedForTheCountryAnswers422OnIdentificationType()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
+        var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
+
+        var response = await manager.PostAsJsonAsync(
+            WholesaleApiHarness.DistributorsUrl(tenant.TenantId),
+            new
+            {
+                email = "ana@distri.co",
+                businessName = "Distribuciones Norte SAS",
+                country = "CO",
+                identificationType = "NIF",
+                identificationNumber = "900123456",
+                contactName = "Ana Pérez",
+                priceListId = list.Id,
+                advisorId = tenant.MemberId,
+                billingCompanyId = company,
+            },
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("IdentificationType", await WholesaleApiHarness.BodyAsync(response), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OptionsCarryTheDefaultCountry()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+
+        var response = await manager.GetAsync($"{WholesaleApiHarness.DistributorsUrl(tenant.TenantId)}/options", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var options = (await response.Content.ReadFromJsonAsync<DistributorOptionsDto>(Ct))!;
+        Assert.Equal("CO", options.DefaultCountry);
+    }
+
+    [Fact]
     public async Task InviteReturns201InvitedAndQueuesOneEmailEventWithoutTheTokenInTheAudit()
     {
         var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
@@ -25,6 +66,8 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
             {
                 email = "  Ana@Distri.CO ",
                 businessName = "Distribuciones Norte SAS",
+                country = "CO",
+                identificationType = "NIT",
                 identificationNumber = "900123456",
                 contactName = "Ana Pérez",
                 priceListId = list.Id,
@@ -39,6 +82,7 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         Assert.Equal(("Invited", "ana@distri.co", list.Id, WholesaleApiHarness.MemberName, company),
             (detail.Status, detail.Email, detail.PriceList.Id, detail.Advisor.Name, detail.BillingCompany.Id));
         Assert.Equal(["edit", "resend", "delete"], detail.AllowedActions);
+        Assert.Equal(("CO", "NIT"), (detail.Country, detail.IdentificationType));
 
         var events = await WholesaleApiHarness.RowsAsync<int>(
             Factory,

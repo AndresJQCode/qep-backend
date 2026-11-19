@@ -176,6 +176,38 @@ public interface IAutomationDataConsents
     Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-19 (chatbot CRM action): the conversation the «Acción de CRM» block acts for.</summary>
+public sealed record CrmActionContext(Guid TenantId, Guid ConversationId);
+
+/// <summary>
+/// Spec 2026-11-19 (chatbot CRM action): the tenant's CRM as the system (adapter in Bootstrapper over Customers and Pipeline):
+/// Automations references neither. Each call answers one of <c>CrmResultCodes</c> and never throws a domain error (a broken rule is
+/// <c>failed</c>); a cancellation, a concurrency conflict or a transient database failure goes up, so the engine unit is retried.
+/// </summary>
+public interface IAutomationCrm
+{
+    Task<string> AddTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken);
+
+    Task<string> RemoveTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken);
+
+    Task<string> MoveDealAsync(CrmActionContext context, Guid stageId, CancellationToken cancellationToken);
+}
+
+public sealed record CrmTagRef(Guid Id, string Name);
+
+public sealed record CrmStageRef(Guid Id, string Name);
+
+/// <summary>Spec 2026-11-19 (chatbot CRM action): what the «Acción de CRM» block can pick. <see cref="OpenStages"/> are the open stages of
+/// the tenant's pipeline in pipeline order. Each list is empty when its module is off.</summary>
+public sealed record CrmCatalog(bool CustomersEnabled, bool PipelineEnabled, IReadOnlyList<CrmTagRef> Tags, IReadOnlyList<CrmStageRef> OpenStages);
+
+/// <summary>Spec 2026-11-19: the tenant's tag catalog and open stages (adapter in Bootstrapper over Customers and Pipeline), for the editor
+/// and the validator.</summary>
+public interface IAutomationsCrmDirectory
+{
+    Task<CrmCatalog> ReadAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
 /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.2 y §7: un agente de IA del tenant. <see cref="Status"/> es el nombre del
 /// <c>AgentStatus</c> de Ai (<c>Draft</c>, <c>Active</c>, <c>Paused</c>); <see cref="Provider"/> y <see cref="Model"/> son los de la versión
 /// publicada, o los del borrador si todavía no tiene.</summary>
@@ -531,6 +563,7 @@ public static class AutomationsAuditActions
     public const string ChatbotConnectionReleased = "automations.chatbot.connection_released";
     public const string ChatbotPaused = "automations.chatbot.paused";
     public const string ChatbotResumed = "automations.chatbot.resumed";
+    public const string ChatbotVersionRestored = "automations.chatbot.version_restored";
     public const string ChatbotDeleted = "automations.chatbot.deleted";
     public const string ChatbotImported = "automations.chatbot.imported";
     public const string TemplateCreated = "automations.template.created";
@@ -547,6 +580,16 @@ public static class AutomationsAuditActions
     /// <summary>Spec 2026-10-26 D-7: Política de datos no tenía un cliente al que registrarle la respuesta y siguió por «No acepto» sin
     /// preguntar.</summary>
     public const string DataConsentUnavailable = "automations.run.data_consent_unavailable";
+
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the «Acción de CRM» block changed the CRM (added, removed or moved). An idempotent
+    /// no-op (already tagged, not tagged, already in the stage) writes no row. The node, operation and result code are in the run's trace.</summary>
+    public const string CrmActionApplied = "automations.run.crm_action_applied";
+
+    /// <summary>Spec 2026-11-19: the «Acción de CRM» block had nothing to act on and left by <c>skipped</c>.</summary>
+    public const string CrmActionSkipped = "automations.run.crm_action_skipped";
+
+    /// <summary>Spec 2026-11-19: the «Acción de CRM» block left by <c>error</c>.</summary>
+    public const string CrmActionFailed = "automations.run.crm_action_failed";
 
     /// <summary>No está en la lista de §4.6: el barrido de D-M13 termina corridas sin una persona y la auditoría es la única huella.</summary>
     public const string RunAbandoned = "automations.run.abandoned";

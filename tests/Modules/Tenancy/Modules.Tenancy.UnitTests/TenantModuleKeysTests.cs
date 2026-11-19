@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -143,14 +143,24 @@ public sealed class TenantModuleKeysTests
         Assert.DoesNotContain(TenantModuleKeys.Purchases, TenantModuleKeys.DefaultForNewTenants);
     }
 
-    // Spec 2026-11-17 (mayorista): el pedido del distribuidor es un Order; se prende por tenant.
+    // Spec 2026-11-17 (mayorista): el pedido del distribuidor es un Order; se prende por tenant. Ya no es la última: siigo va
+    // después.
     [Fact]
-    public void WholesaleIsLastDependsOnOrdersAndIsOffForNewTenants()
+    public void WholesaleDependsOnOrdersAndIsOffForNewTenants()
     {
-        Assert.Equal("wholesale", TenantModuleKeys.All[^1].Value);
-        Assert.Equal(21, TenantModuleKeys.All.Count);
         Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Wholesale));
         Assert.DoesNotContain(TenantModuleKeys.Wholesale, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-18 (integración Siigo): se factura un pedido, así que depende de orders; se prende por tenant.
+    [Fact]
+    public void SiigoIsAKnownKeyOutsideTheDefaults()
+    {
+        Assert.Same(TenantModuleKeys.Siigo, TenantModuleKey.Parse("siigo"));
+        Assert.Equal("siigo", TenantModuleKeys.All[^1].Value);
+        Assert.Equal(22, TenantModuleKeys.All.Count);
+        Assert.DoesNotContain(TenantModuleKeys.Siigo, TenantModuleKeys.DefaultForNewTenants);
+        Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Siigo));
     }
 
     [Fact]

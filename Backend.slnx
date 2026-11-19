@@ -194,6 +194,16 @@
     <Project Path="tests/Modules/Wholesale/Modules.Wholesale.UnitTests/Modules.Wholesale.UnitTests.csproj" />
     <Project Path="tests/Modules/Wholesale/Modules.Wholesale.IntegrationTests/Modules.Wholesale.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Siigo/">
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Api/Modules.Siigo.Api.csproj" />
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Application/Modules.Siigo.Application.csproj" />
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Domain/Modules.Siigo.Domain.csproj" />
+    <Project Path="src/Modules/Siigo/Modules.Siigo.Infrastructure/Modules.Siigo.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Siigo/">
+    <Project Path="tests/Modules/Siigo/Modules.Siigo.UnitTests/Modules.Siigo.UnitTests.csproj" />
+    <Project Path="tests/Modules/Siigo/Modules.Siigo.IntegrationTests/Modules.Siigo.IntegrationTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Support/">
     <Project Path="src/Modules/Support/Modules.Support.Api/Modules.Support.Api.csproj" />
     <Project Path="src/Modules/Support/Modules.Support.Application/Modules.Support.Application.csproj" />

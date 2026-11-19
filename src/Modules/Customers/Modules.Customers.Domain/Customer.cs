@@ -412,14 +412,17 @@ public sealed class Customer
         string? phone,
         DateTimeOffset now,
         IPhoneNumberNormalizer phoneNormalizer,
-        string? email = null)
+        string? email = null,
+        string? country = null)
     {
         ArgumentNullException.ThrowIfNull(phoneNormalizer);
         var normalizedName = NormalizeName(name);
         var normalizedIdentification = identification?.Normalized();
+        // Sin país, Colombia: la caja del POS y los cobros no lo mandan. Un distribuidor de Mayorista sí (spec 2026-11-18).
+        var registerCountry = string.IsNullOrWhiteSpace(country) ? ColombiaCountryCode : country.Trim().ToUpperInvariant();
         if (normalizedIdentification is not null)
         {
-            EnsureDocumentAllowedForCountry(normalizedIdentification.Type, ColombiaCountryCode);
+            EnsureDocumentAllowedForCountry(normalizedIdentification.Type, registerCountry);
         }
 
         var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
@@ -437,8 +440,8 @@ public sealed class Customer
             Name = normalizedName,
             Phone = normalizedPhone,
             Email = CustomerContactInfo.NormalizeEmail(email),
-            Country = ColombiaCountryCode,
-            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, ColombiaCountryCode),
+            Country = registerCountry,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, registerCountry),
             Completeness = CustomerCompleteness.Incomplete,
             IsActive = true,
             Version = 1,

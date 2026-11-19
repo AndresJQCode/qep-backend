@@ -91,7 +91,16 @@ public sealed record PurchaseOrderDetailDto(
     /// decide por esto, nunca por <c>supplier.isLinked</c>.</summary>
     string Mode = PurchaseOrderModes.External,
     PurchaseOrderLinkedDto? Linked = null,
-    PurchaseOrderChangesDto? Changes = null);
+    PurchaseOrderChangesDto? Changes = null,
+    /// <summary>Correo al proveedor: el último intento y el correo con que se mandaría hoy. Un backend anterior no lo manda.</summary>
+    PurchaseOrderEmailDto? Email = null);
+
+/// <summary>
+/// <c>Status</c> (<c>Sent</c>, <c>Failed</c> o <c>NoRecipient</c>), <c>To</c> y <c>At</c> son del último intento y llegan nulos
+/// mientras no haya habido uno. <c>Recipient</c> es el correo actual del proveedor (nulo si no tiene): el diálogo de envío lo
+/// muestra antes de enviar.
+/// </summary>
+public sealed record PurchaseOrderEmailDto(string? Status, string? To, DateTimeOffset? At, string? Recipient);
 
 /// <summary>
 /// Una fila de la lista. <c>Total</c> sigue la regla de <c>totals.total</c> del detalle y <c>LineCount</c> viene contado, para

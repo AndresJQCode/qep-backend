@@ -440,6 +440,22 @@ public sealed class Order
 
     public MemberId? InvoicedBy { get; private set; }
 
+    public const int InvoiceProviderMaxLength = 16;
+
+    public const int InvoiceNumberMaxLength = 40;
+
+    public const int InvoiceExternalIdMaxLength = 64;
+
+    /// <summary>Quién emitió la factura: <c>siigo</c> si la creó una integración (spec 2026-11-18 §5.5), <c>null</c> si la marca es
+    /// manual (alguien la hizo afuera y sólo dejó constancia). Una factura de un proveedor no se revierte desde QEP.</summary>
+    public string? InvoiceProvider { get; private set; }
+
+    /// <summary>El número que el proveedor le dio a la factura (<c>FV-1-123</c> en Siigo). <c>null</c> en una marca manual.</summary>
+    public string? InvoiceNumber { get; private set; }
+
+    /// <summary>El id de la factura en el sistema del proveedor. Nunca viaja en la respuesta de la API.</summary>
+    public string? InvoiceExternalId { get; private set; }
+
     /// <summary>Vacío hasta que se sincronice — placeholder para la integración futura con
     /// Ritual Collection. Esta fase no la implementa.</summary>
     public string? RitualCollectionSyncId { get; private set; }
@@ -1668,6 +1684,40 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>
+    /// Marca el pedido como facturado por un proveedor externo (spec 2026-11-18 §5.5). No exige pagado: el pago se validó una vez, al
+    /// armar la factura, y ésta ya existe en el proveedor; marcar tiene que salir aunque un comprobante haya cambiado entre medio. Es
+    /// <b>idempotente</b>: con la misma marca (mismo proveedor y número) no hace nada y no sube la versión. Con otra marca, manual o de
+    /// otro número, es <c>order.order.already_invoiced</c>.
+    /// </summary>
+    public void InvoiceExternally(
+        string provider, string number, string externalId, MemberId invoicedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(number);
+        ArgumentException.ThrowIfNullOrWhiteSpace(externalId);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(provider.Length, InvoiceProviderMaxLength);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(number.Length, InvoiceNumberMaxLength);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(externalId.Length, InvoiceExternalIdMaxLength);
+
+        if (IsInvoiced
+            && string.Equals(InvoiceProvider, provider, StringComparison.Ordinal)
+            && string.Equals(InvoiceNumber, number, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        EnsureNotCancelled("A cancelled order cannot be invoiced.");
+        EnsureNotInvoiced("The order is already invoiced.");
+        InvoicedBy = invoicedBy;
+        InvoicedAt = occurredAt;
+        InvoiceProvider = provider;
+        InvoiceNumber = number;
+        InvoiceExternalId = externalId;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
     public void RevertInvoicing(MemberId revertedBy, DateTimeOffset occurredAt)
     {
         if (!IsInvoiced)
@@ -1675,6 +1725,14 @@ public sealed class Order
             throw new QuotationsDomainException(
                 OrderStateErrors.NotInvoiced,
                 "Only an invoiced order can have its invoicing reverted.");
+        }
+
+        // Revertir una factura de Siigo es una nota crédito, fuera de alcance (spec §2 y §5.5): sólo se revierte la marca manual.
+        if (InvoiceProvider is not null)
+        {
+            throw new QuotationsDomainException(
+                OrderStateErrors.InvoicedExternally,
+                "An order invoiced by an external provider cannot have its invoicing reverted from QEP.");
         }
 
         InvoicedBy = null;

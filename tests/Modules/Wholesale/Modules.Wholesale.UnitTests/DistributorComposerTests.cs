@@ -9,6 +9,19 @@ public sealed class DistributorComposerTests
     private static CancellationToken Ct => DistributorWorld.Ct;
 
     [Fact]
+    public async Task DetailAndSummaryCarryTheCountryAndTheType()
+    {
+        var world = new DistributorWorld();
+        var distributor = world.SeedInvited("123", identificationType: "CC");
+
+        var detail = await world.Composer().DetailAsync(distributor, Ct);
+        var summary = Assert.Single(await world.Composer().SummariesAsync(world.Tenant, [distributor], Ct));
+
+        Assert.Equal(("CO", "CC"), (detail.Country, detail.IdentificationType));
+        Assert.Equal(("CO", "CC"), (summary.Country, summary.IdentificationType));
+    }
+
+    [Fact]
     public async Task AllowedActionsAreEmptyWithoutTheManagePermission()
     {
         var world = new DistributorWorld(WholesalePermissions.DistributorRead);

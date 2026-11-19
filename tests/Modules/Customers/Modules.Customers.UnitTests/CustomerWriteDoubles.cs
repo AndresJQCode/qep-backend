@@ -82,7 +82,7 @@ internal static class CustomerWriteDoubles
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             ByIntegration.Add((tenantId, action, resourceId, outcome));
 
-        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             BySystem.Add((tenantId, action, resourceId, outcome));
     }
 

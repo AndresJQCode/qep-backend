@@ -23,6 +23,8 @@
     <ProjectReference Include="..\Modules\Purchases\Modules.Purchases.Infrastructure\Modules.Purchases.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Wholesale\Modules.Wholesale.Application\Modules.Wholesale.Application.csproj" />
     <ProjectReference Include="..\Modules\Wholesale\Modules.Wholesale.Infrastructure\Modules.Wholesale.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Siigo\Modules.Siigo.Application\Modules.Siigo.Application.csproj" />
+    <ProjectReference Include="..\Modules\Siigo\Modules.Siigo.Infrastructure\Modules.Siigo.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Support\Modules.Support.Application\Modules.Support.Application.csproj" />
     <ProjectReference Include="..\Modules\Support\Modules.Support.Infrastructure\Modules.Support.Infrastructure.csproj" />
     <!-- The app hub registers Support's topic authorizer from AddQepPlatform (plan N24). -->

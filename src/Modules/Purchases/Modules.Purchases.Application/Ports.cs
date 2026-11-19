@@ -94,7 +94,8 @@ public sealed record PurchasesSupplierRef(
     string IdentificationType,
     string IdentificationNumber,
     bool IsActive,
-    Guid? LinkedTenantId = null);
+    Guid? LinkedTenantId = null,
+    string? Email = null);
 
 /// <summary>El directorio de proveedores; adaptador en Bootstrapper sobre Suppliers. Todo acotado al tenant.</summary>
 public interface IPurchasesSupplierLookup

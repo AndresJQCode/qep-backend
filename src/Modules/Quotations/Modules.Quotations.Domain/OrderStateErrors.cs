@@ -28,4 +28,10 @@ public static class OrderStateErrors
     public const string AlreadyCancelled = "order.order.already_cancelled";
 
     public const string PaymentProofRequired = "order.order.payment_proof_required";
+
+    /// <summary>422: la factura la emitió un proveedor externo (Siigo) y revertirla es una nota crédito, que QEP no hace.</summary>
+    public const string InvoicedExternally = "order.order.invoiced_externally";
+
+    /// <summary>409: hay una factura externa saliendo o sin resolver (<c>Pending</c> o <c>Unknown</c>); marcar a mano ahora la duplicaría.</summary>
+    public const string ExternalInvoicePending = "order.order.external_invoice_pending";
 }

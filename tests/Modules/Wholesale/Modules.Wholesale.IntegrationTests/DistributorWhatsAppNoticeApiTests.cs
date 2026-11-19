@@ -282,6 +282,8 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
             {
                 email = "ana@distri.co",
                 businessName = "Distribuciones Norte SAS",
+                country = "CO",
+                identificationType = "NIT",
                 identificationNumber = "900123456",
                 contactName = "Ana Pérez",
                 priceListId = world.PriceListId,

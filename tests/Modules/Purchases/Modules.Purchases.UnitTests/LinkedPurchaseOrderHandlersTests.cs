@@ -44,7 +44,8 @@ public sealed class LinkedPurchaseOrderHandlersTests
 
     private TransitionPurchaseOrderHandler TransitionHandler() => new(
         _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), _suppliers, _orders, _unitOfWork,
-        _audit, Composer(), _intake);
+        _audit, Composer(), _intake,
+        new PurchaseOrderEmailDelivery(new FakePurchaseOrderEmail(), new FakePurchaseOrderDocumentBuilder(), _unitOfWork, _audit));
 
     private DeletePurchaseOrderHandler DeleteHandler() => new(
         _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), _orders, _unitOfWork, _audit, _intake);

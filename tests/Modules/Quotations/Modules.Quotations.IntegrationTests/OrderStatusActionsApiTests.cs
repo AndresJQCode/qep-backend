@@ -55,7 +55,7 @@ public sealed class OrderStatusActionsApiTests(SharedQuotationsHost sharedHost) 
     }
 
     [Fact]
-    public async Task ApproveIsGone()
+    public async Task ApproveIsOnlyForWholesaleOrders()
     {
         var factory = await sharedHost.StartTestAsync();
         var (tenantId, _, client) = await RegisterTenantAsync(factory, AllPermissions);
@@ -65,7 +65,8 @@ public sealed class OrderStatusActionsApiTests(SharedQuotationsHost sharedHost) 
         var response = await client.PostAsync(
             ActionUrl(tenantId, order.Id, "approve"), content: null, TestContext.Current.CancellationToken);
 
-        Assert.Contains(response.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
+        // La acción aprobar volvió con el mayorista (D-1, D-2): un pedido manual la rechaza, ya no es una ruta inexistente.
+        await AssertDomainRejectionAsync(response, "order.wholesale.source_invalid");
     }
 
     [Fact]

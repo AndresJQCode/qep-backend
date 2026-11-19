@@ -258,6 +258,8 @@ public static class WholesaleEndpoints
                 tenantId,
                 request.Email,
                 request.BusinessName,
+                request.Country,
+                request.IdentificationType,
                 request.IdentificationNumber,
                 request.ContactName,
                 request.PriceListId,
@@ -337,6 +339,8 @@ public sealed record PriceListPreviewRequest(decimal DiscountPercent, string Vis
 public sealed record DistributorInviteRequest(
     string Email,
     string BusinessName,
+    string Country,
+    string IdentificationType,
     string IdentificationNumber,
     string ContactName,
     Guid PriceListId,

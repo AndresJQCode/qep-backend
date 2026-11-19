@@ -85,6 +85,16 @@ public static class OpenAiFieldKeys
     public const string ApiKey = "apiKey";
 }
 
+/// <summary>Spec 2026-11-18 (integración Siigo). <see cref="Username"/> (el usuario API de Siigo) y <see cref="AccessKey"/> (el
+/// secreto) los escribe una persona; <see cref="AccountName"/> es de sólo lectura para la pantalla y lo escribe el probador cuando la
+/// API de Siigo lo da.</summary>
+public static class SiigoFieldKeys
+{
+    public const string Username = "username";
+    public const string AccessKey = "accessKey";
+    public const string AccountName = "accountName";
+}
+
 /// <summary>
 /// La lista cerrada de proveedores, como <see cref="TenantModuleKeys.All"/> (spec 2026-10-08,
 /// «Catálogo»). Cada proveedor entra con el spec de su consumidor, porque sin módulo consumidor nunca
@@ -357,7 +367,34 @@ public static class IntegrationProviders
         onboarding: ProviderOnboarding.Form,
         requiresTenantEnablement: false);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic, OpenAi];
+    /// <summary>Spec 2026-11-18 (integración Siigo): la cuenta de Siigo Nube del tenant, que consume el módulo <c>siigo</c> para emitir la
+    /// factura electrónica de un pedido. Sin habilitación por tenant: tener el módulo alcanza. El patrón de la clave sólo exige texto
+    /// imprimible sin espacios: el formato es de Siigo y lo juzga el probador. La pantalla ve los últimos 4 caracteres.</summary>
+    public static readonly IntegrationProvider Siigo = new(
+        "siigo",
+        "Siigo",
+        IntegrationCategory.Accounting,
+        [TenantModuleKeys.Siigo],
+        [
+            new FieldDefinition(
+                SiigoFieldKeys.Username, "Usuario API", FieldKind.Text,
+                required: true, maxLength: 256, pattern: null,
+                invalidMessage: "Escribe el usuario API de Siigo tal como aparece en tu cuenta."),
+            new FieldDefinition(
+                SiigoFieldKeys.AccessKey, "Clave de acceso", FieldKind.Secret,
+                required: true, maxLength: 512, pattern: @"^[\x21-\x7E]{1,512}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla de Siigo.",
+                revealSuffix: 4),
+            new FieldDefinition(
+                SiigoFieldKeys.AccountName, "Nombre de la cuenta", FieldKind.Text,
+                required: false, maxLength: 256, pattern: null,
+                invalidMessage: "El nombre que devolvió Siigo no tiene una forma válida."),
+        ],
+        DefaultMaxConnections,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic, OpenAi, Siigo];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>

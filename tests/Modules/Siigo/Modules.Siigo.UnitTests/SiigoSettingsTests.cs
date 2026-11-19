@@ -1,0 +1,146 @@
+using Modules.Siigo.Domain;
+
+namespace Modules.Siigo.UnitTests;
+
+/// <summary>Spec 2026-11-18 §5.2: la configuración de una conexión. Toda escritura sube la versión (es el <c>If-Match</c> de los
+/// <c>PUT</c>), y una configuración nueva sale con la DIAN apagada.</summary>
+public sealed class SiigoSettingsTests
+{
+    private static readonly DateTimeOffset At = new(2026, 11, 18, 12, 0, 0, TimeSpan.Zero);
+
+    private static SiigoSettings NewSettings() => SiigoSettings.Create(Guid.CreateVersion7(), Guid.CreateVersion7());
+
+    private static SiigoDocumentSettings Document(bool sendToDian = false) =>
+        new("doc-1", "seller-1", null, null, sendToDian, false, false, null);
+
+    [Fact]
+    public void ANewSettingsHasDianOffAndEverythingElseEmpty()
+    {
+        var settings = NewSettings();
+
+        Assert.False(settings.SendToDian);
+        Assert.False(settings.SendMail);
+        Assert.False(settings.FreightSeparateInvoice);
+        Assert.Equal(0, settings.Version);
+        Assert.Null(settings.CompanyId);
+        Assert.Null(settings.DocumentTypeId);
+        Assert.Null(settings.SellerId);
+        Assert.Null(settings.CashOnDeliveryPaymentTypeId);
+        Assert.Empty(settings.VariantLinks);
+        Assert.Empty(settings.TaxLinks);
+        Assert.Empty(settings.WithholdingLinks);
+        Assert.Empty(settings.PaymentLinks);
+    }
+
+    [Fact]
+    public void EveryWriteBumpsTheVersion()
+    {
+        var settings = NewSettings();
+        var variantId = Guid.CreateVersion7();
+
+        settings.AssignCompany(Guid.CreateVersion7());
+        Assert.Equal(1, settings.Version);
+        settings.UpdateDocument(Document());
+        Assert.Equal(2, settings.Version);
+        settings.ReplaceTaxLinks([new SiigoTaxLink(19, "tax-19")]);
+        Assert.Equal(3, settings.Version);
+        settings.ReplaceWithholdingLinks([new SiigoWithholdingLink(Guid.CreateVersion7(), "tax-rf")]);
+        Assert.Equal(4, settings.Version);
+        settings.UpdatePayments(new SiigoPaymentSettings([new SiigoPaymentLink("BANCO|1", "pay-1")], "credit", 30, "cod", "default"));
+        Assert.Equal(5, settings.Version);
+        settings.LinkVariant(variantId, "AB-1", "p-1", "Producto", SiigoLinkOrigin.Manual, Guid.CreateVersion7(), At);
+        Assert.Equal(6, settings.Version);
+        settings.UnlinkVariant(variantId);
+        Assert.Equal(7, settings.Version);
+    }
+
+    [Fact]
+    public void ADocumentUpdateKeepsTheSwitchesTheCallerChose()
+    {
+        var settings = NewSettings();
+
+        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "seller-1", "cc-1", "wh-1", true, true, true, "FLETE"));
+
+        Assert.True(settings.SendToDian);
+        Assert.True(settings.SendMail);
+        Assert.True(settings.FreightSeparateInvoice);
+        Assert.Equal("FLETE", settings.FreightProductCode);
+        Assert.Equal("cc-1", settings.CostCenterId);
+        Assert.Equal("wh-1", settings.WarehouseId);
+    }
+
+    [Fact]
+    public void ReplacingTaxLinksKeepsOneLinkPerPercentage()
+    {
+        var settings = NewSettings();
+        settings.ReplaceTaxLinks([new SiigoTaxLink(19, "a"), new SiigoTaxLink(5, "b")]);
+
+        settings.ReplaceTaxLinks([new SiigoTaxLink(19, "c"), new SiigoTaxLink(0, null)]);
+
+        Assert.Equal([0, 19], settings.TaxLinks.Select(link => link.TaxPercentage).Order());
+        Assert.Equal("c", settings.TaxLinks.Single(link => link.TaxPercentage == 19).SiigoTaxId);
+        Assert.Null(settings.TaxLinks.Single(link => link.TaxPercentage == 0).SiigoTaxId);
+    }
+
+    [Fact]
+    public void ADuplicatedPercentageIsRejected()
+    {
+        var settings = NewSettings();
+
+        var error = Assert.Throws<SiigoDomainException>(
+            () => settings.ReplaceTaxLinks([new SiigoTaxLink(19, "a"), new SiigoTaxLink(19, "b")]));
+
+        Assert.Equal(SiigoErrorCodes.SettingsDuplicateLink, error.Code);
+    }
+
+    [Fact]
+    public void ADuplicatedAccountIsRejected()
+    {
+        var settings = NewSettings();
+
+        var error = Assert.Throws<SiigoDomainException>(() => settings.UpdatePayments(
+            new SiigoPaymentSettings([new SiigoPaymentLink("K", "a"), new SiigoPaymentLink("K", "b")], null, null, null, null)));
+
+        Assert.Equal(SiigoErrorCodes.SettingsDuplicateLink, error.Code);
+    }
+
+    [Fact]
+    public void ManualLinkReplacesAnAutoLink()
+    {
+        var settings = NewSettings();
+        var variantId = Guid.CreateVersion7();
+        var autoBy = Guid.CreateVersion7();
+        var manualBy = Guid.CreateVersion7();
+        settings.LinkVariant(variantId, "AB-1", "p-1", "Uno", SiigoLinkOrigin.AutoCode, autoBy, At);
+
+        settings.LinkVariant(variantId, "AB-9", "p-9", "Nueve", SiigoLinkOrigin.Manual, manualBy, At.AddMinutes(1));
+
+        var link = Assert.Single(settings.VariantLinks);
+        Assert.Equal("p-9", link.SiigoProductId);
+        Assert.Equal("AB-9", link.SiigoProductCode);
+        Assert.Equal(SiigoLinkOrigin.Manual, link.Origin);
+        Assert.Equal(manualBy, link.LinkedBy);
+        Assert.Equal(At.AddMinutes(1), link.LinkedAt);
+    }
+
+    [Fact]
+    public void UnlinkingAVariantWithoutLinkChangesNothing()
+    {
+        var settings = NewSettings();
+
+        settings.UnlinkVariant(Guid.CreateVersion7());
+
+        Assert.Equal(0, settings.Version);
+    }
+
+    [Fact]
+    public void ACreditTermNeedsItsPaymentType()
+    {
+        var settings = NewSettings();
+
+        var error = Assert.Throws<SiigoDomainException>(
+            () => settings.UpdatePayments(new SiigoPaymentSettings([], null, 30, null, null)));
+
+        Assert.Equal(SiigoErrorCodes.SettingsCreditInvalid, error.Code);
+    }
+}

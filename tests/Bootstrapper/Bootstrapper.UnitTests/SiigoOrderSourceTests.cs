@@ -1,0 +1,132 @@
+using Modules.Quotations.Application;
+using Modules.Quotations.Domain;
+using Modules.Siigo.Application.Invoicing;
+using Modules.Siigo.Domain;
+
+namespace Bootstrapper.UnitTests;
+
+/// <summary>
+/// Spec 2026-11-18 §5.5 y ruling R2: Siigo declara sus propios enums de documento y de persona y nunca referencia tipos de Quotations;
+/// el adaptador de Bootstrapper los traduce por nombre. Este proyecto ve los dos módulos y exige que los juegos de nombres coincidan:
+/// un valor nuevo de QEP sin su par en Siigo se perdería en silencio (la traducción lo dejaría en <c>null</c> y el armador lo reportaría
+/// como un tipo sin código).
+/// </summary>
+public sealed class SiigoOrderSourceTests
+{
+    private static readonly Guid TenantId = Guid.CreateVersion7();
+    private static readonly Guid OrderId = Guid.CreateVersion7();
+    private static readonly Guid CityId = Guid.CreateVersion7();
+
+    [Fact]
+    public void ThePersonKindsMatchByName() =>
+        Assert.Equal(Enum.GetNames<PartyPersonType>().Order(), Enum.GetNames<SiigoPersonKind>().Order());
+
+    [Fact]
+    public void TheIdentificationKindsMatchByName() =>
+        Assert.Equal(Enum.GetNames<PartyIdentificationType>().Order(), Enum.GetNames<SiigoIdentificationKind>().Order());
+
+    [Fact]
+    public void EveryQepIdentificationTypeEitherHasASiigoCodeOrIsKnownToBeUnsupported()
+    {
+        var supported = Enum.GetValues<SiigoIdentificationKind>().Where(kind => SiigoIdentificationTypes.CodeFor(kind) is not null);
+
+        string[] expected =
+        [
+            nameof(PartyIdentificationType.Nit),
+            nameof(PartyIdentificationType.Cc),
+            nameof(PartyIdentificationType.Ce),
+            nameof(PartyIdentificationType.Pasaporte),
+        ];
+        Assert.Equal(expected.Order(), supported.Select(kind => kind.ToString()).Order());
+    }
+
+    [Fact]
+    public async Task TheAdapterTranslatesTheOrderTheEnumsTheCityAndTheBankKey()
+    {
+        var source = new SiigoOrderSource(new FakeInvoicing(Order()), new FakeGeography());
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(input);
+        Assert.Equal("BANCOLOMBIA|000123456", input.BillingAccountKey);
+        Assert.Equal(SiigoIdentificationKind.Nit, input.BilledParty.IdentificationType);
+        Assert.Equal(SiigoPersonKind.Juridica, input.BilledParty.PersonType);
+        Assert.Equal(("11001", "11"), (input.BilledParty.CityCode, input.BilledParty.StateCode));
+        Assert.Single(input.Lines);
+        Assert.Equal(7, input.OrderVersion);
+        Assert.Equal(input.CompanyId, Order().CompanyId);
+    }
+
+    [Fact]
+    public async Task ACityOutsideColombiaGetsNoDaneCode()
+    {
+        var order = Order() with { BilledParty = Order().BilledParty with { Country = "ES" } };
+        var source = new SiigoOrderSource(new FakeInvoicing(order), new FakeGeography());
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        Assert.Null(input!.BilledParty.CityCode);
+        Assert.Null(input.BilledParty.StateCode);
+    }
+
+    [Fact]
+    public async Task TheMarkTravelsWithTheSiigoProvider()
+    {
+        var invoicing = new FakeInvoicing(Order());
+        var source = new SiigoOrderSource(invoicing, new FakeGeography());
+        var memberId = Guid.CreateVersion7();
+
+        await source.MarkInvoicedAsync(TenantId, OrderId, "FV-1-123", "a1b2c3", memberId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(("siigo", "FV-1-123", "a1b2c3", memberId), invoicing.Marked);
+    }
+
+    private static ExternalInvoicingOrder Order() =>
+        new(
+            OrderId,
+            "PED-1",
+            "COP",
+            new DateOnly(2026, 11, 18),
+            false,
+            [new ExternalInvoicingLine(Guid.CreateVersion7(), "Aceite", 2m, 23_800m, 0m, 19, 4_522m)],
+            0m,
+            0m,
+            0,
+            28_322m,
+            28_322m,
+            0m,
+            28_322m,
+            [],
+            [],
+            Guid.Parse("0193a1b2-000b-7000-8000-00000000000b"),
+            " Bancolombia ",
+            "000-123 456",
+            null,
+            new ExternalInvoicingParty(
+                false, PartyPersonType.Juridica, PartyIdentificationType.Nit, "900123456-1", "Verde SAS", "Calle 1", CityId, Guid.CreateVersion7(), "CO", "a@b.co", "300"),
+            7);
+
+    private sealed class FakeInvoicing(ExternalInvoicingOrder order) : IExternalOrderInvoicing
+    {
+        public (string Provider, string Number, string ExternalId, Guid MemberId)? Marked { get; private set; }
+
+        public Task<ExternalInvoicingOrder?> GetForInvoicingAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<ExternalInvoicingOrder?>(order);
+
+        public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<long?>(order.Version);
+
+        public Task MarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string provider, string number, string externalId, Guid memberId, CancellationToken cancellationToken)
+        {
+            Marked = (provider, number, externalId, memberId);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeGeography : ISiigoGeographyLookup
+    {
+        public Task<SiigoCityCodes?> FindCodesAsync(Guid cityId, CancellationToken cancellationToken) =>
+            Task.FromResult<SiigoCityCodes?>(new SiigoCityCodes("11001", "11"));
+    }
+}

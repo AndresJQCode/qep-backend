@@ -31,6 +31,10 @@ public abstract record EngineInput
 
     public sealed record BusinessHours(string NodeId, bool IsOpen) : EngineInput;
 
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the answer to <see cref="Effect.CrmAction"/>. <see cref="Code"/> is one of
+    /// <c>CrmResultCodes</c>; the engine stores it in <c>{saveTo}.result</c> and leaves by the output it maps to.</summary>
+    public sealed record CrmResult(string NodeId, string Code) : EngineInput;
+
     /// <summary>Spec 2026-10-26 D-2 y D-7: la respuesta a <see cref="Effect.CheckDataConsent"/>. <see cref="Accepted"/> dice si el cliente
     /// tiene hoy una aceptación vigente; <see cref="CanRecord"/> es <c>false</c> si no hay cliente al que registrarle la respuesta.</summary>
     public sealed record DataConsent(string NodeId, bool Accepted, bool CanRecord = true) : EngineInput;

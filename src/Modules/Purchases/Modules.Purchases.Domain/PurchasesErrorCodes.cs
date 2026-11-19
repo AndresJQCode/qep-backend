@@ -35,6 +35,12 @@ public static class PurchasesErrorCodes
 
     public const string RelationshipInactive = "wholesale.relationship.inactive";
 
+    /// <summary>409: el correo al proveedor sólo vale desde que la orden se envió y hasta antes de cancelarla.</summary>
+    public const string EmailNotAllowed = "purchases.order.email_not_allowed";
+
+    /// <summary>422: reenviar sin que el proveedor tenga correo guardado.</summary>
+    public const string SupplierEmailMissing = "purchases.order.supplier_email_missing";
+
     /// <summary>502: <c>qcode-pdf</c> no devolvió el PDF. No está en el contrato del spec (pendiente del owner, R8).</summary>
     public const string PdfRenderFailed = "purchases.order.pdf_render_failed";
 }

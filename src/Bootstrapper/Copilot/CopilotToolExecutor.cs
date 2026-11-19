@@ -62,14 +62,13 @@ internal sealed class CopilotToolExecutor(
         }
 
         var modules = await tenantModules.FindAsync(principal.TenantId, cancellationToken);
-        // C-8: Anthropic strict limit 20 tools. Alphabetical order ensures deterministic selection.
+        // Todas, sin recortar: el tope de 20 de Anthropic es de las estrictas, y éstas no lo son (CopilotReportTools.Contract).
         return
         [
             .. _tools.Values
                 .Where(tool => Allows(permissions, modules, tool.Contract))
                 .Select(tool => tool.Contract.Definition)
-                .OrderBy(definition => definition.Name, StringComparer.Ordinal)
-                .Take(20),
+                .OrderBy(definition => definition.Name, StringComparer.Ordinal),
         ];
     }
 

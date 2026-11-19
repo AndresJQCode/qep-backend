@@ -20,9 +20,12 @@ public static class FlowNodeKinds
     /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.1.</summary>
     public const string AiAgent = "aiAgent";
 
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): one operation on the conversation's customer or deal.</summary>
+    public const string CrmAction = "crmAction";
+
     public static readonly IReadOnlySet<string> All = new[]
     {
-        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve, DataConsent, AiAgent,
+        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve, DataConsent, AiAgent, CrmAction,
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
@@ -43,6 +46,7 @@ public static class FlowNodeKinds
         DataConsentNode consent => [FlowOutputs.Accepted, .. RejectedOutput(consent.OnReject)],
         // Spec 2026-11-17 D-B10: siempre las cinco, en este orden.
         AiAgentNode => [FlowOutputs.Done, FlowOutputs.Human, FlowOutputs.NoAnswer, FlowOutputs.Idle, FlowOutputs.Error],
+        CrmActionNode => [FlowOutputs.Ok, FlowOutputs.Skipped, FlowOutputs.Error],
         HandoffNode or ResolveNode => [],
         _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin salidas definidas."),
     };
@@ -102,4 +106,7 @@ public static class FlowOutputs
     public const string Human = "human";
     public const string NoAnswer = "noAnswer";
     public const string Idle = "idle";
+
+    /// <summary>Spec 2026-11-19: the «Acción de CRM» block found nothing to act on (no customer, no open deal, several open deals).</summary>
+    public const string Skipped = "skipped";
 }

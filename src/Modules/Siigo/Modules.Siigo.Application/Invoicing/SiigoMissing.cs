@@ -1,0 +1,24 @@
+namespace Modules.Siigo.Application.Invoicing;
+
+/// <summary>
+/// Un dato que falta para facturar (spec 2026-11-18 §5.4, paso 2). <paramref name="Code"/> es contrato con la pantalla, que lo traduce:
+/// <c>settings_incomplete</c> (<paramref name="Reference"/> = el paso), <c>variant_unlinked</c> (id de la variante, nombre),
+/// <c>tax_unlinked</c> (porcentaje), <c>withholding_unlinked</c> y <c>withholding_type_unsupported</c> (id de la tasa, nombre),
+/// <c>payment_unlinked</c> (clave de la cuenta de cobro, o <c>credit</c> / <c>cash_on_delivery</c>), <c>freight_product_missing</c>,
+/// <c>customer_identification_missing</c>, <c>customer_identification_type_unsupported</c>, <c>customer_city_missing</c> y
+/// <c>currency_unsupported</c> (la moneda). Nunca lleva datos del cliente.
+/// </summary>
+public sealed record SiigoMissing(string Code, string? Reference, string? Label)
+{
+    public const string SettingsIncomplete = "settings_incomplete";
+    public const string VariantUnlinked = "variant_unlinked";
+    public const string TaxUnlinked = "tax_unlinked";
+    public const string WithholdingUnlinked = "withholding_unlinked";
+    public const string WithholdingTypeUnsupported = "withholding_type_unsupported";
+    public const string PaymentUnlinked = "payment_unlinked";
+    public const string FreightProductMissing = "freight_product_missing";
+    public const string CustomerIdentificationMissing = "customer_identification_missing";
+    public const string CustomerIdentificationTypeUnsupported = "customer_identification_type_unsupported";
+    public const string CustomerCityMissing = "customer_city_missing";
+    public const string CurrencyUnsupported = "currency_unsupported";
+}

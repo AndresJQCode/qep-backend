@@ -125,7 +125,8 @@ public sealed class WholesaleOrderEditsTests
         var events = new RecordingQuotationLifecycleEventPublisher();
         var handler = new CancelOrderHandler(
             new StubOrderListRepository(order), new NoOpQuotationsUnitOfWork(), new RecordingQuotationAuditPublisher(), events,
-            new StubMembershipDirectory(Guid.CreateVersion7()), new StubExecutionContext(SubjectId, TenantId), new FixedClock(Now));
+            new StubMembershipDirectory(Guid.CreateVersion7()), new StubExecutionContext(SubjectId, TenantId), new FixedClock(Now),
+            new NeverOpenExternalInvoice());
 
         await handler.HandleAsync(new CancelOrderCommand(TenantId, order.Id.Value, "Sin stock"), Ct);
 
@@ -140,10 +141,16 @@ public sealed class WholesaleOrderEditsTests
         var events = new RecordingQuotationLifecycleEventPublisher();
         var handler = new CancelOrderHandler(
             new StubOrderListRepository(order), new NoOpQuotationsUnitOfWork(), new RecordingQuotationAuditPublisher(), events,
-            new StubMembershipDirectory(Guid.CreateVersion7()), new StubExecutionContext(SubjectId, TenantId), new FixedClock(Now));
+            new StubMembershipDirectory(Guid.CreateVersion7()), new StubExecutionContext(SubjectId, TenantId), new FixedClock(Now),
+            new NeverOpenExternalInvoice());
 
         await handler.HandleAsync(new CancelOrderCommand(TenantId, order.Id.Value, "Sin stock"), Ct);
 
         Assert.Equal(["cancelled"], events.Published.Select(entry => entry.Event));
+    }
+
+    private sealed class NeverOpenExternalInvoice : IExternalInvoiceStatus
+    {
+        public Task<bool> HasOpenInvoiceAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) => Task.FromResult(false);
     }
 }

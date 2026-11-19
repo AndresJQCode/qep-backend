@@ -39,11 +39,15 @@ internal static class CopilotReportTools
         Contract(name, description, permission, TenantModuleKeys.Reporting, properties);
 
     /// <param name="module">El módulo del endpoint que la herramienta replica: el mismo que enmascara su permiso.</param>
+    /// <remarks>Sin strict: Anthropic acepta a lo sumo 20 herramientas estrictas por request (24 opcionales, 16 uniones entre todas), y un
+    /// tenant con todos los módulos ya ve más. Ninguna escribe (D-C4) y <see cref="CopilotArguments"/> valida cada argumento: lo que no
+    /// sirve vuelve al modelo como <c>invalid_arguments</c>. Estrictas quedan las finales del copiloto.</remarks>
     public static CopilotToolContract Contract(
         string name, string description, string permission, TenantModuleKey module, params string[] properties) =>
-        new(new AiToolDefinition(name, description, Schema("{" + string.Join(',', properties) + "}")), permission, module);
+        new(new AiToolDefinition(name, description, Schema("{" + string.Join(',', properties) + "}"), Strict: false), permission, module);
 
-    /// <summary>C-8: estricto. Todas las propiedades en <c>required</c> (las opcionales aceptan <c>null</c>) y sin propiedades extra.</summary>
+    /// <summary>Forma C-8: todas las propiedades en <c>required</c> (las opcionales aceptan <c>null</c>) y sin propiedades extra. Aunque la
+    /// herramienta no sea estricta, le dice al modelo qué acepta.</summary>
     private static string Schema(string propertiesJson)
     {
         using var properties = JsonDocument.Parse(propertiesJson);

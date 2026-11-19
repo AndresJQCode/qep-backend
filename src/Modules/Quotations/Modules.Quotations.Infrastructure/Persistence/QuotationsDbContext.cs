@@ -815,6 +815,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new MemberId(value.Value) : null);
+        // Spec 2026-11-18 §5.5: quién emitió la factura (`siigo`), su número y su id en el proveedor. Los tres nulos son una marca manual.
+        order.Property(value => value.InvoiceProvider).HasColumnName("invoice_provider").HasMaxLength(Order.InvoiceProviderMaxLength);
+        order.Property(value => value.InvoiceNumber).HasColumnName("invoice_number").HasMaxLength(Order.InvoiceNumberMaxLength);
+        order.Property(value => value.InvoiceExternalId).HasColumnName("invoice_external_id").HasMaxLength(Order.InvoiceExternalIdMaxLength);
         order.Property(value => value.RitualCollectionSyncId)
             .HasColumnName("ritual_collection_sync_id")
             .HasMaxLength(100);

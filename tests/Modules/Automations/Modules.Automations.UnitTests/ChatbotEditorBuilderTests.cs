@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Flow;
@@ -94,6 +95,139 @@ public sealed class ChatbotEditorBuilderTests
         Assert.Empty(store.Asked);
     }
 
+    // ---- Spec 2026-11-19 (chatbot CRM action): the tenant's tags and open stages feed the editor and the validator. ----
+
+    private static readonly Guid KnownTag = Guid.CreateVersion7();
+    private static readonly Guid OpenStage = Guid.CreateVersion7();
+
+    private static CrmCatalog FullCatalog() =>
+        new(true, true, [new CrmTagRef(KnownTag, "Interesado")], [new CrmStageRef(OpenStage, "Nuevo"), new CrmStageRef(Guid.CreateVersion7(), "Calificado")]);
+
+    private static Chatbot WithCrm(string operation, Guid? tagId, Guid? stageId)
+    {
+        var tag = tagId is null ? "null" : $"\"{tagId}\"";
+        var stage = stageId is null ? "null" : $"\"{stageId}\"";
+        return Chatbot.Create(
+            TenantId, "CRM", string.Empty, ChatbotTrigger.NewConversation, [],
+            $$"""
+            { "schema": 1, "start": { "firstNodeId": "crm" }, "variables": [], "nodes": [
+              { "id": "crm", "kind": "crmAction", "title": "Acción", "operation": "{{operation}}",
+                "tagId": {{tag}}, "stageId": {{stage}},
+                "saveTo": "crm", "outputs": { "ok": null, "skipped": null, "error": null } } ] }
+            """,
+            "{}", Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task EditorBuilderFeedsTheValidatorWithTheCatalog()
+    {
+        var crm = new CrmDirectory(FullCatalog());
+        var builder = Builder(new Directory([]), aiEnabled: false, crm: crm);
+
+        var foreign = await builder.BuildAsync(WithCrm("addTag", Guid.CreateVersion7(), null), Ct);
+        var known = await builder.BuildAsync(WithCrm("addTag", KnownTag, null), Ct);
+        var stage = await builder.BuildAsync(WithCrm("moveDeal", null, OpenStage), Ct);
+
+        Assert.Contains(foreign.Issues, issue => issue.Code == FlowIssueCodes.CrmTagMissing && issue.NodeId == "crm");
+        Assert.DoesNotContain(known.Issues, issue => issue.Code.StartsWith("crm.", StringComparison.Ordinal));
+        Assert.DoesNotContain(stage.Issues, issue => issue.Code.StartsWith("crm.", StringComparison.Ordinal));
+
+        // Saving and publishing validate through ValidateAsync / ValidateStoredAsync: the same catalog.
+        var stored = await builder.ValidateStoredAsync(WithCrm("removeTag", Guid.CreateVersion7(), null), Ct);
+        Assert.Contains(stored, issue => issue.Code == FlowIssueCodes.CrmTagMissing);
+    }
+
+    [Fact]
+    public async Task TheEditorCarriesTheCatalog()
+    {
+        var catalog = FullCatalog();
+
+        var editor = await Builder(new Directory([]), aiEnabled: false, crm: new CrmDirectory(catalog)).BuildAsync(NewChatbot(), Ct);
+
+        Assert.Equal(
+            new ChatbotEditorCrmDto(
+                [new ChatbotEditorCrmRefDto(KnownTag, "Interesado")],
+                [.. catalog.OpenStages.Select(item => new ChatbotEditorCrmRefDto(item.Id, item.Name))],
+                true, true),
+            editor.Crm,
+            CrmComparer.Instance);
+    }
+
+    [Fact]
+    public async Task ModuleOffGivesEmptyListsAndFlagsFalse()
+    {
+        var crm = new CrmDirectory(new CrmCatalog(false, false, [], []));
+
+        var editor = await Builder(new Directory([]), aiEnabled: false, crm: crm).BuildAsync(WithCrm("addTag", KnownTag, null), Ct);
+
+        Assert.False(editor.Crm.CustomersEnabled);
+        Assert.False(editor.Crm.PipelineEnabled);
+        Assert.Empty(editor.Crm.Tags);
+        Assert.Empty(editor.Crm.Stages);
+        Assert.Contains(editor.Issues, issue => issue.Code == FlowIssueCodes.CrmModuleOff);
+    }
+
+    /// <summary>Saving and publishing a flow without the block do not pay the Customers and Pipeline reads.</summary>
+    [Fact]
+    public async Task ValidatingAFlowWithoutTheBlockNeverReadsTheCatalog()
+    {
+        var crm = new CrmDirectory(FullCatalog());
+
+        await Builder(new Directory([]), aiEnabled: false, crm: crm).ValidateStoredAsync(NewChatbot(), Ct);
+
+        Assert.Equal(0, crm.Reads);
+    }
+
+    /// <summary>A broken CRM module never fails the editor GET: the catalog degrades to empty lists, as with both modules off.</summary>
+    [Fact]
+    public async Task AThrowingDirectoryDegradesToEmptyLists()
+    {
+        var crm = new CrmDirectory(FullCatalog()) { Failure = new InvalidOperationException("Customers is broken.") };
+
+        var editor = await Builder(new Directory([]), aiEnabled: false, crm: crm).BuildAsync(WithCrm("addTag", KnownTag, null), Ct);
+
+        Assert.Empty(editor.Crm.Tags);
+        Assert.Empty(editor.Crm.Stages);
+        Assert.False(editor.Crm.CustomersEnabled);
+        Assert.False(editor.Crm.PipelineEnabled);
+    }
+
+    /// <summary>«Not yet» is not «broken»: a cancellation or a conflict still goes up.</summary>
+    [Fact]
+    public async Task ATransientDirectoryFailureStillPropagates()
+    {
+        var crm = new CrmDirectory(FullCatalog()) { Failure = new OperationCanceledException() };
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => Builder(new Directory([]), aiEnabled: false, crm: crm).BuildAsync(NewChatbot(), Ct));
+    }
+
+    private sealed class CrmDirectory(CrmCatalog catalog) : IAutomationsCrmDirectory
+    {
+        public int Reads { get; private set; }
+
+        public Exception? Failure { get; init; }
+
+        public Task<CrmCatalog> ReadAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            Reads++;
+            return Failure is null ? Task.FromResult(catalog) : Task.FromException<CrmCatalog>(Failure);
+        }
+    }
+
+    /// <summary>Records with lists compare the lists by reference; this compares them by content.</summary>
+    private sealed class CrmComparer : IEqualityComparer<ChatbotEditorCrmDto>
+    {
+        public static readonly CrmComparer Instance = new();
+
+        public bool Equals(ChatbotEditorCrmDto? x, ChatbotEditorCrmDto? y) =>
+            x is not null && y is not null
+            && x.Tags.SequenceEqual(y.Tags) && x.Stages.SequenceEqual(y.Stages)
+            && x.CustomersEnabled == y.CustomersEnabled && x.PipelineEnabled == y.PipelineEnabled;
+
+        public int GetHashCode(ChatbotEditorCrmDto obj) => 0;
+    }
+
     private static Chatbot WithMedia(Guid fileId) =>
         Chatbot.Create(
             TenantId, "Catálogo", string.Empty, ChatbotTrigger.NewConversation, [],
@@ -107,9 +241,10 @@ public sealed class ChatbotEditorBuilderTests
     private static ChatbotSummaryRow Row(Guid id) =>
         new(id, "Bot", string.Empty, ChatbotStatus.Draft, ChatbotTrigger.NewConversation, [], null, null, DateTimeOffset.UtcNow, 1);
 
-    private static ChatbotEditorBuilder Builder(Directory directory, bool aiEnabled, Media? media = null) =>
+    private static ChatbotEditorBuilder Builder(Directory directory, bool aiEnabled, Media? media = null, CrmDirectory? crm = null) =>
         new(new NoConnections(), new NoExternalApis(), new NoMembers(), new NoHours(), new NoRuns(), new BogotaClock(), new NoSlots(), directory,
-            new Modules(aiEnabled), media ?? new Media());
+            new Modules(aiEnabled), media ?? new Media(), crm ?? new CrmDirectory(new CrmCatalog(false, false, [], [])),
+            NullLogger<ChatbotEditorBuilder>.Instance);
 
     private sealed class Media : IChatbotMediaStore
     {

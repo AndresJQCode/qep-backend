@@ -12,8 +12,10 @@ public sealed class DistributorWriteRulesTests
         string email = "ana@distri.co",
         string businessName = "Distribuciones Norte SAS",
         string identificationNumber = "900123456",
-        string contactName = "Ana Pérez") =>
-        new(Tenant, email, businessName, identificationNumber, contactName, Guid.CreateVersion7(), Guid.CreateVersion7(),
+        string contactName = "Ana Pérez",
+        string country = "CO",
+        string identificationType = "NIT") =>
+        new(Tenant, email, businessName, country, identificationType, identificationNumber, contactName, Guid.CreateVersion7(), Guid.CreateVersion7(),
             Guid.CreateVersion7(), "trace");
 
     private static string[] Failed(InviteDistributorCommand command) =>
@@ -37,10 +39,34 @@ public sealed class DistributorWriteRulesTests
     }
 
     [Fact]
+    public void InviteRequiresACountryAndATypeAllowedForIt()
+    {
+        Assert.Empty(Failed(Invite()));
+        Assert.Empty(Failed(Invite(country: "es", identificationType: "nif")));
+        Assert.Empty(Failed(Invite(country: "FR", identificationType: "TAX_ID")));
+        Assert.Equal(["Country"], Failed(Invite(country: "")));
+        Assert.Equal(["IdentificationType"], Failed(Invite(identificationType: "")));
+        Assert.Equal(["IdentificationType"], Failed(Invite(country: "CO", identificationType: "NIF")));
+        Assert.Equal(["IdentificationType"], Failed(Invite(country: "FR", identificationType: "NIT")));
+    }
+
+    [Fact]
+    public void InviteRequiresTheCountryToBeTwoLettersAndJudgesTheTypeOnlyAgainstARealOne()
+    {
+        // Un país mal escrito falla sólo en el país: el tipo no se juzga contra un código que no existe.
+        Assert.Equal(["Country"], Failed(Invite(country: "12")));
+        Assert.Equal(["Country"], Failed(Invite(country: "COL")));
+        Assert.Equal(["Country"], Failed(Invite(country: "C ")));
+
+        var errors = new InviteDistributorValidator().Validate(Invite(country: "CO", identificationType: "NIF")).Errors;
+        Assert.Equal("The identification type is not valid for the country.", Assert.Single(errors).ErrorMessage);
+    }
+
+    [Fact]
     public void InviteAndUpdateRequireTheThreeReferences()
     {
         var invite = new InviteDistributorCommand(
-            Tenant, "ana@distri.co", "Norte", "900123456", "Ana", Guid.Empty, Guid.Empty, Guid.Empty, "trace");
+            Tenant, "ana@distri.co", "Norte", "CO", "NIT", "900123456", "Ana", Guid.Empty, Guid.Empty, Guid.Empty, "trace");
         var update = new UpdateDistributorCommand(Tenant, Guid.CreateVersion7(), 1, Guid.Empty, Guid.Empty, Guid.Empty);
 
         Assert.Equal(["PriceListId", "AdvisorId", "BillingCompanyId"], Failed(invite));

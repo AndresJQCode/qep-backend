@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Wholesale.Application;
 
@@ -15,7 +16,8 @@ public sealed class GetDistributorOptionsHandler(
     IPriceListRepository priceLists,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
-    IWholesaleWhatsAppConnections whatsAppConnections)
+    IWholesaleWhatsAppConnections whatsAppConnections,
+    ITenantDirectory tenants)
     : IQueryHandler<GetDistributorOptionsQuery, DistributorOptionsDto>
 {
     public async Task<DistributorOptionsDto> HandleAsync(GetDistributorOptionsQuery query, CancellationToken cancellationToken)
@@ -25,6 +27,7 @@ public sealed class GetDistributorOptionsHandler(
         var advisors = await members.ListActiveAsync(query.TenantId, cancellationToken);
         var active = await companies.ListActiveAsync(query.TenantId, cancellationToken);
         var ready = await whatsAppConnections.ListReadyAsync(query.TenantId, cancellationToken);
+        var settings = await tenants.GetRegionalSettingsAsync(new TenantId(query.TenantId), cancellationToken);
 
         return new DistributorOptionsDto(
             lists
@@ -40,6 +43,7 @@ public sealed class GetDistributorOptionsHandler(
                 .Select(company => new DistributorCompanyOptionDto(
                     company.Id, company.Name, company.DocumentType, company.DocumentNumber, company.Eligible))
                 .ToList(),
-            ready.Select(connection => new DistributorWhatsAppConnectionDto(connection.Id, connection.Label)).ToList());
+            ready.Select(connection => new DistributorWhatsAppConnectionDto(connection.Id, connection.Label)).ToList(),
+            settings?.Country ?? DistributorDefaults.Country);
     }
 }

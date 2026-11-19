@@ -240,6 +240,8 @@ public static class OrderResponses
             order.BuyerNotes,
             QuotationResponseComposer.ToBreakdownResponse(order.WithholdingBreakdown, context),
             order.OrderDate,
-            order.RequiresShipping);
+            order.RequiresShipping,
+            order.InvoiceProvider,
+            order.InvoiceNumber);
     }
 }

@@ -9,6 +9,8 @@ public sealed record InviteDistributorCommand(
     Guid TenantId,
     string Email,
     string BusinessName,
+    string Country,
+    string IdentificationType,
     string IdentificationNumber,
     string ContactName,
     Guid PriceListId,
@@ -45,7 +47,7 @@ public sealed class InviteDistributorHandler(
 {
     // Lo que la auditoría nombra: nunca el token ni su hash, ni el teléfono (sólo si hubo aviso, D-8).
     private static readonly string[] WrittenFields =
-        ["email", "businessName", "identificationNumber", "contactName", "priceListId", "advisorId", "billingCompanyId"];
+        ["email", "businessName", "country", "identificationType", "identificationNumber", "contactName", "priceListId", "advisorId", "billingCompanyId"];
 
     public async Task<DistributorDetailDto> HandleAsync(InviteDistributorCommand command, CancellationToken cancellationToken)
     {
@@ -54,7 +56,8 @@ public sealed class InviteDistributorHandler(
         await DistributorTerms.EnsureValidAsync(
             priceLists, members, companies, command.TenantId, command.PriceListId, command.AdvisorId, command.BillingCompanyId,
             cancellationToken);
-        if (await distributors.IdentificationExistsAsync(command.TenantId, command.IdentificationNumber.Trim(), cancellationToken))
+        if (await distributors.IdentificationExistsAsync(
+                command.TenantId, command.IdentificationType.Trim().ToUpperInvariant(), command.IdentificationNumber.Trim(), cancellationToken))
         {
             throw WholesaleConflicts.IdentificationTaken();
         }
@@ -71,6 +74,8 @@ public sealed class InviteDistributorHandler(
             command.TenantId,
             command.Email,
             command.BusinessName,
+            command.Country,
+            command.IdentificationType,
             command.IdentificationNumber,
             command.ContactName,
             new PriceListId(command.PriceListId),

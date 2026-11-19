@@ -11,9 +11,6 @@ namespace Modules.Wholesale.Application;
 /// </summary>
 internal static class DistributorWhatsAppNotice
 {
-    /// <summary>Sin fila de configuración regional, Colombia (<c>TenantRegionalSettings.Country</c> tiene el mismo default).</summary>
-    private const string DefaultCountry = "CO";
-
     /// <summary>El teléfono en E.164, o <c>null</c> si viene vacío o sólo con espacios. Uno que no normaliza es un 422 en
     /// <c>Phone</c>.</summary>
     public static async Task<string?> NormalizeAsync(
@@ -29,7 +26,7 @@ internal static class DistributorWhatsAppNotice
         }
 
         var settings = await tenants.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken);
-        var normalized = phones.ToE164(phone.Trim(), settings?.Country ?? DefaultCountry);
+        var normalized = phones.ToE164(phone.Trim(), settings?.Country ?? DistributorDefaults.Country);
         if (normalized is not { Length: > 0 and <= Domain.Distributor.PhoneMaxLength })
         {
             throw new ValidationException([new ValidationFailure("Phone", "The phone is not valid.")]);

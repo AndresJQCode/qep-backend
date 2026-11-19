@@ -64,6 +64,11 @@ using Modules.Reporting.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
+using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
+using Modules.Siigo.Application.Products;
+using Modules.Siigo.Application.Settings;
+using Modules.Siigo.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Store.Infrastructure;
@@ -506,9 +511,17 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Purchases.Application.ConfirmPurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
             Modules.Purchases.Application.ConfirmPurchaseOrderHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.ResendPurchaseOrderEmailCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.ResendPurchaseOrderEmailHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Purchases.Application.GetPurchaseOrderPdfQuery, Modules.Purchases.Application.PurchaseOrderPdfFile>,
             Modules.Purchases.Application.GetPurchaseOrderPdfHandler>();
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
+        // El documento de la orden lo comparten la descarga del PDF y el correo al proveedor.
+        services.AddScoped<
+            Modules.Purchases.Application.IPurchaseOrderDocumentBuilder,
+            Modules.Purchases.Application.PurchaseOrderDocumentBuilder>();
+        services.AddScoped<Modules.Purchases.Application.PurchaseOrderEmailDelivery>();
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
         // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado y el aplicador de sus eventos (lo llama el
@@ -1082,6 +1095,10 @@ public static class QepServiceCollectionExtensions
         // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
         // consume; ningún consumidor referencia Modules.Quotations.Application.
         services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
+        // Spec 2026-11-18 §5.5: el pedido visto por un facturador externo (Siigo) y la pregunta «¿hay una factura externa abierta?» que
+        // la marca manual hace antes de marcar. Quotations declara los dos puertos; el segundo lo implementa Bootstrapper sobre siigo.invoices.
+        services.AddScoped<IExternalOrderInvoicing, ExternalOrderInvoicingService>();
+        services.AddScoped<IExternalInvoiceStatus, SiigoOpenInvoiceCheck>();
         // Spec 2026-10-29 §8.3: el borrador de cotización sin sesión que pide un agente IA (create_quotation_draft); Ai lo
         // consume por un adaptador (AiQuotationDrafts).
         services.AddScoped<IExternalQuotationWriter, ExternalQuotationService>();
@@ -1404,6 +1421,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<PublishChatbotCommand, ChatbotEditorDto>, PublishChatbotHandler>();
         services.AddScoped<ICommandHandler<PauseChatbotCommand, ChatbotEditorDto>, PauseChatbotHandler>();
         services.AddScoped<ICommandHandler<ResumeChatbotCommand, ChatbotEditorDto>, ResumeChatbotHandler>();
+        services.AddScoped<IQueryHandler<ListChatbotVersionsQuery, ChatbotVersionListResponse>, ListChatbotVersionsHandler>();
+        services.AddScoped<ICommandHandler<RestoreChatbotVersionCommand, ChatbotEditorDto>, RestoreChatbotVersionHandler>();
         services.AddScoped<ICommandHandler<DuplicateChatbotCommand, ChatbotEditorDto>, DuplicateChatbotHandler>();
         services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
         services.AddScoped<IQueryHandler<ExportChatbotQuery, ChatbotExportDto>, ExportChatbotHandler>();
@@ -1564,6 +1583,38 @@ public static class QepServiceCollectionExtensions
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
         services.AddShopifyInfrastructure(configuration);
+
+        // Siigo (spec 2026-11-18): la factura electrónica de un pedido en Siigo. Sólo ve Tenancy (y Audit para su auditoría
+        // atómica); conexión, pedido, cliente, producto, ciudad y empresa entran por adaptadores que llegan con cada caso de uso.
+        services.AddSiigoInfrastructure(configuration);
+        // §5.3 y §7 (Tarea 6): la configuración de cada conexión (siigo.settings.manage, política ya registrada abajo) y las listas de
+        // Siigo que sus selectores leen en vivo. Los puertos de Siigo hacia Integrations, Companies y Catalog (SiigoPorts.cs) se unen acá:
+        // Siigo no referencia ninguno de esos módulos (SiigoLayerTests).
+        services.AddScoped<IQueryHandler<GetSiigoSettingsQuery, SiigoSettingsDto>, GetSiigoSettingsHandler>();
+        services.AddScoped<ICommandHandler<AssignSiigoCompanyCommand, SiigoSettingsDto>, AssignSiigoCompanyHandler>();
+        services.AddScoped<ICommandHandler<UpdateSiigoDocumentCommand, SiigoSettingsDto>, UpdateSiigoDocumentHandler>();
+        services.AddScoped<ICommandHandler<UpdateSiigoTaxesCommand, SiigoSettingsDto>, UpdateSiigoTaxesHandler>();
+        services.AddScoped<ICommandHandler<UpdateSiigoPaymentsCommand, SiigoSettingsDto>, UpdateSiigoPaymentsHandler>();
+        services.AddScoped<IQueryHandler<ListSiigoOptionsQuery, IReadOnlyList<SiigoOptionDto>>, ListSiigoOptionsHandler>();
+        // Paso 6 (Tarea 7): los vínculos de las variantes con los productos de Siigo.
+        services.AddScoped<IQueryHandler<ListSiigoVariantLinksQuery, SiigoVariantLinksPageDto>, ListSiigoVariantLinksHandler>();
+        services.AddScoped<ICommandHandler<LinkSiigoVariantCommand, SiigoVariantLinkDto>, LinkSiigoVariantHandler>();
+        services.AddScoped<ICommandHandler<UnlinkSiigoVariantCommand, SiigoCoverageDto>, UnlinkSiigoVariantHandler>();
+        services.AddScoped<ICommandHandler<AutoLinkSiigoVariantsByCodeCommand, SiigoAutoLinkResultDto>, AutoLinkSiigoVariantsByCodeHandler>();
+        services.AddScoped<ISiigoVariantCatalog, SiigoVariantCatalog>();
+        services.AddValidatorsFromAssemblyContaining<UpdateSiigoDocumentValidator>();
+        services.AddScoped<ISiigoConnectionDirectory, SiigoConnectionDirectory>();
+        services.AddScoped<ISiigoCompanyDirectory, SiigoCompanyDirectory>();
+        services.AddScoped<ISiigoTaxRateDirectory, SiigoTaxRateDirectory>();
+        // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
+        services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
+        services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
+        // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
+        services.AddScoped<IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>, PreviewSiigoInvoiceHandler>();
+        services.AddScoped<IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>, GetSiigoInvoicesHandler>();
+        services.AddScoped<ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>, IssueSiigoInvoiceHandler>();
+        services.AddScoped<ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>, StampSiigoInvoiceHandler>();
+        services.AddScoped<ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>, ResolveSiigoInvoiceHandler>();
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
@@ -1715,8 +1766,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAutomationMembers, AutomationMembers>();
         // Spec 2026-11-17 §5.2: los agentes de IA del tenant para el bloque «Agente IA», leídos de Ai.
         services.AddScoped<IAutomationsAgentDirectory, AutomationsAgentDirectory>();
+        // Spec 2026-11-19 (chatbot CRM action): the tags and open stages for the «Acción de CRM» block, read from Customers and Pipeline.
+        services.AddScoped<IAutomationsCrmDirectory, AutomationsCrmDirectory>();
         // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
         services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
+        // Spec 2026-11-19 (chatbot CRM action): the conversation's customer, shared with «Política de datos», and the «Acción de CRM»
+        // block over Customers and Pipeline as the system.
+        services.AddScoped<ConversationCustomerResolver>();
+        services.AddScoped<IAutomationCrm, AutomationCrm>();
         services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
         // Spec 2026-10-21 D-H2, D-H5 y fallo P2-R31: el cliente del bloque HTTP va acá y no en AddAutomationsInfrastructure porque su handler
         // primario (anti-SSRF: sin redirecciones, sin proxy, ConnectCallback que rechaza rangos internos) es de Integrations.Infrastructure.
@@ -1860,6 +1917,7 @@ public static class QepServiceCollectionExtensions
         // `purchases` (spec 2026-11-17): proveedor, variante y membresías son ids sueltos de otros módulos; Compras sólo declara
         // puertos y el composition root los cablea contra Suppliers, Catalog y Tenancy.
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
+        services.AddScoped<Modules.Purchases.Application.IPurchaseOrderEmail, PurchaseOrderEmailSender>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
         // Mayorista fase 3: el catálogo del mayorista, su motor de pedidos (por un scope propio por llamada) y el catálogo propio
@@ -2365,6 +2423,9 @@ public static class QepServiceCollectionExtensions
                 WholesalePermissions.PriceListManage,
                 WholesalePermissions.DistributorRead,
                 WholesalePermissions.DistributorManage,
+                // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
+                SiigoPermissions.SettingsManage,
+                SiigoPermissions.InvoiceIssue,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
@@ -2484,7 +2545,10 @@ public static class QepServiceCollectionExtensions
                 ServiceContractsPermissions.Manage,
                 // Facturación cobra las cuotas de los préstamos: las ve y las marca pagadas (spec de préstamos, 2026-10-31).
                 LoansPermissions.Read,
-                LoansPermissions.Manage
+                LoansPermissions.Manage,
+                // Spec 2026-11-18 (integración Siigo) §5.7: facturación emite la factura en Siigo, como marca el pedido facturado
+                // (quotations.order.invoice). Configurar la conexión es de admin.
+                SiigoPermissions.InvoiceIssue
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -3379,6 +3443,28 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("wholesale.distributor", "Distribuidores", "manage"),
         });
+        // Spec 2026-11-18 (integración Siigo) §5.7: con [siigo], ModuleEntitlementMask quita el permiso al apagar el módulo y el
+        // editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            SiigoPermissions.SettingsManage,
+            "Configurar Siigo",
+            "Permite configurar las conexiones de Siigo: empresa, comprobante, impuestos, formas de pago y productos.",
+            "Siigo",
+            "high",
+            RequiredModules: [ModuleKeys.Siigo])
+        {
+            Shape = new("siigo.settings", "Configuración de Siigo", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SiigoPermissions.InvoiceIssue,
+            "Facturar en Siigo",
+            "Permite generar y reintentar la factura electrónica de un pedido en Siigo.",
+            "Siigo",
+            "high",
+            RequiredModules: [ModuleKeys.Siigo])
+        {
+            Shape = new("siigo.invoice", "Facturas en Siigo", "invoice"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -3909,6 +3995,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 WholesalePermissions.DistributorManage,
                 policy => AddPermissionRequirement(policy, WholesalePermissions.DistributorManage))
+            // Spec 2026-11-18 (integración Siigo): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SiigoPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SiigoPermissions.SettingsManage))
+            .AddPolicy(
+                SiigoPermissions.InvoiceIssue,
+                policy => AddPermissionRequirement(policy, SiigoPermissions.InvoiceIssue))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 ServiceContractsPermissions.Read,

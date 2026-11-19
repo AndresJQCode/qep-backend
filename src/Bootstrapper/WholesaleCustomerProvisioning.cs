@@ -17,12 +17,12 @@ internal sealed class WholesaleCustomerProvisioning(ICustomerProvisioning custom
 {
     private const string Source = "wholesale";
 
-    private const string IdentificationType = "NIT";
-
     public async Task<Guid> EnsureCustomerAsync(
         Guid wholesalerTenantId,
         Guid actorUserId,
         string businessName,
+        string country,
+        string identificationType,
         string identificationNumber,
         string email,
         CancellationToken cancellationToken)
@@ -32,7 +32,7 @@ internal sealed class WholesaleCustomerProvisioning(ICustomerProvisioning custom
             var registered = await customers.CreateFromRegisterAsync(
                 wholesalerTenantId,
                 actorUserId,
-                new RegisterCustomerData(businessName, IdentificationType, identificationNumber, null, email),
+                new RegisterCustomerData(businessName, identificationType, identificationNumber, null, email, country),
                 Source,
                 cancellationToken);
             return registered.Id;
@@ -42,7 +42,7 @@ internal sealed class WholesaleCustomerProvisioning(ICustomerProvisioning custom
             // El documento ya tiene cliente: se relee y se usa ése. Un cliente que no entró quedaría Added en el contexto de
             // Customers y el próximo SaveChanges del scope lo reintentaría.
             customersContext.ChangeTracker.Clear();
-            var type = IdentificationTypeParser.Parse(IdentificationType);
+            var type = IdentificationTypeParser.Parse(identificationType);
             var number = identificationNumber.Trim();
             var existing = await customersContext.Customers.AsNoTracking()
                 .Where(customer => customer.TenantId == wholesalerTenantId

@@ -23,6 +23,12 @@ internal sealed class CustomerTagRepository(CustomersDbContext dbContext) : ICus
         return OrderedByName(rows.Select(row => new TagWithCount(row.Tag, row.Count)));
     }
 
+    public async Task<IReadOnlyList<Tag>> ListWithoutCountsAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var tags = await dbContext.Tags.AsNoTracking().Where(tag => tag.TenantId == tenantId).ToListAsync(cancellationToken);
+        return [.. tags.OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase).ThenBy(tag => tag.Id.Value)];
+    }
+
     public async Task<IReadOnlyList<TagWithCount>> ListForCustomerAsync(
         Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
     {

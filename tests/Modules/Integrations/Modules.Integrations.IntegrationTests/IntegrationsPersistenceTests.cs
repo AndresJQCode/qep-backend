@@ -109,6 +109,31 @@ public sealed class IntegrationsPersistenceTests
             ("id", id)));
     }
 
+    // Spec 2026-11-18 (integración Siigo): el proveedor nuevo entra con la migración AddSiigoProvider que amplía el CHECK.
+    [Fact]
+    public async Task TheProviderKeyCheckAcceptsSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        _ = factory.Services;
+        var id = Guid.CreateVersion7();
+
+        await ExecuteAsync(
+            database.GetConnectionString(),
+            """
+            INSERT INTO integrations.connections (id, tenant_id, provider_key, name, status, fields, created_at, created_by, updated_at, version)
+            VALUES (@id, @tenantId, 'siigo', 'Contabilidad', 'Active', '{}'::jsonb, now(), @memberId, now(), 1)
+            """,
+            ("id", id),
+            ("tenantId", Guid.CreateVersion7()),
+            ("memberId", Guid.CreateVersion7()));
+
+        Assert.Equal(1L, await ScalarAsync<long>(
+            database.GetConnectionString(),
+            "SELECT count(*) FROM integrations.connections WHERE id = @id AND provider_key = 'siigo'",
+            ("id", id)));
+    }
+
     [Fact]
     public async Task TheStatusCheckRejectsAnUnknownStatus()
     {

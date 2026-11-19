@@ -138,7 +138,8 @@ public interface IDistributorRepository : IDistributorUsage
     Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken);
 
     /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13).</summary>
-    Task<bool> IdentificationExistsAsync(Guid tenantId, string identificationNumber, CancellationToken cancellationToken);
+    Task<bool> IdentificationExistsAsync(
+        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken);
 
     /// <summary>
     /// Fase 3: la relación entre los dos tenants, en cualquier estado, o <c>null</c>. Va acotada al mayorista: quien pregunta
@@ -208,8 +209,8 @@ public interface IWholesaleEventPublisher
 
 /// <summary>
 /// Una empresa facturadora del mayorista con lo que el proveedor vinculado necesita (D-2). <c>DocumentType</c> va con el
-/// nombre del cable; <c>Eligible</c> dice si ese documento lo admite un proveedor (<c>NIT</c>, <c>CC</c>, <c>CE</c>,
-/// <c>PASAPORTE</c>).
+/// nombre del cable; <c>Eligible</c> dice si ese documento lo admite un proveedor (hoy los siete códigos: no hay
+/// documento que deje a una empresa fuera).
 /// </summary>
 public sealed record WholesaleCompanyRef(
     Guid Id,
@@ -282,6 +283,8 @@ public interface IWholesaleCustomerProvisioning
         Guid wholesalerTenantId,
         Guid actorUserId,
         string businessName,
+        string country,
+        string identificationType,
         string identificationNumber,
         string email,
         CancellationToken cancellationToken);

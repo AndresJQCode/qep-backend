@@ -69,6 +69,8 @@ public static class CustomersInfrastructureExtensions
         // Spec 2026-10-26 D-5: el registro de consentimiento de datos, sólo de inserción.
         services.AddScoped<ICustomerDataConsentRepository, CustomerDataConsentRepository>();
         services.AddScoped<ICustomerDataConsents, CustomerDataConsents>();
+        // Chatbot CRM action spec (2026-11-19): one tag added or removed by the chatbot, as the system.
+        services.AddScoped<IChatbotCustomerTags, ChatbotCustomerTags>();
         services.AddHostedService<CustomerPhoneBackfillWorker>();
 
         return services;

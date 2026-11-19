@@ -111,7 +111,13 @@ public sealed record OrderDto(
     bool RequiresShipping = true,
     /// <summary>Mayorista fase 3: el vínculo con la orden del distribuidor, sin nombres resueltos. No viaja en
     /// <c>OrderResponse</c>: el compositor del detalle lo resuelve en la raíz (<see cref="OrderDetailResponse.Wholesale"/>).</summary>
-    OrderWholesaleState? Wholesale = null);
+    OrderWholesaleState? Wholesale = null,
+    /// <summary>Quién emitió la factura: <c>siigo</c> si la creó la integración, <c>null</c> en una marca manual (spec 2026-11-18
+    /// §5.5). BFF: la pantalla escribe «Facturado en Siigo FV-1-123» y esconde «Revertir facturación» sin conocer la integración;
+    /// con un proveedor, revertir es una nota crédito y la API responde 422. El id de la factura en el proveedor no viaja.</summary>
+    string? InvoiceProvider = null,
+    /// <summary>El número de la factura del proveedor (<c>FV-1-123</c>); <c>null</c> en una marca manual.</summary>
+    string? InvoiceNumber = null);
 
 /// <summary>Los dos valores de la aprobación mayorista (D-1), por nombre en el JSON.</summary>
 public static class WholesaleApprovals
@@ -459,7 +465,11 @@ public sealed record OrderResponse(
     /// estado y la acción siguen siendo los de siempre (<c>Prepared</c>); el texto lo pone el frontend. Viaja acá y no en la
     /// raíz de <see cref="OrderDetailResponse"/>, para que también lo traigan /approve, /cancel… Con default para no tocar
     /// las construcciones que ya existen; el compositor lo llena siempre.</summary>
-    bool RequiresShipping = true);
+    bool RequiresShipping = true,
+    /// <summary>Ver <see cref="OrderDto.InvoiceProvider"/>.</summary>
+    string? InvoiceProvider = null,
+    /// <summary>Ver <see cref="OrderDto.InvoiceNumber"/>.</summary>
+    string? InvoiceNumber = null);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y

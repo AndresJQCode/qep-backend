@@ -11,7 +11,9 @@ internal sealed class PipelineAuditRecorder(PipelineDbContext dbContext) : IPipe
     private const string Outcome = "success";
     private const string NoChangedFields = "[]";
 
-    public void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt) =>
+    public void Record(
+        Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset occurredAt,
+        string? source = null) =>
         dbContext.AuditEntries.Add(AuditEntry.Create(
             tenantId,
             actorId,
@@ -21,6 +23,6 @@ internal sealed class PipelineAuditRecorder(PipelineDbContext dbContext) : IPipe
             resourceId.ToString(),
             Outcome,
             NoChangedFields,
-            Source,
+            source ?? Source,
             occurredAt));
 }
