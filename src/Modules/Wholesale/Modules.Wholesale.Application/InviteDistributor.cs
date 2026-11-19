@@ -111,7 +111,8 @@ public sealed class InviteDistributorHandler(
         if (phone is not null)
         {
             await DistributorWhatsAppNotice.QueueAsync(
-                eventPublisher, memberships, executionContext.SubjectId, distributor, command.CorrelationId, now, cancellationToken);
+                eventPublisher, memberships, executionContext.SubjectId, distributor, token, command.CorrelationId, now,
+                cancellationToken);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);

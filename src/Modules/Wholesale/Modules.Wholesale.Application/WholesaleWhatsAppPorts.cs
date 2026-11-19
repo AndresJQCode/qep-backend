@@ -25,8 +25,9 @@ public interface IWholesaleWhatsAppConnections
 
 /// <summary>
 /// Lo que el procesador del aviso le pasa al adaptador de envío. <c>MessageId</c> es el id del mensaje del outbox y se usa
-/// como <c>clientId</c> (D-5): un reintento no manda dos avisos. Ni el token ni el link viajan: el aviso sólo dice que la
-/// invitación llegó al correo.
+/// como <c>clientId</c> (D-5): un reintento no manda dos avisos. <c>Link</c> (spec 2026-11-19 §2) es el link de la invitación
+/// armado con el token del evento nuevo, o <c>null</c> para un aviso viejo sin link. El adaptador decide si lo manda: Mensajería
+/// guarda el texto de la plantilla tal cual, así que hoy no lo hace (ver <c>WholesaleInvitationNoticeSender</c>).
 /// </summary>
 public sealed record WholesaleInvitationNotice(
     Guid MessageId,
@@ -35,7 +36,18 @@ public sealed record WholesaleInvitationNotice(
     Guid SentByMemberId,
     string Phone,
     string ContactName,
-    string Email);
+    string Email,
+    string? Link = null)
+{
+    // El link lleva el token y el teléfono es dato personal: un ToString() que llegue a un log sólo muestra ids.
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"MessageId = {MessageId}, TenantId = {TenantId}, ConnectionId = {ConnectionId}");
+        return true;
+    }
+}
 
 /// <summary>El resultado del envío. <c>Failed.Code</c> es el código que se guarda en la invitación:
 /// <c>template_not_approved</c>, <c>connection_unavailable:&lt;motivo&gt;</c> o <c>send_failed:&lt;código&gt;</c>.</summary>

@@ -14,13 +14,17 @@ namespace Modules.Wholesale.IntegrationTests;
 /// <summary>
 /// Spec 2026-11-18: el aviso por WhatsApp de la invitación de punta a punta, desde el <c>POST</c> hasta el estado que pinta el
 /// detalle. Integrations y Mensajería quedan detrás de fakes (las conexiones listas y el envío): lo que se prueba es Mayorista,
-/// su evento sin token, su inbox y su procesador. El worker se saca y el procesador se corre a mano, como en Compras, para que
+/// su evento con link (spec 2026-11-19 §2), el viejo sin link que todavía se drena, su inbox y su procesador. El worker se saca y el procesador se corre a mano, como en Compras, para que
 /// las pruebas no dependan del sondeo.
 /// </summary>
 public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeApiTests.NoticeHost host)
     : IClassFixture<DistributorWhatsAppNoticeApiTests.NoticeHost>
 {
+    /// <summary>El aviso viejo, sin link: ya nadie lo escribe, pero el procesador lo sigue drenando.</summary>
     private const string NoticeEvent = "wholesale.distributor-invitation-notice.v1";
+
+    /// <summary>Spec 2026-11-19 §2: el aviso con link, el que escriben invitar y reenviar.</summary>
+    private const string LinkEvent = "wholesale.distributor-invitation-link.v1";
     private const string RawPhone = "3001234567";
     private const string Phone = "+573001234567";
 
@@ -29,7 +33,7 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
     private WholesaleApiHarness.QepApiFactory Factory => host.Factory;
 
     [Fact]
-    public async Task InviteWithAPhoneQueuesTheEmailAndATokenlessNoticeThatEndsSent()
+    public async Task InvitingWithAPhoneWritesTheLinkEventAndNotTheOldNotice()
     {
         var world = await ArrangeAsync(connections: 1);
         var connection = world.Connections[0];
@@ -41,16 +45,16 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         Assert.Equal(Phone, created.Phone);
         Assert.Equal("Pending", created.Invitation.WhatsAppNotice?.Status);
         Assert.Equal(1, await CountEventsAsync(WholesaleApiHarness.DistributorInvitedEvent, created.Id));
-        Assert.Equal(1, await CountEventsAsync(NoticeEvent, created.Id));
+        Assert.Equal(1, await CountEventsAsync(LinkEvent, created.Id));
+        Assert.Equal(0, await CountEventsAsync(NoticeEvent, created.Id));
 
-        // Review Focus 4: el aviso no lleva el token ni el vencimiento; el token plano sólo viaja en el evento del correo.
+        // El evento nuevo lleva el mismo token que el correo; sin vencimiento.
         var token = await WholesaleApiHarness.LatestTokenAsync(Factory, created.Id);
         var (noticeId, payload) = await NoticeAsync(created.Id);
-        Assert.DoesNotContain(token, payload, StringComparison.Ordinal);
         using (var document = JsonDocument.Parse(payload))
         {
             Assert.False(document.RootElement.TryGetProperty("expiresAt", out _));
-            Assert.False(document.RootElement.TryGetProperty("token", out _));
+            Assert.Equal(token, document.RootElement.GetProperty("token").GetString());
         }
 
         await ProcessNoticesAsync();
@@ -67,6 +71,8 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         Assert.Equal(
             (noticeId, connection.Id, world.Tenant.MemberId, Phone, "Ana Pérez", "ana@distri.co"),
             (sent.MessageId, sent.ConnectionId, sent.SentByMemberId, sent.Phone, sent.ContactName, sent.Email));
+        // El link llega al adaptador armado como el del correo (AppBaseUrl).
+        Assert.EndsWith($"/wholesale-invitations/{Uri.EscapeDataString(token)}", sent.Link, StringComparison.Ordinal);
 
         // Review Focus 4: la auditoría lleva el flag del aviso y nunca el teléfono.
         var audit = Assert.Single(await WholesaleApiHarness.RowsAsync<string>(
@@ -91,6 +97,7 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         Assert.Null(created.Phone);
         Assert.Null(created.Invitation.WhatsAppNotice);
         Assert.Equal(1, await CountEventsAsync(WholesaleApiHarness.DistributorInvitedEvent, created.Id));
+        Assert.Equal(0, await CountEventsAsync(LinkEvent, created.Id));
         Assert.Equal(0, await CountEventsAsync(NoticeEvent, created.Id));
 
         await ProcessNoticesAsync();
@@ -99,17 +106,25 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
     }
 
     [Fact]
-    public async Task AFailingSendLeavesTheInvitationAndTheEmailAndShowsFailedWithItsCode()
+    public async Task AFailureOfTheNoticeDoesNotChangeTheEmailNorTheInvitation()
     {
         var world = await ArrangeAsync(connections: 1);
         host.Sender.Answer(world.Tenant.TenantId, new WholesaleNoticeSendResult.Failed("template_not_approved"));
         var created = await InviteCreatedAsync(world);
+        var token = await WholesaleApiHarness.LatestTokenAsync(Factory, created.Id);
 
         await ProcessNoticesAsync();
         var detail = await WholesaleApiHarness.EventuallyAsync(
             () => DetailAsync(world, created.Id), read => read.Invitation.WhatsAppNotice?.Status == "Failed");
 
         Assert.Equal("Invited", detail.Status);
+        Assert.Equal(created.Email, detail.Email);
+        using (var anonymous = WholesaleApiHarness.CreateAnonymous(Factory))
+        {
+            // El link del correo sigue sirviendo: el aviso fallido no rotó nada.
+            Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync(WholesaleApiHarness.InvitationUrl(token), Ct)).StatusCode);
+        }
+
         Assert.Equal(("Failed", (string?)"template_not_approved"),
             (detail.Invitation.WhatsAppNotice!.Status, detail.Invitation.WhatsAppNotice.FailureCode));
         Assert.Equal(created.Version, detail.Version);
@@ -134,7 +149,8 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         var resent = (await response.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
         Assert.Equal("Pending", resent.Invitation.WhatsAppNotice?.Status);
         Assert.Equal(2, await CountEventsAsync(WholesaleApiHarness.DistributorInvitedEvent, created.Id));
-        Assert.Equal(2, await CountEventsAsync(NoticeEvent, created.Id));
+        Assert.Equal(2, await CountEventsAsync(LinkEvent, created.Id));
+        Assert.Equal(0, await CountEventsAsync(NoticeEvent, created.Id));
         Assert.Equal([0, 1], await GenerationsAsync(created.Id));
 
         await ProcessNoticesAsync();
@@ -162,7 +178,7 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         Assert.Equal(("Failed", (string?)"whatsapp_unavailable"),
             (resent.Invitation.WhatsAppNotice!.Status, resent.Invitation.WhatsAppNotice.FailureCode));
         Assert.Equal(2, await CountEventsAsync(WholesaleApiHarness.DistributorInvitedEvent, created.Id));
-        Assert.Equal(1, await CountEventsAsync(NoticeEvent, created.Id));
+        Assert.Equal(1, await CountEventsAsync(LinkEvent, created.Id));
         var audit = await WholesaleApiHarness.RowsAsync<string>(
             Factory,
             $"""
@@ -238,6 +254,32 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         Assert.Equal(sent.Phone, updated.Phone);
         Assert.Equal(sent.Invitation.WhatsAppNotice, updated.Invitation.WhatsAppNotice);
         Assert.Equal(0, Assert.Single(await GenerationsAsync(created.Id, current: true)));
+    }
+
+    // Spec 2026-11-19 §2: un aviso viejo (sin link) que quedó en el outbox antes del despliegue se sigue procesando, con la misma
+    // regla de generación y sin link. Se simula pasando el evento recién escrito a la forma vieja, sin token.
+    [Fact]
+    public async Task APendingOldNoticeIsStillProcessed()
+    {
+        var world = await ArrangeAsync(connections: 1);
+        var created = await InviteCreatedAsync(world);
+        var (noticeId, _) = await NoticeAsync(created.Id);
+        await WholesaleApiHarness.ExecuteAsync(
+            Factory,
+            $"""
+            UPDATE platform.outbox_messages SET event_name = {NoticeEvent}, payload = payload - 'token'
+            WHERE id = {noticeId}
+            """);
+
+        await ProcessNoticesAsync();
+        var detail = await WholesaleApiHarness.EventuallyAsync(
+            () => DetailAsync(world, created.Id), read => read.Invitation.WhatsAppNotice?.Status == "Sent");
+
+        Assert.Equal("Sent", detail.Invitation.WhatsAppNotice?.Status);
+        Assert.Equal(created.Version, detail.Version);
+        var sent = Assert.Single(host.Sender.CallsFor(world.Tenant.TenantId));
+        Assert.Equal((noticeId, (string?)null), (sent.MessageId, sent.Link));
+        Assert.True(await ProcessedAsync(noticeId));
     }
 
     [Fact]
@@ -355,7 +397,7 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
             Factory,
             $"""
             SELECT id AS "Value" FROM platform.outbox_messages
-            WHERE event_name = {NoticeEvent} AND payload ->> 'distributorId' = {distributorId.ToString()}
+            WHERE event_name IN ({LinkEvent}, {NoticeEvent}) AND payload ->> 'distributorId' = {distributorId.ToString()}
             ORDER BY occurred_at, id
             """);
         var payloads = await WholesaleApiHarness.RowsAsync<string>(
@@ -374,7 +416,7 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
                 Factory,
                 $"""
                 SELECT (payload ->> 'generation')::int AS "Value" FROM platform.outbox_messages
-                WHERE event_name = {NoticeEvent} AND payload ->> 'distributorId' = {distributorId.ToString()}
+                WHERE event_name = {LinkEvent} AND payload ->> 'distributorId' = {distributorId.ToString()}
                 ORDER BY (payload ->> 'generation')::int
                 """);
 

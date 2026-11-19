@@ -118,6 +118,7 @@ internal sealed record PublishedNotice(
     Guid SentByMemberId,
     string ContactName,
     string Email,
+    string Token,
     int Generation,
     string CorrelationId,
     DateTimeOffset OccurredAt);
@@ -150,7 +151,8 @@ internal sealed class FakeEventPublisher : IWholesaleEventPublisher
         EmailChanges.Add(new PublishedEmailChange(
             tenantId, distributorId, previousEmail, newEmail, businessName, correlationId, now));
 
-    public void InvitationNoticeRequested(
+    /// <summary>El aviso con link (spec 2026-11-19 §2); el viejo sin link ya no tiene método.</summary>
+    public void InvitationLinkRequested(
         Guid tenantId,
         Guid distributorId,
         string phone,
@@ -158,11 +160,13 @@ internal sealed class FakeEventPublisher : IWholesaleEventPublisher
         Guid sentByMemberId,
         string contactName,
         string email,
+        string token,
         int generation,
         string correlationId,
         DateTimeOffset occurredAt) =>
         Notices.Add(new PublishedNotice(
-            tenantId, distributorId, phone, connectionId, sentByMemberId, contactName, email, generation, correlationId, occurredAt));
+            tenantId, distributorId, phone, connectionId, sentByMemberId, contactName, email, token, generation, correlationId,
+            occurredAt));
 
     public void DistributorInvited(
         Guid tenantId,
@@ -407,8 +411,12 @@ internal sealed class FakePhoneNormalizer : IWholesalePhoneNormalizer
     }
 }
 
-/// <summary>Las conexiones listas para el aviso. Con <see cref="ThrowWhenCalled"/>, cualquier consulta falla: la prueba de
-/// que un <c>PUT</c> sin cambio no resuelve nada (D-9).</summary>
+/// <summary>
+/// Las conexiones listas para el aviso. Con <see cref="ThrowWhenListed"/> falla resolver cuáles están listas: la prueba de que
+/// un <c>PUT</c> sin cambio no resuelve nada (D-9) y de que un reenvío sigue si Integrations falla. Con
+/// <see cref="ThrowWhenLabeled"/> falla pedir el label, que el detalle sólo pide si hay aviso (D-7). <see cref="ThrowWhenCalled"/>
+/// prende las dos.
+/// </summary>
 internal sealed class FakeWhatsAppConnections : IWholesaleWhatsAppConnections
 {
     public List<WholesaleWhatsAppConnection> Ready { get; } = [];
@@ -416,7 +424,15 @@ internal sealed class FakeWhatsAppConnections : IWholesaleWhatsAppConnections
     /// <summary>Labels de conexiones activas, listas o no.</summary>
     public Dictionary<Guid, string> Labels { get; } = [];
 
-    public bool ThrowWhenCalled { get; set; }
+    public bool ThrowWhenListed { get; set; }
+
+    public bool ThrowWhenLabeled { get; set; }
+
+    public bool ThrowWhenCalled
+    {
+        get => ThrowWhenListed && ThrowWhenLabeled;
+        set => (ThrowWhenListed, ThrowWhenLabeled) = (value, value);
+    }
 
     public int ListCalls { get; private set; }
 
@@ -431,14 +447,14 @@ internal sealed class FakeWhatsAppConnections : IWholesaleWhatsAppConnections
     public Task<IReadOnlyList<WholesaleWhatsAppConnection>> ListReadyAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         ListCalls++;
-        return ThrowWhenCalled
+        return ThrowWhenListed
             ? throw new InvalidOperationException("The connections should not be resolved.")
             : Task.FromResult<IReadOnlyList<WholesaleWhatsAppConnection>>(Ready.ToList());
     }
 
     public Task<string?> FindLabelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-        ThrowWhenCalled
-            ? throw new InvalidOperationException("The connections should not be resolved.")
+        ThrowWhenLabeled
+            ? throw new InvalidOperationException("The connection label should not be read.")
             : Task.FromResult(Labels.GetValueOrDefault(connectionId));
 }
 

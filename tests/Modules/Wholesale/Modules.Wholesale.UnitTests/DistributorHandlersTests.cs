@@ -274,9 +274,10 @@ public sealed class DistributorHandlersTests
 
     private const string SavedPhone = "+573001234567";
 
-    // D-8: el flag va en changed_fields; el teléfono nunca entra a la auditoría ni el token al evento del aviso.
+    // Spec 2026-11-19 §2: con teléfono sale el evento nuevo, con el mismo token que el correo, y no el aviso viejo sin link.
+    // D-8: el flag va en changed_fields; el teléfono nunca entra a la auditoría.
     [Fact]
-    public async Task InviteWithAPhonePublishesTheEmailAndATokenlessNoticeAndAuditsTheFlag()
+    public async Task InvitingWithAPhoneWritesTheLinkEventAndNotTheOldNotice()
     {
         var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
         var member = Guid.CreateVersion7();
@@ -293,7 +294,10 @@ public sealed class DistributorHandlersTests
                 DistributorWorld.Now),
             (notice.TenantId, notice.DistributorId, notice.Phone, notice.ConnectionId, notice.SentByMemberId, notice.ContactName,
                 notice.Email, notice.Generation, notice.CorrelationId, notice.OccurredAt));
-        Assert.DoesNotContain(email.Token, notice.ToString());
+        Assert.Equal(email.Token, notice.Token);
+        Assert.Equal(FakeInvitationLinks.Compose(notice.Token), detail.InvitationUrl);
+        // El aviso viejo ya no tiene método en IWholesaleEventPublisher: nadie puede escribirlo (la integración lo cuenta en el
+        // outbox).
         Assert.Equal(("CO", " 300 123 4567 ".Trim()), (_world.Phones.Calls.Single().Country, _world.Phones.Calls.Single().Phone));
         Assert.Equal((SavedPhone, (Guid?)connection), (stored.Phone, stored.WhatsAppConnectionId));
         Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Pending, stored.Invitation.NoticeStatus);
@@ -400,7 +404,8 @@ public sealed class DistributorHandlersTests
     {
         var connection = Guid.CreateVersion7();
         var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: connection);
-        _world.WhatsApp.ThrowWhenCalled = true;
+        // Resolver cuáles están listas falla; el label del detalle (D-7) sí se puede pedir.
+        _world.WhatsApp.ThrowWhenListed = true;
 
         var detail = await _world.UpdateHandler().HandleAsync(UpdateCommand(distributor, "300 123 4567", null), Ct);
 
@@ -469,10 +474,32 @@ public sealed class DistributorHandlersTests
         var notice = Assert.Single(_world.Events.Notices);
         Assert.Equal((SavedPhone, connection, member, 1, "trace-3"),
             (notice.Phone, notice.ConnectionId, notice.SentByMemberId, notice.Generation, notice.CorrelationId));
-        Assert.DoesNotContain(email.Token, notice.ToString());
+        Assert.Equal(email.Token, notice.Token);
         Assert.Equal((1, (InvitationNoticeStatus?)InvitationNoticeStatus.Pending),
             (distributor.Invitation.Generation, distributor.Invitation.NoticeStatus));
         Assert.Contains("whatsAppNotice=true", Assert.Single(_world.Audit.Entries).ChangedFields);
+    }
+
+    // Spec 2026-11-19 §2: reenviar rota el token, y el evento nuevo lleva el rotado (el mismo del correo nuevo), no el anterior.
+    [Fact]
+    public async Task ResendRotatesTheTokenInTheNewEvent()
+    {
+        var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
+        var invited = await _world.InviteHandler().HandleAsync(
+            _world.InviteCommand() with { Phone = "3001234567", WhatsAppConnectionId = connection }, Ct);
+        var first = Assert.Single(_world.Events.Notices).Token;
+
+        await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, invited.Id, invited.Version, DistributorAction.Resend, "trace-3"), Ct);
+
+        Assert.Equal(2, _world.Events.Notices.Count);
+        var second = _world.Events.Notices[1];
+        Assert.NotEqual(first, second.Token);
+        Assert.Equal(_world.Events.Invitations[1].Token, second.Token);
+        Assert.Equal(1, second.Generation);
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.Null(await _world.Distributors.FindByTokenHashAsync(InvitationTokens.HashOf(first), Ct));
+        Assert.Same(stored, await _world.Distributors.FindByTokenHashAsync(InvitationTokens.HashOf(second.Token), Ct));
     }
 
     // Un fallo del aviso nunca frena el correo: la conexión guardada ya no está lista y el aviso queda fallido sin encolarse.
@@ -498,7 +525,7 @@ public sealed class DistributorHandlersTests
     public async Task ResendWhenListingTheConnectionsThrowsStillSendsTheEmailAndFailsTheNotice()
     {
         var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: Guid.CreateVersion7());
-        _world.WhatsApp.ThrowWhenCalled = true;
+        _world.WhatsApp.ThrowWhenListed = true;
 
         var detail = await _world.TransitionHandler().HandleAsync(
             new TransitionDistributorCommand(_world.Tenant, distributor.Id.Value, 1, DistributorAction.Resend, "trace-4"), Ct);
