@@ -91,9 +91,6 @@ internal static class WholesaleConflicts
     public static RequestForbiddenException RelationshipInactive() =>
         new(WholesaleErrorCodes.RelationshipInactive, "The wholesaler blocked this relationship.");
 
-    public static RequestForbiddenException EmailMismatch() =>
-        new(WholesaleErrorCodes.InvitationEmailMismatch, "The invitation was sent to another email address.");
-
     public static RequestForbiddenException NotTenantOwner() =>
         new(WholesaleErrorCodes.InvitationNotTenantOwner, "Only an owner or admin of the organization can link it.");
 
