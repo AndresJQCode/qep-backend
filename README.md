@@ -2486,10 +2486,12 @@ prueba el buzón, y el correo no tiene que ser el invitado.
 - `email-code` manda un código de 6 dígitos al correo que escribió el distribuidor (vence a los 10 minutos, 5 intentos; uno
   nuevo cada 60 s como mucho). Responde `202` siempre: no dice si el correo tiene cuenta ni si la invitación sigue pendiente, y
   sólo emite con la invitación pendiente.
-- `session-with-password` (sin `email`, el invitado): si ese correo ya tiene contraseña, sólo la verifica. Si no tiene usuario
-  o no tiene contraseña, exige `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla
-  cerrado con `identity.terms.unavailable`) y un `code` válido de `email-code` (`401 identity.credentials.invalid`, sin crear
-  nada); entonces aprovisiona, crea la contraseña y registra los términos.
+- `session-with-password` (sin `email`, el invitado): si ese correo ya tiene contraseña, es un login normal
+  (`IPasswordLogin`: `401 identity.credentials.invalid`, o `403 identity.email.not_verified` con el correo sin verificar; el
+  link no lo verifica). Si no tiene usuario o no tiene contraseña, exige un `code` válido de `email-code`: sin él es el mismo
+  `401` que una contraseña errada, así que la respuesta no dice si el correo tiene cuenta. Con el código ya gastado exige
+  `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla cerrado con
+  `identity.terms.unavailable`), y entonces aprovisiona, crea la contraseña y registra los términos.
 - `session` abre la sesión del correo **verificado** de Google (`403` si no está verificado), sea o no el invitado: usa el
   usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
   (`WholesaleInvitationGoogleSession`).
