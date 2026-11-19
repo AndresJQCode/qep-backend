@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 
 namespace Modules.Wholesale.Application;
@@ -33,6 +34,15 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
             .Must(email => string.IsNullOrWhiteSpace(email) || IsEmail(email.Trim()))
             .WithMessage("The email is not valid.");
         RuleFor(command => command.BusinessName).TrimmedText(DistributorTextLimits.BusinessName);
+        RuleFor(command => command.Country)
+            .Must(country => !string.IsNullOrWhiteSpace(country) && country.Trim().Length == 2)
+            .WithMessage("The country is required, as a two-letter code.");
+        // El país vacío ya falla en su propia regla: aquí sólo se juzga el tipo contra un país que existe.
+        RuleFor(command => command.IdentificationType)
+            .Must((command, type) => string.IsNullOrWhiteSpace(command.Country)
+                || DocumentTypesByCountry.IsAllowed(type, command.Country))
+            .NotEmpty()
+            .WithMessage("The identification type is not valid for the country.");
         RuleFor(command => command.IdentificationNumber).TrimmedText(DistributorTextLimits.IdentificationNumber);
         RuleFor(command => command.ContactName).TrimmedText(DistributorTextLimits.ContactName);
         RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);

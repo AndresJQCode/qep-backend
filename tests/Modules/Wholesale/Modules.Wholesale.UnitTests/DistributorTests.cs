@@ -42,7 +42,7 @@ public sealed class DistributorTests
     private static Distributor Invite(
         string email = "ana@distri.co", string tokenHash = Hash1, string? phone = null, Guid? connection = null) =>
         Distributor.Invite(
-            Tenant, email, "  Distribuciones Norte SAS ", " 900123456 ", " Ana Pérez ", PriceListId.New(),
+            Tenant, email, "  Distribuciones Norte SAS ", "CO", "NIT", " 900123456 ", " Ana Pérez ", PriceListId.New(),
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), tokenHash, Guid.CreateVersion7(), phone,
             connection, Now);
 
@@ -70,12 +70,13 @@ public sealed class DistributorTests
         var reserved = Guid.CreateVersion7();
 
         var distributor = Distributor.Invite(
-            Tenant, " Ana@Distri.CO ", "  Distribuciones Norte SAS ", " 900123456 ", " Ana Pérez ", priceList, advisor,
+            Tenant, " Ana@Distri.CO ", "  Distribuciones Norte SAS ", " co ", "nit", " 900123456 ", " Ana Pérez ", priceList, advisor,
             company, invitedBy, Hash1, reserved, null, null, Now);
 
         Assert.NotEqual(Guid.Empty, distributor.Id.Value);
         Assert.Equal((Tenant, "ana@distri.co", "Distribuciones Norte SAS", "900123456", "Ana Pérez"),
             (distributor.TenantId, distributor.Email, distributor.BusinessName, distributor.IdentificationNumber, distributor.ContactName));
+        Assert.Equal(("CO", "NIT"), (distributor.Country, distributor.IdentificationType));
         Assert.Equal((priceList, advisor, company, invitedBy),
             (distributor.PriceListId, distributor.AdvisorMemberId, distributor.BillingCompanyId, distributor.InvitedByUserId));
         Assert.Equal((DistributorStatus.Invited, 1L, Now, Now), (distributor.Status, distributor.Version, distributor.CreatedAt, distributor.UpdatedAt));

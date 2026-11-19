@@ -82,8 +82,12 @@ internal sealed class DistributorWorld
 
     public GetDistributorOptionsHandler OptionsHandler() => new(Context, PriceLists, Members, Companies, WhatsApp);
 
-    public InviteDistributorCommand InviteCommand(string identification = "900123456", string email = "ana@distri.co") =>
-        new(Tenant, email, "Distribuciones Norte SAS", identification, "Ana Pérez", PriceList.Id.Value, Advisor, Company.Id, "trace-1");
+    public InviteDistributorCommand InviteCommand(
+        string identification = "900123456",
+        string email = "ana@distri.co",
+        string country = "CO",
+        string identificationType = "NIT") =>
+        new(Tenant, email, "Distribuciones Norte SAS", country, identificationType, identification, "Ana Pérez", PriceList.Id.Value, Advisor, Company.Id, "trace-1");
 
     /// <summary>Un distribuidor sembrado sin pasar por el handler, con un hash de token conocido.</summary>
     public Distributor SeedInvited(
@@ -91,12 +95,15 @@ internal sealed class DistributorWorld
         string? tokenHash = null,
         DateTimeOffset? at = null,
         string? phone = null,
-        Guid? whatsAppConnectionId = null)
+        Guid? whatsAppConnectionId = null,
+        string identificationType = "NIT")
     {
         var distributor = Distributor.Invite(
             Tenant,
             "ana@distri.co",
             "Distribuciones " + identification,
+            "CO",
+            identificationType,
             identification,
             "Ana Pérez",
             PriceList.Id,
