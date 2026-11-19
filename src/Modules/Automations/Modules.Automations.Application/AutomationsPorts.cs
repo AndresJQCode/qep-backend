@@ -176,6 +176,23 @@ public interface IAutomationDataConsents
     Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-19 (chatbot CRM action): the conversation the «Acción de CRM» block acts for.</summary>
+public sealed record CrmActionContext(Guid TenantId, Guid ConversationId);
+
+/// <summary>
+/// Spec 2026-11-19 (chatbot CRM action): the tenant's CRM as the system (adapter in Bootstrapper over Customers and Pipeline):
+/// Automations references neither. Each call answers one of <c>CrmResultCodes</c> and never throws a domain error (a broken rule is
+/// <c>failed</c>); a cancellation, a concurrency conflict or a transient database failure goes up, so the engine unit is retried.
+/// </summary>
+public interface IAutomationCrm
+{
+    Task<string> AddTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken);
+
+    Task<string> RemoveTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken);
+
+    Task<string> MoveDealAsync(CrmActionContext context, Guid stageId, CancellationToken cancellationToken);
+}
+
 /// <summary>Spec 2026-11-17 (agente IA en chatbots) §5.2 y §7: un agente de IA del tenant. <see cref="Status"/> es el nombre del
 /// <c>AgentStatus</c> de Ai (<c>Draft</c>, <c>Active</c>, <c>Paused</c>); <see cref="Provider"/> y <see cref="Model"/> son los de la versión
 /// publicada, o los del borrador si todavía no tiene.</summary>
