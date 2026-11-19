@@ -72,7 +72,7 @@ public sealed partial class TransitionDistributorHandler(
                 if (noticeQueued)
                 {
                     await DistributorWhatsAppNotice.QueueAsync(
-                        eventPublisher, memberships, executionContext.SubjectId, distributor, command.CorrelationId, now,
+                        eventPublisher, memberships, executionContext.SubjectId, distributor, token, command.CorrelationId, now,
                         cancellationToken);
                 }
 

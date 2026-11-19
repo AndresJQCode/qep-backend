@@ -49,7 +49,8 @@ public sealed class DistributorInvitationServiceTests
         _suppliers,
         _customers,
         _world.UnitOfWork,
-        _world.Audit);
+        _world.Audit,
+        _world.Events);
 
     private Task<AcceptedInvitationDto> AcceptAsync(AcceptInvitationChoice choice, string? email = "ana@distri.co", Guid? user = null) =>
         Service().AcceptAsync(_token, user ?? _user, email, choice, "trace-accept", Ct);
@@ -132,44 +133,154 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal((DistributorStatus.Active, (Guid?)mine), (_invitation.Status, _invitation.DistributorTenantId));
     }
 
+    // Spec 2026-11-19 §6: el mismo correo, con otras mayúsculas o espacios, no es un cambio: ni evento ni auditoría del correo.
     [Theory]
     [InlineData(" Ana@Distri.CO ")]
     [InlineData("ANA@DISTRI.CO")]
-    public async Task EmailMatchIgnoresCaseAndSurroundingSpaces(string sessionEmail)
+    public async Task AcceptWithTheSameEmailWritesNoEventAndNoAudit(string accountEmail)
     {
-        var result = await AcceptAsync(new NewTenantChoice(NewTenantData), sessionEmail);
+        var result = await AcceptAsync(new NewTenantChoice(NewTenantData), accountEmail);
 
         Assert.True(result.Created);
         Assert.Equal(DistributorStatus.Active, _invitation.Status);
+        Assert.Equal("ana@distri.co", _invitation.Email);
+        Assert.Empty(_world.Events.EmailChanges);
+        Assert.Equal("wholesale.distributor.accepted", Assert.Single(_world.Audit.Entries).Action);
+    }
+
+    // Spec 2026-11-19 §6 y decisión del owner: prevalece el correo de la cuenta que acepta. Se escribe en el mismo commit que la
+    // aceptación, se audita sin los correos y sale un evento para avisar a las dos direcciones.
+    [Fact]
+    public async Task AcceptWithADifferentEmailReplacesItAndPublishesTheEvent()
+    {
+        var result = await AcceptAsync(new NewTenantChoice(NewTenantData), " Compras@Norte.CO ");
+
+        Assert.True(result.Created);
+        Assert.Equal((DistributorStatus.Active, "compras@norte.co"), (_invitation.Status, _invitation.Email));
+        var changed = Assert.Single(_world.Events.EmailChanges);
+        Assert.Equal(
+            (_world.Tenant, _invitation.Id.Value, "ana@distri.co", "compras@norte.co", _invitation.BusinessName, "trace-accept",
+                DistributorWorld.Now),
+            (changed.TenantId, changed.DistributorId, changed.PreviousEmail, changed.NewEmail, changed.BusinessName,
+                changed.CorrelationId, changed.OccurredAt));
+        Assert.Equal(
+            ["wholesale.distributor.email_changed", "wholesale.distributor.accepted"],
+            _world.Audit.Entries.Select(entry => entry.Action));
+        var audit = _world.Audit.Entries[0];
+        Assert.Equal((_world.Tenant, _user, "distributor", _invitation.Id.ToString()),
+            (audit.TenantId, audit.ActorId, audit.ResourceType, audit.ResourceId));
+        Assert.Equal(["email"], audit.ChangedFields);
+        Assert.DoesNotContain(_world.Audit.Entries, entry => entry.ChangedFields.Any(field => field.Contains('@')));
+        // El cliente nace en el mayorista con el correo que queda en el distribuidor, no con el que se reemplazó.
+        Assert.Equal("compras@norte.co", Assert.Single(_customers.Calls).Email);
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+    }
+
+    // Spec 2026-11-19, Pruebas: el correo del mayorista no cambia si falla el commit. Cambio, auditoría y evento van en el
+    // único guardado de la aceptación; al perderlo se sueltan y la fila de la base conserva el correo invitado.
+    [Fact]
+    public async Task AcceptWithADifferentEmailDoesNotChangeItIfTheCommitFails()
+    {
+        var stored = _world.SeedInvited("333", tokenHash: _invitation.Invitation.TokenHash);
+        _world.Distributors.Distributors.Remove(stored);
+        _world.UnitOfWork.FailNextSaveWith = new RequestConcurrencyException("concurrency.conflict", "lost");
+        _world.UnitOfWork.OnDiscard = () => _world.Distributors.Replace(_invitation, stored);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() =>
+            AcceptAsync(new NewTenantChoice(NewTenantData), "compras@norte.co"));
+
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+        Assert.Equal(1, _world.UnitOfWork.Discards);
+        var row = Assert.Single(_world.Distributors.Distributors);
+        Assert.Equal((DistributorStatus.Invited, "ana@distri.co"), (row.Status, row.Email));
+    }
+
+    // Un paso anterior al commit falla: el correo no se tocó todavía y no salió ningún evento.
+    [Fact]
+    public async Task AcceptWithADifferentEmailDoesNotChangeItIfAnEarlierStepFails()
+    {
+        _customers.FailTimes = 1;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            AcceptAsync(new NewTenantChoice(NewTenantData), "compras@norte.co"));
+
+        Assert.Equal("ana@distri.co", _invitation.Email);
+        Assert.Empty(_world.Events.EmailChanges);
+        Assert.Empty(_world.Audit.Entries);
     }
 
     [Theory]
-    [InlineData("otra@distri.co")]
     [InlineData(null)]
-    [InlineData("")]
-    public async Task AnotherAccountIsForbiddenAndNothingIsWritten(string? sessionEmail)
+    [InlineData(" ")]
+    public async Task AcceptWithoutAnAccountEmailKeepsTheInvitedOne(string? accountEmail)
     {
-        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            AcceptAsync(new NewTenantChoice(NewTenantData), sessionEmail));
-        var listing = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            Service().ListLinkableTenantsAsync(_token, _user, sessionEmail, Ct));
+        await AcceptAsync(new NewTenantChoice(NewTenantData), accountEmail);
 
-        Assert.Equal("wholesale.invitation.email_mismatch", error.Code);
-        Assert.Equal("wholesale.invitation.email_mismatch", listing.Code);
-        Assert.Empty(_tenancy.Checked);
+        Assert.Equal((DistributorStatus.Active, "ana@distri.co"), (_invitation.Status, _invitation.Email));
+        Assert.Empty(_world.Events.EmailChanges);
+    }
+
+    // Spec 2026-11-19 §5: el correo ya no es la llave; otra cuenta ve los tenants que administra.
+    [Fact]
+    public async Task ListLinkableAcceptsAnyAccountEmail()
+    {
+        var mine = _tenancy.AddTenant("Mi Tienda", _user, TenantStatus.Active, TenantModuleKeys.Catalog);
+
+        var tenants = await Service().ListLinkableTenantsAsync(_token, _user, "otra@distri.co", Ct);
+
+        Assert.Equal(mine, Assert.Single(tenants).TenantId);
+    }
+
+    [Fact]
+    public async Task AnAdminOfTheTenantCanLinkIt()
+    {
+        var administered = _tenancy.AddTenant("Tienda Ajena", Guid.CreateVersion7(), TenantStatus.Active, TenantModuleKeys.Catalog);
+        _tenancy.Admins[administered] = [_user];
+
+        var result = await AcceptAsync(new LinkTenantChoice(administered));
+
+        Assert.Equal((administered, false), (result.TenantId, result.Created));
+        Assert.Equal((DistributorStatus.Active, (Guid?)administered), (_invitation.Status, _invitation.DistributorTenantId));
+    }
+
+    // Un miembro activo con otro rol (billing) no aparece entre los tenants que administra: 403 con el código de siempre.
+    [Fact]
+    public async Task ABillingMemberCannotLinkItAndGetsNotTenantOwner()
+    {
+        var billingOf = _tenancy.AddTenant("Tienda Ajena", Guid.CreateVersion7(), TenantStatus.Active, TenantModuleKeys.Catalog);
+        _tenancy.Admins[billingOf] = [Guid.CreateVersion7()];
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => AcceptAsync(new LinkTenantChoice(billingOf)));
+
+        Assert.Equal("wholesale.invitation.not_tenant_owner", error.Code);
         AssertNothingWritten();
     }
 
     [Fact]
-    public async Task AnotherAccountCannotLearnTheStateOfAnExpiredInvitation()
+    public async Task ListLinkableIncludesTenantsWhereTheUserIsAdmin()
     {
-        _world.Clock.UtcNow = DistributorWorld.Now.AddDays(4);
+        var owned = _tenancy.AddTenant("A Propia", _user, TenantStatus.Active, TenantModuleKeys.Catalog);
+        var administered = _tenancy.AddTenant("B Administrada", Guid.CreateVersion7(), TenantStatus.Active, TenantModuleKeys.Catalog);
+        _tenancy.Admins[administered] = [_user];
+        _tenancy.AddTenant("C Ajena", Guid.CreateVersion7(), TenantStatus.Active, TenantModuleKeys.Catalog);
 
-        // El correo se mira antes de revelar si venció.
-        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            AcceptAsync(new NewTenantChoice(NewTenantData), "otra@distri.co"));
+        var tenants = await Service().ListLinkableTenantsAsync(_token, _user, "ana@distri.co", Ct);
 
-        Assert.Equal("wholesale.invitation.email_mismatch", error.Code);
+        Assert.Equal([(owned, true), (administered, true)], tenants.Select(tenant => (tenant.TenantId, tenant.Linkable)));
+    }
+
+    // El tenant reservado sólo se le entrega a su owner: ser admin de él no alcanza (D-17).
+    [Fact]
+    public async Task AReservedTenantAdministeredButNotOwnedIsNeverHandedOver()
+    {
+        var reserved = _invitation.Invitation.ReservedTenantId;
+        _tenancy.AddTenant(reserved, "Ajeno", Guid.CreateVersion7(), TenantStatus.Active, TenantModuleKeys.Catalog);
+        _tenancy.Admins[reserved] = [_user];
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+
+        Assert.Equal("wholesale.invitation.not_tenant_owner", error.Code);
+        AssertNothingWritten();
     }
 
     [Fact]

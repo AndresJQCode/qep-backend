@@ -62,6 +62,9 @@ public static class NotificationsInfrastructureExtensions
         services.AddSingleton<OutboxDeliveryWorker, SupplierExportDeliveryWorker>();
         // Spec 2026-11-17 (mayorista): la invitación a un distribuidor, con el link armado sobre AppBaseUrl (ruling W1).
         services.AddSingleton<OutboxDeliveryWorker, WholesaleInvitationDeliveryWorker>();
+        // Spec 2026-11-19 §6: el correo del distribuidor cambió al aceptar. Un consumidor por dirección, cada uno con su inbox.
+        services.AddSingleton<OutboxDeliveryWorker, WholesaleEmailChangedToPreviousDeliveryWorker>();
+        services.AddSingleton<OutboxDeliveryWorker, WholesaleEmailChangedToNewDeliveryWorker>();
         // La exportación asíncrona de Quotations (spec 2026-09-12, D12): una definición por evento.
         services.AddSingleton<OutboxDeliveryWorker, QuotationsExportReadyDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, QuotationsExportFailedDeliveryWorker>();

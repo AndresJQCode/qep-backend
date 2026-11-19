@@ -63,8 +63,11 @@ public sealed record DistributorSummaryDto(
 /// <summary>
 /// El distribuidor completo para su pantalla (BFF). <c>AllowedActions</c> ya cruza estado y permiso (en minúscula y en el orden
 /// del contrato: <c>edit</c>, <c>resend</c>, <c>delete</c>, <c>block</c>, <c>unblock</c>); sin
-/// <c>wholesale.distributor.manage</c> llega vacío. El token nunca viaja. <c>Phone</c> es el celular del aviso en E.164, o
-/// <c>null</c> (spec 2026-11-18).
+/// <c>wholesale.distributor.manage</c> llega vacío. <c>Phone</c> es el celular del aviso en E.164, o <c>null</c> (spec
+/// 2026-11-18).
+/// <para><c>InvitationUrl</c> (spec 2026-11-19 §1) es el link para «Copiar» y sólo viene en la respuesta de invitar (el mismo
+/// token del correo) y en la de rotar el link: la base guarda el hash, así que es la única vez que existe. En cualquier otra
+/// respuesta es <c>null</c> y el frontend tiene que rotar para volver a tenerlo; sin este campo no habría cómo copiarlo.</para>
 /// </summary>
 public sealed record DistributorDetailDto(
     Guid Id,
@@ -85,7 +88,8 @@ public sealed record DistributorDetailDto(
     DistributorInvitationDto Invitation,
     DateTimeOffset CreatedAt,
     DateTimeOffset? ActivatedAt,
-    IReadOnlyList<string> AllowedActions);
+    IReadOnlyList<string> AllowedActions,
+    string? InvitationUrl = null);
 
 /// <summary>
 /// Cuántos distribuidores hay por estado con <c>search</c> y sin <c>status</c>, para las pestañas. Las claves son el nombre del

@@ -60,26 +60,36 @@ internal static class DistributorWhatsAppNotice
     }
 
     /// <summary>
-    /// Escribe el evento del aviso con la generación vigente; se llama después de mutar la invitación. Autor (D-6): la
-    /// membresía activa de quien invita o reenvía y, si no tiene (stub de desarrollo), el asesor, que ya se validó activo.
+    /// Escribe el evento del aviso con link (spec 2026-11-19 §2) con la generación vigente; se llama después de mutar la
+    /// invitación, con el <paramref name="token"/> plano que sale también en el evento del correo (el hash ya está guardado).
+    /// Autor (D-6): la membresía activa de quien invita o reenvía y, si no tiene (stub de desarrollo), el asesor, que ya se
+    /// validó activo.
     /// </summary>
     public static async Task QueueAsync(
         IWholesaleEventPublisher events,
         IMembershipDirectory memberships,
         Guid actorUserId,
         Domain.Distributor distributor,
+        string token,
         string correlationId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
         if (distributor.Phone is not { } phone || distributor.WhatsAppConnectionId is not { } connectionId)
         {
             throw new InvalidOperationException("A notice needs the distributor's phone and WhatsApp connection.");
         }
 
+        // El link del aviso tiene que abrir la invitación vigente: un token de otra generación sería un link muerto.
+        if (!string.Equals(InvitationTokens.HashOf(token), distributor.Invitation.TokenHash, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The notice must carry the token of the current invitation.");
+        }
+
         var sender = await memberships.FindActiveMembershipIdAsync(actorUserId, distributor.TenantId, cancellationToken)
             ?? distributor.AdvisorMemberId;
-        events.InvitationNoticeRequested(
+        events.InvitationLinkRequested(
             distributor.TenantId,
             distributor.Id.Value,
             phone,
@@ -87,6 +97,7 @@ internal static class DistributorWhatsAppNotice
             sender,
             distributor.ContactName,
             distributor.Email,
+            token,
             distributor.Invitation.Generation,
             correlationId,
             now);

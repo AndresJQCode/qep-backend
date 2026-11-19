@@ -406,4 +406,68 @@ public sealed class DistributorTests
         Assert.Null(distributor.Invitation.NoticeFailureCode);
         Assert.Equal((version, updatedAt), (distributor.Version, distributor.UpdatedAt));
     }
+
+    // Spec 2026-11-19 §6: el correo que confirma el distribuidor reemplaza al del mayorista, normalizado igual que al invitar.
+    // El mismo correo con otras mayúsculas o espacios no es un cambio: no escribe nada.
+    [Fact]
+    public void ReplaceEmailNormalizesAndReportsTheChange()
+    {
+        var distributor = Invite();
+
+        var same = distributor.ReplaceEmail("  ANA@Distri.co ", Now.AddHours(1));
+
+        Assert.False(same);
+        Assert.Equal(("ana@distri.co", 1L, Now), (distributor.Email, distributor.Version, distributor.UpdatedAt));
+
+        var changed = distributor.ReplaceEmail(" Compras@Norte.CO ", Now.AddHours(2));
+
+        Assert.True(changed);
+        Assert.Equal(("compras@norte.co", 2L, Now.AddHours(2)), (distributor.Email, distributor.Version, distributor.UpdatedAt));
+    }
+
+    [Fact]
+    public void ReplaceEmailOnAnAcceptedDistributorIsRejected()
+    {
+        var active = Active();
+        var blocked = Blocked();
+
+        var error = Assert.Throws<WholesaleDomainException>(() => active.ReplaceEmail("otra@distri.co", Now.AddHours(3)));
+        Assert.Throws<WholesaleDomainException>(() => blocked.ReplaceEmail("otra@distri.co", Now.AddHours(3)));
+
+        Assert.Equal("wholesale.distributor.invalid_transition", error.Code);
+        Assert.Equal(("ana@distri.co", "ana@distri.co"), (active.Email, blocked.Email));
+    }
+
+    // Spec 2026-11-19 §1: «Copiar» rota token y vigencia (72 h desde ahora), aunque la invitación ya haya vencido, y no toca
+    // el aviso por WhatsApp: no reenvía nada.
+    [Fact]
+    public void RotateInvitationLinkChangesTokenAndExpiryAndKeepsTheNotice()
+    {
+        var distributor = Invite(phone: Phone, connection: Connection);
+        distributor.RecordInvitationNotice(0, InvitationNoticeStatus.Sent, null);
+        var later = Now.AddDays(5);
+
+        distributor.RotateInvitationLink(Hash2, later);
+
+        Assert.Equal((Hash2, later, later.AddHours(72)),
+            (distributor.Invitation.TokenHash, distributor.Invitation.SentAt, distributor.Invitation.ExpiresAt));
+        Assert.Equal((InvitationViewState.Pending, 2L, later),
+            (distributor.InvitationState(later), distributor.Version, distributor.UpdatedAt));
+        Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Sent, distributor.Invitation.NoticeStatus);
+        Assert.Equal((Phone, (Guid?)Connection), (distributor.Phone, distributor.WhatsAppConnectionId));
+    }
+
+    [Fact]
+    public void RotateInvitationLinkOnlyWhileInvitedAndOnlyWithAHash()
+    {
+        var active = Active();
+        var invited = Invite();
+
+        var error = Assert.Throws<WholesaleDomainException>(() => active.RotateInvitationLink(Hash2, Now.AddHours(2)));
+        Assert.Throws<ArgumentException>(() =>
+            invited.RotateInvitationLink("Zx0pQ9mW3rT7yU1iO5aS8dF2gH6jK4lZ0xC3vB7nM1q", Now.AddHours(2)));
+
+        Assert.Equal("wholesale.distributor.invalid_transition", error.Code);
+        Assert.Equal((Hash1, Hash1), (active.Invitation.TokenHash, invited.Invitation.TokenHash));
+    }
 }

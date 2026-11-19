@@ -174,8 +174,9 @@ public interface IDistributorRepository : IDistributorUsage
 }
 
 /// <summary>
-/// El evento <c>wholesale.distributor-invited.v1</c> hacia el correo. Es el único lugar por donde viaja el token plano; el
-/// adaptador lo escribe en el outbox del contexto del módulo, así que sale con el mismo commit que la invitación.
+/// El evento <c>wholesale.distributor-invited.v1</c> hacia el correo y los otros eventos del módulo. El token plano sólo viaja en
+/// el del correo y en el del aviso con link; el adaptador los escribe en el outbox del contexto del módulo, así que salen con el
+/// mismo commit que la invitación.
 /// </summary>
 public interface IWholesaleEventPublisher
 {
@@ -190,11 +191,12 @@ public interface IWholesaleEventPublisher
         DateTimeOffset occurredAt);
 
     /// <summary>
-    /// Spec 2026-11-18: <c>wholesale.distributor-invitation-notice.v1</c>, el aviso por WhatsApp de la invitación. Sale en el
-    /// mismo commit que la invitación y lo procesa el worker del aviso. Sin token, sin link y sin vencimiento: el aviso sólo
-    /// dice que la invitación llegó al correo. <paramref name="generation"/> es la de la invitación al encolarlo (D-4).
+    /// Spec 2026-11-19 §2: <c>wholesale.distributor-invitation-link.v1</c>, el aviso por WhatsApp de la invitación con su link.
+    /// Reemplaza a <c>wholesale.distributor-invitation-notice.v1</c> (sin link), que ya no se escribe y sólo se drena. Sale en el
+    /// mismo commit que la invitación y lo procesa el worker del aviso. <paramref name="token"/> es el mismo del correo y sólo
+    /// vive en el payload del outbox; <paramref name="generation"/> es la de la invitación al encolarlo (D-4).
     /// </summary>
-    void InvitationNoticeRequested(
+    void InvitationLinkRequested(
         Guid tenantId,
         Guid distributorId,
         string phone,
@@ -202,9 +204,32 @@ public interface IWholesaleEventPublisher
         Guid sentByMemberId,
         string contactName,
         string email,
+        string token,
         int generation,
         string correlationId,
         DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// Spec 2026-11-19 §6: <c>wholesale.distributor-email-changed.v1</c>. Al aceptar quedó el correo de la cuenta en lugar del que
+    /// escribió el mayorista; Notifications avisa a las dos direcciones. Sale en el mismo commit que la aceptación. Sin token.
+    /// </summary>
+    void DistributorEmailChanged(
+        Guid tenantId,
+        Guid distributorId,
+        string previousEmail,
+        string newEmail,
+        string businessName,
+        string correlationId,
+        DateTimeOffset now);
+}
+
+/// <summary>
+/// Spec 2026-11-19 §1: el link de la invitación que se le devuelve al mayorista para «Copiar». Adaptador en Bootstrapper con
+/// <c>AccountLinks.WholesaleInvitation</c> (<c>Notifications:AppBaseUrl</c>, ruling W1): el mismo link que lleva el correo.
+/// </summary>
+public interface IWholesaleInvitationLinks
+{
+    string Compose(string token);
 }
 
 /// <summary>
