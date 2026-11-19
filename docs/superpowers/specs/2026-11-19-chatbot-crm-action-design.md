@@ -154,7 +154,8 @@ which modules are on), as it does for members and agents.
   read only when the flow has a `crmAction` block or the editor asks for the palette (modules on), as `AiOfAsync` does
   for agents. Older frontends ignore it.
 - `Simulations.cs`: the `CrmAction` effect never calls the port. It emits an existing **system line** (`lines.System`, which
-  the frontend already renders) with the text «Simulación: se etiquetaría al cliente con «Interesado»» (no new DTO
+  the frontend already renders), generic because the node only carries ids: «Simulación: se etiquetaría al cliente»,
+  «Simulación: se quitaría la etiqueta al cliente» or «Simulación: se movería el negocio de la conversación» (no new DTO
   field), writes `{saveTo}.result` with the operation's success code (`added`, `removed` or `moved`, so downstream
   conditions can be tested) and leaves by `ok`.
 
