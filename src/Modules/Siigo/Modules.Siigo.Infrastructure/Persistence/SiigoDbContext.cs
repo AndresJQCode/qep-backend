@@ -19,7 +19,14 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
     /// traduce por nombre a <c>409 siigo.settings.company_taken</c>.</summary>
     public const string SettingsTenantCompanyIndex = "IX_settings_tenant_company";
 
+    /// <summary>Spec 2026-11-18 §5.6: una factura vigente por pedido y tipo (todo menos <c>Rejected</c> y <c>Failed</c>). El candado del
+    /// pedido da la respuesta amable; este índice cierra la carrera. <c>SiigoUnitOfWork</c> lo traduce por nombre a
+    /// <c>409 siigo.invoice.already_exists</c>.</summary>
+    public const string InvoicesTenantOrderKindIndex = "IX_invoices_tenant_order_kind";
+
     internal DbSet<SiigoSettings> Settings => Set<SiigoSettings>();
+
+    internal DbSet<SiigoInvoice> Invoices => Set<SiigoInvoice>();
 
     internal DbSet<SiigoVariantLink> VariantLinks => Set<SiigoVariantLink>();
 
@@ -43,6 +50,7 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         ConfigureTaxLink(modelBuilder);
         ConfigureWithholdingLink(modelBuilder);
         ConfigurePaymentLink(modelBuilder);
+        ConfigureInvoice(modelBuilder);
     }
 
     private static void ConfigureSettings(ModelBuilder modelBuilder)
@@ -142,6 +150,43 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         link.Property(value => value.BankAccountKey).HasColumnName("bank_account_key").HasMaxLength(BankAccountKey.MaxLength);
         link.Property(value => value.TenantId).HasColumnName("tenant_id");
         link.Property(value => value.SiigoPaymentTypeId).HasColumnName("siigo_payment_type_id").HasMaxLength(SiigoTaxLink.TaxIdMaxLength);
+    }
+
+    private static void ConfigureInvoice(ModelBuilder modelBuilder)
+    {
+        var invoice = modelBuilder.Entity<SiigoInvoice>();
+        invoice.ToTable("invoices", Schema);
+        invoice.HasKey(value => value.Id).HasName("PK_invoices");
+        invoice.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        invoice.Property(value => value.TenantId).HasColumnName("tenant_id");
+        invoice.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        invoice.Property(value => value.OrderId).HasColumnName("order_id");
+        invoice.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16);
+        invoice.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        invoice.Property(value => value.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(SiigoInvoice.KeyMaxLength);
+        // La petición entera, tal como salió: un reintento manda estos bytes. Texto y no jsonb: jsonb la normalizaría y cambiaría los bytes.
+        invoice.Property(value => value.RequestJson).HasColumnName("request_json").HasColumnType("text");
+        invoice.Property(value => value.SiigoInvoiceId).HasColumnName("siigo_invoice_id").HasMaxLength(SiigoInvoice.SiigoIdMaxLength);
+        invoice.Property(value => value.Number).HasColumnName("number").HasMaxLength(SiigoInvoice.NumberMaxLength);
+        invoice.Property(value => value.Cufe).HasColumnName("cufe").HasMaxLength(SiigoInvoice.CufeMaxLength);
+        invoice.Property(value => value.SiigoTotal).HasColumnName("siigo_total").HasPrecision(18, 2);
+        invoice.Property(value => value.ExpectedPaymentsTotal).HasColumnName("expected_payments_total").HasPrecision(18, 2);
+        invoice.Property(value => value.ErrorCode).HasColumnName("error_code").HasMaxLength(SiigoInvoice.ErrorCodeMaxLength);
+        invoice.Property(value => value.ErrorDetail).HasColumnName("error_detail").HasMaxLength(SiigoInvoice.ErrorDetailMaxLength);
+        invoice.Property(value => value.Attempts).HasColumnName("attempts");
+        invoice.Property(value => value.OrderVersion).HasColumnName("order_version");
+        invoice.Property(value => value.OrderChanged).HasColumnName("order_changed");
+        invoice.Property(value => value.SendingSince).HasColumnName("sending_since");
+        invoice.Property(value => value.CreatedBy).HasColumnName("created_by");
+        invoice.Property(value => value.CreatedAt).HasColumnName("created_at");
+        invoice.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Una vigente por pedido y tipo. Parcial por el texto del estado: Rejected y Failed liberan el pedido.
+        invoice.HasIndex(value => new { value.TenantId, value.OrderId, value.Kind })
+            .IsUnique()
+            .HasDatabaseName(InvoicesTenantOrderKindIndex)
+            .HasFilter("status NOT IN ('Rejected', 'Failed')");
+        // La consulta de «¿hay una abierta?» de la marca manual (Pending y Unknown), por pedido.
+        invoice.HasIndex(value => new { value.TenantId, value.OrderId }).HasDatabaseName("IX_invoices_tenant_order");
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

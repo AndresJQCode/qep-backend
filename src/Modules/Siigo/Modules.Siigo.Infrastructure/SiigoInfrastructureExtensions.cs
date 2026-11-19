@@ -33,6 +33,7 @@ public static class SiigoInfrastructureExtensions
         services.AddScoped<ISiigoUnitOfWork, SiigoUnitOfWork>();
         services.AddScoped<ISiigoAuditRecorder, SiigoAuditRecorder>();
         services.AddScoped<ISiigoSettingsRepository, SiigoSettingsRepository>();
+        services.AddScoped<ISiigoInvoiceRepository, SiigoInvoiceRepository>();
 
         // Spec 2026-11-18 §8: Siigo:BaseUrl y Siigo:PartnerId. Se validan al arrancar (en Production, sin Partner-Id el pod no arranca).
         services.AddOptions<SiigoOptions>().Bind(configuration.GetSection(SiigoOptions.SectionName)).ValidateOnStart();

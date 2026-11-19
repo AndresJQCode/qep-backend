@@ -81,6 +81,10 @@ public interface IExternalOrderInvoicing
     /// </summary>
     Task<ExternalInvoicingOrder?> GetForInvoicingAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 
+    /// <summary>La versión actual del pedido, o <c>null</c> si no es del tenant. Sin las precondiciones de <see cref="GetForInvoicingAsync"/>:
+    /// el facturador la compara con la que armó, después de crear la factura, para avisar que el pedido cambió.</summary>
+    Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
     /// <summary>
     /// Marca el pedido como facturado por <paramref name="provider"/> (<see cref="Order.InvoiceExternally"/>), con historial
     /// <c>Invoiced</c> y la auditoría <c>quotation.order.invoiced</c> con <c>provider</c> en <c>changedFields</c>. Idempotente: con la

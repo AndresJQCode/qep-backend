@@ -15,4 +15,7 @@ public static class SiigoAuditActions
     /// <summary>El recurso de las entradas de configuración: la conexión de Integrations (con el mismo nombre que le dan Shopify y
     /// Messaging).</summary>
     public const string ConnectionResourceType = "integration_connection";
+
+    /// <summary>El recurso de las entradas de factura: la fila de <c>siigo.invoices</c>.</summary>
+    public const string InvoiceResourceType = "siigo_invoice";
 }

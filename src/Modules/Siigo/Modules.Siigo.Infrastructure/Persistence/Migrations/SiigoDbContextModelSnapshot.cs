@@ -91,6 +91,124 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Siigo.Domain.SiigoInvoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Cufe")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("cufe");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("error_code");
+
+                    b.Property<string>("ErrorDetail")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("error_detail");
+
+                    b.Property<decimal?>("ExpectedPaymentsTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("expected_payments_total");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Number")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("number");
+
+                    b.Property<bool>("OrderChanged")
+                        .HasColumnType("boolean")
+                        .HasColumnName("order_changed");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<long>("OrderVersion")
+                        .HasColumnType("bigint")
+                        .HasColumnName("order_version");
+
+                    b.Property<string>("RequestJson")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("request_json");
+
+                    b.Property<DateTimeOffset?>("SendingSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sending_since");
+
+                    b.Property<string>("SiigoInvoiceId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("siigo_invoice_id");
+
+                    b.Property<decimal?>("SiigoTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("siigo_total");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("PK_invoices");
+
+                    b.HasIndex("TenantId", "OrderId")
+                        .HasDatabaseName("IX_invoices_tenant_order");
+
+                    b.HasIndex("TenantId", "OrderId", "Kind")
+                        .IsUnique()
+                        .HasDatabaseName("IX_invoices_tenant_order_kind")
+                        .HasFilter("status NOT IN ('Rejected', 'Failed')");
+
+                    b.ToTable("invoices", "siigo");
+                });
+
             modelBuilder.Entity("Modules.Siigo.Domain.SiigoPaymentLink", b =>
                 {
                     b.Property<Guid>("ConnectionId")

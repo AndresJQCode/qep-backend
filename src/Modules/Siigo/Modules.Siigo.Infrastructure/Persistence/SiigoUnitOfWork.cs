@@ -51,6 +51,9 @@ internal sealed class SiigoUnitOfWork(SiigoDbContext dbContext) : ISiigoUnitOfWo
         // §5.3: otra conexión del tenant ya factura con esa empresa. Es un 409 al asesor, no una carrera que se reintente.
         DbUpdateException update when IsUniqueViolation(update, SiigoDbContext.SettingsTenantCompanyIndex) => new ResourceConflictException(
             SiigoErrorCodes.SettingsCompanyTaken, "Another Siigo connection of this tenant already invoices with that company.", exception),
+        // §5.6: ya hay una factura vigente de ese tipo para el pedido; el candado da la respuesta amable y el índice cierra la carrera.
+        DbUpdateException update when IsUniqueViolation(update, SiigoDbContext.InvoicesTenantOrderKindIndex) => new ResourceConflictException(
+            SiigoErrorCodes.InvoiceAlreadyExists, "The order already has a current Siigo invoice of that kind.", exception),
         _ => null,
     };
 

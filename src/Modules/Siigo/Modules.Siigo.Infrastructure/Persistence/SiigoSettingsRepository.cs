@@ -31,4 +31,25 @@ internal sealed class SiigoSettingsRepository(SiigoDbContext dbContext) : ISiigo
         return await query.SingleOrDefaultAsync(
             settings => settings.ConnectionId == connectionId && settings.TenantId == tenantId, cancellationToken);
     }
+
+    public async Task<SiigoSettings?> FindByCompanyAsync(
+        Guid tenantId, Guid companyId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        // Sólo lectura: la factura no modifica la configuración. Los vínculos de productos se traen sólo para las variantes del pedido
+        // (la tabla llega a miles de filas por conexión).
+        var settings = await dbContext.Settings
+            .Include(value => value.TaxLinks)
+            .Include(value => value.WithholdingLinks)
+            .Include(value => value.PaymentLinks)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(value => value.TenantId == tenantId && value.CompanyId == companyId, cancellationToken);
+        if (settings is not null && variantIds.Count > 0)
+        {
+            await dbContext.VariantLinks
+                .Where(link => link.ConnectionId == settings.ConnectionId && variantIds.Contains(link.VariantId))
+                .LoadAsync(cancellationToken);
+        }
+
+        return settings;
+    }
 }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Application.Products;
 using Modules.Siigo.Application.Settings;
 
@@ -89,8 +90,75 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Spec 2026-11-18 §5.4 y §5.6: la factura de un pedido. Cuelga del pedido y no de la conexión (la conexión sale de la empresa de
+        // la cuenta de cobro del pedido), con su propio permiso: quien factura no tiene por qué configurar.
+        var invoice = endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/orders/{orderId:guid}/siigo-invoice")
+            .WithTags("Siigo")
+            .RequireAuthorization(SiigoPermissions.InvoiceIssue);
+
+        invoice.MapGet("/preview", PreviewInvoiceAsync)
+            .Produces<SiigoInvoicePreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        invoice.MapGet("/", GetInvoicesAsync)
+            .Produces<IReadOnlyList<SiigoInvoiceDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        invoice.MapPost("/", IssueInvoiceAsync)
+            .Produces<IReadOnlyList<SiigoInvoiceDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
+        invoice.MapPost("/stamp", StampInvoiceAsync)
+            .Produces<SiigoInvoiceDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
+        invoice.MapPost("/resolve", ResolveInvoiceAsync)
+            .Produces<SiigoInvoiceDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
+
+    private static async Task<IResult> PreviewInvoiceAsync(
+        Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new PreviewSiigoInvoiceQuery(tenantId, orderId), cancellationToken));
+
+    private static async Task<IResult> GetInvoicesAsync(
+        Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetSiigoInvoicesQuery(tenantId, orderId), cancellationToken));
+
+    // El cuerpo es opcional: sin él se usa la propuesta de pagos de la cuenta de cobro.
+    private static async Task<IResult> IssueInvoiceAsync(
+        Guid tenantId, Guid orderId, SiigoIssueInvoiceRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new IssueSiigoInvoiceCommand(
+                tenantId,
+                orderId,
+                request?.Payments?.Select(payment => new SiigoPaymentChoice(payment.Kind, payment.ProofId ?? Guid.Empty, payment.SiigoPaymentTypeId)).ToArray()),
+            cancellationToken));
+
+    private static async Task<IResult> StampInvoiceAsync(
+        Guid tenantId, Guid orderId, string? kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new StampSiigoInvoiceCommand(tenantId, orderId, kind), cancellationToken));
+
+    private static async Task<IResult> ResolveInvoiceAsync(
+        Guid tenantId, Guid orderId, SiigoResolveInvoiceRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ResolveSiigoInvoiceCommand(tenantId, orderId, request.Kind, request.Outcome, request.Number), cancellationToken));
 
     private static async Task<IResult> ListProductsAsync(
         Guid tenantId,
@@ -275,3 +343,12 @@ public sealed record SiigoPaymentsRequest(
     int? CreditDays,
     string? CashOnDeliveryPaymentTypeId,
     string? DefaultPaymentTypeId);
+
+/// <summary>Una forma de pago elegida para un comprobante. Todo opcional en el binding: lo que falta es un 422 con <c>errors</c>.</summary>
+public sealed record SiigoPaymentChoiceRequest(string? Kind, Guid? ProofId, string? SiigoPaymentTypeId);
+
+/// <summary>El cuerpo opcional de <c>POST …/siigo-invoice</c>.</summary>
+public sealed record SiigoIssueInvoiceRequest(IReadOnlyList<SiigoPaymentChoiceRequest>? Payments);
+
+/// <summary>El cuerpo de <c>POST …/siigo-invoice/resolve</c>: <c>exists</c> (con el número) o <c>missing</c>.</summary>
+public sealed record SiigoResolveInvoiceRequest(string? Kind, string? Outcome, string? Number);

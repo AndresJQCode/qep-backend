@@ -71,6 +71,9 @@ public sealed class ExternalOrderInvoicingService(
             order.Version);
     }
 
+    public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+        (await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken))?.Version;
+
     public async Task MarkInvoicedAsync(
         Guid tenantId,
         Guid orderId,

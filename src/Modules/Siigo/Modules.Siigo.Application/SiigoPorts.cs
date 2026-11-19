@@ -67,6 +67,25 @@ public interface ISiigoSettingsRepository
     /// tenant. Trae los vínculos de impuestos, retenciones y cuentas; los de productos sólo con <paramref name="withVariantLinks"/>.
     /// </summary>
     Task<SiigoSettings?> FindOrCreateAsync(Guid tenantId, Guid connectionId, bool withVariantLinks, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// La configuración de la conexión que factura con esa empresa (<c>IX_settings_tenant_company</c>: una por tenant), o <c>null</c> si
+    /// ninguna la eligió. Trae los vínculos de impuestos, retenciones y cuentas, y los de productos <b>sólo de
+    /// <paramref name="variantIds"/></b>: la factura los necesita de las líneas del pedido y la tabla llega a miles de filas. Es de lectura:
+    /// la factura no modifica la configuración.
+    /// </summary>
+    Task<SiigoSettings?> FindByCompanyAsync(
+        Guid tenantId, Guid companyId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
+}
+
+/// <summary>Las facturas de Siigo (<c>siigo.invoices</c>). Con tracking: el llamador modifica y guarda con <see cref="ISiigoUnitOfWork"/>.
+/// Todo filtra por <c>tenant_id</c>.</summary>
+public interface ISiigoInvoiceRepository
+{
+    /// <summary>Todas las filas del pedido (de los dos tipos y de todos los estados), de la más vieja a la más nueva.</summary>
+    Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    void Add(SiigoInvoice invoice);
 }
 
 /// <summary>Una variante de QEP tal como la tabla de vínculos la pinta: <paramref name="DisplayName"/> es el producto más los valores de
@@ -112,6 +131,10 @@ public interface ISiigoOrderSource
     /// <summary>La foto del pedido, o <c>null</c> si no es del tenant. Lanza los mismos 422 que la marca manual cuando el pedido no se
     /// puede facturar (anulado, ya facturado, sin pagar, sin datos del cliente).</summary>
     Task<Invoicing.SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    /// <summary>La versión actual del pedido, o <c>null</c> si no es del tenant. Sin las precondiciones de <see cref="GetAsync"/>: se usa
+    /// después de crear la factura, cuando el pedido puede haber cambiado, para marcar la fila con <c>order_changed</c>.</summary>
+    Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 
     /// <summary>Marca el pedido como facturado en Siigo con el número de la factura y su id. Idempotente.</summary>
     Task MarkInvoicedAsync(

@@ -4,8 +4,18 @@ using Modules.Siigo.Domain;
 
 namespace Modules.Siigo.Application.Invoicing;
 
-/// <summary>Una factura armada: su tipo, el cuerpo ya serializado y el cliente que habría que crear si Siigo no lo tiene.</summary>
-public sealed record SiigoInvoiceDraft(SiigoInvoiceKind Kind, SiigoInvoiceRequest Request, SiigoCustomerRequest? NewCustomer);
+/// <summary>Un pago de la factura armada, para que la vista previa lo muestre. <paramref name="ProofId"/> es el comprobante del que sale
+/// (<c>null</c> en el saldo, que va a crédito o contraentrega); <paramref name="DueDate"/> sólo en el crédito.</summary>
+public sealed record SiigoDraftPayment(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly? DueDate);
+
+/// <summary>Una factura armada: su tipo, el cuerpo ya serializado y el cliente que habría que crear si Siigo no lo tiene.
+/// <paramref name="Total"/> es lo que suman sus pagos (el neto, con las retenciones ya descontadas).</summary>
+public sealed record SiigoInvoiceDraft(
+    SiigoInvoiceKind Kind,
+    SiigoInvoiceRequest Request,
+    SiigoCustomerRequest? NewCustomer,
+    decimal Total = 0m,
+    IReadOnlyList<SiigoDraftPayment>? Payments = null);
 
 /// <summary>Cambia la forma de pago de un comprobante, en la factura de ese tipo (spec 2026-11-18 §6.3).</summary>
 public sealed record SiigoPaymentOverride(SiigoInvoiceKind Kind, Guid ProofId, string SiigoPaymentTypeId);
@@ -92,20 +102,34 @@ public static class SiigoInvoiceBuilder
 
         var drafts = new List<SiigoInvoiceDraft>
         {
-            new(
-                SiigoInvoiceKind.Order,
-                Serialize(Body(input, settings, identification, SiigoInvoiceKind.Order, lines, orderIncludesFreight ? freight : null, plan, overrides)),
-                customerRequest),
+            Draft(input, settings, identification, SiigoInvoiceKind.Order, lines, orderIncludesFreight ? freight : null, plan, overrides, customerRequest),
         };
         if (separateFreight)
         {
-            drafts.Add(new SiigoInvoiceDraft(
-                SiigoInvoiceKind.Freight,
-                Serialize(Body(input, settings, identification, SiigoInvoiceKind.Freight, [], freight, plan, overrides)),
-                customerRequest));
+            drafts.Add(Draft(input, settings, identification, SiigoInvoiceKind.Freight, [], freight, plan, overrides, customerRequest));
         }
 
         return new SiigoBuildResult.Ready(drafts);
+    }
+
+    private static SiigoInvoiceDraft Draft(
+        SiigoInvoiceInput input,
+        SiigoSettings settings,
+        string identification,
+        SiigoInvoiceKind kind,
+        IReadOnlyList<ResolvedItem> lines,
+        ResolvedItem? freight,
+        PaymentPlan plan,
+        IReadOnlyList<SiigoPaymentOverride> overrides,
+        SiigoCustomerRequest? customer)
+    {
+        var payments = Payments(input, settings, kind, plan, overrides);
+        return new SiigoInvoiceDraft(
+            kind,
+            Serialize(Body(input, settings, identification, kind, lines, freight, payments, overrides)),
+            customer,
+            payments.Sum(payment => payment.Value),
+            payments);
     }
 
     // ---- Faltantes (todos juntos, en un orden estable) -------------------------------------------------------------------------
@@ -279,41 +303,27 @@ public static class SiigoInvoiceBuilder
         return Text(settings.PaymentLinks.FirstOrDefault(link => link.BankAccountKey == input.BillingAccountKey)?.SiigoPaymentTypeId);
     }
 
-    private static List<object> Payments(
+    private static List<SiigoDraftPayment> Payments(
         SiigoInvoiceInput input,
         SiigoSettings settings,
         SiigoInvoiceKind kind,
         PaymentPlan plan,
         IReadOnlyList<SiigoPaymentOverride> overrides)
     {
-        var payments = new List<object>();
+        var payments = new List<SiigoDraftPayment>();
         var proposed = ProposedPaymentType(input, settings);
         foreach (var part in plan.Proofs.Where(part => part.Kind == kind))
         {
             var chosen = overrides.FirstOrDefault(value => value.Kind == kind && value.ProofId == part.ProofId)?.SiigoPaymentTypeId;
-            payments.Add(new Dictionary<string, object?> { ["id"] = IdValue(chosen ?? proposed!), ["value"] = part.Amount });
+            payments.Add(new SiigoDraftPayment(part.ProofId, (chosen ?? proposed)!, part.Amount, null));
         }
 
         var balance = plan.Balances.Single(value => value.Kind == kind).Amount;
         if (balance > 0)
         {
-            if (input.CashOnDelivery)
-            {
-                payments.Add(new Dictionary<string, object?>
-                {
-                    ["id"] = IdValue(settings.CashOnDeliveryPaymentTypeId!),
-                    ["value"] = balance,
-                });
-            }
-            else
-            {
-                payments.Add(new Dictionary<string, object?>
-                {
-                    ["id"] = IdValue(settings.CreditPaymentTypeId!),
-                    ["value"] = balance,
-                    ["due_date"] = input.Today.AddDays(settings.CreditDays!.Value).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                });
-            }
+            payments.Add(input.CashOnDelivery
+                ? new SiigoDraftPayment(null, settings.CashOnDeliveryPaymentTypeId!, balance, null)
+                : new SiigoDraftPayment(null, settings.CreditPaymentTypeId!, balance, input.Today.AddDays(settings.CreditDays!.Value)));
         }
 
         return payments;
@@ -378,7 +388,7 @@ public static class SiigoInvoiceBuilder
         SiigoInvoiceKind kind,
         IReadOnlyList<ResolvedItem> lines,
         ResolvedItem? freight,
-        PaymentPlan plan,
+        IReadOnlyList<SiigoDraftPayment> payments,
         IReadOnlyList<SiigoPaymentOverride> overrides)
     {
         var applied = kind == SiigoInvoiceKind.Order ? input.Withholdings : [];
@@ -427,7 +437,16 @@ public static class SiigoInvoiceBuilder
         }
 
         body["items"] = items;
-        body["payments"] = Payments(input, settings, kind, plan, overrides);
+        body["payments"] = payments.Select(payment =>
+        {
+            var json = new Dictionary<string, object?> { ["id"] = IdValue(payment.SiigoPaymentTypeId), ["value"] = payment.Value };
+            if (payment.DueDate is { } dueDate)
+            {
+                json["due_date"] = dueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            }
+
+            return json;
+        }).ToList();
         if (invoiceRetentions.Count > 0)
         {
             body["retentions"] = invoiceRetentions.Select(id => new Dictionary<string, object?> { ["id"] = IdValue(id) }).ToList();

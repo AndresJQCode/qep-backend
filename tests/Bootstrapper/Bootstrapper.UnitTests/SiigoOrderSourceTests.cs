@@ -113,6 +113,9 @@ public sealed class SiigoOrderSourceTests
         public Task<ExternalInvoicingOrder?> GetForInvoicingAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<ExternalInvoicingOrder?>(order);
 
+        public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<long?>(order.Version);
+
         public Task MarkInvoicedAsync(
             Guid tenantId, Guid orderId, string provider, string number, string externalId, Guid memberId, CancellationToken cancellationToken)
         {
