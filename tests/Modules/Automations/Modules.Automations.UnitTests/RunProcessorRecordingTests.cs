@@ -245,7 +245,7 @@ public sealed class RunProcessorRecordingTests
             var chatbots = new ServingChatbots();
             var clock = new FixedClock();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new OkHttp(), media, new MemoryChatbotMedia(), audit, new NoDataConsents(), chatbots, new ModuleStatus(moduleEnabled),
+                Messenger, conversations, hours, http ?? new OkHttp(), media, new MemoryChatbotMedia(), audit, new NoDataConsents(), new NoCrm(), chatbots, new ModuleStatus(moduleEnabled),
                 NullLogger<RunEffects>.Instance);
             var recorder = new RunUnitWriter(Units, clock, Logs.CreateLogger<RunUnitWriter>());
             return new RunProcessor(
@@ -509,6 +509,15 @@ public sealed class RunProcessorRecordingTests
         public Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class NoCrm : IAutomationCrm
+    {
+        public Task<string> AddTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string> RemoveTagAsync(CrmActionContext context, Guid tagId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string> MoveDealAsync(CrmActionContext context, Guid stageId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FixedClock : IClock

@@ -566,6 +566,16 @@ public static class AutomationsAuditActions
     /// preguntar.</summary>
     public const string DataConsentUnavailable = "automations.run.data_consent_unavailable";
 
+    /// <summary>Spec 2026-11-19 (chatbot CRM action): the «Acción de CRM» block changed the CRM (added, removed or moved). An idempotent
+    /// no-op (already tagged, not tagged, already in the stage) writes no row. The node, operation and result code are in the run's trace.</summary>
+    public const string CrmActionApplied = "automations.run.crm_action_applied";
+
+    /// <summary>Spec 2026-11-19: the «Acción de CRM» block had nothing to act on and left by <c>skipped</c>.</summary>
+    public const string CrmActionSkipped = "automations.run.crm_action_skipped";
+
+    /// <summary>Spec 2026-11-19: the «Acción de CRM» block left by <c>error</c>.</summary>
+    public const string CrmActionFailed = "automations.run.crm_action_failed";
+
     /// <summary>No está en la lista de §4.6: el barrido de D-M13 termina corridas sin una persona y la auditoría es la única huella.</summary>
     public const string RunAbandoned = "automations.run.abandoned";
 }

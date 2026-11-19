@@ -1,4 +1,6 @@
+using System.Data.Common;
 using System.Text.Json;
+using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
 using Microsoft.Extensions.Logging;
 using Modules.Automations.Application.Http;
@@ -35,6 +37,7 @@ public sealed partial class RunEffects(
     IChatbotMediaStore chatbotMedia,
     IAutomationsAuditRecorder audit,
     IAutomationDataConsents dataConsents,
+    IAutomationCrm crm,
     IChatbotRepository chatbots,
     IAutomationsModuleStatus modules,
     ILogger<RunEffects> logger)
@@ -49,6 +52,10 @@ public sealed partial class RunEffects(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Contact of conversation {ConversationId} of tenant {TenantId} is blocked during run {RunId}; the run ends Interrupted.")]
     private static partial void LogContactBlocked(ILogger logger, Guid tenantId, Guid conversationId, Guid runId);
+
+    // Only the exception type: its message may carry customer data.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The CRM action of run {RunId} in conversation {ConversationId} of tenant {TenantId} failed ({ExceptionType}).")]
+    private static partial void LogCrmFailed(ILogger logger, Guid tenantId, Guid conversationId, Guid runId, string exceptionType);
 
     /// <summary>Entra al motor con <paramref name="input"/> y ejecuta lo que pida hasta que la corrida espere, termine o se corte.</summary>
     public async Task RunAsync(RunUnit unit, EngineInput input, DateTimeOffset now, CancellationToken cancellationToken)
@@ -79,6 +86,13 @@ public sealed partial class RunEffects(
             if (next is EngineInput.DataConsent { CanRecord: false })
             {
                 Audit(run, AutomationsAuditActions.DataConsentUnavailable, now);
+            }
+
+            // Spec 2026-11-19 (chatbot CRM action): one row per execution of the block, here for the same reason (a unit that died while
+            // Running gets its answer from PendingInputAsync).
+            if (next is EngineInput.CrmResult crmResult)
+            {
+                AuditCrm(run, crmResult.Code, now);
             }
 
             // P2-R43: el motor interpola los textos de SendText y SendInteractive dentro del paso, así que el refresco de los adjuntos va
@@ -119,7 +133,7 @@ public sealed partial class RunEffects(
                     case Effect.WaitForCustomer wait:
                         await conversations.SetStepAsync(run.TenantId, run.ConversationId, wait.StepTitle, cancellationToken);
                         break;
-                    case Effect.CheckBusinessHours or Effect.CallHttp or Effect.CheckDataConsent:
+                    case Effect.CheckBusinessHours or Effect.CallHttp or Effect.CheckDataConsent or Effect.CrmAction:
                         // P2-R40: una salida que vuelve al bloque (o a uno anterior) daría vueltas dentro de la unidad; se trata como el ciclo
                         // de P2-R13. FailAsync traspasa al final, como cualquier traspaso (P2-R23).
                         if (++reentries > EngineReentries.Max)
@@ -255,6 +269,7 @@ public sealed partial class RunEffects(
             HttpNode http => await ExternalAsync(unit.Run, new Effect.CallHttp(http.Id, http), unit.Run.ToState().Variables, unit.Run.StepNumber, cancellationToken),
             BusinessHoursNode hours => await ExternalAsync(unit.Run, new Effect.CheckBusinessHours(hours.Id), unit.Run.ToState().Variables, unit.Run.StepNumber, cancellationToken),
             DataConsentNode consent => await ExternalAsync(unit.Run, new Effect.CheckDataConsent(consent.Id), unit.Run.ToState().Variables, unit.Run.StepNumber, cancellationToken),
+            CrmActionNode action => await ExternalAsync(unit.Run, new Effect.CrmAction(action.Id, action), unit.Run.ToState().Variables, unit.Run.StepNumber, cancellationToken),
             _ => null,
         };
     }
@@ -431,6 +446,7 @@ public sealed partial class RunEffects(
                 hours.NodeId, await businessHours.IsOpenAsync(run.TenantId, run.ConnectionId, cancellationToken)),
             Effect.CallHttp http => await CallHttpAsync(run, http, variables, stepNumber, cancellationToken),
             Effect.CheckDataConsent consent => await CheckDataConsentAsync(run, consent, cancellationToken),
+            Effect.CrmAction action => new EngineInput.CrmResult(action.NodeId, await CrmAsync(run, action.Node, cancellationToken)),
             _ => throw new ArgumentOutOfRangeException(nameof(effect), effect.GetType().Name, "No es un efecto externo."),
         };
 
@@ -486,6 +502,72 @@ public sealed partial class RunEffects(
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-11-19 (chatbot CRM action): the operation of the block, through the CRM port, as a <c>CrmResultCodes</c> code. P2-R33a:
+    /// nothing the port throws escapes the unit as a failure, so anything that is not «not yet» is <c>failed</c> and the block leaves by
+    /// <c>error</c>; a cancellation, a concurrency conflict or a transient database failure goes up and the unit is retried (the port's
+    /// operations are idempotent, so the retry answers <c>already_*</c>).
+    /// </summary>
+    private async Task<string> CrmAsync(ConversationRun run, CrmActionNode node, CancellationToken cancellationToken)
+    {
+        var context = new CrmActionContext(run.TenantId, run.ConversationId);
+        try
+        {
+            return node.Operation switch
+            {
+                CrmOperations.AddTag when node.TagId is { } tagId => await crm.AddTagAsync(context, tagId, cancellationToken),
+                CrmOperations.RemoveTag when node.TagId is { } tagId => await crm.RemoveTagAsync(context, tagId, cancellationToken),
+                CrmOperations.MoveDeal when node.StageId is { } stageId => await crm.MoveDealAsync(context, stageId, cancellationToken),
+                // The validator blocks publishing without the id; a version that has none anyway is a tag or stage that is missing.
+                CrmOperations.MoveDeal => CrmResultCodes.StageMissing,
+                CrmOperations.AddTag or CrmOperations.RemoveTag => CrmResultCodes.TagMissing,
+                _ => CrmResultCodes.Failed,
+            };
+        }
+        catch (Exception exception) when (!IsTransient(exception))
+        {
+            LogCrmFailed(logger, run.TenantId, run.ConversationId, run.Id, exception.GetType().Name);
+            return CrmResultCodes.Failed;
+        }
+    }
+
+    /// <summary>«Not yet» rather than «could not»: a cancellation, a concurrency conflict or a transient database failure
+    /// (<see cref="DbException.IsTransient"/>, anywhere in the chain).</summary>
+    private static bool IsTransient(Exception exception)
+    {
+        if (exception is OperationCanceledException or RequestConcurrencyException)
+        {
+            return true;
+        }
+
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DbException { IsTransient: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Spec 2026-11-19: what changed is audited, as what was skipped or failed; an idempotent no-op writes nothing.</summary>
+    private void AuditCrm(ConversationRun run, string code, DateTimeOffset now)
+    {
+        var output = CrmResultCodes.OutputOf(code);
+        if (output == FlowOutputs.Ok)
+        {
+            if (code is CrmResultCodes.Added or CrmResultCodes.Removed or CrmResultCodes.Moved)
+            {
+                Audit(run, AutomationsAuditActions.CrmActionApplied, now);
+            }
+
+            return;
+        }
+
+        Audit(run, output == FlowOutputs.Skipped ? AutomationsAuditActions.CrmActionSkipped : AutomationsAuditActions.CrmActionFailed, now);
     }
 
     private void Audit(ConversationRun run, string action, DateTimeOffset now) =>
