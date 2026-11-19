@@ -27,6 +27,10 @@ public interface IDealRepository
     /// <summary>Decisión del owner 2026-11-16: si hay un negocio abierto nacido de esa conversación, sea del cliente que sea.</summary>
     Task<bool> HasOpenDealFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
+    /// <summary>Chatbot CRM action spec (2026-11-19): the open deal born from that conversation, whoever's customer it is, with
+    /// tracking. <c>null</c> when there is none, and also when a race left several: the caller never picks one of them.</summary>
+    Task<Deal?> FindOpenFromConversationAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
     /// <summary>D12: las etapas con al menos un negocio, abierto o cerrado. Ésas no se borran.</summary>
     Task<IReadOnlySet<Guid>> StagesWithDealsAsync(Guid tenantId, Guid pipelineId, CancellationToken cancellationToken);
 
@@ -96,6 +100,10 @@ public interface ITriageDecisionRepository
 public interface IPipelineUnitOfWork
 {
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Drops every pending change and tracked row, so the next read loads fresh ones. For a caller that retries a
+    /// write after <c>concurrency.conflict</c> in the same scope (<see cref="ChatbotDealMover"/>).</summary>
+    void DiscardChanges();
 }
 
 /// <summary>§6.3: auditoría atómica propia (proyección de <c>audit.entries</c> en <c>PipelineDbContext</c>), en la misma

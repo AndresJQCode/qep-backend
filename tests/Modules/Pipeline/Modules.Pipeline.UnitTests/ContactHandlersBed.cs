@@ -190,6 +190,8 @@ internal sealed class NoOpUnitOfWork : IPipelineUnitOfWork
         Saves++;
         return Task.FromResult(0);
     }
+
+    public void DiscardChanges() => throw new NotSupportedException();
 }
 
 internal sealed class FakeReasons : IPipelineReasonRepository
