@@ -531,6 +531,7 @@ public static class AutomationsAuditActions
     public const string ChatbotConnectionReleased = "automations.chatbot.connection_released";
     public const string ChatbotPaused = "automations.chatbot.paused";
     public const string ChatbotResumed = "automations.chatbot.resumed";
+    public const string ChatbotVersionRestored = "automations.chatbot.version_restored";
     public const string ChatbotDeleted = "automations.chatbot.deleted";
     public const string ChatbotImported = "automations.chatbot.imported";
     public const string TemplateCreated = "automations.template.created";

@@ -8,6 +8,8 @@ public static class AutomationsErrorCodes
 {
     public const string ChatbotNotFound = "automations.chatbot.not_found";
 
+    public const string ChatbotVersionNotFound = "automations.chatbot.version_not_found";
+
     /// <summary><c>IX_chatbots_tenant_name</c>: el nombre se compara sin mayúsculas.</summary>
     public const string ChatbotNameTaken = "automations.chatbot.name_taken";
 

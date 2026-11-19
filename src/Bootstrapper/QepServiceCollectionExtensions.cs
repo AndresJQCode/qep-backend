@@ -1421,6 +1421,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<PublishChatbotCommand, ChatbotEditorDto>, PublishChatbotHandler>();
         services.AddScoped<ICommandHandler<PauseChatbotCommand, ChatbotEditorDto>, PauseChatbotHandler>();
         services.AddScoped<ICommandHandler<ResumeChatbotCommand, ChatbotEditorDto>, ResumeChatbotHandler>();
+        services.AddScoped<IQueryHandler<ListChatbotVersionsQuery, ChatbotVersionListResponse>, ListChatbotVersionsHandler>();
+        services.AddScoped<ICommandHandler<RestoreChatbotVersionCommand, ChatbotEditorDto>, RestoreChatbotVersionHandler>();
         services.AddScoped<ICommandHandler<DuplicateChatbotCommand, ChatbotEditorDto>, DuplicateChatbotHandler>();
         services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
         services.AddScoped<IQueryHandler<ExportChatbotQuery, ChatbotExportDto>, ExportChatbotHandler>();
