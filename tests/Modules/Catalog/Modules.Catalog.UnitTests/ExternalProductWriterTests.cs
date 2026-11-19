@@ -192,7 +192,7 @@ internal sealed class WriterProductRepository : IProductRepository
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
-        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, bool includeCosts, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public Task<(IReadOnlyList<ProductSummary> Items, int Total)> SearchSummariesAsync(

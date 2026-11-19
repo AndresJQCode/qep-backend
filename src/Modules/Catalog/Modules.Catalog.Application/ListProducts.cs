@@ -129,11 +129,14 @@ public sealed class ListProductsHandler(
 
         // Las variantes vendibles de los productos activos de la página, en una lectura proyectada
         // (ver IProductRepository.ListActiveVariantsAsync). Un producto dado de baja no se vende,
-        // así que ni se consulta: trae la lista vacía.
+        // así que ni se consulta: trae la lista vacía. El costo de cada variante (spec 2026-11-19) viaja con la misma regla
+        // que en el detalle: sólo si quien llama puede verlo, y entonces la lectura suma una sola consulta para la página.
+        var includeCosts = query.IncludeVariants && CatalogCostAccess.CanRead(executionContext);
         var variantsByProduct = query.IncludeVariants
             ? (await repository.ListActiveVariantsAsync(
                     query.TenantId,
                     products.Where(product => product.IsActive).Select(product => product.Id).ToArray(),
+                    includeCosts,
                     cancellationToken))
                 .GroupBy(variant => variant.ProductId)
                 .ToDictionary(group => group.Key, group => group.ToArray())
@@ -151,7 +154,7 @@ public sealed class ListProductsHandler(
         var images = imageIds.Length == 0
             ? new Dictionary<Guid, ProductImageRef>()
             : await imageLookup.FindManyAsync(imageIds, cancellationToken);
-        var lookups = ProductReadLookups.Empty(query.TenantId) with { Images = images };
+        var lookups = ProductReadLookups.Empty(query.TenantId) with { Images = images, IncludeCosts = includeCosts };
 
         // Los nombres de los valores de opción sólo se piden si alguna variante tiene valores.
         var valueNames = variantsByProduct is not null

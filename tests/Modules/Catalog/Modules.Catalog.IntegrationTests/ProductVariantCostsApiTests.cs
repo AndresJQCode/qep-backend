@@ -194,17 +194,21 @@ public sealed class ProductVariantCostsApiTests(SharedCatalogHost sharedHost) : 
         Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Variants[0].Costs.COP", out _));
     }
 
+    // The plain list has no variants, so it never carries costs, not even for a cost manager. With
+    // includeVariants=true the variants do carry them (spec 2026-11-19, ProductListVariantCostsApiTests).
     [Fact]
-    public async Task TheProductListAndSelectorNeverCarryCosts()
+    public async Task TheProductListWithoutVariantsNeverCarriesCosts()
     {
         var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
         using var manager = Client(factory, CostManager);
         await CreateAsync(manager, "VC-1", TwelveThousand);
 
-        var raw = await manager.GetStringAsync(
-            $"{ProductsUrl}?includeVariants=true", TestContext.Current.CancellationToken);
+        foreach (var query in new[] { string.Empty, "?includeVariants=false" })
+        {
+            var raw = await manager.GetStringAsync($"{ProductsUrl}{query}", TestContext.Current.CancellationToken);
 
-        Assert.DoesNotContain("\"costs\"", raw, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("\"costs\"", raw, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private string ProductsUrl => $"/api/v1/tenants/{TenantId}/catalog/products";
