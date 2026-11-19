@@ -89,6 +89,16 @@ public static class PurchaseOrderEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Reenviar el correo al proveedor: no cambia la orden, así que va sin If-Match y sin subir la versión. Un fallo del canal es
+        // 200 con email.status = Failed; sin correo del proveedor, 422.
+        group.MapPost("/{orderId:guid}/resend-email", ResendEmailAsync)
+            .RequireAuthorization(PurchasesPermissions.OrderManage)
+            .Produces<PurchaseOrderDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         MapTransition(group, "/{orderId:guid}/receive", PurchaseOrderAction.Receive);
         MapTransition(group, "/{orderId:guid}/cancel", PurchaseOrderAction.Cancel);
 
@@ -248,6 +258,13 @@ public static class PurchaseOrderEndpoints
 
         return Results.Ok(order);
     }
+
+    private static async Task<IResult> ResendEmailAsync(
+        Guid tenantId,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ResendPurchaseOrderEmailCommand(tenantId, orderId), cancellationToken));
 
     private static async Task<IResult> TransitionOrderAsync(
         Guid tenantId,

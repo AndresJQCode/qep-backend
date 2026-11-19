@@ -511,6 +511,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Purchases.Application.ConfirmPurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
             Modules.Purchases.Application.ConfirmPurchaseOrderHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.ResendPurchaseOrderEmailCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.ResendPurchaseOrderEmailHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Purchases.Application.GetPurchaseOrderPdfQuery, Modules.Purchases.Application.PurchaseOrderPdfFile>,
             Modules.Purchases.Application.GetPurchaseOrderPdfHandler>();
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();

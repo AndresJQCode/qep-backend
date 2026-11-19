@@ -145,7 +145,7 @@ internal static class PurchasesApiHarness
         CreateClient(factory, tenant.SubjectId, tenant.TenantId, PurchasesPermissions.OrderRead);
 
     /// <summary>Un proveedor activo fuera de Colombia (país <c>US</c> con <c>cityName</c>): no necesita ciudad DIVIPOLA.</summary>
-    public static async Task<Guid> CreateSupplierAsync(HttpClient client, Guid tenantId, string name)
+    public static async Task<Guid> CreateSupplierAsync(HttpClient client, Guid tenantId, string name, string? email = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/suppliers",
@@ -160,7 +160,7 @@ internal static class PurchasesApiHarness
                 ["cityId"] = null,
                 ["cityName"] = "Miami",
                 ["phone"] = null,
-                ["email"] = null,
+                ["email"] = email,
                 ["address"] = null,
                 ["paymentTermDays"] = 30,
                 ["category"] = null,
@@ -230,11 +230,11 @@ internal static class PurchasesApiHarness
     /// Un tenant listo para comprar: el gestor, un proveedor activo «Textiles Andinos», una tasa de IVA del 19 % y tres variantes
     /// (A y B con IVA, C sin tasa).
     /// </summary>
-    public static async Task<PurchasesScenario> NewScenarioAsync(QepApiFactory factory)
+    public static async Task<PurchasesScenario> NewScenarioAsync(QepApiFactory factory, string? supplierEmail = null)
     {
         var tenant = await NewTenantAsync(factory);
         var manager = CreateManager(factory, tenant);
-        var supplierId = await CreateSupplierAsync(manager, tenant.TenantId, "Textiles Andinos");
+        var supplierId = await CreateSupplierAsync(manager, tenant.TenantId, "Textiles Andinos", supplierEmail);
         var taxRateId = await CreateTaxRateAsync(manager, tenant.TenantId, "IVA", 19);
         var variantA = await CreateVariantAsync(manager, tenant.TenantId, "SKU-A", "Camiseta", taxRateId);
         var variantB = await CreateVariantAsync(manager, tenant.TenantId, "SKU-B", "Pantalón", taxRateId);
@@ -407,6 +407,12 @@ internal static class PurchasesApiHarness
                 services.AddSingleton<FakePurchaseOrderPdfRenderer>();
                 services.AddSingleton<IPurchaseOrderPdfRenderer>(provider =>
                     provider.GetRequiredService<FakePurchaseOrderPdfRenderer>());
+
+                // El correo al proveedor nunca sale a un proveedor real: el falso guarda lo que recibe (las pruebas lo filtran por
+                // la dirección, única por prueba) y falla con las direcciones que empiezan por «fail-».
+                services.RemoveAll<IPurchaseOrderEmail>();
+                services.AddSingleton<FakePurchaseOrderEmail>();
+                services.AddSingleton<IPurchaseOrderEmail>(provider => provider.GetRequiredService<FakePurchaseOrderEmail>());
 
                 // Mayorista fase 3 (revisión del bloque C, I1): el worker de los eventos del mayorista sondea solo y competiría
                 // con LinkedPurchasesHarness.ProcessEventsAsync, volviendo no deterministas las pruebas de eventos. Se saca el
