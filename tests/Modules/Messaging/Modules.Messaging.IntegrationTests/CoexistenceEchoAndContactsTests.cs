@@ -95,6 +95,56 @@ public sealed class CoexistenceEchoAndContactsTests
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations WHERE last_inbound_at IS NOT NULL"));
     }
 
+    // Producción, 2026-11-18: el asesor mandó un audio desde el celular a un contacto que sólo usa username. Meta mandó el eco con
+    // `to_user_id` y sin `to`; el parser lo descartaba y la entrega quedaba procesada sin rastro.
+    [Fact]
+    public async Task AnEchoToAUsernameOnlyContactCreatesAResolvedConversationByBsuidWithItsAudio()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+
+        await PostAsync(f, MetaPayloads.SmbEchoToUsername(PhoneNumberId, "CO.9001", "wamid.voice", f.ConnectedAt + 60));
+
+        Assert.Equal("Resolved|0|True|True|True", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT status || '|' || unread_count || '|' || CASE WHEN wa_id IS NULL THEN 'True' ELSE 'False' END || '|'
+                || CASE WHEN started_by_echo THEN 'True' ELSE 'False' END || '|'
+                || CASE WHEN customer_id IS NOT NULL THEN 'True' ELSE 'False' END
+              FROM messaging.conversations WHERE user_id = 'CO.9001'
+            """));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.messages WHERE wamid = 'wamid.voice' AND direction = 2 AND imported = false"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.message_media mm JOIN messaging.messages m ON m.id = mm.message_id WHERE m.wamid = 'wamid.voice' AND mm.stored_at IS NULL"));
+    }
+
+    [Fact]
+    public async Task AnEchoByBsuidLandsInTheConversationTheContactAlreadyHas()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await PostAsync(f, MetaPayloads.Inbound(PhoneNumberId, "CO.9001", WaId, "wamid.live", f.ConnectedAt + 60, "Hola"));
+
+        await PostAsync(f, MetaPayloads.SmbEchoToUsername(PhoneNumberId, "CO.9001", "wamid.voice", f.ConnectedAt + 120));
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id WHERE m.wamid = 'wamid.voice' AND c.user_id = 'CO.9001'"));
+    }
+
+    [Fact]
+    public async Task AnEchoWithoutPhoneNorBsuidCreatesNothingAndFinishesTheDelivery()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+
+        await PostAsync(f, MetaPayloads.SmbEchoToUsername(PhoneNumberId, null, "wamid.voice", f.ConnectedAt + 60));
+
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NULL"));
+    }
+
     // P-5: lo que la reabre es el contacto escribiendo en vivo, por el camino de siempre (con su evento Reopened).
     [Fact]
     public async Task ALiveInboundReopensTheConversationAnEchoCreated()

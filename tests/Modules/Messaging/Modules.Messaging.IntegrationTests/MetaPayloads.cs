@@ -495,6 +495,43 @@ internal static class MetaPayloads
         return Change("smb_message_echoes", value.ToJsonString());
     }
 
+    /// <summary>
+    /// Un audio que el negocio mandó desde la app a un contacto que sólo usa username. La forma salió de
+    /// <c>messaging.webhook_deliveries</c> en producción el 2026-11-18 (delivery 75687): el eco no trae <c>to</c>, trae
+    /// <c>to_user_id</c>; el audio trae <c>id, url, voice, sha256, mime_type</c>. Con <paramref name="toUserId"/> en <c>null</c> no
+    /// trae ninguno de los dos.
+    /// </summary>
+    public static string SmbEchoToUsername(string phoneNumberId, string? toUserId, string wamid, long timestamp)
+    {
+        var echo = new JsonObject
+        {
+            ["from"] = "15550001111",
+            ["id"] = wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "audio",
+            ["audio"] = new JsonObject
+            {
+                ["id"] = "MEDIA-" + wamid,
+                ["url"] = "https://example.invalid/audio",
+                ["voice"] = true,
+                ["sha256"] = "abc",
+                ["mime_type"] = "audio/ogg; codecs=opus",
+            },
+        };
+        if (toUserId is not null)
+        {
+            echo["to_user_id"] = toUserId;
+        }
+
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            ["message_echoes"] = new JsonArray(echo),
+        };
+        return Change("smb_message_echoes", value.ToJsonString());
+    }
+
     /// <summary>Spec 2026-10-29: <c>smb_app_state_sync</c> con un contacto agregado o quitado.</summary>
     public static string ContactsSync(string phoneNumberId, string phone, string fullName, string firstName, bool remove = false)
     {
