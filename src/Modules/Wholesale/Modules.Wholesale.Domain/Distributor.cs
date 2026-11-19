@@ -219,6 +219,18 @@ public sealed class Distributor
         Touch(now);
     }
 
+    /// <summary>
+    /// Spec 2026-11-19 §1, «Copiar»: token y vigencia nuevos (72 h desde ahora), como al reenviar, pero sin publicar nada ni
+    /// tocar el estado del aviso. Sólo mientras está invitada, aunque la invitación haya vencido.
+    /// </summary>
+    public void RotateInvitationLink(string tokenHash, DateTimeOffset now)
+    {
+        EnsureTokenHash(tokenHash);
+        EnsureStatus(DistributorStatus.Invited);
+        Invitation.Rotate(tokenHash, now);
+        Touch(now);
+    }
+
     public void Block(DateTimeOffset now)
     {
         EnsureStatus(DistributorStatus.Active);

@@ -526,6 +526,121 @@ public sealed class DistributorHandlersTests
         Assert.Equal([new DistributorWhatsAppConnectionDto(connection, "+57 300 999 0000")], options.WhatsAppConnections);
     }
 
+    // Spec 2026-11-19 §1, foco 5: la respuesta de invitar trae el link con el mismo token que viaja al correo, así el primer
+    // «Copiar» no rota nada.
+    [Fact]
+    public async Task InviteReturnsTheSameLinkThatTheEmailCarries()
+    {
+        var detail = await _world.InviteHandler().HandleAsync(_world.InviteCommand(), Ct);
+
+        var published = Assert.Single(_world.Events.Invitations);
+        Assert.Equal(FakeInvitationLinks.Compose(published.Token), detail.InvitationUrl);
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task GetAndResendCarryNoInvitationUrl()
+    {
+        var distributor = _world.SeedInvited();
+
+        var read = await _world.GetHandler().HandleAsync(new GetDistributorQuery(_world.Tenant, distributor.Id.Value), Ct);
+        var resent = await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, distributor.Id.Value, 1, DistributorAction.Resend, "trace-3"), Ct);
+
+        Assert.Equal((null, null), (read.InvitationUrl, resent.InvitationUrl));
+    }
+
+    [Fact]
+    public async Task RotateReturnsANewUrlAndTheOldTokenStopsWorking()
+    {
+        var distributor = _world.SeedInvited(tokenHash: InvitationTokens.HashOf("token-viejo"));
+        _world.Clock.UtcNow = DistributorWorld.Now.AddDays(4); // vencida: rotar también la renueva
+
+        var detail = await _world.RotateHandler().HandleAsync(RotateCommand(distributor), Ct);
+
+        var token = FakeInvitationLinks.TokenOf(detail.InvitationUrl);
+        Assert.Null(await _world.Distributors.FindByTokenHashAsync(InvitationTokens.HashOf("token-viejo"), Ct));
+        Assert.Same(distributor, await _world.Distributors.FindByTokenHashAsync(InvitationTokens.HashOf(token), Ct));
+        Assert.Equal((2L, DistributorWorld.Now.AddDays(4).AddHours(72), false),
+            (detail.Version, detail.Invitation.ExpiresAt, detail.Invitation.Expired));
+        Assert.Equal(1, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task RotateDoesNotQueueNoticesNorEmails()
+    {
+        var connection = _world.WhatsApp.AddReady("+57 300 999 0000");
+        var distributor = _world.SeedInvited(phone: SavedPhone, whatsAppConnectionId: connection);
+
+        await _world.RotateHandler().HandleAsync(RotateCommand(distributor), Ct);
+
+        Assert.Empty(_world.Events.Invitations);
+        Assert.Empty(_world.Events.Notices);
+        Assert.Empty(_world.Events.EmailChanges);
+        Assert.Equal((InvitationNoticeStatus?)InvitationNoticeStatus.Pending, distributor.Invitation.NoticeStatus);
+    }
+
+    [Fact]
+    public async Task RotateOnAnAcceptedDistributorIsConflict()
+    {
+        var distributor = _world.SeedActive();
+        var hash = distributor.Invitation.TokenHash;
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            _world.RotateHandler().HandleAsync(RotateCommand(distributor), Ct));
+
+        Assert.Equal("wholesale.distributor.invalid_transition", error.Code);
+        Assert.Equal(hash, distributor.Invitation.TokenHash);
+        Assert.Empty(_world.Audit.Entries);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task RotateWithAStaleVersionIs412()
+    {
+        var distributor = _world.SeedInvited();
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() =>
+            _world.RotateHandler().HandleAsync(RotateCommand(distributor) with { ExpectedVersion = 9 }, Ct));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task RotateRequiresDistributorManage()
+    {
+        var distributor = _world.SeedInvited();
+        var hash = distributor.Invitation.TokenHash;
+        _world.Context = new FakeExecutionContext(_world.Tenant, WholesalePermissions.DistributorRead);
+
+        await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            _world.RotateHandler().HandleAsync(RotateCommand(distributor), Ct));
+
+        Assert.Equal(hash, distributor.Invitation.TokenHash);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task TheAuditOfTheRotationNamesNoToken()
+    {
+        var distributor = _world.SeedInvited();
+
+        var detail = await _world.RotateHandler().HandleAsync(RotateCommand(distributor), Ct);
+
+        var token = FakeInvitationLinks.TokenOf(detail.InvitationUrl);
+        var audit = Assert.Single(_world.Audit.Entries);
+        Assert.Equal(("wholesale.distributor.invitation_rotated", "distributor", distributor.Id.ToString(), _world.Context.SubjectId),
+            (audit.Action, audit.ResourceType, audit.ResourceId, audit.ActorId));
+        Assert.Equal(["invitation"], audit.ChangedFields);
+        var written = string.Join("|", audit.ChangedFields.Append(audit.ResourceId));
+        Assert.DoesNotContain(token, written, StringComparison.Ordinal);
+        Assert.DoesNotContain(InvitationTokens.HashOf(token), written, StringComparison.Ordinal);
+    }
+
+    private RotateInvitationLinkCommand RotateCommand(Distributor distributor) =>
+        new(_world.Tenant, distributor.Id.Value, distributor.Version, "trace-rotate");
+
     private UpdateDistributorCommand UpdateCommand(Distributor distributor, string? phone, Guid? connection) =>
         new(_world.Tenant, distributor.Id.Value, distributor.Version, _world.PriceList.Id.Value, _world.Advisor, _world.Company.Id,
             phone, connection);

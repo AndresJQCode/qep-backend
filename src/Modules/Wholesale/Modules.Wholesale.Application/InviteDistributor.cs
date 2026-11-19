@@ -25,7 +25,8 @@ public sealed record InviteDistributorCommand(
 /// Invita a un distribuidor. Orden: 403 → 422 de validación → 404 lista → 422 asesor → 422 empresa → 409 documento → 422
 /// <c>Phone</c> → 422 conexión. El token plano se genera acá y sólo viaja en el evento hacia el correo; en la base queda su
 /// SHA-256 (D-1). El id del tenant que nacerá si acepta creando uno se reserva ya (D-17). Con teléfono (spec 2026-11-18) sale
-/// además el evento del aviso por WhatsApp, sin token, en el mismo commit; sin teléfono la conexión se ignora.
+/// además el evento del aviso por WhatsApp, sin token, en el mismo commit; sin teléfono la conexión se ignora. La respuesta
+/// lleva el link de la invitación para «Copiar» (spec 2026-11-19 §1).
 /// </summary>
 public sealed class InviteDistributorHandler(
     IExecutionContext executionContext,
@@ -41,6 +42,7 @@ public sealed class InviteDistributorHandler(
     IWholesaleUnitOfWork unitOfWork,
     IWholesaleAuditPublisher auditPublisher,
     IWholesaleEventPublisher eventPublisher,
+    IWholesaleInvitationLinks links,
     DistributorComposer composer,
     IValidator<InviteDistributorCommand> validator)
     : ICommandHandler<InviteDistributorCommand, DistributorDetailDto>
@@ -114,7 +116,9 @@ public sealed class InviteDistributorHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await composer.DetailAsync(distributor, cancellationToken);
+        // Spec 2026-11-19 §1: el link para «Copiar», con el mismo token que va al correo; el primer «Copiar» no rota nada.
+        var detail = await composer.DetailAsync(distributor, cancellationToken);
+        return detail with { InvitationUrl = links.Compose(token) };
     }
 }
 

@@ -177,6 +177,23 @@ internal sealed class FakeEventPublisher : IWholesaleEventPublisher
             tenantId, distributorId, email, businessName, token, expiresAt, correlationId, occurredAt));
 }
 
+/// <summary>El link de la invitación con una base fija; <see cref="TokenOf"/> saca el token de vuelta.</summary>
+internal sealed class FakeInvitationLinks : IWholesaleInvitationLinks
+{
+    private const string Base = "https://app.test/wholesale-invitations/";
+
+    public static string Compose(string token) => Base + Uri.EscapeDataString(token);
+
+    public static string TokenOf(string? url)
+    {
+        Assert.NotNull(url);
+        Assert.StartsWith(Base, url, StringComparison.Ordinal);
+        return Uri.UnescapeDataString(url[Base.Length..]);
+    }
+
+    string IWholesaleInvitationLinks.Compose(string token) => Compose(token);
+}
+
 internal sealed class FakeCompanyLookup : IWholesaleCompanyLookup
 {
     public List<WholesaleCompanyRef> Companies { get; } = [];

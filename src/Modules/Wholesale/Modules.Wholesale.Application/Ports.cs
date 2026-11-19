@@ -221,6 +221,15 @@ public interface IWholesaleEventPublisher
 }
 
 /// <summary>
+/// Spec 2026-11-19 §1: el link de la invitación que se le devuelve al mayorista para «Copiar». Adaptador en Bootstrapper con
+/// <c>AccountLinks.WholesaleInvitation</c> (<c>Notifications:AppBaseUrl</c>, ruling W1): el mismo link que lleva el correo.
+/// </summary>
+public interface IWholesaleInvitationLinks
+{
+    string Compose(string token);
+}
+
+/// <summary>
 /// Una empresa facturadora del mayorista con lo que el proveedor vinculado necesita (D-2). <c>DocumentType</c> va con el
 /// nombre del cable; <c>Eligible</c> dice si ese documento lo admite un proveedor (hoy los siete códigos: no hay
 /// documento que deje a una empresa fuera).

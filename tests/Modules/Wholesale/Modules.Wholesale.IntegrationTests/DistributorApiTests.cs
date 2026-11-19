@@ -101,7 +101,69 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
             """);
         Assert.Equal(1, audits[0]);
         Assert.Equal(0, await TokenInAuditAsync(token));
-        Assert.DoesNotContain(token, await WholesaleApiHarness.BodyAsync(response), StringComparison.Ordinal);
+        // Spec 2026-11-19 §1, foco 5: el token sólo viaja dentro del link, y es el mismo que va al correo.
+        Assert.EndsWith($"/wholesale-invitations/{Uri.EscapeDataString(token)}", detail.InvitationUrl, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-19 §1: «Copiar» rota el token y devuelve la URL una vez; el link anterior responde 404. No escribe eventos.
+    [Fact]
+    public async Task RotateReturnsANewUrlAndTheOldTokenStopsWorking()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
+        var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
+        var (distributor, first) = await WholesaleApiHarness.InviteAsync(Factory, manager, tenant, list.Id, company);
+
+        var response = await RotateAsync(manager, tenant.TenantId, distributor);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var rotated = (await response.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
+        Assert.Equal(distributor.Version + 1, rotated.Version);
+        const string Marker = "/wholesale-invitations/";
+        var url = rotated.InvitationUrl;
+        Assert.NotNull(url);
+        Assert.Contains(Marker, url, StringComparison.Ordinal);
+        var second = Uri.UnescapeDataString(url[(url.IndexOf(Marker, StringComparison.Ordinal) + Marker.Length)..]);
+        Assert.NotEqual(first, second);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var old = await anonymous.GetAsync(WholesaleApiHarness.InvitationUrl(first), Ct);
+        var fresh = await anonymous.GetAsync(WholesaleApiHarness.InvitationUrl(second), Ct);
+        Assert.Equal(HttpStatusCode.NotFound, old.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, fresh.StatusCode);
+        var events = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM platform.outbox_messages
+            WHERE event_name LIKE 'wholesale.distributor-%' AND payload ->> 'distributorId' = {distributor.Id.ToString()}
+            """);
+        Assert.Equal(1, events[0]); // sólo el de invitar
+        var audits = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM audit.entries
+            WHERE tenant_id = {tenant.TenantId} AND action = 'wholesale.distributor.invitation_rotated'
+              AND resource_id = {distributor.Id.ToString()}
+            """);
+        Assert.Equal(1, audits[0]);
+        Assert.Equal(0, await TokenInAuditAsync(second));
+    }
+
+    [Fact]
+    public async Task RotateRequiresDistributorManage()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        using var reader = WholesaleApiHarness.CreateReader(Factory, tenant);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
+        var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
+        var (distributor, token) = await WholesaleApiHarness.InviteAsync(Factory, manager, tenant, list.Id, company);
+
+        var response = await RotateAsync(reader, tenant.TenantId, distributor);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync(WholesaleApiHarness.InvitationUrl(token), Ct)).StatusCode);
     }
 
     [Fact]
@@ -265,6 +327,10 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
     private static Task<HttpResponseMessage> ResendAsync(HttpClient manager, Guid tenantId, DistributorDetailDto distributor) =>
         PostWithVersionAsync(
             manager, $"{WholesaleApiHarness.DistributorsUrl(tenantId)}/{distributor.Id}/resend-invitation", distributor.Version);
+
+    private static Task<HttpResponseMessage> RotateAsync(HttpClient client, Guid tenantId, DistributorDetailDto distributor) =>
+        PostWithVersionAsync(
+            client, $"{WholesaleApiHarness.DistributorsUrl(tenantId)}/{distributor.Id}/invitation-link", distributor.Version);
 
     private static Task<HttpResponseMessage> PostWithVersionAsync(HttpClient client, string url, long version) =>
         client.SendAsync(WholesaleApiHarness.WithIfMatch(new HttpRequestMessage(HttpMethod.Post, url), version), Ct);

@@ -15,6 +15,9 @@ public static class WholesaleAuditActions
 
     public const string DistributorInvitationResent = "wholesale.distributor.invitation_resent";
 
+    /// <summary>Spec 2026-11-19 §1: «Copiar» rotó el link. El campo es <c>invitation</c>; ni el token ni su hash.</summary>
+    public const string DistributorInvitationRotated = "wholesale.distributor.invitation_rotated";
+
     public const string DistributorBlocked = "wholesale.distributor.blocked";
 
     public const string DistributorUnblocked = "wholesale.distributor.unblocked";

@@ -139,6 +139,16 @@ public static class WholesaleEndpoints
         MapTransition(group, "/{distributorId:guid}/resend-invitation", DistributorAction.Resend);
         MapTransition(group, "/{distributorId:guid}/block", DistributorAction.Block);
         MapTransition(group, "/{distributorId:guid}/unblock", DistributorAction.Unblock);
+
+        // Spec 2026-11-19 §1, «Copiar»: rota el link y lo devuelve una sola vez en InvitationUrl. Sin cuerpo, con If-Match.
+        group.MapPost("/{distributorId:guid}/invitation-link", RotateInvitationLinkAsync)
+            .RequireAuthorization(WholesalePermissions.DistributorManage)
+            .Produces<DistributorDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
 
     // Reenviar, bloquear y desbloquear no llevan cuerpo y comparten handler; sólo cambia la acción.
@@ -321,6 +331,21 @@ public static class WholesaleEndpoints
         var version = WholesaleIfMatch.RequireVersion(httpContext, DistributorResource);
         var distributor = await dispatcher.SendAsync(
             new TransitionDistributorCommand(tenantId, distributorId, version, action, httpContext.TraceIdentifier),
+            cancellationToken);
+
+        return Results.Ok(distributor);
+    }
+
+    private static async Task<IResult> RotateInvitationLinkAsync(
+        Guid tenantId,
+        Guid distributorId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var version = WholesaleIfMatch.RequireVersion(httpContext, DistributorResource);
+        var distributor = await dispatcher.SendAsync(
+            new RotateInvitationLinkCommand(tenantId, distributorId, version, httpContext.TraceIdentifier),
             cancellationToken);
 
         return Results.Ok(distributor);
