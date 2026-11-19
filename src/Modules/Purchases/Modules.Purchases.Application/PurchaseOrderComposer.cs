@@ -65,7 +65,12 @@ public sealed class PurchaseOrderComposer(
                 order.Lines.Count(line => line.Status == PurchaseOrderLineStatus.Changed),
                 order.Lines.Count(line => line.Status == PurchaseOrderLineStatus.Added),
                 order.Lines.Count(line => line.Status == PurchaseOrderLineStatus.Rejected),
-                order.Lines.Count(line => line.CreatedInCatalog)));
+                order.Lines.Count(line => line.CreatedInCatalog)),
+            new PurchaseOrderEmailDto(
+                order.LastEmailStatus?.ToString(),
+                order.LastEmailTo,
+                order.LastEmailAt,
+                supplierMap.TryGetValue(order.SupplierId, out var emailSupplier) ? emailSupplier.Email : null));
     }
 
     public async Task<IReadOnlyList<PurchaseOrderSummaryDto>> SummariesAsync(
@@ -101,10 +106,24 @@ public sealed class PurchaseOrderComposer(
     internal static PurchaseOrderTotalsDto ToTotals(PurchaseOrderTotals totals) =>
         new(totals.Subtotal, totals.Tax, totals.Total);
 
-    private List<string> AllowedActions(PurchaseOrder order) =>
-        executionContext.HasPermission(PurchasesPermissions.OrderManage)
-            ? order.AllowedActions().Select(action => action.ToString().ToLowerInvariant()).ToList()
-            : [];
+    /// <summary>Reenviar el correo no es una transición del dominio: se suma al final cuando la orden ya salió y no está cancelada.</summary>
+    public const string ResendEmailAction = "resend_email";
+
+    private List<string> AllowedActions(PurchaseOrder order)
+    {
+        if (!executionContext.HasPermission(PurchasesPermissions.OrderManage))
+        {
+            return [];
+        }
+
+        var actions = order.AllowedActions().Select(action => action.ToString().ToLowerInvariant()).ToList();
+        if (order.CanEmailSupplier)
+        {
+            actions.Add(ResendEmailAction);
+        }
+
+        return actions;
+    }
 
     private static PurchaseOrderLineDto ToLine(PurchaseOrderLine line) => new(
         line.Id,

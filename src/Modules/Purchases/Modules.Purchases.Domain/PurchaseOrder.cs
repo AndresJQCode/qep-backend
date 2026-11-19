@@ -74,6 +74,10 @@ public sealed class PurchaseOrder
 
     public DateTimeOffset? LastEmailAt { get; private set; }
 
+    /// <summary>El correo al proveedor vale desde que la orden se envió, y se pierde al cancelarla.</summary>
+    public bool CanEmailSupplier =>
+        Status is PurchaseOrderStatus.Sent or PurchaseOrderStatus.Confirmed or PurchaseOrderStatus.Received;
+
     public IReadOnlyList<PurchaseOrderLine> Lines => _lines;
 
     /// <summary>Pasos del ciclo en orden cronológico, desde el <c>Draft</c> del alta.</summary>
@@ -130,7 +134,7 @@ public sealed class PurchaseOrder
     /// </summary>
     public void RecordEmail(PurchaseOrderEmailStatus status, string? to, DateTimeOffset at)
     {
-        if (Status is PurchaseOrderStatus.Draft or PurchaseOrderStatus.Cancelled)
+        if (!CanEmailSupplier)
         {
             throw new PurchasesDomainException(
                 PurchasesErrorCodes.EmailNotAllowed,

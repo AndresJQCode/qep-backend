@@ -34,7 +34,8 @@ public sealed class PurchaseOrderTransitionApiTests(SharedPurchasesHost host) : 
         Assert.Equal(("Sent", "Confirmed", "Received"), (sent.Status, confirmed.Status, received.Status));
         Assert.Equal(["Draft", "Sent", "Confirmed", "Received"], received.History.Select(entry => entry.Status).ToArray());
         Assert.All(received.History, entry => Assert.Equal(MemberName, entry.ActorName));
-        Assert.Empty(received.AllowedActions);
+        // Una orden recibida ya no transiciona, pero sigue pudiendo reenviar su correo al proveedor.
+        Assert.Equal(["resend_email"], received.AllowedActions);
         Assert.False(received.ConfirmedWithChanges);
     }
 
