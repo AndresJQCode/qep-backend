@@ -289,6 +289,34 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                     b.ToTable("sessions", "identity");
                 });
 
+            modelBuilder.Entity("Modules.Identity.Domain.TermsAcceptance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("accepted_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Version")
+                        .IsUnique();
+
+                    b.ToTable("terms_acceptances", "identity");
+                });
+
             modelBuilder.Entity("Modules.Identity.Domain.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -456,6 +484,15 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("Modules.Identity.Domain.User", null)
                         .WithMany("ProviderLinks")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Identity.Domain.TermsAcceptance", b =>
+                {
+                    b.HasOne("Modules.Identity.Domain.User", null)
+                        .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
