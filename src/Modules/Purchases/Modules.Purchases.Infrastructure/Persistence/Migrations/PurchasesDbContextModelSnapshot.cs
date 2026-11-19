@@ -114,6 +114,20 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnType("char(3)")
                         .HasColumnName("currency");
 
+                    b.Property<DateTimeOffset?>("LastEmailAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_email_at");
+
+                    b.Property<string>("LastEmailStatus")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("last_email_status");
+
+                    b.Property<string>("LastEmailTo")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("last_email_to");
+
                     b.Property<Guid?>("LinkedOrderId")
                         .HasColumnType("uuid")
                         .HasColumnName("linked_order_id");

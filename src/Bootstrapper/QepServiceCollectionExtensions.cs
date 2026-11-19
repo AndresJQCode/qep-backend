@@ -511,9 +511,17 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Purchases.Application.ConfirmPurchaseOrderCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
             Modules.Purchases.Application.ConfirmPurchaseOrderHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Purchases.Application.ResendPurchaseOrderEmailCommand, Modules.Purchases.Application.PurchaseOrderDetailDto>,
+            Modules.Purchases.Application.ResendPurchaseOrderEmailHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Purchases.Application.GetPurchaseOrderPdfQuery, Modules.Purchases.Application.PurchaseOrderPdfFile>,
             Modules.Purchases.Application.GetPurchaseOrderPdfHandler>();
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderComposer>();
+        // El documento de la orden lo comparten la descarga del PDF y el correo al proveedor.
+        services.AddScoped<
+            Modules.Purchases.Application.IPurchaseOrderDocumentBuilder,
+            Modules.Purchases.Application.PurchaseOrderDocumentBuilder>();
+        services.AddScoped<Modules.Purchases.Application.PurchaseOrderEmailDelivery>();
         // El armado de líneas que comparten el alta, la edición y la vista previa (D-19).
         services.AddScoped<Modules.Purchases.Application.PurchaseOrderLineBuilder>();
         // Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado y el aplicador de sus eventos (lo llama el
@@ -1901,6 +1909,7 @@ public static class QepServiceCollectionExtensions
         // `purchases` (spec 2026-11-17): proveedor, variante y membresías son ids sueltos de otros módulos; Compras sólo declara
         // puertos y el composition root los cablea contra Suppliers, Catalog y Tenancy.
         services.AddScoped<Modules.Purchases.Application.IPurchasesSupplierLookup, PurchasesSupplierLookup>();
+        services.AddScoped<Modules.Purchases.Application.IPurchaseOrderEmail, PurchaseOrderEmailSender>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogLookup, PurchasesCatalogLookup>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesMemberDirectory, PurchasesMemberDirectory>();
         // Mayorista fase 3: el catálogo del mayorista, su motor de pedidos (por un scope propio por llamada) y el catálogo propio

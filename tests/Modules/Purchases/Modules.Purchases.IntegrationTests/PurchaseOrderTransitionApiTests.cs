@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Purchases.Application;
 using static Modules.Purchases.IntegrationTests.PurchasesApiHarness;
 
@@ -34,7 +35,8 @@ public sealed class PurchaseOrderTransitionApiTests(SharedPurchasesHost host) : 
         Assert.Equal(("Sent", "Confirmed", "Received"), (sent.Status, confirmed.Status, received.Status));
         Assert.Equal(["Draft", "Sent", "Confirmed", "Received"], received.History.Select(entry => entry.Status).ToArray());
         Assert.All(received.History, entry => Assert.Equal(MemberName, entry.ActorName));
-        Assert.Empty(received.AllowedActions);
+        // Una orden recibida ya no transiciona, pero sigue pudiendo reenviar su correo al proveedor.
+        Assert.Equal(["resend_email"], received.AllowedActions);
         Assert.False(received.ConfirmedWithChanges);
     }
 
@@ -157,5 +159,103 @@ public sealed class PurchaseOrderTransitionApiTests(SharedPurchasesHost host) : 
         Assert.Equal("Cancelled", cancelled.Status);
         Assert.Equal("Cancelled", cancelled.History[^1].Status);
         Assert.Empty(cancelled.AllowedActions);
+    }
+
+    private FakePurchaseOrderEmail Emails => Factory.Services.GetRequiredService<FakePurchaseOrderEmail>();
+
+    private static async Task<string> ProblemCodeAsync(HttpResponseMessage response)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        return document.RootElement.GetProperty("code").GetString()!;
+    }
+
+    [Fact]
+    public async Task SendEmailsTheSupplierWithThePdfAndReturnsEmailSent()
+    {
+        var address = FakePurchaseOrderEmail.NewAddress();
+        using var scenario = await NewScenarioAsync(Factory, address);
+
+        var sent = await TransitionAsync(scenario.Manager, scenario.TenantId, await CreateDraftAsync(scenario), "send");
+
+        var request = Assert.Single(Emails.SentTo(address));
+        Assert.Equal(FakePurchaseOrderPdfRenderer.Content, request.Pdf);
+        Assert.Equal(("Sent", address, address), (sent.Email!.Status, sent.Email.To, sent.Email.Recipient));
+        Assert.Contains("resend_email", sent.AllowedActions);
+        // El resultado queda guardado: una lectura posterior lo trae.
+        var reread = await scenario.Manager.GetFromJsonAsync<PurchaseOrderDetailDto>(OrderUrl(scenario.TenantId, sent.Id), Ct);
+        Assert.Equal("Sent", reread!.Email!.Status);
+    }
+
+    [Fact]
+    public async Task SendWithoutASupplierEmailIs200WithNoRecipientAndSendsNothing()
+    {
+        using var scenario = await NewScenarioAsync(Factory);
+
+        var sent = await TransitionAsync(scenario.Manager, scenario.TenantId, await CreateDraftAsync(scenario), "send");
+
+        Assert.Equal("Sent", sent.Status);
+        Assert.Equal("NoRecipient", sent.Email!.Status);
+        Assert.Null(sent.Email.Recipient);
+    }
+
+    [Fact]
+    public async Task SendWhenTheEmailFailsStillSendsTheOrder()
+    {
+        var address = FakePurchaseOrderEmail.NewAddress(failing: true);
+        using var scenario = await NewScenarioAsync(Factory, address);
+
+        var sent = await TransitionAsync(scenario.Manager, scenario.TenantId, await CreateDraftAsync(scenario), "send");
+
+        Assert.Equal(("Sent", "Failed"), (sent.Status, sent.Email!.Status));
+    }
+
+    [Fact]
+    public async Task ResendEmailIs200AndKeepsTheVersion()
+    {
+        var address = FakePurchaseOrderEmail.NewAddress();
+        using var scenario = await NewScenarioAsync(Factory, address);
+        var sent = await TransitionAsync(scenario.Manager, scenario.TenantId, await CreateDraftAsync(scenario), "send");
+
+        var response = await scenario.Manager.PostAsync(ActionUrl(scenario, sent, "resend-email"), null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = (await response.Content.ReadFromJsonAsync<PurchaseOrderDetailDto>(Ct))!;
+        Assert.Equal(("Sent", sent.Version), (detail.Email!.Status, detail.Version));
+        Assert.Equal(2, Emails.SentTo(address).Count);
+    }
+
+    [Fact]
+    public async Task ResendEmailOfADraftIs409EmailNotAllowed()
+    {
+        using var scenario = await NewScenarioAsync(Factory, FakePurchaseOrderEmail.NewAddress());
+
+        var response = await scenario.Manager.PostAsync(ActionUrl(scenario, await CreateDraftAsync(scenario), "resend-email"), null, Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("purchases.order.email_not_allowed", await ProblemCodeAsync(response));
+    }
+
+    [Fact]
+    public async Task ResendEmailWithoutASupplierEmailIs422()
+    {
+        using var scenario = await NewScenarioAsync(Factory);
+        var sent = await TransitionAsync(scenario.Manager, scenario.TenantId, await CreateDraftAsync(scenario), "send");
+
+        var response = await scenario.Manager.PostAsync(ActionUrl(scenario, sent, "resend-email"), null, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("purchases.order.supplier_email_missing", await ProblemCodeAsync(response));
+    }
+
+    [Fact]
+    public async Task ResendEmailWithoutTheManagePermissionIs403()
+    {
+        using var scenario = await NewScenarioAsync(Factory, FakePurchaseOrderEmail.NewAddress());
+        var sent = await TransitionAsync(scenario.Manager, scenario.TenantId, await CreateDraftAsync(scenario), "send");
+        using var reader = CreateReader(Factory, scenario.Tenant);
+
+        var response = await reader.PostAsync(ActionUrl(scenario, sent, "resend-email"), null, Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 }

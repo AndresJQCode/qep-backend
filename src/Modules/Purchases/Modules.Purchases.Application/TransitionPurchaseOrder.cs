@@ -32,7 +32,8 @@ public sealed class TransitionPurchaseOrderHandler(
     IPurchasesUnitOfWork unitOfWork,
     IPurchasesAuditPublisher auditPublisher,
     PurchaseOrderComposer composer,
-    IWholesaleOrderIntake wholesaleOrders)
+    IWholesaleOrderIntake wholesaleOrders,
+    PurchaseOrderEmailDelivery emailDelivery)
     : ICommandHandler<TransitionPurchaseOrderCommand, PurchaseOrderDetailDto>
 {
     private static readonly string[] StatusField = ["status"];
@@ -56,9 +57,10 @@ public sealed class TransitionPurchaseOrderHandler(
         PurchasesConflicts.EnsureVersion(order, command.ExpectedVersion);
         PurchasesConflicts.EnsureAllowed(order, command.Action);
 
+        PurchasesSupplierRef? supplier = null;
         if (command.Action == PurchaseOrderAction.Send)
         {
-            var supplier = await suppliers.FindAsync(command.TenantId, order.SupplierId, cancellationToken);
+            supplier = await suppliers.FindAsync(command.TenantId, order.SupplierId, cancellationToken);
             if (supplier is not { IsActive: true })
             {
                 throw PurchaseOrderLineBuilder.SupplierInactive();
@@ -103,6 +105,13 @@ public sealed class TransitionPurchaseOrderHandler(
 
         var now = clock.UtcNow;
 
+        // Sin correo del proveedor no hay intento: el «sin correo» se conoce antes de guardar y queda en el mismo guardado.
+        var sendsEmail = supplier is { Email: { } address } && !string.IsNullOrWhiteSpace(address);
+        if (command.Action == PurchaseOrderAction.Send && !sendsEmail)
+        {
+            order.RecordEmail(PurchaseOrderEmailStatus.NoRecipient, null, now);
+        }
+
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
@@ -114,6 +123,14 @@ public sealed class TransitionPurchaseOrderHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await composer.DetailAsync(order, cancellationToken);
+        var detail = await composer.DetailAsync(order, cancellationToken);
+        if (!sendsEmail)
+        {
+            return detail;
+        }
+
+        // La orden ya está enviada y guardada: el correo va después y su fallo no la deshace.
+        var email = await emailDelivery.DeliverAsync(order, detail, supplier!, executionContext.SubjectId, clock.UtcNow, cancellationToken);
+        return detail with { Email = email };
     }
 }

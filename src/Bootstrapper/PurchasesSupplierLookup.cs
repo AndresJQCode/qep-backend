@@ -39,13 +39,20 @@ internal sealed class PurchasesSupplierLookup(SuppliersDbContext suppliers) : IP
                 supplier.Identification.Number,
                 supplier.IsActive,
                 supplier.LinkedTenantId,
+                supplier.Contact.Email,
             })
             .ToListAsync(cancellationToken);
 
         return rows.ToDictionary(
             row => row.Id.Value,
             row => new PurchasesSupplierRef(
-                row.Id.Value, row.Name, row.Type.ToWire(), row.Number, row.IsActive, row.LinkedTenantId));
+                row.Id.Value,
+                row.Name,
+                row.Type.ToWire(),
+                row.Number,
+                row.IsActive,
+                row.LinkedTenantId,
+                string.IsNullOrWhiteSpace(row.Email) ? null : row.Email.Trim()));
     }
 
     public async Task<IReadOnlyList<Guid>> SearchIdsAsync(Guid tenantId, string search, int take, CancellationToken cancellationToken)

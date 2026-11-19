@@ -17,6 +17,10 @@ public static class PurchasesAuditActions
 
     public const string Cancelled = "purchases.order.cancelled";
 
+    public const string EmailSent = "purchases.order.email_sent";
+
+    public const string EmailFailed = "purchases.order.email_failed";
+
     public static class Resources
     {
         public const string PurchaseOrder = "purchase_order";
