@@ -80,8 +80,9 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         var withoutCode = await anonymous.PostAsJsonAsync(
             url, new { email, password = Password, termsVersion = WholesaleApiHarness.TermsVersion }, Ct);
         var usersAfterNoCode = await CountUsersAsync(email);
+        // Un código inventado sin términos es el mismo 401: los términos se miran después de gastar un código válido.
+        var fakeCodeWithoutTerms = await anonymous.PostAsJsonAsync(url, new { email, password = Password, code = "000000" }, Ct);
         var code = await WholesaleApiHarness.EmailCodeAsync(Factory, token, email);
-        var withoutTerms = await anonymous.PostAsJsonAsync(url, new { email, password = Password, code }, Ct);
         var response = await anonymous.PostAsJsonAsync(
             url, new { email, password = Password, code, termsVersion = WholesaleApiHarness.TermsVersion }, Ct);
         var wrongPassword = await anonymous.PostAsJsonAsync(url, new { email, password = "Otra-Clave-99" }, Ct);
@@ -90,8 +91,8 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(HttpStatusCode.Unauthorized, withoutCode.StatusCode);
         Assert.Equal("identity.credentials.invalid", await WholesaleApiHarness.CodeOfAsync(withoutCode));
         Assert.Equal(0, usersAfterNoCode);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, withoutTerms.StatusCode);
-        Assert.Contains("\"TermsVersion\"", await WholesaleApiHarness.BodyAsync(withoutTerms), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Unauthorized, fakeCodeWithoutTerms.StatusCode);
+        Assert.Equal("identity.credentials.invalid", await WholesaleApiHarness.CodeOfAsync(fakeCodeWithoutTerms));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var session = (await response.Content.ReadFromJsonAsync<SessionResponse>(Ct))!;
         Assert.Equal(email, session.Email);
@@ -107,6 +108,48 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         // Los términos ya quedaron: crear la empresa no los vuelve a pedir.
         var accepted = await AcceptNewTenantAsync(session.UserId, token);
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+    }
+
+    // Revisión del bloque C: con el correo en el cuerpo, la respuesta sin código no puede decir si un correo cualquiera tiene
+    // contraseña. Un correo sin cuenta y una cuenta con contraseña y una clave errada responden igual.
+    [Fact]
+    public async Task SessionWithPasswordDoesNotTellWhetherAnEmailHasAPassword()
+    {
+        var withPassword = NewEmail();
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password, withPassword);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
+
+        var unknown = await anonymous.PostAsJsonAsync(url, new { email = NewEmail(), password = Password }, Ct);
+        var wrongPassword = await anonymous.PostAsJsonAsync(url, new { email = withPassword, password = "Otra-Clave-99" }, Ct);
+
+        Assert.Equal(
+            (HttpStatusCode.Unauthorized, "identity.credentials.invalid"),
+            (unknown.StatusCode, await WholesaleApiHarness.CodeOfAsync(unknown)));
+        Assert.Equal(
+            (unknown.StatusCode, await WholesaleApiHarness.CodeOfAsync(unknown)),
+            (wrongPassword.StatusCode, await WholesaleApiHarness.CodeOfAsync(wrongPassword)));
+    }
+
+    // Revisión del bloque C: las tres rutas anónimas que tocan credenciales llevan el limitador Credentials (10 por minuto por IP
+    // y por ruta). El harness da una IP por cliente, así que se mira la metadata del endpoint, no un 429.
+    [Fact]
+    public void TheAnonymousCredentialRoutesCarryTheCredentialsRateLimit()
+    {
+        var policies = Factory.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints
+            .OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith("/api/v1/wholesale-invitations/", StringComparison.Ordinal) == true)
+            .GroupBy(endpoint => endpoint.RoutePattern.RawText!)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(endpoint =>
+                    endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>()?.PolicyName).ToList());
+
+        foreach (var route in new[] { "email-code", "session", "session-with-password" })
+        {
+            Assert.Equal([RateLimiterPolicies.Credentials], policies[$"/api/v1/wholesale-invitations/{{token}}/{route}"]);
+        }
     }
 
     // Spec 2026-11-19: Google abre la sesión del correo verificado, sea o no el invitado; sin verificar no entra.
@@ -386,7 +429,8 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
 
         var accepted = await firstSession.PostAsJsonAsync(url, body, Ct);
         var again = await firstSession.PostAsJsonAsync(url, body, Ct);
-        var refused = await secondSession.PostAsJsonAsync(url, body, Ct);
+        // Sin términos: la invitación ya consumida responde su propio 409 antes de pedir términos o registrarlos.
+        var refused = await secondSession.PostAsJsonAsync(url, new { mode = "NewTenant" }, Ct);
         var linkable = await secondSession.GetAsync($"{WholesaleApiHarness.InvitationUrl(token)}/linkable-tenants", Ct);
 
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
@@ -405,6 +449,9 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
             SELECT count(*)::int AS "Value" FROM tenancy.memberships WHERE user_id = {second.SubjectId}
             """);
         Assert.Equal(1, secondTenants[0]);
+        var secondTerms = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM identity.terms_acceptances WHERE user_id = {second.SubjectId}""");
+        Assert.Equal(0, secondTerms[0]);
     }
 
     [Fact]

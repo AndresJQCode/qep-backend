@@ -27,6 +27,9 @@ public static class WholesaleInvitationEndpoints
 
     private const string SlugTakenCode = "tenancy.slug.taken";
 
+    /// <summary><c>InvitationSummaryDto.Status</c> de una invitación aceptable (<c>InvitationViewState.Pending</c> en minúscula).</summary>
+    private const string PendingStatus = "pending";
+
     /// <summary>Reintentos después del primer intento cuando el slug sugerido se toma en una carrera (spec 2026-11-19 §3b).</summary>
     private const int SlugRetries = 3;
 
@@ -234,7 +237,7 @@ public static class WholesaleInvitationEndpoints
         // usuario (WholesaleInvitationPasswordSession).
         var email = string.IsNullOrWhiteSpace(request.Email) ? invitation.Email : request.Email.Trim();
         var user = await passwordSession.OpenAsync(
-            email, request.Password ?? string.Empty, request.Code, request.TermsVersion, cancellationToken);
+            email, request.Password ?? string.Empty, request.Code, request.TermsVersion, httpContext.TraceIdentifier, cancellationToken);
 
         return await establisher.EstablishAsync(httpContext, user.UserId, user.Email, cancellationToken);
     }
@@ -302,8 +305,15 @@ public static class WholesaleInvitationEndpoints
         }
 
         // FindAsync y no RequirePendingAsync: repetir la aceptación ya hecha (D-16) tiene que seguir devolviendo el resultado.
-        var businessName = (await invitations.FindAsync(token, cancellationToken)).BusinessName;
-        await EnsureTermsAsync(userId, request.TermsVersion, termsAcceptances, cancellationToken);
+        // Los términos sólo se piden (y registran) con la invitación pendiente: una ya consumida o vencida responde su propio
+        // estado (409 para otra cuenta, el mismo resultado para quien la aceptó, 410), no un 422 de términos.
+        var summary = await invitations.FindAsync(token, cancellationToken);
+        if (string.Equals(summary.Status, PendingStatus, StringComparison.Ordinal))
+        {
+            await EnsureTermsAsync(userId, request.TermsVersion, termsAcceptances, cancellationToken);
+        }
+
+        var businessName = summary.BusinessName;
 
         return Results.Ok(await AcceptNewTenantAsync(
             token, userId, email, businessName, httpContext, scopeFactory, cancellationToken));

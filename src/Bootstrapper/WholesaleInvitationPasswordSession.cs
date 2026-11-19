@@ -14,12 +14,18 @@ namespace Bootstrapper;
 /// <item>Ruling W17: la contraseña se valida con las reglas del registro (<see cref="NewPasswordValidator"/>, 422
 /// <c>errors.Password</c>) <b>antes</b> de tocar Identity, así una contraseña débil nunca deja un usuario creado y sin
 /// membresía.</item>
-/// <item>Bajo el lock de ciclo de vida del correo: si ese correo ya tiene usuario <b>con contraseña</b>, se verifica la
-/// contraseña y nada más (un inicio de sesión).</item>
-/// <item>Sin usuario o sin contraseña, siempre hacen falta la versión de los términos y un código válido del correo
-/// (<see cref="IEmailChallenges"/>). Sin esto, el link más el correo de otra persona bastarían para fijarle una contraseña a su
-/// cuenta. La versión se mira antes de gastar el código; un código errado o ausente es 401
-/// <c>identity.credentials.invalid</c>, sin crear ni cambiar nada.</item>
+/// <item>Bajo el lock de ciclo de vida del correo: si ese correo ya tiene usuario <b>con contraseña</b>, es un inicio de sesión
+/// y va por <see cref="IPasswordLogin"/>: la misma auditoría de intentos y el mismo 403 <c>identity.email.not_verified</c> con
+/// el correo sin verificar. Verificar una contraseña nunca marca el correo como verificado: el link no prueba el buzón.</item>
+/// <item>Sin usuario o sin contraseña, siempre hacen falta un código válido del correo (<see cref="IEmailChallenges"/>) y la
+/// versión de los términos. Sin esto, el link más el correo de otra persona bastarían para fijarle una contraseña a su
+/// cuenta.</item>
+/// <item>Revisión del bloque C: sin código válido la respuesta no puede decir si el correo tiene cuenta o contraseña. Un código
+/// ausente o errado pasa por el mismo login (que falla: no hay credencial), así que es el mismo 401
+/// <c>identity.credentials.invalid</c>, con el mismo hash y la misma auditoría que una contraseña errada. Por lo mismo la versión
+/// de los términos se mira <b>después</b> de gastar un código válido, que sólo tiene el dueño del buzón: mirarla antes hacía que
+/// un código inventado sin términos diera 422 sólo para los correos sin contraseña. El costo es que una versión vieja en la
+/// pantalla gasta el código (sin crear nada) y hay que pedir otro.</item>
 /// <item>Después se aprovisiona, se crea la credencial y se registran los términos. <see cref="ITermsAcceptances.RecordAsync"/>
 /// se confirma en su propia conexión y tiene FK a <c>identity.users</c>: va <b>después</b> de que el usuario quedó guardado
 /// (<see cref="IIdentityProvisioning"/> y <see cref="IPasswordCredentials"/> guardan en el acto).</item>
@@ -31,6 +37,7 @@ public sealed class WholesaleInvitationPasswordSession(
     ITenancyUnitOfWork tenancyUnitOfWork,
     IIdentityProvisioning identityProvisioning,
     IPasswordCredentials passwordCredentials,
+    IPasswordLogin passwordLogin,
     IUserDirectory userDirectory,
     IEmailChallenges emailChallenges,
     ITermsAcceptances termsAcceptances,
@@ -40,11 +47,13 @@ public sealed class WholesaleInvitationPasswordSession(
     /// <param name="email">El correo que escribió el distribuidor; puede no ser el invitado (spec 2026-11-19 §6).</param>
     /// <param name="code">El código que llegó a ese correo; sólo se mira si la cuenta no tiene contraseña.</param>
     /// <param name="termsVersion">La versión de los términos que aceptó; sólo se mira si la cuenta no tiene contraseña.</param>
+    /// <param name="correlationId">La del request, para el aviso de verificación que reenvía el login.</param>
     public async Task<AuthenticatedUser> OpenAsync(
         string email,
         string password,
         string? code,
         string? termsVersion,
+        string correlationId,
         CancellationToken cancellationToken)
     {
         await passwordValidator.ValidateAndThrowAsync(new NewPasswordInput(password), cancellationToken);
@@ -54,16 +63,19 @@ public sealed class WholesaleInvitationPasswordSession(
         var existing = await userDirectory.FindUserIdByEmailAsync(email, cancellationToken);
         if (existing is { } userWithAccount && await passwordCredentials.HasPasswordAsync(userWithAccount, cancellationToken))
         {
-            var signedIn = await passwordCredentials.AcceptInvitationAsync(userWithAccount, password, cancellationToken);
+            var signedIn = await passwordLogin.LoginAsync(email, password, correlationId, cancellationToken);
             await lifecycle.CommitAsync(cancellationToken);
             return signedIn;
         }
 
-        EnsureCurrentTermsVersion(termsVersion);
         if (string.IsNullOrWhiteSpace(code) || !await emailChallenges.TryConsumeAsync(email, code, cancellationToken))
         {
+            // Sin credencial el login siempre falla: el mismo 401, hash y auditoría que una contraseña errada.
+            await passwordLogin.LoginAsync(email, password, correlationId, cancellationToken);
             throw new RequestUnauthorizedException(PasswordLoginService.InvalidCredentialsCode, "Invalid credentials.");
         }
+
+        EnsureCurrentTermsVersion(termsVersion);
 
         var userId = await identityProvisioning.GetOrProvisionInvitedUserAsync(email, cancellationToken);
         var user = await passwordCredentials.AcceptInvitationAsync(userId, password, cancellationToken);
@@ -73,8 +85,8 @@ public sealed class WholesaleInvitationPasswordSession(
     }
 
     /// <summary>
-    /// Lo mismo que exige <see cref="ITermsAcceptances.RecordAsync"/>, mirado antes de gastar el código: una versión vieja en la
-    /// pantalla no debe dejar el código usado y la cuenta a medias. Sin versión en el cuerpo, 422 con el campo; sin versión
+    /// Lo mismo que exige <see cref="ITermsAcceptances.RecordAsync"/>, mirado antes de aprovisionar: una versión vieja en la
+    /// pantalla no deja una cuenta con contraseña y sin términos. Sin versión en el cuerpo, 422 con el campo; sin versión
     /// configurada, falla cerrado.
     /// </summary>
     private void EnsureCurrentTermsVersion(string? termsVersion)

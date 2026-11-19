@@ -10,7 +10,8 @@ namespace Bootstrapper.UnitTests;
 /// <summary>
 /// <c>session-with-password</c> desde el link (spec 2026-11-19 §4). El link ya no prueba el buzón: una cuenta sin contraseña (o
 /// sin usuario) necesita siempre un código válido del correo y la versión de los términos; sólo quien ya tiene contraseña entra
-/// con ella. Ruling W17: la contraseña se valida antes de tocar Identity.
+/// con ella, por el mismo camino del login. Ruling W17: la contraseña se valida antes de tocar Identity. Sin código válido la
+/// respuesta no dice si el correo tiene cuenta ni contraseña.
 /// </summary>
 public sealed class WholesaleInvitationPasswordSessionTests
 {
@@ -18,13 +19,17 @@ public sealed class WholesaleInvitationPasswordSessionTests
     private const string Password = "Distri-2026!";
     private const string Code = "123456";
     private const string Terms = "2026-11-19";
+    private const string Correlation = "trace-1";
 
     private readonly FakeIdentity _identity = new();
     private readonly FakeTenancyUnitOfWork _tenancy = new();
     private TermsOptions _terms = new() { CurrentVersion = Terms };
 
     private WholesaleInvitationPasswordSession Session() =>
-        new(_tenancy, _identity, _identity, _identity, _identity, _identity, _terms, new NewPasswordValidator());
+        new(_tenancy, _identity, _identity, _identity, _identity, _identity, _identity, _terms, new NewPasswordValidator());
+
+    private Task<AuthenticatedUser> OpenAsync(string email, string password, string? code, string? termsVersion) =>
+        Session().OpenAsync(email, password, code, termsVersion, Correlation, TestContext.Current.CancellationToken);
 
     [Theory]
     [InlineData("")]
@@ -33,8 +38,7 @@ public sealed class WholesaleInvitationPasswordSessionTests
     {
         _identity.IssueCode(Email, Code);
 
-        var error = await Assert.ThrowsAsync<ValidationException>(() =>
-            Session().OpenAsync(Email, password, Code, Terms, TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<ValidationException>(() => OpenAsync(Email, password, Code, Terms));
 
         Assert.Contains(error.Errors, failure => failure.PropertyName == "Password" && failure.ErrorCode == "identity.password.invalid");
         Assert.Empty(_identity.Calls);
@@ -49,8 +53,7 @@ public sealed class WholesaleInvitationPasswordSessionTests
     {
         _identity.IssueCode(Email, Code);
 
-        var error = await Assert.ThrowsAsync<RequestUnauthorizedException>(() =>
-            Session().OpenAsync(Email, Password, code, Terms, TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<RequestUnauthorizedException>(() => OpenAsync(Email, Password, code, Terms));
 
         Assert.Equal("identity.credentials.invalid", error.Code);
         Assert.Empty(_identity.Provisioned);
@@ -64,29 +67,76 @@ public sealed class WholesaleInvitationPasswordSessionTests
     [Fact]
     public async Task AnExistingUserWithoutAPasswordAlsoNeedsTheCode()
     {
-        var existing = _identity.AddUser(Email, withPassword: false);
+        var existing = _identity.AddUser(Email, password: null);
 
-        var error = await Assert.ThrowsAsync<RequestUnauthorizedException>(() =>
-            Session().OpenAsync(Email, Password, code: null, Terms, TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<RequestUnauthorizedException>(() => OpenAsync(Email, Password, code: null, Terms));
 
         Assert.Equal("identity.credentials.invalid", error.Code);
         Assert.DoesNotContain(_identity.Accepted, accepted => accepted.UserId == existing);
         Assert.Equal(0, _tenancy.Commits);
     }
 
+    // Revisión del bloque C: sin código, un correo sin cuenta y una cuenta con contraseña y una clave errada responden igual, y
+    // los dos pasan por el login (mismo hash, misma auditoría de intento fallido). Antes, el 422 de TermsVersion delataba que el
+    // correo no tenía contraseña.
     [Fact]
-    public async Task AUserWithAPasswordEntersWithoutCode()
+    public async Task WithoutACodeAnUnknownEmailAndAWrongPasswordLookTheSame()
     {
-        var existing = _identity.AddUser(Email, withPassword: true);
+        _identity.AddUser("con-clave@distri.co", Password);
 
-        var user = await Session().OpenAsync(Email, Password, code: null, termsVersion: null, TestContext.Current.CancellationToken);
+        var unknown = await Assert.ThrowsAsync<RequestUnauthorizedException>(() =>
+            OpenAsync("nadie@distri.co", Password, code: null, termsVersion: null));
+        var wrong = await Assert.ThrowsAsync<RequestUnauthorizedException>(() =>
+            OpenAsync("con-clave@distri.co", "Otra-Clave-99", code: null, termsVersion: null));
+
+        Assert.Equal((unknown.GetType(), unknown.Code), (wrong.GetType(), wrong.Code));
+        Assert.Equal("identity.credentials.invalid", unknown.Code);
+        Assert.Equal(["nadie@distri.co", "con-clave@distri.co"], _identity.Logins);
+        Assert.Empty(_identity.Provisioned);
+    }
+
+    // Con un código inventado tampoco: la versión de los términos se mira después de gastar un código válido, que sólo tiene el
+    // dueño del buzón.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2025-01-01")]
+    public async Task AFakeCodeIs401WhateverTheTermsVersion(string? termsVersion)
+    {
+        var error = await Assert.ThrowsAsync<RequestUnauthorizedException>(() =>
+            OpenAsync("nadie@distri.co", Password, "000000", termsVersion));
+
+        Assert.Equal("identity.credentials.invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task AUserWithAPasswordEntersThroughTheLoginWithoutCode()
+    {
+        var existing = _identity.AddUser(Email, Password);
+
+        var user = await OpenAsync(Email, Password, code: null, termsVersion: null);
 
         Assert.Equal(new AuthenticatedUser(existing, Email), user);
-        Assert.Equal([(existing, Password)], _identity.Accepted);
+        Assert.Equal([Email], _identity.Logins);
+        Assert.Empty(_identity.Accepted);
         Assert.Empty(_identity.Consumed);
         Assert.Empty(_identity.Recorded);
         Assert.Empty(_identity.Provisioned);
         Assert.Equal((1, 1, Email), (_tenancy.Scopes, _tenancy.Commits, _tenancy.LockedEmail));
+    }
+
+    // Chequeo (b) de la revisión: verificar una contraseña existente no marca el correo como verificado. Una cuenta con correo
+    // sin verificar recibe lo mismo que en el login (403 identity.email.not_verified), sin AcceptInvitationAsync.
+    [Fact]
+    public async Task AnUnverifiedPasswordAccountIsNotVerifiedByTheLink()
+    {
+        _identity.AddUser(Email, Password, emailVerified: false);
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => OpenAsync(Email, Password, Code, Terms));
+
+        Assert.Equal(PasswordLoginService.EmailNotVerifiedCode, error.Code);
+        Assert.Empty(_identity.Accepted);
+        Assert.Empty(_identity.Consumed);
+        Assert.Equal(0, _tenancy.Commits);
     }
 
     [Fact]
@@ -94,27 +144,24 @@ public sealed class WholesaleInvitationPasswordSessionTests
     {
         _identity.IssueCode(Email, Code);
 
-        var error = await Assert.ThrowsAsync<ValidationException>(() =>
-            Session().OpenAsync(Email, Password, Code, termsVersion: null, TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<ValidationException>(() => OpenAsync(Email, Password, Code, termsVersion: null));
 
         Assert.Contains(error.Errors, failure => failure.PropertyName == "TermsVersion");
-        // El código no se gasta: con la versión, el mismo código sirve.
-        Assert.Empty(_identity.Consumed);
         Assert.Empty(_identity.Provisioned);
+        Assert.Empty(_identity.Accepted);
         Assert.Equal(0, _tenancy.Commits);
     }
 
     [Fact]
-    public async Task AStaleTermsVersionIsRejectedBeforeSpendingTheCode()
+    public async Task AStaleTermsVersionCreatesNothing()
     {
         _identity.IssueCode(Email, Code);
 
-        var error = await Assert.ThrowsAsync<IdentityDomainException>(() =>
-            Session().OpenAsync(Email, Password, Code, "2025-01-01", TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<IdentityDomainException>(() => OpenAsync(Email, Password, Code, "2025-01-01"));
 
         Assert.Equal(TermsAcceptanceService.VersionMismatchCode, error.Code);
-        Assert.Empty(_identity.Consumed);
         Assert.Empty(_identity.Provisioned);
+        Assert.Empty(_identity.Accepted);
     }
 
     [Fact]
@@ -123,11 +170,9 @@ public sealed class WholesaleInvitationPasswordSessionTests
         _terms = new TermsOptions();
         _identity.IssueCode(Email, Code);
 
-        var error = await Assert.ThrowsAsync<IdentityDomainException>(() =>
-            Session().OpenAsync(Email, Password, Code, Terms, TestContext.Current.CancellationToken));
+        var error = await Assert.ThrowsAsync<IdentityDomainException>(() => OpenAsync(Email, Password, Code, Terms));
 
         Assert.Equal(TermsAcceptanceService.UnavailableCode, error.Code);
-        Assert.Empty(_identity.Consumed);
         Assert.Empty(_identity.Provisioned);
     }
 
@@ -138,7 +183,7 @@ public sealed class WholesaleInvitationPasswordSessionTests
     {
         _identity.IssueCode(Email, Code);
 
-        var user = await Session().OpenAsync(Email, Password, Code, Terms, TestContext.Current.CancellationToken);
+        var user = await OpenAsync(Email, Password, Code, Terms);
 
         var provisioned = Assert.Single(_identity.Provisioned);
         Assert.Equal(new AuthenticatedUser(provisioned, Email), user);
@@ -151,13 +196,15 @@ public sealed class WholesaleInvitationPasswordSessionTests
 
     /// <summary>
     /// Identity en memoria. Aprovisionar guarda en el acto, como <c>IdentityProvisioningService</c>; <see cref="RecordAsync"/>
-    /// exige que el usuario ya esté guardado, como la FK de <c>identity.terms_acceptances</c>.
+    /// exige que el usuario ya esté guardado, como la FK de <c>identity.terms_acceptances</c>; <see cref="LoginAsync"/> sigue las
+    /// reglas de <c>PasswordLoginService</c> (401 igual para todo fallo, 403 con el correo sin verificar).
     /// </summary>
     private sealed class FakeIdentity :
-        IIdentityProvisioning, IPasswordCredentials, IUserDirectory, IEmailChallenges, ITermsAcceptances
+        IIdentityProvisioning, IPasswordCredentials, IPasswordLogin, IUserDirectory, IEmailChallenges, ITermsAcceptances
     {
         private readonly Dictionary<Guid, string> _users = [];
-        private readonly HashSet<Guid> _withPassword = [];
+        private readonly Dictionary<Guid, string> _passwords = [];
+        private readonly HashSet<Guid> _unverified = [];
         private readonly Dictionary<string, string> _codes = [];
 
         public List<string> Calls { get; } = [];
@@ -166,17 +213,24 @@ public sealed class WholesaleInvitationPasswordSessionTests
 
         public List<(Guid UserId, string Password)> Accepted { get; } = [];
 
+        public List<string> Logins { get; } = [];
+
         public List<(string Email, string Code)> Consumed { get; } = [];
 
         public List<(Guid UserId, string Version)> Recorded { get; } = [];
 
-        public Guid AddUser(string email, bool withPassword)
+        public Guid AddUser(string email, string? password, bool emailVerified = true)
         {
             var id = Guid.CreateVersion7();
             _users[id] = email;
-            if (withPassword)
+            if (password is not null)
             {
-                _withPassword.Add(id);
+                _passwords[id] = password;
+            }
+
+            if (!emailVerified)
+            {
+                _unverified.Add(id);
             }
 
             return id;
@@ -192,7 +246,7 @@ public sealed class WholesaleInvitationPasswordSessionTests
                 return Task.FromResult(existing);
             }
 
-            var id = AddUser(email, withPassword: false);
+            var id = AddUser(email, password: null);
             Provisioned.Add(id);
             return Task.FromResult(id);
         }
@@ -200,14 +254,32 @@ public sealed class WholesaleInvitationPasswordSessionTests
         public Task<bool> HasPasswordAsync(Guid userId, CancellationToken cancellationToken)
         {
             Calls.Add("has-password");
-            return Task.FromResult(_withPassword.Contains(userId));
+            return Task.FromResult(_passwords.ContainsKey(userId));
         }
 
         public Task<AuthenticatedUser> AcceptInvitationAsync(Guid userId, string password, CancellationToken cancellationToken)
         {
             Calls.Add("password");
             Accepted.Add((userId, password));
-            _withPassword.Add(userId);
+            _passwords[userId] = password;
+            return Task.FromResult(new AuthenticatedUser(userId, _users[userId]));
+        }
+
+        public Task<AuthenticatedUser> LoginAsync(
+            string email, string password, string correlationId, CancellationToken cancellationToken)
+        {
+            Calls.Add("login");
+            Logins.Add(email);
+            if (Find(email) is not { } userId || !_passwords.TryGetValue(userId, out var stored) || stored != password)
+            {
+                throw new RequestUnauthorizedException(PasswordLoginService.InvalidCredentialsCode, "Invalid credentials.");
+            }
+
+            if (_unverified.Contains(userId))
+            {
+                throw new RequestForbiddenException(PasswordLoginService.EmailNotVerifiedCode, "The email is not verified.");
+            }
+
             return Task.FromResult(new AuthenticatedUser(userId, _users[userId]));
         }
 
