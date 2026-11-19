@@ -126,14 +126,14 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
         await using (var scope = Factory.Services.CreateAsyncScope())
         {
             first = await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "900123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "NIT", "900123456", "ana@distri.co", Ct);
         }
 
         Guid second;
         await using (var scope = Factory.Services.CreateAsyncScope())
         {
             second = await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "900123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "NIT", "900123456", "ana@distri.co", Ct);
         }
 
         Assert.Equal(first, second);
@@ -144,6 +144,34 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
             WHERE tenant_id = {tenant.TenantId} AND identification_number = '900123456'
             """);
         Assert.Equal(1, count[0]);
+    }
+
+    // Spec 2026-11-18 (país y documento): el cliente nace con el tipo del distribuidor, y el mismo número con otro tipo es otro cliente.
+    [Fact]
+    public async Task CustomerProvisioningUsesTheGivenTypeAndReusesOnlyTheSameType()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+
+        async Task<Guid> EnsureAsync(string type)
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", type, "123456", "ana@distri.co", Ct);
+        }
+
+        var ce = await EnsureAsync("CE");
+        var ceAgain = await EnsureAsync("CE");
+        var cc = await EnsureAsync("CC");
+
+        Assert.Equal(ce, ceAgain);
+        Assert.NotEqual(ce, cc);
+        var types = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""
+            SELECT identification_type AS "Value" FROM customers.customers
+            WHERE tenant_id = {tenant.TenantId} AND identification_number = '123456' ORDER BY identification_type
+            """);
+        Assert.Equal(2, types.Count);
     }
 
     // D-8: la primera vez crea el proveedor vinculado; la segunda devuelve el mismo, sin otro.
