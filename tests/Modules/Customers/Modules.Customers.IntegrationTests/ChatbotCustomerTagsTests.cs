@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
@@ -73,6 +74,9 @@ public sealed class ChatbotCustomerTagsTests
             return await scope.ServiceProvider.GetRequiredService<IChatbotCustomerTags>()
                 .RemoveAsync(Tenant, customerId, tagId, TestContext.Current.CancellationToken);
         }
+
+        public HttpClient CreateManager() =>
+            CreateClient(factory, SubjectId, TenantId, CustomersPermissions.CustomerRead, CustomersPermissions.CustomerManage);
 
         public Task MarkMergedAsync(Guid mergedId, Guid survivorId) =>
             CustomersApiHarness.MarkMergedAsync(ConnectionString, mergedId, survivorId);
@@ -209,6 +213,52 @@ public sealed class ChatbotCustomerTagsTests
         Assert.Equal(1L, await AssignmentCountAsync(fixture.ConnectionString, survivor, tagId));
         Assert.Equal(0L, await AssignmentCountAsync(fixture.ConnectionString, merged, tagId));
         Assert.Equal(1L, await ChatbotAuditCountAsync(fixture.ConnectionString, survivor));
+    }
+
+    [Fact]
+    public async Task TheScreenWaitsForTheChatbotLockSoTheLimitHolds()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        var customerId = await fixture.SeedIncompleteCustomerAsync();
+        var screen = new List<Guid>();
+        for (var index = 0; index < CustomerTagAssignment.MaxPerCustomer; index++)
+        {
+            screen.Add(await fixture.SeedTagAsync(Tenant, $"Tag {index}"));
+        }
+
+        var byTheBot = await fixture.SeedTagAsync(Tenant, "Interesado");
+        var ct = TestContext.Current.CancellationToken;
+
+        // The chatbot's change, held open mid-way: the same FOR UPDATE on the customer row, then its one tag.
+        await using var bot = new NpgsqlConnection(fixture.ConnectionString);
+        await bot.OpenAsync(ct);
+        await using var transaction = await bot.BeginTransactionAsync(ct);
+        await using (var lockRow = new NpgsqlCommand($"SELECT id FROM customers.customers WHERE id = '{customerId}' FOR UPDATE", bot, transaction))
+        {
+            await lockRow.ExecuteScalarAsync(ct);
+        }
+
+        // The screen saves 20 tags while the chatbot holds the row.
+        using var client = fixture.CreateManager();
+        var put = client.PutAsJsonAsync($"{CustomersUrl()}/{customerId}/tags", new { tagIds = screen }, ct);
+        await Task.Delay(TimeSpan.FromSeconds(2), ct);
+
+        await using (var insert = new NpgsqlCommand(
+            "INSERT INTO customers.customer_tags (customer_id, tag_id, tenant_id, assigned_by_user_id, assigned_at) "
+            + $"VALUES ('{customerId}', '{byTheBot}', '{Tenant}', '{Guid.Empty}', now())", bot, transaction))
+        {
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
+        await transaction.CommitAsync(ct);
+
+        var response = await put;
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        // The screen read the set after the chatbot committed, so it replaced it: never 21.
+        Assert.Equal(
+            CustomerTagAssignment.MaxPerCustomer,
+            await CountAsync(fixture.ConnectionString, $"SELECT count(*) FROM customers.customer_tags WHERE customer_id = '{customerId}'"));
+        Assert.Equal(0L, await AssignmentCountAsync(fixture.ConnectionString, customerId, byTheBot));
     }
 
     [Fact]
