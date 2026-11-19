@@ -37,6 +37,13 @@ tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false
   (persistidos como texto), `IBillingTemplateOutbound` y `BillingTemplateDefinitions` (Messaging), las plantillas `Billing*Email*`
   (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol de sistema `billing`
   (`SystemRoleKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
+- **«Admin» para vincular un tenant a un mayorista es el rol de sistema `admin` en una membresía activa** (spec 2026-11-19,
+  `ITenantOwnership.ListAdministeredActiveTenantsAsync`), además del owner (`owner_membership_id`). Un rol custom con permisos
+  parecidos no cuenta, y una membresía suspendida o pendiente tampoco. Es una consulta de Tenancy, no un cruce con
+  Authorization: no la reemplaces por una pregunta de permisos.
+- **Los términos se aceptan por usuario y la versión sale de `Terms:CurrentVersion`** (`ITermsAcceptances`). Sin versión
+  configurada el alta de un distribuidor nuevo falla cerrado (`identity.terms.unavailable`); nunca se acepta una versión
+  inventada. `RecordAsync` se confirma solo, con FK a `identity.users`: el usuario tiene que estar ya guardado.
 - **La API externa no usa `IExecutionContext` sino `IApiCaller`** (spec 2026-10-30). El tenant sale de la clave, no de la ruta ni de
   un header, y una clave nunca recibe claims `permission`: ninguna política interna pasa con ella. Un scope nuevo se registra con
   `ApiScopeDefinition` en DI (la constante vive en el módulo dueño) y sus rutas cuelgan del grupo de `ExternalApiEndpoints`, que fija
