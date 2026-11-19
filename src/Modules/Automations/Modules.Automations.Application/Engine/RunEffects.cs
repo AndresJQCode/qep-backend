@@ -89,10 +89,11 @@ public sealed partial class RunEffects(
             }
 
             // Spec 2026-11-19 (chatbot CRM action): one row per execution of the block, here for the same reason (a unit that died while
-            // Running gets its answer from PendingInputAsync).
+            // Running gets its answer from PendingInputAsync). A CrmResult is only ever the unit's own input when PendingInputAsync
+            // re-requested it: every other one comes back from ExternalAsync inside this loop.
             if (next is EngineInput.CrmResult crmResult)
             {
-                AuditCrm(run, crmResult.Code, now);
+                AuditCrm(run, crmResult.Code, reRequested: ReferenceEquals(crmResult, input), now);
             }
 
             // P2-R43: el motor interpola los textos de SendText y SendInteractive dentro del paso, así que el refresco de los adjuntos va
@@ -553,13 +554,18 @@ public sealed partial class RunEffects(
         return false;
     }
 
-    /// <summary>Spec 2026-11-19: what changed is audited, as what was skipped or failed; an idempotent no-op writes nothing.</summary>
-    private void AuditCrm(ConversationRun run, string code, DateTimeOffset now)
+    /// <summary>
+    /// Spec 2026-11-19: what changed is audited, as what was skipped or failed; an idempotent no-op writes nothing. Except when
+    /// <paramref name="reRequested"/>: the unit that asked first died, possibly after Customers or Pipeline committed the change with
+    /// its <c>chatbot</c> row, and the retry only sees <c>already_*</c> or <c>not_tagged</c>. It cannot tell who applied it, so it
+    /// writes the run's «applied» row: one row per run and block is better than a change with no Automations row.
+    /// </summary>
+    private void AuditCrm(ConversationRun run, string code, bool reRequested, DateTimeOffset now)
     {
         var output = CrmResultCodes.OutputOf(code);
         if (output == FlowOutputs.Ok)
         {
-            if (code is CrmResultCodes.Added or CrmResultCodes.Removed or CrmResultCodes.Moved)
+            if (reRequested || code is CrmResultCodes.Added or CrmResultCodes.Removed or CrmResultCodes.Moved)
             {
                 Audit(run, AutomationsAuditActions.CrmActionApplied, now);
             }

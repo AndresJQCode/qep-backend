@@ -88,12 +88,17 @@ public sealed partial class RunProcessorTests
     /// <summary>
     /// Review Focus 4: the unit that applied the tag died before saving the run, which stayed <c>Running</c> at the block. The retried
     /// unit re-requests the effect (<see cref="Application.Engine.RunEffects.PendingInputAsync"/>); the port answers
-    /// <c>already_tagged</c>, the walk goes on by <c>ok</c>, and no second «applied» row is written.
+    /// <c>already_*</c> or <c>not_tagged</c> and the walk goes on by <c>ok</c>. The change committed in Customers or Pipeline (with
+    /// its <c>chatbot</c> audit row), so the retry writes the run's one «applied» row: it cannot tell who applied it, and one row per
+    /// run and block is better than none.
     /// </summary>
-    [Fact]
-    public async Task ARunDiedWhileRunningIsReRequestedAndTheSecondAnswerIsAlreadyTagged()
+    [Theory]
+    [InlineData(CrmResultCodes.AlreadyTagged)]
+    [InlineData(CrmResultCodes.NotTagged)]
+    [InlineData(CrmResultCodes.AlreadyInStage)]
+    public async Task ARunDiedWhileRunningIsReRequestedAndTheNoOpAnswerIsAuditedAsApplied(string code)
     {
-        var crm = new RecordingCrm(CrmResultCodes.Added, CrmResultCodes.AlreadyTagged)
+        var crm = new RecordingCrm(CrmResultCodes.Added, code)
         {
             // The first call writes, then the unit dies (the worker is shut down) before the run is saved.
             FailAfterCall = 1,
@@ -114,8 +119,8 @@ public sealed partial class RunProcessorTests
         await bed.Processor().ProcessAsync(Item with { MessageId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, crm.Calls.Count);
-        Assert.Equal(["ok already_tagged"], bed.Messenger.Texts);
-        Assert.DoesNotContain(AutomationsAuditActions.CrmActionApplied, bed.Audit.Actions);
+        Assert.Equal([$"ok {code}"], bed.Messenger.Texts);
+        Assert.Single(bed.Audit.Actions, action => action == AutomationsAuditActions.CrmActionApplied);
         Assert.Equal(RunStatus.Completed, run.Status);
     }
 

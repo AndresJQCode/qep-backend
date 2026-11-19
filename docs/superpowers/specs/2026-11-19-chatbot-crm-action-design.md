@@ -139,7 +139,10 @@ which modules are on), as it does for members and agents.
   guess, never another customer's deal). The target stage must be open (`stage_not_open`, `error`); there is one pipeline
   per tenant, so no pipeline match is needed.
 - **Idempotency:** add/remove tag and move to the same stage are no-ops that return `ok` with `already_*` / `not_tagged`; audit
-  is written only when something changed.
+  is written only when something changed. One exception in Automations' audit: when a unit died after the change committed
+  and the retry re-requests the block (`PendingInputAsync`), the answer is `already_*` / `not_tagged` and the retry cannot
+  tell who applied it, so it writes `crm_action_applied` anyway: one row per run and block rather than a Customers / Pipeline
+  `chatbot` change with no Automations row. A first execution that is a no-op still writes none.
 - **Audit:** the audit of Customers and Pipeline records the change with a new `Chatbot` source value (both publishers get it:
   neither has a detail field) and never a member as the actor. The link to the run lives in Automations' own audit
   (`IAutomationsAuditRecorder`, `bySystem: true`): one entry per applied or skipped action with the chatbot id, run id,
