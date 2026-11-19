@@ -32,6 +32,9 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
         var detail = await reader.GetFromJsonAsync<DistributorDetailDto>(url, Ct);
         var resend = await reader.SendAsync(
             WholesaleApiHarness.WithIfMatch(new HttpRequestMessage(HttpMethod.Post, $"{url}/resend-invitation"), distributor.Version), Ct);
+        // «Copiar» rota el token: es una escritura, como reenviar.
+        var rotate = await reader.SendAsync(
+            WholesaleApiHarness.WithIfMatch(new HttpRequestMessage(HttpMethod.Post, $"{url}/invitation-link"), distributor.Version), Ct);
         var options = await reader.GetAsync($"{WholesaleApiHarness.DistributorsUrl(tenant.TenantId)}/options", Ct);
         var lists = await reader.GetAsync(WholesaleApiHarness.PriceListsUrl(tenant.TenantId), Ct);
 
@@ -39,6 +42,7 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
         Assert.False(row.Invitation!.CanResend);
         Assert.Empty(detail!.AllowedActions);
         Assert.Equal(HttpStatusCode.Forbidden, resend.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, rotate.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, options.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, lists.StatusCode);
     }
