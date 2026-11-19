@@ -229,6 +229,9 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
 {
     public Dictionary<Guid, (string Name, TenantStatus Status, Guid Owner, HashSet<TenantModuleKey> Modules)> Tenants { get; } = [];
 
+    /// <summary>Miembros activos con el rol de sistema admin, por tenant (además del owner).</summary>
+    public Dictionary<Guid, HashSet<Guid>> Admins { get; } = [];
+
     public List<(Guid TenantId, Guid Owner, TenantRegistrationData Data, IReadOnlyList<TenantModuleKey> Modules)> Registered { get; } = [];
 
     public List<(Guid TenantId, IReadOnlyList<TenantModuleKey> Keys, Guid Actor, string Note)> Grants { get; } = [];
@@ -306,6 +309,15 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
     public Task<IReadOnlyList<OwnedTenant>> ListOwnedActiveTenantsAsync(Guid userId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<OwnedTenant>>(Tenants
             .Where(entry => entry.Value.Owner == userId && entry.Value.Status == TenantStatus.Active)
+            .OrderBy(entry => entry.Value.Name, StringComparer.Ordinal)
+            .Select(entry => new OwnedTenant(entry.Key, entry.Value.Name))
+            .ToList());
+
+    public Task<IReadOnlyList<OwnedTenant>> ListAdministeredActiveTenantsAsync(Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OwnedTenant>>(Tenants
+            .Where(entry => entry.Value.Status == TenantStatus.Active
+                && (entry.Value.Owner == userId
+                    || (Admins.TryGetValue(entry.Key, out var admins) && admins.Contains(userId))))
             .OrderBy(entry => entry.Value.Name, StringComparer.Ordinal)
             .Select(entry => new OwnedTenant(entry.Key, entry.Value.Name))
             .ToList());
