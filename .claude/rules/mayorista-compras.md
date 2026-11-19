@@ -34,7 +34,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `email_mismatch` se retiró. No lo vuelvas a exigir: el owner decidió que prevalece el correo de quien acepta.
 - **Sin contraseña, siempre hay código** (foco 1 del spec 2026-11-19). En `session-with-password`, una cuenta que no existe o
   existe sin contraseña necesita un código válido de `email-code` (`IEmailChallenges`) y la versión de los términos antes de
-  escribir nada; sólo quien ya tiene contraseña entra con ella. Sin esto, el link más el correo de otra persona bastarían para
+  escribir nada; sólo quien ya tiene contraseña entra con ella. El código es la única llave, así que `IEmailChallenges` sostiene
+  tres invariantes que no se aflojan (revisión final de la rama, hallazgo 1): **a lo sumo un desafío vivo por correo** (la
+  emisión corre bajo `pg_advisory_xact_lock(EmailChallengeIssuanceLock.Namespace, hashtext(email_hash))` e invalida el anterior
+  en la misma transacción), **sólo cuenta el más reciente** (`TryConsumeAsync` actualiza ese y ningún otro; el código de uno
+  anterior es un código errado) y **5 desafíos por correo en 24 h móviles** (`MaxIssuesPerDay`; el sexto no se emite y no falla,
+  igual que dentro de los 60 s, para no revelar si el correo tiene cuenta). Con varios desafíos vivos, cada intento probaba todos
+  sus códigos a la vez. Sin esto, el link más el correo de otra persona bastarían para
   fijarle una contraseña a su cuenta. Y `ITermsAcceptances.RecordAsync` se confirma en su propia conexión con FK a
   `identity.users`: se llama **después** de que el usuario quedó guardado, nunca con un usuario de una unidad de trabajo sin
   guardar (`WholesaleInvitationPasswordSession`).
@@ -51,8 +57,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`NewTenant` no lee nombre ni slug del cuerpo** (spec 2026-11-19 §3b): el nombre es la razón social del distribuidor y el slug
   lo sugiere `ITenantSlugSuggestions`. Si una carrera se lo gana (`tenancy.slug.taken`), el endpoint reintenta hasta 3 veces,
   cada vez en un scope nuevo: el DbContext de Tenancy del intento fallido se queda con el tenant reservado sin guardar.
-- **El aviso de WhatsApp de la invitación es un evento aparte y sin token** (`wholesale.distributor-invitation-notice.v1`); su
-  consumidor vive en Mayorista con inbox propio (`InvitationNoticeProcessor`, consumidor `wholesale.invitation-whatsapp-notice`)
+- **El aviso de WhatsApp de la invitación es un evento aparte, y desde el spec 2026-11-19 lleva el token**: invitar y
+  «Reenviar» escriben `wholesale.distributor-invitation-link.v1` (token sólo en el payload del outbox). El viejo
+  `wholesale.distributor-invitation-notice.v1`, sin token, ya no se escribe: el procesador sólo lo drena. El mensaje de WhatsApp
+  sigue saliendo sin el link (ver arriba). Su consumidor vive en Mayorista con inbox propio (`InvitationNoticeProcessor`, consumidor `wholesale.invitation-whatsapp-notice`)
   y manda por `WholesaleInvitationNoticeSender` de Bootstrapper. El resultado se aplica sólo a la `generation` vigente y no sube
   `version` (D-3, D-4); la `generation` es token de concurrencia, así que un resultado leído antes de un `PUT` o un «Reenviar» no
   se escribe.

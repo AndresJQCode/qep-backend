@@ -72,11 +72,53 @@ public sealed class EmailChallengeServiceTests
     }
 
     [Fact]
+    public async Task TheSixthChallengeInADayIsNotIssued()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        for (var issue = 0; issue < EmailChallengeService.MaxIssuesPerDay; issue++)
+        {
+            clock.UtcNow = Start + (EmailChallengeService.ReissueInterval * issue);
+            await service.IssueAsync("person@example.com", ct);
+        }
+
+        Assert.Equal(5, outbox.Added.Count);
+
+        // El sexto, ya fuera del intervalo de 60 s: no se emite y no falla, igual que dentro del intervalo.
+        clock.UtcNow = Start + (EmailChallengeService.ReissueInterval * EmailChallengeService.MaxIssuesPerDay);
+        await service.IssueAsync("person@example.com", ct);
+
+        Assert.Equal(5, outbox.Added.Count);
+        Assert.Equal(5, challenges.Added.Count);
+        Assert.All(challenges.Locks, handle => Assert.True(handle.Disposed));
+
+        // La ventana es móvil: 24 h después del primero vuelve a haber cupo para uno.
+        clock.UtcNow = Start + EmailChallengeService.IssueWindow;
+        await service.IssueAsync("person@example.com", ct);
+
+        Assert.Equal(6, outbox.Added.Count);
+    }
+
+    [Fact]
+    public async Task IssuingRunsUnderThePerEmailLockAndCommitsOnlyWhenItIssues()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await service.IssueAsync("person@example.com", ct);
+        await service.IssueAsync("person@example.com", ct);
+
+        Assert.Equal(2, challenges.Locks.Count);
+        Assert.All(challenges.Locks, handle => Assert.Equal(EmailTokenCodec.Hash("person@example.com"), handle.EmailHash));
+        Assert.Equal([true, false], challenges.Locks.Select(handle => handle.Committed));
+        Assert.All(challenges.Locks, handle => Assert.True(handle.Disposed));
+    }
+
+    [Fact]
     public void TheConstantsAreTheOnesTheSpecFixes()
     {
         Assert.Equal(6, EmailChallengeService.CodeLength);
         Assert.Equal(TimeSpan.FromMinutes(10), EmailChallengeService.Lifetime);
         Assert.Equal(5, EmailChallengeService.MaxAttempts);
+        Assert.Equal(5, EmailChallengeService.MaxIssuesPerDay);
+        Assert.Equal(TimeSpan.FromHours(24), EmailChallengeService.IssueWindow);
         Assert.Equal(TimeSpan.FromSeconds(60), EmailChallengeService.ReissueInterval);
     }
 
@@ -122,13 +164,23 @@ public sealed class EmailChallengeServiceTests
 
         public bool ConsumeResult { get; set; }
 
+        public List<RecordingIssuanceLock> Locks { get; } = [];
+
         public void Add(EmailChallenge challenge) => Added.Add(challenge);
 
-        public Task<DateTimeOffset?> FindLatestIssuedAtAsync(string emailHash, CancellationToken cancellationToken) =>
-            Task.FromResult(Added
-                .Where(challenge => challenge.EmailHash == emailHash)
-                .Select(challenge => (DateTimeOffset?)challenge.CreatedAt)
-                .Max());
+        public Task<IEmailChallengeIssuanceLock> LockIssuanceAsync(string emailHash, CancellationToken cancellationToken)
+        {
+            var handle = new RecordingIssuanceLock(emailHash);
+            Locks.Add(handle);
+            return Task.FromResult<IEmailChallengeIssuanceLock>(handle);
+        }
+
+        public Task<IReadOnlyList<DateTimeOffset>> ListIssuedSinceAsync(
+            string emailHash, DateTimeOffset since, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DateTimeOffset>>(Added
+                .Where(challenge => challenge.EmailHash == emailHash && challenge.CreatedAt > since)
+                .Select(challenge => challenge.CreatedAt)
+                .ToList());
 
         public Task InvalidateUnusedAsync(string emailHash, DateTimeOffset now, CancellationToken cancellationToken)
         {
@@ -145,6 +197,27 @@ public sealed class EmailChallengeServiceTests
         {
             ConsumeCalls.Add((emailHash, codeHash, maxAttempts, now));
             return Task.FromResult(ConsumeResult);
+        }
+    }
+
+    private sealed class RecordingIssuanceLock(string emailHash) : IEmailChallengeIssuanceLock
+    {
+        public string EmailHash { get; } = emailHash;
+
+        public bool Committed { get; private set; }
+
+        public bool Disposed { get; private set; }
+
+        public Task CommitAsync(CancellationToken cancellationToken)
+        {
+            Committed = true;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
         }
     }
 }
