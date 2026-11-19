@@ -253,9 +253,7 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         using (var session = WholesaleApiHarness.CreateSession(Factory, userId))
         {
             var accepted = await session.PostAsJsonAsync(
-                $"{WholesaleApiHarness.InvitationUrl(token)}/accept",
-                new { mode = "NewTenant", displayName = "Distri Norte", slug = $"distri-{Guid.NewGuid():N}"[..30] },
-                Ct);
+                $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant" }, Ct);
             accepted.EnsureSuccessStatusCode();
         }
 
@@ -310,9 +308,7 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         using (var session = WholesaleApiHarness.CreateSession(Factory, userId))
         {
             (await session.PostAsJsonAsync(
-                $"{WholesaleApiHarness.InvitationUrl(activeToken)}/accept",
-                new { mode = "NewTenant", displayName = "Otra Distri", slug = $"otra-{Guid.NewGuid():N}"[..30] },
-                Ct)).EnsureSuccessStatusCode();
+                $"{WholesaleApiHarness.InvitationUrl(activeToken)}/accept", new { mode = "NewTenant" }, Ct)).EnsureSuccessStatusCode();
         }
 
         using var otherManager = WholesaleApiHarness.CreateManager(Factory, wholesaler);

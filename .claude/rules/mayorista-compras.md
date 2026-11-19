@@ -28,7 +28,29 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   miembros, y `SensitivePathTelemetry` (registrado en `Program.cs` después de `AddQepLogging`) con la misma regla en el
   `url.path` de los spans de OpenTelemetry y en el scope `RequestPath` de cada log del request. Una ruta nueva con un secreto en
   un segmento se suma ahí.
-  miembros. Una ruta nueva con un secreto en un segmento se suma ahí.
+- **El link de la invitación ya no prueba el buzón, y el correo no tiene que coincidir** (spec 2026-11-19). El link identifica
+  la invitación; la acepta cualquier cuenta, una sola vez. Si el correo de la cuenta no es el del distribuidor, lo reemplaza en
+  el commit final, con auditoría (`wholesale.distributor.email_changed`, sin los correos) y aviso a los dos correos por outbox.
+  `email_mismatch` se retiró. No lo vuelvas a exigir: el owner decidió que prevalece el correo de quien acepta.
+- **Sin contraseña, siempre hay código** (foco 1 del spec 2026-11-19). En `session-with-password`, una cuenta que no existe o
+  existe sin contraseña necesita un código válido de `email-code` (`IEmailChallenges`) y la versión de los términos antes de
+  escribir nada; sólo quien ya tiene contraseña entra con ella. Sin esto, el link más el correo de otra persona bastarían para
+  fijarle una contraseña a su cuenta. Y `ITermsAcceptances.RecordAsync` se confirma en su propia conexión con FK a
+  `identity.users`: se llama **después** de que el usuario quedó guardado, nunca con un usuario de una unidad de trabajo sin
+  guardar (`WholesaleInvitationPasswordSession`).
+- **«Copiar» rota el token** (spec 2026-11-19 §1). La base guarda el hash, así que el link sólo existe en la respuesta de invitar
+  y en la de `POST .../invitation-link`, que rota (vigencia nueva, el link anterior pasa a 404). `DistributorDetailDto` no imprime
+  `InvitationUrl` en su `ToString` (`PrintMembers`): no lo pongas en un log.
+- **El token viaja en el evento del WhatsApp con link** (`wholesale.distributor-invitation-link.v1`), sólo en el payload del
+  outbox. **Pero el mensaje de WhatsApp todavía sale sin el link**: falta un ítem aparte de Mensajería (enmascarar el token en
+  el mensaje guardado, una clase de plantilla con `{{link}}` y su aprobación en Meta). Hasta entonces el texto no lleva el link;
+  no lo metas en el cuerpo de un mensaje guardado.
+- **El cliente del mayorista nace en el paso 7 con el correo de la cuenta**, antes del commit final que reemplaza el del
+  distribuidor (`DistributorInvitationService`). Es idempotente por documento: en un reintento, un cliente que ya existe con ese
+  documento se reutiliza y **no** se actualiza (tampoco su correo).
+- **`NewTenant` no lee nombre ni slug del cuerpo** (spec 2026-11-19 §3b): el nombre es la razón social del distribuidor y el slug
+  lo sugiere `ITenantSlugSuggestions`. Si una carrera se lo gana (`tenancy.slug.taken`), el endpoint reintenta hasta 3 veces,
+  cada vez en un scope nuevo: el DbContext de Tenancy del intento fallido se queda con el tenant reservado sin guardar.
 - **El aviso de WhatsApp de la invitación es un evento aparte y sin token** (`wholesale.distributor-invitation-notice.v1`); su
   consumidor vive en Mayorista con inbox propio (`InvitationNoticeProcessor`, consumidor `wholesale.invitation-whatsapp-notice`)
   y manda por `WholesaleInvitationNoticeSender` de Bootstrapper. El resultado se aplica sólo a la `generation` vigente y no sube

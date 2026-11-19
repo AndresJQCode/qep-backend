@@ -89,7 +89,18 @@ public sealed record DistributorDetailDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset? ActivatedAt,
     IReadOnlyList<string> AllowedActions,
-    string? InvitationUrl = null);
+    string? InvitationUrl = null)
+{
+    /// <summary>
+    /// El <c>ToString</c> generado imprimiría <c>InvitationUrl</c>, que lleva el token plano: un log o un mensaje de aserción
+    /// que nombre el DTO filtraría el link. Sólo se imprime lo que identifica la fila.
+    /// </summary>
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("Id = ").Append(Id).Append(", Status = ").Append(Status).Append(", Version = ").Append(Version);
+        return true;
+    }
+}
 
 /// <summary>
 /// Cuántos distribuidores hay por estado con <c>search</c> y sin <c>status</c>, para las pestañas. Las claves son el nombre del

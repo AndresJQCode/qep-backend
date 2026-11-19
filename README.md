@@ -1349,7 +1349,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/wholesale/price-lists` | `GET` (todas, por nombre, sin paginar), `POST` (201 + `Location`), `preview` (`POST`, la lista sin guardar: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `wholesale.price_list.in_use` si algún distribuidor la usa). Módulo `wholesale` | `wholesale.price_list.manage` |
 | `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `wholesale.price_list.manage` |
 | `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`, manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone` y `whatsAppConnectionId`; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
-| `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
+| `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `email-code` (`POST`, anónimo, `credentials`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
@@ -2474,27 +2474,42 @@ pasa a `404`).
 | Método | Ruta                                                   | Autenticación                        | Límite        |
 | ------ | ------------------------------------------------------ | ------------------------------------ | ------------- |
 | `GET`  | `/api/v1/wholesale-invitations/{token}`                | Anónimo                              | `public`      |
+| `POST` | `/api/v1/wholesale-invitations/{token}/email-code`     | Anónimo, `{ email }`, siempre `202`  | `credentials` |
 | `POST` | `/api/v1/wholesale-invitations/{token}/session`        | Bearer de Google (o stub)            | `credentials` |
-| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ password }`       | `credentials` |
+| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ email, password, code, termsVersion }` | `credentials` |
 | `GET`  | `/api/v1/wholesale-invitations/{token}/linkable-tenants` | Sesión QEP                         | `public`      |
 | `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
 
-- Quien no tiene cuenta abre sesión con el link: `session` exige el correo de la invitación verificado por Google y
-  `session-with-password` crea la contraseña (o verifica la que ya existe). `session-with-password` aprovisiona el usuario por
-  ese correo; `session` usa el usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
-  (`WholesaleInvitationGoogleSession`). Una cuenta de Google ya vinculada a un usuario con otro correo es
-  `403 wholesale.invitation.email_mismatch`, sin crear nada.
-- `accept` recibe `{ mode: "NewTenant", displayName, slug }` (crea el tenant del distribuidor con
-  `catalog, customers, companies, quotations, orders, reporting, suppliers, purchases`, aunque el alta pública esté apagada) o
-  `{ mode: "LinkTenant", tenantId }` (un tenant del que la sesión es owner; prende `catalog`, `suppliers` y `purchases` si
-  faltan). En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista y deja la relación
-  `Active`. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
+Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.md`: el link identifica la invitación, no
+prueba el buzón, y el correo no tiene que ser el invitado.
+
+- `email-code` manda un código de 6 dígitos al correo que escribió el distribuidor (vence a los 10 minutos, 5 intentos; uno
+  nuevo cada 60 s como mucho). Responde `202` siempre: no dice si el correo tiene cuenta ni si la invitación sigue pendiente, y
+  sólo emite con la invitación pendiente.
+- `session-with-password` (sin `email`, el invitado): si ese correo ya tiene contraseña, es un login normal
+  (`IPasswordLogin`: `401 identity.credentials.invalid`, o `403 identity.email.not_verified` con el correo sin verificar; el
+  link no lo verifica). Si no tiene usuario o no tiene contraseña, exige un `code` válido de `email-code`: sin él es el mismo
+  `401` que una contraseña errada, así que la respuesta no dice si el correo tiene cuenta. Con el código ya gastado exige
+  `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla cerrado con
+  `identity.terms.unavailable`), y entonces aprovisiona, crea la contraseña y registra los términos.
+- `session` abre la sesión del correo **verificado** de Google (`403` si no está verificado), sea o no el invitado: usa el
+  usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
+  (`WholesaleInvitationGoogleSession`).
+- `accept` recibe `{ mode: "NewTenant", termsVersion? }` o `{ mode: "LinkTenant", tenantId }`. `NewTenant` crea el tenant del
+  distribuidor con la razón social de la invitación como nombre y un slug que sugiere el servidor (con sufijo si está tomado;
+  si se lo ganan en una carrera, reintenta hasta 3 veces), con `catalog, customers, companies, quotations, orders, reporting,
+  suppliers, purchases`, aunque el alta pública esté apagada; un `displayName` o `slug` en el cuerpo se ignora. Quien no aceptó
+  la versión vigente de los términos manda `termsVersion` (`422` en `TermsVersion` sin ella). `LinkTenant` vincula un tenant
+  donde la sesión es owner o tiene el rol de sistema `admin` en una membresía activa; prende `catalog`, `suppliers` y
+  `purchases` si faltan. En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista y deja la
+  relación `Active`; si el correo de la cuenta no es el del distribuidor, lo reemplaza en el mismo guardado y avisa a los dos
+  correos. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
 - Errores: `404 wholesale.invitation.not_found`, `410 wholesale.invitation.expired`, `409 wholesale.invitation.already_accepted`,
   `.unavailable` (el mayorista no está activo, apagó `wholesale` o su empresa facturadora no sirve) y
-  `wholesale.distributor.already_linked`; `403 wholesale.relationship.inactive` (la relación está bloqueada),
-  `wholesale.invitation.email_mismatch` y
-  `.not_tenant_owner`; `422 wholesale.invitation.self_link`, los de `register-tenant` y `validation.failed`
-  (`Mode`, `DisplayName`, `Slug`, `TenantId`).
+  `wholesale.distributor.already_linked`; `403 wholesale.relationship.inactive` (la relación está bloqueada) y
+  `wholesale.invitation.not_tenant_owner`; `401 identity.credentials.invalid`; `422 wholesale.invitation.self_link`,
+  `identity.terms.unavailable`, `identity.terms.version_mismatch`, los de `register-tenant` y `validation.failed` (`Mode`,
+  `TenantId`, `TermsVersion`, `Password`).
 
 #### Aviso por WhatsApp de la invitación
 

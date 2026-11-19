@@ -4,10 +4,12 @@ using Bootstrapper;
 using Bootstrapper.Authentication;
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.Identity.Application;
+using Modules.Identity.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 using Modules.Wholesale.Application;
-using Modules.Wholesale.Domain;
 
 namespace Api;
 
@@ -23,6 +25,14 @@ public static class WholesaleInvitationEndpoints
 {
     private const string Route = "/api/v1/wholesale-invitations/{token}";
 
+    private const string SlugTakenCode = "tenancy.slug.taken";
+
+    /// <summary><c>InvitationSummaryDto.Status</c> de una invitación aceptable (<c>InvitationViewState.Pending</c> en minúscula).</summary>
+    private const string PendingStatus = "pending";
+
+    /// <summary>Reintentos después del primer intento cuando el slug sugerido se toma en una carrera (spec 2026-11-19 §3b).</summary>
+    private const int SlugRetries = 3;
+
     private static readonly AcceptWholesaleInvitationValidator AcceptValidator = new();
 
     public static IEndpointRouteBuilder MapWholesaleInvitationEndpoints(this IEndpointRouteBuilder endpoints)
@@ -35,7 +45,16 @@ public static class WholesaleInvitationEndpoints
             .Produces<WholesaleInvitationResponse>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        // D-4: el login de Google es sólo por invitación; ésta aprovisiona al usuario por el correo invitado y lo vincula.
+        // Spec 2026-11-19 §4: el código de un solo uso para el correo que escribió el distribuidor. Siempre 202: no dice si el
+        // correo tiene cuenta ni si la invitación sigue pendiente (eso ya lo dice el GET); sólo emite con la invitación pendiente.
+        endpoints.MapPost($"{Route}/email-code", EmailCodeAsync)
+            .AllowAnonymous()
+            .RequireRateLimiting(RateLimiterPolicies.Credentials)
+            .WithTags("Wholesale invitations")
+            .Accepts<WholesaleInvitationEmailCodeRequest>("application/json")
+            .Produces(StatusCodes.Status202Accepted);
+
+        // D-4: el login de Google es sólo por invitación; ésta aprovisiona al usuario por el correo verificado y lo vincula.
         var session = endpoints.MapPost($"{Route}/session", SessionAsync);
         session.RequireGoogleBearerOrDevStub(endpoints.ServiceProvider);
         session
@@ -48,7 +67,8 @@ public static class WholesaleInvitationEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status410Gone);
 
-        // Anónimo, como accept-with-password de miembros: el link prueba el buzón y la sesión sale de esta llamada.
+        // Anónimo, como accept-with-password de miembros. El link ya no prueba el buzón (spec 2026-11-19): una cuenta sin
+        // contraseña necesita el código de email-code y los términos. La sesión sale de esta llamada.
         endpoints.MapPost($"{Route}/session-with-password", SessionWithPasswordAsync)
             .AllowAnonymous()
             .RequireRateLimiting(RateLimiterPolicies.Credentials)
@@ -111,18 +131,51 @@ public static class WholesaleInvitationEndpoints
             hasPassword));
     }
 
-    // Orden fijo: invitación aceptable (404 → 410 → 409) → correo del token verificado y el invitado (403) → bajo el lock de
-    // ciclo de vida del usuario, vincular y, sólo si la identidad no tiene usuario, aprovisionar (WholesaleInvitationGoogleSession)
-    // → el usuario es el del correo invitado (403) → commit → sesión de ese usuario. El correo se mira antes de tocar Identity.
+    // Ni la invitación inexistente o ya no pendiente, ni un correo mal formado, cambian la respuesta: el endpoint no sirve para
+    // averiguar nada. El correo inválido no llega a Identity.
+    private static async Task<IResult> EmailCodeAsync(
+        string token,
+        HttpContext httpContext,
+        IDistributorInvitationService invitations,
+        IEmailChallenges emailChallenges,
+        CancellationToken cancellationToken)
+    {
+        var request = await ReadJsonAsync<WholesaleInvitationEmailCodeRequest>(httpContext, cancellationToken);
+        if (string.IsNullOrWhiteSpace(request?.Email))
+        {
+            return Results.Accepted();
+        }
+
+        try
+        {
+            await invitations.RequirePendingAsync(token, cancellationToken);
+            await emailChallenges.IssueAsync(request.Email, cancellationToken);
+        }
+        catch (Exception exception) when (exception is ResourceNotFoundException
+            or ResourceGoneException
+            or ResourceConflictException
+            or IdentityDomainException)
+        {
+            // 404/410/409 de la invitación o un correo que no es una dirección: la misma respuesta que el caso normal.
+        }
+
+        return Results.Accepted();
+    }
+
+    // Orden fijo: invitación aceptable (404 → 410 → 409) → correo del token verificado (403, sin tocar Identity) → bajo el lock
+    // de ciclo de vida de ese correo, vincular y, sólo si la identidad no tiene usuario, aprovisionarlo
+    // (WholesaleInvitationGoogleSession) → commit → sesión de ese usuario. Spec 2026-11-19: el correo no tiene que ser el
+    // invitado; si es otro, reemplaza al invitado al aceptar.
     private static async Task<IResult> SessionAsync(
         string token,
         HttpContext httpContext,
         IDistributorInvitationService invitations,
         WholesaleInvitationGoogleSession googleSession,
+        IUserDirectory userDirectory,
         SessionEstablisher establisher,
         CancellationToken cancellationToken)
     {
-        var invitation = await invitations.RequirePendingAsync(token, cancellationToken);
+        await invitations.RequirePendingAsync(token, cancellationToken);
 
         var principal = httpContext.User;
         var subject = principal.FindFirstValue("sub") ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -135,12 +188,16 @@ public static class WholesaleInvitationEndpoints
 
         var email = principal.FindFirstValue("email");
         var emailVerified = string.Equals(principal.FindFirstValue("email_verified"), "true", StringComparison.OrdinalIgnoreCase);
-        if (!emailVerified || !invitation.InvitedEmailMatches(email))
+        if (!emailVerified || string.IsNullOrWhiteSpace(email))
         {
-            throw WholesaleInvitationGoogleSession.EmailMismatch();
+            // El mismo motivo que da Identity (ProviderLinkingService) a un correo sin verificar.
+            return Results.Problem(
+                statusCode: StatusCodes.Status403Forbidden,
+                title: "Login denied.",
+                detail: "email_not_verified");
         }
 
-        var outcome = await googleSession.OpenAsync(invitation.Email, subject, email!, cancellationToken);
+        var outcome = await googleSession.OpenAsync(email.Trim(), subject, cancellationToken);
         if (outcome.IsDenied)
         {
             return Results.Problem(
@@ -149,12 +206,16 @@ public static class WholesaleInvitationEndpoints
                 detail: outcome.DenialReason);
         }
 
-        return await establisher.EstablishAsync(httpContext, outcome.UserId!.Value, invitation.Email, cancellationToken);
+        // El correo de la cuenta, no el del token: un subject ya vinculado puede ser de una cuenta con otro correo.
+        var userId = outcome.UserId!.Value;
+        var accountEmail = await userDirectory.GetEmailAsync(userId, cancellationToken);
+        return await establisher.EstablishAsync(httpContext, userId, accountEmail, cancellationToken);
     }
 
-    // Orden fijo: cuerpo (400) → invitación aceptable → contraseña con las reglas del registro (422, W17) → bajo el lock,
-    // aprovisionar por el correo invitado → crear o verificar la contraseña (marca el correo verificado) → commit → sesión. La
-    // contraseña no se registra en ningún lado.
+    // Orden fijo: cuerpo (400) → invitación aceptable → contraseña con las reglas del registro (422, W17) → bajo el lock del
+    // correo, con contraseña ya creada sólo verificarla; sin ella, términos (422) y código del correo (401), y recién entonces
+    // aprovisionar, crear la contraseña y registrar los términos (WholesaleInvitationPasswordSession) → commit → sesión. La
+    // contraseña y el código no se registran en ningún lado.
     private static async Task<IResult> SessionWithPasswordAsync(
         string token,
         HttpContext httpContext,
@@ -163,20 +224,7 @@ public static class WholesaleInvitationEndpoints
         SessionEstablisher establisher,
         CancellationToken cancellationToken)
     {
-        WholesaleInvitationPasswordRequest? request = null;
-        try
-        {
-            // Sin Content-Type JSON, ReadFromJsonAsync tira InvalidOperationException (un 500).
-            if (httpContext.Request.HasJsonContentType())
-            {
-                request = await httpContext.Request.ReadFromJsonAsync<WholesaleInvitationPasswordRequest>(cancellationToken);
-            }
-        }
-        catch (JsonException)
-        {
-            request = null;
-        }
-
+        var request = await ReadJsonAsync<WholesaleInvitationPasswordRequest>(httpContext, cancellationToken);
         if (request is null)
         {
             return Results.Problem(
@@ -185,10 +233,30 @@ public static class WholesaleInvitationEndpoints
         }
 
         var invitation = await invitations.RequirePendingAsync(token, cancellationToken);
-        // Ruling W17: valida la contraseña antes de crear al usuario (WholesaleInvitationPasswordSession).
-        var user = await passwordSession.OpenAsync(invitation.Email, request.Password ?? string.Empty, cancellationToken);
+        // Sin correo en el cuerpo (un cliente anterior), el invitado. Ruling W17: valida la contraseña antes de crear al
+        // usuario (WholesaleInvitationPasswordSession).
+        var email = string.IsNullOrWhiteSpace(request.Email) ? invitation.Email : request.Email.Trim();
+        var user = await passwordSession.OpenAsync(
+            email, request.Password ?? string.Empty, request.Code, request.TermsVersion, httpContext.TraceIdentifier, cancellationToken);
 
         return await establisher.EstablishAsync(httpContext, user.UserId, user.Email, cancellationToken);
+    }
+
+    /// <summary>El cuerpo JSON, o <c>null</c> si falta o está mal formado. Sin Content-Type JSON, <c>ReadFromJsonAsync</c>
+    /// tira <see cref="InvalidOperationException"/> (un 500).</summary>
+    private static async Task<T?> ReadJsonAsync<T>(HttpContext httpContext, CancellationToken cancellationToken)
+        where T : class
+    {
+        try
+        {
+            return httpContext.Request.HasJsonContentType()
+                ? await httpContext.Request.ReadFromJsonAsync<T>(cancellationToken)
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static async Task<IResult> ListLinkableTenantsAsync(
@@ -209,12 +277,16 @@ public static class WholesaleInvitationEndpoints
         return Results.Ok(new LinkableTenantsResponse(tenants));
     }
 
+    // Spec 2026-11-19 §3b y §7: para NewTenant el nombre es la razón social que escribió el mayorista y el slug lo sugiere
+    // Tenancy; lo que traiga el cuerpo no se lee. Quien no aceptó la versión vigente de los términos la manda aquí (422 sin ella).
     private static async Task<IResult> AcceptAsync(
         string token,
         AcceptWholesaleInvitationRequest request,
         HttpContext httpContext,
         IDistributorInvitationService invitations,
         IUserDirectory userDirectory,
+        ITermsAcceptances termsAcceptances,
+        IServiceScopeFactory scopeFactory,
         CancellationToken cancellationToken)
     {
         if (RequireUserId(httpContext) is not { } userId)
@@ -223,16 +295,89 @@ public static class WholesaleInvitationEndpoints
         }
 
         await AcceptValidator.ValidateAndThrowAsync(request, cancellationToken);
-        AcceptInvitationChoice choice = AcceptWholesaleInvitationValidator.IsNewTenant(request.Mode)
-            ? new NewTenantChoice(RegistrationEndpoints.ToRegistrationData(request.DisplayName!, request.Slug!, null, null, null))
-            : new LinkTenantChoice(request.TenantId!.Value);
 
         // El correo sale de Identity, no del cuerpo ni de un claim: la sesión QEP no lo trae.
         var email = await userDirectory.GetEmailAsync(userId, cancellationToken);
-        var accepted = await invitations.AcceptAsync(
-            token, userId, email, choice, httpContext.TraceIdentifier, cancellationToken);
+        if (!AcceptWholesaleInvitationValidator.IsNewTenant(request.Mode))
+        {
+            return Results.Ok(await invitations.AcceptAsync(
+                token, userId, email, new LinkTenantChoice(request.TenantId!.Value), httpContext.TraceIdentifier, cancellationToken));
+        }
 
-        return Results.Ok(accepted);
+        // FindAsync y no RequirePendingAsync: repetir la aceptación ya hecha (D-16) tiene que seguir devolviendo el resultado.
+        // Los términos sólo se piden (y registran) con la invitación pendiente: una ya consumida o vencida responde su propio
+        // estado (409 para otra cuenta, el mismo resultado para quien la aceptó, 410), no un 422 de términos.
+        var summary = await invitations.FindAsync(token, cancellationToken);
+        if (string.Equals(summary.Status, PendingStatus, StringComparison.Ordinal))
+        {
+            await EnsureTermsAsync(userId, request.TermsVersion, termsAcceptances, cancellationToken);
+        }
+
+        var businessName = summary.BusinessName;
+
+        return Results.Ok(await AcceptNewTenantAsync(
+            token, userId, email, businessName, httpContext, scopeFactory, cancellationToken));
+    }
+
+    /// <summary>
+    /// La versión del cuerpo se registra (idempotente; el usuario ya está guardado porque tiene sesión). Sin ella, el usuario
+    /// tiene que haber aceptado la vigente; si no, 422 en <c>TermsVersion</c>. Sin versión configurada falla cerrado
+    /// (<c>identity.terms.unavailable</c>).
+    /// </summary>
+    private static async Task EnsureTermsAsync(
+        Guid userId, string? termsVersion, ITermsAcceptances termsAcceptances, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(termsVersion))
+        {
+            await termsAcceptances.RecordAsync(userId, termsVersion, cancellationToken);
+            return;
+        }
+
+        if (!await termsAcceptances.HasAcceptedCurrentAsync(userId, cancellationToken))
+        {
+            throw new ValidationException(
+                [new ValidationFailure("TermsVersion", "The terms version is required.") { ErrorCode = "NotEmptyValidator" }]);
+        }
+    }
+
+    /// <summary>
+    /// Foco 3: si otra aceptación toma el slug entre la sugerencia y el alta (<c>tenancy.slug.taken</c>), se reintenta con una
+    /// sugerencia nueva hasta <see cref="SlugRetries"/> veces. Cada reintento va en un scope nuevo: si el choque fue en el
+    /// guardado, el DbContext de Tenancy del intento anterior se quedó con el tenant reservado sin guardar, y volver a agregarlo
+    /// con el mismo id fallaría. La aceptación es idempotente (D-3), así que repetirla entera no duplica nada.
+    /// </summary>
+    private static async Task<AcceptedInvitationDto> AcceptNewTenantAsync(
+        string token,
+        Guid userId,
+        string? email,
+        string businessName,
+        HttpContext httpContext,
+        IServiceScopeFactory scopeFactory,
+        CancellationToken cancellationToken)
+    {
+        for (var retry = 0; ; retry++)
+        {
+            AsyncServiceScope? fresh = retry == 0 ? null : scopeFactory.CreateAsyncScope();
+            try
+            {
+                var services = fresh?.ServiceProvider ?? httpContext.RequestServices;
+                var slug = await services.GetRequiredService<ITenantSlugSuggestions>().SuggestAsync(businessName, cancellationToken);
+                var choice = new NewTenantChoice(RegistrationEndpoints.ToRegistrationData(businessName, slug, null, null, null));
+                return await services.GetRequiredService<IDistributorInvitationService>().AcceptAsync(
+                    token, userId, email, choice, httpContext.TraceIdentifier, cancellationToken);
+            }
+            catch (TenantDomainException exception) when (exception.Code == SlugTakenCode && retry < SlugRetries)
+            {
+                // Otra sugerencia en la siguiente vuelta.
+            }
+            finally
+            {
+                if (fresh is { } scope)
+                {
+                    await scope.DisposeAsync();
+                }
+            }
+        }
     }
 
     // Mismo criterio que InvitationEndpoints.RequireUserId: primero qep_sub (la cookie de sesión) y "sub" de respaldo, porque el
@@ -255,19 +400,28 @@ public sealed record WholesaleInvitationResponse(
     DateTimeOffset ExpiresAt,
     bool HasPassword);
 
-public sealed record WholesaleInvitationPasswordRequest(string? Password);
+/// <summary>
+/// Spec 2026-11-19 §4. <c>Email</c> es el que escribió el distribuidor (sin él, el invitado). <c>Code</c> y <c>TermsVersion</c>
+/// sólo se miran si esa cuenta todavía no tiene contraseña; entonces son obligatorios.
+/// </summary>
+public sealed record WholesaleInvitationPasswordRequest(string? Email, string? Password, string? Code, string? TermsVersion);
 
-/// <summary>Los tenants que quien acepta administra como owner, con por qué no se puede elegir cada uno.</summary>
+/// <summary>El correo al que se manda el código de un solo uso.</summary>
+public sealed record WholesaleInvitationEmailCodeRequest(string? Email);
+
+/// <summary>Los tenants que quien acepta administra como owner o admin, con por qué no se puede elegir cada uno.</summary>
 public sealed record LinkableTenantsResponse(IReadOnlyList<LinkableTenantDto> Tenants);
 
 /// <summary>
-/// <c>Mode</c> <c>NewTenant</c> con <c>DisplayName</c> y <c>Slug</c> (las reglas de <c>register-tenant</c>), o <c>LinkTenant</c>
-/// con <c>TenantId</c>. Todo opcional en el tipo para que lo que falte sea un 422 con su campo y no un 400 del binding.
+/// <c>Mode</c> <c>NewTenant</c> (spec 2026-11-19 §3b: sin nombre ni slug; un <c>displayName</c> o <c>slug</c> de un cliente
+/// anterior se ignora) o <c>LinkTenant</c> con <c>TenantId</c>. <c>TermsVersion</c> la manda quien todavía no aceptó la vigente,
+/// y sólo se exige para <c>NewTenant</c>. Todo opcional en el tipo para que lo que falte sea un 422 con su campo y no un 400 del
+/// binding.
 /// </summary>
-public sealed record AcceptWholesaleInvitationRequest(string? Mode, string? DisplayName, string? Slug, Guid? TenantId);
+public sealed record AcceptWholesaleInvitationRequest(string? Mode, Guid? TenantId, string? TermsVersion);
 
-/// <summary>Claves del 422: <c>Mode</c>, <c>DisplayName</c>, <c>Slug</c> y <c>TenantId</c>. El formato del nombre y del slug lo
-/// valida Tenancy con sus propios códigos (<c>tenancy.slug.invalid</c>, …).</summary>
+/// <summary>Claves del 422: <c>Mode</c> y <c>TenantId</c>. <c>TermsVersion</c> la exige el endpoint, que es quien sabe si el
+/// usuario ya aceptó.</summary>
 public sealed class AcceptWholesaleInvitationValidator : AbstractValidator<AcceptWholesaleInvitationRequest>
 {
     public const string NewTenantMode = "NewTenant";
@@ -279,12 +433,6 @@ public sealed class AcceptWholesaleInvitationValidator : AbstractValidator<Accep
         RuleFor(request => request.Mode)
             .Must(mode => IsNewTenant(mode) || IsLinkTenant(mode))
             .WithMessage("Mode must be NewTenant or LinkTenant.");
-
-        When(request => IsNewTenant(request.Mode), () =>
-        {
-            RuleFor(request => request.DisplayName).NotEmpty();
-            RuleFor(request => request.Slug).NotEmpty();
-        });
 
         When(request => IsLinkTenant(request.Mode), () =>
             RuleFor(request => request.TenantId).NotNull().NotEqual(Guid.Empty));
