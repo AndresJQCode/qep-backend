@@ -97,6 +97,14 @@ devuelve el correo **completo**, como hoy (D-20): el flujo del owner lo necesita
 rompería. El costo es que quien tenga el link ve el correo que escribió el mayorista; el link ya iba a ese correo. Quien tiene
 sesión ve, aparte, su tenant actual y sus tenants donde puede aceptar.
 
+### 3b. Formulario «¿Con qué empresa le compras a …?» (decisión del owner, 2026-11-19)
+
+El formulario de nombre e identificador del tenant nuevo **llega prellenado** con lo que escribió el mayorista, para que el
+distribuidor no lo diligencie de nuevo, y **puede corregirlo**. El nombre es `businessName` (ya viaja en el `GET`) y el
+identificador es `suggestedSlug`, un campo nuevo del `GET` que sale de `ITenantSlugSuggestions`. Si el cliente no manda nombre ni
+identificador al aceptar, el servidor usa esos mismos valores. El backend sigue validando lo que llegue (formato, reservados,
+slug libre); sólo el frontend decide cómo se pinta.
+
 ### 4. Distribuidor nuevo
 
 1. El distribuidor escribe un correo (precargado con el del mayorista), contraseña y marca los términos.
