@@ -1,4 +1,3 @@
-using System.Data.Common;
 using System.Text.Json;
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
@@ -527,31 +526,11 @@ public sealed partial class RunEffects(
                 _ => CrmResultCodes.Failed,
             };
         }
-        catch (Exception exception) when (!IsTransient(exception))
+        catch (Exception exception) when (!TransientFailures.MustPropagate(exception))
         {
             LogCrmFailed(logger, run.TenantId, run.ConversationId, run.Id, exception.GetType().Name);
             return CrmResultCodes.Failed;
         }
-    }
-
-    /// <summary>«Not yet» rather than «could not»: a cancellation, a concurrency conflict or a transient database failure
-    /// (<see cref="DbException.IsTransient"/>, anywhere in the chain).</summary>
-    private static bool IsTransient(Exception exception)
-    {
-        if (exception is OperationCanceledException or RequestConcurrencyException)
-        {
-            return true;
-        }
-
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is DbException { IsTransient: true })
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>

@@ -1,6 +1,6 @@
-using System.Data.Common;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging;
+using Modules.Automations.Application.Engine;
 using Modules.Messaging.Application;
 
 namespace Bootstrapper;
@@ -62,7 +62,8 @@ internal sealed partial class ConversationCustomerResolver(
             current = await conversations.LinkCustomerAsync(
                 row.TenantId, row.Id, ensured.CustomerId, ensured.Created, clock.UtcNow, cancellationToken);
         }
-        catch (Exception exception) when (!MustPropagate(exception))
+        // «Not yet» (a cancellation, a conflict, a transient database failure) goes up and the engine unit is retried.
+        catch (Exception exception) when (!TransientFailures.MustPropagate(exception))
         {
             LogCustomerUnavailable(logger, row.TenantId, row.Id, exception.GetType().Name);
             return new ConversationCustomer.Unavailable();
@@ -76,30 +77,6 @@ internal sealed partial class ConversationCustomerResolver(
         }
 
         return current is { } customerId ? new ConversationCustomer.Linked(customerId) : new ConversationCustomer.Unavailable();
-    }
-
-    /// <summary>
-    /// What is not «could not» but «not yet»: a cancellation (the worker shutting down), a concurrency conflict and a transient database
-    /// failure (lost connection, timeout, deadlock or serialization: <see cref="DbException.IsTransient"/>, which Npgsql sets). They go
-    /// up and the engine unit is retried, instead of recording an outcome the customer never caused.
-    /// </summary>
-    public static bool MustPropagate(Exception exception)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
-        if (exception is OperationCanceledException or RequestConcurrencyException)
-        {
-            return true;
-        }
-
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is DbException { IsTransient: true })
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>Ruling P2-R22: the link is already confirmed; a failed notice is logged and does not go up. A cancellation does.</summary>

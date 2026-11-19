@@ -18,7 +18,7 @@ namespace Bootstrapper;
 /// «Which customer»: the tag operations act on the conversation's customer, creating and linking one when it has none (as
 /// «Política de datos» does); moving a deal never creates one and passes the linked customer as it is. Each call rereads the
 /// conversation. A broken rule is <c>failed</c>; a cancellation, a concurrency conflict or a transient database failure goes up
-/// (<see cref="ConversationCustomerResolver.MustPropagate"/>) so the engine unit is retried. Logs carry only tenant and conversation.
+/// (<see cref="Modules.Automations.Application.Engine.TransientFailures.MustPropagate"/>) so the engine unit is retried. Logs carry only tenant and conversation.
 /// </para>
 /// </summary>
 internal sealed partial class AutomationCrm(
