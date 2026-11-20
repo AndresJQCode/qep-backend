@@ -55,6 +55,10 @@ public static class WholesaleErrorCodes
     // Fase 3: una variante fuera de la visibilidad de la lista, inactiva, ajena o sin precio en la moneda del mayorista.
     public const string ProductNotVisible = "wholesale.product.not_visible";
 
+    // Spec 2026-11-20: un `categoryId` que el comprador no pudo sacar de su árbol visible (ajeno, borrado o fuera de la lista);
+    // no dice cuál de los tres.
+    public const string CategoryNotVisible = "wholesale.category.not_visible";
+
     // 422 de guarda: los invariantes de la lista. El validador de Application los atrapa antes con el campo
     // (validation.failed), así que no forman parte del contrato; existen para que el agregado no confíe en quien lo llama
     // (mismo patrón que suppliers.supplier.name_required).

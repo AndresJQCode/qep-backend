@@ -19,7 +19,7 @@ internal sealed class PurchasesWholesaleCatalog(WholesaleOffers offers) : IWhole
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var found = await offers.SearchAsync(wholesalerTenantId, buyerTenantId, search, page, pageSize, cancellationToken);
+        var found = await offers.SearchAsync(wholesalerTenantId, buyerTenantId, search, null, page, pageSize, cancellationToken);
         return new WholesaleCatalogPage(
             found.Currency, found.PriceListName, found.DiscountPercent, [.. found.Items.Select(ToItem)], found.Total, found.ShowPrices);
     }
