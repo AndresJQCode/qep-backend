@@ -20,7 +20,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   2026-10-29, D-5). Agregar va en una versión; quitar, renombrar o volver `NOT NULL` lo que el código viejo escribe, en
   otra. Una migración que rompe al código viejo se despliega con corte (`Recreate` o el backend a cero réplicas), y el
   handoff del spec dice si es aditiva; si no lo dice, no lo es. Las reglas completas:
-  [README § Migraciones con pods viejos y nuevos](README.md#migraciones-con-pods-viejos-y-nuevos-expandcontract).
+  [README § Migraciones con pods viejos y nuevos](../../README.md#migraciones-con-pods-viejos-y-nuevos-expandcontract).
 - **Un hosted service o un singleton con estado nuevo se clasifica en `MultiReplicaInventory`, en el mismo commit**
   (`tests/ArchitectureTests/ArchitectureTests/MultiReplicaInventory.cs`, spec 2026-10-29, D-6). `MultiReplicaInventoryTests`
   lo detecta en el contenedor real y se pone en rojo si falta, o si queda una entrada que ya no está registrada. La

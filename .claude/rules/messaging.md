@@ -16,7 +16,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   categoría nunca se revisaron, así que cambiarlos no sirve — mira el `name` (sólo minúsculas,
   dígitos y guiones bajos), el `examples` (sin `$`, `#`, `%`) y el `Content-Type` del PDF de
   ejemplo. Costó cuatro intentos el 2026-09-04. El procedimiento entero está en
-  [README § Plantilla de WhatsApp](README.md#plantilla-de-whatsapp-zenvia).
+  [README § Plantilla de WhatsApp](../../README.md#plantilla-de-whatsapp-zenvia).
 - **El texto de la plantilla no se edita: se crea otra.** Meta no permite modificar una plantilla
   aprobada, así que cambiar una coma implica plantilla nueva, aprobación nueva y editar el
   `templateId` de la conexión de Zenvia de cada tenant (no hay cuenta global desde el plan
@@ -71,7 +71,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   middleware de CSRF ni se registra, así que la exención por ruta sólo se ve con
   `Authentication__UseDevelopmentStub=false`. Y su limitador `webhook` no es el `Public`: es concurrencia
   global con cola, porque un 429 hace que Meta reintente hasta 7 días. El resto está en
-  [README § Mensajería](README.md#mensajería-whatsapp-cloud).
+  [README § Mensajería](../../README.md#mensajería-whatsapp-cloud).
 - **Todo camino que inserte o reclame destinatarios de campaña respeta el candado de `MarkFrozenAsync`** (spec 2026-10-24 §4.4). El
   desduplicado `duplicate_contact` corre una sola vez, al terminar de congelar la audiencia, con la campaña `FOR UPDATE`;
   `AddRecipientsAsync` inserta con `FOR SHARE` y sólo si `audience_frozen_at IS NULL`, y el worker no reclama mientras sea `NULL`. Un
@@ -166,7 +166,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `POST /{wabaId}/subscribed_apps` sin cuerpo. Y al revés: **cualquier** suscripción sin cuerpo lo borra, según la documentación
   de Meta, también un signup de QEP con la clave vacía o una re-suscripción desde lulo chat, y el síntoma es que los webhooks
   vuelven a la URL de la app sin ningún error. Lo único que dice el estado real es `GET /{wabaId}/subscribed_apps`; el procedimiento
-  está en [README § Historial de coexistencia](README.md#historial-de-coexistencia).
+  está en [README § Historial de coexistencia](../../README.md#historial-de-coexistencia).
 - **Un camino nuevo que lea autores de `messaging.messages` tiene que tratar `sent_by_kind = 4`** (clave de API; el 3 es el agente
   de IA, en su propia entrada más abajo). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
   miembro lo pierde en silencio. Y uno que muestre «primera respuesta» debe excluirlo: un envío automático de un sistema externo no
