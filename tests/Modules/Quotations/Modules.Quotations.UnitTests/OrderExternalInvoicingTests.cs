@@ -143,7 +143,8 @@ public sealed class OrderExternalInvoicingTests
             new StubTenantDirectory(),
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Calle 1 # 2-3",
-                WithRetention: false, VatSurplus: false)));
+                WithRetention: false, VatSurplus: false)),
+            new StubQuotationAdvisorLookup());
 
         await service.MarkInvoicedAsync(TenantId, order.Id.Value, "siigo", "FV-1-123", "a1b2c3", Biller.Value, TestContext.Current.CancellationToken);
         await service.MarkInvoicedAsync(TenantId, order.Id.Value, "siigo", "FV-1-123", "a1b2c3", Biller.Value, TestContext.Current.CancellationToken);

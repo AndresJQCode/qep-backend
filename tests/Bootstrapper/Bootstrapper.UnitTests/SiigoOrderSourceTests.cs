@@ -58,6 +58,16 @@ public sealed class SiigoOrderSourceTests
     }
 
     [Fact]
+    public async Task TheAdvisorEmailTravels()
+    {
+        var source = new SiigoOrderSource(new FakeInvoicing(Order()), new FakeGeography());
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        Assert.Equal("asesora1@ritualbotanico.com", input!.AdvisorEmail);
+    }
+
+    [Fact]
     public async Task ACityOutsideColombiaGetsNoDaneCode()
     {
         var order = Order() with { BilledParty = Order().BilledParty with { Country = "ES" } };
@@ -104,7 +114,8 @@ public sealed class SiigoOrderSourceTests
             null,
             new ExternalInvoicingParty(
                 false, PartyPersonType.Juridica, PartyIdentificationType.Nit, "900123456-1", "Verde SAS", "Calle 1", CityId, Guid.CreateVersion7(), "CO", "a@b.co", "300"),
-            7);
+            7,
+            "asesora1@ritualbotanico.com");
 
     private sealed class FakeInvoicing(ExternalInvoicingOrder order) : IExternalOrderInvoicing
     {
