@@ -12,7 +12,7 @@ public static class EmailChallengeEmailTemplate
 
     public static EmailMessage Render(string recipientAddress, string code, TimeSpan validity)
     {
-        const string subject = "Tu código para vincularte";
+        const string subject = "Lulo CRM - Tu código para vincularte";
         var minutes = ((int)Math.Round(validity.TotalMinutes)).ToString(CultureInfo.InvariantCulture);
 
         var textBody =
