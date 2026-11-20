@@ -8,6 +8,8 @@ internal sealed class ServiceContractRepository(ServiceContractsDbContext dbCont
 {
     public void Add(ServiceContract service) => dbContext.Services.Add(service);
 
+    public void Remove(ServiceContract service) => dbContext.Services.Remove(service);
+
     public Task<ServiceContract?> FindAsync(
         Guid tenantId, ServiceContractId id, CancellationToken cancellationToken) =>
         dbContext.Services.FirstOrDefaultAsync(

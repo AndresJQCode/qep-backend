@@ -408,6 +408,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.ServiceContracts.Application.ChangeServiceStatusCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
             Modules.ServiceContracts.Application.ChangeServiceStatusHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.DeleteServiceCommand, bool>,
+            Modules.ServiceContracts.Application.DeleteServiceHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.ServiceContracts.Application.ListChargesQuery, Modules.ServiceContracts.Application.ChargePageDto>,
             Modules.ServiceContracts.Application.ListChargesHandler>();
         services.AddScoped<
