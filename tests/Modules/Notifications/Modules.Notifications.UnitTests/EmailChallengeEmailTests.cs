@@ -15,7 +15,7 @@ public sealed class EmailChallengeEmailTests
         var message = EmailChallengeEmailTemplate.Render("a@x.com", "042137", TimeSpan.FromMinutes(10));
 
         Assert.Equal("a@x.com", message.ToAddress);
-        Assert.Equal("Tu código para vincularte", message.Subject);
+        Assert.Equal("Lulo CRM - Tu código para vincularte", message.Subject);
         Assert.Contains("042137", message.TextBody);
         Assert.Contains("042137", message.HtmlBody);
         Assert.Contains("10 minutos", message.TextBody);

@@ -477,6 +477,25 @@ public sealed class SiigoApiClientTests : IDisposable
     }
 
     [Fact]
+    public async Task ARejectedCustomerNamesTheSiigoErrorCodesButNeverTheirMessages()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On(
+            "/v1/customers",
+            HttpStatusCode.BadRequest,
+            """{"Errors":[{"Code":"invalid_city","Message":"Ciudad 99999 de CLIENTE-SENTINEL no existe"}]}""");
+        var request = new SiigoCustomerRequest(
+            "Person", "13", "123", ["Ana", "Gomez"], null, "Co", "11", "99999", null, "Ana", "Gomez", null);
+
+        var error = await Assert.ThrowsAsync<UpstreamServiceException>(
+            () => _client.CreateCustomerAsync(Credentials, request, TestContext.Current.CancellationToken));
+
+        Assert.Contains("HTTP 400", error.Message, StringComparison.Ordinal);
+        Assert.Contains("invalid_city", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("SENTINEL", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AStampIsPostedToTheInvoiceAndItsErrorsAreRead()
     {
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));

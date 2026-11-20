@@ -301,9 +301,19 @@ public sealed class MessageTemplate
             throw new ArgumentException("The template already uses that header image.", nameof(fileId));
         }
 
-        var retired = HeaderImageFileId is { } previousId
-            ? MessageTemplateRetiredHeaderImage.Create(TenantId, Id, previousId, HeaderImageUrl ?? string.Empty, now)
-            : null;
+        MessageTemplateRetiredHeaderImage? retired = null;
+        if (HeaderImageFileId is { } previousId)
+        {
+            // Id y URL se asignan siempre juntos (AttachHeaderImage / ReplaceHeaderImage). Un id sin URL es una fila inconsistente:
+            // retirarla con una URL vacía escondería el dato roto y el historial enlazaría a la nada, así que se falla fuerte.
+            if (HeaderImageUrl is null)
+            {
+                throw new InvalidOperationException("The template has a header image file id but no URL; the stored state is inconsistent.");
+            }
+
+            retired = MessageTemplateRetiredHeaderImage.Create(TenantId, Id, previousId, HeaderImageUrl, now);
+        }
+
         HeaderImageFileId = fileId;
         HeaderImageUrl = publicUrl;
         UpdatedAt = now;

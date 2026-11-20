@@ -133,6 +133,24 @@ public sealed class ReplaceTemplateHeaderImageTests
         Assert.Equal(0, rig.UnitOfWork.Saves);
     }
 
+    // Sin componente HEADER no hay dónde poner la imagen: HeaderMedia es null y se rechaza igual que un encabezado de texto o documento.
+    [Fact]
+    public async Task RejectsATemplateWithNoHeaderWithHeaderMismatch()
+    {
+        var rig = new Rig();
+        var template = rig.Seed("""[{"type":"BODY","text":"Hola"}]""");
+        var newId = rig.Images.Seed(rig.Bed.TenantId, "image/png", 2048);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.ReplaceAsync(template.Id, newId));
+
+        Assert.Equal(MessagingErrorCodes.TemplateHeaderMismatch, error.Code);
+        Assert.Empty(rig.Images.Calls);
+        Assert.Empty(rig.Releases.Published);
+        Assert.Empty(rig.Repository.RetiredHeaderImages);
+        Assert.Null(template.HeaderImageFileId);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+    }
+
     [Fact]
     public async Task RejectsTheFileTheTemplateAlreadyUses()
     {
