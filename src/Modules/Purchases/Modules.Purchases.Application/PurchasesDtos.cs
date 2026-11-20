@@ -46,11 +46,11 @@ public sealed record PurchaseOrderLineDto(
     string Name,
     decimal? Quantity,
     decimal? ConfirmedQuantity,
-    decimal UnitCost,
+    decimal? UnitCost,
     decimal? ConfirmedUnitCost,
     decimal TaxRatePercent,
     string LineStatus,
-    decimal Subtotal,
+    decimal? Subtotal,
     /// <summary>Mayorista fase 3: la variante del mayorista; null en una orden externa.</summary>
     Guid? SupplierVariantId = null,
     /// <summary>Mayorista fase 3: la foto de la lista; null en una externa y en una línea que agregó el mayorista.</summary>
@@ -83,8 +83,8 @@ public sealed record PurchaseOrderDetailDto(
     PurchaseOrderMemberDto CreatedBy,
     DateTimeOffset CreatedAt,
     IReadOnlyList<PurchaseOrderLineDto> Lines,
-    PurchaseOrderTotalsDto Totals,
-    decimal RequestedTotal,
+    PurchaseOrderTotalsDto? Totals,
+    decimal? RequestedTotal,
     IReadOnlyList<PurchaseOrderHistoryDto> History,
     IReadOnlyList<string> AllowedActions,
     /// <summary>Mayorista fase 3 (adenda): <c>External</c> o <c>Linked</c>, el modo fijado al guardar (D-10). La pantalla
@@ -113,7 +113,7 @@ public sealed record PurchaseOrderSummaryDto(
     bool ConfirmedWithChanges,
     PurchaseOrderSupplierRefDto Supplier,
     string Currency,
-    decimal Total,
+    decimal? Total,
     DateTimeOffset CreatedAt,
     int LineCount,
     /// <summary>Mayorista fase 3: si la orden va a un mayorista vinculado, y el modo por nombre (adenda).</summary>

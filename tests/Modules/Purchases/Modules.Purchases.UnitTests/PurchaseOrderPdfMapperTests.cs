@@ -16,8 +16,8 @@ public sealed class PurchaseOrderPdfMapperTests
 
     private static PurchaseOrderLineDto Line(
         decimal quantity,
-        decimal unitCost,
-        decimal subtotal,
+        decimal? unitCost,
+        decimal? subtotal,
         decimal? confirmedQuantity = null,
         decimal? confirmedUnitCost = null,
         string lineStatus = "Pending") =>
@@ -37,7 +37,7 @@ public sealed class PurchaseOrderPdfMapperTests
     private static PurchaseOrderDetailDto Detail(
         string currency,
         IReadOnlyList<PurchaseOrderLineDto> lines,
-        PurchaseOrderTotalsDto totals,
+        PurchaseOrderTotalsDto? totals,
         string status = "Draft",
         DateTimeOffset? createdAt = null,
         IReadOnlyList<PurchaseOrderHistoryDto>? history = null) =>
@@ -54,7 +54,7 @@ public sealed class PurchaseOrderPdfMapperTests
             createdAt ?? PurchaseOrderTestData.Now,
             lines,
             totals,
-            totals.Total,
+            totals?.Total,
             history ?? [],
             []);
 
@@ -82,6 +82,22 @@ public sealed class PurchaseOrderPdfMapperTests
         Assert.Equal(
             ("Mayorista S.A.S.", "OC-0001", "17/11/2026", "Textiles Andinos", "NIT 900123456", "COP", "Entregar en bodega"),
             (cop.TenantName, cop.Number, cop.IssuedOn, cop.SupplierName, cop.SupplierIdentification, cop.Currency, cop.Notes));
+    }
+
+    [Fact]
+    public void MapPrintsADashWhereAnOrderWithoutPricesHasNoAmount()
+    {
+        var document = PurchaseOrderPdfMapper.Map(
+            Detail("COP", [Line(2m, null, null)], null),
+            Supplier,
+            "Mayorista S.A.S.",
+            Regional(),
+            Bogota);
+
+        var line = Assert.Single(document.Lines);
+        Assert.Equal(("2", "—", "—"), (line.Quantity, line.UnitCost, line.Subtotal));
+        Assert.Equal("19 %", line.TaxRate);
+        Assert.Equal(("—", "—", "—"), (document.Subtotal, document.Tax, document.Total));
     }
 
     [Fact]
