@@ -69,6 +69,28 @@ public sealed class SupplierCatalogTests
         Assert.Equal([(TenantId, Wholesaler, (string?)"aceite", 2, 50)], _wholesale.Searches);
     }
 
+    // Spec 2026-11-19: el ítem sigue plano por variante pero trae el producto y la foto para agrupar y dibujar tarjetas.
+    [Fact]
+    public async Task CatalogItemsCarryTheProductAndPhoto()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+        var productId = Guid.CreateVersion7();
+        var medium = _wholesale.Add("CAM-M", 14000m, 15m, 11900m, 19m);
+        var large = _wholesale.Add("CAM-L", 14000m, 15m, 11900m, 19m);
+        _wholesale.Items[medium.VariantId] = medium with
+        {
+            ProductId = productId, ProductName = "Camiseta", ImageUrl = "https://cdn.example.co/m.png",
+        };
+        _wholesale.Items[large.VariantId] = large with { ProductId = productId, ProductName = "Camiseta", ImageUrl = null };
+
+        var page = await Handler().HandleAsync(
+            new ListSupplierCatalogQuery(TenantId, PurchaseOrderTestData.SupplierId, null, 1, 50), Ct);
+
+        Assert.Equal(
+            [(productId, "Camiseta", (string?)"https://cdn.example.co/m.png"), (productId, "Camiseta", null)],
+            page.Items.Select(item => (item.ProductId, item.ProductName, item.ImageUrl)));
+    }
+
     [Fact]
     public async Task ThePageSizeIsCappedAt200()
     {

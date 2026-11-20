@@ -103,7 +103,12 @@ internal sealed record FakeCatalogProduct(
     Guid? CategoryId,
     IReadOnlyDictionary<string, decimal> Prices,
     bool IsActive = true,
-    decimal TaxRatePercent = 0m);
+    decimal TaxRatePercent = 0m)
+{
+    public Guid ProductId { get; init; } = Guid.CreateVersion7();
+
+    public string? ImageUrl { get; init; }
+}
 
 /// <summary>
 /// El catálogo del mayorista en memoria. <see cref="SampleAsync"/> filtra como el adaptador (activo, con precio en la moneda,
@@ -137,7 +142,8 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
         decimal? cop,
         decimal? usd = null,
         bool isActive = true,
-        decimal taxRatePercent = 0m)
+        decimal taxRatePercent = 0m,
+        string? imageUrl = null)
     {
         var prices = new Dictionary<string, decimal>();
         if (cop is { } copPrice)
@@ -150,7 +156,10 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
             prices["USD"] = usdPrice;
         }
 
-        var product = new FakeCatalogProduct(Guid.CreateVersion7(), code, name, categoryId, prices, isActive, taxRatePercent);
+        var product = new FakeCatalogProduct(Guid.CreateVersion7(), code, name, categoryId, prices, isActive, taxRatePercent)
+        {
+            ImageUrl = imageUrl,
+        };
         Products.Add(product);
         return product.VariantId;
     }
@@ -168,7 +177,9 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
     }
 
     private WholesaleSellableVariant Sellable(FakeCatalogProduct product, string currency) =>
-        new(product.VariantId, product.Code, product.Name, product.Prices[currency], product.TaxRatePercent, PathOf(product.CategoryId));
+        new(
+            product.VariantId, product.Code, product.Name, product.Prices[currency], product.TaxRatePercent, PathOf(product.CategoryId),
+            product.ProductId, "Producto " + product.Name, product.ImageUrl);
 
     public Task<IReadOnlyDictionary<Guid, WholesaleSellableVariant>> FindSellableAsync(
         Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)

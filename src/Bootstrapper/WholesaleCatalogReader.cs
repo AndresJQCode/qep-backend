@@ -17,7 +17,8 @@ internal sealed class WholesaleCatalogReader(
     IProductCategoryRepository categories,
     IProductRepository products,
     IOptionDefinitionRepository options,
-    ITaxRateRepository taxRates)
+    ITaxRateRepository taxRates,
+    IProductImageLookup images)
     : IWholesaleCatalogReader
 {
     public async Task<IReadOnlyDictionary<Guid, WholesaleCategoryRef>> FindCategoriesAsync(
@@ -159,28 +160,39 @@ internal sealed class WholesaleCatalogReader(
         var parents = (await categories.ListCategoriesWithParentsAsync(tenantId, cancellationToken))
             .ToDictionary(node => node.Id.Value, node => node.ParentId?.Value);
 
-        var items = new List<WholesaleSellableVariant>();
+        // Primero las variantes que se ofrecen; luego las fotos de todas en UNA llamada (sin N+1).
+        var sellable = new List<(Product Product, ProductVariant Variant, decimal Price)>();
         foreach (var product in found)
         {
-            var path = PathOf(product.CategoryId?.Value, parents);
+            foreach (var variant in variantsOf(product))
+            {
+                if (CatalogVariantReads.IsSellable(product, variant) && variant.PriceIn(currency) is { } price)
+                {
+                    sellable.Add((product, variant, price));
+                }
+            }
+        }
+
+        // Las fotos son del mayorista: el re-chequeo de tenant de ImageUrlOf usa SU tenant, nunca el del comprador.
+        var files = await CatalogVariantReads.LoadImagesAsync(
+            images, sellable.Select(entry => (Guid?)CatalogVariantReads.ImageFileIdOf(entry.Product, entry.Variant)), cancellationToken);
+
+        var items = new List<WholesaleSellableVariant>(sellable.Count);
+        foreach (var (product, variant, price) in sellable)
+        {
             var taxRate = product.TaxRateId is { } rateId && percentages.TryGetValue(rateId, out var percentage)
                 ? percentage
                 : 0m;
-            foreach (var variant in variantsOf(product))
-            {
-                if (!CatalogVariantReads.IsSellable(product, variant) || variant.PriceIn(currency) is not { } price)
-                {
-                    continue;
-                }
-
-                items.Add(new WholesaleSellableVariant(
-                    variant.Id.Value,
-                    variant.Code,
-                    CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
-                    price,
-                    taxRate,
-                    path));
-            }
+            items.Add(new WholesaleSellableVariant(
+                variant.Id.Value,
+                variant.Code,
+                CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
+                price,
+                taxRate,
+                PathOf(product.CategoryId?.Value, parents),
+                product.Id.Value,
+                product.Name,
+                CatalogVariantReads.ImageUrlOf(CatalogVariantReads.ImageFileIdOf(product, variant), files, tenantId)));
         }
 
         return items;

@@ -46,7 +46,9 @@ public sealed record WholesaleSampleVariant(Guid VariantId, string Code, string 
 /// <summary>
 /// Fase 3: una variante que el distribuidor puede pedir (variante y producto activos, con precio en la moneda pedida), con su
 /// tasa de IVA vigente y <paramref name="CategoryPath"/> = la categoría del producto y sus ancestros, para decidir la
-/// visibilidad «con descendientes» sin otra lectura del árbol.
+/// visibilidad «con descendientes» sin otra lectura del árbol. Spec 2026-11-19: ProductId, ProductName e ImageUrl (la foto de la
+/// variante, si no la principal del producto, si no null; sólo si el archivo es del tenant y está disponible) para que el
+/// distribuidor dibuje tarjetas por producto.
 /// </summary>
 public sealed record WholesaleSellableVariant(
     Guid VariantId,
@@ -54,7 +56,10 @@ public sealed record WholesaleSellableVariant(
     string Name,
     decimal BasePrice,
     decimal TaxRatePercent,
-    IReadOnlyList<Guid> CategoryPath);
+    IReadOnlyList<Guid> CategoryPath,
+    Guid ProductId = default,
+    string ProductName = "",
+    string? ImageUrl = null);
 
 /// <summary>El catálogo del mayorista visto desde Mayorista; adaptador en Bootstrapper sobre Catalog. Todo acotado al tenant.</summary>
 public interface IWholesaleCatalogReader
