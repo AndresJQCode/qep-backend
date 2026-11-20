@@ -105,6 +105,11 @@ public static class SiigoEndpoints
             .WithTags("Siigo")
             .RequireAuthorization(SiigoPermissions.InvoiceIssue);
 
+        invoice.MapGet("/availability", InvoiceAvailabilityAsync)
+            .Produces<SiigoInvoiceAvailabilityDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         invoice.MapGet("/preview", PreviewInvoiceAsync)
             .Produces<SiigoInvoicePreviewDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -140,6 +145,10 @@ public static class SiigoEndpoints
 
         return endpoints;
     }
+
+    private static async Task<IResult> InvoiceAvailabilityAsync(
+        Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new SiigoInvoiceAvailabilityQuery(tenantId, orderId), cancellationToken));
 
     private static async Task<IResult> PreviewInvoiceAsync(
         Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
