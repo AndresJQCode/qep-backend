@@ -64,7 +64,7 @@ public sealed class WholesaleOffersTests
         SeedActive().Block(DistributorWorld.Now);
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct));
+            Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct));
 
         Assert.Equal(WholesaleErrorCodes.RelationshipInactive, error.Code);
     }
@@ -170,7 +170,7 @@ public sealed class WholesaleOffersTests
         _catalog.AddProduct("A-4", "Vieja", null, cop: 5000m, isActive: false);
         SeedActive();
 
-        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct);
+        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
 
         Assert.Equal(["A-2", "A-1"], page.Items.Select(item => item.Code));
         Assert.Equal(2, page.Total);
@@ -184,7 +184,7 @@ public sealed class WholesaleOffersTests
         SeedActive();
         var product = _catalog.Products.Single(candidate => candidate.VariantId == variantId);
 
-        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct);
+        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
         var (_, priced) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [variantId], Ct);
 
         var offer = Assert.Single(page.Items);
@@ -219,7 +219,7 @@ public sealed class WholesaleOffersTests
         _catalog.AddProduct("S-2", "Martillo", null, cop: 5000m);
         SeedActive();
 
-        var page = await Offers().SearchAsync(_world.Tenant, _buyer, "olla", 1, 50, Ct);
+        var page = await Offers().SearchAsync(_world.Tenant, _buyer, "olla", null, 1, 50, Ct);
 
         Assert.Equal(("COP", "Mayoristas", 15m, 1), (page.Currency, page.PriceListName, page.DiscountPercent, page.Total));
         var item = Assert.Single(page.Items);
@@ -234,7 +234,7 @@ public sealed class WholesaleOffersTests
         var hogar = _catalog.AddCategory("Hogar");
         UseCategories(SeedActive(), 10m, hogar);
 
-        await Offers().SearchAsync(_world.Tenant, _buyer, null, 2, 20, Ct);
+        await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 2, 20, Ct);
 
         var call = Assert.Single(_catalog.SearchCalls);
         Assert.Equal([hogar], call.CategoryIds!);
@@ -315,14 +315,171 @@ public sealed class WholesaleOffersTests
         var distributor = SeedActive();
 
         var visibleTerms = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
-        var visiblePage = await Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct);
+        var visiblePage = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
         _world.PriceLists.Lists.Values.Single().Update(
             "Mayoristas", 15m, PriceListVisibility.AllActive, [], DistributorWorld.Now, false);
         var hiddenTerms = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
-        var hiddenPage = await Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct);
+        var hiddenPage = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
 
         Assert.Equal((true, true), (visibleTerms.ShowPrices, visiblePage.ShowPrices));
         Assert.Equal((false, false), (hiddenTerms.ShowPrices, hiddenPage.ShowPrices));
         Assert.NotNull(distributor);
+    }
+
+    private (Guid Raiz, Guid Hijo, Guid Nieto, Guid Otra) SeedTree()
+    {
+        var raiz = _catalog.AddCategory("Hogar");
+        var hijo = _catalog.AddCategory("Cocina", raiz);
+        var nieto = _catalog.AddCategory("Ollas", hijo);
+        var otra = _catalog.AddCategory("Jardín");
+        return (raiz, hijo, nieto, otra);
+    }
+
+    [Fact]
+    public async Task VisibleCategoriesOfAnAllActiveListAreTheWholeTree()
+    {
+        var (raiz, hijo, nieto, otra) = SeedTree();
+        SeedActive();
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal(
+            new[] { raiz, hijo, nieto, otra }.OrderBy(id => _catalog.Categories[id].Name, StringComparer.Ordinal),
+            nodes.Select(node => node.Id));
+        Assert.Equal(raiz, nodes.Single(node => node.Id == hijo).ParentId);
+    }
+
+    [Fact]
+    public async Task VisibleCategoriesOfACategoriesListAreItsRootsAndDescendants()
+    {
+        var (raiz, hijo, nieto, otra) = SeedTree();
+        UseCategories(SeedActive(), 10m, hijo);
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal(new[] { hijo, nieto }.Order(), nodes.Select(node => node.Id).Order());
+        Assert.Null(nodes.Single(node => node.Id == hijo).ParentId);
+        Assert.Equal(hijo, nodes.Single(node => node.Id == nieto).ParentId);
+        Assert.DoesNotContain(nodes, node => node.Id == raiz || node.Id == otra);
+    }
+
+    [Fact]
+    public async Task VisibleCategoriesWithoutRelationshipIsRelationshipInactive()
+    {
+        SeedTree();
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct));
+
+        Assert.Equal(WholesaleErrorCodes.RelationshipInactive, error.Code);
+    }
+
+    [Fact]
+    public async Task SearchWithAVisibleCategoryPassesItToTheReader()
+    {
+        var (_, hijo, nieto, otra) = SeedTree();
+        _catalog.AddProduct("C-1", "Olla", nieto, cop: 10000m);
+        _catalog.AddProduct("J-1", "Pala", otra, cop: 5000m);
+        SeedActive();
+
+        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, hijo, 1, 50, Ct);
+
+        Assert.Equal([hijo], _catalog.SearchCalls.Single().CategoryIds);
+        Assert.Equal(["C-1"], page.Items.Select(item => item.Code));
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task SearchWithACategoryOutsideTheListIs422NotVisible()
+    {
+        var (raiz, _, _, otra) = SeedTree();
+        UseCategories(SeedActive(), 10m, raiz);
+
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() =>
+            Offers().SearchAsync(_world.Tenant, _buyer, null, otra, 1, 50, Ct));
+
+        Assert.Equal(WholesaleErrorCodes.CategoryNotVisible, error.Code);
+        Assert.Empty(_catalog.SearchCalls);
+    }
+
+    [Fact]
+    public async Task SearchWithAnUnknownCategoryIs422NotVisible()
+    {
+        SeedTree();
+        SeedActive();
+
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() =>
+            Offers().SearchAsync(_world.Tenant, _buyer, null, Guid.CreateVersion7(), 1, 50, Ct));
+
+        Assert.Equal(WholesaleErrorCodes.CategoryNotVisible, error.Code);
+        Assert.Empty(_catalog.SearchCalls);
+    }
+
+    [Fact]
+    public async Task SearchWithADescendantOfAListedCategoryIsAllowed()
+    {
+        var (raiz, _, nieto, _) = SeedTree();
+        _catalog.AddProduct("C-1", "Olla", nieto, cop: 10000m);
+        _catalog.AddProduct("H-1", "Mesa", raiz, cop: 20000m);
+        UseCategories(SeedActive(), 10m, raiz);
+
+        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, nieto, 1, 50, Ct);
+
+        Assert.Equal(["C-1"], page.Items.Select(item => item.Code));
+    }
+
+    [Fact]
+    public async Task SearchWithoutCategoryIdKeepsTheListVisibility()
+    {
+        var (raiz, _, _, _) = SeedTree();
+        UseCategories(SeedActive(), 10m, raiz);
+
+        await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
+
+        Assert.Equal([raiz], _catalog.SearchCalls.Single().CategoryIds);
+    }
+
+    // Menores diferidos de la revisión final: el árbol visible no depende de datos sanos.
+    [Fact]
+    public async Task AnAllActiveTreeTurnsAnOrphanIntoARoot()
+    {
+        var huerfana = _catalog.AddCategory("Huérfana", Guid.CreateVersion7());
+        var raiz = _catalog.AddCategory("Raíz");
+        var hija = _catalog.AddCategory("Hija", raiz);
+        SeedActive();
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal(3, nodes.Count);
+        Assert.Null(nodes.Single(node => node.Id == huerfana).ParentId);
+        Assert.Equal(raiz, nodes.Single(node => node.Id == hija).ParentId);
+    }
+
+    [Fact]
+    public async Task ACategoriesTreeWithACycleOrAMissingParentDoesNotHang()
+    {
+        var a = _catalog.AddCategory("A");
+        var b = _catalog.AddCategory("B", a);
+        _catalog.Categories[a] = _catalog.Categories[a] with { ParentId = b };
+        var sinPadre = _catalog.AddCategory("Sin padre", Guid.CreateVersion7());
+        UseCategories(SeedActive(), 10m, a, sinPadre);
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        Assert.Equal(new[] { a, b, sinPadre }.Order(), nodes.Select(node => node.Id).Order());
+        Assert.Null(nodes.Single(node => node.Id == sinPadre).ParentId);
+    }
+
+    [Fact]
+    public async Task VisibleCategoriesOfACategoriesListKeepTheReadersOrder()
+    {
+        var raiz = _catalog.AddCategory("Raíz");
+        var zeta = _catalog.AddCategory("Zeta", raiz);
+        var alfa = _catalog.AddCategory("Alfa", raiz);
+        UseCategories(SeedActive(), 10m, raiz);
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal([alfa, raiz, zeta], nodes.Select(node => node.Id));
     }
 }

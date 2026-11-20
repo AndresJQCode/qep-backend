@@ -532,6 +532,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Purchases.Application.ListSupplierCatalogQuery, Modules.Purchases.Application.SupplierCatalogPageDto>,
             Modules.Purchases.Application.ListSupplierCatalogHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Purchases.Application.ListSupplierCatalogCategoriesQuery, Modules.Purchases.Application.SupplierCatalogCategoriesDto>,
+            Modules.Purchases.Application.ListSupplierCatalogCategoriesHandler>();
         services.AddScoped<Modules.Purchases.Application.WholesaleOrderEventApplier>();
 
         // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.

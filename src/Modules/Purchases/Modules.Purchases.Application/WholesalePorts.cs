@@ -27,6 +27,9 @@ public sealed record WholesaleCatalogPage(
     int Total,
     bool ShowPrices = true);
 
+/// <summary>Una categoría del mayorista que el distribuidor puede ver; <c>ParentId</c> nulo es raíz de su árbol visible.</summary>
+public sealed record WholesaleCategory(Guid Id, string Name, Guid? ParentId);
+
 /// <summary>
 /// El catálogo de un mayorista vinculado; adaptador en Bootstrapper sobre Wholesale (<c>WholesaleOffers</c>). Recibe los dos
 /// tenants y verifica en el servidor la relación <c>Active</c>: sin ella, 403 <c>wholesale.relationship.inactive</c>. Una
@@ -35,10 +38,22 @@ public sealed record WholesaleCatalogPage(
 /// </summary>
 public interface IWholesaleCatalog
 {
+    /// <summary>
+    /// El árbol de categorías que la lista del distribuidor le deja ver (spec 2026-11-20), plano y en el orden del mayorista.
+    /// Misma verificación de relación que el catálogo: 403 <c>wholesale.relationship.inactive</c>.
+    /// </summary>
+    Task<IReadOnlyList<WholesaleCategory>> ListCategoriesAsync(
+        Guid buyerTenantId, Guid wholesalerTenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <paramref name="categoryId"/> filtra por esa categoría y sus descendientes; una fuera del árbol visible es 422
+    /// <c>wholesale.category.not_visible</c>.
+    /// </summary>
     Task<WholesaleCatalogPage> SearchAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         string? search,
+        Guid? categoryId,
         int page,
         int pageSize,
         CancellationToken cancellationToken);

@@ -4,7 +4,8 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Purchases.Application;
 
-public sealed record ListSupplierCatalogQuery(Guid TenantId, Guid SupplierId, string? Search, int Page, int PageSize)
+public sealed record ListSupplierCatalogQuery(
+    Guid TenantId, Guid SupplierId, string? Search, int Page, int PageSize, Guid? CategoryId = null)
     : IQuery<SupplierCatalogPageDto>;
 
 /// <summary>
@@ -72,7 +73,7 @@ public sealed class ListSupplierCatalogHandler(
         var pageSize = query.PageSize < 1 ? DefaultPageSize : Math.Min(query.PageSize, MaxPageSize);
         var search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim();
         var result = await wholesaleCatalog.SearchAsync(
-            query.TenantId, wholesalerTenantId, search, page, pageSize, cancellationToken);
+            query.TenantId, wholesalerTenantId, search, query.CategoryId, page, pageSize, cancellationToken);
 
         var show = result.ShowPrices;
         return new SupplierCatalogPageDto(

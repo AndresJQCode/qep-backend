@@ -143,4 +143,92 @@ public sealed class SupplierCatalogTests
             new SupplierCatalogItemDto(item.VariantId, "ACE-1", "Producto ACE-1", 14000m, 15m, 11900m, 19m, 10000m),
             Assert.Single(page.Items));
     }
+
+    private ListSupplierCatalogCategoriesHandler CategoriesHandler(params string[] permissions) =>
+        new(new FakeExecutionContext(TenantId, permissions.Length == 0 ? [PurchasesPermissions.OrderManage] : permissions),
+            _suppliers, _wholesale);
+
+    private static ListSupplierCatalogCategoriesQuery CategoriesQuery(Guid supplierId) => new(TenantId, supplierId);
+
+    [Fact]
+    public async Task CategoriesOfANonLinkedSupplierIs422()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle");
+
+        var error = await Assert.ThrowsAsync<PurchasesDomainException>(() =>
+            CategoriesHandler().HandleAsync(CategoriesQuery(PurchaseOrderTestData.SupplierId), Ct));
+
+        Assert.Equal(PurchasesErrorCodes.SupplierNotLinked, error.Code);
+    }
+
+    [Fact]
+    public async Task CategoriesOfAnotherTenantsSupplierIs404()
+    {
+        var error = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            CategoriesHandler().HandleAsync(CategoriesQuery(Guid.CreateVersion7()), Ct));
+
+        Assert.Equal("suppliers.supplier.not_found", error.Code);
+    }
+
+    [Fact]
+    public async Task CategoriesNeedOrderManage()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            CategoriesHandler(PurchasesPermissions.OrderRead)
+                .HandleAsync(CategoriesQuery(PurchaseOrderTestData.SupplierId), Ct));
+
+        Assert.Equal("authorization.denied", error.Code);
+    }
+
+    [Fact]
+    public async Task CategoriesWithAnInactiveRelationshipIs403()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+        _wholesale.Forbidden = true;
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            CategoriesHandler().HandleAsync(CategoriesQuery(PurchaseOrderTestData.SupplierId), Ct));
+
+        Assert.Equal(PurchasesErrorCodes.RelationshipInactive, error.Code);
+    }
+
+    [Fact]
+    public async Task CategoriesComeInTheOrderTheWholesalerGives()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+        var zeta = new WholesaleCategory(Guid.CreateVersion7(), "Zeta", null);
+        var alfa = new WholesaleCategory(Guid.CreateVersion7(), "Alfa", zeta.Id);
+        _wholesale.Categories.AddRange([zeta, alfa]);
+
+        var result = await CategoriesHandler().HandleAsync(CategoriesQuery(PurchaseOrderTestData.SupplierId), Ct);
+
+        Assert.Equal(
+            [new SupplierCatalogCategoryDto(zeta.Id, "Zeta", null), new SupplierCatalogCategoryDto(alfa.Id, "Alfa", zeta.Id)],
+            result.Items);
+    }
+
+    [Fact]
+    public async Task CatalogPassesTheCategoryIdToTheWholesaleCatalog()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+        var categoryId = Guid.CreateVersion7();
+
+        await Handler().HandleAsync(
+            new ListSupplierCatalogQuery(TenantId, PurchaseOrderTestData.SupplierId, null, 1, 50, categoryId), Ct);
+
+        Assert.Equal([(Guid?)categoryId], _wholesale.SearchCategoryIds);
+    }
+
+    [Fact]
+    public async Task CatalogWithoutCategoryIdPassesNull()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+
+        await Handler().HandleAsync(
+            new ListSupplierCatalogQuery(TenantId, PurchaseOrderTestData.SupplierId, null, 1, 50), Ct);
+
+        Assert.Equal([(Guid?)null], _wholesale.SearchCategoryIds);
+    }
 }
