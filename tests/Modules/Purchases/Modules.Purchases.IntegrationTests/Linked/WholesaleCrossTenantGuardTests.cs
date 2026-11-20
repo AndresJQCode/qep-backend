@@ -59,6 +59,21 @@ public sealed class WholesaleCrossTenantGuardTests(SharedPurchasesHost host) : I
             (item.BasePrice, item.ListPrice, item.UnitCost));
     }
 
+    // Spec 2026-11-19: cada ítem trae el producto de su variante; sin foto subida, ImageUrl es null.
+    [Fact]
+    public async Task TheCatalogItemsCarryTheirProduct()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+
+        var page = await world.Buyer.GetFromJsonAsync<SupplierCatalogPageDto>(world.CatalogUrl(), Ct);
+
+        var item = page!.Items.Single(candidate => candidate.VariantId == world.VariantA);
+        Assert.NotEqual(Guid.Empty, item.ProductId);
+        Assert.False(string.IsNullOrWhiteSpace(item.ProductName));
+        Assert.StartsWith(item.ProductName, item.Name, StringComparison.Ordinal);
+        Assert.Null(item.ImageUrl);
+    }
+
     [Fact]
     public async Task PreviewAndSendWithAnInvisibleProductAre422()
     {
