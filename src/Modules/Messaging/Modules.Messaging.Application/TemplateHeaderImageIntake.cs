@@ -93,16 +93,16 @@ internal sealed partial class TemplateHeaderImageIntake(
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released now; the release goes through the outbox.")]
+        Message = "The header image {FileId} of a template that failed to be created or changed in tenant {TenantId} could not be released now; the release goes through the outbox.")]
     private static partial void LogReleaseDeferred(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} is not released: a saved template uses it.")]
+        Message = "The header image {FileId} of a template that failed to be created or changed in tenant {TenantId} is not released: a saved template uses it.")]
     private static partial void LogReleaseSkippedInUse(ILogger logger, Guid tenantId, Guid fileId);
 
     [LoggerMessage(
         Level = LogLevel.Error,
-        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released nor deferred to the outbox; it stays published.")]
+        Message = "The header image {FileId} of a template that failed to be created or changed in tenant {TenantId} could not be released nor deferred to the outbox; it stays published.")]
     private static partial void LogReleaseFailed(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
 }

@@ -282,7 +282,7 @@ public sealed class MessageTemplate
     }
 
     /// <summary>Spec 2026-11-20: cambia la imagen fija del encabezado y devuelve la anterior ya retirada (<c>null</c> si no había), para
-    /// que quien guarda la persista: Meta puede seguir mostrándola, así que no se libera. Misma imagen es un error de quien llama.</summary>
+    /// que quien guarda la persista: el historial de mensajes de QEP enlaza a ella (el encabezado guardado de lo ya enviado), así que no se libera. Misma imagen es un error de quien llama.</summary>
     public MessageTemplateRetiredHeaderImage? ReplaceHeaderImage(Guid fileId, string publicUrl, DateTimeOffset now)
     {
         if (fileId == Guid.Empty)

@@ -23,8 +23,8 @@ public sealed class ReplaceTemplateHeaderImageCommandValidator : AbstractValidat
 
 /// <summary>Spec 2026-11-20. Orden: autorización, validador, conexión (422 <c>connection_unavailable</c>), plantilla (404), formato del
 /// encabezado (422 <c>header_mismatch</c> si no es <c>IMAGE</c>), archivo en uso o retirado (422 <c>header_image_rejected</c>) y revisión
-/// del archivo. Después de publicar, un fallo libera sólo la imagen nueva: la anterior queda retirada y referenciada (Meta puede seguir
-/// mostrándola), nunca se libera acá. Con la fila guardada la imagen nueva es suya y no se libera.</summary>
+/// del archivo. Después de publicar, un fallo libera sólo la imagen nueva: la anterior queda retirada y referenciada (el historial de mensajes
+/// de QEP enlaza a ella), nunca se libera acá. Con la fila guardada la imagen nueva es suya y no se libera.</summary>
 public sealed class ReplaceTemplateHeaderImageHandler(
     IMessageTemplateRepository repository,
     IMessagingConnectionDirectory connections,

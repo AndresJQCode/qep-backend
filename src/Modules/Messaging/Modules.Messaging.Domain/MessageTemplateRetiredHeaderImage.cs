@@ -1,8 +1,8 @@
 namespace Modules.Messaging.Domain;
 
 /// <summary>
-/// Spec 2026-11-20: una imagen de encabezado que la plantilla ya no usa pero que Meta puede seguir mostrando (el <c>header_handle</c>
-/// de la plantilla ya aprobada apunta a ella). No se libera al cambiarla: la fila hace que Storage la siga contando como referenciada
+/// Spec 2026-11-20: una imagen de encabezado que la plantilla ya no usa pero que el historial de mensajes de QEP sigue enlazando (el enlace
+/// del encabezado guardado en lo ya enviado apunta a ella; liberarla lo rompería). No se libera al cambiarla: la fila hace que Storage la siga contando como referenciada
 /// hasta que se borre la plantilla, y entonces se va en cascada.
 /// </summary>
 public sealed class MessageTemplateRetiredHeaderImage
