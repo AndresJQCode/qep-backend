@@ -10,7 +10,36 @@ public sealed class TenantSlugsTests
 {
     [Fact]
     public void StripsAccentsAndPunctuation() =>
-        Assert.Equal("distribuciones-nandu-s-a-s", TenantSlugs.Normalize("Distribuciones Ñandú S.A.S."));
+        Assert.Equal("distribuciones-nandu-cia", TenantSlugs.Normalize("Distribuciones Ñandú & Cía."));
+
+    // Spec 2026-11-19 §3b: la forma societaria del final no entra al slug (sí queda en el nombre del tenant).
+    [Theory]
+    [InlineData("Distribuciones Andina SAS", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina S.A.S", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina S.A.S.", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina, S.A.S.", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina SA", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina S.A", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina S.A.", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina LTDA", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina Ltda.", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina LTA", "distribuciones-andina")]
+    [InlineData("distribuciones andina s.a.s.", "distribuciones-andina")]
+    [InlineData("Distribuciones Andina Ltda. S.A.S.", "distribuciones-andina")]
+    public void TheCorporateSuffixAtTheEndIsNotPartOfTheSlug(string displayName, string expected) =>
+        Assert.Equal(expected, TenantSlugs.Normalize(displayName));
+
+    // Sólo cuenta como sufijo una palabra suelta al final: no un final de palabra, ni algo en el medio, ni el nombre entero.
+    [Theory]
+    [InlineData("Casas", "casas")]
+    [InlineData("Pesa", "pesa")]
+    [InlineData("Tasa Bosa", "tasa-bosa")]
+    [InlineData("SA Distribuciones", "sa-distribuciones")]
+    [InlineData("S.A.S. Andina", "s-a-s-andina")]
+    [InlineData("SAS", "sas")]
+    [InlineData("Andina S.A.S. Norte", "andina-s-a-s-norte")]
+    public void ASuffixLookalikeIsKept(string displayName, string expected) =>
+        Assert.Equal(expected, TenantSlugs.Normalize(displayName));
 
     [Theory]
     [InlineData("A")]
