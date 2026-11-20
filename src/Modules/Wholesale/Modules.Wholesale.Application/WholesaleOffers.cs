@@ -29,7 +29,10 @@ public sealed record WholesaleOffer(
     decimal BasePrice,
     decimal DiscountPercent,
     decimal ListPrice,
-    decimal TaxRatePercent);
+    decimal TaxRatePercent,
+    Guid ProductId = default,
+    string ProductName = "",
+    string? ImageUrl = null);
 
 /// <summary>Una página del catálogo visto por el distribuidor, con la lista que la precia (adenda: <c>priceList</c>).</summary>
 public sealed record WholesaleOfferPage(
@@ -196,7 +199,10 @@ public sealed class WholesaleOffers(
             item.BasePrice,
             discountPercent,
             WholesalePricing.ListPrice(item.BasePrice, discountPercent, rounding),
-            item.TaxRatePercent);
+            item.TaxRatePercent,
+            item.ProductId,
+            item.ProductName,
+            item.ImageUrl);
 
     private static WholesaleDomainException NotVisible(string? code) => new(
         WholesaleErrorCodes.ProductNotVisible,

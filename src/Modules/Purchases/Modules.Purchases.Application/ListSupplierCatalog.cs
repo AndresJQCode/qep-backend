@@ -19,7 +19,10 @@ public sealed record SupplierCatalogItemDto(
     decimal DiscountPercent,
     decimal ListPrice,
     decimal TaxRatePercent,
-    decimal UnitCost);
+    decimal UnitCost,
+    Guid ProductId = default,
+    string ProductName = "",
+    string? ImageUrl = null);
 
 /// <summary>La lista de precios que aplica al distribuidor (adenda: la tarjeta «Tarifa: Distribuidor estándar»).</summary>
 public sealed record SupplierCatalogPriceListDto(string Name, decimal DiscountPercent);
@@ -78,7 +81,10 @@ public sealed class ListSupplierCatalogHandler(
                     item.DiscountPercent,
                     item.ListPrice,
                     item.TaxRatePercent,
-                    PurchaseOrderMath.NetOfVat(item.ListPrice, item.TaxRatePercent)))
+                    PurchaseOrderMath.NetOfVat(item.ListPrice, item.TaxRatePercent),
+                    item.ProductId,
+                    item.ProductName,
+                    item.ImageUrl))
                 .ToList(),
             result.Total,
             page,

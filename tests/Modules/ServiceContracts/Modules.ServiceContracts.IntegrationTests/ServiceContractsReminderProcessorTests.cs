@@ -987,6 +987,9 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             inner.AddRange(list);
         }
 
+        public Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken) =>
+            inner.RemoveByServiceAsync(serviceId, cancellationToken);
+
         public Task<Charge?> FindAsync(Guid tenantId, Guid chargeId, CancellationToken cancellationToken) =>
             inner.FindAsync(tenantId, chargeId, cancellationToken);
 

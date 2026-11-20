@@ -1259,4 +1259,149 @@ public sealed class ServiceContractApiTests
         Assert.Equal("validation.failed", await CodeOfAsync(response));
         Assert.True(Has((await ErrorsOfAsync(response)), field));
     }
+
+    // Eliminar un contrato (spec 2026-11-19): borrado duro de cualquier estado, con cobros pagados incluidos.
+    [Fact]
+    public async Task DeleteRemovesTheServiceItsChargesRemindersAndPriceChangesWithAuditAndKeepsTheOthers()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        await SeedCallerMembershipAsync(factory, "Caro Cobros");
+        using var manager = CreateManager(factory);
+        var doomed = await CreateAsync(
+            manager, ServiceBody(customerId, ProfileBody("Email", admin), name: "Hosting", firstDueDate: PastAnchor(2)));
+        var survivor = await CreateAsync(
+            manager, ServiceBody(customerId, null, name: "Dominio", firstDueDate: PastAnchor(1)));
+        var paid = await manager.PostAsJsonAsync(
+            $"{ServiceContractsUrl()}/charges/{doomed.Charges[^1].Id}/pay", new { paidOn = Iso(TenantToday) }, Ct);
+        Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+        var priced = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(doomed.Service.Id), 1,
+                new { name = "Hosting", price = 200000m, currency = "COP", priceChangeReason = "IPC" }), Ct));
+        await SeedReminderStepAsync(factory, customerId, doomed.Charges[0].Id);
+        await SeedReminderStepAsync(factory, customerId, survivor.Charges[0].Id);
+
+        var response = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(doomed.Service.Id), priced.Service.Version), Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await manager.GetAsync(ServiceUrl(doomed.Service.Id), Ct)).StatusCode);
+        Assert.Equal(0, await CountRowsAsync(factory, "services", doomed.Service.Id));
+        Assert.Equal(0, await CountRowsAsync(factory, "charges", doomed.Service.Id));
+        Assert.Equal(0, await CountRowsAsync(factory, "service_price_changes", doomed.Service.Id));
+        Assert.Equal(1, await CountRowsAsync(factory, "services", survivor.Service.Id));
+        Assert.Equal(survivor.Charges.Count, await CountRowsAsync(factory, "charges", survivor.Service.Id));
+        Assert.Equal(1, await CountReminderStepsAsync(factory));
+        Assert.Equal(1, await CountAuditEntriesAsync(factory, ServiceContractsAuditActions.ServiceDeleted, doomed.Service.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task DeleteWorksOnACancelledService()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        var cancelled = await ReadDetailAsync(await TransitionAsync(manager, created.Service.Id, "cancel", 1));
+
+        var response = await manager.SendAsync(
+            WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), cancelled.Service.Version), Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteNeedsIfMatchAndAFreshVersionAndLeavesTheServiceIntact()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+
+        var missing = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), null), Ct);
+        var stale = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), 99), Ct);
+
+        Assert.Equal(HttpStatusCode.PreconditionRequired, missing.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal(1, await CountRowsAsync(factory, "services", created.Service.Id));
+        Assert.Equal(0, await CountAuditEntriesAsync(factory, ServiceContractsAuditActions.ServiceDeleted, created.Service.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task DeleteOfAnUnknownOrForeignServiceAnswers404AndWithoutManageAnswers403()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        await SeedTenantAsync(factory, ServiceContractsApiHarness.OtherTenantId);
+        using var outsider = CreateClient(
+            factory, ServiceContractsApiHarness.OtherSubjectId, ServiceContractsApiHarness.OtherTenantId,
+            ServiceContractsPermissions.Read, ServiceContractsPermissions.Manage);
+        using var reader = CreateReader(factory);
+
+        var unknown = await manager.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(Guid.CreateVersion7()), 1), Ct);
+        var foreign = await outsider.SendAsync(
+            WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id, ServiceContractsApiHarness.OtherTenantId), 1), Ct);
+        var forbidden = await reader.SendAsync(WithVersion(HttpMethod.Delete, ServiceUrl(created.Service.Id), 1), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.Equal("billing.service.not_found", await CodeOfAsync(unknown));
+        Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
+        Assert.Equal("billing.service.not_found", await CodeOfAsync(foreign));
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        Assert.Equal(1, await CountRowsAsync(factory, "services", created.Service.Id));
+    }
+
+    private static async Task<NpgsqlConnection> OpenConnectionAsync(QepApiFactory factory)
+    {
+        var connection = new NpgsqlConnection(
+            factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("QepDatabase")!);
+        await connection.OpenAsync(Ct);
+        return connection;
+    }
+
+    /// <summary>Filas de una tabla de <c>billing</c> de ese servicio (<c>id</c> en services, <c>service_id</c> en el resto).</summary>
+    private static async Task<int> CountRowsAsync(QepApiFactory factory, string table, Guid serviceId)
+    {
+        await using var connection = await OpenConnectionAsync(factory);
+        var column = table == "services" ? "id" : "service_id";
+        await using var count = new NpgsqlCommand($"SELECT count(*) FROM billing.{table} WHERE {column} = @id", connection);
+        count.Parameters.AddWithValue("id", serviceId);
+        return (int)(long)(await count.ExecuteScalarAsync(Ct))!;
+    }
+
+    private static async Task<int> CountReminderStepsAsync(QepApiFactory factory)
+    {
+        await using var connection = await OpenConnectionAsync(factory);
+        await using var count = new NpgsqlCommand("SELECT count(*) FROM billing.reminder_steps", connection);
+        return (int)(long)(await count.ExecuteScalarAsync(Ct))!;
+    }
+
+    private static async Task SeedReminderStepAsync(QepApiFactory factory, Guid customerId, Guid chargeId)
+    {
+        await using var connection = await OpenConnectionAsync(factory);
+        var messageId = Guid.CreateVersion7();
+        await using var message = new NpgsqlCommand(
+            "INSERT INTO billing.customer_messages (id, tenant_id, customer_id, run_date, kind, channel, status, claimed_until, attempted_at) " +
+            "VALUES (@id, @tenant, @customer, @day, 'Reminder', 'Email', 'Sent', now(), now())", connection);
+        message.Parameters.AddWithValue("id", messageId);
+        message.Parameters.AddWithValue("tenant", Tenant);
+        message.Parameters.AddWithValue("customer", customerId);
+        message.Parameters.AddWithValue("day", TenantToday.AddDays(-Random.Shared.Next(1, 3000)));
+        await message.ExecuteNonQueryAsync(Ct);
+        await using var step = new NpgsqlCommand(
+            "INSERT INTO billing.reminder_steps (charge_id, step, message_id, tenant_id) VALUES (@charge, 'D0', @message, @tenant)", connection);
+        step.Parameters.AddWithValue("charge", chargeId);
+        step.Parameters.AddWithValue("message", messageId);
+        step.Parameters.AddWithValue("tenant", Tenant);
+        await step.ExecuteNonQueryAsync(Ct);
+    }
 }

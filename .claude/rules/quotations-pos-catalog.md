@@ -50,7 +50,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Al agregar una columna al catálogo del Excel de pedidos, revisa los encabezados de las fijas de la semilla.**
   Una columna nueva cuyo encabezado choca con una visible del layout guardado nace oculta en silencio, sin
   error: la regla de choque está en
-  [README § Columnas del Excel de pedidos](README.md#columnas-del-excel-de-pedidos-por-tenant-homologación).
+  [README § Columnas del Excel de pedidos](../../README.md#columnas-del-excel-de-pedidos-por-tenant-homologación).
 - **La variante por defecto lleva el id del producto, y el relleno de `variant_id` depende de eso** (spec 2026-10-20 §8).
   `Product.Create` le da a la primera variante el id del producto —también al crear con opciones—, y `AddProductVariants`
   hizo lo mismo con cada producto que existía. Por eso `AddVariantToLines` (Quotations) y `AddVariantToSaleLines` (Pos)

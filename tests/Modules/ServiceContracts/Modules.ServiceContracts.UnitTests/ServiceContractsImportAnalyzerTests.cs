@@ -224,6 +224,8 @@ public sealed class ServiceContractsImportAnalyzerTests
 
         public void Add(ServiceContract service) => throw new NotSupportedException();
 
+        public void Remove(ServiceContract service) => throw new NotSupportedException();
+
         public Task<ServiceContract?> FindAsync(Guid tenantId, ServiceContractId id, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

@@ -73,6 +73,14 @@ public static class ServiceContractsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        group.MapDelete("/services/{serviceId:guid}", DeleteServiceAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Manage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         MapTransition(group, "pause", ServiceContractTransition.Pause);
         MapTransition(group, "resume", ServiceContractTransition.Resume);
         MapTransition(group, "cancel", ServiceContractTransition.Cancel);
@@ -317,6 +325,20 @@ public static class ServiceContractsEndpoints
             UpdateServiceCommand.From(tenantId, serviceId, request, RequireVersion(httpContext)), cancellationToken);
 
         return Results.Ok(service);
+    }
+
+    // Borrado duro (spec 2026-11-19): cualquier estado, con If-Match como las transiciones.
+    private static async Task<IResult> DeleteServiceAsync(
+        Guid tenantId,
+        Guid serviceId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteServiceCommand(tenantId, serviceId, RequireVersion(httpContext)), cancellationToken);
+
+        return Results.NoContent();
     }
 
     private static async Task<IResult> ListChargesAsync(

@@ -9,6 +9,9 @@ public interface IServiceContractRepository
 {
     void Add(ServiceContract service);
 
+    /// <summary>Borra el servicio al guardar (borrado duro, spec 2026-11-19); sus cobros e historial de precios los quitan sus repositorios.</summary>
+    void Remove(ServiceContract service);
+
     Task<ServiceContract?> FindAsync(Guid tenantId, ServiceContractId id, CancellationToken cancellationToken);
 
     /// <summary>Los servicios del tenant con esos ids, en un solo viaje: la lista de cobros pinta el nombre del servicio de cada fila.</summary>
