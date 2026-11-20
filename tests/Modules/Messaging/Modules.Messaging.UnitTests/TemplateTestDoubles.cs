@@ -244,6 +244,14 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
     public Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
         Task.FromResult(SavedHeaderImages.Contains((tenantId, fileId)));
 
+    public List<MessageTemplateRetiredHeaderImage> RetiredHeaderImages { get; } = [];
+
+    public void AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage image) => RetiredHeaderImages.Add(image);
+
+    public Task<IReadOnlyList<Guid>> ListRetiredHeaderImageFileIdsAsync(Guid tenantId, Guid templateId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>(
+            RetiredHeaderImages.Where(image => image.TenantId == tenantId && image.TemplateId == templateId).Select(image => image.FileId).ToList());
+
     public Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Syncs.TryGetValue((tenantId, connectionId), out var at) ? at : (DateTimeOffset?)null);
 

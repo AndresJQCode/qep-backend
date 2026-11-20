@@ -54,6 +54,12 @@ public interface IMessageTemplateRepository
     /// Lee la base, no lo rastreado: una fila agregada y sin guardar no cuenta. Crear la usa para no tomar ni liberar la imagen de otra.</summary>
     Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-20: guarda la imagen que una plantilla dejó de usar al cambiarla. Cuenta como en uso hasta que se borre la plantilla.</summary>
+    void AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage image);
+
+    /// <summary>Spec 2026-11-20: los archivos retirados de la plantilla, para liberarlos todos al borrarla.</summary>
+    Task<IReadOnlyList<Guid>> ListRetiredHeaderImageFileIdsAsync(Guid tenantId, Guid templateId, CancellationToken cancellationToken);
+
     /// <summary>§4.1 <c>template_mirror_syncs</c>: cuándo se confirmó el espejo de la conexión contra Meta; <c>null</c> si nunca.</summary>
     Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 

@@ -281,6 +281,35 @@ public sealed class MessageTemplate
         UpdatedAt = now;
     }
 
+    /// <summary>Spec 2026-11-20: cambia la imagen fija del encabezado y devuelve la anterior ya retirada (<c>null</c> si no había), para
+    /// que quien guarda la persista: el historial de mensajes de QEP enlaza a ella (el encabezado guardado de lo ya enviado), así que no se libera. Misma imagen es un error de quien llama.</summary>
+    public MessageTemplateRetiredHeaderImage? ReplaceHeaderImage(Guid fileId, string publicUrl, DateTimeOffset now)
+    {
+        if (fileId == Guid.Empty)
+        {
+            throw new ArgumentException("The header image needs a file id.", nameof(fileId));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(publicUrl);
+        if (publicUrl.Length > HeaderImageUrlMaxLength)
+        {
+            throw new ArgumentException($"The header image URL takes at most {HeaderImageUrlMaxLength} characters.", nameof(publicUrl));
+        }
+
+        if (HeaderImageFileId == fileId)
+        {
+            throw new ArgumentException("The template already uses that header image.", nameof(fileId));
+        }
+
+        var retired = HeaderImageFileId is { } previousId
+            ? MessageTemplateRetiredHeaderImage.Create(TenantId, Id, previousId, HeaderImageUrl ?? string.Empty, now)
+            : null;
+        HeaderImageFileId = fileId;
+        HeaderImageUrl = publicUrl;
+        UpdatedAt = now;
+        return retired;
+    }
+
     /// <summary>El webhook <c>message_template_status_update</c>: estado nuevo y su motivo («NONE» = ninguno).</summary>
     public void ApplyStatus(string? status, string? reason, DateTimeOffset now)
     {

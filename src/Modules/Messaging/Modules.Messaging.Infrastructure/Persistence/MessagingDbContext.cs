@@ -139,6 +139,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// a <c>header_image_rejected</c> y su compensación ve la fila de la ganadora y no libera la imagen.</summary>
     public const string MessageTemplateHeaderImageIndex = "UX_message_templates_header_image";
 
+    /// <summary>Spec 2026-11-20: un archivo retirado lo es una sola vez en todo el sistema.</summary>
+    public const string MessageTemplateRetiredHeaderImageFileIndex = "UX_message_template_retired_header_images_file";
+
     /// <summary>Fix de la Task 8 (spec 2026-10-14 §4.5): una sola <c>Quotation</c> por conexión. Parcial sobre <c>kind = 'Quotation'</c>,
     /// que se guarda como texto (<c>CK_message_templates_kind</c>). Dos primeros aprovisionamientos a la vez chocan acá y la unidad de
     /// trabajo lo traduce por nombre a <c>quotation_exists</c>.</summary>
@@ -211,6 +214,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-14 §4.1: el espejo de plantillas.</summary>
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
 
+    public DbSet<MessageTemplateRetiredHeaderImage> MessageTemplateRetiredHeaderImages => Set<MessageTemplateRetiredHeaderImage>();
+
     internal DbSet<TemplateMirrorSyncRecord> TemplateMirrorSyncs => Set<TemplateMirrorSyncRecord>();
 
     /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
@@ -249,6 +254,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureBotDelegation(modelBuilder);
         ConfigureConnectionBots(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
+        ConfigureMessageTemplateRetiredHeaderImage(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
         ConfigureHistorySync(modelBuilder);
         ConfigureInbox(modelBuilder);
@@ -855,6 +861,22 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Kind }, MessageTemplateBillingIndex).IsUnique()
             .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Status }, "IX_message_templates_status");
+    }
+
+    /// <summary>Spec 2026-11-20: las imágenes de encabezado que una plantilla dejó de usar. Se van con la plantilla (cascada).</summary>
+    private static void ConfigureMessageTemplateRetiredHeaderImage(ModelBuilder modelBuilder)
+    {
+        var retired = modelBuilder.Entity<MessageTemplateRetiredHeaderImage>();
+        retired.ToTable("message_template_retired_header_images", Schema);
+        retired.HasKey(value => value.Id);
+        retired.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        retired.Property(value => value.TenantId).HasColumnName("tenant_id");
+        retired.Property(value => value.TemplateId).HasColumnName("template_id");
+        retired.Property(value => value.FileId).HasColumnName("file_id");
+        retired.Property(value => value.PublicUrl).HasColumnName("public_url").HasMaxLength(MessageTemplate.HeaderImageUrlMaxLength);
+        retired.Property(value => value.RetiredAt).HasColumnName("retired_at");
+        retired.HasOne<MessageTemplate>().WithMany().HasForeignKey(value => value.TemplateId).OnDelete(DeleteBehavior.Cascade);
+        retired.HasIndex(value => value.FileId, MessageTemplateRetiredHeaderImageFileIndex).IsUnique();
     }
 
     /// <summary>Spec 2026-10-29: la importación del historial por conexión. Sin FK: la conexión es de Integrations, otro schema.

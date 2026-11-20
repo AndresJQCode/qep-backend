@@ -188,11 +188,14 @@ internal static class MessagingSaveChanges
         }
     }
 
-    /// <summary>Por nombre de índice, como el resto: otro 23505 de <c>message_templates</c> no es una imagen tomada.</summary>
+    /// <summary>Por nombre de índice, como el resto: otro 23505 de <c>message_templates</c> no es una imagen tomada. Spec 2026-11-20: el
+    /// índice único de las imágenes retiradas cuenta igual: dos cambios a la vez con el mismo archivo, o un archivo ya retirado, son el
+    /// mismo rechazo del campo y no un 500.</summary>
     internal static bool IsHeaderImageTaken(DbUpdateException exception) =>
         exception.InnerException is PostgresException postgres
         && postgres.SqlState == PostgresErrorCodes.UniqueViolation
-        && string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateHeaderImageIndex, StringComparison.Ordinal);
+        && (string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateHeaderImageIndex, StringComparison.Ordinal)
+            || string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateRetiredHeaderImageFileIndex, StringComparison.Ordinal));
 
     /// <summary>El error del campo de la imagen (el mismo que el rechazo de antes de publicar), con la violación como causa.</summary>
     internal static MessagingDomainException HeaderImageTaken(DbUpdateException exception) =>

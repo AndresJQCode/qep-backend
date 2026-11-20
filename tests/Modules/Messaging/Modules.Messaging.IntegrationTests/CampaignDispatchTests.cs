@@ -471,6 +471,74 @@ public sealed class CampaignDispatchTests
         Assert.True(recipient.GetProperty("retriable").GetBoolean());
     }
 
+    // Meta acepta el envío (200) y avisa por webhook que la cuenta no puede pagar: cada envío siguiente fallaría igual. La campaña se detiene
+    // ahí, sin esperar a que el worker reciba un error síncrono, y lo que esperaba turno queda Skipped campaign_failed para reintentarlo.
+    [Fact]
+    public async Task AnAccountBlockReportedByWebhookStopsTheCampaignAndSkipsWhatWasPending()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        LeaveAllButTheFirstTwoPending(f);
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant,
+            ("Ana", "300 111 2201"), ("Beto", "300 111 2202"), ("Carla", "300 111 2203"), ("Diego", "300 111 2204"), ("Elena", "300 111 2205"), ("Fabio", "300 111 2206"));
+        var id = await LaunchAsync(f, Input(f, [.. customers]));
+        await DrainCampaignsAsync(f.Host);
+        var sent = await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Sent'");
+        Assert.Equal(2L, sent);
+        Assert.Equal(4L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Pending'"));
+        var wamid = await ScalarAsync<string>(f.ConnectionString, "SELECT wamid FROM messaging.messages WHERE direction = 2 AND wamid IS NOT NULL ORDER BY id LIMIT 1");
+
+        using var webhook = f.Host.CreateClient();
+        await PostWebhookAsync(webhook, MetaPayloads.Status("111", wamid, "failed", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), null, 131042, "Business eligibility payment issue"));
+        await DrainDeliveriesAsync(f.Host);
+
+        Assert.Equal("Failed", await CampaignStatusAsync(f, id));
+        var detail = await f.Client.GetFromJsonAsync<JsonElement>($"{CampaignsUrl(f)}/{id}", Ct);
+        Assert.Equal("131042", detail.GetProperty("failureCode").GetString());
+        Assert.Equal(MessageFailureReasons.For(131042), detail.GetProperty("failureReason").GetString());
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Pending'"));
+        Assert.Equal(6L - sent, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Skipped' AND failure_code = 'campaign_failed'"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.campaign.failed' AND resource_id = @id", ("id", id.ToString())));
+        var sends = MetaSends(f.Pod.MetaHandler);
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal(sends, MetaSends(f.Pod.MetaHandler));
+    }
+
+    // Una pasada del worker manda a todos los que el ritmo permite. Para que la campaña siga en curso cuando llega el webhook, Meta acepta
+    // los dos primeros y responde throughput (130429, reintentable) al resto: vuelven a Pending con su backoff y esperan su turno.
+    private static void LeaveAllButTheFirstTwoPending(Fixture f)
+    {
+        f.Pod.MetaHandler.Reset();
+        f.Pod.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
+        ScriptSends(f.Pod.MetaHandler, number => number > 2 ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(130429)) : null);
+    }
+
+    // Un fallo por destinatario (número sin WhatsApp) no detiene nada: la campaña sigue con los demás.
+    [Fact]
+    public async Task ARecipientFailureReportedByWebhookDoesNotStopTheCampaign()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        LeaveAllButTheFirstTwoPending(f);
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant,
+            ("Ana", "300 111 2201"), ("Beto", "300 111 2202"), ("Carla", "300 111 2203"), ("Diego", "300 111 2204"), ("Elena", "300 111 2205"), ("Fabio", "300 111 2206"));
+        var id = await LaunchAsync(f, Input(f, [.. customers]));
+        await DrainCampaignsAsync(f.Host);
+        Assert.Equal(4L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Pending'"));
+        var wamid = await ScalarAsync<string>(f.ConnectionString, "SELECT wamid FROM messaging.messages WHERE direction = 2 AND wamid IS NOT NULL ORDER BY id LIMIT 1");
+
+        using var webhook = f.Host.CreateClient();
+        await PostWebhookAsync(webhook, MetaPayloads.Status("111", wamid, "failed", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), null, 131026, "Message undeliverable"));
+        await DrainDeliveriesAsync(f.Host);
+
+        Assert.Equal("Sending", await CampaignStatusAsync(f, id));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.campaign_recipients WHERE status = 'Skipped'"));
+    }
+
     [Fact]
     public async Task APausedTemplateStopsTheCampaignAndSkipsWhatWasPending()
     {

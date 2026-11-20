@@ -358,7 +358,11 @@ public sealed class CampaignDispatcherTests
     [InlineData(132001)]
     [InlineData(132015)]
     [InlineData(132016)]
-    public async Task ATemplateProblemFailsTheRecipientAndStopsTheCampaign(int code)
+    [InlineData(131042)]
+    [InlineData(131031)]
+    [InlineData(368)]
+    [InlineData(131005)]
+    public async Task ATemplateProblemOrAnAccountBlockFailsTheRecipientAndStopsTheCampaign(int code)
     {
         var bed = new DispatchBed();
         var recipient = bed.Recipient();
