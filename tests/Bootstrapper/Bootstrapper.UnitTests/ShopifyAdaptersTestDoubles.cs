@@ -603,6 +603,9 @@ internal sealed class FakeConnectionRepository(params IntegrationConnection[] co
 
 internal sealed class FakeIntegrationConnections(params IntegrationConnection[] connections) : IIntegrationConnections
 {
+    public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
         var connection = connections.FirstOrDefault(candidate =>

@@ -24,7 +24,12 @@ public interface ISiigoConnectionDirectory
     /// proveedor (el llamador responde 403, nunca 404).</summary>
     Task<SiigoConnectionInfo?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Las credenciales para <b>operar</b> (facturar, sellar): sólo una conexión <c>Active</c>.</summary>
     Task<SiigoConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Las credenciales para <b>configurar</b> (listas del asistente, productos y sus vínculos): también una <c>Paused</c>.
+    /// Pausar es dejar de facturar, no dejar de configurar.</summary>
+    Task<SiigoConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
     /// <summary>Todas las del tenant, por nombre.</summary>
     Task<IReadOnlyList<SiigoConnectionInfo>> ListByTenantAsync(Guid tenantId, CancellationToken cancellationToken);

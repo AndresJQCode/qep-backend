@@ -63,6 +63,39 @@ public sealed class ConsumerPortsTests
         Assert.Equal((ConnectionUnavailableReason.ProviderHidden, "Oculta", true), await Of(hidden.Id));
     }
 
+    // Pausar es dejar de operar, no dejar de configurar: la configuración de un consumidor (Siigo) lee con una pausada. NeedsAttention
+    // sigue afuera: su credencial está rechazada y el proveedor respondería 401 igual.
+    [Fact]
+    public async Task ResolveForSetupAcceptsAPausedConnectionButNotOneThatNeedsAttention()
+    {
+        var bed = new IntegrationsTestBed();
+        var paused = bed.Seed("Pausada");
+        paused.Pause(IntegrationsTestBed.Now);
+        var attention = bed.Seed("Atención");
+        attention.MarkNeedsAttention(ConnectionFailureCodes.CredentialsRejected, IntegrationsTestBed.Now);
+        var unreadable = bed.Seed("Ilegible");
+        unreadable.Pause(IntegrationsTestBed.Now);
+        bed.Protector.Unreadable.Add((unreadable.Id, ZenviaFieldKeys.ApiToken));
+        var port = bed.ConnectionsPort();
+
+        var resolved = await port.ResolveForSetupAsync(bed.TenantId, paused.Id, Ct);
+        Assert.Null(resolved.Unavailable);
+        Assert.Equal(IntegrationsTestBed.Token, resolved.Connection!.Secrets[ZenviaFieldKeys.ApiToken]);
+
+        Assert.Equal(
+            ConnectionUnavailableReason.NeedsAttention,
+            (await port.ResolveForSetupAsync(bed.TenantId, attention.Id, Ct)).Unavailable);
+        Assert.Equal(
+            ConnectionUnavailableReason.SecretUnreadable,
+            (await port.ResolveForSetupAsync(bed.TenantId, unreadable.Id, Ct)).Unavailable);
+        Assert.Equal(
+            ConnectionUnavailableReason.NotFound,
+            (await port.ResolveForSetupAsync(bed.TenantId, Guid.CreateVersion7(), Ct)).Unavailable);
+
+        // Operar sigue exigiendo Active.
+        Assert.Equal(ConnectionUnavailableReason.Paused, (await port.ResolveAsync(bed.TenantId, paused.Id, Ct)).Unavailable);
+    }
+
     // Zenvia exige que el operador lo habilite para el tenant (plan 2026-10-21): un conjunto vacío lo apaga.
     [Fact]
     public async Task ResolveSaysProviderDisabledWhenTheTenantTurnedItOff()
