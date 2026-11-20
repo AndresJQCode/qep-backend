@@ -71,14 +71,16 @@ public sealed record WholesaleIntakeRequest(
 
 /// <summary>
 /// El pedido que quedó en el mayorista con sus líneas, ya convertidas a la foto de la orden (costo sin IVA, D-9). Con
-/// <c>AlreadyExisted</c> es el pedido que ya estaba (D-8) y la orden adopta esas líneas.
+/// <c>AlreadyExisted</c> es el pedido que ya estaba (D-8) y la orden adopta esas líneas. <c>ShowPrices</c> es el flag vivo de la
+/// lista del distribuidor (spec 2026-11-19, D-9): en <c>false</c> la orden adopta las líneas sin montos y los recibe al aprobar.
 /// </summary>
 public sealed record WholesaleIntakeResult(
     Guid OrderId,
     string OrderNumber,
     string Currency,
     IReadOnlyList<LinkedLineSnapshot> Lines,
-    bool AlreadyExisted);
+    bool AlreadyExisted,
+    bool ShowPrices = true);
 
 /// <summary>
 /// El pedido del mayorista visto desde la orden de compra; adaptador en Bootstrapper sobre Wholesale y Quotations. Cruza

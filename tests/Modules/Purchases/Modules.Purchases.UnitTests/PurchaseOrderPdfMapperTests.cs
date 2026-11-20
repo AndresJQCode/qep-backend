@@ -56,7 +56,8 @@ public sealed class PurchaseOrderPdfMapperTests
             totals,
             totals?.Total,
             history ?? [],
-            []);
+            [],
+            ShowPrices: totals is not null);
 
     [Fact]
     public void MapFormatsMoneyWithTheTenantSeparatorsAndTheCurrencySymbol()
@@ -98,6 +99,20 @@ public sealed class PurchaseOrderPdfMapperTests
         Assert.Equal(("2", "—", "—"), (line.Quantity, line.UnitCost, line.Subtotal));
         Assert.Equal("19 %", line.TaxRate);
         Assert.Equal(("—", "—", "—"), (document.Subtotal, document.Tax, document.Total));
+        Assert.False(document.ShowsAmounts);
+    }
+
+    [Fact]
+    public void MapKeepsShowingAmountsForAPricedOrder()
+    {
+        var document = PurchaseOrderPdfMapper.Map(
+            Detail("COP", [Line(2m, 100m, 200m)], new PurchaseOrderTotalsDto(200m, 38m, 238m)),
+            Supplier,
+            "Mayorista S.A.S.",
+            Regional(),
+            Bogota);
+
+        Assert.True(document.ShowsAmounts);
     }
 
     [Fact]

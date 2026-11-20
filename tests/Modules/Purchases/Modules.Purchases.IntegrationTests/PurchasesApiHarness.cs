@@ -311,7 +311,7 @@ internal static class PurchasesApiHarness
             HttpMethod.Post,
             $"{OrderUrl(tenantId, order.Id)}/confirm",
             order.Version,
-            ConfirmBody(order.Lines.Select(line => (line.Id, line.Quantity!.Value, line.UnitCost)).ToArray()));
+            ConfirmBody(order.Lines.Select(line => (line.Id, line.Quantity!.Value, line.UnitCost!.Value)).ToArray()));
         await EnsureSuccessAsync(response);
         return (await response.Content.ReadFromJsonAsync<PurchaseOrderDetailDto>(Ct))!;
     }

@@ -53,6 +53,62 @@ public sealed class PurchaseOrderComposerTests
     }
 
     [Fact]
+    public async Task APricelessLinkedOrderHasNoAmountsAndSaysShowPricesFalse()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central");
+        var order = PurchaseOrderTestData.SentPricelessOrder([PurchaseOrderTestData.LinkedLine(quantity: 120m)]);
+
+        var detail = await Composer(PurchasesPermissions.OrderRead).DetailAsync(order, CancellationToken.None);
+
+        Assert.False(detail.ShowPrices);
+        Assert.Null(detail.Totals);
+        Assert.Null(detail.RequestedTotal);
+        var line = Assert.Single(detail.Lines);
+        Assert.Equal((120m, null, null, null, null, "Pending"), (line.Quantity, line.UnitCost, line.ConfirmedUnitCost, line.Subtotal, line.ListPrice, line.LineStatus));
+
+        var summary = Assert.Single(await Composer(PurchasesPermissions.OrderRead)
+            .SummariesAsync(order.TenantId, [order], CancellationToken.None));
+        Assert.Null(summary.Total);
+        Assert.False(summary.ShowPrices);
+    }
+
+    [Fact]
+    public async Task AnApprovedPricelessOrderShowsConfirmedAmountsButNoRequestedTotal()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central");
+        var order = PurchaseOrderTestData.SentPricelessOrder([PurchaseOrderTestData.LinkedLine(quantity: 120m)]);
+        order.ApplyWholesalerApproval([PurchaseOrderTestData.FinalOf(order.Lines[0], quantity: 100m, unitCost: 10000m)], PurchaseOrderTestData.Now);
+
+        var detail = await Composer(PurchasesPermissions.OrderRead).DetailAsync(order, CancellationToken.None);
+
+        Assert.True(detail.ShowPrices);
+        Assert.Equal(new PurchaseOrderTotalsDto(1_000_000m, 190_000m, 1_190_000m), detail.Totals);
+        Assert.Null(detail.RequestedTotal);
+        var line = Assert.Single(detail.Lines);
+        Assert.Equal((null, 10000m, 1_000_000m, "Changed"), (line.UnitCost, line.ConfirmedUnitCost, line.Subtotal, line.LineStatus));
+        Assert.True(detail.ConfirmedWithChanges);
+
+        var summary = Assert.Single(await Composer(PurchasesPermissions.OrderRead)
+            .SummariesAsync(order.TenantId, [order], CancellationToken.None));
+        Assert.Equal((1_190_000m, true), (summary.Total, summary.ShowPrices));
+    }
+
+    [Fact]
+    public async Task APricedOrderAndAnExternalOneSayShowPricesTrue()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle");
+
+        var external = await Composer(PurchasesPermissions.OrderRead)
+            .DetailAsync(PurchaseOrderTestData.Order(), CancellationToken.None);
+        var linked = await Composer(PurchasesPermissions.OrderRead)
+            .DetailAsync(PurchaseOrderTestData.LinkedOrder(), CancellationToken.None);
+
+        Assert.True(external.ShowPrices);
+        Assert.True(linked.ShowPrices);
+        Assert.NotNull(linked.Totals);
+    }
+
+    [Fact]
     public async Task AMissingMemberIsSinNombre()
     {
         _suppliers.Add(PurchaseOrderTestData.SupplierId, "Textiles del Valle");

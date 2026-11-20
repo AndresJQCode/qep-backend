@@ -40,6 +40,10 @@ public sealed class LinkedPurchaseOrderHandlersTests
         _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), Builder(), _orders,
         new FakePurchaseOrderNumbers(), _unitOfWork, _audit, Composer(), new CreatePurchaseOrderValidator());
 
+    private UpdatePurchaseOrderHandler UpdateHandler() => new(
+        _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), Builder(), _orders, _unitOfWork,
+        _audit, Composer(), new UpdatePurchaseOrderValidator());
+
     private PreviewPurchaseOrderHandler PreviewHandler() => new(_context, Builder(), new PreviewPurchaseOrderValidator());
 
     private TransitionPurchaseOrderHandler TransitionHandler() => new(
@@ -337,5 +341,99 @@ public sealed class LinkedPurchaseOrderHandlersTests
         Assert.True(preview.ShowPrices);
         Assert.Equal(2000m, Assert.Single(preview.Lines).Subtotal);
         Assert.Equal(new PurchaseOrderTotalsDto(2000m, 380m, 2380m), preview.Totals);
+    }
+
+    // Spec 2026-11-19 (revisada): con la lista oculta la orden nace sin montos, y el dominio es el único que los descarta.
+    [Fact]
+    public async Task CreateWithAHiddenPriceListSavesLinesWithoutAmounts()
+    {
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+        _wholesale.ShowPrices = false;
+
+        var detail = await CreateHandler().HandleAsync(Create(new PurchaseOrderLineInput(item.VariantId, 3m, null)), Ct);
+
+        var line = Assert.Single(Assert.Single(_orders.Orders).Lines);
+        Assert.Equal(3m, line.Quantity);
+        Assert.Equal((null, null, null, null), (line.UnitCost, line.ListBasePrice, line.ListDiscountPercent, line.ListUnitPrice));
+        Assert.False(detail.ShowPrices);
+        Assert.Null(detail.Totals);
+        Assert.Null(detail.RequestedTotal);
+        var dto = Assert.Single(detail.Lines);
+        Assert.Equal((null, null, null), (dto.UnitCost, dto.Subtotal, dto.ListPrice));
+        Assert.Equal(("ACE-1", 3m, 19m), (dto.Code, dto.Quantity, dto.TaxRatePercent));
+    }
+
+    [Fact]
+    public async Task CreateWithAVisiblePriceListKeepsAmountsAndSaysSo()
+    {
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+
+        var detail = await CreateHandler().HandleAsync(Create(new PurchaseOrderLineInput(item.VariantId, 3m, null)), Ct);
+
+        Assert.True(detail.ShowPrices);
+        Assert.Equal(new PurchaseOrderTotalsDto(30000m, 5700m, 35700m), detail.Totals);
+        Assert.Equal(35700m, detail.RequestedTotal);
+    }
+
+    [Fact]
+    public async Task UpdateRebuildsTheLinesWithTheLiveFlag()
+    {
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+        var created = await CreateHandler().HandleAsync(Create(new PurchaseOrderLineInput(item.VariantId, 3m, null)), Ct);
+        var order = Assert.Single(_orders.Orders);
+        Assert.NotNull(order.Lines[0].UnitCost);
+        _wholesale.ShowPrices = false;
+
+        var hidden = await UpdateHandler().HandleAsync(
+            new UpdatePurchaseOrderCommand(
+                TenantId, order.Id.Value, created.Version, PurchaseOrderTestData.SupplierId, "COP", null,
+                [new PurchaseOrderLineInput(item.VariantId, 4m, null)]),
+            Ct);
+
+        Assert.False(hidden.ShowPrices);
+        Assert.Null(Assert.Single(order.Lines).UnitCost);
+        Assert.Null(hidden.Totals);
+
+        _wholesale.ShowPrices = true;
+        var visible = await UpdateHandler().HandleAsync(
+            new UpdatePurchaseOrderCommand(
+                TenantId, order.Id.Value, hidden.Version, PurchaseOrderTestData.SupplierId, "COP", null,
+                [new PurchaseOrderLineInput(item.VariantId, 4m, null)]),
+            Ct);
+
+        Assert.True(visible.ShowPrices);
+        Assert.Equal(10000m, Assert.Single(order.Lines).UnitCost);
+        Assert.Equal(new PurchaseOrderTotalsDto(40000m, 7600m, 47600m), visible.Totals);
+    }
+
+    [Fact]
+    public async Task SendWithAHiddenListAdoptsTheOrderLinesWithoutAmountsEvenIfTheDraftHadThem()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.LinkedOrder());
+        _intake.ShowPrices = false;
+
+        var detail = await TransitionHandler().HandleAsync(
+            new TransitionPurchaseOrderCommand(TenantId, order.Id.Value, order.Version, PurchaseOrderAction.Send), Ct);
+
+        var line = Assert.Single(order.Lines);
+        Assert.Equal((null, null, null, null), (line.UnitCost, line.ListBasePrice, line.ListDiscountPercent, line.ListUnitPrice));
+        Assert.Equal(2m, line.Quantity);
+        Assert.False(detail.ShowPrices);
+        Assert.Null(detail.Totals);
+        Assert.Null(Assert.Single(detail.Lines).UnitCost);
+    }
+
+    [Fact]
+    public async Task SendWithAVisibleListGivesAPricelessDraftItsAmounts()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.LinkedOrder(withPrices: false));
+        _intake.ShowPrices = true;
+
+        var detail = await TransitionHandler().HandleAsync(
+            new TransitionPurchaseOrderCommand(TenantId, order.Id.Value, order.Version, PurchaseOrderAction.Send), Ct);
+
+        Assert.Equal(10000m, Assert.Single(order.Lines).UnitCost);
+        Assert.True(detail.ShowPrices);
+        Assert.NotNull(detail.Totals);
     }
 }

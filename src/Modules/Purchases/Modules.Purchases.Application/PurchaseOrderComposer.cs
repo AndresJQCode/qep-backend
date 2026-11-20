@@ -70,7 +70,8 @@ public sealed class PurchaseOrderComposer(
                 order.LastEmailStatus?.ToString(),
                 order.LastEmailTo,
                 order.LastEmailAt,
-                supplierMap.TryGetValue(order.SupplierId, out var emailSupplier) ? emailSupplier.Email : null));
+                supplierMap.TryGetValue(order.SupplierId, out var emailSupplier) ? emailSupplier.Email : null),
+            order.HasPrices);
     }
 
     public async Task<IReadOnlyList<PurchaseOrderSummaryDto>> SummariesAsync(
@@ -99,7 +100,8 @@ public sealed class PurchaseOrderComposer(
                 order.CreatedAt,
                 order.Lines.Count,
                 order.IsLinked,
-                ModeOf(order)))
+                ModeOf(order),
+                order.HasPrices))
             .ToList();
     }
 

@@ -186,7 +186,7 @@ vinculada de una lista visible, responde como hoy con `showPrices: true`.
 ### PDF (`GET …/orders/{id}/pdf`) y correo al proveedor
 
 Mismo documento (`PurchaseOrderPdfMapper` desde el detalle). Sin precio: costo, subtotal, «Subtotal», «IVA» y «Total» como «—»;
-código, nombre, cantidad y tasa como hoy. El correo toma los textos del documento: «2 x — = —», «Total (COP): —».
+código, nombre, cantidad y tasa como hoy. El correo de una orden sin precio sale sin la tabla de montos (decisión del owner, abajo); el PDF adjunto sí lleva «—».
 
 ### Lo que este cambio nunca toca: los documentos del mayorista
 
@@ -214,8 +214,9 @@ tanda): con la lista oculta, el PDF del pedido del mayorista trae montos. Si el 
 - **Frontend viejo** contra este backend: idéntico a hoy mientras ninguna lista esté oculta; con una oculta leería `null` donde
   espera número (detalle en blanco). Por eso el frontend nuevo sale enseguida y es null-safe en detalle y lista.
 
-## Pregunta abierta para el owner
+## Decisión del owner sobre el correo (2026-11-20)
 
-1. **Correo al proveedor al enviar una orden sin precio.** Hoy sale igual, con «—» en montos (decisión por defecto: es la orden del
-   distribuidor y el mayorista ya tiene sus precios en su pedido). ¿Prefieres que en ese caso el correo no salga, o salga sin la
-   tabla de montos? Cambia sólo `PurchaseOrderEmailTemplate`; no bloquea la implementación.
+1. **Correo al proveedor al enviar una orden sin precio: sale sin la tabla de montos.** Conserva código, producto y cantidad; no
+   lleva las columnas «Costo» y «Subtotal» ni las líneas de Subtotal, IVA y Total, y tampoco una grilla de «—». El PDF adjunto
+   sí imprime «—» (D-13). Implementación: `PurchaseOrderEmailInput.ShowsAmounts` (por defecto `true`), que el sender toma de
+   `PurchaseOrderPdfDocument.ShowsAmounts` (no viaja a la plantilla Typst) y el mapper deriva de `detail.showPrices`.

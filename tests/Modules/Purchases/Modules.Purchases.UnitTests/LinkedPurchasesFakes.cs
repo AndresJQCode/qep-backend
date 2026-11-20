@@ -181,6 +181,9 @@ internal sealed class FakeWholesaleOrderIntake : IWholesaleOrderIntake
 
     public Guid OrderId { get; } = Guid.CreateVersion7();
 
+    /// <summary>Spec 2026-11-19: el flag vivo de la lista con que el intake crea el pedido (por defecto se muestran).</summary>
+    public bool ShowPrices { get; set; } = true;
+
     public Task<WholesaleIntakeResult> SubmitAsync(WholesaleIntakeRequest request, CancellationToken cancellationToken)
     {
         Submitted.Add(request);
@@ -194,7 +197,7 @@ internal sealed class FakeWholesaleOrderIntake : IWholesaleOrderIntake
             .Select(line => new LinkedLineSnapshot(
                 line.PurchaseOrderLineId, line.VariantId, "SKU", "Producto", line.Quantity, 10000m, 19m, 12500m, 4.8m, 11900m))
             .ToList();
-        return Task.FromResult(new WholesaleIntakeResult(OrderId, "PED-0042", "USD", lines, AlreadyExisted: false));
+        return Task.FromResult(new WholesaleIntakeResult(OrderId, "PED-0042", "USD", lines, AlreadyExisted: false, ShowPrices));
     }
 
     public Task CancelAsync(

@@ -60,7 +60,8 @@ public static class PurchaseOrderPdfMapper
             Money(detail.Totals?.Subtotal),
             Money(detail.Totals?.Tax),
             Money(detail.Totals?.Total),
-            detail.Lines.Any(line => line.ConfirmedQuantity is not null || line.ConfirmedUnitCost is not null));
+            detail.Lines.Any(line => line.ConfirmedQuantity is not null || line.ConfirmedUnitCost is not null),
+            detail.ShowPrices);
     }
 
     // El envío se busca en el historial y no por el estado: una orden cancelada después de enviarse conserva la fecha del envío.
