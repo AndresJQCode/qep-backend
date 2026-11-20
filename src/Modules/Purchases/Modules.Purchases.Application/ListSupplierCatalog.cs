@@ -11,21 +11,24 @@ public sealed record ListSupplierCatalogQuery(Guid TenantId, Guid SupplierId, st
 /// Una variante del catálogo del mayorista para armar la orden. Precios con IVA (base, descuento y lista) para pintar «base y
 /// descuento», y <c>UnitCost</c> = lo que la orden guardaría, la lista sin IVA (D-9): la pantalla no divide.
 /// </summary>
+/// <remarks>BFF (spec 2026-11-19): con la lista oculta del mayorista, <c>BasePrice</c>, <c>DiscountPercent</c>, <c>ListPrice</c> y
+/// <c>UnitCost</c> (y el descuento de la lista) viajan <c>null</c> y la página trae <c>ShowPrices = false</c>; ausente = backend
+/// viejo = se muestran. Se enmascara acá y no en Wholesale porque la orden necesita el costo para guardarse.</remarks>
 public sealed record SupplierCatalogItemDto(
     Guid VariantId,
     string Code,
     string Name,
-    decimal BasePrice,
-    decimal DiscountPercent,
-    decimal ListPrice,
+    decimal? BasePrice,
+    decimal? DiscountPercent,
+    decimal? ListPrice,
     decimal TaxRatePercent,
-    decimal UnitCost,
+    decimal? UnitCost,
     Guid ProductId = default,
     string ProductName = "",
     string? ImageUrl = null);
 
 /// <summary>La lista de precios que aplica al distribuidor (adenda: la tarjeta «Tarifa: Distribuidor estándar»).</summary>
-public sealed record SupplierCatalogPriceListDto(string Name, decimal DiscountPercent);
+public sealed record SupplierCatalogPriceListDto(string Name, decimal? DiscountPercent);
 
 /// <summary>
 /// Una página del catálogo del mayorista en su moneda por defecto (la que tendrá la orden, D-11), con la lista que la precia.
@@ -37,7 +40,8 @@ public sealed record SupplierCatalogPageDto(
     int Total,
     int Page,
     int PageSize,
-    SupplierCatalogPriceListDto PriceList);
+    SupplierCatalogPriceListDto PriceList,
+    bool ShowPrices = true);
 
 /// <summary>
 /// Mayorista fase 3: el catálogo del mayorista de un proveedor vinculado. Exige <c>purchases.order.manage</c> (es para armar una
@@ -70,6 +74,7 @@ public sealed class ListSupplierCatalogHandler(
         var result = await wholesaleCatalog.SearchAsync(
             query.TenantId, wholesalerTenantId, search, page, pageSize, cancellationToken);
 
+        var show = result.ShowPrices;
         return new SupplierCatalogPageDto(
             result.Currency,
             result.Items
@@ -77,11 +82,11 @@ public sealed class ListSupplierCatalogHandler(
                     item.VariantId,
                     item.Code,
                     item.Name,
-                    item.BasePrice,
-                    item.DiscountPercent,
-                    item.ListPrice,
+                    show ? item.BasePrice : null,
+                    show ? item.DiscountPercent : null,
+                    show ? item.ListPrice : null,
                     item.TaxRatePercent,
-                    PurchaseOrderMath.NetOfVat(item.ListPrice, item.TaxRatePercent),
+                    show ? PurchaseOrderMath.NetOfVat(item.ListPrice, item.TaxRatePercent) : null,
                     item.ProductId,
                     item.ProductName,
                     item.ImageUrl))
@@ -89,6 +94,7 @@ public sealed class ListSupplierCatalogHandler(
             result.Total,
             page,
             pageSize,
-            new SupplierCatalogPriceListDto(result.PriceListName, result.DiscountPercent));
+            new SupplierCatalogPriceListDto(result.PriceListName, show ? result.DiscountPercent : null),
+            show);
     }
 }

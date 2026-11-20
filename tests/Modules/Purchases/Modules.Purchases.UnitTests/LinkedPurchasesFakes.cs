@@ -138,10 +138,10 @@ internal sealed class FakeWholesaleCatalog : IWholesaleCatalog
     {
         EnsureAllowed();
         Searches.Add((buyerTenantId, wholesalerTenantId, search, page, pageSize));
-        return Task.FromResult(new WholesaleCatalogPage(Currency, "Distribuidor estándar", 15m, Items.Values.ToList(), Items.Count));
+        return Task.FromResult(new WholesaleCatalogPage(Currency, "Distribuidor estándar", 15m, Items.Values.ToList(), Items.Count, ShowPrices));
     }
 
-    public Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items)> PriceAsync(
+    public Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items, bool ShowPrices)> PriceAsync(
         Guid buyerTenantId, Guid wholesalerTenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
     {
         EnsureAllowed();
@@ -152,8 +152,11 @@ internal sealed class FakeWholesaleCatalog : IWholesaleCatalog
         }
 
         IReadOnlyDictionary<Guid, WholesaleCatalogItem> found = variantIds.Distinct().ToDictionary(id => id, id => Items[id]);
-        return Task.FromResult((Currency, found));
+        return Task.FromResult((Currency, found, ShowPrices));
     }
+
+    /// <summary>Spec 2026-11-19: el flag vivo de la lista del mayorista (por defecto se muestran).</summary>
+    public bool ShowPrices { get; set; } = true;
 
     private void EnsureAllowed()
     {

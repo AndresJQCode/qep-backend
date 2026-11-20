@@ -19,7 +19,8 @@ public sealed record WholesaleTerms(
     string Currency,
     decimal DiscountPercent,
     IReadOnlyCollection<Guid>? VisibleCategoryIds,
-    string PriceListName);
+    string PriceListName,
+    bool ShowPrices = true);
 
 /// <summary>Una variante con su precio de lista para el distribuidor (IVA incluido, con el redondeo del mayorista).</summary>
 public sealed record WholesaleOffer(
@@ -40,7 +41,8 @@ public sealed record WholesaleOfferPage(
     string PriceListName,
     decimal DiscountPercent,
     IReadOnlyList<WholesaleOffer> Items,
-    int Total);
+    int Total,
+    bool ShowPrices = true);
 
 /// <summary>
 /// Spec 2026-11-17 (mayorista, fase 3): todo lo que un tenant lee del catálogo de otro pasa por acá. Quien llama es un adaptador
@@ -90,7 +92,8 @@ public sealed class WholesaleOffers(
             currency,
             list.DiscountPercent,
             list.Visibility == PriceListVisibility.AllActive ? null : list.CategoryIds.ToArray(),
-            list.Name);
+            list.Name,
+            list.ShowPrices);
     }
 
     public async Task<WholesaleOfferPage> SearchAsync(
@@ -111,7 +114,8 @@ public sealed class WholesaleOffers(
             terms.PriceListName,
             terms.DiscountPercent,
             items.Select(item => OfferOf(item, terms.DiscountPercent, rounding)).ToList(),
-            total);
+            total,
+            terms.ShowPrices);
     }
 
     /// <summary>

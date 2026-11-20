@@ -24,7 +24,8 @@ public sealed record WholesaleCatalogPage(
     string PriceListName,
     decimal DiscountPercent,
     IReadOnlyList<WholesaleCatalogItem> Items,
-    int Total);
+    int Total,
+    bool ShowPrices = true);
 
 /// <summary>
 /// El catálogo de un mayorista vinculado; adaptador en Bootstrapper sobre Wholesale (<c>WholesaleOffers</c>). Recibe los dos
@@ -42,8 +43,9 @@ public interface IWholesaleCatalog
         int pageSize,
         CancellationToken cancellationToken);
 
-    /// <summary>El precio de cada variante pedida en la moneda por defecto del mayorista; todas vienen o la llamada falla.</summary>
-    Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items)> PriceAsync(
+    /// <summary>El precio de cada variante pedida en la moneda por defecto del mayorista; todas vienen o la llamada falla. <c>ShowPrices</c>
+    /// es el flag vivo de la lista del distribuidor (spec 2026-11-19): el precio viaja igual, Compras lo enmascara en su borde.</summary>
+    Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items, bool ShowPrices)> PriceAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         IReadOnlyCollection<Guid> variantIds,

@@ -150,7 +150,7 @@ public sealed record PurchaseOrderPreviewLineDto(
     string Code,
     string Name,
     decimal TaxRatePercent,
-    decimal Subtotal,
+    decimal? Subtotal,
     /// <summary>Mayorista fase 3: con proveedor vinculado, <c>VariantId</c> es la del mayorista y esto su precio de lista.</summary>
     PurchaseOrderListPriceDto? ListPrice = null);
 
@@ -158,11 +158,14 @@ public sealed record PurchaseOrderPreviewLineDto(
 /// La vista previa del formulario (con debounce): misma aritmética que el alta (D-19), así el total que se ve es el que se
 /// guarda. Las líneas vuelven en el orden del cuerpo.
 /// </summary>
-/// <remarks>Mayorista fase 3: <c>Currency</c> es la moneda efectiva (la del mayorista con proveedor vinculado, D-11).</remarks>
+/// <remarks>Mayorista fase 3: <c>Currency</c> es la moneda efectiva (la del mayorista con proveedor vinculado, D-11). Spec
+/// 2026-11-19: con la lista del mayorista oculta (flag vivo al consultar), <c>Subtotal</c>, <c>ListPrice</c> y <c>Totals</c> van
+/// <c>null</c> y <c>ShowPrices</c> es <c>false</c>; los totales se calculan igual, sólo el DTO los omite.</remarks>
 public sealed record PurchaseOrderPreviewDto(
     IReadOnlyList<PurchaseOrderPreviewLineDto> Lines,
-    PurchaseOrderTotalsDto Totals,
-    string Currency);
+    PurchaseOrderTotalsDto? Totals,
+    string Currency,
+    bool ShowPrices = true);
 
 /// <summary>
 /// Una línea del cuerpo: la variante, la cantidad y el costo unitario sin IVA. Mayorista fase 3 (D-11): con proveedor vinculado
