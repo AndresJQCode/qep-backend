@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -81,6 +82,27 @@ public sealed partial class EngineEndToEndTests
 
         Assert.Equal([fileId], await references.FindReferencedAsync(f.Tenant.TenantId, [fileId, unused], Ct));
         Assert.Empty(await references.FindReferencedAsync(Guid.CreateVersion7(), [fileId], Ct));
+    }
+
+    // Regla 2 del owner (plan Task 12): borrar el chatbot avisa a Storage del archivo de su Mensaje, pero la conversación sigue mostrando la
+    // burbuja del bot. La pregunta que Storage le hace a Bootstrapper por los ids de ese aviso responde que siguen en uso, así que el
+    // archivo se queda.
+    [Fact]
+    public async Task DeletingTheChatbotKeepsAFileTheInboxShows()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (f, fileId) = await ArrangeBotSentImageAsync(database);
+        using var _ = f;
+
+        Assert.Equal(HttpStatusCode.NoContent, (await DeleteChatbotAsync(f)).StatusCode);
+
+        using var payload = JsonDocument.Parse(await ScalarAsync<string>(f.ConnectionString,
+            "SELECT payload::text FROM platform.outbox_messages WHERE event_name = @event", ("event", ChatbotsApiTests.MediaReleasedEvent)));
+        var released = payload.RootElement.GetProperty("fileIds").EnumerateArray().Select(element => element.GetGuid()).ToList();
+        Assert.Equal([fileId], released);
+        await using var scope = f.Host.Services.CreateAsyncScope();
+        var references = scope.ServiceProvider.GetRequiredService<IChatbotMediaReferences>();
+        Assert.Equal([fileId], await references.FindReferencedAsync(f.Tenant.TenantId, released, Ct));
     }
 
     private const string PlainHandoffFlow = """

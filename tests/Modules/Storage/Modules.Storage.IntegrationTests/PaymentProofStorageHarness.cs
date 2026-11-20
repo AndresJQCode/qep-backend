@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Modules.Storage.Application;
+using Modules.Storage.Infrastructure.ChatbotMedia;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
@@ -530,6 +531,16 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
                     && descriptor.ImplementationType == typeof(TemplateHeaderImageReleaseWorker))
                 .ToList();
             foreach (var descriptor in templateImageReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Y el de los archivos de un chatbot borrado (spec 2026-11-18): ChatbotMediaReleaseTests corre el lote a mano.
+            var chatbotMediaReleaseWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(ChatbotMediaReleaseWorker))
+                .ToList();
+            foreach (var descriptor in chatbotMediaReleaseWorkers)
             {
                 services.Remove(descriptor);
             }
