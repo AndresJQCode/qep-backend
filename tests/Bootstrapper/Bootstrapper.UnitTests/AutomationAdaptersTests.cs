@@ -602,6 +602,9 @@ public sealed class AutomationAdaptersTests
             return Task.FromResult(listings);
         }
 
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
         {
             Resolved = (tenantId, connectionId);

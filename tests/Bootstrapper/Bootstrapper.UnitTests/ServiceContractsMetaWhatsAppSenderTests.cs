@@ -234,6 +234,9 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
 
         public int ListResolvedCalls { get; private set; }
 
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
         {
             ResolveCalls++;

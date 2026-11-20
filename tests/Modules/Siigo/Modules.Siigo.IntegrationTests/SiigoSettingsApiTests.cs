@@ -456,6 +456,28 @@ public sealed class SiigoSettingsApiTests
         }
     }
 
+    // Pausar es dejar de facturar, no dejar de configurar: el asistente lee de Siigo y el paso «Conexión» queda completo.
+    [Fact]
+    public async Task APausedConnectionCanStillBeConfigured()
+    {
+        await using var database = await StartDatabaseAsync();
+        var siigo = new FakeSiigoApi();
+        var world = await ArrangeAsync(database, siigo);
+        using var factory = world.Factory;
+        using var client = Manager(factory, world.Tenant);
+        await ExecuteAsync(world.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+
+        var options = await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId, "options/document-types"), Ct);
+        var settings = await client.GetFromJsonAsync<JsonObject>(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, options.StatusCode);
+        Assert.Equal(1, siigo.CallsTo("/v1/document-types"));
+        Assert.Equal("Paused", settings!["connection"]!["status"]!.GetValue<string>());
+        var credentials = settings["readiness"]!.AsArray().Single(step => step!["step"]!.GetValue<string>() == "Credentials")!;
+        Assert.True(credentials["complete"]!.GetValue<bool>());
+        Assert.Empty(credentials["missingCodes"]!.AsArray());
+    }
+
     [Fact]
     public async Task AnUnknownListIs404()
     {
