@@ -60,6 +60,29 @@ public sealed class DeleteTemplateHeaderImageTests
     }
 
     [Fact]
+    public async Task DeletingPublishesTheReleaseOfEveryRetiredImageToo()
+    {
+        var rig = new Rig();
+        var currentId = Guid.CreateVersion7();
+        var template = rig.Seed(currentId);
+        var retiredA = Guid.CreateVersion7();
+        var retiredB = Guid.CreateVersion7();
+        rig.Repository.AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage.Create(rig.Bed.TenantId, template.Id, retiredA, "https://public.test/a.png", rig.Bed.Now));
+        rig.Repository.AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage.Create(rig.Bed.TenantId, template.Id, retiredB, "https://public.test/b.png", rig.Bed.Now));
+        var savesAtPublish = new List<int>();
+        rig.Releases.OnPublish = () => savesAtPublish.Add(rig.UnitOfWork.Saves);
+
+        Assert.True(await rig.DeleteAsync(template));
+
+        Assert.Equal(
+            new[] { currentId, retiredA, retiredB }.Order(),
+            rig.Releases.Published.Select(published => published.FileId).Order());
+        Assert.All(rig.Releases.Published, published => Assert.Equal((rig.Bed.TenantId, rig.Bed.Now), (published.TenantId, published.OccurredAt)));
+        Assert.Equal([0, 0, 0], savesAtPublish);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
+    }
+
+    [Fact]
     public async Task DeletingATemplateWithoutAnImagePublishesNothing()
     {
         var rig = new Rig();

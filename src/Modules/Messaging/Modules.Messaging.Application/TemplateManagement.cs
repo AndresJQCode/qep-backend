@@ -566,12 +566,19 @@ public sealed class DeleteTemplateHandler(
         }
 
         var now = clock.UtcNow;
+        // Spec 2026-11-20: las imágenes retiradas se leen antes de quitar la fila (la cascada se las lleva al guardar).
+        var retiredFileIds = await repository.ListRetiredHeaderImageFileIdsAsync(command.TenantId, template.Id, cancellationToken);
         repository.Remove(template);
         // Spec 2026-11-17: la imagen del encabezado la libera Storage al leer el aviso, que commitea con la eliminación de la fila. Si el
         // guardado falla, no sale aviso y la imagen sigue siendo de su fila.
         if (template.HeaderImageFileId is { } fileId)
         {
             imageReleases.Publish(command.TenantId, fileId, now);
+        }
+
+        foreach (var retiredFileId in retiredFileIds)
+        {
+            imageReleases.Publish(command.TenantId, retiredFileId, now);
         }
 
         audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateDeleted, template.Id, now);

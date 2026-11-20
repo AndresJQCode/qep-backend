@@ -55,6 +55,49 @@ public sealed class TemplateImageReferencesTests
         }
     }
 
+    // Spec 2026-11-20: una imagen retirada sigue referenciada (Meta puede mostrarla), y sólo para su tenant.
+    [Fact]
+    public async Task RetiredImagesCountAsReferenced()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantA = await RegisterTenantAsync(factory);
+        var tenantB = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenantA.TenantId);
+        await EnableMessagingAsync(connectionString, tenantB.TenantId);
+        var connectionA = await SeedWhatsAppConnectionAsync(factory, tenantA.TenantId, "Ventas", "111", "222");
+        var connectionB = await SeedWhatsAppConnectionAsync(factory, tenantB.TenantId, "Ventas", "333", "444");
+        var current = Guid.CreateVersion7();
+        var retiredA = Guid.CreateVersion7();
+        var retiredB = Guid.CreateVersion7();
+        var unused = Guid.CreateVersion7();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IMessageTemplateRepository>();
+            var templateA = WithImage(tenantA.TenantId, connectionA, "900", retiredA);
+            repository.AddRetiredHeaderImage(templateA.ReplaceHeaderImage(current, $"https://public.test/{current}.png", Now)!);
+            var templateB = WithImage(tenantB.TenantId, connectionB, "901", retiredB);
+            repository.AddRetiredHeaderImage(templateB.ReplaceHeaderImage(Guid.CreateVersion7(), "https://public.test/x.png", Now)!);
+            repository.Add(templateA);
+            repository.Add(templateB);
+            await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var references = scope.ServiceProvider.GetRequiredService<ITemplateImageReferences>();
+            var repository = scope.ServiceProvider.GetRequiredService<IMessageTemplateRepository>();
+
+            var referencedByA = await references.FindReferencedAsync(tenantA.TenantId, [current, retiredA, retiredB, unused], Ct);
+
+            Assert.Equal(new[] { current, retiredA }.Order(), referencedByA.Order());
+            Assert.True(await repository.IsHeaderImageInUseAsync(tenantA.TenantId, retiredA, Ct));
+            Assert.False(await repository.IsHeaderImageInUseAsync(tenantA.TenantId, retiredB, Ct));
+        }
+    }
+
     private static MessageTemplate WithImage(Guid tenantId, Guid connectionId, string metaId, Guid fileId)
     {
         var template = MessageTemplate.Pending(tenantId, connectionId, metaId, "promo", "es", "MARKETING", "NAMED", "PENDING",

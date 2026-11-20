@@ -81,9 +81,20 @@ internal sealed class MessageTemplateRepository(MessagingDbContext dbContext) : 
             cancellationToken);
 
     // Una consulta a la base (AnyAsync no mira el tracker): la fila Added de una creación que no se pudo guardar no cuenta.
-    public Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
-        dbContext.MessageTemplates.AsNoTracking().AnyAsync(
-            template => template.TenantId == tenantId && template.HeaderImageFileId == fileId, cancellationToken);
+    // Spec 2026-11-20: una imagen retirada sigue en uso (Meta puede mostrarla) hasta que se borre la plantilla.
+    public async Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+        await dbContext.MessageTemplates.AsNoTracking().AnyAsync(
+            template => template.TenantId == tenantId && template.HeaderImageFileId == fileId, cancellationToken)
+        || await dbContext.MessageTemplateRetiredHeaderImages.AsNoTracking().AnyAsync(
+            retired => retired.TenantId == tenantId && retired.FileId == fileId, cancellationToken);
+
+    public void AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage image) => dbContext.MessageTemplateRetiredHeaderImages.Add(image);
+
+    public async Task<IReadOnlyList<Guid>> ListRetiredHeaderImageFileIdsAsync(Guid tenantId, Guid templateId, CancellationToken cancellationToken) =>
+        await dbContext.MessageTemplateRetiredHeaderImages.AsNoTracking()
+            .Where(retired => retired.TenantId == tenantId && retired.TemplateId == templateId)
+            .Select(retired => retired.FileId)
+            .ToListAsync(cancellationToken);
 
     public async Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
