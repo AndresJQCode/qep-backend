@@ -36,6 +36,8 @@ public sealed class SiigoSettingsReadinessTests
         var settings = NewSettings();
         settings.AssignCompany(Guid.CreateVersion7());
         settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "seller-1", null, null, false, false, false, null));
+        settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
+        settings.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
 
         var steps = SiigoSettingsReadiness.Evaluate(settings);
 
@@ -44,6 +46,64 @@ public sealed class SiigoSettingsReadinessTests
             steps.Select(step => step.Step));
         Assert.All(steps, step => Assert.True(step.Complete));
         Assert.All(steps, step => Assert.Empty(step.MissingCodes));
+    }
+
+    [Fact]
+    public void WithoutAnyTaxLinkTheTaxesStepIsIncomplete()
+    {
+        var step = Step(NewSettings(), SiigoSetupStep.Taxes);
+
+        Assert.False(step.Complete);
+        Assert.Equal(["tax_link_missing"], step.MissingCodes);
+    }
+
+    [Fact]
+    public void ALinkedVatRateCompletesTheTaxesStep()
+    {
+        var settings = NewSettings();
+        settings.ReplaceTaxLinks([new SiigoTaxLink(0, null), new SiigoTaxLink(19, "13156")]);
+
+        Assert.True(Step(settings, SiigoSetupStep.Taxes).Complete);
+    }
+
+    [Fact]
+    public void ALinkedWithholdingAloneCompletesTheTaxesStep()
+    {
+        var settings = NewSettings();
+        settings.ReplaceWithholdingLinks([new SiigoWithholdingLink(Guid.CreateVersion7(), "13160")]);
+
+        Assert.True(Step(settings, SiigoSetupStep.Taxes).Complete);
+    }
+
+    [Fact]
+    public void LinksWithoutASiigoTaxDoNotCompleteTheTaxesStep()
+    {
+        var settings = NewSettings();
+        settings.ReplaceTaxLinks([new SiigoTaxLink(19, null)]);
+        settings.ReplaceWithholdingLinks([new SiigoWithholdingLink(Guid.CreateVersion7(), " ")]);
+
+        Assert.False(Step(settings, SiigoSetupStep.Taxes).Complete);
+    }
+
+    [Fact]
+    public void WithoutAnyPaymentLinkThePaymentsStepIsIncomplete()
+    {
+        var step = Step(NewSettings(), SiigoSetupStep.Payments);
+
+        Assert.False(step.Complete);
+        Assert.Equal(["payment_link_missing"], step.MissingCodes);
+    }
+
+    [Fact]
+    public void ADefaultOrAnAccountPaymentTypeCompletesThePaymentsStep()
+    {
+        var withDefault = NewSettings();
+        withDefault.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
+        var withAccount = NewSettings();
+        withAccount.UpdatePayments(new SiigoPaymentSettings([new SiigoPaymentLink("BANCO|1", "pay-2")], null, null, null, null));
+
+        Assert.True(Step(withDefault, SiigoSetupStep.Payments).Complete);
+        Assert.True(Step(withAccount, SiigoSetupStep.Payments).Complete);
     }
 
     // La cobertura se informa, no bloquea: un tenant sin ningún vínculo ya puede terminar el asistente.

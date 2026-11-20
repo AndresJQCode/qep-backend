@@ -14,8 +14,8 @@ namespace Modules.Catalog.Application;
 /// de acá sale <c>CanDelete</c>. Null es «no se consultó» y deja <c>CanDelete</c> en false: ofrecer
 /// «Eliminar» sin saberlo sería prometer un borrado que el PUT puede convertir en
 /// desactivación.</param>
-/// <param name="IncludeCosts">Si el llamador puede leer costos. Falso deja <c>Costs</c> en null, y
-/// el listado y el selector nunca lo prenden.</param>
+/// <param name="IncludeCosts">Si el llamador puede leer costos (<see cref="CatalogCostAccess.CanRead"/>). Falso deja
+/// <c>Costs</c> en null, en el detalle y en las variantes del listado con <c>includeVariants</c> (spec 2026-11-19).</param>
 internal sealed record ProductReadLookups(
     Guid TenantId,
     IReadOnlyDictionary<Guid, OptionDefinition> Options,
@@ -320,6 +320,11 @@ internal static class ProductMapping
                     scale.Restriction, scale.Multiple, scale.AllowGrouping, prices))
                 .ToArray(),
             variant.PackagingUnits.ToArray(),
-            variant.GalleryFileId is { } fileId ? lookups.UrlOf(fileId) : mainImageUrl);
+            variant.GalleryFileId is { } fileId ? lookups.UrlOf(fileId) : mainImageUrl,
+            // Same rule and order as the detail (ToResponse/CostsOf): the permission decides, not whether the reading
+            // happened to load them; a reader with a variant without costs gets {}.
+            Costs: lookups.IncludeCosts
+                ? InCatalogueOrder(variant.Costs ?? new Dictionary<string, decimal>())
+                : null);
     }
 }

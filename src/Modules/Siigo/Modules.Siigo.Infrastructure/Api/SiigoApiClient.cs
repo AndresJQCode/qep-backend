@@ -33,6 +33,12 @@ internal sealed class SiigoApiClient(
 
     private static readonly TimeSpan ListCacheTtl = TimeSpan.FromMinutes(5);
 
+    // El selector de productos del paso 6 lee todo el catálogo: la copia dura lo que dura teclear y paginar, no más.
+    private static readonly TimeSpan ProductsCacheTtl = TimeSpan.FromSeconds(60);
+
+    /// <summary>Tope de páginas, el mismo del auto-vínculo: un Siigo que siguiera devolviendo páginas llenas no cuelga la petición.</summary>
+    private const int MaxProductPages = 1000;
+
     // Si el token viene sin expires_in, lo que Siigo documenta: un día.
     private static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromHours(24);
 
@@ -107,6 +113,30 @@ internal sealed class SiigoApiClient(
             pagination.Page ?? Math.Max(page, 1),
             pagination.PageSize ?? SiigoApiErrors.ProductsPageSize,
             pagination.TotalResults ?? items.Count);
+    }
+
+    public async Task<IReadOnlyList<SiigoProductOption>> ListActiveProductsAsync(
+        SiigoCredentials credentials, bool refresh, CancellationToken cancellationToken)
+    {
+        var key = $"siigo:{credentials.ConnectionId}:products";
+        if (!refresh && cache.TryGetValue(key, out IReadOnlyList<SiigoProductOption>? cached) && cached is not null)
+        {
+            return cached;
+        }
+
+        var active = new List<SiigoProductOption>();
+        for (var page = 1; page <= MaxProductPages; page++)
+        {
+            var products = await SearchProductsAsync(credentials, null, page, cancellationToken);
+            active.AddRange(products.Items.Where(product => product.Active));
+            if (products.Items.Count == 0 || products.Page * products.PageSize >= products.TotalResults)
+            {
+                break;
+            }
+        }
+
+        cache.Set(key, (IReadOnlyList<SiigoProductOption>)active, ProductsCacheTtl);
+        return active;
     }
 
     public async Task<SiigoCustomerRef?> FindCustomerAsync(
@@ -235,7 +265,7 @@ internal sealed class SiigoApiClient(
         [
             .. SiigoJson.Items(reply.Body)
                 .Where(item => SiigoJson.Bool(item, "active", fallback: true))
-                .Select(item => new SiigoOption(SiigoJson.Text(item, "id") ?? string.Empty, SiigoJson.NameOf(item)))
+                .Select(item => new SiigoOption(SiigoJson.Text(item, "id") ?? string.Empty, SiigoJson.NameOf(item), SiigoJson.Text(item, "description")))
                 .Where(option => option.Id.Length > 0),
         ];
     }

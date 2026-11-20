@@ -8,8 +8,11 @@ using Modules.Wholesale.Infrastructure.Persistence;
 namespace Modules.Wholesale.Infrastructure.Messaging;
 
 /// <summary>
-/// Spec 2026-11-18: consume del outbox de plataforma <c>wholesale.distributor-invitation-notice.v1</c> y manda el aviso por
-/// WhatsApp de la invitación con <see cref="IWholesaleInvitationNoticeSender"/> (adaptador en Bootstrapper, D-1).
+/// Spec 2026-11-18: consume del outbox de plataforma el aviso por WhatsApp de la invitación y lo manda con
+/// <see cref="IWholesaleInvitationNoticeSender"/> (adaptador en Bootstrapper, D-1). Desde spec 2026-11-19 §2 el evento es
+/// <c>wholesale.distributor-invitation-link.v1</c>, que trae el token, y el procesador le pasa al adaptador el link armado con
+/// <see cref="IWholesaleInvitationLinks"/>; el viejo <c>wholesale.distributor-invitation-notice.v1</c> sigue consumiéndose,
+/// sin link, para drenar los pendientes.
 /// <para>Por mensaje: un payload malformado se marca procesado sin efecto; un aviso que ya no es vigente (distribuidor borrado,
 /// aceptado o con otra <c>generation</c>, D-4) se marca procesado sin mandar. Si no, se manda con el id del mensaje como
 /// <c>clientId</c> (D-5), se registra <c>Sent</c> o <c>Failed</c> con su código y el inbox se marca, todo en un solo
@@ -21,7 +24,12 @@ namespace Modules.Wholesale.Infrastructure.Messaging;
 internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory scopeFactory, ILogger<InvitationNoticeProcessor> logger)
 {
     internal const string Consumer = "wholesale.invitation-whatsapp-notice";
+
+    /// <summary>El aviso viejo, sin link: ya no se escribe y se sigue consumiendo sólo para drenar los pendientes.</summary>
     internal const string NoticeEvent = WholesaleEventPublisher.InvitationNoticeEvent;
+
+    /// <summary>Spec 2026-11-19 §2: el aviso con link. Mismo consumidor, mismo inbox y mismas reglas (D-3, D-4, D-5).</summary>
+    internal const string LinkEvent = WholesaleEventPublisher.InvitationLinkEvent;
 
     /// <summary>Desde qué intento una falla se loguea en Error: el primero que deja la espera de 5 minutos por delante.</summary>
     internal const int ErrorAfterAttempts = 3;
@@ -29,7 +37,7 @@ internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory sco
     private static readonly IReadOnlyList<TimeSpan> RetryDelays =
         [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5)];
 
-    internal ClaimedOutboxConsumer Claims { get; } = new(scopeFactory, Consumer, [NoticeEvent], RetryDelays);
+    internal ClaimedOutboxConsumer Claims { get; } = new(scopeFactory, Consumer, [NoticeEvent, LinkEvent], RetryDelays);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Outbox message {MessageId} ({EventName}) has a malformed payload; it is marked as processed without effect.")]
     private static partial void LogMalformed(ILogger logger, Guid messageId, string eventName);
@@ -58,7 +66,7 @@ internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory sco
         var notices = message.Services.GetRequiredService<DistributorInvitationNotices>();
         var record = message.Record;
 
-        if (!TryRead(record.PayloadJson, out var payload))
+        if (!TryRead(record.PayloadJson, record.EventName == LinkEvent, out var payload))
         {
             LogMalformed(logger, record.Id, record.EventName);
             await FinishAsync(message, unitOfWork, cancellationToken);
@@ -73,10 +81,13 @@ internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory sco
         }
 
         var sender = message.Services.GetRequiredService<IWholesaleInvitationNoticeSender>();
+        var link = payload.Token is { } token
+            ? message.Services.GetRequiredService<IWholesaleInvitationLinks>().Compose(token)
+            : null;
         var result = await sender.SendAsync(
             new WholesaleInvitationNotice(
                 record.Id, payload.TenantId, payload.ConnectionId, payload.SentByMemberId, payload.Phone, payload.ContactName,
-                payload.Email),
+                payload.Email, link),
             cancellationToken);
         var (status, failureCode) = result switch
         {
@@ -104,8 +115,8 @@ internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory sco
     }
 
     /// <summary>El payload que escribe <see cref="WholesaleEventPublisher"/>, con sus nombres en minúscula. Falta algo o sobra un
-    /// tipo: malformado.</summary>
-    internal static bool TryRead(string json, out NoticePayload payload)
+    /// tipo: malformado. Con <paramref name="withToken"/> (el aviso con link) el token es obligatorio; en el viejo no se lee.</summary>
+    internal static bool TryRead(string json, bool withToken, out NoticePayload payload)
     {
         payload = default!;
         try
@@ -127,7 +138,19 @@ internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory sco
                 return false;
             }
 
-            payload = new NoticePayload(tenantId, distributorId, phone, connectionId, sentByMemberId, contactName, email, generation);
+            string? token = null;
+            if (withToken)
+            {
+                if (!TryText(root, "token", out var text))
+                {
+                    return false;
+                }
+
+                token = text;
+            }
+
+            payload = new NoticePayload(
+                tenantId, distributorId, phone, connectionId, sentByMemberId, contactName, email, generation, token);
             return true;
         }
         catch (JsonException)
@@ -177,7 +200,8 @@ internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory sco
         }
     }
 
-    /// <summary>Lo que el aviso necesita del evento. El teléfono viaja sólo hasta el adaptador; nunca a un log.</summary>
+    /// <summary>Lo que el aviso necesita del evento. El teléfono y el token viajan sólo hasta el adaptador; nunca a un log.
+    /// <c>Token</c> es <c>null</c> en el aviso viejo.</summary>
     internal sealed record NoticePayload(
         Guid TenantId,
         Guid DistributorId,
@@ -186,5 +210,15 @@ internal sealed partial class InvitationNoticeProcessor(IServiceScopeFactory sco
         Guid SentByMemberId,
         string ContactName,
         string Email,
-        int Generation);
+        int Generation,
+        string? Token)
+    {
+        private bool PrintMembers(System.Text.StringBuilder builder)
+        {
+            builder.Append(
+                System.Globalization.CultureInfo.InvariantCulture,
+                $"TenantId = {TenantId}, DistributorId = {DistributorId}, Generation = {Generation}");
+            return true;
+        }
+    }
 }

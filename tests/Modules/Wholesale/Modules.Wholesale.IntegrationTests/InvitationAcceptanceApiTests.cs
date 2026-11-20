@@ -1,19 +1,23 @@
 using System.Net;
 using System.Net.Http.Json;
 using Api;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Wholesale.Application;
 
 namespace Modules.Wholesale.IntegrationTests;
 
 /// <summary>
-/// El link de la invitación de punta a punta (contrato «Invitación», D-3, D-4, D-16, D-17, D-20): resumen anónimo, las dos
-/// sesiones, los tenants vinculables y la aceptación con sus escrituras entre módulos. Cada prueba usa un correo propio para
-/// que el usuario de una no exista en otra del mismo host.
+/// El link de la invitación de punta a punta (contrato «Invitación», D-3, D-4, D-16, D-17, D-20; spec 2026-11-19): resumen
+/// anónimo, el código del correo, las dos sesiones, los tenants vinculables y la aceptación con sus escrituras entre módulos.
+/// Cada prueba usa un correo propio para que el usuario de una no exista en otra del mismo host.
 /// </summary>
 public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : IClassFixture<SharedWholesaleHost>
 {
     private const string Password = "Distri-2026!";
+
+    private const string EmailChangedEvent = "wholesale.distributor-email-changed.v1";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -41,7 +45,8 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
     [Fact]
     public async Task AnExpiredLinkIs410()
     {
-        var (_, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var email = NewEmail();
+        var (_, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
         await WholesaleApiHarness.ExecuteAsync(
             Factory,
             $"""
@@ -52,56 +57,118 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
 
         var summary = await anonymous.GetFromJsonAsync<WholesaleInvitationResponse>(WholesaleApiHarness.InvitationUrl(token), Ct);
         var session = await anonymous.PostAsJsonAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password", new { password = Password }, Ct);
+            $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password",
+            new { email, password = Password, code = "000000", termsVersion = WholesaleApiHarness.TermsVersion },
+            Ct);
 
         Assert.Equal("expired", summary!.Status);
         Assert.Equal(HttpStatusCode.Gone, session.StatusCode);
         Assert.Equal("wholesale.invitation.expired", await WholesaleApiHarness.CodeOfAsync(session));
     }
 
+    // Spec 2026-11-19 §4 y foco 1: sin contraseña, el código y los términos son obligatorios; después, la contraseña sola.
     [Fact]
-    public async Task APasswordSessionProvisionsTheUserAndOpensASession()
+    public async Task ANewDistributorFinishesWithAPasswordACodeAndTheTerms()
     {
         var email = NewEmail();
         var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
         using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
 
         var missingBody = await anonymous.PostAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password",
-            new StringContent("{", System.Text.Encoding.UTF8, "application/json"),
-            Ct);
+            url, new StringContent("{", System.Text.Encoding.UTF8, "application/json"), Ct);
+        var withoutCode = await anonymous.PostAsJsonAsync(
+            url, new { email, password = Password, termsVersion = WholesaleApiHarness.TermsVersion }, Ct);
+        var usersAfterNoCode = await CountUsersAsync(email);
+        // Un código inventado sin términos es el mismo 401: los términos se miran después de gastar un código válido.
+        var fakeCodeWithoutTerms = await anonymous.PostAsJsonAsync(url, new { email, password = Password, code = "000000" }, Ct);
+        var code = await WholesaleApiHarness.EmailCodeAsync(Factory, token, email);
         var response = await anonymous.PostAsJsonAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password", new { password = Password }, Ct);
-        var wrongPassword = await anonymous.PostAsJsonAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password", new { password = "Otra-Clave-99" }, Ct);
+            url, new { email, password = Password, code, termsVersion = WholesaleApiHarness.TermsVersion }, Ct);
+        var wrongPassword = await anonymous.PostAsJsonAsync(url, new { email, password = "Otra-Clave-99" }, Ct);
 
         Assert.Equal(HttpStatusCode.BadRequest, missingBody.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, withoutCode.StatusCode);
+        Assert.Equal("identity.credentials.invalid", await WholesaleApiHarness.CodeOfAsync(withoutCode));
+        Assert.Equal(0, usersAfterNoCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, fakeCodeWithoutTerms.StatusCode);
+        Assert.Equal("identity.credentials.invalid", await WholesaleApiHarness.CodeOfAsync(fakeCodeWithoutTerms));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var session = (await response.Content.ReadFromJsonAsync<SessionResponse>(Ct))!;
         Assert.Equal(email, session.Email);
         Assert.Empty(session.ActiveTenantIds);
         Assert.True(response.Headers.TryGetValues("Set-Cookie", out var cookies) && cookies.Any());
+        var terms = await WholesaleApiHarness.RowsAsync<string>(
+            Factory, $"""SELECT version AS "Value" FROM identity.terms_acceptances WHERE user_id = {session.UserId}""");
+        Assert.Equal([WholesaleApiHarness.TermsVersion], terms);
         // Con contraseña ya creada, una distinta no abre sesión.
         Assert.Equal(HttpStatusCode.Unauthorized, wrongPassword.StatusCode);
         Assert.Equal("identity.credentials.invalid", await WholesaleApiHarness.CodeOfAsync(wrongPassword));
+
+        // Los términos ya quedaron: crear la empresa no los vuelve a pedir.
+        var accepted = await AcceptNewTenantAsync(session.UserId, token);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
     }
 
-    // D-4: Google sólo con el correo invitado y verificado.
+    // Revisión del bloque C: con el correo en el cuerpo, la respuesta sin código no puede decir si un correo cualquiera tiene
+    // contraseña. Un correo sin cuenta y una cuenta con contraseña y una clave errada responden igual.
     [Fact]
-    public async Task AGoogleSessionNeedsTheInvitedVerifiedEmail()
+    public async Task SessionWithPasswordDoesNotTellWhetherAnEmailHasAPassword()
+    {
+        var withPassword = NewEmail();
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password, withPassword);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
+
+        var unknown = await anonymous.PostAsJsonAsync(url, new { email = NewEmail(), password = Password }, Ct);
+        var wrongPassword = await anonymous.PostAsJsonAsync(url, new { email = withPassword, password = "Otra-Clave-99" }, Ct);
+
+        Assert.Equal(
+            (HttpStatusCode.Unauthorized, "identity.credentials.invalid"),
+            (unknown.StatusCode, await WholesaleApiHarness.CodeOfAsync(unknown)));
+        Assert.Equal(
+            (unknown.StatusCode, await WholesaleApiHarness.CodeOfAsync(unknown)),
+            (wrongPassword.StatusCode, await WholesaleApiHarness.CodeOfAsync(wrongPassword)));
+    }
+
+    // Revisión del bloque C: las tres rutas anónimas que tocan credenciales llevan el limitador Credentials (10 por minuto por IP
+    // y por ruta). El harness da una IP por cliente, así que se mira la metadata del endpoint, no un 429.
+    [Fact]
+    public void TheAnonymousCredentialRoutesCarryTheCredentialsRateLimit()
+    {
+        var policies = Factory.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints
+            .OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith("/api/v1/wholesale-invitations/", StringComparison.Ordinal) == true)
+            .GroupBy(endpoint => endpoint.RoutePattern.RawText!)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(endpoint =>
+                    endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>()?.PolicyName).ToList());
+
+        foreach (var route in new[] { "email-code", "session", "session-with-password" })
+        {
+            Assert.Equal([RateLimiterPolicies.Credentials], policies[$"/api/v1/wholesale-invitations/{{token}}/{route}"]);
+        }
+    }
+
+    // Spec 2026-11-19: Google abre la sesión del correo verificado, sea o no el invitado; sin verificar no entra.
+    [Fact]
+    public async Task AGoogleSessionNeedsAVerifiedEmailButNotTheInvitedOne()
     {
         var email = NewEmail();
+        var otherEmail = NewEmail();
         var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
-        using var other = WholesaleApiHarness.CreateGoogle(Factory, NewEmail());
-        using var unverified = WholesaleApiHarness.CreateGoogle(Factory, email, verified: false);
+        using var other = WholesaleApiHarness.CreateGoogle(Factory, otherEmail);
+        using var unverified = WholesaleApiHarness.CreateGoogle(Factory, NewEmail(), verified: false);
         using var invited = WholesaleApiHarness.CreateGoogle(Factory, $"  {email.ToUpperInvariant()} ");
 
-        var mismatch = await other.PostAsync($"{WholesaleApiHarness.InvitationUrl(token)}/session", null, Ct);
+        var otherSession = await other.PostAsync($"{WholesaleApiHarness.InvitationUrl(token)}/session", null, Ct);
         var notVerified = await unverified.PostAsync($"{WholesaleApiHarness.InvitationUrl(token)}/session", null, Ct);
         var ok = await invited.PostAsync($"{WholesaleApiHarness.InvitationUrl(token)}/session", null, Ct);
 
-        Assert.Equal(HttpStatusCode.Forbidden, mismatch.StatusCode);
-        Assert.Equal("wholesale.invitation.email_mismatch", await WholesaleApiHarness.CodeOfAsync(mismatch));
+        Assert.Equal(HttpStatusCode.OK, otherSession.StatusCode);
+        Assert.Equal(otherEmail, (await otherSession.Content.ReadFromJsonAsync<SessionResponse>(Ct))!.Email);
         Assert.Equal(HttpStatusCode.Forbidden, notVerified.StatusCode);
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
         Assert.Equal(email, (await ok.Content.ReadFromJsonAsync<SessionResponse>(Ct))!.Email);
@@ -121,9 +188,7 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         using var session = WholesaleApiHarness.CreateSession(factory, userId);
 
         var response = await session.PostAsJsonAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/accept",
-            new { mode = "NewTenant", displayName = "Distri Norte", slug = NewSlug() },
-            Ct);
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant" }, Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
@@ -147,6 +212,35 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(1, owner[0]);
     }
 
+    // Spec 2026-11-19 §3b: el formulario no pide nombre ni slug. El nombre es la razón social y el slug lo genera el servidor;
+    // lo que traiga un cuerpo viejo se ignora.
+    [Fact]
+    public async Task ANewTenantUsesTheBusinessNameAndAGeneratedSlugAndIgnoresABodyNameAndSlug()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var businessName = $"Distribución Ñandú {suffix}";
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), businessName: businessName);
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        var bodySlug = NewSlug();
+        using var session = WholesaleApiHarness.CreateSession(Factory, userId);
+
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept",
+            new { mode = "NewTenant", displayName = "Nombre Ajeno", slug = bodySlug },
+            Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
+        Assert.Equal(businessName, accepted.TenantName);
+        var tenant = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""SELECT slug || '|' || display_name || '|' || default_culture || '|' || time_zone AS "Value" FROM tenancy.tenants WHERE id = {accepted.TenantId}""");
+        Assert.Equal([$"distribucion-nandu-{suffix}|{businessName}|es-CO|America/Bogota"], tenant);
+        var ignored = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM tenancy.tenants WHERE slug = {bodySlug}""");
+        Assert.Equal(0, ignored[0]);
+    }
+
     [Fact]
     public async Task NewTenantCreatesTheLinkedSupplierInTheDistributorAndTheCustomerInTheWholesaler()
     {
@@ -157,7 +251,7 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
-        Assert.Equal(("Distri Norte", true), (accepted.TenantName, accepted.Created));
+        Assert.Equal((WholesaleApiHarness.DefaultBusinessName, true), (accepted.TenantName, accepted.Created));
         var suppliers = await WholesaleApiHarness.RowsAsync<int>(
             Factory,
             $"""
@@ -218,28 +312,146 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(1, supplier[0]);
     }
 
+    // Spec 2026-11-19 §6: con el mismo correo no se escribe nada del correo, ni auditoría ni aviso.
     [Fact]
-    public async Task AnotherAccountIs403AndNothingIsWritten()
+    public async Task AnExistingAccountLinksWithoutTouchingAnythingIfTheEmailMatches()
     {
-        var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
-        var stranger = await WholesaleApiHarness.NewTenantAsync(Factory);
-        using var session = WholesaleApiHarness.CreateSession(Factory, stranger.SubjectId, stranger.TenantId);
-        var slug = NewSlug();
+        var mine = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var email = WholesaleApiHarness.EmailOf(mine);
+        var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
+        using var session = WholesaleApiHarness.CreateSession(Factory, mine.SubjectId, mine.TenantId);
 
-        var accept = await session.PostAsJsonAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant", displayName = "Ajena", slug }, Ct);
-        var linkable = await session.GetAsync($"{WholesaleApiHarness.InvitationUrl(token)}/linkable-tenants", Ct);
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "LinkTenant", tenantId = mine.TenantId }, Ct);
 
-        Assert.Equal(HttpStatusCode.Forbidden, accept.StatusCode);
-        Assert.Equal("wholesale.invitation.email_mismatch", await WholesaleApiHarness.CodeOfAsync(accept));
-        Assert.Equal(HttpStatusCode.Forbidden, linkable.StatusCode);
-        var tenants = await WholesaleApiHarness.RowsAsync<int>(
-            Factory, $"""SELECT count(*)::int AS "Value" FROM tenancy.tenants WHERE slug = {slug}""");
-        Assert.Equal(0, tenants[0]);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
         var detail = (await manager.GetFromJsonAsync<DistributorDetailDto>(
             $"{WholesaleApiHarness.DistributorsUrl(wholesaler.TenantId)}/{distributor.Id}", Ct))!;
-        Assert.Equal("Invited", detail.Status);
+        Assert.Equal(("Active", email), (detail.Status, detail.Email));
+        Assert.Equal(0, await EmailChangesAsync(wholesaler.TenantId, distributor.Id));
+    }
+
+    // Decisión del owner (2026-11-19): prevalece el correo de la cuenta, sin aprobación y con aviso a las dos partes.
+    [Fact]
+    public async Task ADifferentEmailReplacesTheWholesalersRecordAndNotifiesBoth()
+    {
+        var invitedEmail = NewEmail();
+        var accountEmail = NewEmail();
+        var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, invitedEmail);
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password, accountEmail);
+
+        var response = await AcceptNewTenantAsync(userId, token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
+        var detail = (await manager.GetFromJsonAsync<DistributorDetailDto>(
+            $"{WholesaleApiHarness.DistributorsUrl(wholesaler.TenantId)}/{distributor.Id}", Ct))!;
+        Assert.Equal(accountEmail, detail.Email);
+        // La auditoría llega por outbox: se espera a que aparezca.
+        Assert.Equal(
+            2,
+            await WholesaleApiHarness.EventuallyAsync(
+                () => EmailChangesAsync(wholesaler.TenantId, distributor.Id), count => count >= 2));
+        var notice = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""
+            SELECT (payload ->> 'previousEmail') || '>' || (payload ->> 'newEmail') AS "Value" FROM platform.outbox_messages
+            WHERE event_name = {EmailChangedEvent} AND payload ->> 'distributorId' = {distributor.Id.ToString()}
+            """);
+        Assert.Equal([$"{invitedEmail}>{accountEmail}"], notice);
+    }
+
+    // Spec 2026-11-19 §5 y §7: billing no administra el tenant, así que no lo puede vincular (el código de siempre); sí puede
+    // crear una empresa nueva con su sesión, aceptando los términos.
+    [Fact]
+    public async Task ABillingMemberIsToldToChangeOrganizationAndCanCreateANewTenant()
+    {
+        var company = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var billing = await WholesaleApiHarness.AddMemberAsync(Factory, company.TenantId, "billing");
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, $"miembro-{billing:N}@example.com");
+        using var session = WholesaleApiHarness.CreateSession(Factory, billing, company.TenantId);
+        var url = WholesaleApiHarness.InvitationUrl(token);
+
+        var linkable = await session.GetFromJsonAsync<LinkableTenantsResponse>($"{url}/linkable-tenants", Ct);
+        var link = await session.PostAsJsonAsync($"{url}/accept", new { mode = "LinkTenant", tenantId = company.TenantId }, Ct);
+        var withoutTerms = await session.PostAsJsonAsync($"{url}/accept", new { mode = "NewTenant" }, Ct);
+        var created = await session.PostAsJsonAsync(
+            $"{url}/accept", new { mode = "NewTenant", termsVersion = WholesaleApiHarness.TermsVersion }, Ct);
+
+        Assert.Empty(linkable!.Tenants);
+        Assert.Equal(HttpStatusCode.Forbidden, link.StatusCode);
+        Assert.Equal("wholesale.invitation.not_tenant_owner", await WholesaleApiHarness.CodeOfAsync(link));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, withoutTerms.StatusCode);
+        Assert.Contains("\"TermsVersion\"", await WholesaleApiHarness.BodyAsync(withoutTerms), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        Assert.True((await created.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!.Created);
+        var terms = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM identity.terms_acceptances WHERE user_id = {billing}""");
+        Assert.Equal(1, terms[0]);
+    }
+
+    [Fact]
+    public async Task AnAdminLinksTheTenant()
+    {
+        var company = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var admin = await WholesaleApiHarness.AddMemberAsync(Factory, company.TenantId, "admin");
+        var (wholesaler, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, $"miembro-{admin:N}@example.com");
+        using var session = WholesaleApiHarness.CreateSession(Factory, admin, company.TenantId);
+
+        var linkable = await session.GetFromJsonAsync<LinkableTenantsResponse>(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/linkable-tenants", Ct);
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "LinkTenant", tenantId = company.TenantId }, Ct);
+
+        Assert.Equal(company.TenantId, Assert.Single(linkable!.Tenants).TenantId);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var suppliers = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM suppliers.suppliers
+            WHERE tenant_id = {company.TenantId} AND linked_tenant_id = {wholesaler.TenantId}
+            """);
+        Assert.Equal(1, suppliers[0]);
+    }
+
+    // Spec 2026-11-19: el link identifica la invitación, no el correo. Cualquier cuenta la acepta, una sola vez.
+    [Fact]
+    public async Task AnotherAccountAcceptsAndTheInvitationIsConsumedOnlyOnce()
+    {
+        var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var first = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var second = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var firstSession = WholesaleApiHarness.CreateSession(Factory, first.SubjectId, first.TenantId);
+        using var secondSession = WholesaleApiHarness.CreateSession(Factory, second.SubjectId, second.TenantId);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/accept";
+        var body = new { mode = "NewTenant", termsVersion = WholesaleApiHarness.TermsVersion };
+
+        var accepted = await firstSession.PostAsJsonAsync(url, body, Ct);
+        var again = await firstSession.PostAsJsonAsync(url, body, Ct);
+        // Sin términos: la invitación ya consumida responde su propio 409 antes de pedir términos o registrarlos.
+        var refused = await secondSession.PostAsJsonAsync(url, new { mode = "NewTenant" }, Ct);
+        var linkable = await secondSession.GetAsync($"{WholesaleApiHarness.InvitationUrl(token)}/linkable-tenants", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var tenantId = (await accepted.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!.TenantId;
+        Assert.Equal(tenantId, (await again.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!.TenantId);
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Equal("wholesale.invitation.already_accepted", await WholesaleApiHarness.CodeOfAsync(refused));
+        Assert.Equal(HttpStatusCode.Conflict, linkable.StatusCode);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
+        var detail = (await manager.GetFromJsonAsync<DistributorDetailDto>(
+            $"{WholesaleApiHarness.DistributorsUrl(wholesaler.TenantId)}/{distributor.Id}", Ct))!;
+        Assert.Equal(("Active", tenantId, WholesaleApiHarness.EmailOf(first)), (detail.Status, detail.DistributorTenant!.Id, detail.Email));
+        var secondTenants = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM tenancy.memberships WHERE user_id = {second.SubjectId}
+            """);
+        Assert.Equal(1, secondTenants[0]);
+        var secondTerms = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM identity.terms_acceptances WHERE user_id = {second.SubjectId}""");
+        Assert.Equal(0, secondTerms[0]);
     }
 
     [Fact]
@@ -263,17 +475,17 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
     [Fact]
     public async Task TwoConcurrentAcceptsCreateOneTenantOneSupplierOneCustomer()
     {
-        var (wholesaler, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), "901222333");
+        var businessName = $"Doble Clic {Guid.NewGuid():N}"[..24];
+        var (wholesaler, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), "901222333", businessName);
         var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
-        var slug = NewSlug();
 
-        var responses = await Task.WhenAll(AcceptNewTenantAsync(userId, token, slug), AcceptNewTenantAsync(userId, token, slug));
+        var responses = await Task.WhenAll(AcceptNewTenantAsync(userId, token), AcceptNewTenantAsync(userId, token));
 
         Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
         var accepted = await Task.WhenAll(responses.Select(response => response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct)));
         Assert.Equal(accepted[0]!.TenantId, accepted[1]!.TenantId);
         var tenants = await WholesaleApiHarness.RowsAsync<int>(
-            Factory, $"""SELECT count(*)::int AS "Value" FROM tenancy.tenants WHERE slug = {slug}""");
+            Factory, $"""SELECT count(*)::int AS "Value" FROM tenancy.tenants WHERE display_name = {businessName}""");
         var suppliers = await WholesaleApiHarness.RowsAsync<int>(
             Factory,
             $"""
@@ -289,23 +501,86 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal((1, 1, 1), (tenants[0], suppliers[0], customers[0]));
     }
 
+    // Spec 2026-11-19 §3b, foco 3: dos distribuidores con la misma razón social reciben la misma sugerencia; el que pierde la
+    // reserva del slug reintenta con una sugerencia nueva. Host propio: el doble de las sugerencias es global.
+    [Fact]
+    public async Task TwoAcceptancesRacingForTheSameSlugBothEndUpWithATenant()
+    {
+        var race = new SlugRace();
+        await using var database = await WholesaleApiHarness.StartDatabaseAsync();
+        await using var factory = new WholesaleApiHarness.QepApiFactory(
+            database.GetConnectionString(), configureServices: services => race.Install(services));
+        var businessName = "Carrera Distribuidora SAS";
+        var (_, _, firstToken) = await WholesaleApiHarness.InvitedAsync(factory, NewEmail(), "901000001", businessName);
+        var (_, _, secondToken) = await WholesaleApiHarness.InvitedAsync(factory, NewEmail(), "901000002", businessName);
+        var firstUser = await WholesaleApiHarness.PasswordSessionAsync(factory, firstToken, Password);
+        var secondUser = await WholesaleApiHarness.PasswordSessionAsync(factory, secondToken, Password);
+
+        var responses = await Task.WhenAll(
+            AcceptNewTenantAsync(factory, firstUser, firstToken), AcceptNewTenantAsync(factory, secondUser, secondToken));
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        var accepted = await Task.WhenAll(responses.Select(response => response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct)));
+        Assert.NotEqual(accepted[0]!.TenantId, accepted[1]!.TenantId);
+        var slugs = await WholesaleApiHarness.RowsAsync<string>(
+            factory,
+            $"""SELECT slug AS "Value" FROM tenancy.tenants WHERE display_name = {businessName} ORDER BY slug""");
+        Assert.Equal(["carrera-distribuidora-sas", "carrera-distribuidora-sas-2"], slugs);
+        Assert.True(race.Calls >= 3, $"Only {race.Calls} suggestions: nobody retried.");
+    }
+
+    // Spec 2026-11-19 §4: siempre 202, exista o no el correo o la invitación; sólo emite con la invitación pendiente.
+    [Fact]
+    public async Task EmailCodeAlwaysAnswers202()
+    {
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var (_, expiredDistributor, expiredToken) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        await WholesaleApiHarness.ExecuteAsync(
+            Factory,
+            $"""
+            UPDATE wholesale.distributor_invitations SET expires_at = now() - interval '1 minute'
+            WHERE distributor_id = {expiredDistributor.Id}
+            """);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var anyEmail = NewEmail();
+        var expiredEmail = NewEmail();
+
+        var pending = await anonymous.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/email-code", new { email = anyEmail }, Ct);
+        var expired = await anonymous.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(expiredToken)}/email-code", new { email = expiredEmail }, Ct);
+        var unknown = await anonymous.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl("no-existe")}/email-code", new { email = NewEmail() }, Ct);
+        var malformed = await anonymous.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/email-code", new { email = "no-es-un-correo" }, Ct);
+        var noBody = await anonymous.PostAsync($"{WholesaleApiHarness.InvitationUrl(token)}/email-code", null, Ct);
+
+        Assert.All(
+            new[] { pending, expired, unknown, malformed, noBody },
+            response => Assert.Equal(HttpStatusCode.Accepted, response.StatusCode));
+        Assert.Matches("^[0-9]{6}$", await WholesaleApiHarness.LatestEmailCodeAsync(Factory, anyEmail));
+        Assert.Null(await WholesaleApiHarness.LatestEmailCodeAsync(Factory, expiredEmail));
+    }
+
     // El token no queda en la auditoría ni en el log de fallas (platform.request_failures), aunque una aceptación falle.
     [Fact]
     public async Task TheTokenNeverAppearsInAuditOrRequestLogs()
     {
-        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var email = NewEmail();
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
         var stranger = await WholesaleApiHarness.NewTenantAsync(Factory);
         using (var session = WholesaleApiHarness.CreateSession(Factory, stranger.SubjectId, stranger.TenantId))
         {
+            // Sin términos aceptados: 422, una falla que el middleware guarda.
             var refused = await session.PostAsJsonAsync(
-                $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant", displayName = "X", slug = NewSlug() }, Ct);
-            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+                $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant" }, Ct);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, refused.StatusCode);
         }
 
         using (var anonymous = WholesaleApiHarness.CreateAnonymous(Factory))
         {
             var weak = await anonymous.PostAsJsonAsync(
-                $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password", new { password = "1" }, Ct);
+                $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password", new { email, password = "1" }, Ct);
             Assert.Equal(HttpStatusCode.UnprocessableEntity, weak.StatusCode);
         }
 
@@ -336,12 +611,69 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
     // Slug de 30: dentro del tope de Tenancy y único por prueba.
     private static string NewSlug() => $"distri-{Guid.NewGuid():N}"[..30];
 
-    private async Task<HttpResponseMessage> AcceptNewTenantAsync(Guid userId, string token, string? slug = null)
+    private Task<HttpResponseMessage> AcceptNewTenantAsync(Guid userId, string token) =>
+        AcceptNewTenantAsync(Factory, userId, token);
+
+    private static async Task<HttpResponseMessage> AcceptNewTenantAsync(
+        WholesaleApiHarness.QepApiFactory factory, Guid userId, string token)
     {
-        using var session = WholesaleApiHarness.CreateSession(Factory, userId);
-        return await session.PostAsJsonAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/accept",
-            new { mode = "NewTenant", displayName = "Distri Norte", slug = slug ?? NewSlug() },
-            Ct);
+        using var session = WholesaleApiHarness.CreateSession(factory, userId);
+        return await session.PostAsJsonAsync($"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant" }, Ct);
+    }
+
+    /// <summary>La auditoría del cambio de correo y su evento para ese distribuidor.</summary>
+    private async Task<int> EmailChangesAsync(Guid wholesalerTenantId, Guid distributorId)
+    {
+        var rows = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT ((SELECT count(*) FROM audit.entries
+                     WHERE tenant_id = {wholesalerTenantId} AND resource_id = {distributorId.ToString()}
+                       AND action = 'wholesale.distributor.email_changed')
+                  + (SELECT count(*) FROM platform.outbox_messages
+                     WHERE event_name = {EmailChangedEvent} AND payload ->> 'distributorId' = {distributorId.ToString()}))::int AS "Value"
+            """);
+        return rows[0];
+    }
+
+    private async Task<int> CountUsersAsync(string email)
+    {
+        var rows = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM identity.users WHERE email = {email}""");
+        return rows[0];
+    }
+
+    /// <summary>
+    /// Las dos primeras sugerencias de slug devuelven la misma (la que vio la primera), como dos aceptaciones que consultan
+    /// antes de que cualquiera reserve; desde la tercera, la sugerencia real.
+    /// </summary>
+    private sealed class SlugRace
+    {
+        private int _calls;
+        private string? _first;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public void Install(IServiceCollection services)
+        {
+            var original = services.Last(descriptor => descriptor.ServiceType == typeof(ITenantSlugSuggestions));
+            services.Remove(original);
+            services.AddScoped<ITenantSlugSuggestions>(provider => new Stale(
+                (ITenantSlugSuggestions)ActivatorUtilities.CreateInstance(provider, original.ImplementationType!), this));
+        }
+
+        private sealed class Stale(ITenantSlugSuggestions inner, SlugRace race) : ITenantSlugSuggestions
+        {
+            public async Task<string> SuggestAsync(string displayName, CancellationToken cancellationToken)
+            {
+                if (Interlocked.Increment(ref race._calls) <= 2)
+                {
+                    var suggested = await inner.SuggestAsync(displayName, cancellationToken);
+                    return Interlocked.CompareExchange(ref race._first, suggested, null) ?? suggested;
+                }
+
+                return await inner.SuggestAsync(displayName, cancellationToken);
+            }
+        }
     }
 }

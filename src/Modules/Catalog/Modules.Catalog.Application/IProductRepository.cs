@@ -13,8 +13,8 @@ public interface IProductRepository
     /// cuando se llenan los dos); `search` es el criterio OR original sobre los mismos dos
     /// campos, para el combobox de productos de `quotes`. `isActive` es un filtro real de la
     /// consulta, no un post-filtro en memoria. `categoryIds`: null no filtra; no nulo deja sólo
-    /// los productos de esas categorías (una colección vacía no devuelve filas). Lo usa el POS;
-    /// `GET /catalog/products` no lo expone todavía (spec 2026-10-26 §3.3).
+    /// los productos de esas categorías (una colección vacía no devuelve filas). Lo usan el POS y
+    /// `GET /catalog/products?categoryId=` (spec 2026-11-19 catalogo-productos-filtro-categoria).
     /// </summary>
     Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
         Guid tenantId,
@@ -52,10 +52,15 @@ public interface IProductRepository
     /// variante tiene foto propia, una de galería; con 2.048 variantes por producto, el agregado
     /// de una página entera serían cientos de miles de objetos para pintar una lista. El producto
     /// activo lo decide quien llama, que ya tiene la fila.
+    ///
+    /// Con <paramref name="includeCosts"/> suma **una** consulta a los costos de todas las variantes de la página
+    /// (spec 2026-11-19); sin él la tabla de costos no se toca y <see cref="SellableVariantSummary.Costs"/> queda null.
+    /// Quien llama lo prende sólo si el usuario puede ver costos (<c>CatalogCostAccess.CanRead</c>).
     /// </summary>
     Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
         Guid tenantId,
         IReadOnlyCollection<ProductId> productIds,
+        bool includeCosts,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -281,6 +286,8 @@ public sealed record ProductPriceRange(string Currency, decimal Min, decimal Max
 /// <param name="Prices">Moneda → monto, sin orden garantizado: el mapeo los pone en orden de catálogo.</param>
 /// <param name="Scales">Sin orden garantizado: el mapeo las ordena por <c>FromUnit</c>.</param>
 /// <param name="GalleryFileId">El archivo de la foto propia de la variante; null si usa la principal.</param>
+/// <param name="Costs">Moneda → costo, sin orden garantizado; vacío si la variante no tiene. Null = no se leyó (quien
+/// llama no pidió los costos): el mapeo decide por el permiso, no por este campo.</param>
 public sealed record SellableVariantSummary(
     ProductId ProductId,
     VariantId Id,
@@ -291,7 +298,8 @@ public sealed record SellableVariantSummary(
     IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyList<SellableVariantScale> Scales,
     IReadOnlyList<int> PackagingUnits,
-    Guid? GalleryFileId);
+    Guid? GalleryFileId,
+    IReadOnlyDictionary<string, decimal>? Costs = null);
 
 public sealed record SellableVariantScale(
     Guid Id,

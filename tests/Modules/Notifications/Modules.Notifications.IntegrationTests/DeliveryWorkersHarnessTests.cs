@@ -21,13 +21,14 @@ public sealed class DeliveryWorkersHarnessTests
     }
 
     [Fact]
-    public async Task TheSwitchPutsTheDeliveryLoopBackWithItsThirteenConsumers()
+    public async Task TheSwitchPutsTheDeliveryLoopBackWithAllItsConsumers()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new NotificationsApiFactory(database.GetConnectionString(), runDeliveryWorkers: true);
 
         var loop = Assert.Single(factory.Services.GetServices<IHostedService>(), service => IsDeliveryWorker(service.GetType()));
         Assert.IsType<NotificationsDeliveryWorker>(loop);
-        Assert.Equal(13, factory.Services.GetServices<OutboxDeliveryWorker>().Count());
+        // Los mismos que registra AddNotificationsInfrastructure (NotificationsDeliveryWorkerTests): 17 desde spec 2026-11-19.
+        Assert.Equal(17, factory.Services.GetServices<OutboxDeliveryWorker>().Count());
     }
 }

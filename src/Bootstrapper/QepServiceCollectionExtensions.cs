@@ -574,6 +574,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wholesale.Application.DeleteDistributorCommand, bool>,
             Modules.Wholesale.Application.DeleteDistributorHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wholesale.Application.RotateInvitationLinkCommand, Modules.Wholesale.Application.DistributorDetailDto>,
+            Modules.Wholesale.Application.RotateInvitationLinkHandler>();
         services.AddScoped<Modules.Wholesale.Application.DistributorComposer>();
         // La invitación vista desde el link: sin IExecutionContext, el tenant del mayorista sale de la invitación.
         services.AddScoped<Modules.Wholesale.Application.IDistributorInvitationService, Modules.Wholesale.Application.DistributorInvitationService>();
@@ -1598,6 +1601,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<ListSiigoOptionsQuery, IReadOnlyList<SiigoOptionDto>>, ListSiigoOptionsHandler>();
         // Paso 6 (Tarea 7): los vínculos de las variantes con los productos de Siigo.
         services.AddScoped<IQueryHandler<ListSiigoVariantLinksQuery, SiigoVariantLinksPageDto>, ListSiigoVariantLinksHandler>();
+        services.AddScoped<IQueryHandler<SearchSiigoProductsQuery, SiigoProductCandidatesPageDto>, SearchSiigoProductsHandler>();
         services.AddScoped<ICommandHandler<LinkSiigoVariantCommand, SiigoVariantLinkDto>, LinkSiigoVariantHandler>();
         services.AddScoped<ICommandHandler<UnlinkSiigoVariantCommand, SiigoCoverageDto>, UnlinkSiigoVariantHandler>();
         services.AddScoped<ICommandHandler<AutoLinkSiigoVariantsByCodeCommand, SiigoAutoLinkResultDto>, AutoLinkSiigoVariantsByCodeHandler>();
@@ -1940,6 +1944,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Wholesale.Application.IWholesalePhoneNormalizer, WholesalePhoneNormalizer>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleWhatsAppConnections, WholesaleWhatsAppConnections>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleInvitationNoticeSender, WholesaleInvitationNoticeSender>();
+        // Spec 2026-11-19: el link para «Copiar», el mismo del correo (Notifications:AppBaseUrl, ruling W1).
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleInvitationLinks, WholesaleInvitationLinks>();
         // Ruling W17: el paso de Identity de session-with-password, con la contraseña validada antes de crear al usuario.
         services.AddScoped<WholesaleInvitationPasswordSession>();
         // El paso de Identity de session con Google: aprovisiona sólo si la identidad no tiene usuario, y usa ese usuario.

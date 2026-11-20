@@ -13,4 +13,12 @@ public interface ITenantOwnership
     /// <returns>Los tenants <c>Active</c> cuyo <c>OwnerMembershipId</c> es una membresía <c>Active</c> de
     /// <paramref name="userId"/>, ordenados por nombre.</returns>
     Task<IReadOnlyList<OwnedTenant>> ListOwnedActiveTenantsAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-19 (onboarding por link): los tenants que el usuario puede vincular. Además de los suyos como owner,
+    /// los que administra como miembro <c>Active</c> con el rol de sistema <c>admin</c>; un rol personalizado no cuenta.
+    /// </summary>
+    /// <returns>Los tenants <c>Active</c> que cumplen, ordenados por nombre como
+    /// <see cref="ListOwnedActiveTenantsAsync"/>.</returns>
+    Task<IReadOnlyList<OwnedTenant>> ListAdministeredActiveTenantsAsync(Guid userId, CancellationToken cancellationToken);
 }

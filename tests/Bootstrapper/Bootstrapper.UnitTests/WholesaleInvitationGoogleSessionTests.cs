@@ -1,72 +1,71 @@
-using BuildingBlocks.Application;
 using Modules.Identity.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
-using Modules.Wholesale.Domain;
 
 namespace Bootstrapper.UnitTests;
 
 /// <summary>
 /// <c>POST /wholesale-invitations/{token}/session</c> con Google: la sesión se abre para el usuario que el subject ya tiene o,
-/// si no tiene ninguno, para el que se aprovisiona por el correo invitado. Nunca se aprovisiona un usuario que después no se usa
-/// (antes, un subject vinculado a otro usuario dejaba uno sin membresía y abría la sesión del otro).
+/// si no tiene ninguno, para el que se aprovisiona por el <b>correo verificado de Google</b> (spec 2026-11-19: el link ya no
+/// exige el correo invitado). Nunca se aprovisiona un usuario que después no se usa.
 /// </summary>
 public sealed class WholesaleInvitationGoogleSessionTests
 {
-    private const string InvitedEmail = "ana@distri.co";
+    private const string GoogleEmail = "ana@gmail.com";
     private const string Subject = "google-sub-1";
 
     private readonly FakeIdentity _identity = new();
     private readonly FakeTenancyUnitOfWork _tenancy = new();
 
-    private WholesaleInvitationGoogleSession Session() => new(_tenancy, _identity, _identity, _identity);
+    private WholesaleInvitationGoogleSession Session() => new(_tenancy, _identity, _identity);
 
     [Fact]
     public async Task ASubjectAlreadyLinkedUsesThatUserAndProvisionsNothing()
     {
-        var existing = _identity.AddUser(InvitedEmail, Subject);
+        var existing = _identity.AddUser(GoogleEmail, Subject);
 
-        var outcome = await Session().OpenAsync(InvitedEmail, Subject, InvitedEmail, TestContext.Current.CancellationToken);
+        var outcome = await Session().OpenAsync(GoogleEmail, Subject, TestContext.Current.CancellationToken);
 
         Assert.Equal(ProviderLinkOutcome.Linked(existing), outcome);
         Assert.Empty(_identity.Provisioned);
-        Assert.Equal((1, 1, InvitedEmail), (_tenancy.Scopes, _tenancy.Commits, _tenancy.LockedEmail));
+        Assert.Equal((1, 1, GoogleEmail), (_tenancy.Scopes, _tenancy.Commits, _tenancy.LockedEmail));
     }
 
+    // Spec 2026-11-19 §6: la invitación fue a otro correo; la cuenta es la de Google y su correo reemplaza al invitado al aceptar.
     [Fact]
-    public async Task ANewSubjectAndEmailProvisionsOnceAndOpensTheSessionForThatUser()
+    public async Task GoogleOpensTheSessionForTheVerifiedEmailEvenIfItIsNotTheInvitedOne()
     {
-        var outcome = await Session().OpenAsync(InvitedEmail, Subject, InvitedEmail, TestContext.Current.CancellationToken);
+        var outcome = await Session().OpenAsync(GoogleEmail, Subject, TestContext.Current.CancellationToken);
 
         var provisioned = Assert.Single(_identity.Provisioned);
         Assert.Equal(ProviderLinkOutcome.Linked(provisioned), outcome);
+        Assert.Equal(GoogleEmail, _identity.EmailOf(provisioned));
         Assert.Equal(provisioned, _identity.UserForSubject(Subject));
-        Assert.Equal(1, _tenancy.Commits);
+        Assert.Equal((1, GoogleEmail), (_tenancy.Commits, _tenancy.LockedEmail));
     }
 
     [Fact]
     public async Task AnEmailWithAUserAndANewSubjectLinksThatUserWithoutProvisioning()
     {
-        var existing = _identity.AddUser(InvitedEmail, subject: null);
+        var existing = _identity.AddUser(GoogleEmail, subject: null);
 
-        var outcome = await Session().OpenAsync(InvitedEmail, Subject, InvitedEmail, TestContext.Current.CancellationToken);
+        var outcome = await Session().OpenAsync(GoogleEmail, Subject, TestContext.Current.CancellationToken);
 
         Assert.Equal(ProviderLinkOutcome.Linked(existing), outcome);
         Assert.Empty(_identity.Provisioned);
     }
 
+    // Antes era email_mismatch. Ahora el subject manda: la sesión es la de su cuenta, y nada se aprovisiona.
     [Fact]
-    public async Task ASubjectLinkedToAUserWithAnotherEmailIsRejectedAndCreatesNoUser()
+    public async Task ASubjectLinkedToAnAccountWithAnotherEmailOpensThatAccount()
     {
-        _identity.AddUser("otra@distri.co", Subject);
+        var existing = _identity.AddUser("otra@distri.co", Subject);
 
-        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
-            Session().OpenAsync(InvitedEmail, Subject, InvitedEmail, TestContext.Current.CancellationToken));
+        var outcome = await Session().OpenAsync(GoogleEmail, Subject, TestContext.Current.CancellationToken);
 
-        Assert.Equal(WholesaleErrorCodes.InvitationEmailMismatch, error.Code);
+        Assert.Equal(ProviderLinkOutcome.Linked(existing), outcome);
         Assert.Empty(_identity.Provisioned);
-        Assert.Equal(1, _identity.UserCount);
-        Assert.Equal(0, _tenancy.Commits);
+        Assert.Equal(1, _tenancy.Commits);
     }
 
     [Fact]
@@ -74,7 +73,7 @@ public sealed class WholesaleInvitationGoogleSessionTests
     {
         _identity.DenyWith = "email_invalid";
 
-        var outcome = await Session().OpenAsync(InvitedEmail, Subject, InvitedEmail, TestContext.Current.CancellationToken);
+        var outcome = await Session().OpenAsync(GoogleEmail, Subject, TestContext.Current.CancellationToken);
 
         Assert.Equal(ProviderLinkOutcome.Denied("email_invalid"), outcome);
         Assert.Empty(_identity.Provisioned);
@@ -82,7 +81,7 @@ public sealed class WholesaleInvitationGoogleSessionTests
     }
 
     /// <summary>Las reglas de <c>ProviderLinkingService</c> e <c>IdentityProvisioningService</c> sobre un directorio en memoria.</summary>
-    private sealed class FakeIdentity : IIdentityProvisioning, IProviderLinking, IUserDirectory
+    private sealed class FakeIdentity : IIdentityProvisioning, IProviderLinking
     {
         private readonly Dictionary<Guid, string> _emails = [];
         private readonly Dictionary<string, Guid> _subjects = [];
@@ -90,8 +89,6 @@ public sealed class WholesaleInvitationGoogleSessionTests
         public List<Guid> Provisioned { get; } = [];
 
         public string? DenyWith { get; set; }
-
-        public int UserCount => _emails.Count;
 
         public Guid AddUser(string email, string? subject)
         {
@@ -104,6 +101,8 @@ public sealed class WholesaleInvitationGoogleSessionTests
 
             return id;
         }
+
+        public string? EmailOf(Guid userId) => _emails.TryGetValue(userId, out var email) ? email : null;
 
         public Guid? UserForSubject(string subject) => _subjects.TryGetValue(subject, out var id) ? id : null;
 
@@ -140,12 +139,6 @@ public sealed class WholesaleInvitationGoogleSessionTests
             _subjects[subject] = user;
             return Task.FromResult(ProviderLinkOutcome.Linked(user));
         }
-
-        public Task<string?> GetEmailAsync(Guid userId, CancellationToken cancellationToken) =>
-            Task.FromResult(_emails.TryGetValue(userId, out var email) ? email : null);
-
-        public Task<Guid?> FindUserIdByEmailAsync(string email, CancellationToken cancellationToken) =>
-            Task.FromResult(FindByEmail(email));
 
         private Guid? FindByEmail(string? email) =>
             _emails.Where(pair => string.Equals(pair.Value, email, StringComparison.OrdinalIgnoreCase))

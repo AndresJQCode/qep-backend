@@ -136,6 +136,8 @@ internal static class LinkedPurchasesHarness
             {
                 email = EmailOf(buyerTenant),
                 businessName = "Distribuciones Norte SAS",
+                country = "CO",
+                identificationType = "NIT",
                 identificationNumber = $"9{Random.Shared.NextInt64(100_000_000, 999_999_999)}",
                 contactName = "Ana Pérez",
                 priceListId = priceList.Id,

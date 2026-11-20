@@ -256,6 +256,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
     public async Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
         Guid tenantId,
         IReadOnlyCollection<ProductId> productIds,
+        bool includeCosts,
         CancellationToken cancellationToken)
     {
         if (productIds.Count == 0)
@@ -320,6 +321,20 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .ToListAsync(cancellationToken))
             .ToLookup(scale => scale.VariantId);
 
+        // Los costos, igual que los precios: una consulta plana para toda la página, y ninguna si quien llama no puede
+        // verlos (el dato es sensible y la tabla ni se toca).
+        var costs = includeCosts
+            ? (await variants
+                .SelectMany(variant => variant.Costs, (variant, cost) => new
+                {
+                    VariantId = variant.Id,
+                    cost.Currency,
+                    cost.Amount
+                })
+                .ToListAsync(cancellationToken))
+                .ToLookup(cost => cost.VariantId)
+            : null;
+
         // La foto propia: sólo se consulta la galería si alguna variante eligió una.
         var galleryImageIds = rows
             .Where(row => row.GalleryImageId.HasValue)
@@ -359,7 +374,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.PackagingUnits,
                 row.GalleryImageId is { } imageId && galleryFiles.TryGetValue(imageId, out var fileId)
                     ? fileId
-                    : null))
+                    : null,
+                costs?[row.Id].ToDictionary(cost => cost.Currency, cost => cost.Amount)))
             .ToArray();
     }
 
@@ -433,8 +449,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             query = query.Where(product => product.IsActive == isActive);
         }
 
-        // null = sin filtro; una colección vacía no devuelve filas. Lo usa el POS; el listado de
-        // productos no lo expone todavía (spec 2026-10-26 §3.3).
+        // null = sin filtro; una colección vacía no devuelve filas. Lo usan el POS y el listado de
+        // productos (`categoryId`, spec 2026-11-19 catalogo-productos-filtro-categoria), los dos con la
+        // categoría ya expandida a sus descendientes.
         if (categoryIds is not null)
         {
             // Los ids con el tipo exacto de la propiedad, ProductCategoryId? (nullable), y el Contains sobre

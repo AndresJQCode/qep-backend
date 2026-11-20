@@ -44,7 +44,8 @@ public sealed class Distributor
 
     public string ContactName { get; private set; }
 
-    /// <summary>Recortado y en minúsculas: el correo al que se ata la invitación.</summary>
+    /// <summary>Recortado y en minúsculas. Nace con el que escribe el mayorista; al aceptar queda el de la cuenta que acepta
+    /// (<see cref="ReplaceEmail"/>).</summary>
     public string Email { get; private set; }
 
     public PriceListId PriceListId { get; private set; }
@@ -218,6 +219,18 @@ public sealed class Distributor
         Touch(now);
     }
 
+    /// <summary>
+    /// Spec 2026-11-19 §1, «Copiar»: token y vigencia nuevos (72 h desde ahora), como al reenviar, pero sin publicar nada ni
+    /// tocar el estado del aviso. Sólo mientras está invitada, aunque la invitación haya vencido.
+    /// </summary>
+    public void RotateInvitationLink(string tokenHash, DateTimeOffset now)
+    {
+        EnsureTokenHash(tokenHash);
+        EnsureStatus(DistributorStatus.Invited);
+        Invitation.Rotate(tokenHash, now);
+        Touch(now);
+    }
+
     public void Block(DateTimeOffset now)
     {
         EnsureStatus(DistributorStatus.Active);
@@ -241,6 +254,26 @@ public sealed class Distributor
         DistributorStatus.Invited => InvitationViewState.Pending,
         _ => InvitationViewState.Accepted,
     };
+
+    /// <summary>
+    /// Spec 2026-11-19 §6: el correo de la cuenta que acepta reemplaza al que escribió el mayorista. Sólo mientras está invitada
+    /// (después es <c>wholesale.distributor.invalid_transition</c>) y normalizado como al invitar. Devuelve <c>true</c> y sube
+    /// <see cref="Version"/> sólo si cambió: el mismo correo con otras mayúsculas o espacios no escribe nada.
+    /// </summary>
+    public bool ReplaceEmail(string email, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        EnsureStatus(DistributorStatus.Invited);
+        var normalized = NormalizeEmail(email);
+        if (normalized == Email)
+        {
+            return false;
+        }
+
+        Email = normalized;
+        Touch(now);
+        return true;
+    }
 
     /// <summary>Si el correo de la sesión es el de la invitación, sin importar mayúsculas ni espacios alrededor.</summary>
     public bool InvitedEmailMatches(string? email) =>

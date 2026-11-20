@@ -27,4 +27,29 @@ public sealed class TenantOwnershipQuery(TenancyDbContext dbContext) : ITenantOw
                orderby tenant.DisplayName, tenant.Id
                select new OwnedTenant(tenant.Id.Value, tenant.DisplayName);
     }
+
+    public async Task<IReadOnlyList<OwnedTenant>> ListAdministeredActiveTenantsAsync(
+        Guid userId, CancellationToken cancellationToken) =>
+        await Administered(dbContext, userId).ToListAsync(cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-19 (onboarding por link): los tenants que el usuario administra, como owner o como miembro activo con
+    /// el rol de sistema <see cref="Membership.AdminRole"/>. Un rol personalizado no cuenta. La membresía es única por
+    /// usuario y tenant, así que el join no duplica filas.
+    /// </summary>
+    public static IQueryable<OwnedTenant> Administered(TenancyDbContext dbContext, Guid userId)
+    {
+        ArgumentNullException.ThrowIfNull(dbContext);
+        return from tenant in dbContext.Tenants.AsNoTracking()
+               join membership in dbContext.Memberships.AsNoTracking() on tenant.Id equals membership.TenantId
+               where membership.UserId == userId
+                   && membership.State == MembershipState.Active
+                   && tenant.Status == TenantStatus.Active
+                   // EF.Property y no membership.Roles: el mapeo ignora la propiedad y le da la columna al campo
+                   // privado, como en MembershipRepository.ListActiveTenantSummariesByUserAsync.
+                   && (tenant.OwnerMembershipId == membership.Id
+                       || EF.Property<List<string>>(membership, "_roles").Contains(Membership.AdminRole))
+               orderby tenant.DisplayName, tenant.Id
+               select new OwnedTenant(tenant.Id.Value, tenant.DisplayName);
+    }
 }

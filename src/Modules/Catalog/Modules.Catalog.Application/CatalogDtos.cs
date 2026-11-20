@@ -187,6 +187,10 @@ public sealed record PriceRangeResponse(decimal Min, decimal Max);
 /// <c>packaging_unit</c> se explica con los empaques de **esta** variante.</param>
 /// <param name="ImageUrl">La foto de la variante o, sin ella, la principal del producto; null si
 /// el archivo no está publicado o no es del tenant.</param>
+/// <param name="Costs">El costo unitario sin IVA por moneda, con la semántica de
+/// <see cref="ProductVariantResponse.Costs"/>: <c>null</c> = quien llama no puede verlo, <c>{}</c> = no tiene costo
+/// (spec 2026-11-19 catalogo-lista-costos-de-variantes). BFF: el catálogo de la orden de compra lo pinta en la tarjeta y
+/// prellena el costo de la línea sin pedir el detalle de cada producto. El selector de cotizaciones lo ignora.</param>
 public sealed record ProductSellableVariantDto(
     Guid Id,
     string Name,
@@ -195,7 +199,8 @@ public sealed record ProductSellableVariantDto(
     IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyCollection<PriceScaleResponse> PriceScales,
     IReadOnlyList<int> PackagingUnits,
-    string? ImageUrl);
+    string? ImageUrl,
+    IReadOnlyDictionary<string, decimal>? Costs = null);
 
 /// <summary>
 /// Precio y escalas de un producto (CAT-09), tal como los manda el cliente.

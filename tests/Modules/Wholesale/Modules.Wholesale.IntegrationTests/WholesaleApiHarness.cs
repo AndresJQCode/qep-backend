@@ -28,6 +28,13 @@ internal static class WholesaleApiHarness
 
     public const string DistributorInvitedEvent = "wholesale.distributor-invited.v1";
 
+    public const string EmailChallengeEvent = "identity.email-challenge-requested.v1";
+
+    public const string DefaultBusinessName = "Distribuciones Norte SAS";
+
+    /// <summary>La versión vigente de los términos en los hosts de prueba (<c>Terms:CurrentVersion</c>).</summary>
+    public const string TermsVersion = "2026-11-19-pruebas";
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     public static string PriceListsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/price-lists";
@@ -43,7 +50,24 @@ internal static class WholesaleApiHarness
     public static string EmailOf(WholesaleTestTenant tenant) => $"mayorista-{tenant.SubjectId:N}@example.com";
 
     /// <summary>Quien abre el link sin sesión.</summary>
-    public static HttpClient CreateAnonymous(QepApiFactory factory) => factory.CreateClient();
+    public static HttpClient CreateAnonymous(QepApiFactory factory) => ClientWithOwnIp(factory);
+
+    /// <summary>
+    /// Un cliente con su propia IP (198.18.0.0/15, reservada para pruebas), como <c>SupportPublicHarness</c>. TestServer no trae
+    /// <c>RemoteIpAddress</c>, así que sin esto todas las pruebas de un host compartido caen en la misma partición del limitador
+    /// <c>Credentials</c> (10 por minuto por ruta) y una clase con varias sesiones por link recibe 429 según el orden.
+    /// </summary>
+    private static HttpClient ClientWithOwnIp(QepApiFactory factory)
+    {
+        var next = Interlocked.Increment(ref _nextIp);
+        var ip = System.Net.IPAddress.Parse($"198.18.{next / 250 % 250}.{(next % 250) + 1}");
+        return new HttpClient(factory.Server.CreateHandler(context => context.Connection.RemoteIpAddress = ip))
+        {
+            BaseAddress = factory.Server.BaseAddress,
+        };
+    }
+
+    private static int _nextIp;
 
     /// <summary>
     /// La sesión de quien acepta, con el stub por headers: el sujeto QEP va en <c>X-Subject-Id</c> y el tenant es uno cualquiera
@@ -51,7 +75,7 @@ internal static class WholesaleApiHarness
     /// </summary>
     public static HttpClient CreateSession(QepApiFactory factory, Guid userId, Guid? tenantId = null)
     {
-        var client = factory.CreateClient();
+        var client = ClientWithOwnIp(factory);
         client.DefaultRequestHeaders.Add("X-Subject-Id", userId.ToString());
         client.DefaultRequestHeaders.Add("X-Tenant-Id", (tenantId ?? Guid.CreateVersion7()).ToString());
         return client;
@@ -66,25 +90,90 @@ internal static class WholesaleApiHarness
         return client;
     }
 
-    /// <summary>Abre sesión con contraseña desde el link y devuelve el id del usuario (lo crea si no existía).</summary>
-    public static async Task<Guid> PasswordSessionAsync(QepApiFactory factory, string token, string password = "Distri-2026!")
+    /// <summary>
+    /// Abre sesión con contraseña desde el link y devuelve el id del usuario (lo crea si no existía). Spec 2026-11-19 §4: pide el
+    /// código al correo (por defecto, el invitado) y lo manda con la versión de los términos; una cuenta que ya tiene
+    /// contraseña los ignora.
+    /// </summary>
+    public static async Task<Guid> PasswordSessionAsync(
+        QepApiFactory factory, string token, string password = "Distri-2026!", string? email = null)
     {
         using var anonymous = CreateAnonymous(factory);
-        var response = await anonymous.PostAsJsonAsync($"{InvitationUrl(token)}/session-with-password", new { password }, Ct);
+        email ??= (await anonymous.GetFromJsonAsync<global::Api.WholesaleInvitationResponse>(InvitationUrl(token), Ct))!.Email;
+        var code = await EmailCodeAsync(factory, token, email);
+        var response = await anonymous.PostAsJsonAsync(
+            $"{InvitationUrl(token)}/session-with-password", new { email, password, code, termsVersion = TermsVersion }, Ct);
         await EnsureSuccessAsync(response);
         using var document = JsonDocument.Parse(await BodyAsync(response));
         return document.RootElement.GetProperty("userId").GetGuid();
     }
 
+    /// <summary>
+    /// Pide el código de <c>email-code</c> y lo lee del outbox, el único lugar donde existe en claro. <c>null</c> si nunca se
+    /// emitió uno para ese correo (por ejemplo, con la invitación ya no pendiente).
+    /// </summary>
+    public static async Task<string?> EmailCodeAsync(QepApiFactory factory, string token, string email)
+    {
+        using var anonymous = CreateAnonymous(factory);
+        var response = await anonymous.PostAsJsonAsync($"{InvitationUrl(token)}/email-code", new { email }, Ct);
+        await EnsureSuccessAsync(response);
+        return await LatestEmailCodeAsync(factory, email);
+    }
+
+    /// <summary>El código del último desafío emitido para ese correo (normalizado como lo guarda Identity).</summary>
+    public static async Task<string?> LatestEmailCodeAsync(QepApiFactory factory, string email)
+    {
+        var payloads = await RowsAsync<string>(
+            factory,
+            $"""
+            SELECT payload::text AS "Value" FROM platform.outbox_messages
+            WHERE event_name = {EmailChallengeEvent} AND payload ->> 'email' = {email.Trim().ToLowerInvariant()}
+            ORDER BY occurred_at DESC, id DESC
+            """);
+        if (payloads.Count == 0)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(payloads[0]);
+        return document.RootElement.GetProperty("code").GetString();
+    }
+
+    /// <summary>
+    /// Un usuario activo con una membresía activa de <paramref name="role"/> en un tenant ajeno (sin ser su owner). Devuelve el
+    /// id del usuario; su correo es <c>miembro-{id:N}@example.com</c>.
+    /// </summary>
+    public static async Task<Guid> AddMemberAsync(QepApiFactory factory, Guid tenantId, string role)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        var subjectId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+
+        var user = User.CreateInvited(UserId.Parse(subjectId.ToString()), $"miembro-{subjectId:N}@example.com", now);
+        identity.Users.Add(user);
+        var membership = Membership.CreateActive(
+            MembershipId.New(), user.Id.Value, new Modules.Tenancy.Domain.TenantId(tenantId), [role], "test", now);
+        tenancy.Memberships.Add(membership);
+        await identity.SaveChangesAsync(Ct);
+        await tenancy.SaveChangesAsync(Ct);
+        return subjectId;
+    }
+
     /// <summary>Lista, empresa facturadora e invitación: lo que toda prueba de la aceptación necesita del lado del mayorista.</summary>
     public static async Task<(WholesaleTestTenant Wholesaler, DistributorDetailDto Distributor, string Token)> InvitedAsync(
-        QepApiFactory factory, string email = "ana@distri.co", string identificationNumber = "900123456")
+        QepApiFactory factory,
+        string email = "ana@distri.co",
+        string identificationNumber = "900123456",
+        string businessName = DefaultBusinessName)
     {
         var wholesaler = await NewTenantAsync(factory);
         using var manager = CreateManager(factory, wholesaler);
         var list = await CreatePriceListAsync(manager, wholesaler.TenantId, "Oro", 10m);
         var company = await CreateCompanyAsync(manager, wholesaler.TenantId, "Mayorista Central SAS");
-        var (distributor, token) = await InviteAsync(factory, manager, wholesaler, list.Id, company, email, identificationNumber);
+        var (distributor, token) = await InviteAsync(
+            factory, manager, wholesaler, list.Id, company, email, identificationNumber, businessName);
         return (wholesaler, distributor, token);
     }
 
@@ -277,14 +366,15 @@ internal static class WholesaleApiHarness
         Guid priceListId,
         Guid billingCompanyId,
         string email = "ana@distri.co",
-        string identificationNumber = "900123456")
+        string identificationNumber = "900123456",
+        string businessName = DefaultBusinessName)
     {
         var response = await client.PostAsJsonAsync(
             DistributorsUrl(tenant.TenantId),
             new
             {
                 email,
-                businessName = "Distribuciones Norte SAS",
+                businessName,
                 country = "CO",
                 identificationType = "NIT",
                 identificationNumber,
@@ -404,6 +494,8 @@ internal static class WholesaleApiHarness
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos en la base de pruebas.
             builder.UseSetting("Seed:Enabled", "false");
+            // Sin versión configurada, el alta de un distribuidor nuevo falla cerrado (spec 2026-11-19).
+            builder.UseSetting("Terms:CurrentVersion", TermsVersion);
 
             foreach (var (key, value) in settings ?? new Dictionary<string, string>())
             {

@@ -144,6 +144,30 @@ public sealed class SiigoSettingsApiTests
     }
 
     [Fact]
+    public async Task ACompanyHeldByADeletedConnectionCanBeTakenAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        using var client = Manager(factory, world.Tenant);
+        var company = await CreateCompanyAsync(client, world.TenantId);
+        var second = await LinkSiigoConnectionAsync(factory, world.TenantId, "Siigo secundario");
+        await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
+        await client.GetAsync(SettingsRoute(world.TenantId, second), Ct);
+        var first = await PutAsync(client, SettingsRoute(world.TenantId, world.ConnectionId, "company"), new { companyId = company.Id }, "\"0\"");
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        // Integrations does not clean siigo.settings (soft reference, no FK): the row outlives its connection.
+        await ExecuteAsync(world.ConnectionString, "DELETE FROM integrations.connections WHERE id = @id", ("id", world.ConnectionId));
+
+        var response = await PutAsync(client, SettingsRoute(world.TenantId, second, "company"), new { companyId = company.Id }, "\"0\"");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            0L,
+            await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.settings WHERE connection_id = @id", ("id", world.ConnectionId)));
+    }
+
+    [Fact]
     public async Task ACompanyThatDoesNotExistIs422()
     {
         await using var database = await StartDatabaseAsync();
@@ -286,6 +310,44 @@ public sealed class SiigoSettingsApiTests
             new (int, string?)[] { (0, null), (19, "13156") },
             saved["taxes"]!["vat"]!.AsArray().Select(item => (item!["taxPercentage"]!.GetValue<int>(), item["siigoTaxId"]?.GetValue<string>())));
         Assert.Equal("13158", saved["taxes"]!["withholdings"]![0]!["siigoTaxId"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task TheTaxesStepOffersTheNationalWithholdingsEvenWhenTheCompanyHasNoneAssigned()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        using var client = Manager(factory, world.Tenant);
+        // Retefuente is national (the same for every company), so no company is ever assigned one: the step must offer it anyway.
+        await CreateCompanyAsync(client, world.TenantId, "Empresa base");
+        var retefuente = await CreateTaxRateAsync(client, world.TenantId, "Retefuente compras 2,5", 2.5m, type: "Retefuente", country: "CO");
+        // A municipal rate nobody assigned to the chosen company stays out.
+        await CreateTaxRateAsync(
+            client, world.TenantId, "ReteICA sin asignar", 9.66m, type: "ReteICA", country: "CO", cityId: await AnyCityIdAsync(client));
+        var company = await CreateCompanyAsync(client, world.TenantId);
+        await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
+        (await PutAsync(client, SettingsRoute(world.TenantId, world.ConnectionId, "company"), new { companyId = company.Id }, "\"0\"")).EnsureSuccessStatusCode();
+
+        var settings = (await client.GetFromJsonAsync<JsonObject>(SettingsRoute(world.TenantId, world.ConnectionId), Ct))!;
+
+        var rate = Assert.Single(settings["taxes"]!["withholdings"]!.AsArray())!.AsObject();
+        Assert.Equal(retefuente.ToString(), rate["taxRateId"]!.GetValue<string>());
+        Assert.Equal("Retefuente", rate["type"]!.GetValue<string>());
+
+        // It saves like any other link.
+        var put = await PutAsync(
+            client,
+            SettingsRoute(world.TenantId, world.ConnectionId, "taxes"),
+            new
+            {
+                vat = new object[] { new { taxPercentage = 0, siigoTaxId = (string?)null } },
+                withholdings = new[] { new { taxRateId = retefuente, siigoTaxId = "13160" } },
+            },
+            "\"1\"");
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        var saved = (await put.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Equal("13160", saved["taxes"]!["withholdings"]![0]!["siigoTaxId"]!.GetValue<string>());
     }
 
     [Fact]

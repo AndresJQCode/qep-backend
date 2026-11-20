@@ -13,9 +13,7 @@ public static class WholesaleErrorCodes
 
     public const string InvitationNotFound = "wholesale.invitation.not_found";
 
-    // 403
-    public const string InvitationEmailMismatch = "wholesale.invitation.email_mismatch";
-
+    // 403. Spec 2026-11-19: wholesale.invitation.email_mismatch se retiró; el link no exige el correo invitado.
     public const string InvitationNotTenantOwner = "wholesale.invitation.not_tenant_owner";
 
     // Spec 2026-11-17 y ruling W18: 403 en todos lados; en esta fase, al aceptar una relación bloqueada.

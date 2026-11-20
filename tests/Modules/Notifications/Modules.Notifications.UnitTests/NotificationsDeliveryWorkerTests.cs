@@ -78,8 +78,9 @@ public sealed class NotificationsDeliveryWorkerTests
 
         var hosted = Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IHostedService));
         Assert.Equal(typeof(NotificationsDeliveryWorker), hosted.ImplementationType);
-        // 14 con la invitación de mayorista (spec 2026-11-17).
-        Assert.Equal(14, services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)
+        // 14 con la invitación de mayorista (spec 2026-11-17); 15 con el código de correo y 17 con los dos avisos de correo
+        // cambiado del distribuidor (spec 2026-11-19).
+        Assert.Equal(17, services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)
             && descriptor.Lifetime == ServiceLifetime.Singleton));
     }
 

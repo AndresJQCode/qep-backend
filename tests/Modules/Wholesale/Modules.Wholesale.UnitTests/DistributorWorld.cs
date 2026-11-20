@@ -52,6 +52,8 @@ internal sealed class DistributorWorld
 
     public FakeMembershipDirectory Memberships { get; } = new();
 
+    public FakeInvitationLinks Links { get; } = new();
+
     public PriceList PriceList { get; }
 
     public Guid Advisor { get; }
@@ -64,7 +66,9 @@ internal sealed class DistributorWorld
 
     public InviteDistributorHandler InviteHandler() => new(
         Context, Clock, PriceLists, Distributors, Members, Companies, Tenancy, Phones, WhatsApp, Memberships, UnitOfWork, Audit,
-        Events, Composer(), new InviteDistributorValidator());
+        Events, Links, Composer(), new InviteDistributorValidator());
+
+    public RotateInvitationLinkHandler RotateHandler() => new(Context, Clock, Distributors, UnitOfWork, Audit, Links, Composer());
 
     public UpdateDistributorHandler UpdateHandler() => new(
         Context, Clock, PriceLists, Distributors, Members, Companies, Tenancy, Phones, WhatsApp, UnitOfWork, Audit, Composer(),

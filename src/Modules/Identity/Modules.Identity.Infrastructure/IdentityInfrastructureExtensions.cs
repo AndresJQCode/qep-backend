@@ -27,6 +27,16 @@ public static class IdentityInfrastructureExtensions
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IPasswordCredentialRepository, PasswordCredentialRepository>();
         services.AddScoped<IEmailTokenRepository, EmailTokenRepository>();
+        // Spec 2026-11-19 (onboarding por link): el código que confirma un correo antes de que exista el usuario.
+        services.AddScoped<IEmailChallengeRepository, EmailChallengeRepository>();
+        services.AddScoped<IEmailChallenges, EmailChallengeService>();
+        // Spec 2026-11-19: términos aceptados por usuario. Sin ValidateOnStart a propósito: Terms:CurrentVersion es
+        // decisión pendiente del owner y una clave requerida rompería todos los hosts de prueba. Sin valor, el servicio
+        // falla cerrado al usarse (identity.terms.unavailable).
+        services.AddOptions<TermsOptions>().Bind(configuration.GetSection(TermsOptions.SectionName));
+        services.AddScoped(provider => provider.GetRequiredService<IOptionsSnapshot<TermsOptions>>().Value);
+        services.AddScoped<ITermsAcceptanceRepository, TermsAcceptanceRepository>();
+        services.AddScoped<ITermsAcceptances, TermsAcceptanceService>();
         services.AddScoped<IEmailTokenIssuer, EmailTokenIssuer>();
         // Sin estado por request: el hash ficticio se calcula una vez por proceso.
         services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();

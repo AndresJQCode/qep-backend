@@ -1,5 +1,10 @@
 # Aviso por WhatsApp de la invitación de distribuidor — diseño (backend)
 
+> **Reemplazado en lo del link y la identidad por
+> [`2026-11-19-onboarding-distribuidor-por-link-design.md`](2026-11-19-onboarding-distribuidor-por-link-design.md).** El link ya
+> no prueba el buzón, el correo de quien acepta no tiene que ser el invitado, «Copiar» rota el token y hay un evento de WhatsApp
+> con el link. Lo de este spec sobre el aviso sin link sigue vigente hasta que el owner confirme que se retira.
+
 Fecha: 2026-11-18. Estado: listo para aprobación del owner. Spec hermano:
 `qep-frontend/docs/superpowers/specs/2026-11-18-invitacion-distribuidor-whatsapp-design.md`.
 
