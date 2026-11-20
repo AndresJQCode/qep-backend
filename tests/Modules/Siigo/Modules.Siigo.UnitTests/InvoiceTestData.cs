@@ -72,7 +72,8 @@ internal static class InvoiceTestData
             BuyerNotes: null,
             BilledParty: Company(),
             CompanyId: Guid.Parse("0193a1b2-000b-7000-8000-00000000000b"),
-            OrderVersion: 7);
+            OrderVersion: 7,
+            AdvisorEmail: "asesora1@ritualbotanico.com");
 
     public static SiigoInvoiceDraft Ready(SiigoBuildResult result, SiigoInvoiceKind kind = SiigoInvoiceKind.Order) =>
         Assert.IsType<SiigoBuildResult.Ready>(result).Drafts.Single(draft => draft.Kind == kind);

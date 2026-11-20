@@ -23,7 +23,7 @@ public sealed class PreviewSiigoInvoiceHandler(
         await SiigoInvoiceSupport.AuthorizeAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
         var context = await SiigoInvoiceSupport.LoadAsync(orders, settingsRepository, query.TenantId, query.OrderId, cancellationToken);
 
-        return SiigoInvoiceBuilder.Build(context.Input, context.Settings, null) switch
+        return SiigoInvoiceBuilder.Build(context.Input, context.Settings, context.Settings.SellerId, null) switch
         {
             SiigoBuildResult.Ready ready => new SiigoInvoicePreviewDto(
                 [

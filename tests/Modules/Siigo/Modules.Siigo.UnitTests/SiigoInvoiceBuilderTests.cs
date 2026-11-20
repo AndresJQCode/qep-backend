@@ -9,9 +9,14 @@ namespace Modules.Siigo.UnitTests;
 /// se mandaría a Siigo.</summary>
 public sealed class SiigoInvoiceBuilderTests
 {
+    private const string Seller = "629";
+
     private static SiigoBuildResult Build(
-        SiigoInvoiceInput? input = null, SiigoSettings? settings = null, IReadOnlyList<SiigoPaymentOverride>? overrides = null) =>
-        SiigoInvoiceBuilder.Build(input ?? Order(), settings ?? Settings(), overrides);
+        SiigoInvoiceInput? input = null,
+        SiigoSettings? settings = null,
+        IReadOnlyList<SiigoPaymentOverride>? overrides = null,
+        string? sellerId = Seller) =>
+        SiigoInvoiceBuilder.Build(input ?? Order(), settings ?? Settings(), sellerId, overrides);
 
     private static SiigoWithholdingInput ReteFuente(decimal amount = 2000m) =>
         new(ReteFuenteRate, "Retefuente 2,5 %", TaxCountries.RetefuenteType, amount);
@@ -114,6 +119,31 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal("withholding_unlinked", missing.Code);
         Assert.Equal(rate.ToString(), missing.Reference);
         Assert.Equal("Retefuente 4 %", missing.Label);
+    }
+
+    [Fact]
+    public void TheSellerIsTheResolvedOne()
+    {
+        using var json = Json(Ready(Build(sellerId: "744")));
+
+        Assert.Equal(744, json.RootElement.GetProperty("seller").GetInt32());
+    }
+
+    [Fact]
+    public void WithoutASellerTheInvoiceIsNotReady()
+    {
+        var result = Assert.IsType<SiigoBuildResult.NotReady>(Build(sellerId: null));
+
+        Assert.Equal(new SiigoMissing("seller_not_found", null, "asesora1@ritualbotanico.com"), Assert.Single(result.Missing));
+    }
+
+    [Fact]
+    public void TheMissingSellerIsReportedWithTheOtherMissing()
+    {
+        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(settings: Settings(linkVariants: false), sellerId: null)).Missing;
+
+        Assert.Contains(missing, value => value.Code == "seller_not_found");
+        Assert.Contains(missing, value => value.Code == "variant_unlinked");
     }
 
     [Fact]

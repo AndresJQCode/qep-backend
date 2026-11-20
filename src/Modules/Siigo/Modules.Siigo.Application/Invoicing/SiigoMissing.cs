@@ -5,8 +5,9 @@ namespace Modules.Siigo.Application.Invoicing;
 /// <c>settings_incomplete</c> (<paramref name="Reference"/> = el paso), <c>variant_unlinked</c> (id de la variante, nombre),
 /// <c>tax_unlinked</c> (porcentaje), <c>withholding_unlinked</c> y <c>withholding_type_unsupported</c> (id de la tasa, nombre),
 /// <c>payment_unlinked</c> (clave de la cuenta de cobro, o <c>credit</c> / <c>cash_on_delivery</c>), <c>freight_product_missing</c>,
-/// <c>customer_identification_missing</c>, <c>customer_identification_type_unsupported</c>, <c>customer_city_missing</c> y
-/// <c>currency_unsupported</c> (la moneda). Nunca lleva datos del cliente.
+/// <c>customer_identification_missing</c>, <c>customer_identification_type_unsupported</c>, <c>customer_city_missing</c>,
+/// <c>currency_unsupported</c> (la moneda) y <c>seller_not_found</c> (<paramref name="Label"/> = el correo del asesor del pedido, que es
+/// un miembro del tenant; spec 2026-11-20). Nunca lleva datos del cliente.
 /// </summary>
 public sealed record SiigoMissing(string Code, string? Reference, string? Label)
 {
@@ -21,4 +22,5 @@ public sealed record SiigoMissing(string Code, string? Reference, string? Label)
     public const string CustomerIdentificationTypeUnsupported = "customer_identification_type_unsupported";
     public const string CustomerCityMissing = "customer_city_missing";
     public const string CurrencyUnsupported = "currency_unsupported";
+    public const string SellerNotFound = "seller_not_found";
 }

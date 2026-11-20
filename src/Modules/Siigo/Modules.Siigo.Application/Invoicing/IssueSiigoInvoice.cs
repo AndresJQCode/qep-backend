@@ -156,7 +156,7 @@ public sealed class IssueSiigoInvoiceHandler(
                 SiigoInvoiceSupport.ParseKind(choice.Kind), choice.ProofId, choice.SiigoPaymentTypeId!.Trim()))
             .ToList();
 
-        var drafts = SiigoInvoiceBuilder.Build(context.Input, context.Settings, overrides) switch
+        var drafts = SiigoInvoiceBuilder.Build(context.Input, context.Settings, context.Settings.SellerId, overrides) switch
         {
             SiigoBuildResult.Ready ready => ready.Drafts,
             SiigoBuildResult.NotReady notReady => throw new SiigoInvoiceNotReadyException(notReady.Missing),
