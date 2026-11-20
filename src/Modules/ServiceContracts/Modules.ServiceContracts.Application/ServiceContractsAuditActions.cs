@@ -17,6 +17,8 @@ public static class ServiceContractsAuditActions
 
     public const string ServiceCancelled = "billing.service.cancelled";
 
+    public const string ServiceDeleted = "billing.service.deleted";
+
     public const string ProfileUpdated = "billing.profile.updated";
 
     public const string SettingsUpdated = "billing.settings.updated";
