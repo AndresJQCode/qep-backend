@@ -1360,6 +1360,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetWholesaleInvitationNoticeTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
+        // Spec 2026-11-20: cambiar la imagen del encabezado sin pasar por Meta. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<ReplaceTemplateHeaderImageCommand, ManagedTemplateDto>, ReplaceTemplateHeaderImageHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ReadReceipts>();
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();

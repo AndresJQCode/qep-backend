@@ -146,6 +146,16 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-20: cambiar la imagen fija del encabezado de una plantilla guardada, sin pasar por Meta. Devuelve la plantilla entera,
+        // que es lo que la pantalla repinta.
+        group.MapPut("/templates/{templateId:guid}/header-image", ReplaceHeaderImageAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<ReplaceTemplateHeaderImageRequest>("application/json")
+            .Produces<ManagedTemplateDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapDelete("/templates/{templateId:guid}", DeleteAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
             .Produces(StatusCodes.Status204NoContent)
@@ -179,6 +189,12 @@ internal static class TemplateManagementEndpoints
         Results.Ok(await dispatcher.SendAsync(
             new CreateTemplateHeaderImageSessionCommand(tenantId, connectionId, request.FileName, request.MimeType, request.SizeBytes),
             cancellationToken));
+
+    private static async Task<IResult> ReplaceHeaderImageAsync(
+        Guid tenantId, Guid connectionId, Guid templateId, ReplaceTemplateHeaderImageRequest request, IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ReplaceTemplateHeaderImageCommand(tenantId, connectionId, templateId, request.HeaderImageFileId), cancellationToken));
 
     // Location = la pantalla, como al crear una libre.
     private static async Task<IResult> ProvisionQuotationAsync(
@@ -272,6 +288,10 @@ public sealed record CreateTemplateRequest(
     List<TemplateButtonRequest>? Buttons,
     Dictionary<string, string?>? Examples,
     Guid? HeaderImageFileId = null);
+
+/// <summary>Spec 2026-11-20: el archivo de la imagen nueva, ya subido por la sesión de la imagen. Nullable para que un cuerpo sin él salga
+/// 422 con su clave en <c>errors</c>, no 400 del binder.</summary>
+public sealed record ReplaceTemplateHeaderImageRequest(Guid? HeaderImageFileId);
 
 /// <summary>El cuerpo editado de la plantilla de cotización. Son opcionales la propiedad <c>Body</c> y también el cuerpo HTTP entero: sin
 /// ellos se crea el texto base (backend desplegado antes que el frontend).</summary>

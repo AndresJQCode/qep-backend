@@ -31,7 +31,10 @@ public sealed record ManagedTemplateDto(
     string? RequestedCategory = null,
     // Spec 2026-11-17 (BFF): la URL pública de la imagen fija del encabezado, para que la pantalla la muestre sin conocer Storage.
     // «header» sigue siendo sólo el texto y es null en una plantilla con imagen. null = sin imagen guardada.
-    string? HeaderImageUrl = null);
+    string? HeaderImageUrl = null,
+    // Spec 2026-11-20 (BFF): el formato del encabezado multimedia («Image», «Video», «Document»), para que la pantalla sepa si ofrece
+    // «Cambiar imagen» sin leer los componentes de Meta. null = encabezado de texto o sin encabezado.
+    string? HeaderMedia = null);
 
 /// <summary>§4.3: el estado de la plantilla de cotización de la conexión. <c>null</c> en la pantalla = no aprovisionada, botón de crear.</summary>
 public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
