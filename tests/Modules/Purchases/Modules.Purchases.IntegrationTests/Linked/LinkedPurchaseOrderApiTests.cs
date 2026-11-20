@@ -219,4 +219,116 @@ public sealed class LinkedPurchaseOrderApiTests(SharedPurchasesHost host) : ICla
         Assert.Equal(2m, line.Quantity);
         Assert.Equal(LinkedPurchasesHarness.ListPrice, line.UnitPrice);
     }
+
+    private static async Task<string> DetailJsonAsync(LinkedPurchasesHarness.LinkedWorld world, Guid orderId)
+    {
+        var response = await world.Buyer.GetAsync(PurchasesApiHarness.OrderUrl(world.BuyerTenant.TenantId, orderId), Ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await PurchasesApiHarness.BodyAsync(response);
+    }
+
+    private static Task<int> NullCostLinesAsync(PurchasesApiHarness.QepApiFactory factory, Guid orderId) =>
+        PurchasesApiHarness.ScalarAsync<int>(
+            factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM purchases.purchase_order_lines
+            WHERE order_id = {orderId} AND unit_cost IS NULL
+            """);
+
+    private static void AssertNoAmounts(JsonElement root)
+    {
+        Assert.False(root.GetProperty("showPrices").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("totals").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("requestedTotal").ValueKind);
+        foreach (var line in root.GetProperty("lines").EnumerateArray())
+        {
+            foreach (var field in new[] { "unitCost", "subtotal", "listPrice" })
+            {
+                Assert.True(!line.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null, field);
+            }
+        }
+    }
+
+    // Spec 2026-11-19 (revisada): con la lista oculta la orden nace sin montos, y los recibe con la aprobación del mayorista.
+    [Fact]
+    public async Task HiddenPriceListOrderGetsPricesOnApproval()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+        await world.SetShowPricesAsync(false);
+
+        var draft = await world.CreateDraftAsync((world.VariantA, 2m));
+        var draftJson = await DetailJsonAsync(world, draft.Id);
+        TestContext.Current.SendDiagnosticMessage("PRICELESS DRAFT JSON: " + draftJson);
+        using (var document = JsonDocument.Parse(draftJson))
+        {
+            AssertNoAmounts(document.RootElement);
+        }
+
+        var listResponse = await world.Buyer.GetAsync(PurchasesApiHarness.OrderUrl(world.BuyerTenant.TenantId), Ct);
+        var listJson = await PurchasesApiHarness.BodyAsync(listResponse);
+        TestContext.Current.SendDiagnosticMessage("PRICELESS LIST JSON: " + listJson);
+        using (var list = JsonDocument.Parse(listJson))
+        {
+            var item = Assert.Single(list.RootElement.GetProperty("items").EnumerateArray().ToList());
+            Assert.Equal(JsonValueKind.Null, item.GetProperty("total").ValueKind);
+            Assert.False(item.GetProperty("showPrices").GetBoolean());
+        }
+
+        Assert.Equal(1, await NullCostLinesAsync(Factory, draft.Id));
+
+        var sent = await PurchasesApiHarness.TransitionAsync(world.Buyer, world.BuyerTenant.TenantId, draft, "send");
+        var sentJson = await DetailJsonAsync(world, sent.Id);
+        TestContext.Current.SendDiagnosticMessage("PRICELESS SENT JSON: " + sentJson);
+        using (var document = JsonDocument.Parse(sentJson))
+        {
+            AssertNoAmounts(document.RootElement);
+            Assert.Equal("Sent", document.RootElement.GetProperty("status").GetString());
+        }
+
+        Assert.Equal(1, await NullCostLinesAsync(Factory, sent.Id));
+        // El pedido del mayorista conserva su precio: sólo el distribuidor no lo guarda.
+        using (var order = await world.WholesaleOrderAsync(sent.Id))
+        {
+            Assert.Equal(LinkedPurchasesHarness.ListPrice, order.RootElement.GetProperty("items")[0].GetProperty("unitPrice").GetDecimal());
+        }
+
+        await world.ApproveAsync(sent.Id);
+        await world.ProcessEventsAsync();
+
+        var approvedJson = await DetailJsonAsync(world, sent.Id);
+        TestContext.Current.SendDiagnosticMessage("APPROVED PRICELESS JSON: " + approvedJson);
+        using var approved = JsonDocument.Parse(approvedJson);
+        var root = approved.RootElement;
+        var net = PurchaseOrderMath.NetOfVat(LinkedPurchasesHarness.ListPrice, 19m);
+        var subtotal = net * 2m;
+        Assert.Equal(("Confirmed", true, false), (root.GetProperty("status").GetString(), root.GetProperty("showPrices").GetBoolean(), root.GetProperty("confirmedWithChanges").GetBoolean()));
+        var line = Assert.Single(root.GetProperty("lines").EnumerateArray().ToList());
+        Assert.Equal(JsonValueKind.Null, line.GetProperty("unitCost").ValueKind);
+        Assert.Equal(net, line.GetProperty("confirmedUnitCost").GetDecimal());
+        Assert.Equal(subtotal, line.GetProperty("subtotal").GetDecimal());
+        Assert.Equal("Unchanged", line.GetProperty("lineStatus").GetString());
+        var totals = root.GetProperty("totals");
+        Assert.Equal(subtotal, totals.GetProperty("subtotal").GetDecimal());
+        Assert.Equal(PurchaseOrderMath.Tax(subtotal, 19m), totals.GetProperty("tax").GetDecimal());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("requestedTotal").ValueKind);
+    }
+
+    // Caso borde 1: un borrador guardado con la lista visible pierde los montos si al enviar la lista ya está oculta.
+    [Fact]
+    public async Task DraftSavedVisibleLosesPricesWhenSentWithHiddenList()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+        var draft = await world.CreateDraftAsync((world.VariantA, 2m));
+        Assert.True(draft.ShowPrices);
+        Assert.Equal(0, await NullCostLinesAsync(Factory, draft.Id));
+        await world.SetShowPricesAsync(false);
+
+        var sent = await PurchasesApiHarness.TransitionAsync(world.Buyer, world.BuyerTenant.TenantId, draft, "send");
+
+        var json = await DetailJsonAsync(world, sent.Id);
+        using var document = JsonDocument.Parse(json);
+        AssertNoAmounts(document.RootElement);
+        Assert.Equal("Sent", document.RootElement.GetProperty("status").GetString());
+        Assert.Equal(1, await NullCostLinesAsync(Factory, sent.Id));
+    }
 }
