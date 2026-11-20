@@ -16,6 +16,7 @@ using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.ProductImages;
 using Modules.Storage.Infrastructure.TemplateImages;
+using Modules.Storage.Infrastructure.UnreferencedFiles;
 using Npgsql;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -534,11 +535,11 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
             }
 
             // Y el barrido diario (spec 2026-11-17, «Closing the residual gaps»): TemplateHeaderImageSweepTests lo corre a mano.
-            var templateImageSweepWorkers = services
+            var unreferencedFileSweepWorkers = services
                 .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationType == typeof(TemplateHeaderImageSweepWorker))
+                    && descriptor.ImplementationType == typeof(UnreferencedFileSweepWorker))
                 .ToList();
-            foreach (var descriptor in templateImageSweepWorkers)
+            foreach (var descriptor in unreferencedFileSweepWorkers)
             {
                 services.Remove(descriptor);
             }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Messaging.Application;
+using Modules.Storage.Application;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
 namespace Modules.Automations.IntegrationTests;
@@ -59,5 +60,58 @@ public sealed partial class EngineEndToEndTests
             (image.GetProperty("link").GetString(), image.GetProperty("caption").GetString()));
         Assert.Equal(1L, await BotMessagesAsync(f));
         Assert.Equal(session.FileId, await ScalarAsync<Guid>(connectionString, "SELECT storage_file_id FROM messaging.message_media"));
+    }
+
+    // Regla 2 del owner (plan Task 11): la bandeja conserva sus archivos. Ningún chatbot nombra ya el archivo, pero la conversación sigue
+    // mostrando la burbuja del bot: para Storage está en uso y el barrido no lo suelta. Para otro tenant no cuenta.
+    [Fact]
+    public async Task AFileShownInAConversationIsNotReleased()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (f, fileId) = await ArrangeBotSentImageAsync(database);
+        using var _ = f;
+        Assert.Equal(1, await ExecuteAsync(f.ConnectionString,
+            "UPDATE automations.chatbots SET draft_flow = @flow::jsonb WHERE id = @id", ("flow", PlainHandoffFlow), ("id", f.ChatbotId)));
+        Assert.Equal(1, await ExecuteAsync(f.ConnectionString,
+            "UPDATE automations.chatbot_versions SET flow = @flow::jsonb WHERE chatbot_id = @id", ("flow", PlainHandoffFlow), ("id", f.ChatbotId)));
+        var unused = Guid.CreateVersion7();
+
+        await using var scope = f.Host.Services.CreateAsyncScope();
+        var references = scope.ServiceProvider.GetRequiredService<IChatbotMediaReferences>();
+
+        Assert.Equal([fileId], await references.FindReferencedAsync(f.Tenant.TenantId, [fileId, unused], Ct));
+        Assert.Empty(await references.FindReferencedAsync(Guid.CreateVersion7(), [fileId], Ct));
+    }
+
+    private const string PlainHandoffFlow = """
+        { "schema": 1, "start": { "firstNodeId": "h1" }, "variables": [],
+          "nodes": [ { "id": "h1", "kind": "handoff", "title": "Asesor", "text": null } ] }
+        """;
+
+    /// <summary>Un chatbot publicado con <see cref="ImageFlow"/> que ya le mandó la imagen a un cliente: la bandeja tiene la fila de
+    /// <c>message_media</c> con el <c>storage_file_id</c>.</summary>
+    private static async Task<(Fixture Fixture, Guid FileId)> ArrangeBotSentImageAsync(TestDatabase database)
+    {
+        var connectionString = database.GetConnectionString();
+        var factory = new QepApiFactory(connectionString);
+        var notifier = new RecordingNotifier();
+        var host = factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IMessagingNotifier>();
+            services.AddSingleton<IMessagingNotifier>(notifier);
+        }));
+        var tenant = await RegisterTenantAsync(host);
+        await EnableAutomationsAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Servicio", PhoneNumberId, "222");
+        var session = await factory.Media.OpenUploadAsync(tenant.TenantId, "catalogo.jpg", "image/jpeg", 2048, 25_000_000, Ct);
+        await factory.Media.CompleteAsync(tenant.TenantId, session.FileId, Ct);
+        using var admin = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var chatbotId = await PublishChatbotAsync(
+            admin, tenant.TenantId, ImageFlow.Replace("{fileId}", session.FileId.ToString(), StringComparison.Ordinal), connectionId);
+        var f = new Fixture(factory, host, connectionString, tenant, connectionId, chatbotId, host.CreateClient(), notifier, new BotMeta(factory.MetaHandler));
+        await InboundAsync(f, "w1", "hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal(session.FileId, await ScalarAsync<Guid>(connectionString, "SELECT storage_file_id FROM messaging.message_media"));
+        return (f, session.FileId);
     }
 }
