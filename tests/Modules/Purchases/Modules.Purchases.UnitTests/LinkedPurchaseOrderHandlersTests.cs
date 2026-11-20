@@ -283,4 +283,91 @@ public sealed class LinkedPurchaseOrderHandlersTests
         Assert.Equal("External", detail.Mode);
         Assert.Null(detail.Linked);
     }
+
+    // Spec 2026-11-19 (D-4): con la lista oculta la vista previa no manda montos, pero el costo sigue guardándose al crear/editar.
+    private Task<PurchaseOrderPreviewDto> PreviewAsync(Guid supplierId, Guid variantId, decimal quantity) =>
+        PreviewHandler().HandleAsync(
+            new PreviewPurchaseOrderCommand(TenantId, supplierId, "COP", null, [new PurchaseOrderLineInput(variantId, quantity, null)]),
+            Ct);
+
+    [Fact]
+    public async Task PreviewOfAHiddenPriceListHasNoAmounts()
+    {
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+        _wholesale.ShowPrices = false;
+
+        var preview = await PreviewAsync(PurchaseOrderTestData.SupplierId, item.VariantId, 2m);
+
+        Assert.False(preview.ShowPrices);
+        Assert.Null(preview.Totals);
+        var line = Assert.Single(preview.Lines);
+        Assert.Equal((item.VariantId, "ACE-1", 19m), (line.VariantId, line.Code, line.TaxRatePercent));
+        Assert.Null(line.Subtotal);
+        Assert.Null(line.ListPrice);
+        Assert.Equal("USD", preview.Currency);
+    }
+
+    [Fact]
+    public async Task PreviewOfAVisiblePriceListKeepsItsAmounts()
+    {
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+        _wholesale.ShowPrices = true;
+
+        var preview = await PreviewAsync(PurchaseOrderTestData.SupplierId, item.VariantId, 2m);
+
+        Assert.True(preview.ShowPrices);
+        Assert.Equal(new PurchaseOrderTotalsDto(20000m, 3800m, 23800m), preview.Totals);
+        var line = Assert.Single(preview.Lines);
+        Assert.Equal(20000m, line.Subtotal);
+        Assert.Equal(new PurchaseOrderListPriceDto(12500m, 4.8m, 11900m), line.ListPrice);
+    }
+
+    [Fact]
+    public async Task PreviewOfAnExternalSupplierIsNotMasked()
+    {
+        var external = Guid.CreateVersion7();
+        _suppliers.Add(external, "Textiles del Valle");
+        var variant = _catalog.Add("SKU-1", "Camiseta", 19m);
+        _wholesale.ShowPrices = false; // el flag es del mayorista: no aplica a una orden externa.
+
+        var preview = await PreviewHandler().HandleAsync(
+            new PreviewPurchaseOrderCommand(TenantId, external, "COP", null, [new PurchaseOrderLineInput(variant.VariantId, 2m, 1000m)]),
+            Ct);
+
+        Assert.True(preview.ShowPrices);
+        Assert.Equal(2000m, Assert.Single(preview.Lines).Subtotal);
+        Assert.Equal(new PurchaseOrderTotalsDto(2000m, 380m, 2380m), preview.Totals);
+    }
+
+    [Fact]
+    public async Task CreateWithAHiddenPriceListStillStoresTheCost()
+    {
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+        _wholesale.ShowPrices = false;
+
+        await CreateHandler().HandleAsync(Create(new PurchaseOrderLineInput(item.VariantId, 3m, null)), Ct);
+
+        var line = Assert.Single(Assert.Single(_orders.Orders).Lines);
+        Assert.Equal((10000m, 11900m), (line.UnitCost, line.ListUnitPrice!.Value));
+    }
+
+    [Fact]
+    public async Task UpdateWithAHiddenPriceListStillStoresTheCost()
+    {
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+        var order = _orders.Seed(PurchaseOrderTestData.LinkedOrder());
+        _wholesale.ShowPrices = false;
+        var handler = new UpdatePurchaseOrderHandler(
+            _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), Builder(), _orders, _unitOfWork,
+            _audit, Composer(), new UpdatePurchaseOrderValidator());
+
+        await handler.HandleAsync(
+            new UpdatePurchaseOrderCommand(
+                TenantId, order.Id.Value, order.Version, PurchaseOrderTestData.SupplierId, "COP", null,
+                [new PurchaseOrderLineInput(item.VariantId, 3m, null)]),
+            Ct);
+
+        var line = Assert.Single(order.Lines);
+        Assert.Equal((10000m, item.VariantId), (line.UnitCost, line.SupplierVariantId!.Value));
+    }
 }
