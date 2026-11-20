@@ -62,4 +62,44 @@ public sealed class MessageTemplateReplaceHeaderImageTests
 
         Assert.Throws<ArgumentException>(() => template.ReplaceHeaderImage(Guid.Empty, "https://public.test/a.png", Now));
     }
+
+    // Mismas guardas de la URL que AttachHeaderImage: null lanza ArgumentNullException (subtipo), vacía y de sólo espacios ArgumentException.
+    [Fact]
+    public void ReplacingWithANullUrlThrows()
+    {
+        var template = NewTemplate();
+
+        Assert.ThrowsAny<ArgumentException>(() => template.ReplaceHeaderImage(Guid.CreateVersion7(), null!, Now));
+        Assert.Null(template.HeaderImageFileId);
+    }
+
+    [Fact]
+    public void ReplacingWithAWhitespaceUrlThrows()
+    {
+        var template = NewTemplate();
+
+        Assert.Throws<ArgumentException>(() => template.ReplaceHeaderImage(Guid.CreateVersion7(), "   ", Now));
+        Assert.Null(template.HeaderImageFileId);
+    }
+
+    [Fact]
+    public void ReplacingWithAUrlOverTheMaxLengthThrows()
+    {
+        var template = NewTemplate();
+        var tooLong = new string('a', MessageTemplate.HeaderImageUrlMaxLength + 1);
+
+        Assert.Throws<ArgumentException>(() => template.ReplaceHeaderImage(Guid.CreateVersion7(), tooLong, Now));
+        Assert.Null(template.HeaderImageFileId);
+    }
+
+    [Fact]
+    public void ReplacingWithAUrlAtTheMaxLengthIsAccepted()
+    {
+        var template = NewTemplate();
+        var atLimit = new string('a', MessageTemplate.HeaderImageUrlMaxLength);
+
+        template.ReplaceHeaderImage(Guid.CreateVersion7(), atLimit, Now);
+
+        Assert.Equal(atLimit, template.HeaderImageUrl);
+    }
 }
