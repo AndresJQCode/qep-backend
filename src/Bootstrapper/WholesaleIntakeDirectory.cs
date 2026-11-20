@@ -17,7 +17,7 @@ internal interface IWholesaleIntakeDirectory
         Guid wholesalerTenantId, Guid buyerTenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
 
     /// <summary>Sin revalidar nada (<see cref="WholesaleOffers.OffersForOrderAsync"/>): para el pedido que ya existe (D-8).</summary>
-    Task<IReadOnlyDictionary<Guid, WholesaleOffer>> OffersForOrderAsync(
+    Task<WholesaleOrderOffers> OffersForOrderAsync(
         Guid wholesalerTenantId,
         Guid buyerTenantId,
         string currency,
@@ -36,7 +36,7 @@ internal sealed class WholesaleIntakeDirectory(WholesaleOffers offers, TenancyDb
         Guid wholesalerTenantId, Guid buyerTenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
         offers.PriceVisibleAsync(wholesalerTenantId, buyerTenantId, variantIds, cancellationToken);
 
-    public Task<IReadOnlyDictionary<Guid, WholesaleOffer>> OffersForOrderAsync(
+    public Task<WholesaleOrderOffers> OffersForOrderAsync(
         Guid wholesalerTenantId,
         Guid buyerTenantId,
         string currency,

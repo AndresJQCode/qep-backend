@@ -89,6 +89,7 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
             .UsePropertyAccessMode(PropertyAccessMode.Field)
             .HasColumnName("category_ids")
             .HasColumnType("uuid[]");
+        list.Property(value => value.ShowPrices).HasColumnName("show_prices").HasDefaultValue(true);
         list.Property(value => value.CreatedAt).HasColumnName("created_at");
         list.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         list.Property(value => value.Version)

@@ -115,6 +115,18 @@ public sealed class WholesaleDbContextMappingTests
         Assert.Equal(DistributorInvitation.NoticeFailureCodeMaxLength, failure.GetMaxLength());
     }
 
+    // Spec 2026-11-19 (mostrar precios): columna aditiva, no nula, con default true para las listas existentes.
+    [Fact]
+    public void TheShowPricesColumnIsRequiredWithADefaultOfTrue()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var priceLists = context.Model.FindEntityType(typeof(PriceList))!;
+
+        var showPrices = priceLists.FindProperty(nameof(PriceList.ShowPrices))!;
+        Assert.Equal(("show_prices", false, (object?)true),
+            (showPrices.GetColumnName(), showPrices.IsNullable, showPrices.GetDefaultValue()));
+    }
+
     [Fact]
     public void TheModelHasNoChangesPendingAMigration()
     {

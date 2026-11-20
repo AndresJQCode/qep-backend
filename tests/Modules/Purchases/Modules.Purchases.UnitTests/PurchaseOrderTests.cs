@@ -157,7 +157,7 @@ public sealed class PurchaseOrderTests
         var order = OrderIn(PurchaseOrderStatus.Sent);
         var line = Assert.Single(order.Lines);
 
-        order.Confirm([new PurchaseOrderLineConfirmation(line.Id, 0m, line.UnitCost)], MemberId, Now);
+        order.Confirm([new PurchaseOrderLineConfirmation(line.Id, 0m, line.UnitCost!.Value)], MemberId, Now);
 
         Assert.Equal(PurchaseOrderLineStatus.Rejected, line.Status);
         Assert.True(order.ConfirmedWithChanges);

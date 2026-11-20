@@ -276,6 +276,53 @@ public sealed class WholesaleOffersTests
 
         var offers = await Offers().OffersForOrderAsync(_world.Tenant, _buyer, "COP", [cocina], Ct);
 
-        Assert.Equal((10000m, 15m, 8500m), (offers[cocina].BasePrice, offers[cocina].DiscountPercent, offers[cocina].ListPrice));
+        var offer = offers.Offers[cocina];
+        Assert.Equal((10000m, 15m, 8500m), (offer.BasePrice, offer.DiscountPercent, offer.ListPrice));
+        Assert.True(offers.ShowPrices);
+    }
+
+    // Spec 2026-11-19, D-14: el reintento del envío lee el flag vivo de la lista; sin relación o sin lista, cierra (false).
+    [Fact]
+    public async Task OrderOffersCarryTheLiveShowPricesOfTheList()
+    {
+        var cocina = _catalog.AddProduct("C-1", "Olla", null, cop: 10000m);
+        SeedActive();
+        _world.PriceLists.Lists.Values.Single().Update(
+            "Mayoristas", 15m, PriceListVisibility.AllActive, [], DistributorWorld.Now, false);
+
+        var offers = await Offers().OffersForOrderAsync(_world.Tenant, _buyer, "COP", [cocina], Ct);
+
+        Assert.False(offers.ShowPrices);
+        Assert.Equal(8500m, offers.Offers[cocina].ListPrice);
+    }
+
+    [Fact]
+    public async Task OrderOffersWithoutRelationshipAreEmptyAndHidePrices()
+    {
+        var olla = _catalog.AddProduct("C-1", "Olla", null, cop: 10000m);
+
+        var offers = await Offers().OffersForOrderAsync(_world.Tenant, _buyer, "COP", [olla], Ct);
+
+        Assert.Empty(offers.Offers);
+        Assert.False(offers.ShowPrices);
+    }
+
+    // Spec 2026-11-19: el flag de la lista del distribuidor viaja en las condiciones y en la página del catálogo.
+    [Fact]
+    public async Task TermsAndPageReflectTheShowPricesOfTheList()
+    {
+        _catalog.AddProduct("S-1", "Olla", null, cop: 10000m);
+        var distributor = SeedActive();
+
+        var visibleTerms = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
+        var visiblePage = await Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct);
+        _world.PriceLists.Lists.Values.Single().Update(
+            "Mayoristas", 15m, PriceListVisibility.AllActive, [], DistributorWorld.Now, false);
+        var hiddenTerms = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
+        var hiddenPage = await Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct);
+
+        Assert.Equal((true, true), (visibleTerms.ShowPrices, visiblePage.ShowPrices));
+        Assert.Equal((false, false), (hiddenTerms.ShowPrices, hiddenPage.ShowPrices));
+        Assert.NotNull(distributor);
     }
 }
