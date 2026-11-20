@@ -34,8 +34,11 @@ de la revisión; la que recibe el cliente la pone QEP en cada envío, por enlace
 
 ## Contrato
 
-`PUT /api/v1/messaging/connections/{connectionId}/template-management/templates/{templateId}/header-image` (mismo grupo y prefijo que
-`DELETE …/templates/{templateId}`), permiso `messaging.template.manage`, sin `If-Match`.
+`PUT /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/templates/{templateId}/header-image` (mismo
+grupo que `DELETE …/templates/{templateId}`), permiso `messaging.template.manage`, sin `If-Match`.
+
+`ManagedTemplateDto` suma `HeaderMedia` (`"Image" | "Video" | "Document" | null`, de `TemplateCatalog.FromStored`), en el listado y en
+toda respuesta que lo devuelve: sin él la pantalla no distingue una plantilla de imagen sin imagen guardada de una sin encabezado.
 
 Cuerpo: `{ "headerImageFileId": "<guid>" }`, el archivo ya subido con `POST …/header-image/upload-session` (la misma sesión de la
 creación).
