@@ -267,7 +267,7 @@ namespace Modules.Purchases.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("tax_rate_percent");
 
-                    b.Property<decimal>("UnitCost")
+                    b.Property<decimal?>("UnitCost")
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("unit_cost");

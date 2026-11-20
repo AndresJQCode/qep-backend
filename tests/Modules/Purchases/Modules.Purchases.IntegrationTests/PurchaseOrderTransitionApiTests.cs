@@ -73,7 +73,7 @@ public sealed class PurchaseOrderTransitionApiTests(SharedPurchasesHost host) : 
     {
         using var scenario = await NewScenarioAsync(Factory);
         var sent = await TransitionAsync(scenario.Manager, scenario.TenantId, await CreateDraftAsync(scenario), "send");
-        var lines = sent.Lines.Select(line => (line.Id, line.Quantity!.Value, line.UnitCost)).ToList();
+        var lines = sent.Lines.Select(line => (line.Id, line.Quantity!.Value, line.UnitCost!.Value)).ToList();
         switch (mismatch)
         {
             case "missing":

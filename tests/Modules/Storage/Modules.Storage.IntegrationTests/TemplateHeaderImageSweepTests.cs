@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
 using Modules.Storage.Infrastructure.TemplateImages;
+using Modules.Storage.Infrastructure.UnreferencedFiles;
 using Npgsql;
 using static Modules.Storage.IntegrationTests.PaymentProofStorageHarness;
 
@@ -101,11 +102,11 @@ public sealed class TemplateHeaderImageSweepTests
         var walked = new List<Guid>();
         await using (var scope = factory.Services.CreateAsyncScope())
         {
-            var files = scope.ServiceProvider.GetRequiredService<ITemplateHeaderImageFiles>();
-            TemplateImageCandidate? after = null;
+            var files = scope.ServiceProvider.GetRequiredService<IUnreferencedFileCandidates>();
+            UnreferencedFileCandidate? after = null;
             for (var page = 0; page < 10; page++)
             {
-                var candidates = await files.ListStaleAsync(cutoff, after, take: 1, Ct);
+                var candidates = await files.ListStaleAsync(FileOwnerType.MessageTemplate, cutoff, after, take: 1, Ct);
                 if (candidates.Count == 0)
                 {
                     break;
@@ -162,7 +163,7 @@ public sealed class TemplateHeaderImageSweepTests
             services.AddSingleton<ITemplateImageReferences>(references);
         }));
         await using var scope = host.Services.CreateAsyncScope();
-        return await scope.ServiceProvider.GetRequiredService<ITemplateHeaderImageSweep>().SweepAsync(DateTimeOffset.UtcNow, Ct);
+        return await scope.ServiceProvider.GetRequiredService<TemplateHeaderImageSweep>().SweepAsync(DateTimeOffset.UtcNow, Ct);
     }
 
     private static async Task ExecuteAsync(string connectionString, string sql, Guid fileId)

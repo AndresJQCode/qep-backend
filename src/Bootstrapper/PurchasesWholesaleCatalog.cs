@@ -21,17 +21,17 @@ internal sealed class PurchasesWholesaleCatalog(WholesaleOffers offers) : IWhole
     {
         var found = await offers.SearchAsync(wholesalerTenantId, buyerTenantId, search, page, pageSize, cancellationToken);
         return new WholesaleCatalogPage(
-            found.Currency, found.PriceListName, found.DiscountPercent, [.. found.Items.Select(ToItem)], found.Total);
+            found.Currency, found.PriceListName, found.DiscountPercent, [.. found.Items.Select(ToItem)], found.Total, found.ShowPrices);
     }
 
-    public async Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items)> PriceAsync(
+    public async Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items, bool ShowPrices)> PriceAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken)
     {
         var (terms, priced) = await offers.PriceVisibleAsync(wholesalerTenantId, buyerTenantId, variantIds, cancellationToken);
-        return (terms.Currency, priced.ToDictionary(pair => pair.Key, pair => ToItem(pair.Value)));
+        return (terms.Currency, priced.ToDictionary(pair => pair.Key, pair => ToItem(pair.Value)), terms.ShowPrices);
     }
 
     private static WholesaleCatalogItem ToItem(WholesaleOffer offer) =>

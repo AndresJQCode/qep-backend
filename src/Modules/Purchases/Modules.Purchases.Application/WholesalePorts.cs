@@ -24,7 +24,8 @@ public sealed record WholesaleCatalogPage(
     string PriceListName,
     decimal DiscountPercent,
     IReadOnlyList<WholesaleCatalogItem> Items,
-    int Total);
+    int Total,
+    bool ShowPrices = true);
 
 /// <summary>
 /// El catálogo de un mayorista vinculado; adaptador en Bootstrapper sobre Wholesale (<c>WholesaleOffers</c>). Recibe los dos
@@ -42,8 +43,9 @@ public interface IWholesaleCatalog
         int pageSize,
         CancellationToken cancellationToken);
 
-    /// <summary>El precio de cada variante pedida en la moneda por defecto del mayorista; todas vienen o la llamada falla.</summary>
-    Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items)> PriceAsync(
+    /// <summary>El precio de cada variante pedida en la moneda por defecto del mayorista; todas vienen o la llamada falla. <c>ShowPrices</c>
+    /// es el flag vivo de la lista del distribuidor (spec 2026-11-19): el precio viaja igual, Compras lo enmascara en su borde.</summary>
+    Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items, bool ShowPrices)> PriceAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         IReadOnlyCollection<Guid> variantIds,
@@ -69,14 +71,16 @@ public sealed record WholesaleIntakeRequest(
 
 /// <summary>
 /// El pedido que quedó en el mayorista con sus líneas, ya convertidas a la foto de la orden (costo sin IVA, D-9). Con
-/// <c>AlreadyExisted</c> es el pedido que ya estaba (D-8) y la orden adopta esas líneas.
+/// <c>AlreadyExisted</c> es el pedido que ya estaba (D-8) y la orden adopta esas líneas. <c>ShowPrices</c> es el flag vivo de la
+/// lista del distribuidor (spec 2026-11-19, D-9): en <c>false</c> la orden adopta las líneas sin montos y los recibe al aprobar.
 /// </summary>
 public sealed record WholesaleIntakeResult(
     Guid OrderId,
     string OrderNumber,
     string Currency,
     IReadOnlyList<LinkedLineSnapshot> Lines,
-    bool AlreadyExisted);
+    bool AlreadyExisted,
+    bool ShowPrices = true);
 
 /// <summary>
 /// El pedido del mayorista visto desde la orden de compra; adaptador en Bootstrapper sobre Wholesale y Quotations. Cruza

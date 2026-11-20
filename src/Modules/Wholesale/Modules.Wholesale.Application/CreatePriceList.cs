@@ -10,7 +10,8 @@ public sealed record CreatePriceListCommand(
     string Name,
     decimal DiscountPercent,
     string Visibility,
-    IReadOnlyList<Guid> CategoryIds)
+    IReadOnlyList<Guid> CategoryIds,
+    bool? ShowPrices = null)
     : ICommand<PriceListDetailDto>, IPriceListTermsCommand;
 
 /// <summary>Crea una lista. Orden: 403 → 422 de validación → 409 nombre → 422 categorías.</summary>
@@ -24,7 +25,7 @@ public sealed class CreatePriceListHandler(
     IValidator<CreatePriceListCommand> validator)
     : ICommandHandler<CreatePriceListCommand, PriceListDetailDto>
 {
-    internal static readonly string[] WrittenFields = ["name", "discountPercent", "visibility", "categoryIds"];
+    internal static readonly string[] WrittenFields = ["name", "discountPercent", "visibility", "categoryIds", "showPrices"];
 
     public async Task<PriceListDetailDto> HandleAsync(CreatePriceListCommand command, CancellationToken cancellationToken)
     {
@@ -42,7 +43,8 @@ public sealed class CreatePriceListHandler(
 
         var now = clock.UtcNow;
         var list = PriceList.Create(
-            command.TenantId, name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now);
+            command.TenantId, name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now,
+            command.ShowPrices ?? true);
         priceLists.Add(list);
         auditPublisher.Publish(
             command.TenantId,

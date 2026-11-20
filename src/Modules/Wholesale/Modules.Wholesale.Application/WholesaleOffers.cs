@@ -19,7 +19,8 @@ public sealed record WholesaleTerms(
     string Currency,
     decimal DiscountPercent,
     IReadOnlyCollection<Guid>? VisibleCategoryIds,
-    string PriceListName);
+    string PriceListName,
+    bool ShowPrices = true);
 
 /// <summary>Una variante con su precio de lista para el distribuidor (IVA incluido, con el redondeo del mayorista).</summary>
 public sealed record WholesaleOffer(
@@ -34,13 +35,21 @@ public sealed record WholesaleOffer(
     string ProductName = "",
     string? ImageUrl = null);
 
+/// <summary>
+/// Las ofertas de un pedido que ya existe (<see cref="WholesaleOffers.OffersForOrderAsync"/>) y el flag vivo de la lista del
+/// distribuidor (spec 2026-11-19, D-14). Sin relación o sin lista, vacío y <see cref="ShowPrices"/> en <c>false</c>: sin
+/// información la orden de compra queda sin precio y lo recibe al aprobar, nunca un precio que no se debía ver.
+/// </summary>
+public sealed record WholesaleOrderOffers(IReadOnlyDictionary<Guid, WholesaleOffer> Offers, bool ShowPrices);
+
 /// <summary>Una página del catálogo visto por el distribuidor, con la lista que la precia (adenda: <c>priceList</c>).</summary>
 public sealed record WholesaleOfferPage(
     string Currency,
     string PriceListName,
     decimal DiscountPercent,
     IReadOnlyList<WholesaleOffer> Items,
-    int Total);
+    int Total,
+    bool ShowPrices = true);
 
 /// <summary>
 /// Spec 2026-11-17 (mayorista, fase 3): todo lo que un tenant lee del catálogo de otro pasa por acá. Quien llama es un adaptador
@@ -90,7 +99,8 @@ public sealed class WholesaleOffers(
             currency,
             list.DiscountPercent,
             list.Visibility == PriceListVisibility.AllActive ? null : list.CategoryIds.ToArray(),
-            list.Name);
+            list.Name,
+            list.ShowPrices);
     }
 
     public async Task<WholesaleOfferPage> SearchAsync(
@@ -111,7 +121,8 @@ public sealed class WholesaleOffers(
             terms.PriceListName,
             terms.DiscountPercent,
             items.Select(item => OfferOf(item, terms.DiscountPercent, rounding)).ToList(),
-            total);
+            total,
+            terms.ShowPrices);
     }
 
     /// <summary>
@@ -159,14 +170,14 @@ public sealed class WholesaleOffers(
         string currency,
         IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken) =>
-        (await OffersForOrderAsync(wholesalerTenantId, buyerTenantId, currency, variantIds, cancellationToken))
+        (await OffersForOrderAsync(wholesalerTenantId, buyerTenantId, currency, variantIds, cancellationToken)).Offers
             .ToDictionary(pair => pair.Key, pair => pair.Value.ListPrice);
 
     /// <summary>
     /// Lo mismo que <see cref="ListPricesForOrderAsync"/>, con la oferta entera (precio base y descuento): el reintento de un
     /// envío que encuentra el pedido ya creado (D-8) pinta «base y descuento» sin volver a validar la relación.
     /// </summary>
-    public async Task<IReadOnlyDictionary<Guid, WholesaleOffer>> OffersForOrderAsync(
+    public async Task<WholesaleOrderOffers> OffersForOrderAsync(
         Guid wholesalerTenantId,
         Guid buyerTenantId,
         string currency,
@@ -174,20 +185,27 @@ public sealed class WholesaleOffers(
         CancellationToken cancellationToken)
     {
         var distributor = await distributors.FindByTenantsAsync(wholesalerTenantId, buyerTenantId, cancellationToken);
-        if (distributor is null || variantIds.Count == 0)
+        if (distributor is null)
         {
-            return new Dictionary<Guid, WholesaleOffer>();
+            return new WholesaleOrderOffers(new Dictionary<Guid, WholesaleOffer>(), false);
         }
 
         var list = await priceLists.GetAsync(wholesalerTenantId, distributor.PriceListId, cancellationToken);
         if (list is null)
         {
-            return new Dictionary<Guid, WholesaleOffer>();
+            return new WholesaleOrderOffers(new Dictionary<Guid, WholesaleOffer>(), false);
+        }
+
+        if (variantIds.Count == 0)
+        {
+            return new WholesaleOrderOffers(new Dictionary<Guid, WholesaleOffer>(), list.ShowPrices);
         }
 
         var rounding = await priceRounding.GetAsync(wholesalerTenantId, currency, cancellationToken);
         var found = await catalog.FindSellableAsync(wholesalerTenantId, currency, variantIds, cancellationToken);
-        return found.ToDictionary(pair => pair.Key, pair => OfferOf(pair.Value, list.DiscountPercent, rounding));
+        return new WholesaleOrderOffers(
+            found.ToDictionary(pair => pair.Key, pair => OfferOf(pair.Value, list.DiscountPercent, rounding)),
+            list.ShowPrices);
     }
 
     private static WholesaleOffer OfferOf(

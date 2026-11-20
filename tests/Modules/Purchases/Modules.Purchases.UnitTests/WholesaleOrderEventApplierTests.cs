@@ -53,6 +53,27 @@ public sealed class WholesaleOrderEventApplierTests
         Assert.Equal(1, _unitOfWork.Saves);
     }
 
+    // Spec 2026-11-19 (D-10, D-18): una orden sin precio recibe los costos con la aprobación y crea el producto con ese costo.
+    [Fact]
+    public async Task ApprovingAPricelessOrderGivesItPricesAndCreatesTheProductWithTheConfirmedCost()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentPricelessOrder());
+        var line = order.Lines[0];
+        Assert.False(order.HasPrices);
+
+        var outcome = await Applier().ApplyApprovedAsync(Approval(order, Final(line, 2m)), Later, Ct);
+
+        Assert.Equal(WholesaleEventOutcome.Applied, outcome);
+        Assert.True(order.HasPrices);
+        Assert.Null(line.UnitCost);
+        Assert.Equal((2m, 10000m), (line.ConfirmedQuantity!.Value, line.ConfirmedUnitCost!.Value));
+        Assert.Equal([("SKU-1", line.Name, "COP", (decimal?)10000m)], _writer.Calls);
+        Assert.Equal(PurchaseOrderLineStatus.Unchanged, line.Status);
+        Assert.False(order.ConfirmedWithChanges);
+        Assert.Null(order.RequestedTotals());
+        Assert.Equal(new PurchaseOrderTotals(20000m, 3800m, 23800m), order.Totals());
+    }
+
     // Review Focus 4: " ABC-1 " encuentra ABC-1 (inactivo o no) y no lo toca: la línea lo usa y no cuenta como creado.
     [Fact]
     public async Task AnInactiveVariantWithTheCodeIsReusedUntouched()

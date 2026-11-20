@@ -225,7 +225,7 @@ public sealed class PriceListHandlersTests
             Assert.Equal((_tenant, _context.SubjectId, "price_list", created.Id.ToString(), "success"),
                 (entry.TenantId, entry.ActorId, entry.ResourceType, entry.ResourceId, entry.Outcome)));
         Assert.Equal([Now, Now.AddHours(1), Now.AddHours(2)], _audit.Entries.Select(entry => entry.OccurredAt));
-        Assert.Equal(["name", "discountPercent", "visibility", "categoryIds"], _audit.Entries[0].ChangedFields);
+        Assert.Equal(["name", "discountPercent", "visibility", "categoryIds", "showPrices"], _audit.Entries[0].ChangedFields);
         Assert.Equal(3, _unitOfWork.Saves);
         Assert.Empty(_lists.Lists);
     }
@@ -283,5 +283,68 @@ public sealed class PriceListHandlersTests
         Assert.Equal(
             [new WholesaleCategoryDto(kitchen, "Cocina", home), new WholesaleCategoryDto(home, "Hogar", null)],
             response.Items);
+    }
+
+    // Spec 2026-11-19: mostrar precios es por lista, y por defecto se muestran.
+    [Fact]
+    public async Task CreateWithoutShowPricesShowsThem()
+    {
+        var detail = await CreateHandler().HandleAsync(
+            new CreatePriceListCommand(_tenant, "Mayoristas", 15m, "AllActive", []), Ct);
+
+        Assert.True(detail.ShowPrices);
+        Assert.True(Assert.Single(_lists.Lists.Values).ShowPrices);
+    }
+
+    [Fact]
+    public async Task CreateWithShowPricesFalseHidesThemAndAuditsTheField()
+    {
+        var detail = await CreateHandler().HandleAsync(
+            new CreatePriceListCommand(_tenant, "Mayoristas", 15m, "AllActive", [], false), Ct);
+
+        Assert.False(detail.ShowPrices);
+        Assert.False(Assert.Single(_lists.Lists.Values).ShowPrices);
+        Assert.Contains("showPrices", Assert.Single(_audit.Entries).ChangedFields!);
+    }
+
+    [Fact]
+    public async Task UpdateWithoutShowPricesKeepsAHiddenListHidden()
+    {
+        var created = await CreateHandler().HandleAsync(
+            new CreatePriceListCommand(_tenant, "Mayoristas", 15m, "AllActive", [], false), Ct);
+
+        var detail = await UpdateHandler().HandleAsync(
+            new UpdatePriceListCommand(_tenant, created.Id, 1, "Mayoristas", 20m, "AllActive", [], null), Ct);
+
+        Assert.False(detail.ShowPrices);
+        Assert.False(Assert.Single(_lists.Lists.Values).ShowPrices);
+    }
+
+    [Fact]
+    public async Task UpdateWithShowPricesTrueShowsTheListAgain()
+    {
+        var created = await CreateHandler().HandleAsync(
+            new CreatePriceListCommand(_tenant, "Mayoristas", 15m, "AllActive", [], false), Ct);
+
+        var detail = await UpdateHandler().HandleAsync(
+            new UpdatePriceListCommand(_tenant, created.Id, 1, "Mayoristas", 15m, "AllActive", [], true), Ct);
+
+        Assert.True(detail.ShowPrices);
+        Assert.True(Assert.Single(_lists.Lists.Values).ShowPrices);
+        Assert.Contains("showPrices", _audit.Entries[^1].ChangedFields!);
+    }
+
+    [Fact]
+    public async Task GetAndListCarryShowPrices()
+    {
+        var created = await CreateHandler().HandleAsync(
+            new CreatePriceListCommand(_tenant, "Oculta", 15m, "AllActive", [], false), Ct);
+        await CreateHandler().HandleAsync(new CreatePriceListCommand(_tenant, "Visible", 15m, "AllActive", []), Ct);
+
+        var detail = await GetHandler().HandleAsync(new GetPriceListQuery(_tenant, created.Id), Ct);
+        var response = await ListHandler().HandleAsync(new ListPriceListsQuery(_tenant), Ct);
+
+        Assert.False(detail.ShowPrices);
+        Assert.Equal([("Oculta", false), ("Visible", true)], response.Items.Select(item => (item.Name, item.ShowPrices)));
     }
 }

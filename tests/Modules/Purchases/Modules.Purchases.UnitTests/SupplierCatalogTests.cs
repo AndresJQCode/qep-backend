@@ -101,4 +101,46 @@ public sealed class SupplierCatalogTests
 
         Assert.Equal((1, 200), (page.Page, page.PageSize));
     }
+
+    // Spec 2026-11-19: con la lista oculta del mayorista, el BFF no manda montos pero sí lo que identifica al producto.
+    [Fact]
+    public async Task ACatalogOfAHiddenPriceListHasNoAmounts()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+        var item = _wholesale.Add("ACE-1", 14000m, 15m, 11900m, 19m);
+        _wholesale.Items[item.VariantId] = item with
+        {
+            ProductId = Guid.CreateVersion7(), ProductName = "Aceite", ImageUrl = "https://cdn.example.co/a.png",
+        };
+        _wholesale.ShowPrices = false;
+
+        var page = await Handler().HandleAsync(
+            new ListSupplierCatalogQuery(TenantId, PurchaseOrderTestData.SupplierId, null, 1, 50), Ct);
+
+        Assert.False(page.ShowPrices);
+        Assert.Equal(new SupplierCatalogPriceListDto("Distribuidor estándar", null), page.PriceList);
+        var shown = Assert.Single(page.Items);
+        Assert.Equal((null, null, null, null), (shown.BasePrice, shown.DiscountPercent, shown.ListPrice, shown.UnitCost));
+        Assert.Equal(
+            (item.VariantId, "ACE-1", "Producto ACE-1", 19m, "Aceite", "https://cdn.example.co/a.png"),
+            (shown.VariantId, shown.Code, shown.Name, shown.TaxRatePercent, shown.ProductName, shown.ImageUrl));
+        Assert.Equal(1, page.Total);
+    }
+
+    [Fact]
+    public async Task ACatalogOfAVisiblePriceListKeepsItsAmounts()
+    {
+        _suppliers.Add(PurchaseOrderTestData.SupplierId, "Mayorista Central", linkedTenantId: Wholesaler);
+        var item = _wholesale.Add("ACE-1", 14000m, 15m, 11900m, 19m);
+        _wholesale.ShowPrices = true;
+
+        var page = await Handler().HandleAsync(
+            new ListSupplierCatalogQuery(TenantId, PurchaseOrderTestData.SupplierId, null, 1, 50), Ct);
+
+        Assert.True(page.ShowPrices);
+        Assert.Equal(new SupplierCatalogPriceListDto("Distribuidor estándar", 15m), page.PriceList);
+        Assert.Equal(
+            new SupplierCatalogItemDto(item.VariantId, "ACE-1", "Producto ACE-1", 14000m, 15m, 11900m, 19m, 10000m),
+            Assert.Single(page.Items));
+    }
 }

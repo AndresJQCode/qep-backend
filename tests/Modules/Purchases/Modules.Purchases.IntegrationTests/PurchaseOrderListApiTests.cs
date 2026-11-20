@@ -84,7 +84,7 @@ public sealed class PurchaseOrderListApiTests(SharedPurchasesHost host) : IClass
         var item = Assert.Single((await ListAsync(scenario)).Items);
 
         Assert.Equal(new PurchaseOrderSupplierRefDto(scenario.SupplierId, "Textiles Andinos"), item.Supplier);
-        Assert.Equal(order.Totals.Total, item.Total);
+        Assert.Equal(order.Totals!.Total, item.Total);
         Assert.Equal(248m, item.Total);
         Assert.Equal(2, item.LineCount);
         Assert.Equal(("OC-0001", "Draft", "COP"), (item.Number, item.Status, item.Currency));

@@ -303,6 +303,27 @@ internal static class LinkedPurchasesHarness
             await EnsureSuccessAsync(response);
         }
 
+        /// <summary>Spec 2026-11-19: el mayorista oculta (o muestra) los precios de la lista del distribuidor.</summary>
+        public async Task SetShowPricesAsync(bool showPrices)
+        {
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists/{priceListId}";
+            var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
+            var response = await PurchasesApiHarness.WriteAsync(
+                wholesaler,
+                HttpMethod.Put,
+                url,
+                list.Version,
+                new { name = PriceListName, discountPercent = DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), showPrices });
+            await EnsureSuccessAsync(response);
+        }
+
+        public Task<string> WholesaleOrderNumberAsync(Guid orderId) =>
+            PurchasesApiHarness.ScalarAsync<string>(
+                factory,
+                $"""
+                SELECT order_number AS "Value" FROM quotations.orders WHERE id = {orderId}
+                """);
+
         public Task DeactivateWholesalerProductAsync(Guid variantId) =>
             PurchasesApiHarness.ExecuteAsync(
                 factory,
