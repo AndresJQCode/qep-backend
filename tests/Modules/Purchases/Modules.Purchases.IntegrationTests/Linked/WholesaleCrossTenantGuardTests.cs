@@ -45,6 +45,42 @@ public sealed class WholesaleCrossTenantGuardTests(SharedPurchasesHost host) : I
         Assert.Equal(PurchasesErrorCodes.RelationshipInactive, await PurchasesApiHarness.CodeOfAsync(response));
     }
 
+    // Spec 2026-11-20: el árbol visible y el filtro por categoría llegan por HTTP con los mismos guardas que el catálogo.
+    [Fact]
+    public async Task CatalogCategoriesAreServedAsAFlatList()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+
+        var response = await world.Buyer.GetAsync(world.CatalogUrl() + "/categories", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = System.Text.Json.JsonDocument.Parse(await PurchasesApiHarness.BodyAsync(response));
+        Assert.Equal(System.Text.Json.JsonValueKind.Array, document.RootElement.GetProperty("items").ValueKind);
+    }
+
+    [Fact]
+    public async Task CatalogCategoriesWithABlockedRelationshipIs403()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+        await world.BlockRelationshipAsync();
+
+        var response = await world.Buyer.GetAsync(world.CatalogUrl() + "/categories", Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(PurchasesErrorCodes.RelationshipInactive, await PurchasesApiHarness.CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task CatalogWithAnUnknownCategoryIs422NotVisible()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+
+        var response = await world.Buyer.GetAsync($"{world.CatalogUrl()}?categoryId={Guid.CreateVersion7()}", Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wholesale.category.not_visible", await PurchasesApiHarness.CodeOfAsync(response));
+    }
+
     [Fact]
     public async Task TheCatalogCarriesThePriceListAndTheNetCost()
     {

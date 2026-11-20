@@ -103,18 +103,46 @@ public sealed class WholesaleOffers(
             list.ShowPrices);
     }
 
+    /// <summary>
+    /// El árbol de categorías que la lista del distribuidor le deja ver, plano y en el orden del lector. Con una lista de
+    /// categorías: ellas más sus descendientes; una cuyo padre queda fuera sale como raíz (<c>ParentId = null</c>), y un
+    /// ancestro que no está en la lista no se devuelve.
+    /// </summary>
+    public async Task<IReadOnlyList<WholesaleCategoryNode>> ListVisibleCategoriesAsync(
+        Guid wholesalerTenantId, Guid buyerTenantId, CancellationToken cancellationToken)
+    {
+        var terms = await ResolveTermsAsync(wholesalerTenantId, buyerTenantId, cancellationToken);
+        return await VisibleTreeAsync(wholesalerTenantId, terms, cancellationToken);
+    }
+
     public async Task<WholesaleOfferPage> SearchAsync(
         Guid wholesalerTenantId,
         Guid buyerTenantId,
         string? search,
+        Guid? categoryId,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var terms = await ResolveTermsAsync(wholesalerTenantId, buyerTenantId, cancellationToken);
+        IReadOnlyCollection<Guid>? categoryIds = terms.VisibleCategoryIds;
+        if (categoryId is { } chosen)
+        {
+            // La validación contra el árbol visible es lo que garantiza la lista; al lector sólo le llega la elegida (él expande
+            // sus descendientes), así que el filtro nunca amplía lo que la lista permite.
+            var visible = await VisibleTreeAsync(wholesalerTenantId, terms, cancellationToken);
+            if (visible.All(node => node.Id != chosen))
+            {
+                throw new WholesaleDomainException(
+                    WholesaleErrorCodes.CategoryNotVisible, "La categoría ya no está disponible para ti.");
+            }
+
+            categoryIds = [chosen];
+        }
+
         var rounding = await priceRounding.GetAsync(wholesalerTenantId, terms.Currency, cancellationToken);
         var (items, total) = await catalog.SearchSellableAsync(
-            wholesalerTenantId, terms.Currency, terms.VisibleCategoryIds, search, page, pageSize, cancellationToken);
+            wholesalerTenantId, terms.Currency, categoryIds, search, page, pageSize, cancellationToken);
 
         return new WholesaleOfferPage(
             terms.Currency,
@@ -123,6 +151,34 @@ public sealed class WholesaleOffers(
             items.Select(item => OfferOf(item, terms.DiscountPercent, rounding)).ToList(),
             total,
             terms.ShowPrices);
+    }
+
+    private async Task<IReadOnlyList<WholesaleCategoryNode>> VisibleTreeAsync(
+        Guid wholesalerTenantId, WholesaleTerms terms, CancellationToken cancellationToken)
+    {
+        var all = await catalog.ListCategoriesAsync(wholesalerTenantId, cancellationToken);
+        if (terms.VisibleCategoryIds is not { } listed)
+        {
+            return all;
+        }
+
+        // BFS desde las categorías de la lista; el conjunto de visitados corta un ciclo o un padre faltante.
+        var childrenByParent = all.Where(node => node.ParentId is not null).ToLookup(node => node.ParentId!.Value, node => node.Id);
+        var inTree = all.Select(node => node.Id).ToHashSet();
+        var visible = new HashSet<Guid>();
+        var queue = new Queue<Guid>(listed.Where(inTree.Contains).Where(visible.Add));
+        while (queue.TryDequeue(out var current))
+        {
+            foreach (var child in childrenByParent[current].Where(visible.Add))
+            {
+                queue.Enqueue(child);
+            }
+        }
+
+        return all
+            .Where(node => visible.Contains(node.Id))
+            .Select(node => node.ParentId is { } parent && !visible.Contains(parent) ? node with { ParentId = null } : node)
+            .ToList();
     }
 
     /// <summary>

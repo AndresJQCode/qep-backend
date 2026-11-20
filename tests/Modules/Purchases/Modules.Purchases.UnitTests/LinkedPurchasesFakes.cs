@@ -133,11 +133,31 @@ internal sealed class FakeWholesaleCatalog : IWholesaleCatalog
         return item;
     }
 
+    /// <summary>Spec 2026-11-20: el árbol que el mayorista le deja ver al comprador, en el orden que lo da.</summary>
+    public List<WholesaleCategory> Categories { get; } = [];
+
+    /// <summary>El <c>categoryId</c> de cada búsqueda, en el mismo orden que <see cref="Searches"/>.</summary>
+    public List<Guid?> SearchCategoryIds { get; } = [];
+
+    public Task<IReadOnlyList<WholesaleCategory>> ListCategoriesAsync(
+        Guid buyerTenantId, Guid wholesalerTenantId, CancellationToken cancellationToken)
+    {
+        EnsureAllowed();
+        return Task.FromResult<IReadOnlyList<WholesaleCategory>>(Categories.ToList());
+    }
+
     public Task<WholesaleCatalogPage> SearchAsync(
-        Guid buyerTenantId, Guid wholesalerTenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
+        Guid buyerTenantId,
+        Guid wholesalerTenantId,
+        string? search,
+        Guid? categoryId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
     {
         EnsureAllowed();
         Searches.Add((buyerTenantId, wholesalerTenantId, search, page, pageSize));
+        SearchCategoryIds.Add(categoryId);
         return Task.FromResult(new WholesaleCatalogPage(Currency, "Distribuidor estándar", 15m, Items.Values.ToList(), Items.Count, ShowPrices));
     }
 
