@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Modules.Tenancy.Application;
 
@@ -27,15 +28,23 @@ public static class TenantSlugs
     /// <summary>El slug de respaldo cuando el nombre no deja al menos <see cref="MinLength"/> caracteres útiles.</summary>
     public const string Fallback = "distribuidor";
 
+    // Spec 2026-11-19 §3b: la forma societaria suelta del final del nombre (SAS, S.A.S, SA, S.A, LTDA, LTA, con o sin puntos y
+    // con coma antes) no entra al slug. Sólo cuenta una palabra entera: antes tiene que haber un espacio o un signo, así que
+    // «Casas» o «Pesa» no pierden su final.
+    private static readonly Regex CorporateSuffix = new(
+        @"(?<=[\s,;.\-])(?:s\.?\s*a\.?\s*s|s\.?\s*a|ltda|lta)\.?[\s,;.\-]*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(100));
+
     /// <summary>
-    /// Minúsculas y sin tildes; todo lo que no sea letra o dígito ASCII pasa a <c>-</c>, sin guiones repetidos ni en los
-    /// extremos, con tope de <see cref="MaxLength"/>. Si queda de menos de <see cref="MinLength"/> caracteres devuelve
-    /// <see cref="Fallback"/>.
+    /// Minúsculas y sin tildes; sin la forma societaria del final (<c>S.A.S.</c>, <c>LTDA</c>…); todo lo que no sea letra o
+    /// dígito ASCII pasa a <c>-</c>, sin guiones repetidos ni en los extremos, con tope de <see cref="MaxLength"/>. Si queda
+    /// de menos de <see cref="MinLength"/> caracteres devuelve <see cref="Fallback"/>.
     /// </summary>
     public static string Normalize(string displayName)
     {
         ArgumentNullException.ThrowIfNull(displayName);
-        var decomposed = displayName.Normalize(NormalizationForm.FormD);
+        var decomposed = WithoutCorporateSuffix(displayName).Normalize(NormalizationForm.FormD);
         var builder = new StringBuilder(decomposed.Length);
         foreach (var character in decomposed)
         {
@@ -56,6 +65,23 @@ public static class TenantSlugs
 
         var slug = Cut(builder.ToString(), MaxLength);
         return slug.Length < MinLength ? Fallback : slug;
+    }
+
+    // Se repite por si hay más de una («Andina Ltda. S.A.S.»). Si lo único que queda es la forma societaria, el nombre se deja
+    // entero: «SAS» no pasa a ser vacío.
+    private static string WithoutCorporateSuffix(string displayName)
+    {
+        var current = displayName;
+        while (true)
+        {
+            var stripped = CorporateSuffix.Replace(current, string.Empty);
+            if (stripped.Length == current.Length || !stripped.Any(char.IsLetterOrDigit))
+            {
+                return current;
+            }
+
+            current = stripped;
+        }
     }
 
     /// <summary>El slug con el sufijo numérico, recortando la base para no pasar de <see cref="MaxLength"/>.</summary>
