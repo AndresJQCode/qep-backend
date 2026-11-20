@@ -438,4 +438,48 @@ public sealed class WholesaleOffersTests
 
         Assert.Equal([raiz], _catalog.SearchCalls.Single().CategoryIds);
     }
+
+    // Menores diferidos de la revisión final: el árbol visible no depende de datos sanos.
+    [Fact]
+    public async Task AnAllActiveTreeTurnsAnOrphanIntoARoot()
+    {
+        var huerfana = _catalog.AddCategory("Huérfana", Guid.CreateVersion7());
+        var raiz = _catalog.AddCategory("Raíz");
+        var hija = _catalog.AddCategory("Hija", raiz);
+        SeedActive();
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal(3, nodes.Count);
+        Assert.Null(nodes.Single(node => node.Id == huerfana).ParentId);
+        Assert.Equal(raiz, nodes.Single(node => node.Id == hija).ParentId);
+    }
+
+    [Fact]
+    public async Task ACategoriesTreeWithACycleOrAMissingParentDoesNotHang()
+    {
+        var a = _catalog.AddCategory("A");
+        var b = _catalog.AddCategory("B", a);
+        _catalog.Categories[a] = _catalog.Categories[a] with { ParentId = b };
+        var sinPadre = _catalog.AddCategory("Sin padre", Guid.CreateVersion7());
+        UseCategories(SeedActive(), 10m, a, sinPadre);
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        Assert.Equal(new[] { a, b, sinPadre }.Order(), nodes.Select(node => node.Id).Order());
+        Assert.Null(nodes.Single(node => node.Id == sinPadre).ParentId);
+    }
+
+    [Fact]
+    public async Task VisibleCategoriesOfACategoriesListKeepTheReadersOrder()
+    {
+        var raiz = _catalog.AddCategory("Raíz");
+        var zeta = _catalog.AddCategory("Zeta", raiz);
+        var alfa = _catalog.AddCategory("Alfa", raiz);
+        UseCategories(SeedActive(), 10m, raiz);
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal([alfa, raiz, zeta], nodes.Select(node => node.Id));
+    }
 }

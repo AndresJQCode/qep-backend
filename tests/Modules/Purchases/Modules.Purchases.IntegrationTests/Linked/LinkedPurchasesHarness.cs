@@ -303,6 +303,25 @@ internal static class LinkedPurchasesHarness
             await EnsureSuccessAsync(response);
         }
 
+        /// <summary>Spec 2026-11-20: una categoría del catálogo del mayorista, opcionalmente bajo otra.</summary>
+        public async Task<Guid> CreateWholesalerCategoryAsync(string name, Guid? parentId = null) =>
+            (await PostAsync<CategoryResponse>(
+                wholesaler, $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/categories", new { name, parentId })).Id;
+
+        /// <summary>Spec 2026-11-20: la lista del distribuidor pasa a ver sólo esas categorías (y sus descendientes).</summary>
+        public async Task UseCategoriesAsync(params Guid[] categoryIds)
+        {
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists/{priceListId}";
+            var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
+            var response = await PurchasesApiHarness.WriteAsync(
+                wholesaler,
+                HttpMethod.Put,
+                url,
+                list.Version,
+                new { name = PriceListName, discountPercent = DiscountPercent, visibility = "Categories", categoryIds });
+            await EnsureSuccessAsync(response);
+        }
+
         /// <summary>Spec 2026-11-19: el mayorista oculta (o muestra) los precios de la lista del distribuidor.</summary>
         public async Task SetShowPricesAsync(bool showPrices)
         {

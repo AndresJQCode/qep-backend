@@ -59,6 +59,38 @@ public sealed class WholesaleCrossTenantGuardTests(SharedPurchasesHost host) : I
     }
 
     [Fact]
+    public async Task CatalogCategoriesCarryOnlyWhatTheListShows()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+        var raiz = await world.CreateWholesalerCategoryAsync("Hogar");
+        var hijo = await world.CreateWholesalerCategoryAsync("Cocina", raiz);
+        var nieto = await world.CreateWholesalerCategoryAsync("Ollas", hijo);
+        var otra = await world.CreateWholesalerCategoryAsync("Jardín");
+        await world.UseCategoriesAsync(hijo);
+
+        var response = await world.Buyer.GetAsync(world.CatalogUrl() + "/categories", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = System.Text.Json.JsonDocument.Parse(await PurchasesApiHarness.BodyAsync(response));
+        var items = document.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => (
+                Id: item.GetProperty("id").GetGuid(),
+                Name: item.GetProperty("name").GetString(),
+                Parent: item.GetProperty("parentId").ValueKind == System.Text.Json.JsonValueKind.Null
+                    ? (Guid?)null
+                    : item.GetProperty("parentId").GetGuid()))
+            .ToList();
+        Assert.Equal([(hijo, "Cocina", (Guid?)null), (nieto, "Ollas", hijo)], items);
+        Assert.DoesNotContain(items, item => item.Id == raiz || item.Id == otra);
+
+        var allowed = await world.Buyer.GetAsync($"{world.CatalogUrl()}?categoryId={nieto}", Ct);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        var hidden = await world.Buyer.GetAsync($"{world.CatalogUrl()}?categoryId={otra}", Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, hidden.StatusCode);
+        Assert.Equal(PurchasesErrorCodes.CategoryNotVisible, await PurchasesApiHarness.CodeOfAsync(hidden));
+    }
+
+    [Fact]
     public async Task CatalogCategoriesWithABlockedRelationshipIs403()
     {
         using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
@@ -78,7 +110,7 @@ public sealed class WholesaleCrossTenantGuardTests(SharedPurchasesHost host) : I
         var response = await world.Buyer.GetAsync($"{world.CatalogUrl()}?categoryId={Guid.CreateVersion7()}", Ct);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("wholesale.category.not_visible", await PurchasesApiHarness.CodeOfAsync(response));
+        Assert.Equal(PurchasesErrorCodes.CategoryNotVisible, await PurchasesApiHarness.CodeOfAsync(response));
     }
 
     [Fact]

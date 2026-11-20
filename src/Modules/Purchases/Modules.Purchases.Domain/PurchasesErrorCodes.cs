@@ -33,6 +33,9 @@ public static class PurchasesErrorCodes
 
     public const string ProductNotVisible = "wholesale.product.not_visible";
 
+    /// <summary>422: el <c>categoryId</c> no está en el árbol que la lista del distribuidor le deja ver (spec 2026-11-20).</summary>
+    public const string CategoryNotVisible = "wholesale.category.not_visible";
+
     public const string RelationshipInactive = "wholesale.relationship.inactive";
 
     /// <summary>409: el correo al proveedor sólo vale desde que la orden se envió y hasta antes de cancelarla.</summary>

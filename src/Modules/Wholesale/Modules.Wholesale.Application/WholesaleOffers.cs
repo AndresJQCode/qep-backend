@@ -157,12 +157,18 @@ public sealed class WholesaleOffers(
         Guid wholesalerTenantId, WholesaleTerms terms, CancellationToken cancellationToken)
     {
         var all = await catalog.ListCategoriesAsync(wholesalerTenantId, cancellationToken);
-        if (terms.VisibleCategoryIds is not { } listed)
-        {
-            return all;
-        }
+        var visible = terms.VisibleCategoryIds is { } listed ? DescendantsOf(all, listed) : all.Select(node => node.Id).ToHashSet();
 
-        // BFS desde las categorías de la lista; el conjunto de visitados corta un ciclo o un padre faltante.
+        // Un nodo cuyo padre no se ve (o no existe) sale como raíz: el árbol que llega al comprador nunca apunta afuera de sí mismo.
+        return all
+            .Where(node => visible.Contains(node.Id))
+            .Select(node => node.ParentId is { } parent && !visible.Contains(parent) ? node with { ParentId = null } : node)
+            .ToList();
+    }
+
+    /// <summary>BFS desde las categorías de la lista que aún existen; el conjunto de visitados corta un ciclo.</summary>
+    private static HashSet<Guid> DescendantsOf(IReadOnlyList<WholesaleCategoryNode> all, IReadOnlyCollection<Guid> listed)
+    {
         var childrenByParent = all.Where(node => node.ParentId is not null).ToLookup(node => node.ParentId!.Value, node => node.Id);
         var inTree = all.Select(node => node.Id).ToHashSet();
         var visible = new HashSet<Guid>();
@@ -175,10 +181,7 @@ public sealed class WholesaleOffers(
             }
         }
 
-        return all
-            .Where(node => visible.Contains(node.Id))
-            .Select(node => node.ParentId is { } parent && !visible.Contains(parent) ? node with { ParentId = null } : node)
-            .ToList();
+        return visible;
     }
 
     /// <summary>
