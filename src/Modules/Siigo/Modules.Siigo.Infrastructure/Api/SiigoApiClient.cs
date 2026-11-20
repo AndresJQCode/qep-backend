@@ -292,7 +292,12 @@ internal sealed class SiigoApiClient(
 
         if (!reply.Success)
         {
-            throw new UpstreamServiceException("siigo.unexpected_response", $"Siigo answered HTTP {(int)reply.Status!.Value}.");
+            // Sólo los códigos de Siigo, nunca sus mensajes: repiten los valores rechazados (documento, dirección, nombre).
+            var codes = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false).Select(error => error.Code).Distinct().Take(5);
+            var detail = string.Join(", ", codes);
+            throw new UpstreamServiceException(
+                "siigo.unexpected_response",
+                $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}");
         }
     }
 
