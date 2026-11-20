@@ -477,6 +477,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         media.Property(value => value.StorageFileId).HasColumnName("storage_file_id");
         media.Property(value => value.PublicUrl).HasColumnName("public_url").HasMaxLength(2048);
         media.HasIndex(value => value.NextAttemptAt).HasDatabaseName("IX_message_media_pending").HasFilter("stored_at IS NULL");
+        // Spec 2026-11-18, regla 2 del owner: Storage pregunta por estos ids a diario y al borrar un chatbot. Parcial: sólo las filas de bot.
+        media.HasIndex(value => value.StorageFileId).HasDatabaseName("IX_message_media_storage_file").HasFilter("storage_file_id IS NOT NULL");
     }
 
     private static readonly ValueConverter<IReadOnlyList<Guid>, Guid[]> GuidListConverter = new(list => list.ToArray(), array => array);

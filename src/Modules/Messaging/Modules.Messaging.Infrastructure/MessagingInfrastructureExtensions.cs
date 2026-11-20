@@ -41,6 +41,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
         // Plan 2026-11-17 Task 8: el aviso de liberación de la imagen del encabezado, en el SaveChanges de quien elimina la plantilla.
         services.AddScoped<ITemplateHeaderImageReleases, TemplateHeaderImageReleasePublisher>();
+        // Spec 2026-11-18, regla 2 del owner: qué archivos de chatbot muestra todavía un mensaje de bot (para el barrido de Storage).
+        services.AddScoped<IBotMediaReferences, BotMediaReferences>();
         // Borrar clientes (A-12 y P4): el candado compartido del cliente al colgarle una conversación, sobre la conexión de Mensajería.
         services.AddScoped<IMessagingCustomerReferenceLock, MessagingCustomerReferenceLock>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).

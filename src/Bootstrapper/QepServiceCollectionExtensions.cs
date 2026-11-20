@@ -1888,6 +1888,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IChatbotMediaProcessing, ChatbotMediaProcessing>();
         // Y al revés, para el barrido diario de Storage: qué imágenes de encabezado usa todavía una plantilla.
         services.AddScoped<ITemplateImageReferences, TemplateImageReferences>();
+        // Y los archivos de chatbot (spec 2026-11-18): en uso mientras los nombre un chatbot, una versión, una plantilla guardada o un
+        // mensaje de la bandeja.
+        services.AddScoped<IChatbotMediaReferences, ChatbotMediaReferences>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los
