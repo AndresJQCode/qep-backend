@@ -2,7 +2,9 @@ using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
+using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Domain;
+using Modules.Messaging.Infrastructure.Persistence;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
@@ -336,5 +338,46 @@ public sealed class MessageTemplatePersistenceTests
             Assert.Equal<(Guid?, string?)>((null, null), (withoutImage.HeaderImageFileId, withoutImage.HeaderImageUrl));
             return 0;
         });
+    }
+
+    [Fact]
+    public async Task RetiredHeaderImageRoundTripsAndCascadesWithItsTemplate()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var oldFileId = Guid.CreateVersion7();
+        var templateId = Guid.Empty;
+
+        using (var scope = f.Factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            var template = MessageTemplate.Pending(f.TenantId, f.ConnectionId, "930", "con_imagen", "es", "MARKETING", "NAMED", "APPROVED",
+                "[]", MessageTemplateKind.Free, null, Now);
+            template.AttachHeaderImage(oldFileId, "https://public.test/old.png", Now);
+            var retired = template.ReplaceHeaderImage(Guid.CreateVersion7(), "https://public.test/new.png", Now.AddHours(1));
+            dbContext.MessageTemplates.Add(template);
+            dbContext.MessageTemplateRetiredHeaderImages.Add(retired!);
+            await dbContext.SaveChangesAsync(Ct);
+            templateId = template.Id;
+        }
+
+        using (var scope = f.Factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            var row = await dbContext.MessageTemplateRetiredHeaderImages.AsNoTracking().SingleAsync(Ct);
+            Assert.Equal((f.TenantId, templateId, oldFileId, "https://public.test/old.png", Now.AddHours(1)),
+                (row.TenantId, row.TemplateId, row.FileId, row.PublicUrl, row.RetiredAt));
+
+            var template = await dbContext.MessageTemplates.SingleAsync(value => value.Id == templateId, Ct);
+            dbContext.MessageTemplates.Remove(template);
+            await dbContext.SaveChangesAsync(Ct);
+        }
+
+        using (var scope = f.Factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+            Assert.False(await dbContext.MessageTemplateRetiredHeaderImages.AsNoTracking().AnyAsync(Ct));
+        }
     }
 }

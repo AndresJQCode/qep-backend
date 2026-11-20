@@ -934,6 +934,44 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Messaging.Domain.MessageTemplateRetiredHeaderImage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<string>("PublicUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("public_url");
+
+                    b.Property<DateTimeOffset>("RetiredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retired_at");
+
+                    b.Property<Guid>("TemplateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("template_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TemplateId");
+
+                    b.HasIndex(new[] { "FileId" }, "UX_message_template_retired_header_images_file")
+                        .IsUnique();
+
+                    b.ToTable("message_template_retired_header_images", "messaging");
+                });
+
             modelBuilder.Entity("Modules.Messaging.Domain.QuickReply", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1901,6 +1939,15 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ResolutionReasonId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_conversations_resolution_reasons");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.MessageTemplateRetiredHeaderImage", b =>
+                {
+                    b.HasOne("Modules.Messaging.Domain.MessageTemplate", null)
+                        .WithMany()
+                        .HasForeignKey("TemplateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Messaging.Domain.ScheduledMessage", b =>
