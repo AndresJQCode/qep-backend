@@ -95,6 +95,16 @@ En todo lo demás —y en toda orden externa o aprobada— `showPrices: true` y 
 
 `taxRatePercent` no es un precio y se queda: la pantalla no puede reconstruir el monto con él.
 
+### Lo que este corte nunca toca: los documentos del mayorista
+
+`showPrices = false` oculta precios **sólo en las superficies del distribuidor** (la tabla de arriba, módulo Compras). Los
+documentos que el mayorista emite desde su propio tenant —cotización, pedido, PDF, envío por WhatsApp o correo, módulo Cotizaciones—
+**siempre llevan precios**: una cotización sin precios no tiene sentido y el mayorista no tiene un pedido distinto del suyo
+(`Order` con `Source = Wholesale`, con el precio congelado). Un test de regresión lo fija: con la lista oculta, el PDF del pedido
+del mayorista sigue trayendo los montos. Si el mayorista le manda al distribuidor el PDF de su cotización o su pedido, el
+distribuidor recibe los precios por ese camino: la lista oculta sólo controla lo que el distribuidor ve **mientras arma su orden**
+en QEP, no lo que el mayorista decide enviarle.
+
 ### Fugas que quedan abiertas (seguimiento)
 
 1. **Lo que el distribuidor ya vio.** Un borrador guardado con la lista visible conserva sus montos hasta que se vuelva a
