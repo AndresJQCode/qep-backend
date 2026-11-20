@@ -20,12 +20,14 @@ public sealed record PriceListSummaryDto(
     IReadOnlyList<PriceListCategoryDto> Categories,
     int DistributorCount,
     long Version,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    bool ShowPrices = true);
 
 /// <summary>
 /// La lista completa para el formulario y su detalle (BFF). <c>Categories</c> trae sólo las que siguen existiendo, ordenadas
 /// por nombre (D-23): el detalle no puede pintar una categoría sin nombre, y el siguiente <c>PUT</c> guarda el conjunto limpio.
-/// <c>Visibility</c> va por nombre (<c>AllActive</c> o <c>Categories</c>).
+/// <c>Visibility</c> va por nombre (<c>AllActive</c> o <c>Categories</c>). <c>ShowPrices</c> (spec 2026-11-19): con <c>false</c>
+/// el distribuidor de la lista no recibe montos; la pantalla pinta el interruptor sin inferirlo de nada más.
 /// </summary>
 public sealed record PriceListDetailDto(
     Guid Id,
@@ -36,7 +38,8 @@ public sealed record PriceListDetailDto(
     int DistributorCount,
     long Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    bool ShowPrices = true);
 
 /// <summary>Todas las listas del tenant ordenadas por nombre, sin paginar (D-12): un mayorista tiene un puñado.</summary>
 public sealed record PriceListsResponse(IReadOnlyList<PriceListSummaryDto> Items);
@@ -85,7 +88,8 @@ internal static class PriceListMapping
             distributorCount,
             list.Version,
             list.CreatedAt,
-            list.UpdatedAt);
+            list.UpdatedAt,
+            list.ShowPrices);
 
     public static PriceListSummaryDto ToSummary(
         PriceList list, IReadOnlyDictionary<Guid, WholesaleCategoryRef> found, int distributorCount)
@@ -100,6 +104,7 @@ internal static class PriceListMapping
             categories,
             distributorCount,
             list.Version,
-            list.CreatedAt);
+            list.CreatedAt,
+            list.ShowPrices);
     }
 }

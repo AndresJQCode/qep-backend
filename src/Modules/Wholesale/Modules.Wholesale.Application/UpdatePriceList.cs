@@ -12,7 +12,8 @@ public sealed record UpdatePriceListCommand(
     string Name,
     decimal DiscountPercent,
     string Visibility,
-    IReadOnlyList<Guid> CategoryIds)
+    IReadOnlyList<Guid> CategoryIds,
+    bool? ShowPrices = null)
     : ICommand<PriceListDetailDto>, IPriceListTermsCommand;
 
 /// <summary>
@@ -48,7 +49,7 @@ public sealed class UpdatePriceListHandler(
         var categories = await PriceListTerms.RequireCategoriesAsync(catalog, command.TenantId, categoryIds, cancellationToken);
 
         var now = clock.UtcNow;
-        list.Update(name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now, list.ShowPrices);
+        list.Update(name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now, command.ShowPrices ?? list.ShowPrices);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

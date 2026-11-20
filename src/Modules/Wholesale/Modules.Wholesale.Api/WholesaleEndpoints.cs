@@ -185,7 +185,7 @@ public static class WholesaleEndpoints
     {
         var list = await dispatcher.SendAsync(
             new CreatePriceListCommand(
-                tenantId, request.Name, request.DiscountPercent, request.Visibility, request.CategoryIds ?? []),
+                tenantId, request.Name, request.DiscountPercent, request.Visibility, request.CategoryIds ?? [], request.ShowPrices),
             cancellationToken);
 
         return Results.Created($"/api/v1/tenants/{tenantId}/wholesale/price-lists/{list.Id}", list);
@@ -217,7 +217,8 @@ public static class WholesaleEndpoints
                 request.Name,
                 request.DiscountPercent,
                 request.Visibility,
-                request.CategoryIds ?? []),
+                request.CategoryIds ?? [],
+                request.ShowPrices),
             cancellationToken);
 
         return Results.Ok(list);
@@ -354,7 +355,7 @@ public static class WholesaleEndpoints
 
 /// <summary>El cuerpo de alta y edición de una lista. <c>Visibility</c> como texto: un valor raro es 422, no 400.</summary>
 public sealed record PriceListWriteRequest(
-    string Name, decimal DiscountPercent, string Visibility, IReadOnlyList<Guid>? CategoryIds);
+    string Name, decimal DiscountPercent, string Visibility, IReadOnlyList<Guid>? CategoryIds, bool? ShowPrices = null);
 
 /// <summary>La lista sin guardar para «Así lo ve el distribuidor»: los términos sin el nombre.</summary>
 public sealed record PriceListPreviewRequest(decimal DiscountPercent, string Visibility, IReadOnlyList<Guid>? CategoryIds);
