@@ -35,5 +35,6 @@ internal sealed class PurchasesWholesaleCatalog(WholesaleOffers offers) : IWhole
     }
 
     private static WholesaleCatalogItem ToItem(WholesaleOffer offer) =>
-        new(offer.VariantId, offer.Code, offer.Name, offer.BasePrice, offer.DiscountPercent, offer.ListPrice, offer.TaxRatePercent);
+        new(offer.VariantId, offer.Code, offer.Name, offer.BasePrice, offer.DiscountPercent, offer.ListPrice, offer.TaxRatePercent,
+            offer.ProductId, offer.ProductName, offer.ImageUrl);
 }

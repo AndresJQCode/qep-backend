@@ -176,6 +176,23 @@ public sealed class WholesaleOffersTests
         Assert.Equal(2, page.Total);
     }
 
+    // Spec 2026-11-19: el producto y la foto del lector llegan intactos a la oferta.
+    [Fact]
+    public async Task OffersCarryTheProductAndImageOfTheReader()
+    {
+        var variantId = _catalog.AddProduct("A-1", "Olla", null, cop: 10000m, imageUrl: "https://cdn.example.co/olla.png");
+        SeedActive();
+        var product = _catalog.Products.Single(candidate => candidate.VariantId == variantId);
+
+        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, 1, 50, Ct);
+        var (_, priced) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [variantId], Ct);
+
+        var offer = Assert.Single(page.Items);
+        Assert.Equal((product.ProductId, "Producto Olla", "https://cdn.example.co/olla.png"), (offer.ProductId, offer.ProductName, offer.ImageUrl));
+        Assert.Equal(product.ProductId, priced[variantId].ProductId);
+        Assert.Equal("https://cdn.example.co/olla.png", priced[variantId].ImageUrl);
+    }
+
     [Fact]
     public async Task ListPriceUsesTheWholesalerRounding()
     {

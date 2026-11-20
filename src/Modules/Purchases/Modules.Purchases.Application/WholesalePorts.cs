@@ -13,7 +13,10 @@ public sealed record WholesaleCatalogItem(
     decimal BasePrice,
     decimal DiscountPercent,
     decimal ListPrice,
-    decimal TaxRatePercent);
+    decimal TaxRatePercent,
+    Guid ProductId = default,
+    string ProductName = "",
+    string? ImageUrl = null);
 
 /// <summary>Una página del catálogo del mayorista con la lista que la precia (adenda del contrato: <c>priceList</c>).</summary>
 public sealed record WholesaleCatalogPage(
