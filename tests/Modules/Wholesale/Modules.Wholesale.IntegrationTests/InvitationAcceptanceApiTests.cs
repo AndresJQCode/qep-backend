@@ -227,6 +227,33 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal($"Distribuciones Andina {suffix} S.A.S.", summary.BusinessName);
     }
 
+    // El frontend no puede adivinar la versión vigente de los términos: la lee de aquí y la devuelve al crear la cuenta o el
+    // tenant. Sin versión configurada viaja nula (la pantalla no deja crear cuenta nueva: el backend falla cerrado).
+    [Fact]
+    public async Task TheSummaryCarriesTheCurrentTermsVersion()
+    {
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+
+        var summary = await anonymous.GetFromJsonAsync<WholesaleInvitationResponse>(WholesaleApiHarness.InvitationUrl(token), Ct);
+
+        Assert.Equal(WholesaleApiHarness.TermsVersion, summary!.TermsVersion);
+    }
+
+    [Fact]
+    public async Task WithoutAConfiguredTermsVersionTheSummaryCarriesNone()
+    {
+        await using var database = await WholesaleApiHarness.StartDatabaseAsync();
+        await using var factory = new WholesaleApiHarness.QepApiFactory(
+            database.GetConnectionString(), settings: new Dictionary<string, string> { ["Terms:CurrentVersion"] = "  " });
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(factory, NewEmail());
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(factory);
+
+        var summary = await anonymous.GetFromJsonAsync<WholesaleInvitationResponse>(WholesaleApiHarness.InvitationUrl(token), Ct);
+
+        Assert.Null(summary!.TermsVersion);
+    }
+
     // Sin nombre ni slug en el cuerpo (un cliente sin edición): la razón social y el slug que sugiere el servidor.
     [Fact]
     public async Task ANewTenantWithoutNameOrSlugUsesTheBusinessNameAndASuggestedSlug()
