@@ -1,139 +1,155 @@
 # Lista de precios: mostrar u ocultar precios al distribuidor — plan de implementación (backend)
 
 > **Para quien ejecute:** SUB-SKILL REQUERIDA: `superpowers:executing-plans` o `superpowers:subagent-driven-development`.
-> Casillas `- [ ]`. **Presupuesto de pruebas** (CLAUDE.md de la raíz): **2 bloques** (A: tareas 1-3, B: tareas 4-6), un
-> implementador por bloque, un commit por tarea. El RED de compilación no levanta contenedores. La integración se filtra por
-> nombre de prueba (`--filter "FullyQualifiedName~Nombre"`) y la clase entera corre una vez al final del bloque. Antes de cada
-> corrida de integración: `Get-Process testhost, dotnet -ErrorAction SilentlyContinue` (si hay una, se espera; no se detiene).
+> Casillas `- [ ]`. **Presupuesto de pruebas** (CLAUDE.md de la raíz, manda sobre el skill): bloques con **un implementador** cada
+> uno, **una revisión por bloque**, un commit por tarea. El RED de compilación no levanta contenedores (evidencia: salida del
+> build). Mientras se itera, la integración se filtra por nombre de prueba (`--filter "FullyQualifiedName~Nombre"`); la clase
+> entera corre una vez al cierre del bloque. Antes de cada corrida de integración:
+> `Get-Process testhost, dotnet -ErrorAction SilentlyContinue` — si hay una, se espera; **no se detiene** (es de otra sesión).
 > `$env:Seed__Enabled = "false"`. Pruebas en primer plano. Nada de correr la solución entera.
 
-> **Alcance reducido (owner, 2026-11-19).** Primera tanda: **Bloque A** + la **vista previa** enmascarada (calculada con el flag vivo de la lista
-> al consultar, sin flag guardado). **Segunda tanda, no se construye ahora:** el Bloque B entero (tareas 4, 5 y 6: prices_hidden, detalle,
-> lista, PDF, correo y la regla «los precios aparecen al aprobar»). Hasta entonces una orden guardada sigue mostrando sus montos.
-> La vista previa se agrega a la **Tarea 3** (ver abajo). Regresión: con la lista oculta, el PDF del pedido del mayorista sigue trayendo
-> montos (ver nota en la Tarea 3).
+**Meta:** `PriceList.ShowPrices`; con `false`, el distribuidor no recibe montos en catálogo ni vista previa, y su orden vinculada
+**se guarda sin montos** hasta que el mayorista la aprueba.
 
-**Meta:** `PriceList.ShowPrices`; con `false`, el distribuidor de esa lista no recibe montos en catálogo, vista previa, detalle,
-lista, PDF ni correo de una orden vinculada hasta que el mayorista la aprueba.
+**Spec:** [`2026-11-19-mayorista-mostrar-precios-design.md`](../specs/2026-11-19-mayorista-mostrar-precios-design.md) (D-1…D-3,
+D-7…D-14). La revisión anterior de las tareas 4-6 (`prices_hidden`, enmascarar en el DTO hasta un paso `Confirmed`) queda
+**reemplazada** por la de abajo.
 
-**Spec:** [`2026-11-19-mayorista-mostrar-precios-design.md`](../specs/2026-11-19-mayorista-mostrar-precios-design.md) (D-1…D-7).
-
-**Rama:** `feature/wholesale-show-prices` (worktree `qep-backend-worktrees/wholesale-show-prices`). Mergear a `develop`, nunca a
-`main`; `docs/estado.md` se actualiza en `develop` al mergear.
+**Rama:** `feature/wholesale-show-prices` (worktree `qep-backend-worktrees/wholesale-show-prices`). Mergear a `develop` entera
+(nunca la primera tanda sola, nunca a `main`); `docs/estado.md` se actualiza en `develop` al mergear.
 
 ## Restricciones
 
-- Expand puro: columnas con default; sin backfill ni contract.
-- El flag cruza módulos por los records existentes como **miembro final con default** (`bool ShowPrices = true` /
-  `bool PricesHidden = false`), igual que `ProductId`/`ImageUrl` en el spec de foto: los llamadores existentes compilan.
-- Los montos se ponen `null` en el borde de Compras (DTO), nunca en Wholesale: la orden necesita el costo para guardarse (D-4).
-- Cada DTO que cambia lleva en su `<summary>` el motivo (BFF): «null con la lista oculta del mayorista (spec 2026-11-19)».
+- Expand: un solo `AlterColumn` (`unit_cost` nullable). Sin columna nueva, sin backfill.
+- El flag cruza módulos por los records existentes como **miembro final con default** (`bool ShowPrices = true`): los llamadores
+  existentes compilan.
+- **Un solo punto descarta montos: el dominio** (`withPrices` en `Create`, `Replace`, `SendToWholesaler`). Ni el adaptador ni el
+  DTO enmascaran: guardan o muestran lo que la orden tiene.
+- Cada DTO que cambia lleva en su `<summary>` el motivo: «null en una orden vinculada que todavía no tiene precio (spec
+  2026-11-19)».
 
-## Bloque A — la lista y el catálogo
+## Bloque A — la lista, el catálogo y la vista previa (PRIMERA TANDA, HECHO)
 
-### Tarea 1: `PriceList.ShowPrices` en el dominio y la base
+Tareas 1-3 commiteadas en la rama (`f535e69f8` … `78b240afc`): `PriceList.ShowPrices` + migración `AddPriceListShowPrices`,
+contrato de la lista, `WholesaleTerms.ShowPrices`, catálogo y vista previa enmascarados con el flag vivo, regresión del PDF del
+pedido del mayorista. Las pruebas `CreateWithAHiddenPriceListStillStoresTheCost` y `UpdateWithAHiddenPriceListStillStoresTheCost`
+(D-4) ya se quitaron.
 
-**Archivos:** `src/Modules/Wholesale/Modules.Wholesale.Domain/PriceList.cs`,
-`…Infrastructure/Persistence/WholesaleDbContext.cs`, migración nueva `AddPriceListShowPrices` en
-`…Infrastructure/Persistence/Migrations/`; pruebas `tests/Modules/Wholesale/Modules.Wholesale.UnitTests/PriceListTests.cs` y
-`WholesaleDbContextMappingTests.cs`.
+**Pendiente de la primera tanda:** las corridas de integración de cierre no se ejecutaron (había un `testhost` de otra sesión):
+`PriceListApiTests` (Wholesale), `LinkedPurchaseOrderApiTests` y `PurchaseOrderPdfApiTests` (Purchases). Se corren en el cierre del
+Bloque C, en fila.
 
-- [ ] RED: `Create` sin indicar nada deja `ShowPrices == true`; `Create(..., showPrices: false)` lo guarda; `Update(...,
-      showPrices: false)` lo cambia y sube `Version`; el mapeo tiene columna `show_prices` no nula con default `true`. Evidencia:
-      salida del build (no compila).
-- [ ] GREEN: propiedad `ShowPrices`, parámetro `bool showPrices = true` en `Create` y `bool showPrices` en `Update`; columna
-      `show_prices boolean not null default true`. Migración:
-      `dotnet ef migrations add AddPriceListShowPrices --project src/Modules/Wholesale/Modules.Wholesale.Infrastructure --startup-project src/Api`.
-      Revisar que el `Up` sea un solo `AddColumn` con `defaultValue: true`.
-- [ ] `dotnet test tests/Modules/Wholesale/Modules.Wholesale.UnitTests --filter "FullyQualifiedName~PriceListTests|FullyQualifiedName~WholesaleDbContextMappingTests"`
-- [ ] Commit: `feat(wholesale): price list can hide prices from its distributors`
+## Bloque B — la orden nace sin precio (SEGUNDA TANDA; tareas 4 y 5, sólo unitarias)
 
-### Tarea 2: contrato de la lista (crear, editar, leer)
+Un implementador. Las dos tareas tocan los mismos archivos en cadena (dominio → aplicación), por eso van juntas.
 
-**Archivos:** `…Api/WholesaleEndpoints.cs` (`PriceListWriteRequest` + `bool? ShowPrices = null`), `…Application/CreatePriceList.cs`,
-`UpdatePriceList.cs` (`bool? ShowPrices` en el comando), `PriceListDtos.cs` (`ShowPrices` en `PriceListSummaryDto` y
-`PriceListDetailDto` y en `PriceListMapping`), `CreatePriceListHandler.WrittenFields` += `"showPrices"`; pruebas
-`PriceListHandlersTests.cs` y, en integración, `PriceListApiTests.cs`.
+### Tarea 4: el dominio y la base admiten una línea sin precio
 
-- [ ] RED (unitaria): alta sin `ShowPrices` → `true`; alta con `false` → `false`; edición con `null` **conserva** `false` (D-2);
-      edición con `true` lo cambia; la auditoría lista `showPrices`.
-- [ ] RED (integración, una prueba nueva `Put_without_showPrices_keeps_hidden_list`): `POST` con `showPrices: false`, `PUT` sin el
-      campo con `If-Match`, `GET` responde `showPrices: false`.
-- [ ] GREEN. `ShowPrices` **no** entra en `IPriceListTermsCommand` (la vista previa no lo usa).
-- [ ] `dotnet test tests/Modules/Wholesale/Modules.Wholesale.UnitTests --filter "FullyQualifiedName~PriceListHandlersTests"` y
-      `dotnet test tests/Modules/Wholesale/Modules.Wholesale.IntegrationTests --filter "FullyQualifiedName~Put_without_showPrices_keeps_hidden_list" -- xUnit.MaxParallelThreads=4`
-- [ ] Commit: `feat(wholesale): read and write showPrices on price lists`
+**Archivos:**
+- `src/Modules/Purchases/Modules.Purchases.Domain/PurchaseOrderLine.cs` — `UnitCost` → `decimal?`; `PurchaseOrderLineDraft`
+  sin cambio de forma (sigue trayendo el costo calculado: la vista previa lo usa); `From(draft, bool withPrices)` y
+  `From(snapshot, bool withPrices)`: en `false`, `UnitCost`, `ListBasePrice`, `ListDiscountPercent`, `ListUnitPrice` en `null`
+  (se conservan `SupplierVariantId`, código, nombre, cantidad, tasa); `RequestedSubtotal`, `Subtotal`, `Tax`, `RequestedTax` →
+  `decimal?` con las reglas del spec («Modelo de datos»); `Status` según D-12; `Confirm(decimal, decimal?)`.
+- `…Domain/PurchaseOrder.cs` — `Create(..., bool withPrices = true)`, `Replace(..., bool withPrices = true)`,
+  `SendToWholesaler(..., bool withPrices = true)`; `withPrices: false` en una externa → `ArgumentException`; `Totals()` y
+  `RequestedTotals()` → `PurchaseOrderTotals?`; `HasPrices` (D-11); `ApplyWholesalerApproval` sin cambio de lógica (la línea
+  quitada se confirma con `(0, UnitCost)`).
+- `…Infrastructure/Persistence/PurchasesDbContext.cs` — `unit_cost` deja de ser requerido.
+- Migración `AllowPricelessPurchaseOrderLines`:
+  `dotnet ef migrations add AllowPricelessPurchaseOrderLines --project src/Modules/Purchases/Modules.Purchases.Infrastructure --startup-project src/Api`.
+  Revisar que el `Up` sea **un solo** `AlterColumn` de `unit_cost` a `nullable: true` (si aparece algo más, el modelo derivó: parar).
+- Pruebas: `tests/Modules/Purchases/Modules.Purchases.UnitTests/PurchaseOrderTests.cs`, `LinkedPurchaseOrderTests.cs`,
+  `PurchaseOrderTotalsTests.cs`; ajuste de compilación en `PurchaseOrderTestData.cs`.
 
-### Tarea 3: el catálogo del mayorista enmascara
+- [ ] RED (evidencia: build que no compila): vinculada creada con `withPrices: false` → líneas sin `UnitCost` ni `List*`,
+      `Totals()` y `RequestedTotals()` nulos, `HasPrices` falso; `Replace` con `true` sobre un borrador sin precio lo pone con
+      precio, y con `false` sobre uno con precio se los quita (casos borde 2 y 3); `SendToWholesaler(..., withPrices: false)`
+      adopta las líneas del pedido sin montos y con `true` como hoy (caso 1); externa con `withPrices: false` → `ArgumentException`;
+      aprobación de una orden sin precio → `HasPrices` verdadero, totales con lo confirmado, `RequestedTotals()` nulo, línea con la
+      misma cantidad `Unchanged`, con otra `Changed`, quitada `Rejected` con subtotal 0, agregada `Added`; cancelada sin aprobar →
+      sigue sin precio; una orden externa da los mismos totales que hoy (las pruebas existentes de `PurchaseOrderTotalsTests` siguen
+      pasando con los tipos nuevos).
+- [ ] GREEN + migración.
+- [ ] `dotnet test tests/Modules/Purchases/Modules.Purchases.UnitTests --filter "FullyQualifiedName~PurchaseOrderTests|FullyQualifiedName~LinkedPurchaseOrderTests|FullyQualifiedName~PurchaseOrderTotalsTests"`
+- [ ] Commit: `feat(purchases): a linked order line can be saved without a price`
 
-**Archivos:** `…Wholesale.Application/WholesaleOffers.cs` (`WholesaleTerms.ShowPrices = true` desde `list.ShowPrices`;
-`WholesaleOfferPage.ShowPrices = true`), `src/Bootstrapper/PurchasesWholesaleCatalog.cs`,
-`…Purchases.Application/WholesalePorts.cs` (`WholesaleCatalogPage.ShowPrices = true`; `PriceAsync` devuelve además
-`bool ShowPrices`), `…Purchases.Application/ListSupplierCatalog.cs` (`SupplierCatalogItemDto` con `decimal?` en
-`BasePrice`, `DiscountPercent`, `ListPrice`, `UnitCost`; `SupplierCatalogPriceListDto.DiscountPercent` `decimal?`;
-`SupplierCatalogPageDto.ShowPrices`). Pruebas: `WholesaleOffersTests.cs`, `SupplierCatalogTests.cs`; integración
-`LinkedPurchaseOrderApiTests.cs`.
+### Tarea 5: alta, edición, envío y lecturas sin precio
 
-- [ ] RED: `ResolveTermsAsync` refleja `ShowPrices` de la lista; con `false`, el handler del catálogo devuelve los cuatro montos y
-      `priceList.discountPercent` en `null`, `showPrices: false`, y conserva código, nombres, foto, tasa y `total`; con `true`, igual
-      que hoy y `showPrices: true`. Ajustar los fakes de `IWholesaleCatalog` a la tupla nueva.
-- [ ] RED (integración, `Catalog_of_hidden_price_list_has_no_prices`): mayorista con lista oculta → el JSON no trae ningún número en
-      los campos de precio.
+**Archivos:**
+- `…Purchases.Application/CreatePurchaseOrder.cs`, `UpdatePurchaseOrder.cs` — pasan `withPrices: build.ShowPrices` (el
+  `PurchaseOrderLineBuild.ShowPrices` de la primera tanda; externo siempre `true`).
+- `…Purchases.Application/WholesalePorts.cs` — `WholesaleIntakeResult` + `bool ShowPrices = true` al final.
+- `…Purchases.Application/TransitionPurchaseOrder.cs` — `order.SendToWholesaler(..., withPrices: submitted.ShowPrices)` (hoy
+  línea 85: es **el punto exacto** donde la orden adopta el costo del pedido).
+- `src/Bootstrapper/PurchasesWholesaleOrderIntake.cs` — `ToIntake(order, offers, showPrices)`: camino nuevo con
+  `terms.ShowPrices`; camino D-8 (`existing`) con el flag de `OffersForOrderAsync` (D-14). Las fotos de línea siguen trayendo el
+  precio (es la verdad del mayorista); quien las descarta es el dominio.
+- `src/Bootstrapper/WholesaleIntakeDirectory.cs` y `…Wholesale.Application/WholesaleOffers.cs` — `OffersForOrderAsync` devuelve
+  `WholesaleOrderOffers(IReadOnlyDictionary<Guid, WholesaleOffer> Offers, bool ShowPrices)`; sin relación o sin lista, vacío y
+  `ShowPrices: false`. `ListPricesForOrderAsync` usa `.Offers` (su contrato no cambia).
+- `…Purchases.Application/PurchasesDtos.cs` — `PurchaseOrderLineDto.UnitCost` y `Subtotal` → `decimal?`;
+  `PurchaseOrderDetailDto.Totals` → `PurchaseOrderTotalsDto?`, `RequestedTotal` → `decimal?`, `bool ShowPrices = true` al final;
+  `PurchaseOrderSummaryDto.Total` → `decimal?`, `bool ShowPrices = true` al final. Vista previa: sin cambio.
+- `…Purchases.Application/PurchaseOrderComposer.cs` — `Totals()`/`RequestedTotals()` nulos se mapean a `null`;
+  `ShowPrices = order.HasPrices` en detalle y resumen. Nada se enmascara: lo que no está, no está.
+- `…Purchases.Application/PurchaseOrderPdfMapper.cs` — `Money(decimal?)` → «—» con `null` (costo, subtotal, totales). El correo
+  (`PurchaseOrderEmailSender`, `PurchaseOrderEmailTemplate`) no cambia: toma los textos del documento.
+- `…Purchases.Application/PreviewPurchaseOrder.cs` — sin cambio de comportamiento; sólo compila con `UnitCost` del borrador, que
+  sigue siendo `decimal`.
+- `…Purchases.Application/WholesaleOrderEventApplier.cs` — sin cambio de lógica (escribe confirmados como hoy, D-10); D-18 lee
+  `ConfirmedUnitCost`, que la aprobación siempre trae.
+
+**Pruebas que cambian** (unitarias): `LinkedPurchaseOrderHandlersTests.cs`, `PurchaseOrderLineBuilderTests.cs`,
+`PurchaseOrderComposerTests.cs`, `PurchaseOrderPdfMapperTests.cs`, `WholesaleOrderEventApplierTests.cs`, el intake falso de
+`LinkedPurchasesFakes.cs` (`ShowPrices`), `tests/Bootstrapper/Bootstrapper.UnitTests/PurchasesWholesaleOrderIntakeTests.cs`,
+`tests/Modules/Wholesale/Modules.Wholesale.UnitTests/WholesaleOffersTests.cs`; ajustes de compilación (`decimal?` en tuplas y
+`Totals!`) donde aparezcan. Las tres de la vista previa de la primera tanda (`PreviewOfAHiddenPriceListHasNoAmounts`,
+`PreviewOfAVisiblePriceListKeepsItsAmounts`, `PreviewOfAnExternalSupplierIsNotMasked`) **no cambian**.
+
+- [ ] RED (build): alta y edición con lista oculta guardan líneas sin `UnitCost` y responden `showPrices: false`, `totals: null`,
+      `requestedTotal: null`, `lines[].unitCost/subtotal/listPrice: null`; con lista visible, como hoy; envío con intake
+      `ShowPrices: false` adopta sin montos aunque el borrador tuviera precio; con `true` sobre un borrador sin precio, adopta
+      montos; resumen: `total: null`, `showPrices: false`; aprobación (applier) de una orden sin precio → detalle con
+      `showPrices: true`, costos confirmados, `requestedTotal: null`, y el producto creado con ese costo (D-18); PDF de una orden sin
+      precio → «—» en costo, subtotal, subtotal general, IVA y total, y cantidades como hoy; intake: camino nuevo con
+      `terms.ShowPrices`, camino D-8 con el flag de `OffersForOrderAsync`, sin lista `false`; `OffersForOrderAsync` devuelve el
+      `ShowPrices` de la lista.
 - [ ] GREEN.
-- [ ] Unitarias de los dos proyectos filtradas por `WholesaleOffersTests|SupplierCatalogTests`; integración por el nombre de la
-      prueba nueva. **Cierre del bloque:** `PriceListApiTests` entera y `ArchitectureTests`.
-- [ ] **Primera tanda, vista previa:** `PreviewPurchaseOrder` / `PurchaseOrderPreviewDto` (`Subtotal` y `ListPrice` de línea y `Totals` a `decimal?`/`?`, `ShowPrices = true` al final) se enmascaran con el `ShowPrices` de los términos del mayorista **al momento de la vista previa** (flag vivo). Con externo, igual que hoy.
-- [ ] Regresión: si ya existe una prueba del PDF del pedido del mayorista, extenderla con la lista oculta (el PDF sigue con montos); si no, queda como prueba de seguimiento.
-- [ ] Commit: `feat(purchases): hide wholesaler prices in the supplier catalog when the list says so`
+- [ ] `dotnet test tests/Modules/Purchases/Modules.Purchases.UnitTests` (el proyecto unitario entero: es rápido),
+      `dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --filter "FullyQualifiedName~PurchasesWholesaleOrderIntakeTests"`,
+      `dotnet test tests/Modules/Wholesale/Modules.Wholesale.UnitTests --filter "FullyQualifiedName~WholesaleOffersTests"`.
+- [ ] Commit: `feat(purchases): a linked order from a hidden price list gets its prices on approval`
+- [ ] **Cierre del bloque:** `dotnet build` de la solución (compila los proyectos de integración que leen los DTOs) y
+      `dotnet test tests/ArchitectureTests`. Revisión del bloque (foco: ningún monto del mayorista guardado ni respondido con la
+      lista oculta antes de aprobar; orden externa idéntica a hoy).
 
-## Bloque B — la orden vinculada (SEGUNDA TANDA, no se construye en la primera)
+## Bloque C — integración (tarea 6)
 
-### Tarea 4: la orden congela el flag
+### Tarea 6: de punta a punta, y las corridas pendientes
 
-**Archivos:** `…Purchases.Domain/PurchaseOrder.cs` (`PricesHidden`, `ShowsPrices => !PricesHidden || History.Any(e => e.Status ==
-PurchaseOrderStatus.Confirmed)`; `Create` y `Replace` reciben `bool pricesHidden`, que sólo puede ser `true` con mayorista),
-`…Application/PurchaseOrderLineBuilder.cs` (`PurchaseOrderLineBuild.PricesHidden = !showPrices` en la rama vinculada, `false` en la
-externa), `CreatePurchaseOrder.cs`, `UpdatePurchaseOrder.cs`, `…Infrastructure/Persistence/PurchasesDbContext.cs`, migración
-`AddPurchaseOrderPricesHidden`. Pruebas: `PurchaseOrderTests.cs`, `LinkedPurchaseOrderTests.cs`, `PurchaseOrderLineBuilderTests.cs`.
+**Archivo:** `tests/Modules/Purchases/Modules.Purchases.IntegrationTests/Linked/LinkedPurchaseOrderApiTests.cs` (ajustes de
+compilación en `LinkedPurchasesHarness.cs`, `PurchasesApiHarness.cs`, `PurchaseOrderWriteApiTests.cs`,
+`PurchaseOrderListApiTests.cs`, `PurchaseOrderTransitionApiTests.cs`, `PurchaseOrderPdfApiTests.cs` si leen montos como `decimal`).
 
-- [ ] RED: build vinculado con lista oculta → `PricesHidden`; externo → nunca; `ShowsPrices` falso en `Draft` y `Sent`, verdadero
-      tras `Confirm`/aprobación, falso en una anulada sin aprobar; `Replace` con el flag nuevo lo cambia (D-5). Evidencia: build.
-- [ ] GREEN + migración (`--project src/Modules/Purchases/Modules.Purchases.Infrastructure --startup-project src/Api`),
-      `prices_hidden boolean not null default false`.
-- [ ] Unitarias filtradas por las tres clases.
-- [ ] Commit: `feat(purchases): a linked order remembers whether its prices are hidden`
-
-### Tarea 5: vista previa, detalle, lista y PDF enmascaran
-
-**Archivos:** `…Application/PurchasesDtos.cs` (`PurchaseOrderLineDto.UnitCost`, `Subtotal` → `decimal?`;
-`PurchaseOrderDetailDto.Totals` → `PurchaseOrderTotalsDto?`, `RequestedTotal` → `decimal?`, `ShowPrices = true` al final;
-`PurchaseOrderSummaryDto.Total` → `decimal?`, `ShowPrices = true`; `PurchaseOrderPreviewLineDto.Subtotal` → `decimal?`;
-`PurchaseOrderPreviewDto.Totals` → `PurchaseOrderTotalsDto?`, `ShowPrices = true`), `PreviewPurchaseOrder.cs`,
-`PurchaseOrderComposer.cs` (un solo punto: `order.ShowsPrices`), `PurchaseOrderPdfMapper.cs` (monto `null` → «—»). Pruebas:
-`LinkedPurchaseOrderHandlersTests.cs`, `PurchaseOrderComposerTests.cs`, `PurchaseOrderPdfMapperTests.cs`.
-
-- [ ] RED: vista previa con lista oculta → subtotales, `listPrice` y `totals` en `null`, `showPrices: false`; detalle y resumen de
-      una orden oculta sin aprobar → montos `null` y `showPrices: false`; aprobada → montos y `showPrices: true`; externa → igual que
-      hoy; el PDF de una oculta imprime «—» en costo, subtotal y totales (y el correo, que toma los textos del documento).
-- [ ] GREEN. Los totales se siguen calculando para guardar; sólo el DTO los omite.
-- [ ] Unitarias filtradas por las tres clases.
-- [ ] Commit: `feat(purchases): mask linked order amounts until the wholesaler approves`
-
-### Tarea 6: integración de punta a punta
-
-**Archivo:** `tests/Modules/Purchases/Modules.Purchases.IntegrationTests/Linked/LinkedPurchaseOrderApiTests.cs`.
-
-- [ ] Prueba `Hidden_price_list_masks_order_until_approval`: lista oculta → `preview` sin montos → `POST` crea y el detalle no trae
-      montos → `GET /purchases/orders` fila con `total: null` → enviar → aplicar el evento de aprobación (como
-      `WholesaleOrderEventsTests`) → el detalle trae costos confirmados y `showPrices: true`.
-- [ ] `dotnet test tests/Modules/Purchases/Modules.Purchases.IntegrationTests --filter "FullyQualifiedName~Hidden_price_list_masks_order_until_approval" -- xUnit.MaxParallelThreads=4`
-- [ ] **Cierre del bloque:** `LinkedPurchaseOrderApiTests` y `PurchaseOrderPdfApiTests` enteras (una tras otra).
+- [ ] Prueba `HiddenPriceListOrderGetsPricesOnApproval`: lista oculta → `POST` crea y el detalle no trae montos
+      (`showPrices: false`) → la fila de `GET /purchases/orders` trae `total: null` → en la base, `unit_cost` es `NULL` → enviar →
+      el detalle sigue sin montos → aplicar el evento de aprobación (como `WholesaleOrderEventsTests`) → el detalle trae costos
+      confirmados, totales y `showPrices: true`.
+- [ ] Prueba `DraftSavedVisibleLosesPricesWhenSentWithHiddenList` (caso borde 1): borrador con lista visible → ocultar la
+      lista → enviar → detalle sin montos.
+- [ ] `dotnet test tests/Modules/Purchases/Modules.Purchases.IntegrationTests --filter "FullyQualifiedName~HiddenPriceListOrderGetsPricesOnApproval|FullyQualifiedName~DraftSavedVisibleLosesPricesWhenSentWithHiddenList" -- xUnit.MaxParallelThreads=4`
+- [ ] **Cierre del bloque (en fila, una tras otra, mirando antes `testhost`):**
+      `dotnet test tests/Modules/Wholesale/Modules.Wholesale.IntegrationTests --filter "FullyQualifiedName~PriceListApiTests" -- xUnit.MaxParallelThreads=4`,
+      luego `--filter "FullyQualifiedName~LinkedPurchaseOrderApiTests"`, luego `--filter "FullyQualifiedName~PurchaseOrderPdfApiTests"` y
+      luego `--filter "FullyQualifiedName~WholesaleOrderEventsTests"` sobre `Modules.Purchases.IntegrationTests`.
 - [ ] Commit: `test(purchases): hidden wholesaler prices end to end`
 
 ## Antes de mergear a `develop`
 
-Una sola vez, en fila: `Modules.Wholesale.UnitTests`, `Modules.Purchases.UnitTests`, `Modules.Wholesale.IntegrationTests`,
-`Modules.Purchases.IntegrationTests` (cada uno con `-- xUnit.MaxParallelThreads=4`) y `tests/ArchitectureTests`. No es un cambio
-transversal: no se corre la solución. Revisión fuerte de la rama al final (foco: ningún monto del mayorista en una respuesta del
-distribuidor con la lista oculta; `PUT` sin `showPrices` no muestra una lista oculta). Despliegue: backend primero, frontend
-enseguida.
+Una sola vez, en fila: `Modules.Wholesale.UnitTests`, `Modules.Purchases.UnitTests`, `Bootstrapper.UnitTests`,
+`Modules.Wholesale.IntegrationTests`, `Modules.Purchases.IntegrationTests` (cada uno con `-- xUnit.MaxParallelThreads=4`) y
+`tests/ArchitectureTests`. Hay una migración de un solo módulo: no es transversal, no se corre la solución. Revisión fuerte de la
+rama al final (foco: con la lista oculta, ninguna respuesta ni fila del distribuidor trae un monto antes de aprobar; `PUT` sin
+`showPrices` no muestra una lista oculta; externa idéntica). Despliegue: backend con su migración y enseguida el frontend;
+rollback sólo hacia adelante una vez que alguna lista se ocultó (spec, «Compatibilidad»).
