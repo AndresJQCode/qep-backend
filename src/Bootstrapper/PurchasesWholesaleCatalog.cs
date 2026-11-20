@@ -11,15 +11,21 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class PurchasesWholesaleCatalog(WholesaleOffers offers) : IWholesaleCatalog
 {
+    public async Task<IReadOnlyList<WholesaleCategory>> ListCategoriesAsync(
+        Guid buyerTenantId, Guid wholesalerTenantId, CancellationToken cancellationToken) =>
+        [.. (await offers.ListVisibleCategoriesAsync(wholesalerTenantId, buyerTenantId, cancellationToken))
+            .Select(node => new WholesaleCategory(node.Id, node.Name, node.ParentId))];
+
     public async Task<WholesaleCatalogPage> SearchAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         string? search,
+        Guid? categoryId,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var found = await offers.SearchAsync(wholesalerTenantId, buyerTenantId, search, null, page, pageSize, cancellationToken);
+        var found = await offers.SearchAsync(wholesalerTenantId, buyerTenantId, search, categoryId, page, pageSize, cancellationToken);
         return new WholesaleCatalogPage(
             found.Currency, found.PriceListName, found.DiscountPercent, [.. found.Items.Select(ToItem)], found.Total, found.ShowPrices);
     }
