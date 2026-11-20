@@ -19,4 +19,12 @@ public static class StorageSubscribedEvents
     /// La paridad con Messaging la amarra <c>TemplateHeaderImageReleaseEventParityTests</c>.
     /// </summary>
     public const string TemplateHeaderImageReleased = "messaging.template.header-image-released.v1";
+
+    /// <summary>
+    /// Spec 2026-11-18 («Lifecycle»): los archivos de los bloques «Mensaje» de un chatbot que Automations borró (el borrador y cada versión
+    /// publicada). Payload: <c>{ "tenantId": "&lt;guid&gt;", "fileIds": ["&lt;guid&gt;", …] }</c>. Un archivo que otro chatbot, una plantilla
+    /// guardada o un mensaje de la bandeja todavía usa no se suelta. La paridad con Automations la amarra
+    /// <c>ChatbotMediaReleasedEventParityTests</c>.
+    /// </summary>
+    public const string ChatbotMediaReleased = "automations.chatbot.media-released.v1";
 }

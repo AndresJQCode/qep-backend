@@ -58,6 +58,29 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal("automations.chatbot.has_live_runs", (await ProblemAsync(response)).Code);
     }
 
+    /// <summary>Spec 2026-11-18 («Lifecycle»), plan Task 12: un borrado que el 409 rechaza no escribe el aviso de liberación: los archivos del
+    /// chatbot siguen en uso, y el aviso sale en la misma transacción que el borrado o no sale.</summary>
+    [Fact]
+    public async Task ADeleteRefusedForLiveRunsWritesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal("Waiting", await RunAsync(f, "status"));
+        Assert.Equal(HttpStatusCode.OK, (await ChatbotActionAsync(f, "pause")).StatusCode);
+        Assert.Equal(1, await ExecuteAsync(f.ConnectionString,
+            "UPDATE automations.chatbots SET draft_flow = @flow::jsonb WHERE id = @id",
+            ("flow", ChatbotMediaReferencesTests.MediaFlow(Guid.CreateVersion7())), ("id", f.ChatbotId)));
+
+        var response = await DeleteChatbotAsync(f);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", f.ChatbotId)));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = @event", ("event", ChatbotsApiTests.MediaReleasedEvent)));
+    }
+
     /// <summary>D-7: la decisión no depende de la señal. Un asesor tomó la conversación y el worker todavía no cerró la corrida
     /// (sigue <c>Waiting</c>): ya no hay a quién dejar hablando solo, así que se puede borrar.</summary>
     [Fact]

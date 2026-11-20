@@ -1509,6 +1509,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_message_media_pending")
                         .HasFilter("stored_at IS NULL");
 
+                    b.HasIndex("StorageFileId")
+                        .HasDatabaseName("IX_message_media_storage_file")
+                        .HasFilter("storage_file_id IS NOT NULL");
+
                     b.ToTable("message_media", "messaging");
                 });
 
