@@ -102,6 +102,29 @@ public sealed class OrderExportApiTests(SharedQuotationsHost sharedHost) : IClas
         Assert.Contains("ConvertedTo", problem.Errors.Keys);
     }
 
+    // Por número de pedido no se piden fechas: el trabajo se encola sin rango y el procesador trae sólo ese pedido.
+    // Corre el procesador, que reclama trabajos de toda la base: va en su propio host.
+    [Fact]
+    public async Task ExportByOrderNumberNeedsNoDates()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var wanted = await CreateOrderAsync(client, factory, tenantId);
+        await CreateOrderAsync(client, factory, tenantId);
+
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?orderNumber={Uri.EscapeDataString(wanted.OrderNumber)}",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+        Assert.Equal(1, (await FindExportJobAsync(factory, accepted!.JobId)).RowCount);
+    }
+
     [Fact]
     public async Task ExportWithNoMatchingOrdersIsUnprocessable()
     {
