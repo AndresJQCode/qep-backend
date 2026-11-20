@@ -116,6 +116,7 @@ public static class WholesaleInvitationEndpoints
         IUserDirectory userDirectory,
         IPasswordCredentials passwordCredentials,
         ITenantSlugSuggestions slugSuggestions,
+        TermsOptions termsOptions,
         CancellationToken cancellationToken)
     {
         var summary = await invitations.FindAsync(token, cancellationToken);
@@ -132,7 +133,8 @@ public static class WholesaleInvitationEndpoints
             summary.Status,
             summary.ExpiresAt,
             hasPassword,
-            suggestedSlug));
+            suggestedSlug,
+            string.IsNullOrWhiteSpace(termsOptions.CurrentVersion) ? null : termsOptions.CurrentVersion.Trim()));
     }
 
     // Ni la invitación inexistente o ya no pendiente, ni un correo mal formado, cambian la respuesta: el endpoint no sirve para
@@ -400,7 +402,9 @@ public static class WholesaleInvitationEndpoints
 }
 
 /// <summary>El resumen del link (D-20) más <c>HasPassword</c>, que sólo la composición sabe (Identity), y <c>SuggestedSlug</c>
-/// (spec 2026-11-19 §3b), el identificador libre que se le propone al distribuidor para su tenant nuevo.</summary>
+/// (spec 2026-11-19 §3b), el identificador libre que se le propone al distribuidor para su tenant nuevo, y <c>TermsVersion</c>,
+/// la versión vigente de los términos (<c>Terms:CurrentVersion</c>) que la pantalla devuelve al crear la cuenta o el tenant;
+/// nula si no hay una configurada.</summary>
 public sealed record WholesaleInvitationResponse(
     string WholesalerName,
     string BusinessName,
@@ -409,7 +413,8 @@ public sealed record WholesaleInvitationResponse(
     string Status,
     DateTimeOffset ExpiresAt,
     bool HasPassword,
-    string SuggestedSlug);
+    string SuggestedSlug,
+    string? TermsVersion);
 
 /// <summary>
 /// Spec 2026-11-19 §4. <c>Email</c> es el que escribió el distribuidor (sin él, el invitado). <c>Code</c> y <c>TermsVersion</c>

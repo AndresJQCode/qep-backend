@@ -111,6 +111,11 @@ reintenta con otro sufijo (hasta 3 veces). Si el slug lo escribió el distribuid
 422 con `tenancy.slug.taken` para que lo corrija, y la invitación sigue pendiente. El formato lo sigue validando Tenancy.
 Esto reemplaza dos decisiones del mismo día (primero «prellenado y editable», luego «sin campos»).
 
+**Versión de los términos.** El `GET` de la invitación devuelve también `termsVersion`: la versión vigente
+(`Terms:CurrentVersion`), o nula si no hay una configurada. El frontend no puede conocerla de otro modo; la devuelve al crear
+la cuenta (`session-with-password`) o el tenant (`accept`). Con `termsVersion` nulo la pantalla no ofrece crear cuenta nueva
+(el backend falla cerrado con `identity.terms.unavailable`).
+
 ### 4. Distribuidor nuevo
 
 1. El distribuidor escribe un correo (precargado con el del mayorista), contraseña y marca los términos.
