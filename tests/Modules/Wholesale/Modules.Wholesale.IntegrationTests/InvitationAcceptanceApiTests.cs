@@ -212,22 +212,33 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(1, owner[0]);
     }
 
-    // Spec 2026-11-19 §3b: el formulario no pide nombre ni slug. El nombre es la razón social y el slug lo genera el servidor;
-    // lo que traiga un cuerpo viejo se ignora.
+    // Spec 2026-11-19 §3b: el formulario llega prellenado con la razón social y un slug sin la forma societaria del final.
     [Fact]
-    public async Task ANewTenantUsesTheBusinessNameAndAGeneratedSlugAndIgnoresABodyNameAndSlug()
+    public async Task TheSummarySuggestsTheSlugWithoutTheCorporateSuffix()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        var businessName = $"Distribución Ñandú {suffix}";
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(
+            Factory, NewEmail(), businessName: $"Distribuciones Andina {suffix} S.A.S.");
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+
+        var summary = await anonymous.GetFromJsonAsync<WholesaleInvitationResponse>(WholesaleApiHarness.InvitationUrl(token), Ct);
+
+        Assert.Equal($"distribuciones-andina-{suffix}", summary!.SuggestedSlug);
+        Assert.Equal($"Distribuciones Andina {suffix} S.A.S.", summary.BusinessName);
+    }
+
+    // Sin nombre ni slug en el cuerpo (un cliente sin edición): la razón social y el slug que sugiere el servidor.
+    [Fact]
+    public async Task ANewTenantWithoutNameOrSlugUsesTheBusinessNameAndASuggestedSlug()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var businessName = $"Distribución Ñandú {suffix} S.A.S.";
         var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), businessName: businessName);
         var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
-        var bodySlug = NewSlug();
         using var session = WholesaleApiHarness.CreateSession(Factory, userId);
 
         var response = await session.PostAsJsonAsync(
-            $"{WholesaleApiHarness.InvitationUrl(token)}/accept",
-            new { mode = "NewTenant", displayName = "Nombre Ajeno", slug = bodySlug },
-            Ct);
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant" }, Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
@@ -236,9 +247,54 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
             Factory,
             $"""SELECT slug || '|' || display_name || '|' || default_culture || '|' || time_zone AS "Value" FROM tenancy.tenants WHERE id = {accepted.TenantId}""");
         Assert.Equal([$"distribucion-nandu-{suffix}|{businessName}|es-CO|America/Bogota"], tenant);
-        var ignored = await WholesaleApiHarness.RowsAsync<int>(
-            Factory, $"""SELECT count(*)::int AS "Value" FROM tenancy.tenants WHERE slug = {bodySlug}""");
-        Assert.Equal(0, ignored[0]);
+    }
+
+    // El distribuidor puede corregir lo que vino prellenado: lo que manda en el cuerpo es lo que se crea.
+    [Fact]
+    public async Task ANewTenantUsesTheNameAndSlugTheDistributorEdited()
+    {
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), businessName: "Razón Social Original");
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        var slug = NewSlug();
+        using var session = WholesaleApiHarness.CreateSession(Factory, userId);
+
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept",
+            new { mode = "NewTenant", displayName = "  Mi Empresa Corregida  ", slug },
+            Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
+        Assert.Equal("Mi Empresa Corregida", accepted.TenantName);
+        var tenant = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""SELECT slug || '|' || display_name AS "Value" FROM tenancy.tenants WHERE id = {accepted.TenantId}""");
+        Assert.Equal([$"{slug}|Mi Empresa Corregida"], tenant);
+    }
+
+    // Un slug que el distribuidor escribió y ya está tomado no se reemplaza solo: es un 422 con su código, para que lo corrija,
+    // y la invitación sigue pendiente.
+    [Fact]
+    public async Task ATakenEditedSlugIs422AndTheInvitationStaysPending()
+    {
+        var (_, _, firstToken) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var firstUser = await WholesaleApiHarness.PasswordSessionAsync(Factory, firstToken, Password);
+        var slug = NewSlug();
+        using var firstSession = WholesaleApiHarness.CreateSession(Factory, firstUser);
+        (await firstSession.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(firstToken)}/accept", new { mode = "NewTenant", slug }, Ct)).EnsureSuccessStatusCode();
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        using var session = WholesaleApiHarness.CreateSession(Factory, userId);
+
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant", slug }, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("tenancy.slug.taken", await response.Content.ReadAsStringAsync(Ct));
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var summary = await anonymous.GetFromJsonAsync<WholesaleInvitationResponse>(WholesaleApiHarness.InvitationUrl(token), Ct);
+        Assert.Equal("pending", summary!.Status);
     }
 
     [Fact]
@@ -525,7 +581,7 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         var slugs = await WholesaleApiHarness.RowsAsync<string>(
             factory,
             $"""SELECT slug AS "Value" FROM tenancy.tenants WHERE display_name = {businessName} ORDER BY slug""");
-        Assert.Equal(["carrera-distribuidora-sas", "carrera-distribuidora-sas-2"], slugs);
+        Assert.Equal(["carrera-distribuidora", "carrera-distribuidora-2"], slugs);
         Assert.True(race.Calls >= 3, $"Only {race.Calls} suggestions: nobody retried.");
     }
 

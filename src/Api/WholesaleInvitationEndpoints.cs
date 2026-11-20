@@ -115,11 +115,14 @@ public static class WholesaleInvitationEndpoints
         IDistributorInvitationService invitations,
         IUserDirectory userDirectory,
         IPasswordCredentials passwordCredentials,
+        ITenantSlugSuggestions slugSuggestions,
         CancellationToken cancellationToken)
     {
         var summary = await invitations.FindAsync(token, cancellationToken);
         var userId = await userDirectory.FindUserIdByEmailAsync(summary.Email, cancellationToken);
         var hasPassword = userId is { } id && await passwordCredentials.HasPasswordAsync(id, cancellationToken);
+        // Spec 2026-11-19 §3b: el formulario de aceptar llega prellenado con la razón social y este slug, y se pueden corregir.
+        var suggestedSlug = await slugSuggestions.SuggestAsync(summary.BusinessName, cancellationToken);
 
         return Results.Ok(new WholesaleInvitationResponse(
             summary.WholesalerName,
@@ -128,7 +131,8 @@ public static class WholesaleInvitationEndpoints
             summary.Email,
             summary.Status,
             summary.ExpiresAt,
-            hasPassword));
+            hasPassword,
+            suggestedSlug));
     }
 
     // Ni la invitación inexistente o ya no pendiente, ni un correo mal formado, cambian la respuesta: el endpoint no sirve para
@@ -277,8 +281,9 @@ public static class WholesaleInvitationEndpoints
         return Results.Ok(new LinkableTenantsResponse(tenants));
     }
 
-    // Spec 2026-11-19 §3b y §7: para NewTenant el nombre es la razón social que escribió el mayorista y el slug lo sugiere
-    // Tenancy; lo que traiga el cuerpo no se lee. Quien no aceptó la versión vigente de los términos la manda aquí (422 sin ella).
+    // Spec 2026-11-19 §3b y §7: para NewTenant el formulario llega prellenado (razón social y slug sugerido) y el distribuidor
+    // puede corregirlos: lo que traiga el cuerpo se usa; lo que falte sale de la razón social y de lo que sugiere Tenancy.
+    // Quien no aceptó la versión vigente de los términos la manda aquí (422 sin ella).
     private static async Task<IResult> AcceptAsync(
         string token,
         AcceptWholesaleInvitationRequest request,
@@ -313,10 +318,11 @@ public static class WholesaleInvitationEndpoints
             await EnsureTermsAsync(userId, request.TermsVersion, termsAcceptances, cancellationToken);
         }
 
-        var businessName = summary.BusinessName;
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? summary.BusinessName : request.DisplayName.Trim();
+        var slug = string.IsNullOrWhiteSpace(request.Slug) ? null : request.Slug.Trim();
 
         return Results.Ok(await AcceptNewTenantAsync(
-            token, userId, email, businessName, httpContext, scopeFactory, cancellationToken));
+            token, userId, email, displayName, slug, httpContext, scopeFactory, cancellationToken));
     }
 
     /// <summary>
@@ -341,8 +347,9 @@ public static class WholesaleInvitationEndpoints
     }
 
     /// <summary>
-    /// Foco 3: si otra aceptación toma el slug entre la sugerencia y el alta (<c>tenancy.slug.taken</c>), se reintenta con una
-    /// sugerencia nueva hasta <see cref="SlugRetries"/> veces. Cada reintento va en un scope nuevo: si el choque fue en el
+    /// Foco 3: si el slug es el sugerido y otra aceptación lo toma entre la sugerencia y el alta (<c>tenancy.slug.taken</c>), se
+    /// reintenta con una sugerencia nueva hasta <see cref="SlugRetries"/> veces. Un slug que escribió el distribuidor no se
+    /// reemplaza solo: si está tomado sale el 422 para que lo corrija. Cada reintento va en un scope nuevo: si el choque fue en el
     /// guardado, el DbContext de Tenancy del intento anterior se quedó con el tenant reservado sin guardar, y volver a agregarlo
     /// con el mismo id fallaría. La aceptación es idempotente (D-3), así que repetirla entera no duplica nada.
     /// </summary>
@@ -350,7 +357,8 @@ public static class WholesaleInvitationEndpoints
         string token,
         Guid userId,
         string? email,
-        string businessName,
+        string displayName,
+        string? requestedSlug,
         HttpContext httpContext,
         IServiceScopeFactory scopeFactory,
         CancellationToken cancellationToken)
@@ -361,12 +369,13 @@ public static class WholesaleInvitationEndpoints
             try
             {
                 var services = fresh?.ServiceProvider ?? httpContext.RequestServices;
-                var slug = await services.GetRequiredService<ITenantSlugSuggestions>().SuggestAsync(businessName, cancellationToken);
-                var choice = new NewTenantChoice(RegistrationEndpoints.ToRegistrationData(businessName, slug, null, null, null));
+                var slug = requestedSlug
+                    ?? await services.GetRequiredService<ITenantSlugSuggestions>().SuggestAsync(displayName, cancellationToken);
+                var choice = new NewTenantChoice(RegistrationEndpoints.ToRegistrationData(displayName, slug, null, null, null));
                 return await services.GetRequiredService<IDistributorInvitationService>().AcceptAsync(
                     token, userId, email, choice, httpContext.TraceIdentifier, cancellationToken);
             }
-            catch (TenantDomainException exception) when (exception.Code == SlugTakenCode && retry < SlugRetries)
+            catch (TenantDomainException exception) when (exception.Code == SlugTakenCode && requestedSlug is null && retry < SlugRetries)
             {
                 // Otra sugerencia en la siguiente vuelta.
             }
@@ -390,7 +399,8 @@ public static class WholesaleInvitationEndpoints
     }
 }
 
-/// <summary>El resumen del link (D-20) más <c>HasPassword</c>, que sólo la composición sabe (Identity).</summary>
+/// <summary>El resumen del link (D-20) más <c>HasPassword</c>, que sólo la composición sabe (Identity), y <c>SuggestedSlug</c>
+/// (spec 2026-11-19 §3b), el identificador libre que se le propone al distribuidor para su tenant nuevo.</summary>
 public sealed record WholesaleInvitationResponse(
     string WholesalerName,
     string BusinessName,
@@ -398,7 +408,8 @@ public sealed record WholesaleInvitationResponse(
     string Email,
     string Status,
     DateTimeOffset ExpiresAt,
-    bool HasPassword);
+    bool HasPassword,
+    string SuggestedSlug);
 
 /// <summary>
 /// Spec 2026-11-19 §4. <c>Email</c> es el que escribió el distribuidor (sin él, el invitado). <c>Code</c> y <c>TermsVersion</c>
@@ -413,12 +424,13 @@ public sealed record WholesaleInvitationEmailCodeRequest(string? Email);
 public sealed record LinkableTenantsResponse(IReadOnlyList<LinkableTenantDto> Tenants);
 
 /// <summary>
-/// <c>Mode</c> <c>NewTenant</c> (spec 2026-11-19 §3b: sin nombre ni slug; un <c>displayName</c> o <c>slug</c> de un cliente
-/// anterior se ignora) o <c>LinkTenant</c> con <c>TenantId</c>. <c>TermsVersion</c> la manda quien todavía no aceptó la vigente,
+/// <c>Mode</c> <c>NewTenant</c> (spec 2026-11-19 §3b: <c>DisplayName</c> y <c>Slug</c> opcionales, los del formulario prellenado
+/// y corregido; sin ellos, la razón social y el slug sugerido) o <c>LinkTenant</c> con <c>TenantId</c>. <c>TermsVersion</c> la manda quien todavía no aceptó la vigente,
 /// y sólo se exige para <c>NewTenant</c>. Todo opcional en el tipo para que lo que falte sea un 422 con su campo y no un 400 del
 /// binding.
 /// </summary>
-public sealed record AcceptWholesaleInvitationRequest(string? Mode, Guid? TenantId, string? TermsVersion);
+public sealed record AcceptWholesaleInvitationRequest(
+    string? Mode, Guid? TenantId, string? TermsVersion, string? DisplayName = null, string? Slug = null);
 
 /// <summary>Claves del 422: <c>Mode</c> y <c>TenantId</c>. <c>TermsVersion</c> la exige el endpoint, que es quien sabe si el
 /// usuario ya aceptó.</summary>

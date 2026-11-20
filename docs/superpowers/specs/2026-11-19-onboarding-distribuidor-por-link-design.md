@@ -97,14 +97,19 @@ devuelve el correo **completo**, como hoy (D-20): el flujo del owner lo necesita
 rompería. El costo es que quien tenga el link ve el correo que escribió el mayorista; el link ya iba a ese correo. Quien tiene
 sesión ve, aparte, su tenant actual y sus tenants donde puede aceptar.
 
-### 3b. Formulario «¿Con qué empresa le compras a …?» (decisión del owner, 2026-11-19)
+### 3b. Formulario «¿Con qué empresa le compras a …?» (decisión del owner, 2026-11-19, versión final)
 
-El formulario **no pide nombre ni identificador**: se quitan los dos campos. El nombre del tenant es la razón social
-(`businessName`) tal como la creó el mayorista, y el identificador (slug) lo genera el servidor con `ITenantSlugSuggestions`.
-El distribuidor sólo elige entre crear la empresa nueva o vincular una donde sea owner o admin, y acepta. El servidor ignora
-cualquier `DisplayName` o `Slug` que llegue en el cuerpo de `accept`. Esto reemplaza una decisión de hace unas horas (formulario
-prellenado y editable): el owner prefirió quitar los campos. Si el slug generado se toma en una carrera, el servidor reintenta
-con otro sufijo (hasta 3 veces); no hay nada que corregir a mano.
+El distribuidor **no vuelve a diligenciar** el nombre del tenant ni el identificador: llegan **prellenados y editables**. El
+nombre es la razón social (`businessName`) tal como la escribió el mayorista, y el identificador es `suggestedSlug`, un campo
+nuevo del `GET` que sale de `ITenantSlugSuggestions`. El slug se genera **sin la forma societaria del final del nombre**
+(`SAS`, `S.A.S`, `SA`, `S.A`, `LTDA`, `LTA`, con o sin puntos y con coma antes: `Andina, S.A.S.` da `andina`); sólo cuenta una
+palabra suelta al final, así que `Casas` o `Pesa` no pierden nada, y el nombre del tenant conserva la forma societaria.
+
+`accept` recibe `DisplayName` y `Slug` **opcionales**. Con ellos se crea el tenant tal cual (el nombre recortado); sin ellos,
+con la razón social y el slug sugerido. Si el slug es el sugerido y otra aceptación lo toma en una carrera, el servidor
+reintenta con otro sufijo (hasta 3 veces). Si el slug lo escribió el distribuidor y está tomado, no se reemplaza solo: responde
+422 con `tenancy.slug.taken` para que lo corrija, y la invitación sigue pendiente. El formato lo sigue validando Tenancy.
+Esto reemplaza dos decisiones del mismo día (primero «prellenado y editable», luego «sin campos»).
 
 ### 4. Distribuidor nuevo
 
