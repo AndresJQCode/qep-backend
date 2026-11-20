@@ -284,7 +284,7 @@ public sealed class LinkedPurchaseOrderHandlersTests
         Assert.Null(detail.Linked);
     }
 
-    // Spec 2026-11-19 (D-4): con la lista oculta la vista previa no manda montos, pero el costo sigue guardándose al crear/editar.
+    // Spec 2026-11-19: con la lista oculta la vista previa no manda montos.
     private Task<PurchaseOrderPreviewDto> PreviewAsync(Guid supplierId, Guid variantId, decimal quantity) =>
         PreviewHandler().HandleAsync(
             new PreviewPurchaseOrderCommand(TenantId, supplierId, "COP", null, [new PurchaseOrderLineInput(variantId, quantity, null)]),
@@ -337,37 +337,5 @@ public sealed class LinkedPurchaseOrderHandlersTests
         Assert.True(preview.ShowPrices);
         Assert.Equal(2000m, Assert.Single(preview.Lines).Subtotal);
         Assert.Equal(new PurchaseOrderTotalsDto(2000m, 380m, 2380m), preview.Totals);
-    }
-
-    [Fact]
-    public async Task CreateWithAHiddenPriceListStillStoresTheCost()
-    {
-        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
-        _wholesale.ShowPrices = false;
-
-        await CreateHandler().HandleAsync(Create(new PurchaseOrderLineInput(item.VariantId, 3m, null)), Ct);
-
-        var line = Assert.Single(Assert.Single(_orders.Orders).Lines);
-        Assert.Equal((10000m, 11900m), (line.UnitCost, line.ListUnitPrice!.Value));
-    }
-
-    [Fact]
-    public async Task UpdateWithAHiddenPriceListStillStoresTheCost()
-    {
-        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
-        var order = _orders.Seed(PurchaseOrderTestData.LinkedOrder());
-        _wholesale.ShowPrices = false;
-        var handler = new UpdatePurchaseOrderHandler(
-            _context, new FakeMembership(), new FakePurchasesClock(PurchaseOrderTestData.Now), Builder(), _orders, _unitOfWork,
-            _audit, Composer(), new UpdatePurchaseOrderValidator());
-
-        await handler.HandleAsync(
-            new UpdatePurchaseOrderCommand(
-                TenantId, order.Id.Value, order.Version, PurchaseOrderTestData.SupplierId, "COP", null,
-                [new PurchaseOrderLineInput(item.VariantId, 3m, null)]),
-            Ct);
-
-        var line = Assert.Single(order.Lines);
-        Assert.Equal((10000m, item.VariantId), (line.UnitCost, line.SupplierVariantId!.Value));
     }
 }

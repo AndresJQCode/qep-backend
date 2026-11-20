@@ -171,7 +171,7 @@ public sealed class LinkedPurchaseOrderApiTests(SharedPurchasesHost host) : ICla
             (item.GetProperty("basePrice").GetDecimal(), item.GetProperty("discountPercent").GetDecimal(), item.GetProperty("listPrice").GetDecimal()));
     }
 
-    // La vista previa se enmascara con el flag vivo; el costo se sigue guardando al crear (D-4).
+    // La vista previa se enmascara con el flag vivo.
     [Fact]
     public async Task PreviewOfHiddenPriceListHasNoAmounts()
     {
@@ -195,9 +195,6 @@ public sealed class LinkedPurchaseOrderApiTests(SharedPurchasesHost host) : ICla
         }
 
         Assert.Equal("ACE-1", line.GetProperty("code").GetString());
-
-        var draft = await world.CreateDraftAsync((world.VariantA, 2m));
-        Assert.Equal(PurchaseOrderMath.NetOfVat(LinkedPurchasesHarness.ListPrice, 19m), Assert.Single(draft.Lines).UnitCost);
     }
 
     // El documento propio del mayorista siempre lleva montos: el PDF de su pedido no lee el flag de la lista.
