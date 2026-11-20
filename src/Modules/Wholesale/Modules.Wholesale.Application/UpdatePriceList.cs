@@ -48,7 +48,7 @@ public sealed class UpdatePriceListHandler(
         var categories = await PriceListTerms.RequireCategoriesAsync(catalog, command.TenantId, categoryIds, cancellationToken);
 
         var now = clock.UtcNow;
-        list.Update(name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now);
+        list.Update(name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now, list.ShowPrices);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

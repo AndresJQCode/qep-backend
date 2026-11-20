@@ -37,6 +37,9 @@ public sealed class PriceList
     /// <see cref="PriceListVisibility.AllActive"/>, vacía. Que existan en el tenant lo valida Application (D-9).</summary>
     public IReadOnlyList<Guid> CategoryIds => _categoryIds;
 
+    /// <summary>Spec 2026-11-19: con <c>false</c> el distribuidor de esta lista no recibe montos (catálogo y vista previa de Compras). Por defecto <c>true</c>.</summary>
+    public bool ShowPrices { get; private set; } = true;
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -49,7 +52,8 @@ public sealed class PriceList
         decimal discountPercent,
         PriceListVisibility visibility,
         IReadOnlyCollection<Guid> categoryIds,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool showPrices = true)
     {
         var terms = Normalize(name, discountPercent, visibility, categoryIds);
         return new PriceList
@@ -59,6 +63,7 @@ public sealed class PriceList
             Name = terms.Name,
             DiscountPercent = discountPercent,
             Visibility = visibility,
+            ShowPrices = showPrices,
             _categoryIds = terms.CategoryIds,
             Version = 1,
             CreatedAt = now,
@@ -71,13 +76,15 @@ public sealed class PriceList
         decimal discountPercent,
         PriceListVisibility visibility,
         IReadOnlyCollection<Guid> categoryIds,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool showPrices)
     {
         // Se valida todo antes de asignar: un cambio rechazado no deja la lista a medias.
         var terms = Normalize(name, discountPercent, visibility, categoryIds);
         Name = terms.Name;
         DiscountPercent = discountPercent;
         Visibility = visibility;
+        ShowPrices = showPrices;
         _categoryIds = terms.CategoryIds;
         Version++;
         UpdatedAt = now;

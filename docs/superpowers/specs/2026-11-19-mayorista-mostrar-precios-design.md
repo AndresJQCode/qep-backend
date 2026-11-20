@@ -3,6 +3,18 @@
 Spec del frontend: `qep-frontend/docs/superpowers/specs/2026-11-19-wholesale-show-prices-design.md`.
 Plan: [`2026-11-19-mayorista-mostrar-precios-backend.md`](../plans/2026-11-19-mayorista-mostrar-precios-backend.md).
 
+## Alcance de la primera tanda (owner, 2026-11-19)
+
+Se construye primero un corte reducido; lo demás queda como **Segunda tanda** y no se implementa todavía.
+
+- **Entra:** PriceList.ShowPrices (D-1, D-2, D-3, D-4, D-7), el catálogo del mayorista enmascarado y la **vista previa** de la orden
+  enmascarada (POST …/purchases/orders/preview). La vista previa lee el flag **vivo** de la lista del mayorista en el momento de
+  la consulta; no hay flag guardado en la orden.
+- **Segunda tanda:** D-5 (purchases.purchase_orders.prices_hidden), D-6 (los precios aparecen al aprobar) y todo el bloque de
+  detalle, lista, PDF y correo de la orden.
+- **Fuga abierta hasta la segunda tanda:** una orden o borrador ya guardado **sigue mostrando sus montos** en el detalle, la lista,
+  el PDF y el correo, aunque la lista del mayorista esté oculta. Sólo el catálogo y la vista previa los esconden.
+
 ## Problema
 
 Un distribuidor que arma una orden de compra a un mayorista vinculado ve el catálogo con precio base, descuento, precio de
@@ -26,12 +38,12 @@ catálogo; el precio se conoce al aprobar).
   guardarse (D-9 de fase 3: `UnitCost` = lista sin IVA), así que `WholesaleOffers` devuelve precios **y** el flag
   (`WholesaleTerms.ShowPrices`), y los DTOs de Compras los ponen en `null`. El costo queda guardado en la base del distribuidor,
   nunca en una respuesta mientras esté oculto.
-- **D-5. La orden congela el flag al guardarse.** `PurchaseOrder.PricesHidden` (columna `prices_hidden`) se fija en el alta y en
+- **D-5. [Segunda tanda] La orden congela el flag al guardarse.** `PurchaseOrder.PricesHidden` (columna `prices_hidden`) se fija en el alta y en
   cada edición de una orden vinculada con lo que dijo el catálogo del mayorista en ese momento, igual que la orden congela la
   lista (D-9 de fase 3). Detalle, lista, PDF y correo leen la columna, sin cruzar tenants en cada lectura (y sin depender de
   que la relación siga `Active`). Consecuencia aceptada: si el mayorista cambia el switch, un borrador ya guardado cambia al
   volver a guardarse; una orden enviada conserva el valor con que salió.
-- **D-6. Los precios aparecen al aprobar.** Una orden con `PricesHidden` muestra montos cuando ya tiene un paso `Confirmed` en
+- **D-6. [Segunda tanda] Los precios aparecen al aprobar.** Una orden con `PricesHidden` muestra montos cuando ya tiene un paso `Confirmed` en
   su historial (lo escribe el evento de aprobación del mayorista). Antes —borrador, enviada, o anulada sin aprobar— van ocultos.
   **Consecuencia de producto:** el distribuidor pide por cantidades y conoce lo que le van a cobrar cuando el mayorista aprueba;
   desde ahí ve costos y totales confirmados, que necesita para su inventario (D-18 crea productos con ese costo).
@@ -85,6 +97,8 @@ En todo lo demás —y en toda orden externa o aprobada— `showPrices: true` y 
 
 ### Qué se enmascara
 
+> Primera tanda: sólo las filas «Catálogo del mayorista» y «Vista previa». Las demás filas son **Segunda tanda**.
+
 | Superficie (distribuidor) | Oculto | Se mantiene |
 | --- | --- | --- |
 | Catálogo del mayorista | `basePrice`, `discountPercent`, `listPrice`, `unitCost`, `priceList.discountPercent` | código, nombres, foto, `taxRatePercent`, `priceList.name`, `total` |
@@ -107,6 +121,8 @@ en QEP, no lo que el mayorista decide enviarle.
 
 ### Fugas que quedan abiertas (seguimiento)
 
+0. **Hasta la segunda tanda:** una orden o borrador ya guardado muestra sus montos en detalle, lista, PDF y correo (no hay
+   prices_hidden ni regla D-6). La vista previa y el catálogo sí los esconden.
 1. **Lo que el distribuidor ya vio.** Un borrador guardado con la lista visible conserva sus montos hasta que se vuelva a
    guardar (D-5). No se reescribe en masa.
 2. **El correo y el PDF le llegan al mayorista con «—»** mientras la orden no esté aprobada. No es una fuga (al revés): el
@@ -117,7 +133,7 @@ en QEP, no lo que el mayorista decide enviarle.
 
 ### Compatibilidad
 
-Expand puro: dos columnas con valor por defecto (`wholesale.price_lists.show_prices` `true`, `purchases.purchase_orders.prices_hidden`
+Expand puro: en la primera tanda una columna con valor por defecto (la segunda, prices_hidden, es de la segunda tanda),  (`wholesale.price_lists.show_prices` `true`, `purchases.purchase_orders.prices_hidden`
 `false`). Un pod viejo ignora las columnas. Un **frontend viejo** contra este backend ve exactamente lo de hoy mientras ninguna
 lista esté oculta; con una lista oculta leería `null` donde espera número. Como el switch sólo existe en el frontend nuevo, el
 orden de despliegue es backend y enseguida frontend, y ningún mayorista puede ocultar antes de que el frontend nuevo esté arriba.

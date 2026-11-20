@@ -248,6 +248,12 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasColumnName("normalized_name")
                         .HasComputedColumnSql("lower(name)", true);
 
+                    b.Property<bool>("ShowPrices")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("show_prices");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");

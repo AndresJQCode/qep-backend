@@ -7,6 +7,12 @@
 > corrida de integración: `Get-Process testhost, dotnet -ErrorAction SilentlyContinue` (si hay una, se espera; no se detiene).
 > `$env:Seed__Enabled = "false"`. Pruebas en primer plano. Nada de correr la solución entera.
 
+> **Alcance reducido (owner, 2026-11-19).** Primera tanda: **Bloque A** + la **vista previa** enmascarada (calculada con el flag vivo de la lista
+> al consultar, sin flag guardado). **Segunda tanda, no se construye ahora:** el Bloque B entero (tareas 4, 5 y 6: prices_hidden, detalle,
+> lista, PDF, correo y la regla «los precios aparecen al aprobar»). Hasta entonces una orden guardada sigue mostrando sus montos.
+> La vista previa se agrega a la **Tarea 3** (ver abajo). Regresión: con la lista oculta, el PDF del pedido del mayorista sigue trayendo
+> montos (ver nota en la Tarea 3).
+
 **Meta:** `PriceList.ShowPrices`; con `false`, el distribuidor de esa lista no recibe montos en catálogo, vista previa, detalle,
 lista, PDF ni correo de una orden vinculada hasta que el mayorista la aprueba.
 
@@ -76,9 +82,11 @@ lista, PDF ni correo de una orden vinculada hasta que el mayorista la aprueba.
 - [ ] GREEN.
 - [ ] Unitarias de los dos proyectos filtradas por `WholesaleOffersTests|SupplierCatalogTests`; integración por el nombre de la
       prueba nueva. **Cierre del bloque:** `PriceListApiTests` entera y `ArchitectureTests`.
+- [ ] **Primera tanda, vista previa:** `PreviewPurchaseOrder` / `PurchaseOrderPreviewDto` (`Subtotal` y `ListPrice` de línea y `Totals` a `decimal?`/`?`, `ShowPrices = true` al final) se enmascaran con el `ShowPrices` de los términos del mayorista **al momento de la vista previa** (flag vivo). Con externo, igual que hoy.
+- [ ] Regresión: si ya existe una prueba del PDF del pedido del mayorista, extenderla con la lista oculta (el PDF sigue con montos); si no, queda como prueba de seguimiento.
 - [ ] Commit: `feat(purchases): hide wholesaler prices in the supplier catalog when the list says so`
 
-## Bloque B — la orden vinculada
+## Bloque B — la orden vinculada (SEGUNDA TANDA, no se construye en la primera)
 
 ### Tarea 4: la orden congela el flag
 

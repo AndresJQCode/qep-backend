@@ -116,7 +116,7 @@ public sealed class PriceListTests
         var later = Now.AddHours(2);
         var category = Guid.CreateVersion7();
 
-        list.Update(" Lista B ", 20m, PriceListVisibility.Categories, [category], later);
+        list.Update(" Lista B ", 20m, PriceListVisibility.Categories, [category], later, showPrices: true);
 
         Assert.Equal(("Lista B", 20m, PriceListVisibility.Categories, 2L, Now, later),
             (list.Name, list.DiscountPercent, list.Visibility, list.Version, list.CreatedAt, list.UpdatedAt));
@@ -129,8 +129,34 @@ public sealed class PriceListTests
         var list = PriceList.Create(Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now);
 
         Assert.Throws<WholesaleDomainException>(() =>
-            list.Update("Lista B", 101m, PriceListVisibility.AllActive, [], Now.AddHours(1)));
+            list.Update("Lista B", 101m, PriceListVisibility.AllActive, [], Now.AddHours(1), showPrices: true));
 
         Assert.Equal(("Lista", 10m, 1L, Now), (list.Name, list.DiscountPercent, list.Version, list.UpdatedAt));
     }
-}
+
+    // Spec 2026-11-19 (mostrar precios): por defecto la lista muestra precios.
+    [Fact]
+    public void CreateShowsPricesByDefault()
+    {
+        var list = PriceList.Create(Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now);
+
+        Assert.True(list.ShowPrices);
+    }
+
+    [Fact]
+    public void CreateCanHidePrices()
+    {
+        var list = PriceList.Create(Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now, showPrices: false);
+
+        Assert.False(list.ShowPrices);
+    }
+
+    [Fact]
+    public void UpdateChangesShowPricesAndBumpsTheVersion()
+    {
+        var list = PriceList.Create(Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now);
+
+        list.Update("Lista", 10m, PriceListVisibility.AllActive, [], Now.AddHours(1), showPrices: false);
+
+        Assert.Equal((false, 2L), (list.ShowPrices, list.Version));
+    }}
