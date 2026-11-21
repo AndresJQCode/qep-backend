@@ -23,8 +23,11 @@ public static class DoorbellQueues
     /// <summary>Spec 2026-11-17 §5.2: las importaciones de productos de Shopify.</summary>
     public const string ShopifyProducts = "shopify_products";
 
+    /// <summary>Las tandas de facturación con Siigo: un <c>INSERT</c> en <c>siigo.invoice_batch_items</c> timbra.</summary>
+    public const string SiigoInvoice = "siigo_invoice";
+
     public static IReadOnlyList<string> All { get; } =
-        [Automation, Webhook, ShopifyWebhook, Media, Scheduled, Campaign, Export, Outbox, SupportSurvey, ShopifyProducts];
+        [Automation, Webhook, ShopifyWebhook, Media, Scheduled, Campaign, Export, Outbox, SupportSurvey, ShopifyProducts, SiigoInvoice];
 
     public static TimeSpan SafetyNet(string queue) => queue switch
     {
@@ -38,6 +41,7 @@ public static class DoorbellQueues
         Outbox => TimeSpan.FromSeconds(30),
         SupportSurvey => TimeSpan.FromSeconds(30),
         ShopifyProducts => TimeSpan.FromSeconds(30),
+        SiigoInvoice => TimeSpan.FromSeconds(30),
         _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "Unknown doorbell queue."),
     };
 }

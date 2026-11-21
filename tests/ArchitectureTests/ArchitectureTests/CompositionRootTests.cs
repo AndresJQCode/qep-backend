@@ -1408,12 +1408,15 @@ public sealed class CompositionRootTests
     /// con los permisos de alguien que no las pidió. Se lee del IL: un <c>new</c> o un <c>Enter</c> en otro tipo pone esto en rojo.
     /// </summary>
     [Fact]
-    public void OnlyTheCopilotExecutorCreatesADelegatedContext()
+    public void OnlyTheCopilotExecutorAndTheSiigoBatchInvokerCreateADelegatedContext()
     {
         var bootstrapper = typeof(QepServiceCollectionExtensions).Assembly;
         var delegated = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionContext", throwOnError: true)!;
         var scope = bootstrapper.GetType("Bootstrapper.Copilot.DelegatedExecutionScope", throwOnError: true)!;
         var executor = bootstrapper.GetType("Bootstrapper.Copilot.CopilotToolExecutor", throwOnError: true)!;
+        // Spec 2026-11-21: el único otro que corre un handler como un miembro fuera de un request. Factura cada pedido de una tanda con
+        // los permisos que quien la pidió tiene al procesarlo.
+        var siigoBatchInvoker = bootstrapper.GetType("Bootstrapper.SiigoBatchItemInvoker", throwOnError: true)!;
 
         var creators = IlScanner.CallersOf(bootstrapper, method => method is ConstructorInfo && method.DeclaringType == delegated);
         var enterers = IlScanner.CallersOf(bootstrapper, method => method.DeclaringType == scope && method.Name == "Enter");
@@ -1421,7 +1424,8 @@ public sealed class CompositionRootTests
         Assert.NotEmpty(creators);
         Assert.NotEmpty(enterers);
         Assert.All(creators.Concat(enterers), caller => Assert.True(
-            IlScanner.IsWithin(caller, executor), $"{caller.DeclaringType?.FullName}.{caller.Name} creates or installs a delegated context."));
+            IlScanner.IsWithin(caller, executor) || IlScanner.IsWithin(caller, siigoBatchInvoker),
+            $"{caller.DeclaringType?.FullName}.{caller.Name} creates or installs a delegated context."));
     }
 
     /// <summary>Plan fase 2, C2.4: fuera de un scope del ejecutor del copiloto, <c>IExecutionContext</c> sigue siendo el de los claims del

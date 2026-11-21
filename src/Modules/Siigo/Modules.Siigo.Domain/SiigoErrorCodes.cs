@@ -64,4 +64,16 @@ public static class SiigoErrorCodes
 
     /// <summary>404: el pedido no tiene factura de Siigo de ese tipo.</summary>
     public const string InvoiceNotFound = "siigo.invoice.not_found";
+
+    /// <summary>422: una tanda de facturación lleva entre 1 y 50 pedidos.</summary>
+    public const string InvoiceBatchSize = "siigo.invoice_batch.size";
+
+    /// <summary>422: los pedidos de una tanda son obligatorios y no se repiten.</summary>
+    public const string InvoiceBatchOrders = "siigo.invoice_batch.orders";
+
+    /// <summary>404: la tanda no existe en el tenant.</summary>
+    public const string InvoiceBatchNotFound = "siigo.invoice_batch.not_found";
+
+    /// <summary>El pedido de una tanda no se facturó porque quien la pidió ya no tiene permiso o membresía al procesarlo.</summary>
+    public const string InvoiceBatchForbidden = "siigo.invoice_batch.forbidden";
 }

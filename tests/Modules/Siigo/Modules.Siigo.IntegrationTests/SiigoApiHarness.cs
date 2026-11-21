@@ -366,6 +366,8 @@ internal static class SiigoApiHarness
             builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);
             builder.UseSetting("Integrations:SecretProtection:Keys:k1", string.Empty);
             builder.UseSetting("Siigo:PartnerId", PartnerId);
+            // El worker de las tandas no corre solo durante una prueba: cada prueba lo corre a mano con DrainAsync.
+            builder.UseSetting("Siigo:Batches:PollSeconds", "3600");
         }
     }
 

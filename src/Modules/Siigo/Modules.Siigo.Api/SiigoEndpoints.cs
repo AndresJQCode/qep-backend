@@ -156,8 +156,35 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-21: la tanda de facturación. Cuelga del tenant (junta pedidos) y usa el mismo permiso que facturar uno solo. El POST sólo
+        // la crea (202): un worker factura cada pedido y la pantalla consulta el avance con el GET.
+        var batches = endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/siigo/invoice-batches")
+            .WithTags("Siigo")
+            .RequireAuthorization(SiigoPermissions.InvoiceIssue);
+
+        batches.MapPost("/", CreateInvoiceBatchAsync)
+            .Produces<SiigoInvoiceBatchDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        batches.MapGet("/{batchId:guid}", GetInvoiceBatchAsync)
+            .Produces<SiigoInvoiceBatchDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
+
+    private static async Task<IResult> CreateInvoiceBatchAsync(
+        Guid tenantId, SiigoInvoiceBatchRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Json(
+            await dispatcher.SendAsync(new CreateSiigoInvoiceBatchCommand(tenantId, request?.OrderIds), cancellationToken),
+            statusCode: StatusCodes.Status202Accepted);
+
+    private static async Task<IResult> GetInvoiceBatchAsync(
+        Guid tenantId, Guid batchId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetSiigoInvoiceBatchQuery(tenantId, batchId), cancellationToken));
 
     private static async Task<IResult> InvoiceAvailabilityAsync(
         Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -416,6 +443,10 @@ public sealed record SiigoPaymentChoiceRequest(string? Kind, Guid? ProofId, stri
 
 /// <summary>El cuerpo opcional de <c>POST …/siigo-invoice</c>.</summary>
 public sealed record SiigoIssueInvoiceRequest(IReadOnlyList<SiigoPaymentChoiceRequest>? Payments);
+
+/// <summary>El cuerpo de <c>POST …/siigo/invoice-batches</c>: los pedidos de la tanda (de 1 a 50, sin repetir). Opcional en el binding: lo que falta
+/// es un 422 con <c>errors.orderIds</c>.</summary>
+public sealed record SiigoInvoiceBatchRequest(IReadOnlyList<Guid>? OrderIds);
 
 /// <summary>El cuerpo de <c>POST …/siigo-invoice/resolve</c>: <c>exists</c> (con el número) o <c>missing</c>.</summary>
 public sealed record SiigoResolveInvoiceRequest(string? Kind, string? Outcome, string? Number);
