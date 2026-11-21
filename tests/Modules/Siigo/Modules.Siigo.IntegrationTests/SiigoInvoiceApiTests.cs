@@ -267,42 +267,25 @@ public sealed class SiigoInvoiceApiTests
     }
 
     [Fact]
-    public async Task ThePreviewReportsAnAdvisorWithoutSiigoUser()
+    public async Task ThePreviewReportsAnUnlinkedAdvisorWithoutCallingSiigoUsers()
     {
         await using var database = await StartDatabaseAsync();
-        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+        using var world = await ArrangeAsync(database, advisorLinked: false);
 
         var preview = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
 
         var missing = Assert.Single(preview.GetProperty("missing").EnumerateArray());
-        Assert.Equal("seller_not_found", missing.GetProperty("code").GetString());
-        Assert.Equal(JsonValueKind.Null, missing.GetProperty("reference").ValueKind);
+        Assert.Equal("seller_unlinked", missing.GetProperty("code").GetString());
+        Assert.True(Guid.TryParse(missing.GetProperty("reference").GetString(), out _));
         Assert.Equal(world.Tenant.Email, missing.GetProperty("label").GetString());
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path == "/v1/users");
     }
 
     [Fact]
-    public async Task TheSellerIsFoundRightAfterTheUserIsCreatedInSiigo()
+    public async Task IssuingWithAnUnlinkedAdvisorIsRefused()
     {
         await using var database = await StartDatabaseAsync();
-        using var world = await ArrangeAsync(database, advisorInSiigo: false);
-        var before = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
-        Assert.Equal("seller_not_found", Assert.Single(before.GetProperty("missing").EnumerateArray()).GetProperty("code").GetString());
-
-        // Alguien crea el usuario del asesor en Siigo: la lista cacheada no lo tiene, pero un faltante vuelve a preguntarle a Siigo.
-        world.Siigo.On(
-            "/v1/users",
-            HttpStatusCode.OK,
-            $$"""{"pagination":{"page":1,"page_size":25,"total_results":1},"results":[{"id":629,"first_name":"Ana","email":"{{world.Tenant.Email}}","active":true}]}""");
-        var after = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
-
-        Assert.Empty(after.GetProperty("missing").EnumerateArray());
-    }
-
-    [Fact]
-    public async Task IssuingWithAnAdvisorWithoutSiigoUserIsRefused()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+        using var world = await ArrangeAsync(database, advisorLinked: false);
 
         var response = await PostAsync(world);
 
@@ -310,9 +293,9 @@ public sealed class SiigoInvoiceApiTests
         AssertRejectedCode(response, HttpStatusCode.UnprocessableEntity, "siigo.invoice.not_ready", text);
         using var json = JsonDocument.Parse(text);
         Assert.Equal(
-            ["seller_not_found"],
+            ["seller_unlinked"],
             json.RootElement.GetProperty("details").GetProperty("missing").EnumerateArray().Select(item => item.GetProperty("code").GetString()));
-        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers");
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers" or "/v1/users");
         Assert.Equal(0, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
     }
 
@@ -341,7 +324,7 @@ public sealed class SiigoInvoiceApiTests
         Assert.Equal(35_700m, draft.GetProperty("total").GetDecimal());
         Assert.Empty(preview.GetProperty("missing").EnumerateArray());
         Assert.Equal(0, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
-        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers");
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers" or "/v1/users");
     }
 
     // La pantalla del pedido sólo ofrece «Facturar en Siigo» si la conexión de la empresa del pedido sirve: el backend lo dice, el

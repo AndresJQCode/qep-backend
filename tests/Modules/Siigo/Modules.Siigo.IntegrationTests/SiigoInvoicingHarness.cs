@@ -6,6 +6,7 @@ using Modules.Customers.Application;
 using Modules.Quotations.Application;
 using Modules.Siigo.Application;
 using Modules.Siigo.Domain;
+using Modules.Tenancy.Application;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
 
 namespace Modules.Siigo.IntegrationTests;
@@ -105,7 +106,7 @@ internal static class SiigoInvoicingHarness
         bool freight = false,
         bool linkProduct = true,
         bool markPaid = true,
-        bool advisorInSiigo = true)
+        bool advisorLinked = true)
     {
         var connectionString = database.GetConnectionString();
         var siigo = new FakeSiigoApi();
@@ -145,19 +146,13 @@ internal static class SiigoInvoicingHarness
         }
 
         siigo.AddProduct("p-100", SiigoCode, "Aceite esencial Siigo");
-        await ConfigureSettingsAsync(factory, tenant, connectionId, company, variantId, sendToDian, freightSeparate, linkProduct);
+        await ConfigureSettingsAsync(factory, tenant, connectionId, company, variantId, sendToDian, freightSeparate, linkProduct, advisorLinked);
 
         // Lo feliz de Siigo: el cliente no existe y la factura se crea.
         siigo.OnRequest("/v1/customers", call => call.Method == HttpMethod.Get
             ? FakeSiigoApi.Respond(System.Net.HttpStatusCode.OK, """{"pagination":{"page":1,"page_size":25,"total_results":0},"results":[]}""")
             : FakeSiigoApi.Respond(System.Net.HttpStatusCode.Created, """{"id":"c-1","identification":"900123456","active":true}"""));
         siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f", 0m));
-        // El vendedor es el asesor del pedido (el owner que lo creó), cruzado por correo (spec 2026-11-20). Sin él en Siigo, sólo otro usuario.
-        var sellerEmail = advisorInSiigo ? tenant.Email : "otro@empresa.test";
-        siigo.On(
-            "/v1/users",
-            System.Net.HttpStatusCode.OK,
-            $$"""{"pagination":{"page":1,"page_size":100,"total_results":1},"results":[{"id":629,"first_name":"Ana","last_name":"Gomez","email":"{{sellerEmail}}","active":true}]}""");
         return new InvoicingWorld(factory, siigo, tenant, client, connectionString, connectionId, orderId, orderNumber, variantId, customerId, company);
     }
 
@@ -179,7 +174,8 @@ internal static class SiigoInvoicingHarness
         Guid variantId,
         bool sendToDian,
         bool freightSeparate,
-        bool linkProduct)
+        bool linkProduct,
+        bool linkAdvisor)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var repository = scope.ServiceProvider.GetRequiredService<ISiigoSettingsRepository>();
@@ -194,6 +190,15 @@ internal static class SiigoInvoicingHarness
             CreditDays: 30,
             CashOnDeliveryPaymentTypeId: "5103",
             DefaultPaymentTypeId: "5101"));
+        // El vendedor es el usuario de Siigo vinculado al asesor del pedido, que es el owner que lo creó (spec 2026-11-20).
+        if (linkAdvisor)
+        {
+            var owner = await scope.ServiceProvider.GetRequiredService<IMembershipDirectory>()
+                .FindActiveMembershipIdAsync(tenant.OwnerUserId, tenant.TenantId, TestContext.Current.CancellationToken)
+                ?? throw new InvalidOperationException("The owner has no active membership.");
+            settings.ReplaceSellerLinks([new SiigoSellerLink(owner, "629", "ANA GOMEZ")]);
+        }
+
         if (linkProduct)
         {
             settings.LinkVariant(
