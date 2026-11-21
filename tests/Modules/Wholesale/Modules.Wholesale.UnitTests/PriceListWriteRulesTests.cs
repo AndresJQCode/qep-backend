@@ -99,4 +99,56 @@ public sealed class PriceListWriteRulesTests
                 .Validate(new UpdatePriceListCommand(Tenant, Guid.CreateVersion7(), 1, "", 15m, "AllActive", []))
                 .Errors.Select(error => error.PropertyName).Distinct().ToArray());
     }
+
+    // Spec 2026-11-20: exclusions.
+    private static CreatePriceListCommand WithExclusions(params PriceListExclusionInput[] exclusions) =>
+        new(Tenant, "Mayoristas", 15m, "AllActive", [], Exclusions: exclusions);
+
+    [Fact]
+    public void ValidOrAbsentExclusionsPass()
+    {
+        Assert.Empty(FailedProperties(WithExclusions()));
+        Assert.Empty(FailedProperties(new CreatePriceListCommand(Tenant, "Mayoristas", 15m, "AllActive", [], Exclusions: null)));
+        Assert.Empty(FailedProperties(WithExclusions(
+            new PriceListExclusionInput("Category", Guid.CreateVersion7()),
+            new PriceListExclusionInput("product", Guid.CreateVersion7()))));
+    }
+
+    [Fact]
+    public void AnUnknownKindOrAnEmptyIdFailsOnItsIndex()
+    {
+        var command = WithExclusions(
+            new PriceListExclusionInput("Variant", Guid.CreateVersion7()),
+            new PriceListExclusionInput("Product", Guid.Empty),
+            new PriceListExclusionInput("1", Guid.CreateVersion7()));
+
+        Assert.Equal(["Exclusions[0]", "Exclusions[1]", "Exclusions[2]"], FailedProperties(command));
+    }
+
+    [Fact]
+    public void ARepeatedKindAndIdFailsOnTheSecondButTheSameIdOfAnotherKindIsFine()
+    {
+        var id = Guid.CreateVersion7();
+
+        Assert.Equal(
+            ["Exclusions[1]"],
+            FailedProperties(WithExclusions(new PriceListExclusionInput("Product", id), new PriceListExclusionInput("product", id))));
+        Assert.Empty(FailedProperties(WithExclusions(new PriceListExclusionInput("Product", id), new PriceListExclusionInput("Category", id))));
+    }
+
+    [Fact]
+    public void MoreThanTheCapsFailOnExclusions()
+    {
+        var categories = Enumerable.Range(0, 201).Select(_ => new PriceListExclusionInput("Category", Guid.CreateVersion7())).ToArray();
+        var products = Enumerable.Range(0, 1001).Select(_ => new PriceListExclusionInput("Product", Guid.CreateVersion7())).ToArray();
+        var atCap = Enumerable.Range(0, 1000).Select(_ => new PriceListExclusionInput("Product", Guid.CreateVersion7())).ToArray();
+
+        Assert.Equal(["Exclusions"], FailedProperties(WithExclusions(categories)));
+        Assert.Equal(["Exclusions"], FailedProperties(WithExclusions(products)));
+        Assert.Empty(FailedProperties(WithExclusions(atCap)));
+        Assert.Equal(
+            ["Exclusions[0]"],
+            FailedProperties(new PreviewPriceListCommand(
+                Tenant, 15m, "AllActive", [], [new PriceListExclusionInput("Nope", Guid.CreateVersion7())])));
+    }
 }

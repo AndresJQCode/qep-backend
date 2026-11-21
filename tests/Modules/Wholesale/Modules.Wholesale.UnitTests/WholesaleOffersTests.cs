@@ -482,4 +482,137 @@ public sealed class WholesaleOffersTests
 
         Assert.Equal([alfa, raiz, zeta], nodes.Select(node => node.Id));
     }
+
+    // Spec 2026-11-20: exclusions per price list.
+    private PriceList Exclude(Distributor distributor, PriceListVisibility visibility, Guid[] scope, params PriceListExclusion[] exclusions)
+    {
+        var list = _world.PriceLists.Seed(PriceList.Create(
+            _world.Tenant, "Lista " + Guid.CreateVersion7(), 10m, visibility, scope, DistributorWorld.Now, exclusions: exclusions));
+        distributor.ChangeTerms(list.Id, distributor.AdvisorMemberId, distributor.BillingCompanyId, DistributorWorld.Now);
+        return list;
+    }
+
+    private static PriceListExclusion HideCategory(Guid id) => new(PriceListExclusionKind.Category, id);
+
+    private static PriceListExclusion HideProduct(Guid id) => new(PriceListExclusionKind.Product, id);
+
+    [Fact]
+    public async Task TermsCarryTheHiddenIdsAndEmptyWhenThereAreNone()
+    {
+        var (_, hijo, _, _) = SeedTree();
+        var olla = _catalog.AddProduct("C-1", "Olla", hijo, cop: 10000m);
+        var distributor = SeedActive();
+
+        var plain = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
+        Exclude(distributor, PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(olla)));
+        var hidden = await Offers().ResolveTermsAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Empty(plain.HiddenCategoryIds);
+        Assert.Empty(plain.HiddenProductIds);
+        Assert.Equal([hijo], hidden.HiddenCategoryIds);
+        Assert.Equal([_catalog.ProductIdOf(olla)], hidden.HiddenProductIds);
+    }
+
+    [Fact]
+    public async Task AnExcludedCategoryRemovesItsDescendantsFromTheTreeButNotItsParent()
+    {
+        var (raiz, hijo, nieto, otra) = SeedTree();
+        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo));
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal(new[] { raiz, otra }.Order(), nodes.Select(node => node.Id).Order());
+        Assert.DoesNotContain(nodes, node => node.Id == hijo || node.Id == nieto);
+    }
+
+    [Fact]
+    public async Task ExclusionsApplyInsideAListedCategoryScope()
+    {
+        var (raiz, hijo, nieto, _) = SeedTree();
+        Exclude(SeedActive(), PriceListVisibility.Categories, [raiz], HideCategory(nieto));
+
+        var nodes = await Offers().ListVisibleCategoriesAsync(_world.Tenant, _buyer, Ct);
+
+        Assert.Equal(new[] { raiz, hijo }.Order(), nodes.Select(node => node.Id).Order());
+    }
+
+    [Fact]
+    public async Task SearchPassesTheExclusionsToTheReaderAndTheTotalIsTrue()
+    {
+        var (_, hijo, nieto, otra) = SeedTree();
+        _catalog.AddProduct("C-1", "Olla", nieto, cop: 10000m);
+        _catalog.AddProduct("J-1", "Pala", otra, cop: 5000m);
+        var rake = _catalog.AddProduct("J-2", "Rastrillo", otra, cop: 6000m);
+        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(rake)));
+
+        var page = await Offers().SearchAsync(_world.Tenant, _buyer, null, null, 1, 50, Ct);
+
+        Assert.Equal(["J-1"], page.Items.Select(item => item.Code));
+        Assert.Equal(1, page.Total);
+        var (categories, products) = _catalog.SearchExclusions.Single();
+        Assert.Equal([hijo], categories);
+        Assert.Equal([_catalog.ProductIdOf(rake)], products);
+    }
+
+    [Fact]
+    public async Task ACategoryIdThatIsExcludedOrBelowAnExcludedOneIs422NotVisible()
+    {
+        var (_, hijo, nieto, _) = SeedTree();
+        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo));
+
+        foreach (var chosen in new[] { hijo, nieto })
+        {
+            var error = await Assert.ThrowsAsync<WholesaleDomainException>(() =>
+                Offers().SearchAsync(_world.Tenant, _buyer, null, chosen, 1, 50, Ct));
+            Assert.Equal(WholesaleErrorCodes.CategoryNotVisible, error.Code);
+        }
+    }
+
+    [Fact]
+    public async Task PriceVisibleRejectsAnExcludedProductAndOneUnderAnExcludedCategory()
+    {
+        var (_, hijo, nieto, otra) = SeedTree();
+        var pot = _catalog.AddProduct("C-1", "Olla", nieto, cop: 10000m);
+        var shovel = _catalog.AddProduct("J-1", "Pala", otra, cop: 5000m);
+        var loose = _catalog.AddProduct("S-1", "Suelto", categoryId: null, cop: 1000m);
+        var fine = _catalog.AddProduct("J-2", "Rastrillo", otra, cop: 6000m);
+        Exclude(
+            SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(shovel)),
+            HideProduct(_catalog.ProductIdOf(loose)));
+
+        foreach (var (variant, code) in new[] { (pot, "C-1"), (shovel, "J-1"), (loose, "S-1") })
+        {
+            var error = await Assert.ThrowsAsync<WholesaleDomainException>(() =>
+                Offers().PriceVisibleAsync(_world.Tenant, _buyer, [variant], Ct));
+            Assert.Equal(WholesaleErrorCodes.ProductNotVisible, error.Code);
+            Assert.Contains(code, error.Message, StringComparison.Ordinal);
+        }
+
+        var (_, offers) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [fine], Ct);
+        Assert.Single(offers);
+    }
+
+    [Fact]
+    public async Task APriceListWithoutExclusionsBehavesAsBefore()
+    {
+        var (_, _, nieto, _) = SeedTree();
+        var pot = _catalog.AddProduct("C-1", "Olla", nieto, cop: 10000m);
+        SeedActive();
+
+        var (_, offers) = await Offers().PriceVisibleAsync(_world.Tenant, _buyer, [pot], Ct);
+
+        Assert.Single(offers);
+    }
+
+    [Fact]
+    public async Task OrderPricesIgnoreTheExclusions()
+    {
+        var (_, hijo, _, _) = SeedTree();
+        var pot = _catalog.AddProduct("C-1", "Olla", hijo, cop: 10000m);
+        Exclude(SeedActive(), PriceListVisibility.AllActive, [], HideCategory(hijo), HideProduct(_catalog.ProductIdOf(pot)));
+
+        var prices = await Offers().ListPricesForOrderAsync(_world.Tenant, _buyer, "COP", [pot], Ct);
+
+        Assert.Single(prices);
+    }
 }

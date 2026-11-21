@@ -124,6 +124,19 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
 
     public List<IReadOnlyCollection<Guid>?> SampleCategoryIds { get; } = [];
 
+    /// <summary>Las exclusiones de cada llamada a SampleAsync, como llegaron.</summary>
+    public List<(IReadOnlyCollection<Guid>? Categories, IReadOnlyCollection<Guid>? Products)> SampleExclusions { get; } = [];
+
+    /// <summary>Las exclusiones de cada llamada a SearchSellableAsync, como llegaron.</summary>
+    public List<(IReadOnlyCollection<Guid>? Categories, IReadOnlyCollection<Guid>? Products)> SearchExclusions { get; } = [];
+
+    public Guid ProductIdOf(Guid variantId) => Products.Single(product => product.VariantId == variantId).ProductId;
+
+    /// <summary>Como el adaptador: el producto está excluido, o su categoría o un ancestro lo está (eso es «con descendientes»).</summary>
+    private bool IsExcluded(FakeCatalogProduct product, IReadOnlyCollection<Guid>? categories, IReadOnlyCollection<Guid>? products) =>
+        products?.Contains(product.ProductId) == true
+        || (categories is { Count: > 0 } && PathOf(product.CategoryId).Any(categories.Contains));
+
     public List<(string Currency, int Take)> SampleCalls { get; } = [];
 
     public Guid AddCategory(string name, Guid? parentId = null)
@@ -195,14 +208,18 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
         Guid tenantId,
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
         string? search,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         SearchCalls.Add((currency, categoryIds, search, page, pageSize));
+        SearchExclusions.Add((excludedCategoryIds, excludedProductIds));
         var matching = Products
             .Where(product => product.IsActive && product.Prices.ContainsKey(currency))
+            .Where(product => !IsExcluded(product, excludedCategoryIds, excludedProductIds))
             .Where(product => categoryIds is null || PathOf(product.CategoryId).Any(categoryIds.Contains))
             .Where(product => search is null
                 || product.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
@@ -213,6 +230,46 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(product => Sellable(product, currency))
+            .ToList();
+        return Task.FromResult((items, matching.Count));
+    }
+
+    public int FindProductsCalls { get; private set; }
+
+    /// <summary>Ids de productos que el catálogo ya no tiene (borrados): <see cref="FindProductsAsync"/> no los devuelve.</summary>
+    public HashSet<Guid> DeletedProducts { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, WholesaleProductRef>> FindProductsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        FindProductsCalls++;
+        IReadOnlyDictionary<Guid, WholesaleProductRef> found = Products
+            .Where(product => ids.Contains(product.ProductId) && !DeletedProducts.Contains(product.ProductId))
+            .ToDictionary(
+                product => product.ProductId,
+                product => new WholesaleProductRef(product.ProductId, product.Code, product.Name, product.CategoryId, 1, product.ImageUrl));
+        return Task.FromResult(found);
+    }
+
+    public List<(Guid? CategoryId, string? Search, int Page, int PageSize)> ProductSearchCalls { get; } = [];
+
+    /// <summary>Activos con precio en la moneda; <c>categoryId</c> con descendientes (el camino de la categoría lo contiene).</summary>
+    public Task<(IReadOnlyList<WholesaleProductRef> Items, int Total)> SearchProductsAsync(
+        Guid tenantId, string currency, Guid? categoryId, string? search, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        ProductSearchCalls.Add((categoryId, search, page, pageSize));
+        var matching = Products
+            .Where(product => product.IsActive && product.Prices.ContainsKey(currency))
+            .Where(product => categoryId is null || PathOf(product.CategoryId).Contains(categoryId.Value))
+            .Where(product => search is null
+                || product.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || product.Code.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(product => product.Name, StringComparer.Ordinal)
+            .ToList();
+        IReadOnlyList<WholesaleProductRef> items = matching
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(product => new WholesaleProductRef(product.ProductId, product.Code, product.Name, product.CategoryId, 1, product.ImageUrl))
             .ToList();
         return Task.FromResult((items, matching.Count));
     }
@@ -235,12 +292,20 @@ internal sealed class FakeCatalogReader : IWholesaleCatalogReader
     }
 
     public Task<(IReadOnlyList<WholesaleSampleVariant> Items, int TotalProducts)> SampleAsync(
-        Guid tenantId, string currency, IReadOnlyCollection<Guid>? categoryIds, int take, CancellationToken cancellationToken)
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
+        int take,
+        CancellationToken cancellationToken)
     {
         SampleCategoryIds.Add(categoryIds);
         SampleCalls.Add((currency, take));
+        SampleExclusions.Add((excludedCategoryIds, excludedProductIds));
         var matching = Products
             .Where(product => product.IsActive && product.Prices.ContainsKey(currency))
+            .Where(product => !IsExcluded(product, excludedCategoryIds, excludedProductIds))
             .Where(product => categoryIds is null
                 || (product.CategoryId is { } category && categoryIds.Contains(category)))
             .OrderBy(product => product.Name, StringComparer.Ordinal)

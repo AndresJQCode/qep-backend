@@ -560,6 +560,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Wholesale.Application.ListWholesaleCategoriesQuery, Modules.Wholesale.Application.WholesaleCategoriesResponse>,
             Modules.Wholesale.Application.ListWholesaleCategoriesHandler>();
         services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListWholesaleProductsQuery, Modules.Wholesale.Application.WholesaleProductsResponse>,
+            Modules.Wholesale.Application.ListWholesaleProductsHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Wholesale.Application.ListDistributorsQuery, Modules.Wholesale.Application.DistributorsResponse>,
             Modules.Wholesale.Application.ListDistributorsHandler>();
         services.AddScoped<

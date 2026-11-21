@@ -183,6 +183,15 @@ internal sealed class WriterProductRepository : IProductRepository
         Guid tenantId, string? search, string? name, string? code, bool? isActive, IReadOnlyCollection<Guid>? categoryIds, int page, int pageSize,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
+    public Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId, string? search, string? pricedInCurrency, IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds, IReadOnlyCollection<Guid>? excludedProductIds, bool orderByName, int page,
+        int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyList<ProductBasics>> FindBasicsByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<IReadOnlyList<Product>> ListForExportAsync(
         Guid tenantId, string? search, string? name, string? code, bool? isActive, ProductKind? kind, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();

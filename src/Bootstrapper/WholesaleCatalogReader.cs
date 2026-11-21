@@ -45,6 +45,8 @@ internal sealed class WholesaleCatalogReader(
         Guid tenantId,
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
         int take,
         CancellationToken cancellationToken)
     {
@@ -54,8 +56,9 @@ internal sealed class WholesaleCatalogReader(
             return ([], 0);
         }
 
-        var (found, total) = await products.SearchAsync(
-            tenantId, null, null, null, isActive: true, expanded, page: 1, pageSize: take, cancellationToken);
+        var hidden = await ExpandAsync(tenantId, excludedCategoryIds is { Count: > 0 } ? excludedCategoryIds : null, cancellationToken);
+        var (found, total) = await products.SearchActiveFilteredAsync(
+            tenantId, null, null, expanded, hidden, excludedProductIds, orderByName: false, page: 1, pageSize: take, cancellationToken);
         var valueNames = await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, found, cancellationToken);
 
         var items = new List<WholesaleSampleVariant>(found.Count);
@@ -101,6 +104,8 @@ internal sealed class WholesaleCatalogReader(
         Guid tenantId,
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
         string? search,
         int page,
         int pageSize,
@@ -112,13 +117,17 @@ internal sealed class WholesaleCatalogReader(
             return ([], 0);
         }
 
-        var (found, total) = await products.SearchAsync(
+        // Spec 2026-11-20: las exclusiones se filtran en la consulta (con sus descendientes), no sobre la página: así Total y
+        // la paginación cuentan sólo lo que el distribuidor puede ver.
+        var hidden = await ExpandAsync(tenantId, excludedCategoryIds is { Count: > 0 } ? excludedCategoryIds : null, cancellationToken);
+        var (found, total) = await products.SearchActiveFilteredAsync(
             tenantId,
             string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
             null,
-            null,
-            isActive: true,
             expanded,
+            hidden,
+            excludedProductIds,
+            orderByName: false,
             page,
             pageSize,
             cancellationToken);
@@ -127,6 +136,67 @@ internal sealed class WholesaleCatalogReader(
         var items = await ToSellableAsync(tenantId, currency, ordered, product => product.Variants, cancellationToken);
         return (items, total);
     }
+
+    public async Task<IReadOnlyDictionary<Guid, WholesaleProductRef>> FindProductsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, WholesaleProductRef>();
+        }
+
+        // Acotada al tenant: un id ajeno o borrado simplemente no aparece.
+        var found = await products.FindBasicsByIdsAsync(tenantId, ids.Select(id => new ProductId(id)).ToArray(), cancellationToken);
+        return found.ToDictionary(
+            product => product.Id.Value,
+            product => new WholesaleProductRef(
+                product.Id.Value, product.SingleVariantCode, product.Name, product.CategoryId?.Value, product.VariantCount, null));
+    }
+
+    public async Task<(IReadOnlyList<WholesaleProductRef> Items, int Total)> SearchProductsAsync(
+        Guid tenantId,
+        string currency,
+        Guid? categoryId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var expanded = await ExpandAsync(tenantId, categoryId is { } chosen ? [chosen] : null, cancellationToken);
+        if (expanded is { Count: 0 })
+        {
+            return ([], 0);
+        }
+
+        // Los mismos productos que la lista puede mostrar: activos y con precio en la moneda; el Total los cuenta a ellos.
+        var (found, total) = await products.SearchActiveFilteredAsync(
+            tenantId,
+            string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+            currency,
+            expanded,
+            null,
+            null,
+            orderByName: true,
+            page,
+            pageSize,
+            cancellationToken);
+        var files = await CatalogVariantReads.LoadImagesAsync(images, found.Select(product => product.ImageFileId), cancellationToken);
+        // El orden por nombre lo pone la consulta (también con búsqueda): reordenar la página en memoria no lo arreglaría.
+        var items = found
+            .Select(product => RefOf(product, CatalogVariantReads.ImageUrlOf(product.ImageFileId, files, tenantId)))
+            .ToList();
+        return (items, total);
+    }
+
+    // El código sólo cuando lo identifica: con una sola variante, el suyo (ProductListCode, la regla de la grilla del catálogo).
+    private static WholesaleProductRef RefOf(Product product, string? imageUrl) =>
+        new(
+            product.Id.Value,
+            product.Variants.Count == 1 ? product.Variants[0].Code : null,
+            product.Name,
+            product.CategoryId?.Value,
+            product.Variants.Count,
+            imageUrl);
 
     private async Task<HashSet<Guid>?> ExpandAsync(
         Guid tenantId, IReadOnlyCollection<Guid>? categoryIds, CancellationToken cancellationToken)

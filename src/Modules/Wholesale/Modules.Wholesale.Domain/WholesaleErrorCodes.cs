@@ -73,4 +73,7 @@ public static class WholesaleErrorCodes
     public const string PriceListCategoriesRequired = "wholesale.price_list.categories_required";
 
     public const string PriceListCategoriesTooMany = "wholesale.price_list.categories_too_many";
+
+    /// <summary>Spec 2026-11-20: más exclusiones de las que caben en una lista.</summary>
+    public const string PriceListExclusionsTooMany = "wholesale.price_list.exclusions_too_many";
 }

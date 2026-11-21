@@ -112,6 +112,74 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         return (items, total);
     }
 
+    public async Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId,
+        string? search,
+        string? pricedInCurrency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
+        bool orderByName,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var source = Aggregates().AsNoTracking();
+        if (pricedInCurrency is not null)
+        {
+            source = source.Where(product => product.Variants.Any(variant =>
+                variant.IsActive && variant.Prices.Any(price => price.Currency == pricedInCurrency)));
+        }
+
+        if (excludedProductIds is { Count: > 0 })
+        {
+            var hiddenProducts = excludedProductIds.Select(id => new ProductId(id)).ToArray();
+            source = source.Where(product => !hiddenProducts.Contains(product.Id));
+        }
+
+        if (excludedCategoryIds is { Count: > 0 })
+        {
+            // Mismo tipo exacto que en SearchQueryAsync (ProductCategoryId?). Un producto sin categoría nunca cae por acá
+            // (regla 4 del spec); el null se pregunta aparte para que no dependa de cómo traduce EF el NOT IN. Lo prueba
+            // PriceListExclusionsApiTests contra Postgres.
+            var hiddenCategories = excludedCategoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            source = source.Where(product => product.CategoryId == null || !hiddenCategories.Contains(product.CategoryId));
+        }
+
+        var (ordered, total) = await SearchQueryAsync(
+            source, tenantId, search, null, null, isActive: true, categoryIds, cancellationToken, byNameOnly: orderByName);
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    public async Task<IReadOnlyList<ProductBasics>> FindBasicsByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        // Proyectado en la base: sin agregado, sin precios ni costos. El código sólo con una variante.
+        var rows = await dbContext.Products
+            .AsNoTracking()
+            .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id))
+            .Select(product => new
+            {
+                product.Id,
+                product.Name,
+                product.CategoryId,
+                VariantCount = product.Variants.Count,
+                Code = product.Variants.Count == 1 ? product.Variants.Min(variant => variant.Code) : null,
+            })
+            .ToListAsync(cancellationToken);
+        return rows.Select(row => new ProductBasics(row.Id, row.Name, row.CategoryId, row.VariantCount, row.Code)).ToList();
+    }
+
     // Con variantes, el listado de productos no trae el agregado (con 2.048 variantes por
     // producto y sus escalas, una página de 200 serían cientos de miles de filas para pintar una
     // grilla). Proyecta lo que la fila muestra y, en una segunda consulta agrupada en la base, el
@@ -441,7 +509,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? code,
         bool? isActive,
         IReadOnlyCollection<Guid>? categoryIds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool byNameOnly = false)
     {
         var query = source.Where(product => product.TenantId == tenantId);
         if (isActive is not null)
@@ -484,7 +553,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         var codeTerm = code?.Trim() ?? string.Empty;
 
         // Con variantes, la relevancia del código es la de la variante que más se parece.
-        var orderedQuery = searchPattern is not null
+        var orderedQuery = byNameOnly
+            ? query.OrderBy(product => product.Name)
+            : searchPattern is not null
             ? query.OrderByDescending(product =>
                 EF.Functions.TrigramsSimilarity(product.Name, searchTerm) +
                 product.Variants.Max(variant => EF.Functions.TrigramsSimilarity(variant.Code, searchTerm)))

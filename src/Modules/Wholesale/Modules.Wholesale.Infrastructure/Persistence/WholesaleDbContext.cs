@@ -37,6 +37,8 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
     internal const string NormalizedName = "NormalizedName";
 
     private const string CategoryIdsField = "_categoryIds";
+    private const string ExcludedCategoryIdsField = "_excludedCategoryIds";
+    private const string ExcludedProductIdsField = "_excludedProductIds";
 
     private const string DistributorIdColumn = "DistributorId";
 
@@ -89,6 +91,22 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
             .UsePropertyAccessMode(PropertyAccessMode.Field)
             .HasColumnName("category_ids")
             .HasColumnType("uuid[]");
+        // Spec 2026-11-20: el dominio expone una sola lista de exclusiones; la base guarda dos arreglos, como category_ids.
+        list.Ignore(value => value.Exclusions);
+        list.Ignore(value => value.ExcludedCategoryIds);
+        list.Ignore(value => value.ExcludedProductIds);
+        list.Property<List<Guid>>(ExcludedCategoryIdsField)
+            .HasField(ExcludedCategoryIdsField)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("excluded_category_ids")
+            .HasColumnType("uuid[]")
+            .HasDefaultValueSql("'{}'::uuid[]");
+        list.Property<List<Guid>>(ExcludedProductIdsField)
+            .HasField(ExcludedProductIdsField)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("excluded_product_ids")
+            .HasColumnType("uuid[]")
+            .HasDefaultValueSql("'{}'::uuid[]");
         list.Property(value => value.ShowPrices).HasColumnName("show_prices").HasDefaultValue(true);
         list.Property(value => value.CreatedAt).HasColumnName("created_at");
         list.Property(value => value.UpdatedAt).HasColumnName("updated_at");
