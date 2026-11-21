@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
 using Modules.Siigo.Domain;
@@ -28,6 +29,10 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
 
     internal DbSet<SiigoInvoice> Invoices => Set<SiigoInvoice>();
 
+    internal DbSet<SiigoInvoiceBatch> InvoiceBatches => Set<SiigoInvoiceBatch>();
+
+    internal DbSet<SiigoInvoiceBatchItem> InvoiceBatchItems => Set<SiigoInvoiceBatchItem>();
+
     internal DbSet<SiigoVariantLink> VariantLinks => Set<SiigoVariantLink>();
 
     internal DbSet<SiigoTaxLink> TaxLinks => Set<SiigoTaxLink>();
@@ -55,6 +60,7 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         ConfigurePaymentLink(modelBuilder);
         ConfigureInvoice(modelBuilder);
         ConfigureCallFailure(modelBuilder);
+        ConfigureInvoiceBatch(modelBuilder);
     }
 
     private static void ConfigureSettings(ModelBuilder modelBuilder)
@@ -170,6 +176,57 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         link.Property(value => value.BankAccountKey).HasColumnName("bank_account_key").HasMaxLength(BankAccountKey.MaxLength);
         link.Property(value => value.TenantId).HasColumnName("tenant_id");
         link.Property(value => value.SiigoPaymentTypeId).HasColumnName("siigo_payment_type_id").HasMaxLength(SiigoTaxLink.TaxIdMaxLength);
+    }
+
+    // Las tandas de facturación (spec 2026-11-21): una fila por tanda y una por pedido. Sin FKs a otros esquemas (pedido y usuario son
+    // referencias blandas); los ítems se borran con su tanda.
+    private static void ConfigureInvoiceBatch(ModelBuilder modelBuilder)
+    {
+        var batch = modelBuilder.Entity<SiigoInvoiceBatch>();
+        batch.ToTable("invoice_batches", Schema);
+        batch.HasKey(value => value.Id).HasName("PK_invoice_batches");
+        batch.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        batch.Property(value => value.TenantId).HasColumnName("tenant_id");
+        batch.Property(value => value.RequestedBy).HasColumnName("requested_by");
+        batch.Property(value => value.CreatedAt).HasColumnName("created_at");
+        batch.Property(value => value.FinishedAt).HasColumnName("finished_at");
+        batch.Ignore(value => value.IsFinished);
+        batch.HasIndex(value => new { value.TenantId, value.CreatedAt }).HasDatabaseName("IX_invoice_batches_tenant_created");
+        batch.HasMany(value => value.Items).WithOne().HasForeignKey(item => item.BatchId).OnDelete(DeleteBehavior.Cascade);
+        batch.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        var item = modelBuilder.Entity<SiigoInvoiceBatchItem>();
+        item.ToTable("invoice_batch_items", Schema);
+        item.HasKey(value => value.Id).HasName("PK_invoice_batch_items");
+        item.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        item.Property(value => value.BatchId).HasColumnName("batch_id");
+        item.Property(value => value.TenantId).HasColumnName("tenant_id");
+        item.Property(value => value.OrderId).HasColumnName("order_id");
+        item.Property(value => value.Position).HasColumnName("position");
+        item.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        item.Property(value => value.ErrorCode).HasColumnName("error_code").HasMaxLength(SiigoInvoiceBatchItem.ErrorCodeMaxLength);
+        item.Property(value => value.MissingCodes)
+            .HasColumnName("missing_codes")
+            .HasMaxLength(SiigoInvoiceBatchItem.MissingCodesMaxLength)
+            .HasConversion(
+                codes => string.Join(',', codes),
+                text => text.Length == 0 ? Array.Empty<string>() : text.Split(',', StringSplitOptions.None),
+                new ValueComparer<IReadOnlyList<string>>(
+                    (left, right) => left!.SequenceEqual(right!),
+                    codes => codes.Aggregate(0, (hash, code) => HashCode.Combine(hash, code)),
+                    codes => codes.ToArray()));
+        item.Property(value => value.InvoiceNumber).HasColumnName("invoice_number").HasMaxLength(SiigoInvoiceBatchItem.InvoiceNumberMaxLength);
+        item.Property(value => value.Attempts).HasColumnName("attempts");
+        item.Property(value => value.AvailableAt).HasColumnName("available_at");
+        item.Property(value => value.LeaseUntil).HasColumnName("lease_until");
+        item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Un pedido una sola vez por tanda.
+        item.HasIndex(value => new { value.BatchId, value.OrderId }).IsUnique().HasDatabaseName("IX_invoice_batch_items_batch_order");
+        // El reclamo del worker: lo pendiente por hora y lo reclamado por vencimiento del lease. Sólo lo no resuelto.
+        item.HasIndex(value => new { value.Status, value.AvailableAt })
+            .HasDatabaseName("IX_invoice_batch_items_claim")
+            .HasFilter("status IN ('Pending', 'Sending')");
+        item.Ignore(value => value.IsSettled);
     }
 
     private static void ConfigureInvoice(ModelBuilder modelBuilder)

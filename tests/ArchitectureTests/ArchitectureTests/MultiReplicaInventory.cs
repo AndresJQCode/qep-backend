@@ -114,6 +114,8 @@ public static class MultiReplicaInventory
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyRepositories.cs:199-202 — lease por tienda (reconcile_lease_until)"),
         new("Modules.Shopify.Infrastructure.Workers.ShopifyOrderPushWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyOrderPushQueue.cs:36-39 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por envío"),
+        new("Modules.Siigo.Infrastructure.Batches.SiigoInvoiceBatchWorker", WorkerClassification.Claimed,
+            "Modules/Siigo/Modules.Siigo.Infrastructure/Batches/SiigoInvoiceBatchWorker.cs (ClaimAsync) — UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED) con lease_until de 5 min por pedido; un pedido por réplica a la vez, y repetirlo no duplica (candado por pedido y clave de idempotencia del handler)"),
         new("Modules.Shopify.Infrastructure.Workers.ShopifyProductImportWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyProductImportQueue.cs:27-32 — FOR UPDATE SKIP LOCKED con lease_until de 2 min por importación"),
         new("Modules.Ai.Infrastructure.AiInboxWorker", WorkerClassification.Claimed,

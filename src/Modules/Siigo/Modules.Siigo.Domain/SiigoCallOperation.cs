@@ -23,4 +23,7 @@ public enum SiigoCallOperation
     InvoiceStamp,
 
     StampErrors,
+
+    /// <summary>La descarga del PDF de una factura ya creada.</summary>
+    InvoicePdf,
 }

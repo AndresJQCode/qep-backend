@@ -73,6 +73,9 @@ public sealed class SiigoInvoiceNotReadyException(IReadOnlyList<SiigoMissing> mi
     : DomainException(SiigoErrorCodes.InvoiceNotReady, "The order is not ready to be invoiced in Siigo."),
       IHasProblemExtensions
 {
+    /// <summary>Lo que falta, para quien lo necesite sin pasar por el 422 (la tanda de facturación guarda sus códigos).</summary>
+    public IReadOnlyList<SiigoMissing> Missing { get; } = missing;
+
     public IReadOnlyDictionary<string, object?> ProblemExtensions { get; } = new Dictionary<string, object?>(StringComparer.Ordinal)
     {
         ["details"] = new { missing = missing.Select(value => new SiigoMissingDto(value.Code, value.Reference, value.Label)).ToArray() },

@@ -4,13 +4,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Infrastructure.Api;
+using Modules.Siigo.Infrastructure.Batches;
 using Modules.Siigo.Infrastructure.Persistence;
 
 namespace Modules.Siigo.Infrastructure;
 
-/// <summary>Persistencia, auditoría y cliente HTTP del módulo Siigo. Sin hosted services; el único singleton con estado es
-/// <see cref="SiigoTokenCache"/>, clasificado en <c>MultiReplicaInventory</c>.</summary>
+/// <summary>Persistencia, auditoría y cliente HTTP del módulo Siigo, y el worker de las tandas de facturación; el único singleton con
+/// estado es <see cref="SiigoTokenCache"/>, clasificado en <c>MultiReplicaInventory</c>.</summary>
 public static class SiigoInfrastructureExtensions
 {
     public static IServiceCollection AddSiigoInfrastructure(
@@ -36,6 +38,12 @@ public static class SiigoInfrastructureExtensions
         services.AddScoped<ISiigoInvoiceRepository, SiigoInvoiceRepository>();
         services.AddScoped<ISiigoCallFailureLog, SiigoCallFailureLog>();
         services.AddScoped<ISiigoCallFailureRepository, SiigoCallFailureRepository>();
+        services.AddScoped<ISiigoInvoiceBatchRepository, SiigoInvoiceBatchRepository>();
+
+        // Las tandas de facturación: un worker por réplica, con timbre. Quien factura cada pedido (ISiigoBatchItemInvoker) vive en
+        // Bootstrapper, porque corre el handler como la persona que pidió la tanda.
+        services.Configure<SiigoInvoiceBatchOptions>(configuration.GetSection(SiigoInvoiceBatchOptions.SectionName));
+        services.AddHostedService<SiigoInvoiceBatchWorker>();
 
         // Spec 2026-11-18 §8: Siigo:BaseUrl y Siigo:PartnerId. Se validan al arrancar (en Production, sin Partner-Id el pod no arranca).
         services.AddOptions<SiigoOptions>().Bind(configuration.GetSection(SiigoOptions.SectionName)).ValidateOnStart();

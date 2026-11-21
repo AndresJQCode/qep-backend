@@ -296,6 +296,111 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                     b.ToTable("invoices", "siigo");
                 });
 
+            modelBuilder.Entity("Modules.Siigo.Domain.SiigoInvoiceBatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<Guid>("RequestedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("requested_by");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id")
+                        .HasName("PK_invoice_batches");
+
+                    b.HasIndex("TenantId", "CreatedAt")
+                        .HasDatabaseName("IX_invoice_batches_tenant_created");
+
+                    b.ToTable("invoice_batches", "siigo");
+                });
+
+            modelBuilder.Entity("Modules.Siigo.Domain.SiigoInvoiceBatchItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset>("AvailableAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("available_at");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("batch_id");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("error_code");
+
+                    b.Property<string>("InvoiceNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("invoice_number");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_until");
+
+                    b.Property<string>("MissingCodes")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("missing_codes");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("PK_invoice_batch_items");
+
+                    b.HasIndex("BatchId", "OrderId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_invoice_batch_items_batch_order");
+
+                    b.HasIndex("Status", "AvailableAt")
+                        .HasDatabaseName("IX_invoice_batch_items_claim")
+                        .HasFilter("status IN ('Pending', 'Sending')");
+
+                    b.ToTable("invoice_batch_items", "siigo");
+                });
+
             modelBuilder.Entity("Modules.Siigo.Domain.SiigoPaymentLink", b =>
                 {
                     b.Property<Guid>("ConnectionId")
@@ -610,6 +715,15 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Siigo.Domain.SiigoInvoiceBatchItem", b =>
+                {
+                    b.HasOne("Modules.Siigo.Domain.SiigoInvoiceBatch", null)
+                        .WithMany("Items")
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Siigo.Domain.SiigoPaymentLink", b =>
                 {
                     b.HasOne("Modules.Siigo.Domain.SiigoSettings", null)
@@ -653,6 +767,11 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ConnectionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Siigo.Domain.SiigoInvoiceBatch", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("Modules.Siigo.Domain.SiigoSettings", b =>

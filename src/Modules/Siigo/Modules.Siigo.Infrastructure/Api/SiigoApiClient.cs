@@ -261,7 +261,12 @@ internal sealed class SiigoApiClient(
 
     public async Task<byte[]> GetInvoicePdfAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
     {
-        var reply = await GetAsync(credentials, $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/pdf", cancellationToken);
+        var reply = await GetAsync(
+            credentials,
+            SiigoCallOperation.InvoicePdf,
+            $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/pdf",
+            siigoInvoiceId,
+            cancellationToken);
         using var document = SiigoJson.Parse(reply.Body);
         var encoded = document is null ? null : SiigoJson.Text(document.RootElement, "base64");
         try
