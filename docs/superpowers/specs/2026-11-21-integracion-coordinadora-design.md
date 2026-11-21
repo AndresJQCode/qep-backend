@@ -319,5 +319,11 @@ del proveedor en Integraciones.
   opciones.
 - **Arquitectura**: `CoordinadoraLayerTests`, el conteo de permisos, los dos clientes HTTP sin loggers, el proveedor en el
   catálogo y la clave de módulo en Tenancy.
-- **Integración** (`Modules.Coordinadora.IntegrationTests`): configuración y generación con un `FakeCoordinadoraApi` como
-  handler primario. **Escritas pero no corridas en esta sesión** (sin Docker para Testcontainers): las corre el owner.
+- **Integración**: **no se escribieron en esta sesión.** El contenedor no tiene Docker, así que Testcontainers no arranca y
+  una prueba que no se puede correr no deja evidencia. Quedan como pendiente: `Modules.Coordinadora.IntegrationTests` con un
+  `FakeCoordinadoraApi` como handler primario del cliente `coordinadora` (configuración, generación con candado, 403 por tenant,
+  índice único de la guía viva), más las de Tenancy e Integrations que enumeran módulos y proveedores (ya actualizadas, sin correr).
+
+**Lo que no corrió en esta sesión** (2026-11-21): ninguna llamada a Coordinadora (ni sandbox), las migraciones contra una base,
+el arranque del host (`ValidateOnStart`, `MigrateAsync`) y toda prueba de integración. Corrieron el build del host, las unitarias
+de Coordinadora, Integrations, Tenancy, Quotations y Bootstrapper, y `ArchitectureTests`.
