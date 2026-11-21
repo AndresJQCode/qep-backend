@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
+using Modules.Siigo.Application;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
 using static Modules.Siigo.IntegrationTests.SiigoInvoicingHarness;
 
@@ -36,7 +37,7 @@ public sealed class SiigoNoLeakTests
             factory,
             world.Tenant.OwnerUserId,
             world.TenantId,
-            [.. InvoicerPermissions, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage]);
+            [.. InvoicerPermissions, IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage, SiigoPermissions.CallsRead]);
 
         var customer = await ReadAsync(await client.GetAsync($"/api/v1/tenants/{world.TenantId}/customers/{world.CustomerId}", Ct));
         var documentNumber = customer.GetProperty("identificationNumber").GetString()!;
@@ -67,6 +68,8 @@ public sealed class SiigoNoLeakTests
         world.Siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f", 0m));
         await CallAsync("POST invoice created", () => client.PostAsync(world.BaseRoute, null, Ct));
         await CallAsync("GET invoices", () => client.GetAsync(world.BaseRoute, Ct));
+        // Spec 2026-11-21: la lista de fallas no lleva el curl ni la respuesta (que repiten la dirección y el documento del cliente).
+        await CallAsync("GET call-failures", () => client.GetAsync($"{tenantRoute}/siigo/call-failures", Ct));
 
         // La prueba ejerció el camino de las credenciales y de los datos: Siigo recibió el token y el cliente, y cada llamada llegó a su
         // handler (no un 500 ni un 401 que no diga nada).
@@ -77,7 +80,7 @@ public sealed class SiigoNoLeakTests
         Assert.Equal(
             [
                 "POST test connection → 200", "GET connection → 200", "GET connections → 200", "GET settings → 200", "GET options → 200",
-                "POST invoice rejected → 200", "POST invoice created → 200", "GET invoices → 200",
+                "POST invoice rejected → 200", "POST invoice created → 200", "GET invoices → 200", "GET call-failures → 200",
             ],
             bodies.Select(entry => entry.Call));
         // Control positivo: el host registró en Trace.
@@ -98,6 +101,12 @@ public sealed class SiigoNoLeakTests
                 world.ConnectionString,
                 "SELECT coalesce(string_agg(action, ',' ORDER BY action), '') FROM audit.entries WHERE tenant_id = @t AND action LIKE 'siigo.invoice.%'",
                 ("t", world.TenantId))).Split(',', StringSplitOptions.RemoveEmptyEntries));
+        // La fila del rechazo guarda el curl y la respuesta de Siigo (con datos del cliente: es su propósito, y sólo el detalle los devuelve),
+        // pero nunca el token ni la clave de acceso, ni siquiera tras autenticar: control positivo con el código que Siigo repitió.
+        var failures = await ScalarAsync<string>(world.ConnectionString, "SELECT coalesce(string_agg(f::text, E'\n'), '') FROM siigo.call_failures f");
+        Assert.Contains("invalid_customer", failures, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccessKey, failures, StringComparison.Ordinal);
+        Assert.DoesNotContain(FakeSiigoApi.Token, failures, StringComparison.Ordinal);
         foreach (var secret in secrets)
         {
             Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(secret, StringComparison.Ordinal));

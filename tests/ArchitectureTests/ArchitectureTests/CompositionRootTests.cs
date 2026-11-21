@@ -349,8 +349,9 @@ public sealed class CompositionRootTests
         // + los dos del copiloto (ai.copilot.use|manage, spec 2026-11-17)
         // + los dos de compras (purchases.order.read|manage, spec 2026-11-17)
         // + los tres de mayorista (spec 2026-11-17)
-        // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18).
-        Assert.Equal(94, PermissionConstants().Length);
+        // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18)
+        // + el de las fallas de las llamadas a Siigo (siigo.calls.read, spec 2026-11-21).
+        Assert.Equal(95, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -942,9 +943,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
-        var all = new[] { SiigoPermissions.SettingsManage, SiigoPermissions.InvoiceIssue };
+        var all = new[] { SiigoPermissions.SettingsManage, SiigoPermissions.InvoiceIssue, SiigoPermissions.CallsRead };
 
-        Assert.Equal(["siigo.settings.manage", "siigo.invoice.issue"], all);
+        Assert.Equal(["siigo.settings.manage", "siigo.invoice.issue", "siigo.calls.read"], all);
         foreach (var permission in all)
         {
             Assert.Equal([ModuleKeys.Siigo], definitions[permission].RequiredModules!.ToArray());
@@ -955,6 +956,8 @@ public sealed class CompositionRootTests
 
         Assert.Contains(SiigoPermissions.InvoiceIssue, catalog.PermissionsFor("billing"));
         Assert.DoesNotContain(SiigoPermissions.SettingsManage, catalog.PermissionsFor("billing"));
+        // Spec 2026-11-21: el curl y la respuesta llevan datos del cliente; quien factura no los ve de fábrica.
+        Assert.DoesNotContain(SiigoPermissions.CallsRead, catalog.PermissionsFor("billing"));
     }
 
     /// <summary>
