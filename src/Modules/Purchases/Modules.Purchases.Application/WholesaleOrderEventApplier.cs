@@ -16,12 +16,38 @@ namespace Modules.Purchases.Application;
 public sealed partial class WholesaleOrderEventApplier(
     IPurchaseOrderRepository orders,
     IPurchasesCatalogWriter catalogWriter,
+    IPurchasesProductImages productImages,
     IPurchasesAuditPublisher auditPublisher,
     IPurchasesUnitOfWork unitOfWork,
     ILogger<WholesaleOrderEventApplier> logger)
 {
     // D-22: la traza queda en el comprador, firmada por nadie del tenant.
     private static readonly string[] WholesalerField = ["wholesaler"];
+
+    // Spec 2026-11-21: las fotos de los productos que esta aprobación creó. El applier es del scope de un mensaje, así que la
+    // lista es de ese mensaje; el procesador las copia sólo después de confirmar.
+    private readonly List<PendingProductImage> _pendingImages = [];
+
+    /// <summary>
+    /// Copia la foto de cada producto que la última aprobación creó. Se llama **después** del commit: nunca lanza (el mensaje ya
+    /// quedó procesado) y una falla no impide las demás; cada una se registra.
+    /// </summary>
+    public async Task CopyPendingImagesAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var pending = _pendingImages.ToArray();
+        _pendingImages.Clear();
+        foreach (var image in pending)
+        {
+            try
+            {
+                await productImages.CopyAsync(image, now, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                LogImageCopyFailed(logger, exception, image.BuyerTenantId, image.ProductId);
+            }
+        }
+    }
 
     public async Task<WholesaleEventOutcome> ApplyApprovedAsync(
         WholesaleApproval approval, DateTimeOffset now, CancellationToken cancellationToken)
@@ -152,6 +178,14 @@ public sealed partial class WholesaleOrderEventApplier(
             {
                 order.LinkLineToCatalog(line.Id, entry.VariantId, entry.Created && line.Id == first.Id);
             }
+
+            // La foto sale de la variante del mayorista de la primera línea que la conozca; sólo a lo que se creó.
+            if (entry is { Created: true, ProductId: { } productId }
+                && order.SupplierTenantId is { } supplierTenant
+                && group.FirstOrDefault(line => line.SupplierVariantId is not null)?.SupplierVariantId is { } supplierVariant)
+            {
+                _pendingImages.Add(new PendingProductImage(order.TenantId, supplierTenant, supplierVariant, productId));
+            }
         }
     }
 
@@ -182,6 +216,9 @@ public sealed partial class WholesaleOrderEventApplier(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Line {LineId} of purchase order {PurchaseOrderId} of tenant {TenantId} has no code; it stays without a catalog product.")]
     private static partial void LogBlankCode(ILogger logger, Guid tenantId, Guid purchaseOrderId, Guid lineId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not copy the wholesaler image to catalog product {ProductId} of tenant {TenantId}; the product stays without an image.")]
+    private static partial void LogImageCopyFailed(ILogger logger, Exception exception, Guid tenantId, Guid productId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not find or create the catalog product {Code} for purchase order {PurchaseOrderId} of tenant {TenantId}; its lines stay without a catalog product.")]
     private static partial void LogCatalogFailed(

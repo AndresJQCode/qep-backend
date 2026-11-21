@@ -85,3 +85,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Un producto creado por Compras no tiene precio de venta (`AllowsNoPrice`) ni origen externo** (D-16, D-17). Nace sin
   `ExternalSource` para que el distribuidor lo edite como cualquier otro, sin precio, y con costo sólo si es mayor que 0. No sale
   en tienda, POS ni cotizaciones hasta que alguien le ponga precio; guardar el producto desde el formulario exige precio.
+- **La foto del producto creado por Compras se copia después del commit, nunca dentro de él** (spec 2026-11-21). El evento de
+  aprobación no lleva imagen: `WholesaleOrderEventApplier` anota un `PendingProductImage` por producto **creado** (no por uno hallado
+  por código) con el `SupplierVariantId` de la línea y el `SupplierTenantId` de la orden, y el procesador llama
+  `CopyPendingImagesAsync` ya confirmado. `PurchasesProductImages` (Bootstrapper) busca la foto en el catálogo del **mayorista**, baja
+  los bytes y los sube como archivo propio del distribuidor: no guardes la URL del mayorista. No lo muevas a la transacción del
+  inbox: el archivo de Storage no se deshace con ella y un reintento dejaría archivos `Available` sin dueño. Una falla de la foto
+  se registra y el producto queda sin imagen; no frena la confirmación ni se reintenta. **El adaptador no tiene prueba automática**
+  (necesita Catalog y Storage reales): se verifica a mano aprobando una orden con un producto del mayorista que tenga foto.

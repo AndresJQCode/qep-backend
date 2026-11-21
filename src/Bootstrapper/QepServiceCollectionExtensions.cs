@@ -2096,6 +2096,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.IWholesaleOrderIntake, PurchasesWholesaleOrderIntake>();
         services.AddScoped<IWholesaleIntakeDirectory, WholesaleIntakeDirectory>();
         services.AddScoped<Modules.Purchases.Application.IPurchasesCatalogWriter, PurchasesCatalogWriter>();
+        services.AddScoped<Modules.Purchases.Application.IPurchasesProductImages, PurchasesProductImages>();
         // Y la adenda del contrato: el estado de la relación con el mayorista en la lista y el detalle de proveedores.
         services.AddScoped<ISupplierRelationshipLookup, SuppliersWholesaleRelationshipLookup>();
 

@@ -121,8 +121,26 @@ public interface IWholesaleOrderIntake
         CancellationToken cancellationToken);
 }
 
-/// <summary>La variante del catálogo propio que se encontró por código o se creó (D-18).</summary>
-public sealed record PurchasesCatalogEntry(Guid VariantId, bool Created);
+/// <summary>La variante del catálogo propio que se encontró por código o se creó (D-18). <c>ProductId</c> viene sólo si se
+/// creó: una variante hallada por código no se vuelve a leer y nadie lo necesita.</summary>
+public sealed record PurchasesCatalogEntry(Guid VariantId, bool Created, Guid? ProductId);
+
+/// <summary>
+/// La foto de un producto que Compras acaba de crear y falta copiar del catálogo del mayorista (spec 2026-11-21): de qué
+/// variante del mayorista sale y a qué producto del comprador va.
+/// </summary>
+public sealed record PendingProductImage(Guid BuyerTenantId, Guid SupplierTenantId, Guid SupplierVariantId, Guid ProductId);
+
+/// <summary>
+/// Copia la foto de la variante del mayorista al producto nuevo del comprador; adaptador en Bootstrapper sobre Catalog y
+/// Storage. Corre **después** del commit del evento, fuera de la transacción del producto: la foto es un archivo de Storage y
+/// no puede deshacerse con ella. Una falla lanza y quien llama la registra (<c>CopyPendingImagesAsync</c>): lo ya confirmado
+/// no se deshace por una foto.
+/// </summary>
+public interface IPurchasesProductImages
+{
+    Task CopyAsync(PendingProductImage image, DateTimeOffset now, CancellationToken cancellationToken);
+}
 
 /// <summary>
 /// El catálogo del comprador para la confirmación del mayorista (D-18); adaptador en Bootstrapper sobre Catalog. Busca por
