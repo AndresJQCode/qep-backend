@@ -285,6 +285,11 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("freight_separate_invoice");
 
+                    b.Property<string>("SellerId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("seller_id");
+
                     b.Property<bool>("SendMail")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
