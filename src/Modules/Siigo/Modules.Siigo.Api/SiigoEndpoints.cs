@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.CallFailures;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Application.Products;
 using Modules.Siigo.Application.Settings;
@@ -156,8 +157,42 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-21: las llamadas a Siigo que fallaron, con su curl y la respuesta. Lectura sola; expiran a los 7 días.
+        var failures = endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/siigo/call-failures")
+            .WithTags("Siigo")
+            .RequireAuthorization(SiigoPermissions.CallsRead);
+
+        failures.MapGet("/", ListCallFailuresAsync)
+            .Produces<SiigoCallFailurePageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        failures.MapGet("/{id:guid}", GetCallFailureAsync)
+            .Produces<SiigoCallFailureDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
+
+    private static async Task<IResult> ListCallFailuresAsync(
+        Guid tenantId,
+        string? page,
+        string? pageSize,
+        string? operation,
+        string? status,
+        string? from,
+        string? to,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        // Todo como texto: un valor ilegible es 422 con su campo (ListSiigoCallFailuresValidator), no un 400 de enlace sin errors.
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListSiigoCallFailuresQuery(tenantId, operation, status, from, to, page, pageSize), cancellationToken));
+
+    private static async Task<IResult> GetCallFailureAsync(
+        Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetSiigoCallFailureQuery(tenantId, id), cancellationToken));
 
     private static async Task<IResult> InvoiceAvailabilityAsync(
         Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

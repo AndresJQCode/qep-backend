@@ -27,12 +27,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
-- **Una llamada a Siigo que falla deja su curl en el log de fallas (`platform/request-log`), sin interruptor.** El detalle de la fila lleva el
-  `curl.exe` de la petición (token y `access_key` enmascarados) y la respuesta de Siigo, con datos del cliente: sólo lo lee quien tiene
-  `RequestLogRead`. Dos caminos: la factura y el sellado no lanzan, así que `SiigoApiClient` escribe la fila por `ISiigoCallFailureLog`
-  (`siigo.call_failed`, adaptador `SiigoCallFailureLog` en Bootstrapper, sólo en requests que escriben); las lecturas y el cliente nuevo
-  lanzan, y el curl viaja en `Exception.Data["request.diagnostic"]` hasta `RequestFailureCapture.Describe`. Ese literal está en Siigo y en
-  Api: cambiar uno compila y deja el detalle sin curl. Una respuesta buena nunca se guarda: la de `/auth` trae el token.
+- **Una llamada a Siigo que falla deja su curl y la respuesta en `siigo.call_failures`** (spec 2026-11-21). Una fila por llamada fallida,
+  lecturas y escrituras: el `curl.exe` de la petición (token y `access_key` enmascarados, `SiigoCurl.Build`) y lo que contestó Siigo, atada a la
+  factura por la `Idempotency-Key` (creación) o el id de Siigo (sellado). **Una llamada buena no se guarda nunca:** la respuesta de `/auth`
+  trae el token. Las escribe `SiigoApiClient` por `ISiigoCallFailureLog` (`SiigoCallFailureLog`, con su propio `DbContext`, sin propagar
+  errores) y cada escritura borra de paso hasta 200 filas de más de 7 días, de todos los tenants (sin worker). Se leen con `siigo.calls.read`
+  (sólo `admin` de fábrica; soporte recibe un rol personalizado) en `GET …/siigo/call-failures` (sin curl ni cuerpo) y `…/{id}` (con ellos):
+  llevan datos del cliente. El log de requests (`platform/request-log`) conserva sólo la excepción, ligada por `TraceId`; no lleva el curl.
 - **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected` y
   `Failed`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`, `order_id` o
   `tenant_id` compila y deja ambas operaciones en 500.
