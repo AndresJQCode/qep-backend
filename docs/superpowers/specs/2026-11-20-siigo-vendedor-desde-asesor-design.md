@@ -51,9 +51,11 @@ usuario ya no resuelven.
 ### 4.3 Paginación de las listas (bug existente)
 
 `SiigoApiClient.ReadOptionsAsync` lee sólo la primera página. Con más de 25 usuarios, bodegas, centros de costo, formas
-de pago o impuestos, el resto no aparece. Se corrige para todas las listas: pedir `page_size=100` y recorrer `page=1..n`
-hasta juntar `pagination.total_results` (o hasta una página vacía). Si la respuesta no trae `pagination` (endpoints de
-Siigo que no paginan), se toma la única página como hoy.
+de pago o impuestos, el resto no aparece. Se corrige para todas las listas: la primera petición va **tal cual, sin
+parámetros de página** (los endpoints que devuelven un arreglo pelado no reciben nada nuevo). Sólo si la respuesta trae
+`pagination` y faltan resultados se piden `page=2..n` con el `page_size` que Siigo informó, hasta juntar `total_results` o
+recibir una página vacía. Tope: 100 páginas. (Revisión final, 2026-11-20: mandar `page`/`page_size` a endpoints no
+verificados arriesgaba un 400 que tumbaría el asistente.)
 
 ### 4.4 Resolución del vendedor
 
@@ -74,8 +76,12 @@ Función pura en Application, `SiigoSellerResolver.Resolve(string? advisorEmail,
 
 ### 4.6 Handlers
 
-- **Preview** (`PreviewSiigoInvoiceHandler`): pasa a leer credenciales (`SiigoInvoiceSupport.CredentialsAsync`) y la lista
-  de usuarios (cacheada) antes de armar. Cambia el principio de la spec 2026-11-18 §6.3 «sin llamar a Siigo»: ahora es
+- **Usuarios cacheados:** la lista se cachea 5 minutos por réplica. Si el asesor no aparece, se relee **una vez** sin caché
+  (`SiigoInvoiceSupport.ResolveSellerAsync`): el arreglo de un `seller_not_found` es crear el usuario en Siigo, y la caché
+  no puede seguir negándolo después.
+- **Preview** (`PreviewSiigoInvoiceHandler`): pasa a leer credenciales **de configuración**
+  (`SiigoInvoiceSupport.SetupCredentialsAsync`, que acepta una conexión pausada, como las listas del asistente) y la lista
+  de usuarios antes de armar. Cambia el principio de la spec 2026-11-18 §6.3 «sin llamar a Siigo»: ahora es
   «sin escribir nada y sin llamar a Siigo salvo la lista de usuarios, cacheada». Se actualiza el `<summary>`. Si Siigo no
   responde, el preview responde el mismo 503 `Unavailable` que ya devuelven las listas.
 - **Issue** (`IssueSiigoInvoiceHandler`): hoy arma (`:159`) antes de pedir credenciales (`:167`). Se invierte: credenciales,
@@ -87,8 +93,10 @@ Función pura en Application, `SiigoSellerResolver.Resolve(string? advisorEmail,
 - `SiigoSettings.SellerId`, `SiigoSettingsDto.SellerId`, `UpdateSiigoDocument.SellerId` (comando, validador,
   `OverridePropertyName("sellerId")`), el campo del request en `SiigoEndpoints.cs` y su paso a `SiigoSettingsSupport`.
 - `SiigoSettingsReadiness.SellerMissing` (`seller_missing`). Una conexión cuyo único faltante era el vendedor queda lista.
-- Migración EF: `DROP COLUMN seller_id` de `siigo.settings`, la única tabla que la tiene (verificado en
-  `SiigoDbContextModelSnapshot.cs`). El vendedor usado en cada factura queda en el `RequestJson` de su fila.
+- La columna `siigo.settings.seller_id` (la única tabla que la tiene) **no se borra en este release**: las migraciones
+  corren al arrancar, y borrarla rompería a las réplicas viejas durante un despliegue gradual y a un rollback de imagen.
+  Queda mapeada como propiedad sombra de EF, sin lectura ni escritura, y la borra una migración en un release posterior.
+  El vendedor usado en cada factura queda en el `RequestJson` de su fila.
 - La lista `users` de `ListSiigoOptions` **se queda**: deja de tener consumidor en el asistente, pero es barata y útil para
   diagnosticar. (Si el plan confirma que nadie la usa, se puede quitar en otro cambio.)
 
