@@ -25,7 +25,7 @@ public sealed class OrderExternalInvoicingTests
     };
 
     // Una línea de 2 × 11.900 con IVA del 19 % → neto 23.800. Por defecto, un comprobante de 100.000 (queda pagado).
-    private static Order NewOrder(IReadOnlyCollection<OrderPaymentProofInput>? proofs = null) =>
+    private static Order NewOrder(IReadOnlyCollection<OrderPaymentProofInput>? proofs = null, ShippingDetails? shipping = null) =>
         Order.CreateManual(
             OrderId.New(),
             TenantId,
@@ -33,7 +33,7 @@ public sealed class OrderExternalInvoicingTests
             new OrderHeader(ClientId, Advisor, "COP", "Transferencia", false, null, false, []),
             QuotationParties.Empty,
             Account,
-            ShippingDetails.None,
+            shipping ?? ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
             null,
             Advisor,
@@ -144,7 +144,8 @@ public sealed class OrderExternalInvoicingTests
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Calle 1 # 2-3",
                 WithRetention: false, VatSurplus: false)),
-            new StubQuotationAdvisorLookup());
+            new StubQuotationAdvisorLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
 
         await service.MarkInvoicedAsync(TenantId, order.Id.Value, "siigo", "FV-1-123", "a1b2c3", Biller.Value, TestContext.Current.CancellationToken);
         await service.MarkInvoicedAsync(TenantId, order.Id.Value, "siigo", "FV-1-123", "a1b2c3", Biller.Value, TestContext.Current.CancellationToken);
@@ -153,6 +154,63 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal(["quotation.order.invoiced"], audit.Actions);
         Assert.Equal([OrderHistoryEventType.Invoiced], repository.History.Select(entry => entry.EventType));
     }
+
+    // «Los mismos del cliente» no guarda parte de envío: el despacho va a la dirección y ciudad de la ficha del cliente, como la facturación.
+    [Fact]
+    public async Task GetForInvoicingShipsToTheCustomersAddressAndCityWhenTheOrderHasNoShippingParty()
+    {
+        // Envío gratis y sin transportadora: hay envío registrado, y ninguna parte de envío propia.
+        var order = NewOrder(shipping: new ShippingDetails(null, null, FreightChargeMode.Free, 0m, 0, CashOnDelivery: false));
+        Assert.Null(order.Shipping);
+        var cityId = Guid.CreateVersion7();
+        var service = NewService(
+            order,
+            new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Cra 9 # 13-135 bodega 501",
+                WithRetention: false, VatSurplus: false, CityId: cityId, DepartmentId: Guid.CreateVersion7(),
+                IdentificationNumber: "900123456", IdentificationType: "Nit"),
+            new Dictionary<Guid, string> { [cityId] = "Cali" });
+
+        var invoicing = await service.GetForInvoicingAsync(TenantId, order.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(invoicing);
+        Assert.Equal("Cra 9 # 13-135 bodega 501", invoicing.ShippingAddress);
+        Assert.Equal("Cali", invoicing.ShippingCity);
+    }
+
+    // Sin envío registrado no hay despacho: la dirección del cliente no se vuelve «dirección de despacho».
+    [Fact]
+    public async Task GetForInvoicingHasNoShippingAddressWhenTheOrderHasNoShippingRegistered()
+    {
+        var order = NewOrder();
+        var service = NewService(
+            order,
+            new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Cra 9 # 13-135 bodega 501",
+                WithRetention: false, VatSurplus: false, IdentificationNumber: "900123456", IdentificationType: "Nit"),
+            new Dictionary<Guid, string>());
+
+        var invoicing = await service.GetForInvoicingAsync(TenantId, order.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(invoicing);
+        Assert.Null(invoicing.ShippingAddress);
+        Assert.Null(invoicing.ShippingCity);
+    }
+
+    private static ExternalOrderInvoicingService NewService(
+        Order order, QuotationCustomerRef customer, IReadOnlyDictionary<Guid, string> cityNames) =>
+        new(
+            new StubOrderListRepository(order),
+            new NoOpQuotationsUnitOfWork(),
+            new RecordingQuotationAuditPublisher(),
+            new SubjectExecutionContext(Guid.CreateVersion7(), TenantId),
+            new FixedClock(Now),
+            new FixedTenantClock(Now),
+            new FixedQuotationSettingsStore { OrderSettings = new OrderSettings(false, false, false) },
+            new StubTenantDirectory(),
+            new StubQuotationCustomerLookup(customer),
+            new StubQuotationAdvisorLookup(),
+            new StubQuotationGeographyLookup(cityNames));
 
     private sealed class SubjectExecutionContext(Guid subjectId, Guid tenantId) : IExecutionContext
     {

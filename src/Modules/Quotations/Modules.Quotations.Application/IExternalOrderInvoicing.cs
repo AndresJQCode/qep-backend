@@ -70,7 +70,9 @@ public sealed record ExternalInvoicingOrder(
     ExternalInvoicingParty BilledParty,
     long Version,
     Guid AdvisorMembershipId,
-    string? AdvisorLabel);
+    string? AdvisorLabel,
+    string? ShippingAddress = null,
+    string? ShippingCity = null);
 
 /// <summary>
 /// El puerto que un facturador externo (Siigo) usa sobre los pedidos (spec 2026-11-18 §5.5). El adaptador vive en Bootstrapper; este

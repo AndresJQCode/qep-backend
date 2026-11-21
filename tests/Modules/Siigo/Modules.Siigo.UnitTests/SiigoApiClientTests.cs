@@ -44,7 +44,94 @@ public sealed class SiigoApiClientTests : IDisposable
             new HttpClient(handler, disposeHandler: false),
             Options.Create(new SiigoOptions { BaseUrl = "https://siigo.test", PartnerId = PartnerId }),
             _tokens,
-            _cache);
+            _cache,
+            _failures);
+
+    private readonly RecordingFailureLog _failures = new();
+
+    private sealed class RecordingFailureLog : ISiigoCallFailureLog
+    {
+        public List<SiigoCallFailure> Recorded { get; } = [];
+
+        public Task RecordAsync(SiigoCallFailure failure, CancellationToken cancellationToken)
+        {
+            Recorded.Add(failure);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task ARejectedInvoiceLeavesItsCurlAndTheReplyInTheFailureLog()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.BadRequest, """{"Errors":[{"Code":"invalid_total_payments","Message":"Cliente Fulano"}]}""");
+
+        await _client.CreateInvoiceAsync(
+            Credentials, new SiigoInvoiceRequest("""{"date":"2026-11-18"}"""), "abc123", TestContext.Current.CancellationToken);
+
+        var failure = Assert.Single(_failures.Recorded);
+        Assert.Equal(400, failure.Status);
+        Assert.Contains("curl.exe -X POST \"https://siigo.test/v1/invoices\"", failure.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("Partner-Id: qepTest", failure.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("Idempotency-Key: abc123", failure.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("""{"date":"2026-11-18"}""", failure.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("invalid_total_payments", failure.Diagnostic, StringComparison.Ordinal);
+        Assert.Contains("Bearer <TOKEN>", failure.Diagnostic, StringComparison.Ordinal);
+        Assert.DoesNotContain("token-one-SENTINEL", failure.Diagnostic, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccessKey, failure.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATransientFailureLeavesItsCurlWithTheReason()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.BadGateway, "<html>bad gateway</html>");
+
+        await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        var failure = Assert.Single(_failures.Recorded);
+        Assert.Equal("http_502", failure.Reason);
+        Assert.Contains("bad gateway", failure.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACreatedInvoiceLeavesNothingBecauseItsAuthReplyCarriesTheToken()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.Created, Fixture.Read("invoice-created.json"));
+
+        await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.Empty(_failures.Recorded);
+    }
+
+    [Fact]
+    public async Task A401ThatRenewsTheTokenAndSucceedsLeavesNothing()
+    {
+        _api.OnSequence("/auth", (HttpStatusCode.OK, Fixture.Read("auth.json")), (HttpStatusCode.OK, Fixture.Read("auth-renewed.json")));
+        _api.OnSequence(
+            "/v1/invoices",
+            (HttpStatusCode.Unauthorized, """{"Errors":[{"Code":"unauthorized","Message":"expired"}]}"""),
+            (HttpStatusCode.Created, Fixture.Read("invoice-created.json")));
+
+        await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.Empty(_failures.Recorded);
+    }
+
+    [Fact]
+    public async Task AThrownReadFailureCarriesItsCurlInTheExceptionData()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/customers", HttpStatusCode.UnprocessableEntity, """{"Errors":[{"Code":"invalid_field","Message":"x"}]}""");
+
+        var exception = await Assert.ThrowsAsync<UpstreamServiceException>(
+            () => _client.FindCustomerAsync(Credentials, "900123456", TestContext.Current.CancellationToken));
+
+        var diagnostic = Assert.IsType<string>(exception.Data["request.diagnostic"]);
+        Assert.Contains("/v1/customers?identification=900123456", diagnostic, StringComparison.Ordinal);
+        Assert.Empty(_failures.Recorded);
+    }
 
     [Fact]
     public async Task EveryCallCarriesPartnerIdAndBearerToken()

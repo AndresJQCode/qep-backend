@@ -19,7 +19,8 @@ public sealed class ExternalOrderInvoicingService(
     IQuotationSettingsStore settingsStore,
     ITenantDirectory tenantDirectory,
     IQuotationCustomerLookup customerLookup,
-    IQuotationAdvisorLookup advisorLookup)
+    IQuotationAdvisorLookup advisorLookup,
+    IQuotationGeographyLookup geographyLookup)
     : IExternalOrderInvoicing
 {
     public async Task<ExternalInvoicingOrder?> GetForInvoicingAsync(
@@ -40,6 +41,16 @@ public sealed class ExternalOrderInvoicingService(
         var party = await ResolvePartyAsync(tenantId, order, cancellationToken);
         var advisors = await advisorLookup.FindAsync(tenantId, [order.AdvisorId.Value], cancellationToken);
         var items = order.Items.OrderBy(item => item.Position).ToList();
+        var shippingAddress = FirstNonBlank(order.Shipping?.Address, null);
+        var shippingCity = await ShippingCityAsync(order.Shipping, cancellationToken);
+        // «Los mismos del cliente» no guarda parte de envío: el despacho va a la ficha del cliente, la misma condición de BilledCustomerFieldsRequired.
+        if (order.Shipping is null && !order.IsStorePickup && order.ShippingDetails != ShippingDetails.None)
+        {
+            var customer = await customerLookup.FindAsync(tenantId, order.ClientId, cancellationToken);
+            shippingAddress = FirstNonBlank(customer?.Address, null);
+            shippingCity = await CustomerCityAsync(customer, cancellationToken);
+        }
+
         return new ExternalInvoicingOrder(
             order.Id.Value,
             order.OrderNumber,
@@ -72,7 +83,53 @@ public sealed class ExternalOrderInvoicingService(
             party,
             order.Version,
             order.AdvisorId.Value,
-            advisors.GetValueOrDefault(order.AdvisorId.Value)?.Label);
+            advisors.GetValueOrDefault(order.AdvisorId.Value)?.Label,
+            shippingAddress,
+            shippingCity);
+    }
+
+    // La ciudad de la ficha del cliente: sin país o CO, el nombre que da Geography; fuera de Colombia, el texto de la ficha.
+    private async Task<string?> CustomerCityAsync(QuotationCustomerRef? customer, CancellationToken cancellationToken)
+    {
+        if (customer is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrEmpty(customer.Country) && customer.Country != "CO")
+        {
+            return FirstNonBlank(customer.CityName, null);
+        }
+
+        if (customer.CityId is not { } cityId)
+        {
+            return null;
+        }
+
+        var names = await geographyLookup.FindCityNamesAsync([cityId], cancellationToken);
+        return names.GetValueOrDefault(cityId);
+    }
+
+    // La ciudad de la parte de envío: el nombre que da Geography en Colombia, el texto escrito a mano fuera de ella (el mismo criterio que el comprador).
+    private async Task<string?> ShippingCityAsync(OrderParty? shipping, CancellationToken cancellationToken)
+    {
+        if (shipping is null)
+        {
+            return null;
+        }
+
+        if (shipping.Country is not null)
+        {
+            return FirstNonBlank(shipping.CityName, null);
+        }
+
+        if (shipping.CityId is not { } cityId)
+        {
+            return null;
+        }
+
+        var names = await geographyLookup.FindCityNamesAsync([cityId], cancellationToken);
+        return names.GetValueOrDefault(cityId);
     }
 
     public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>

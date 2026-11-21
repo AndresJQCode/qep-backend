@@ -71,7 +71,7 @@ Las decisiones que tomé yo van marcadas **[decisión del diseño]**.
   `items[].price` (6 decimales; o `taxed_price` con IVA incluido), y `payments[]` con `id` (de `/payment-types`),
   `value` y `due_date` si la forma de pago es a crédito. Opcionales: `cost_center`, `items[].discount`,
   `items[].taxes[].id` (uno por tipo), `retentions[].id` (ReteICA, ReteIVA, autorretención, de `/taxes`),
-  `observations` (4.000), `additional_fields.purchase_order` (prefijo y número, 20 alfanuméricos), `stamp.send`
+  `observations` (4.000), `stamp.send`
   (DIAN, por defecto `false`), `mail.send`.
 - El cliente tiene que existir y estar activo en Siigo, o se crea en la misma petición mandando el objeto `customer`
   completo (tipo de persona, tipo de documento, dirección con códigos de país, departamento y ciudad).
@@ -366,7 +366,8 @@ exija, V-6).
   `422 siigo.invoice.payments_exceed_total`. La suma tiene que dar el total que Siigo espera (con o sin retenciones,
   V-2). `GET …/orders/{id}/siigo-invoice/preview` devuelve la factura armada, los faltantes y la propuesta de pagos.
 - `date` = hoy en la zona del tenant. `observations` = número del pedido de QEP y `BuyerNotes` si hay, recortado a 4.000.
-  `additional_fields.purchase_order.number` = número del pedido de QEP (≤ 20).
+  Sin `additional_fields.purchase_order` (2026-11-20): Siigo lo rechaza con `document_settings` si el comprobante no tiene la orden de compra
+  configurada; el número del pedido ya va en `observations`.
 
 ### 6.4 Cuadre de totales
 

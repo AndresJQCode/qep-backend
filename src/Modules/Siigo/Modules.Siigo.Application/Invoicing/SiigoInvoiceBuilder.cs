@@ -43,7 +43,6 @@ public abstract record SiigoBuildResult
 public static class SiigoInvoiceBuilder
 {
     public const int ObservationsMaxLength = 4000;
-    public const int PurchaseOrderMaxLength = 20;
 
     /// <summary>Spec §6.4: la diferencia entre los ítems y el pedido que no frena la factura (un peso).</summary>
     public const decimal Tolerance = 1m;
@@ -96,6 +95,11 @@ public static class SiigoInvoiceBuilder
         {
             return new SiigoBuildResult.TotalsMismatch(input.FreightSubtotal + input.FreightTaxAmount, freight.Subtotal + freight.Tax);
         }
+
+        // Los pagos tienen que sumar el total que Siigo calcula (IVA redondeado por línea desde la base ya redondeada), no el de QEP: la
+        // diferencia (hasta un peso, ya validada arriba) se reparte en los pagos y no se pide después con el total que proponga Siigo.
+        var freightDelta = separateFreight ? freight!.Subtotal + freight.Tax - (input.FreightSubtotal + input.FreightTaxAmount) : 0m;
+        plan = PlanPayments(input, separateFreight, computedOrderTotal - qepOrderTotal, freightDelta);
 
         if (plan.Exceeds)
         {
@@ -253,22 +257,29 @@ public static class SiigoInvoiceBuilder
 
     private sealed record PaymentPlan(IReadOnlyList<ProofPart> Proofs, IReadOnlyList<Balance> Balances, bool Exceeds);
 
-    /// <summary>Reparte los comprobantes: primero llenan la factura del pedido y lo que sobra va a la de flete (si va aparte). Un
-    /// comprobante puede partirse entre las dos. Lo que queda de cada neto es su saldo.</summary>
-    private static PaymentPlan PlanPayments(SiigoInvoiceInput input, bool separateFreight)
+    /// <summary>
+    /// Reparte los comprobantes: primero llenan la factura del pedido y lo que sobra va a la de flete (si va aparte). Un comprobante puede
+    /// partirse entre las dos. Lo que queda de cada neto es su saldo.
+    /// <para>
+    /// <paramref name="orderDelta"/> y <paramref name="freightDelta"/> son lo que el total de Siigo se aparta del de QEP (redondeo del IVA,
+    /// hasta un peso). Un comprobante que pasa de la capacidad por no más de un peso se recorta a ella, y un saldo de no más de un peso es
+    /// redondeo, no deuda: se suma al último comprobante de esa factura en vez de salir como un segundo pago a crédito.
+    /// </para>
+    /// </summary>
+    private static PaymentPlan PlanPayments(SiigoInvoiceInput input, bool separateFreight, decimal orderDelta = 0m, decimal freightDelta = 0m)
     {
         var freightGross = input.FreightSubtotal > 0 ? input.FreightSubtotal + input.FreightTaxAmount : 0m;
         var capacities = new List<(SiigoInvoiceKind Kind, decimal Left)>
         {
-            (SiigoInvoiceKind.Order, Money(separateFreight ? input.NetTotal - freightGross : input.NetTotal)),
+            (SiigoInvoiceKind.Order, Money((separateFreight ? input.NetTotal - freightGross : input.NetTotal) + orderDelta)),
         };
         if (separateFreight)
         {
-            capacities.Add((SiigoInvoiceKind.Freight, Money(freightGross)));
+            capacities.Add((SiigoInvoiceKind.Freight, Money(freightGross + freightDelta)));
         }
 
         var parts = new List<ProofPart>();
-        var exceeds = false;
+        var excess = 0m;
         foreach (var proof in input.PaymentProofs)
         {
             var remaining = Money(proof.Amount);
@@ -285,10 +296,21 @@ public static class SiigoInvoiceBuilder
                 remaining -= take;
             }
 
-            exceeds |= remaining > 0;
+            excess += remaining;
         }
 
-        return new PaymentPlan(parts, capacities.Select(value => new Balance(value.Kind, value.Left)).ToList(), exceeds);
+        for (var index = 0; index < capacities.Count; index++)
+        {
+            var (kind, left) = capacities[index];
+            var last = parts.FindLastIndex(part => part.Kind == kind);
+            if (left > 0 && left <= Tolerance && last >= 0)
+            {
+                parts[last] = parts[last] with { Amount = parts[last].Amount + left };
+                capacities[index] = (kind, 0m);
+            }
+        }
+
+        return new PaymentPlan(parts, capacities.Select(value => new Balance(value.Kind, value.Left)).ToList(), excess > Tolerance);
     }
 
     private static string? ProposedPaymentType(SiigoInvoiceInput input, SiigoSettings settings)
@@ -427,14 +449,9 @@ public static class SiigoInvoiceBuilder
         body["stamp"] = new Dictionary<string, object?> { ["send"] = settings.SendToDian };
         body["mail"] = new Dictionary<string, object?> { ["send"] = settings.SendMail };
         body["observations"] = observations;
-        if (PurchaseOrderNumber(input.OrderNumber) is { Length: > 0 } purchaseOrder)
-        {
-            body["additional_fields"] = new Dictionary<string, object?>
-            {
-                ["purchase_order"] = new Dictionary<string, object?> { ["number"] = purchaseOrder },
-            };
-        }
 
+        // Sin `additional_fields.purchase_order`: un comprobante sin la orden de compra configurada lo rechaza con `document_settings`
+        // (prueba real, 2026-11-20), y el número de pedido ya va en las observaciones.
         body["items"] = items;
         body["payments"] = payments.Select(payment =>
         {
@@ -484,17 +501,18 @@ public static class SiigoInvoiceBuilder
         return result;
     }
 
+    // Con dirección de despacho el texto es el que pidió el owner (2026-11-20) y reemplaza a la nota del comprador; sin ella (recogida en
+    // tienda, parte de envío vacía) queda la forma de antes.
     private static string Observations(SiigoInvoiceInput input)
     {
-        var text = string.IsNullOrWhiteSpace(input.BuyerNotes)
-            ? $"Pedido {input.OrderNumber}"
-            : $"Pedido {input.OrderNumber}. {input.BuyerNotes.Trim()}";
+        var text = !string.IsNullOrWhiteSpace(input.ShippingAddress)
+            ? $"Pedido {input.OrderNumber}, Importante!! Dirección de despacho: {input.ShippingAddress.Trim()}"
+                + (string.IsNullOrWhiteSpace(input.ShippingCity) ? string.Empty : $", {input.ShippingCity.Trim()}")
+            : string.IsNullOrWhiteSpace(input.BuyerNotes)
+                ? $"Pedido {input.OrderNumber}"
+                : $"Pedido {input.OrderNumber}. {input.BuyerNotes.Trim()}";
         return text.Length <= ObservationsMaxLength ? text : text[..ObservationsMaxLength];
     }
-
-    // El número de orden de compra de Siigo admite sólo alfanuméricos, hasta 20.
-    private static string PurchaseOrderNumber(string orderNumber) =>
-        new(orderNumber.Where(char.IsAsciiLetterOrDigit).Take(PurchaseOrderMaxLength).ToArray());
 
     private static SiigoInvoiceRequest Serialize(Dictionary<string, object?> body) => new(JsonSerializer.Serialize(body));
 
