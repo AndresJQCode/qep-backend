@@ -30,6 +30,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`Siigo:DebugCurl` (apagado por defecto) loguea como curl, con su respuesta, sólo las llamadas a Siigo que fallan** (`SiigoCurlLogHandler`,
   categoría propia; el token y la `access_key` salen enmascarados). El cuerpo lleva datos del cliente: se prende en el ConfigMap sólo
   mientras se diagnostica y se vuelve a apagar. Una llamada exitosa nunca se loguea: su respuesta trae el token de `/auth`.
+- **Una llamada a Siigo que falla deja su curl en el log de fallas (`platform/request-log`), sin interruptor.** El detalle de la fila lleva el
+  `curl.exe` de la petición (token y `access_key` enmascarados) y la respuesta de Siigo, con datos del cliente: sólo lo lee quien tiene
+  `RequestLogRead`. Dos caminos: la factura y el sellado no lanzan, así que `SiigoApiClient` escribe la fila por `ISiigoCallFailureLog`
+  (`siigo.call_failed`, adaptador `SiigoCallFailureLog` en Bootstrapper, sólo en requests que escriben); las lecturas y el cliente nuevo
+  lanzan, y el curl viaja en `Exception.Data["request.diagnostic"]` hasta `RequestFailureCapture.Describe`. Ese literal está en Siigo y en
+  Api: cambiar uno compila y deja el detalle sin curl. Una respuesta buena nunca se guarda: la de `/auth` trae el token.
 - **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected` y
   `Failed`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`, `order_id` o
   `tenant_id` compila y deja ambas operaciones en 500.

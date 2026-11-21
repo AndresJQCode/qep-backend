@@ -1628,6 +1628,7 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
         services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
+        services.AddScoped<ISiigoCallFailureLog, SiigoCallFailureLog>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
         services.AddScoped<IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>, PreviewSiigoInvoiceHandler>();
         services.AddScoped<IQueryHandler<SiigoInvoiceAvailabilityQuery, SiigoInvoiceAvailabilityDto>, SiigoInvoiceAvailabilityHandler>();
