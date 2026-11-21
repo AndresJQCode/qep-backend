@@ -201,6 +201,7 @@ si vas a tocar un módulo, abre su regla antes (o lee primero un archivo del mó
 | [`infra-valkey-sesiones`](.claude/rules/infra-valkey-sesiones.md) | Valkey, sesiones, permisos, timbres y tiempo real: limitadores, ACL, cachés de sesión y permisos, colas con timbre, listener y presencia |
 | [`tenancy-y-servicios`](.claude/rules/tenancy-y-servicios.md) | Tenancy, Identidad, contratos de servicio y API externa: registro de tenant, roles asignables, módulo billing, claves de API |
 | [`siigo`](.claude/rules/siigo.md) | Siigo (facturación de pedidos): registro legal de facturas, DIAN apagado por defecto, retenciones, `error_detail`, bloqueo de marca manual y anulación |
+| [`coordinadora`](.claude/rules/coordinadora.md) | Coordinadora (guías de un pedido): contrato legacy sin verificar (V-1 a V-5), sin reenvío de guías, una cuenta por tenant, probador sin credenciales, recaudo apagado |
 
 Una regla nueva va al archivo de su módulo, no acá. Si lee o escribe columnas o tablas de otro
 módulo por nombre, va en `sql-entre-modulos`: sus paths (Bootstrapper y migraciones) la cargan

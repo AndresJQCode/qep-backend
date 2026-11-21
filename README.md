@@ -852,9 +852,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai`, `support`, `purchases` y `wholesale`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai`, `support`, `purchases`, `wholesale`, `siigo`, `hr` y `coordinadora`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. `purchases` (las órdenes de compra a proveedores) exige `suppliers` y `catalog`; no viene con el signup y se prende por tenant. `wholesale` (el mayorista: listas de precios y distribuidores invitados, ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación)) exige `orders`; no viene con el signup y se prende por tenant. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. `purchases` (las órdenes de compra a proveedores) exige `suppliers` y `catalog`; no viene con el signup y se prende por tenant. `wholesale` (el mayorista: listas de precios y distribuidores invitados, ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación)) exige `orders`; no viene con el signup y se prende por tenant. `coordinadora` (las guías de Coordinadora de un pedido, ver [Integración con Coordinadora](#integración-con-coordinadora)) exige `orders`; no viene con el signup y se prende por tenant. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -5419,6 +5419,82 @@ apagado ninguna puede salir mal sin que se vea):
 | V-6 | Si una factura electrónica exige `fiscal_responsibilities` y `vat_responsible` en el cliente, y el formato de `person_type` | Mirar el rechazo con un cliente persona jurídica |
 | V-7 | Código y texto de `invalid_total_payments` con y sin retenciones; base mínima (UVT) y redondeo de cada retención; ReteIVA y autorretención; borrado de una factura sin emitir por API | Con la primera factura real sin emitir (`stamp.send = false`) |
 | V-8 | Cuándo exige Siigo la bodega en un ítem y si un servicio la rechaza | Facturar un producto con control de inventario y un servicio |
+
+### Integración con Coordinadora
+
+Un pedido de QEP se cotiza, se despacha y se sigue con Coordinadora desde el pedido (spec
+`2026-11-21-integracion-coordinadora-design.md`): QEP arma la guía con el remitente de la conexión, el destinatario del pedido y el
+paquete por defecto, la genera en Coordinadora y guarda el número de guía; desde ahí se imprime el rótulo, se consulta el estado y se
+anula. Módulo `coordinadora` (depende de `orders`, no está en `DefaultForNewTenants`: se prende desde la consola de operador, como
+`siigo`), esquema `coordinadora` (`settings` y `shipments`), y del lado de Integrations el proveedor `coordinadora`, el primero de la
+categoría `Shipping`. Recogidas, despachos agrupados, conciliación del recaudo y peso por producto quedan fuera (spec §2).
+
+**Contrato.** Es el legacy de Coordinadora, el mismo con el que se regenera `coordinadora-cities.json` (ver [Nombres de ciudad de
+Coordinadora](#nombres-de-ciudad-de-coordinadora)): el AGS (`ws.coordinadora.com/ags/1.5/server.php`) por JSON-RPC 2.0 para
+`Cotizador.cotizar`, y el servidor de guías (`guias.coordinadora.com/ws/guias/1.6/server.php`) por SOAP 1.2 para `Guias_generarGuia`,
+`Guias_imprimirRotulos`, `Guias_rastreoSimple` y `Guias_anularGuia`. Las credenciales viajan dentro de `p`: `nit`, `apikey` y `clave`
+en el AGS; `id_cliente`, `usuario` y `clave` (SHA-256 de la contraseña) en guías. El portal REST nuevo de Coordinadora no se pudo leer
+al diseñar; cinco detalles del contrato legacy quedan por verificar con la primera guía real (spec §9, V-1 a V-5) y cada uno vive en
+un solo lugar del cliente. Las URL y el `xmlns` de guías salen de la sección `Coordinadora` de la configuración (`AgsUrl`, `GuidesUrl`,
+`GuidesNamespace`; vacías valen las de producción, y el sandbox se usa cambiándolas en el ambiente).
+
+**Conexión.** El tenant crea la conexión `coordinadora` en Integrations (una por tenant) con su NIT y los dos juegos de credenciales
+(cifradas, como las demás). El probador sólo comprueba que el AGS responde (`Cotizador.departamentos`, sin credenciales): ninguna lectura
+barata las verifica, así que se confirman con la primera cotización y la primera guía. La configuración vive bajo
+`/api/v1/tenants/{tenantId}/coordinadora/connections/{connectionId}/settings` (`coordinadora.settings.manage`; `GET` y `PUT` con
+`If-Match`: sin él 428, con una versión vieja 412): el remitente (nombre, dirección, teléfono y ciudad de Geography), `accountCode`,
+`productCode`, `serviceLevel`, `div`, el paquete por defecto (`defaultPackage`: alto, ancho y largo en cm y peso en kg; el catálogo no
+tiene medidas), `packagingType` (`ubl`), `declaredValueMinimum`, `collectOnDelivery` (nace apagado) y `labelFormat`. El `GET` trae
+`readiness` con lo que falta (`sender_incomplete`, `sender_city_not_served`, `package_defaults_missing`).
+
+**La guía.** Bajo `/api/v1/tenants/{tenantId}/orders/{orderId}/coordinadora-shipment` (permiso `coordinadora.shipment.manage`, de
+fábrica `admin` y `advisor`; el handler revalida tenant y permiso: 403, nunca 404):
+
+| Método | Ruta | Qué hace |
+| --- | --- | --- |
+| `GET` | `/` | La guía que cuenta del pedido (la viva o la última), o 404 `coordinadora.shipment.not_found` |
+| `GET` | `/preview` | La petición armada (sin credenciales) o los faltantes, y el paquete y el valor declarado que se usarían |
+| `POST` | `/quote` | `Cotizador.cotizar` con los mismos datos; devuelve el `result` crudo y el flete total si se pudo leer. Cuerpo opcional con `package` y `declaredValue` |
+| `POST` | `/` | Genera la guía. Cuerpo opcional igual al de `quote` |
+| `GET` | `/label` | El PDF del rótulo: el guardado al crear o `Guias_imprimirRotulos` en vivo |
+| `POST` | `/track` | `Guias_rastreoSimple`; guarda `trackingStatus`, `trackingDetail` y `trackedAt` |
+| `POST` | `/cancel` | `Guias_anularGuia`; la fila pasa a `Cancelled` y el pedido queda libre |
+| `POST` | `/resolve` | `{ "outcome": "exists", "guideNumber": "…" }` o `{ "outcome": "missing" }`, sólo desde `Unknown` |
+
+- Si falta algo (pedido anulado o de recogida, sin líneas físicas, transportadora distinta de Coordinadora, destinatario sin
+  teléfono o sin ciudad, ciudad que Coordinadora no atiende, remitente o paquete sin configurar, sin conexión) responde
+  `422 coordinadora.shipment.not_ready` con `details.missing` y nada sale a Coordinadora.
+- Un candado por pedido (`pg_advisory_xact_lock(20261121, …)`) serializa el envío, y el índice único parcial
+  `IX_shipments_tenant_order_live` cierra la carrera (`409 coordinadora.shipment.already_exists`). Con una fila viva (`Pending`,
+  `Created` o `Unknown`) el `POST` la devuelve tal cual. **Nunca reenvía**: Coordinadora no tiene clave de idempotencia, así que un
+  timeout o un 5xx deja la fila `Unknown` y la resuelve una persona mirando en Coordinadora.
+- El valor declarado es el total con IVA de las líneas (nunca por debajo de `declaredValueMinimum`); el recaudo contraentrega va
+  sólo con el pedido contraentrega **y** `collectOnDelivery` prendido.
+- El pedido no cambia por tener guía: `Order` no guarda el número y el Excel de pedidos sigue igual (spec §9, P-2).
+
+**Seguridad.** Las tres claves no salen a logs, auditoría, `request_json` ni respuestas; `request_json`, `error_detail` (lo que dijo
+Coordinadora, recortado a 200) y `label_pdf` llevan datos del destinatario y sólo los devuelven `…/preview` y `…/label` a quien tiene
+el permiso de guías. Los clientes HTTP `coordinadora` e `integrations.coordinadora` no tienen loggers ni siguen redirecciones.
+
+**Despliegue.**
+
+1. Sin configuración nueva obligatoria: `Coordinadora:AgsUrl` y `Coordinadora:GuidesUrl` valen las de producción si no se definen.
+   Para el sandbox de Coordinadora se cambian las dos en el ambiente.
+2. Migraciones, todas aditivas y sin corte: `AddCoordinadoraProvider` (Integrations), `InitialCoordinadora` (Coordinadora) y
+   `AddCoordinadoraModuleKey` (Tenancy). Sus `Down` no se corren en producción: el de Integrations borra la conexión con sus secretos
+   y `coordinadora.shipments` es el registro de un servicio que Coordinadora facturó.
+3. Prende el módulo al tenant desde la consola de operador, crea la conexión, configura el remitente y el paquete, y cotiza antes de
+   generar la primera guía: la cotización confirma las credenciales del AGS y la primera guía las de guías.
+
+**Lo que se mira en la primera guía real** (spec §9):
+
+| | Qué | Dónde se corrige |
+| --- | --- | --- |
+| V-1 | El `xmlns` del cuerpo SOAP de guías y que el servidor acepte SOAP 1.2 | `Coordinadora:GuidesNamespace`, `CoordinadoraSoap` |
+| V-2 | El campo del PDF en `Guias_generarGuia` e `imprimirRotulos` | `CoordinadoraSoap.Reply.Pdf` |
+| V-3 | El tipo de `recaudos` | `CoordinadoraGuideBuilder` |
+| V-4 | `Cotizador.cotizar` por JSON-RPC con `params: {"p": …}` y la forma de su `result` | `CoordinadoraApiClient.QuoteAsync` |
+| V-5 | Los campos de `Guias_rastreoSimple` | `CoordinadoraApiClient.TrackAsync` |
 
 ### Contratos de servicio (cobros recurrentes)
 

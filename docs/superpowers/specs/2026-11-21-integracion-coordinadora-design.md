@@ -117,7 +117,9 @@ ningún sitio alcanzable. Lo que sí está verificado, y es el contrato que este
 - **Tenancy:** clave de módulo `coordinadora`, depende de `orders`, **fuera** de `DefaultForNewTenants` (se prende por
   tenant, como `siigo`) **[decisión del diseño]**. Migración que ensancha el `CHECK` de `tenant_modules`.
 - **Integrations:** proveedor `coordinadora`, categoría `Shipping`, consumidor `TenantModuleKeys.Coordinadora`,
-  `ProviderOnboarding.Form`, tope `DefaultMaxConnections`. Campos: `nit` (texto, requerido), `apiKey` (secreto, requerido:
+  `ProviderOnboarding.Form`, **tope 1 por tenant** **[decisión del diseño]**: una cuenta de Coordinadora por tenant, así el
+  módulo toma «la conexión del tenant» sin que el pedido tenga que elegir cuál (Siigo elige por la empresa que factura; una guía
+  no tiene esa ancla). Campos: `nit` (texto, requerido), `apiKey` (secreto, requerido:
   apikey del AGS), `apiPassword` (secreto, requerido: `clave` del AGS), `clientId` (texto, requerido: `id_cliente` de guías),
   `guidesUser` (texto, requerido: `usuario` de guías), `guidesPassword` (secreto, requerido: la contraseña de guías; el
   cliente manda su SHA-256). Migración que ensancha el `CHECK` de `connections.provider_key`.
@@ -219,7 +221,8 @@ revalidación en el handler (doble capa). Responde la guía (§5.5).
 coordinadora.shipment.already_exists`: el candado da la respuesta amable, el índice cierra la carrera.
 
 - `GET …/coordinadora-shipment` → la fila vigente del pedido (o la última si todas están cerradas), o 404
-  `coordinadora.shipment.not_found`. Sin `request_json` ni `label_pdf`.
+  `coordinadora.shipment.not_found`. Sin `request_json` ni `label_pdf`. De paso aplica la transición perezosa: una `Pending`
+  cuyo reclamo de 2 min venció pasa a `Unknown` (la petición murió sin respuesta) y se guarda.
 - `GET …/coordinadora-shipment/preview` → la petición armada (sin credenciales), los faltantes y el paquete que se usaría.
 - `POST …/coordinadora-shipment/quote` → `Cotizador.cotizar` con los mismos datos; responde los valores que Coordinadora
   devuelve (`flete_fijo`, `flete_variable`, `flete_total`, `otros`, `total` cuando vienen) **y el resultado crudo**, porque la
