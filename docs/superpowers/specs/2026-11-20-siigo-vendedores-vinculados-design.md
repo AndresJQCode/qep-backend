@@ -130,3 +130,18 @@ Se queda (el paso la usa para el selector), sin cambios de forma.
 
 - Número de identificación en la membresía.
 - Detectar en la vista previa un usuario de Siigo desactivado (exigiría volver a leer `/v1/users` al facturar).
+
+## 9. Vinculación automática al abrir el paso (owner, 2026-11-20)
+
+La primera vez que se abre el paso «Vendedores» y la primera vez que se abre «Productos», el asistente intenta vincular solo
+(por correo y por código); lo que no coincide se vincula a mano. «La primera vez» es **por conexión**, guardada en el
+backend, no en el navegador: cambiar de equipo o de sesión no lo repite.
+
+- `SiigoSettings` gana `SellersAutoLinkedAt` y `ProductsAutoLinkedAt` (`DateTimeOffset?`), columnas
+  `sellers_auto_linked_at` y `products_auto_linked_at` en `siigo.settings`, en la misma migración `AddSiigoSellerLinks`.
+- Los dos auto-link (`POST …/sellers/auto-link` y el existente `POST …/products/auto-link`) **siempre** fijan su marca, aunque
+  no vinculen nada, y guardan. Hoy el de productos sólo guarda si vinculó algo: pasa a guardar siempre. Fijar la marca es una
+  escritura del agregado y sube `Version` (`Touch`), como cualquier otra.
+- `SiigoSettingsDto` expone `sellersAutoLinkedAt` y `productsAutoLinkedAt` (null = nunca se intentó).
+- El intento automático lo dispara la pantalla (§ frontend); el botón sigue para volver a intentar después. Un intento que
+  falla (409 conexión, 503 Siigo) no fija la marca: se reintenta la próxima vez que se abre el paso.

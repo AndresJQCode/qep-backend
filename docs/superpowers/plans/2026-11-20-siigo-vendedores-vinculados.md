@@ -131,3 +131,19 @@
 - [ ] **Step 4: Commit** `test(siigo): invoice with linked sellers`
 
 **Fin del Bloque B:** una revisión del bloque. Antes de mergear a `develop`, la integración completa de Siigo la corre el owner. `docs/estado.md` se actualiza en `develop` al mergear.
+
+---
+
+## Adenda (owner, 2026-11-20): marcas de vinculación automática — spec §9
+
+- **Task 1** agrega además `SellersAutoLinkedAt` y `ProductsAutoLinkedAt` (`DateTimeOffset?`) a `SiigoSettings`, con
+  `MarkSellersAutoLinked(DateTimeOffset at)` y `MarkProductsAutoLinked(DateTimeOffset at)` (fijan la fecha y `Touch`), mapeadas
+  a `sellers_auto_linked_at` y `products_auto_linked_at` en la misma migración `AddSiigoSellerLinks`. Test:
+  `MarkingTheAutoLinkKeepsTheDateAndBumpsTheVersion`.
+- **Task 3** agrega `SellersAutoLinkedAt` y `ProductsAutoLinkedAt` a `SiigoSettingsDto` (después de `Sellers`).
+- **Task 4** llama `MarkSellersAutoLinked(clock.UtcNow)` y guarda **siempre**. Test: `AutoLinkMarksTheStepEvenWithoutMatches`
+  (`sellersAutoLinkedAt` no null, `linked: 0`).
+- **Task 4b (nueva): productos.** `AutoLinkSiigoVariantsByCodeHandler` llama `MarkProductsAutoLinked(clock.UtcNow)` y guarda
+  siempre (hoy sólo con `toLink.Count > 0`); la auditoría sigue sólo cuando vinculó algo. Test de integración en
+  `SiigoProductLinksApiTests`: `AutoLinkMarksTheProductsStepEvenWithoutMatches`. Commit
+  `feat(siigo): mark the first products auto-link of a connection`.
