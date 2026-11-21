@@ -36,6 +36,8 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
 
     public DbSet<Department> Departments => Set<Department>();
 
+    public DbSet<Country> Countries => Set<Country>();
+
     public DbSet<City> Cities => Set<City>();
 
     public DbSet<CitySynonym> CitySynonyms => Set<CitySynonym>();
@@ -53,6 +55,7 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureCountry(modelBuilder);
         ConfigureDepartment(modelBuilder);
         ConfigureCity(modelBuilder);
         ConfigureCitySynonym(modelBuilder);
@@ -60,6 +63,22 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
         ConfigureUnresolvedCityOccurrence(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+    }
+
+    private static void ConfigureCountry(ModelBuilder modelBuilder)
+    {
+        var country = modelBuilder.Entity<Country>();
+        country.ToTable("countries", "geography");
+        country.HasKey(value => value.Code);
+        country.Property(value => value.Code)
+            .HasColumnName("code")
+            .HasMaxLength(2)
+            .ValueGeneratedNever();
+        country.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(80)
+            .IsRequired();
+        country.HasIndex(value => value.Name).IsUnique();
     }
 
     private static void ConfigureDepartment(ModelBuilder modelBuilder)

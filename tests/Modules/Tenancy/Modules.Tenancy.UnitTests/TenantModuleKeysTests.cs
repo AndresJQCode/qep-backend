@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -157,11 +157,23 @@ public sealed class TenantModuleKeysTests
     public void SiigoIsAKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Siigo, TenantModuleKey.Parse("siigo"));
-        Assert.Equal("siigo", TenantModuleKeys.All[^1].Value);
-        Assert.Equal(22, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Siigo, TenantModuleKeys.DefaultForNewTenants);
         Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Siigo));
     }
+
+    // Spec 2026-11-20 (RRHH fase 1): la empresa empleadora es una empresa de Companies; se prende por tenant.
+    [Fact]
+    public void HrIsTheLastKnownKeyOutsideTheDefaults()
+    {
+        Assert.Same(TenantModuleKeys.Hr, TenantModuleKey.Parse("hr"));
+        Assert.Equal("hr", TenantModuleKeys.All[^1].Value);
+        Assert.Equal(23, TenantModuleKeys.All.Count);
+        Assert.DoesNotContain(TenantModuleKeys.Hr, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    [Fact]
+    public void HrDependsOnCompanies() =>
+        Assert.Equal([TenantModuleKeys.Companies], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Hr));
 
     [Fact]
     public void MessagingHasNoDependencies() =>

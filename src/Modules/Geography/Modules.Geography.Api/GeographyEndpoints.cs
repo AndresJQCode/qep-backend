@@ -22,6 +22,12 @@ public static class GeographyEndpoints
             .WithTags("Geography")
             .Produces<IReadOnlyList<DepartmentResponse>>();
 
+        // Spec 2026-11-20 (RRHH fase 1, D-10): el catálogo de países (ISO 3166-1 alfa-2), global como los departamentos.
+        endpoints.MapGet("/api/v1/countries", ListCountriesAsync)
+            .RequireAuthorization()
+            .WithTags("Geography")
+            .Produces<IReadOnlyList<CountryResponse>>();
+
         endpoints.MapGet("/api/v1/cities", ListCitiesAsync)
             .RequireAuthorization()
             .WithTags("Geography")
@@ -37,6 +43,15 @@ public static class GeographyEndpoints
         return Results.Ok(departments
             .Select(department => new DepartmentResponse(
                 department.Id, department.DivipolaCode, department.Name))
+            .ToArray());
+    }
+
+    private static async Task<IResult> ListCountriesAsync(
+        IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var countries = await dispatcher.QueryAsync(new ListCountriesQuery(), cancellationToken);
+        return Results.Ok(countries
+            .Select(country => new CountryResponse(country.Code, country.Name))
             .ToArray());
     }
 
@@ -62,6 +77,8 @@ public static class GeographyEndpoints
             .ToArray());
     }
 }
+
+public sealed record CountryResponse(string Code, string Name);
 
 public sealed record DepartmentResponse(Guid Id, string DivipolaCode, string Name);
 

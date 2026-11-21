@@ -202,6 +202,27 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                     b.ToTable("city_synonyms", "geography");
                 });
 
+            modelBuilder.Entity("Modules.Geography.Domain.Country", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("name");
+
+                    b.HasKey("Code");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("countries", "geography");
+                });
+
             modelBuilder.Entity("Modules.Geography.Domain.Department", b =>
                 {
                     b.Property<Guid>("Id")
