@@ -39,6 +39,8 @@ using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
+using Modules.Hr.Application;
+using Modules.Hr.Infrastructure;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Application;
@@ -65,6 +67,7 @@ using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.CallFailures;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Application.Products;
 using Modules.Siigo.Application.Settings;
@@ -485,6 +488,124 @@ public static class QepServiceCollectionExtensions
             Modules.Loans.Application.VoidCapitalPaymentHandler>();
         // Lo reutilizan los mutadores de préstamos, cuotas y abonos.
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
+
+        // Hr, spec 2026-11-20. A mano y con ruta completa, como Loans: un handler olvidado responde 500.
+        services.AddScoped<SalaryRules>();
+        services.AddScoped<
+            IQueryHandler<GetSalaryRulesQuery, SalaryRulesDto>,
+            GetSalaryRulesHandler>();
+        // Lo que comparten los casos de uso de la configuración: empresas, «¿está lista?» y el armado de los DTO.
+        services.AddScoped<Modules.Hr.Application.HrCompanyRefs>();
+        services.AddScoped<Modules.Hr.Application.HrSetup>();
+        services.AddScoped<Modules.Hr.Application.HrSettingsComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetHrSettingsQuery, Modules.Hr.Application.HrSettingsDto>,
+            Modules.Hr.Application.GetHrSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateSiteCommand, Modules.Hr.Application.SiteDto>,
+            Modules.Hr.Application.CreateSiteHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateSiteCommand, Modules.Hr.Application.SiteDto>,
+            Modules.Hr.Application.UpdateSiteHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateWorkplaceCommand, Modules.Hr.Application.WorkplaceDto>,
+            Modules.Hr.Application.CreateWorkplaceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateWorkplaceCommand, Modules.Hr.Application.WorkplaceDto>,
+            Modules.Hr.Application.UpdateWorkplaceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateNamedSettingCommand, object>,
+            Modules.Hr.Application.CreateNamedSettingHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateNamedSettingCommand, object>,
+            Modules.Hr.Application.UpdateNamedSettingHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ArchiveSettingCommand, object>,
+            Modules.Hr.Application.ArchiveSettingHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteSettingCommand, bool>,
+            Modules.Hr.Application.DeleteSettingHandler>();
+        // Empleados (spec 2026-11-20): lo que comparten los casos de uso (armado de la respuesta, historial de acciones, contrato
+        // nuevo) y un handler por ruta.
+        services.AddScoped<Modules.Hr.Application.EmployeeDetailComposer>();
+        services.AddScoped<Modules.Hr.Application.ActivityWriter>();
+        services.AddScoped<Modules.Hr.Application.NewContractFactory>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListEmployeesQuery, EmployeePageDto>,
+            Modules.Hr.Application.ListEmployeesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetEmployeeQuery, EmployeeDetailDto>,
+            Modules.Hr.Application.GetEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateEmployeeCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.CreateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateEmployeeCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.UpdateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateEmployeePaymentCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.UpdateEmployeePaymentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeactivateEmployeeCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.DeactivateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteEmployeeCommand, bool>,
+            Modules.Hr.Application.DeleteEmployeeHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListAvailableMembersQuery, IReadOnlyList<Modules.Hr.Application.MemberRefDto>>,
+            Modules.Hr.Application.ListAvailableMembersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListEmployeeActivityQuery, ActivityPageDto>,
+            Modules.Hr.Application.ListEmployeeActivityHandler>();
+        // El contrato del empleado (spec 2026-11-20): lo que comparten las escrituras y un handler por ruta.
+        services.AddScoped<Modules.Hr.Application.ContractWrites>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.AddSalaryCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.AddSalaryHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RewriteSalaryCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RewriteSalaryHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.AddAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.AddAssignmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RenewContractCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RenewContractHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ConvertContractToIndefiniteCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.ConvertContractToIndefiniteHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ChangeContractTypeCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.ChangeContractTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.TerminateContractCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.TerminateContractHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ReincorporateEmployeeCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.ReincorporateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetHrDocumentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.SetHrDocumentHandler>();
+        // Los PDF de contratos y registros (spec 2026-11-20): la sesión de subida y la URL firmada de descarga.
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.OpenHrUploadSessionCommand, Modules.Hr.Application.HrUploadSessionDto>,
+            Modules.Hr.Application.OpenHrUploadSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetHrFileDownloadUrlQuery, Modules.Hr.Application.HrDownloadUrlDto>,
+            Modules.Hr.Application.GetHrFileDownloadUrlHandler>();
+        // La importación de empleados por Excel (spec 2026-11-20): plantilla, vista previa y confirmación comparten análisis.
+        services.AddScoped<Modules.Hr.Application.EmployeeImportCatalogs>();
+        services.AddScoped<Modules.Hr.Application.EmployeeImportAnalyzer>();
+        services.AddScoped<Modules.Hr.Application.IHrPhoneNormalizer, HrPhoneNormalizer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetEmployeeImportTemplateQuery, Modules.Hr.Application.EmployeeImportTemplateFile>,
+            Modules.Hr.Application.GetEmployeeImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.PreviewEmployeeImportCommand, Modules.Hr.Application.EmployeeImportPreviewDto>,
+            Modules.Hr.Application.PreviewEmployeeImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ImportEmployeesCommand, Modules.Hr.Application.EmployeeImportResultDto>,
+            Modules.Hr.Application.ImportEmployeesHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -930,6 +1051,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListDepartmentsQuery, IReadOnlyList<DepartmentDto>>,
             ListDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCountriesQuery, IReadOnlyList<CountryDto>>,
+            ListCountriesHandler>();
         services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
@@ -1460,6 +1584,9 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        // Hr: se escanea el ensamblado (sólo registra validadores públicos, y todos los de Hr lo son), porque HrPermissions es
+        // estática y no sirve de argumento de tipo.
+        services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
@@ -1481,6 +1608,7 @@ public static class QepServiceCollectionExtensions
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
+        services.AddHrInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
         services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
@@ -1628,14 +1756,21 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
         services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
-        services.AddScoped<ISiigoCallFailureLog, SiigoCallFailureLog>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
         services.AddScoped<IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>, PreviewSiigoInvoiceHandler>();
         services.AddScoped<IQueryHandler<SiigoInvoiceAvailabilityQuery, SiigoInvoiceAvailabilityDto>, SiigoInvoiceAvailabilityHandler>();
         services.AddScoped<IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>, GetSiigoInvoicesHandler>();
+        // Spec 2026-11-21: las llamadas a Siigo que fallaron. El validador entra con AddValidatorsFromAssemblyContaining del módulo.
+        services.AddScoped<IQueryHandler<ListSiigoCallFailuresQuery, SiigoCallFailurePageDto>, ListSiigoCallFailuresHandler>();
+        services.AddScoped<IQueryHandler<GetSiigoCallFailureQuery, SiigoCallFailureDetailDto>, GetSiigoCallFailureHandler>();
+        services.AddScoped<IQueryHandler<GetSiigoInvoicePdfQuery, SiigoInvoicePdfDto>, GetSiigoInvoicePdfHandler>();
         services.AddScoped<ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>, IssueSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>, StampSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>, ResolveSiigoInvoiceHandler>();
+        // Spec 2026-11-21: la tanda de facturación. El invocador corre el handler de arriba como quien la pidió.
+        services.AddScoped<ICommandHandler<CreateSiigoInvoiceBatchCommand, SiigoInvoiceBatchDto>, CreateSiigoInvoiceBatchHandler>();
+        services.AddScoped<IQueryHandler<GetSiigoInvoiceBatchQuery, SiigoInvoiceBatchDto>, GetSiigoInvoiceBatchHandler>();
+        services.AddScoped<ISiigoBatchItemInvoker, SiigoBatchItemInvoker>();
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
@@ -1759,6 +1894,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IOrderVariantCostLookup, CatalogVariantCostLookup>();
         services.AddScoped<IPosCategoryLookup, PosCategoryLookup>();
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
+        // Hr: la empresa empleadora y la sede entran por su propio puerto (HrLayerTests.NoHrLayerReferencesCompanies).
+        services.AddScoped<Modules.Hr.Application.IHrCompanyLookup, HrCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
         services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();
 
@@ -1905,11 +2042,19 @@ public static class QepServiceCollectionExtensions
         // Y los archivos de chatbot (spec 2026-11-18): en uso mientras los nombre un chatbot, una versión, una plantilla guardada o un
         // mensaje de la bandeja.
         services.AddScoped<IChatbotMediaReferences, ChatbotMediaReferences>();
+        // Spec 2026-11-20: el PDF de un contrato o de un registro de RRHH sobre Storage (dueño HrDocument, sin pasar por sus handlers ni
+        // sus permisos: lo autoriza hr.contract.manage). Hr no referencia Storage (HrLayerTests).
+        services.AddScoped<Modules.Hr.Application.IHrDocumentStore, HrDocumentStore>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los
         // repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICompanyGeographyLookup, CompanyGeographyLookup>();
+
+        // Hr: ciudades y países de Geography por su puerto (HrLayerTests.NoHrLayerReferencesGeography).
+        services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
+        // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
+        services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
 
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.
@@ -1930,6 +2075,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, LoansUserReferenceProbe>();
+        services.AddScoped<IUserReferenceProbe, HrUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, PurchasesUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, SupportUserReferenceProbe>();
 
@@ -2452,12 +2598,21 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
                 SiigoPermissions.SettingsManage,
                 SiigoPermissions.InvoiceIssue,
+                // Spec 2026-11-21: ver las llamadas a Siigo que fallaron; el cuerpo lleva datos del cliente, así que sólo admin de fábrica.
+                SiigoPermissions.CallsRead,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
                 // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
+                // Spec 2026-11-20 (RRHH fase 1): empleados y contratos los administra quien administra la empresa; ningún otro rol de
+                // sistema los lleva (el salario y los datos bancarios son sensibles).
+                HrPermissions.EmployeeRead,
+                HrPermissions.EmployeeManage,
+                HrPermissions.ContractRead,
+                HrPermissions.ContractManage,
+                HrPermissions.SettingsManage,
                 // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
@@ -3491,6 +3646,17 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("siigo.invoice", "Facturas en Siigo", "invoice"),
         });
+        // Spec 2026-11-21: con [siigo], ModuleEntitlementMask la quita al apagar el módulo y el editor de roles no la ofrece.
+        services.AddSingleton(new PermissionDefinition(
+            SiigoPermissions.CallsRead,
+            "Ver las fallas de Siigo",
+            "Permite ver las llamadas a Siigo que fallaron, con la petición y la respuesta: incluyen datos del cliente.",
+            "Siigo",
+            "high",
+            RequiredModules: [ModuleKeys.Siigo])
+        {
+            Shape = new("siigo.calls", "Fallas de las llamadas a Siigo", "read"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -3546,6 +3712,58 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [ModuleKeys.Loans])
         {
             Shape = new("loans.loan", "Préstamos", "manage"),
+        });
+        // Spec 2026-11-20 (RRHH fase 1): con [hr], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo
+        // ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. Ver el empleado no incluye su contrato ni su dinero.
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.EmployeeRead,
+            "Ver empleados",
+            "Permite ver la lista, la ficha, el historial de acciones y la configuración de RRHH, sin salario, cargo ni datos bancarios.",
+            "Recursos humanos",
+            "low",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.employee", "Empleados", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.EmployeeManage,
+            "Gestionar empleados",
+            "Permite editar los datos personales y de seguridad social, desactivar y eliminar empleados.",
+            "Recursos humanos",
+            "medium",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.employee", "Empleados", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.ContractRead,
+            "Ver contratos y salarios",
+            "Permite ver contratos, salarios, cargos y sedes con su historial, prórrogas y datos bancarios.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.contract", "Contratos laborales", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.ContractManage,
+            "Gestionar contratos",
+            "Permite crear empleados, registrar salarios y cambios de cargo, prorrogar, convertir, terminar, reincorporar, editar los datos bancarios e importar.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.contract", "Contratos laborales", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.SettingsManage,
+            "Configurar RRHH",
+            "Permite crear, editar, archivar y eliminar sedes, centros de trabajo, áreas y cargos.",
+            "Recursos humanos",
+            "medium",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.settings", "Configuración de RRHH", "manage"),
         });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
@@ -4028,6 +4246,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 SiigoPermissions.InvoiceIssue,
                 policy => AddPermissionRequirement(policy, SiigoPermissions.InvoiceIssue))
+            .AddPolicy(
+                SiigoPermissions.CallsRead,
+                policy => AddPermissionRequirement(policy, SiigoPermissions.CallsRead))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 ServiceContractsPermissions.Read,
@@ -4042,6 +4263,22 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 LoansPermissions.Manage,
                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            // Spec 2026-11-20 (RRHH): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                HrPermissions.EmployeeRead,
+                policy => AddPermissionRequirement(policy, HrPermissions.EmployeeRead))
+            .AddPolicy(
+                HrPermissions.EmployeeManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.EmployeeManage))
+            .AddPolicy(
+                HrPermissions.ContractRead,
+                policy => AddPermissionRequirement(policy, HrPermissions.ContractRead))
+            .AddPolicy(
+                HrPermissions.ContractManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.ContractManage))
+            .AddPolicy(
+                HrPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.SettingsManage))
             // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 SupportPermissions.Read,

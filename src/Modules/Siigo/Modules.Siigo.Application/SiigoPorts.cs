@@ -111,6 +111,24 @@ public interface ISiigoInvoiceRepository
     void Add(SiigoInvoice invoice);
 }
 
+/// <summary>Las llamadas a Siigo que fallaron (<c>siigo.call_failures</c>), sólo lectura y sin tracking: la escritura es de
+/// <see cref="ISiigoCallFailureLog"/>. Todo filtra por <c>tenant_id</c>.</summary>
+public interface ISiigoCallFailureRepository
+{
+    /// <summary>La página pedida, de la más nueva a la más vieja, y el total con los mismos filtros. Un filtro nulo no se aplica.</summary>
+    Task<(IReadOnlyList<SiigoCallFailure> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        SiigoCallOperation? operation,
+        int? status,
+        DateTimeOffset? since,
+        DateTimeOffset? until,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    Task<SiigoCallFailure?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+}
+
 /// <summary>Una variante de QEP tal como la tabla de vínculos la pinta: <paramref name="DisplayName"/> es el producto más los valores de
 /// sus opciones; <paramref name="IsActive"/> exige variante y producto activos.</summary>
 public sealed record SiigoVariantRef(Guid VariantId, string DisplayName, string Code, bool IsActive);

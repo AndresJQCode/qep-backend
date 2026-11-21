@@ -154,6 +154,10 @@ public interface ISiigoApi
     /// <summary><c>POST /v1/invoices/{id}/stamp</c>: envía a la DIAN una factura ya creada.</summary>
     Task<SiigoStampOutcome> StampInvoiceAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken);
 
+    /// <summary><c>GET /v1/invoices/{id}/pdf</c>: el PDF de la factura, ya decodificado (Siigo lo manda en base64 dentro de un JSON). Lanza
+    /// como las demás lecturas, y <c>siigo.unavailable</c> si Siigo contesta sin contenido. Nunca se cachea: pesa y es de un solo uso.</summary>
+    Task<byte[]> GetInvoicePdfAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken);
+
     /// <summary><c>GET /v1/invoices/{id}/stamp/errors</c>: el rechazo de la DIAN.</summary>
     Task<IReadOnlyList<SiigoError>> GetStampErrorsAsync(
         SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken);

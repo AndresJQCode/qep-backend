@@ -27,15 +27,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
-- **`Siigo:DebugCurl` (apagado por defecto) loguea como curl, con su respuesta, sólo las llamadas a Siigo que fallan** (`SiigoCurlLogHandler`,
-  categoría propia; el token y la `access_key` salen enmascarados). El cuerpo lleva datos del cliente: se prende en el ConfigMap sólo
-  mientras se diagnostica y se vuelve a apagar. Una llamada exitosa nunca se loguea: su respuesta trae el token de `/auth`.
-- **Una llamada a Siigo que falla deja su curl en el log de fallas (`platform/request-log`), sin interruptor.** El detalle de la fila lleva el
-  `curl.exe` de la petición (token y `access_key` enmascarados) y la respuesta de Siigo, con datos del cliente: sólo lo lee quien tiene
-  `RequestLogRead`. Dos caminos: la factura y el sellado no lanzan, así que `SiigoApiClient` escribe la fila por `ISiigoCallFailureLog`
-  (`siigo.call_failed`, adaptador `SiigoCallFailureLog` en Bootstrapper, sólo en requests que escriben); las lecturas y el cliente nuevo
-  lanzan, y el curl viaja en `Exception.Data["request.diagnostic"]` hasta `RequestFailureCapture.Describe`. Ese literal está en Siigo y en
-  Api: cambiar uno compila y deja el detalle sin curl. Una respuesta buena nunca se guarda: la de `/auth` trae el token.
+- **Una llamada a Siigo que falla deja su curl y la respuesta en `siigo.call_failures`** (spec 2026-11-21). Una fila por llamada fallida,
+  lecturas y escrituras: el `curl.exe` de la petición (token y `access_key` enmascarados, `SiigoCurl.Build`) y lo que contestó Siigo, atada a la
+  factura por la `Idempotency-Key` (creación) o el id de Siigo (sellado). **Una llamada buena no se guarda nunca:** la respuesta de `/auth`
+  trae el token. Las escribe `SiigoApiClient` por `ISiigoCallFailureLog` (`SiigoCallFailureLog`, con su propio `DbContext`, sin propagar
+  errores) y cada escritura borra de paso hasta 200 filas de más de 7 días, de todos los tenants (sin worker). Se leen con `siigo.calls.read`
+  (sólo `admin` de fábrica; soporte recibe un rol personalizado) en `GET …/siigo/call-failures` (sin curl ni cuerpo) y `…/{id}` (con ellos):
+  llevan datos del cliente. El log de requests (`platform/request-log`) conserva sólo la excepción, ligada por `TraceId`; no lleva el curl.
 - **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected` y
   `Failed`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`, `order_id` o
   `tenant_id` compila y deja ambas operaciones en 500.
@@ -49,3 +47,19 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   quedar un centavo abajo y `invalid_total_payments` rechaza. `SiigoInvoiceBuilder` dimensiona los pagos con ese total (`computedOrderTotal`) y no con
   el de QEP; un saldo de hasta un peso (`Tolerance`) es redondeo y se suma al último comprobante en vez de salir como un segundo pago a crédito, y un
   comprobante que pasa por no más de un peso se recorta. Nada de esto lee el total del error de Siigo: sigue vigente la regla de arriba.
+- **El PDF de la factura no se guarda: se pide a Siigo en cada descarga** (`GET …/siigo-invoice/{invoiceId}/pdf`, `GetSiigoInvoicePdfHandler`).
+  Mismo permiso que generar (`siigo.invoice.issue`: de fábrica `admin` y `billing`), así que un rol con ese permiso también lo ve. Siigo lo
+  entrega como `{"base64": "…"}` (campo tomado de la documentación del SDK, no probado contra una cuenta real: si falla, mirar ese campo
+  primero). Sólo lo tiene una fila con id de Siigo y `Created`, `Stamped` o `StampRejected` (`SiigoInvoice.HasPdf`, que viaja como `hasPdf`);
+  una resuelta a mano no tiene id y no se puede pedir.
+
+- **La facturación masiva es una tanda con worker, no un bucle en el request** (`siigo.invoice_batches` e `invoice_batch_items`,
+  `SiigoInvoiceBatchWorker`). Cada pedido de la tanda lo factura el mismo `IssueSiigoInvoiceHandler` de siempre, así que el candado por
+  pedido y la clave de idempotencia evitan duplicados al repetir o recuperar un lease. El worker corre **como quien pidió la tanda**:
+  `SiigoBatchItemInvoker` (Bootstrapper) instala un `DelegatedExecutionContext` con los permisos que esa persona tiene al procesar *ese*
+  pedido; si ya no tiene `siigo.invoice.issue`, el pedido falla con `siigo.invoice_batch.forbidden` y no se llama a Siigo. Es, junto al
+  copiloto, el único que instala ese contexto (`CompositionRootTests`). El reclamo es un `UPDATE … SKIP LOCKED` de un pedido (lease de 5 min;
+  más de 5 reclamos y se da por fallido). Un pedido que no está en condiciones sale `Skipped` con su código (y, si es `not_ready`, los códigos
+  de lo que falta); Siigo sin responder o la conexión caída reintenta (`Retry`) con espera creciente; el resto de la tanda sigue. El timbre
+  sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre calla y sólo queda la
+  red de seguridad de 30 s. Tope de 50 pedidos por tanda.
