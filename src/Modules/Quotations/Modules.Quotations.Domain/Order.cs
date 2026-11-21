@@ -1163,6 +1163,37 @@ public sealed class Order
         Touch(updatedBy, occurredAt);
     }
 
+    /// <summary>Agrega una línea de regalo (spec 2026-11-21): precio de lista real con descuento fijo en 100 %. Misma regla
+    /// de edición, costo congelado y duplicado que <see cref="AddItem"/>, pero la clave es (variante, regalo): puede ser
+    /// de la misma variante que una línea pagada.</summary>
+    public void AddGift(
+        OrderItemId itemId,
+        Guid variantId,
+        Guid productId,
+        decimal quantity,
+        decimal listUnitPrice,
+        int taxPercentage,
+        OrderLineCosts costs,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt,
+        ProductKind kind = ProductKind.Physical,
+        SalesUnit salesUnit = SalesUnit.Unit)
+    {
+        ArgumentNullException.ThrowIfNull(costs);
+        EnsureEditable("Gifts can only be added while the order is editable.");
+        var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
+        var unitCost = sold ? costs.For(variantId) : null;
+        var item = AddItemCore(
+            itemId, variantId, productId, quantity, listUnitPrice, OrderItem.GiftDiscountPercentage, taxPercentage,
+            QuotationDiscountOrigin.Own, null, kind, salesUnit, occurredAt, isGift: true);
+        if (sold)
+        {
+            item.FreezeCost(unitCost, occurredAt);
+        }
+
+        Touch(updatedBy, occurredAt);
+    }
+
     // Congela las líneas que todavía no lo hicieron; las ya congeladas conservan su costo (§4.3). Resuelve todos
     // los costos antes de tocar una línea, para que un costo sin buscar no deje el pedido congelado a medias.
     private void FreezeLineCosts(OrderLineCosts costs, DateTimeOffset at)
@@ -1190,11 +1221,12 @@ public sealed class Order
         QuotationProductSnapshot? product,
         ProductKind kind,
         SalesUnit salesUnit,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool isGift = false)
     {
         // Una línea por variante (spec 2026-10-20 §4): dos tallas del mismo producto son dos líneas. El
         // código de error se conserva: es contrato con el frontend.
-        if (_items.Any(existing => existing.VariantId == variantId))
+        if (_items.Any(existing => existing.VariantId == variantId && existing.IsGift == isGift))
         {
             throw new QuotationsDomainException(
                 "order.item.duplicate_product",
@@ -1204,7 +1236,7 @@ public sealed class Order
         // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = OrderItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
-            _items.Count + 1, Currency, PriceRounding, kind, salesUnit, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, kind, salesUnit, occurredAt, isGift);
         if (origin != QuotationDiscountOrigin.Own)
         {
             item.ApplyDiscount(discountPercentage, origin, Currency, PriceRounding, occurredAt);
@@ -1334,7 +1366,7 @@ public sealed class Order
         IReadOnlyDictionary<OrderItemId, QuotationItemDiscount> discounts,
         DateTimeOffset occurredAt)
     {
-        foreach (var item in _items)
+        foreach (var item in _items.Where(item => !item.IsGift))
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
@@ -2290,7 +2322,8 @@ public sealed class Order
     }
 
     private bool SameItems(OrderItem[] candidates) =>
-        candidates.Length == _items.Count
+        // Los regalos tienen su propio alta y baja: la edición externa sólo compara las líneas pagadas.
+        candidates.Length == _items.Count(item => !item.IsGift)
         && candidates.All(candidate => _items.Any(item => item.SameAs(candidate)));
 
     private void ReplaceExternalLines(
@@ -2300,16 +2333,16 @@ public sealed class Order
         var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
         var newCosts = sold
             ? candidates
-                .Where(candidate => _items.All(item => item.VariantId != candidate.VariantId))
+                .Where(candidate => _items.All(item => item.IsGift || item.VariantId != candidate.VariantId))
                 .ToDictionary(candidate => candidate.VariantId, candidate => costs.For(candidate.VariantId))
             : [];
         var inputs = lines.ToArray();
-        _items.RemoveAll(item => candidates.All(candidate => candidate.VariantId != item.VariantId));
+        _items.RemoveAll(item => !item.IsGift && candidates.All(candidate => candidate.VariantId != item.VariantId));
         for (var index = 0; index < candidates.Length; index++)
         {
             var candidate = candidates[index];
             var input = inputs[index];
-            if (_items.FirstOrDefault(item => item.VariantId == candidate.VariantId) is { } kept)
+            if (_items.FirstOrDefault(item => !item.IsGift && item.VariantId == candidate.VariantId) is { } kept)
             {
                 kept.ApplyExternal(
                     input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, ChargesVat, index + 1,
