@@ -110,7 +110,7 @@ public sealed class SalaryRulesApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         using var document = JsonDocument.Parse(await BodyAsync(response));
         Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("date", out var dateErrors));
-        Assert.NotEqual(JsonValueKind.Null, dateErrors.ValueKind);;
+        Assert.NotEqual(JsonValueKind.Null, dateErrors.ValueKind);
     }
 
     // La fecha se lee en el handler, ya autorizado: quien opera en otro tenant recibe 403 y no un 422 sobre un dato que todavía

@@ -229,7 +229,7 @@ public static class HrEndpoints
         CancellationToken cancellationToken)
     {
         var site = await dispatcher.SendAsync(
-            new UpdateSiteCommand(tenantId, id, request, RequireVersion(httpContext)), cancellationToken);
+            new UpdateSiteCommand(tenantId, id, request, IfMatchOf(httpContext)), cancellationToken);
 
         return Results.Ok(site);
     }
@@ -251,7 +251,7 @@ public static class HrEndpoints
         CancellationToken cancellationToken)
     {
         var workplace = await dispatcher.SendAsync(
-            new UpdateWorkplaceCommand(tenantId, id, request, RequireVersion(httpContext)), cancellationToken);
+            new UpdateWorkplaceCommand(tenantId, id, request, IfMatchOf(httpContext)), cancellationToken);
 
         return Results.Ok(workplace);
     }
@@ -285,7 +285,7 @@ public static class HrEndpoints
         CancellationToken cancellationToken)
     {
         var setting = await dispatcher.SendAsync(
-            new UpdateNamedSettingCommand(tenantId, kind, id, request, RequireVersion(httpContext)), cancellationToken);
+            new UpdateNamedSettingCommand(tenantId, kind, id, request, IfMatchOf(httpContext)), cancellationToken);
 
         return Results.Ok(setting);
     }
@@ -311,29 +311,6 @@ public static class HrEndpoints
         return Results.NoContent();
     }
 
-    // Copia de LoansEndpoints.RequireVersion (Hr no referencia ese módulo): sin If-Match 428; la versión vieja es 412 en el handler.
-    private static long RequireVersion(HttpContext httpContext) =>
-        TryParseVersion(httpContext.Request.Headers.IfMatch, out var version)
-            ? version
-            : throw new PreconditionRequiredException(
-                "precondition.if_match_required",
-                "A valid If-Match header containing the loaded record version is required.");
-
-    private static bool TryParseVersion(string? etag, out long version)
-    {
-        version = 0;
-        if (string.IsNullOrWhiteSpace(etag))
-        {
-            return false;
-        }
-
-        var normalized = etag.Trim();
-        if (normalized.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
-        {
-            normalized = normalized[2..].Trim();
-        }
-
-        normalized = normalized.Trim('"');
-        return long.TryParse(normalized, out version) && version > 0;
-    }
+    // El If-Match llega crudo al caso de uso, que lo exige ya autorizado: parsearlo acá daría 428 a quien opera en otro tenant.
+    private static string? IfMatchOf(HttpContext httpContext) => httpContext.Request.Headers.IfMatch.ToString();
 }

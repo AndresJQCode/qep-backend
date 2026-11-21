@@ -294,6 +294,14 @@ public sealed class Employee
     private static bool ValidateNewContract(NewContract next, SalaryFloor floorAtStart)
     {
         var terms = next.Terms;
+
+        // Application validates this with a field error; the aggregate does not rely on it, because `Renew` and the aviso de
+        // vencimiento read `EndDate` of a fixed-term contract without a null check.
+        if (terms is { Duration: ContractDuration.FixedTerm or ContractDuration.WorkOrLabor, EndDate: null })
+        {
+            throw new ArgumentException("A fixed-term or work-or-labor contract needs an end date.", nameof(next));
+        }
+
         if (terms is { Duration: ContractDuration.FixedTerm, EndDate: { } end } && end > FixedTermLimits.MaxEndDate(terms.StartDate))
         {
             throw new HrDomainException(

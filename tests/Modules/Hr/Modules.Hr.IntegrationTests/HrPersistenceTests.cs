@@ -432,6 +432,71 @@ public sealed class HrPersistenceTests : IClassFixture<HrPersistenceTests.World>
         await Assert.ThrowsAsync<RequestConcurrencyException>(() => SaveAsync(second.ServiceProvider));
     }
 
+    // El token de concurrencia de la configuración (Version) corre en la base: dos pantallas que cargaron la misma versión de un área y
+    // la guardan por su lado, la segunda pierde. El caso de uso sólo compara la versión con la que cargó; esto prueba el respaldo de EF.
+    [Fact]
+    public async Task TwoConcurrentUpdatesOfAnAreaEndInAConcurrencyConflict()
+    {
+        var tenant = Guid.NewGuid();
+        var area = Area.Create(AreaId.New(), tenant, "Operaciones", Now);
+        await InScopeAsync(async provider =>
+        {
+            provider.GetRequiredService<IHrSettingsRepository>().Add(area);
+            await SaveAsync(provider);
+        });
+
+        await using var first = _world.Factory.Services.CreateAsyncScope();
+        await using var second = _world.Factory.Services.CreateAsyncScope();
+        var loadedFirst = await first.ServiceProvider.GetRequiredService<IHrSettingsRepository>().FindAreaAsync(tenant, area.Id, Ct);
+        var loadedSecond = await second.ServiceProvider.GetRequiredService<IHrSettingsRepository>().FindAreaAsync(tenant, area.Id, Ct);
+        Assert.Equal(loadedFirst!.Version, loadedSecond!.Version);
+        loadedFirst.Rename("Operaciones A", Now);
+        loadedSecond.Rename("Operaciones B", Now);
+
+        await SaveAsync(first.ServiceProvider);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => SaveAsync(second.ServiceProvider));
+    }
+
+    // Eliminar es «revisar si se usa» y luego borrar: una contratación que llega en medio hace que el RESTRICT de la base rechace el
+    // borrado. Eso es el mismo 409 hr.settings.in_use, no un 500 con una DbUpdateException cruda.
+    [Fact]
+    public async Task DeletingASettingThatAHireJustStartedUsingIsTheInUseConflict()
+    {
+        var tenant = Guid.NewGuid();
+        var settings = await SeedSettingsAsync(tenant);
+
+        await using var deleting = _world.Factory.Services.CreateAsyncScope();
+        var repository = deleting.ServiceProvider.GetRequiredService<IHrSettingsRepository>();
+        var workplace = await repository.FindWorkplaceAsync(tenant, settings.Workplace.Id, Ct);
+        var position = await repository.FindPositionAsync(tenant, settings.Position.Id, Ct);
+        repository.Remove(workplace!);
+        repository.Remove(position!);
+
+        // Entre la revisión de «en uso» y el borrado, otra petición contrata a alguien en ese centro y cargo.
+        await AddAsync(Hire(tenant, settings, "9001"));
+
+        var exception = await Assert.ThrowsAsync<ResourceConflictException>(() => SaveAsync(deleting.ServiceProvider));
+        Assert.Equal("hr.settings.in_use", exception.Code);
+    }
+
+    // La traducción es de un borrado de configuración: una contratación que apunta a una configuración ya eliminada rompe la misma FK,
+    // pero no es «está en uso», es un error.
+    [Fact]
+    public async Task AHireOfADeletedSettingIsNotTranslated()
+    {
+        var tenant = Guid.NewGuid();
+        var settings = await SeedSettingsAsync(tenant);
+        await InScopeAsync(async provider =>
+        {
+            var repository = provider.GetRequiredService<IHrSettingsRepository>();
+            repository.Remove((await repository.FindWorkplaceAsync(tenant, settings.Workplace.Id, Ct))!);
+            await SaveAsync(provider);
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => AddAsync(Hire(tenant, settings, "9002")));
+    }
+
     [Fact]
     public async Task ListCountsRespectSearchButNotStatus()
     {

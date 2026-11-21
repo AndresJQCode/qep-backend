@@ -230,6 +230,36 @@ public sealed class EmployeeLifecycleTests
         Assert.Equal(Later, employee.UpdatedAt);
     }
 
+    // El validador de la solicitud ya exige la fecha, pero el agregado no depende de él: `Renew` lee `EndDate` sin comprobarlo, así
+    // que un término fijo o una obra sin fin no puede llegar a existir (revisión del bloque B).
+    [Theory]
+    [InlineData(ContractDuration.FixedTerm)]
+    [InlineData(ContractDuration.WorkOrLabor)]
+    public void AContractThatEndsNeedsAnEndDateWhereverItIsCreated(ContractDuration duration)
+    {
+        var withoutEnd = new ContractTerms(
+            CompanyId, ContractType.Employee, duration, SalaryType.Monthly, new DateOnly(2026, 1, 15), null);
+        var next = Contract(Terms(start: new DateOnly(2026, 12, 1), end: new DateOnly(2027, 6, 30))) with { Terms = withoutEnd with { StartDate = new DateOnly(2026, 12, 1) } };
+
+        Assert.Throws<ArgumentException>(() => Hire(Contract(withoutEnd)));
+
+        var converting = Hire();
+        Assert.Throws<ArgumentException>(() => converting.ChangeContractType(converting.ActiveContract!.Id, next, Floor2026, Later));
+
+        var retired = Hire();
+        Terminate(retired);
+        Assert.Throws<ArgumentException>(() => retired.Reincorporate(
+            next with { Terms = withoutEnd with { StartDate = new DateOnly(2026, 12, 15) } }, Floor2026, Later));
+    }
+
+    [Fact]
+    public void AnIndefiniteContractNeedsNoEndDate()
+    {
+        var employee = Hire(Contract(Terms(duration: ContractDuration.Indefinite)));
+
+        Assert.Null(employee.ActiveContract!.EndDate);
+    }
+
     [Fact]
     public void AnUnknownContractIsNotFound()
     {

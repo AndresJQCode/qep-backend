@@ -362,6 +362,21 @@ public sealed class HrSettingsApiTests : IClassFixture<HrSettingsApiTests.World>
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // El If-Match se lee en el caso de uso, ya autorizado: quien opera en otro tenant recibe 403 aunque no mande el encabezado (antes
+    // el endpoint lo exigía primero y respondía 428).
+    [Fact]
+    public async Task AnotherTenantWriteWithoutIfMatchIs403()
+    {
+        using var tenant = await NewTenantAsync();
+        using var other = await NewTenantAsync();
+        var area = await NamedAsync(tenant, "areas", "Logística");
+
+        var response = await PutAsync(other.Hr, $"{tenant.Url}/areas/{area.GetProperty("id").GetGuid()}", new { name = "Otra" }, null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("authorization.denied", CodeOf(await JsonOfAsync(response)));
+    }
+
     [Fact]
     public async Task EveryWriteIsAudited()
     {

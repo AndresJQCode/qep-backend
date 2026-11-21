@@ -14,9 +14,9 @@ public enum NamedSettingKind
 /// <summary>Responde <see cref="AreaDto"/> o <see cref="PositionDto"/> según <see cref="NamedSettingKind"/>.</summary>
 public sealed record CreateNamedSettingCommand(Guid TenantId, NamedSettingKind Kind, NamedSettingRequest Request) : ICommand<object>;
 
-/// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
+/// <param name="IfMatch">La versión que la pantalla cargó; llega por <c>If-Match</c>, crudo: el caso de uso lo lee ya autorizado.</param>
 public sealed record UpdateNamedSettingCommand(
-    Guid TenantId, NamedSettingKind Kind, Guid Id, NamedSettingRequest Request, long ExpectedVersion) : ICommand<object>;
+    Guid TenantId, NamedSettingKind Kind, Guid Id, NamedSettingRequest Request, string? IfMatch) : ICommand<object>;
 
 public sealed class CreateNamedSettingHandler(
     IExecutionContext executionContext,
@@ -76,6 +76,7 @@ public sealed class UpdateNamedSettingHandler(
     {
         await HrAuthorization.EnsureAsync(
             executionContext, tenantModules, command.TenantId, cancellationToken, HrPermissions.EmployeeRead, HrPermissions.SettingsManage);
+        var expectedVersion = HrIfMatch.Require(command.IfMatch);
         await validator.ValidateAndThrowAsync(command.Request, cancellationToken);
 
         var name = command.Request.Name!;
@@ -87,7 +88,7 @@ public sealed class UpdateNamedSettingHandler(
         {
             var area = await settings.FindAreaAsync(command.TenantId, new AreaId(command.Id), cancellationToken)
                 ?? throw HrNotFound.Area(command.Id);
-            HrSettingsSupport.EnsureVersion(area.Version, command.ExpectedVersion);
+            HrSettingsSupport.EnsureVersion(area.Version, expectedVersion);
             HrSettingsSupport.Diff(changed, "name", area.Name, name.Trim());
             area.Rename(name, now);
             (updated, resource) = (area, HrAuditActions.Resources.Area);
@@ -96,7 +97,7 @@ public sealed class UpdateNamedSettingHandler(
         {
             var position = await settings.FindPositionAsync(command.TenantId, new PositionId(command.Id), cancellationToken)
                 ?? throw HrNotFound.Position(command.Id);
-            HrSettingsSupport.EnsureVersion(position.Version, command.ExpectedVersion);
+            HrSettingsSupport.EnsureVersion(position.Version, expectedVersion);
             HrSettingsSupport.Diff(changed, "name", position.Name, name.Trim());
             position.Rename(name, now);
             (updated, resource) = (position, HrAuditActions.Resources.Position);

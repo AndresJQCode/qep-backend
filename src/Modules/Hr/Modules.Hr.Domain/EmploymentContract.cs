@@ -200,7 +200,8 @@ public sealed class EmploymentContract
     {
         EnsureActive();
         EnsureFixedTerm();
-        var currentEnd = EndDate!.Value;
+        var currentEnd = EndDate
+            ?? throw new InvalidOperationException("A fixed-term contract always has an end date; creation enforces it.");
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(newEndDate, currentEnd);
         if (newEndDate > FixedTermLimits.MaxEndDate(StartDate))
         {

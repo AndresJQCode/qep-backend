@@ -7,8 +7,8 @@ namespace Modules.Hr.Application;
 
 public sealed record CreateWorkplaceCommand(Guid TenantId, WorkplaceRequest Request) : ICommand<WorkplaceDto>;
 
-/// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
-public sealed record UpdateWorkplaceCommand(Guid TenantId, Guid WorkplaceId, WorkplaceRequest Request, long ExpectedVersion)
+/// <param name="IfMatch">La versión que la pantalla cargó; llega por <c>If-Match</c>, crudo: el caso de uso lo lee ya autorizado.</param>
+public sealed record UpdateWorkplaceCommand(Guid TenantId, Guid WorkplaceId, WorkplaceRequest Request, string? IfMatch)
     : ICommand<WorkplaceDto>;
 
 public sealed class CreateWorkplaceHandler(
@@ -67,12 +67,13 @@ public sealed class UpdateWorkplaceHandler(
     {
         await HrAuthorization.EnsureAsync(
             executionContext, tenantModules, command.TenantId, cancellationToken, HrPermissions.EmployeeRead, HrPermissions.SettingsManage);
+        var expectedVersion = HrIfMatch.Require(command.IfMatch);
         await validator.ValidateAndThrowAsync(command.Request, cancellationToken);
 
         var request = command.Request;
         var workplace = await settings.FindWorkplaceAsync(command.TenantId, new WorkplaceId(command.WorkplaceId), cancellationToken)
             ?? throw HrNotFound.Workplace(command.WorkplaceId);
-        HrSettingsSupport.EnsureVersion(workplace.Version, command.ExpectedVersion);
+        HrSettingsSupport.EnsureVersion(workplace.Version, expectedVersion);
         if (request.SiteId != workplace.SiteId.Value)
         {
             HrFieldErrors.Throw("siteId", "La sede de un centro de trabajo no cambia.");

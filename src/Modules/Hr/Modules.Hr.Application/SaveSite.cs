@@ -7,8 +7,8 @@ namespace Modules.Hr.Application;
 
 public sealed record CreateSiteCommand(Guid TenantId, SiteRequest Request) : ICommand<SiteDto>;
 
-/// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
-public sealed record UpdateSiteCommand(Guid TenantId, Guid SiteId, SiteRequest Request, long ExpectedVersion) : ICommand<SiteDto>;
+/// <param name="IfMatch">La versión que la pantalla cargó; llega por <c>If-Match</c>, crudo: el caso de uso lo lee ya autorizado.</param>
+public sealed record UpdateSiteCommand(Guid TenantId, Guid SiteId, SiteRequest Request, string? IfMatch) : ICommand<SiteDto>;
 
 /// <summary>
 /// Crear una sede exige una empresa <b>activa</b> (D-12: un vínculo nuevo). La empresa no cambia después: editar una sede
@@ -67,12 +67,13 @@ public sealed class UpdateSiteHandler(
     {
         await HrAuthorization.EnsureAsync(
             executionContext, tenantModules, command.TenantId, cancellationToken, HrPermissions.EmployeeRead, HrPermissions.SettingsManage);
+        var expectedVersion = HrIfMatch.Require(command.IfMatch);
         await validator.ValidateAndThrowAsync(command.Request, cancellationToken);
 
         var request = command.Request;
         var site = await settings.FindSiteAsync(command.TenantId, new SiteId(command.SiteId), cancellationToken)
             ?? throw HrNotFound.Site(command.SiteId);
-        HrSettingsSupport.EnsureVersion(site.Version, command.ExpectedVersion);
+        HrSettingsSupport.EnsureVersion(site.Version, expectedVersion);
         if (request.CompanyId != site.CompanyId)
         {
             HrFieldErrors.Throw("companyId", "La empresa de una sede no cambia.");
