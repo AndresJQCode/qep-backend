@@ -235,6 +235,41 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                     b.ToTable("payment_links", "siigo");
                 });
 
+            modelBuilder.Entity("Modules.Siigo.Domain.SiigoSellerLink", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<Guid>("MembershipId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("membership_id");
+
+                    b.Property<string>("SiigoUserId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("siigo_user_id");
+
+                    b.Property<string>("SiigoUserName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("siigo_user_name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("ConnectionId", "MembershipId")
+                        .HasName("PK_seller_links");
+
+                    b.HasIndex("TenantId", "ConnectionId")
+                        .HasDatabaseName("IX_seller_links_tenant_connection");
+
+                    b.ToTable("seller_links", "siigo");
+                });
+
             modelBuilder.Entity("Modules.Siigo.Domain.SiigoSettings", b =>
                 {
                     b.Property<Guid>("ConnectionId")
@@ -285,10 +320,18 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("freight_separate_invoice");
 
+                    b.Property<DateTimeOffset?>("ProductsAutoLinkedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("products_auto_linked_at");
+
                     b.Property<string>("SellerId")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
                         .HasColumnName("seller_id");
+
+                    b.Property<DateTimeOffset?>("SellersAutoLinkedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sellers_auto_linked_at");
 
                     b.Property<bool>("SendMail")
                         .ValueGeneratedOnAdd()
@@ -494,6 +537,15 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Siigo.Domain.SiigoSellerLink", b =>
+                {
+                    b.HasOne("Modules.Siigo.Domain.SiigoSettings", null)
+                        .WithMany("SellerLinks")
+                        .HasForeignKey("ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Siigo.Domain.SiigoTaxLink", b =>
                 {
                     b.HasOne("Modules.Siigo.Domain.SiigoSettings", null)
@@ -524,6 +576,8 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Modules.Siigo.Domain.SiigoSettings", b =>
                 {
                     b.Navigation("PaymentLinks");
+
+                    b.Navigation("SellerLinks");
 
                     b.Navigation("TaxLinks");
 

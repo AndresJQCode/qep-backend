@@ -48,6 +48,7 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         ConfigureSettings(modelBuilder);
         ConfigureVariantLink(modelBuilder);
         ConfigureTaxLink(modelBuilder);
+        ConfigureSellerLink(modelBuilder);
         ConfigureWithholdingLink(modelBuilder);
         ConfigurePaymentLink(modelBuilder);
         ConfigureInvoice(modelBuilder);
@@ -97,6 +98,10 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         settings.HasMany(value => value.TaxLinks).WithOne().HasForeignKey(link => link.ConnectionId).OnDelete(DeleteBehavior.Cascade);
         settings.HasMany(value => value.WithholdingLinks).WithOne().HasForeignKey(link => link.ConnectionId).OnDelete(DeleteBehavior.Cascade);
         settings.HasMany(value => value.PaymentLinks).WithOne().HasForeignKey(link => link.ConnectionId).OnDelete(DeleteBehavior.Cascade);
+        settings.HasMany(value => value.SellerLinks).WithOne().HasForeignKey(link => link.ConnectionId).OnDelete(DeleteBehavior.Cascade);
+        settings.Navigation(value => value.SellerLinks).UsePropertyAccessMode(PropertyAccessMode.Field);
+        settings.Property(value => value.SellersAutoLinkedAt).HasColumnName("sellers_auto_linked_at");
+        settings.Property(value => value.ProductsAutoLinkedAt).HasColumnName("products_auto_linked_at");
         settings.Navigation(value => value.VariantLinks).UsePropertyAccessMode(PropertyAccessMode.Field);
         settings.Navigation(value => value.TaxLinks).UsePropertyAccessMode(PropertyAccessMode.Field);
         settings.Navigation(value => value.WithholdingLinks).UsePropertyAccessMode(PropertyAccessMode.Field);
@@ -119,6 +124,19 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         link.Property(value => value.LinkedAt).HasColumnName("linked_at");
         link.Property(value => value.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(16);
         link.HasIndex(value => new { value.TenantId, value.ConnectionId }).HasDatabaseName("IX_variant_links_tenant_connection");
+    }
+
+    private static void ConfigureSellerLink(ModelBuilder modelBuilder)
+    {
+        var link = modelBuilder.Entity<SiigoSellerLink>();
+        link.ToTable("seller_links", Schema);
+        link.HasKey(value => new { value.ConnectionId, value.MembershipId }).HasName("PK_seller_links");
+        link.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        link.Property(value => value.MembershipId).HasColumnName("membership_id");
+        link.Property(value => value.TenantId).HasColumnName("tenant_id");
+        link.Property(value => value.SiigoUserId).HasColumnName("siigo_user_id").HasMaxLength(SiigoSellerLink.UserIdMaxLength);
+        link.Property(value => value.SiigoUserName).HasColumnName("siigo_user_name").HasMaxLength(SiigoSellerLink.UserNameMaxLength);
+        link.HasIndex(value => new { value.TenantId, value.ConnectionId }).HasDatabaseName("IX_seller_links_tenant_connection");
     }
 
     private static void ConfigureTaxLink(ModelBuilder modelBuilder)

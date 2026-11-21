@@ -31,4 +31,15 @@ public sealed class SiigoDbContextMappingTests
         Assert.True(seller.IsShadowProperty());
         Assert.Equal("seller_id", seller.GetColumnName());
     }
+
+    [Fact]
+    public void TheSellerLinksMapToTheirTable()
+    {
+        using var context = new SiigoDbContextFactory().CreateDbContext([]);
+
+        var link = context.Model.FindEntityType(typeof(SiigoSellerLink))!;
+
+        Assert.Equal(("seller_links", "siigo"), (link.GetTableName(), link.GetSchema()));
+        Assert.Equal(["ConnectionId", "MembershipId"], link.FindPrimaryKey()!.Properties.Select(property => property.Name));
+    }
 }

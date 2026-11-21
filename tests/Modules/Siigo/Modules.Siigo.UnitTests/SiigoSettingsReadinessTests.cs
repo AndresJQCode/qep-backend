@@ -32,21 +32,35 @@ public sealed class SiigoSettingsReadinessTests
     }
 
     [Fact]
-    public void WithEverythingTheSixStepsAreComplete()
+    public void WithEverythingTheSevenStepsAreComplete()
     {
         var settings = NewSettings();
         settings.AssignCompany(Guid.CreateVersion7());
         settings.UpdateDocument(new SiigoDocumentSettings("doc-1", null, null, false, false, false, null));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
         settings.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
+        settings.ReplaceSellerLinks([new SiigoSellerLink(Guid.CreateVersion7(), "800", "VANESA HERNANDEZ")]);
 
         var steps = SiigoSettingsReadiness.Evaluate(settings);
 
         Assert.Equal(
-            [SiigoSetupStep.Credentials, SiigoSetupStep.Company, SiigoSetupStep.Document, SiigoSetupStep.Taxes, SiigoSetupStep.Payments, SiigoSetupStep.Products],
+            [
+                SiigoSetupStep.Credentials, SiigoSetupStep.Company, SiigoSetupStep.Document, SiigoSetupStep.Taxes, SiigoSetupStep.Payments,
+                SiigoSetupStep.Sellers, SiigoSetupStep.Products,
+            ],
             steps.Select(step => step.Step));
         Assert.All(steps, step => Assert.True(step.Complete));
         Assert.All(steps, step => Assert.Empty(step.MissingCodes));
+    }
+
+    [Fact]
+    public void WithoutSellerLinksTheSellersStepNamesWhatIsMissing()
+    {
+        var settings = NewSettings();
+        Assert.Equal(["seller_link_missing"], Step(settings, SiigoSetupStep.Sellers).MissingCodes);
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(Guid.CreateVersion7(), "800", "VANESA HERNANDEZ")]);
+        Assert.True(Step(settings, SiigoSetupStep.Sellers).Complete);
     }
 
     [Fact]

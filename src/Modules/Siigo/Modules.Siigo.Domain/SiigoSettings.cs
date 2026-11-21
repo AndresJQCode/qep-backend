@@ -41,6 +41,7 @@ public sealed class SiigoSettings
     private readonly List<SiigoTaxLink> _taxLinks = [];
     private readonly List<SiigoWithholdingLink> _withholdingLinks = [];
     private readonly List<SiigoPaymentLink> _paymentLinks = [];
+    private readonly List<SiigoSellerLink> _sellerLinks = [];
 
     private SiigoSettings()
     {
@@ -92,6 +93,15 @@ public sealed class SiigoSettings
 
     public IReadOnlyList<SiigoPaymentLink> PaymentLinks => _paymentLinks;
 
+    public IReadOnlyList<SiigoSellerLink> SellerLinks => _sellerLinks;
+
+    /// <summary>Cuándo el asistente intentó vincular por correo por primera vez (spec 2026-11-20 §9). Null: nunca; la pantalla lo
+    /// intenta sola al abrir el paso.</summary>
+    public DateTimeOffset? SellersAutoLinkedAt { get; private set; }
+
+    /// <summary>Igual que <see cref="SellersAutoLinkedAt"/>, para la vinculación de productos por código.</summary>
+    public DateTimeOffset? ProductsAutoLinkedAt { get; private set; }
+
     public static SiigoSettings Create(Guid connectionId, Guid tenantId) =>
         new()
         {
@@ -133,6 +143,37 @@ public sealed class SiigoSettings
             link => link.TaxPercentage,
             (existing, incoming) => existing.Relink(incoming.SiigoTaxId),
             (link, connectionId, tenantId) => (link.ConnectionId, link.TenantId) = (connectionId, tenantId));
+        Touch();
+    }
+
+    /// <summary>Igual que <see cref="ReplaceTaxLinks"/>, por <c>MembershipId</c> (spec 2026-11-20): el vendedor de cada asesor.</summary>
+    public void ReplaceSellerLinks(IReadOnlyList<SiigoSellerLink> links)
+    {
+        ArgumentNullException.ThrowIfNull(links);
+        Sync(
+            _sellerLinks,
+            links,
+            link => link.MembershipId,
+            (existing, incoming) => existing.Relink(incoming.SiigoUserId, incoming.SiigoUserName),
+            (link, connectionId, tenantId) => (link.ConnectionId, link.TenantId) = (connectionId, tenantId));
+        Touch();
+    }
+
+    /// <summary>El usuario de Siigo vinculado al asesor, o <c>null</c> si no tiene vínculo.</summary>
+    public string? SellerFor(Guid membershipId) =>
+        _sellerLinks.Find(link => link.MembershipId == membershipId)?.SiigoUserId;
+
+    /// <summary>Deja constancia de que ya se intentó vincular vendedores por correo; vinculen o no, la pantalla no lo repite sola.</summary>
+    public void MarkSellersAutoLinked(DateTimeOffset at)
+    {
+        SellersAutoLinkedAt = at;
+        Touch();
+    }
+
+    /// <summary>Igual que <see cref="MarkSellersAutoLinked"/>, para productos.</summary>
+    public void MarkProductsAutoLinked(DateTimeOffset at)
+    {
+        ProductsAutoLinkedAt = at;
         Touch();
     }
 
