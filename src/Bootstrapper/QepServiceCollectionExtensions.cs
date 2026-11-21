@@ -524,6 +524,38 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.DeleteSettingCommand, bool>,
             Modules.Hr.Application.DeleteSettingHandler>();
+        // Empleados (spec 2026-11-20): lo que comparten los casos de uso (armado de la respuesta, historial de acciones, contrato
+        // nuevo) y un handler por ruta.
+        services.AddScoped<Modules.Hr.Application.EmployeeDetailComposer>();
+        services.AddScoped<Modules.Hr.Application.ActivityWriter>();
+        services.AddScoped<Modules.Hr.Application.NewContractFactory>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListEmployeesQuery, EmployeePageDto>,
+            Modules.Hr.Application.ListEmployeesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetEmployeeQuery, EmployeeDetailDto>,
+            Modules.Hr.Application.GetEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateEmployeeCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.CreateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateEmployeeCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.UpdateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateEmployeePaymentCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.UpdateEmployeePaymentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeactivateEmployeeCommand, EmployeeDetailDto>,
+            Modules.Hr.Application.DeactivateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteEmployeeCommand, bool>,
+            Modules.Hr.Application.DeleteEmployeeHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListAvailableMembersQuery, IReadOnlyList<Modules.Hr.Application.MemberRefDto>>,
+            Modules.Hr.Application.ListAvailableMembersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListEmployeeActivityQuery, ActivityPageDto>,
+            Modules.Hr.Application.ListEmployeeActivityHandler>();
         // Los PDF de contratos y registros (spec 2026-11-20): la sesión de subida y la URL firmada de descarga.
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.OpenHrUploadSessionCommand, Modules.Hr.Application.HrUploadSessionDto>,
@@ -1962,6 +1994,8 @@ public static class QepServiceCollectionExtensions
 
         // Hr: ciudades y países de Geography por su puerto (HrLayerTests.NoHrLayerReferencesGeography).
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
+        // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
+        services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
 
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.

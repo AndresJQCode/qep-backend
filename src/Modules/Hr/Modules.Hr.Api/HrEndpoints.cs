@@ -24,6 +24,7 @@ public static class HrEndpoints
 
         MapSettings(group);
         MapFiles(group);
+        MapEmployees(group);
 
         return endpoints;
     }
@@ -190,6 +191,171 @@ public static class HrEndpoints
 
         return Results.Ok(url);
     }
+
+    // Empleados. La política de cada ruta es el permiso en negrita de la tabla del plan; el handler revalida la lista completa (D-1).
+    // Las rutas de la importación (`/employees/import/*`, Tarea 10) se registran antes que `/employees/{employeeId:guid}`.
+    private static void MapEmployees(RouteGroupBuilder group)
+    {
+        group.MapGet("/employees", ListEmployeesAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead)
+            .Produces<EmployeePageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/employees", CreateEmployeeAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<CreateEmployeeRequest>("application/json")
+            .Produces<EmployeeDetailDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/employees/{employeeId:guid}", GetEmployeeAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead)
+            .Produces<EmployeeDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPut("/employees/{employeeId:guid}", UpdateEmployeeAsync)
+            .RequireAuthorization(HrPermissions.EmployeeManage)
+            .Accepts<EmployeeRequest>("application/json")
+            .Produces<EmployeeDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPut("/employees/{employeeId:guid}/payment", UpdateEmployeePaymentAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<PaymentRequest>("application/json")
+            .Produces<EmployeeDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/employees/{employeeId:guid}/deactivate", DeactivateEmployeeAsync)
+            .RequireAuthorization(HrPermissions.EmployeeManage)
+            .Accepts<DeactivateRequest>("application/json")
+            .Produces<EmployeeDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/employees/{employeeId:guid}", DeleteEmployeeAsync)
+            .RequireAuthorization(HrPermissions.EmployeeManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/employees/{employeeId:guid}/activity", ListEmployeeActivityAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead)
+            .Produces<ActivityPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/members-available", ListAvailableMembersAsync)
+            .RequireAuthorization(HrPermissions.EmployeeManage)
+            .Produces<IReadOnlyList<MemberRefDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+    }
+
+    // Los números llegan como texto y el handler los valida, ya autorizado: un `page=abc` que dejara al binding automático lanzaría una
+    // BadHttpRequestException, y ApiExceptionHandler la reduce a 500. Lo que no se puede leer se pasa como 0 para que el validador
+    // responda 422 sobre el campo.
+    private static async Task<IResult> ListEmployeesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? search = null,
+        string? status = null,
+        string? expiringSoon = null,
+        string? companyId = null,
+        string? page = null,
+        string? pageSize = null)
+    {
+        var result = await dispatcher.QueryAsync(
+            new ListEmployeesQuery(
+                tenantId,
+                string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+                string.IsNullOrWhiteSpace(status) ? null : status.Trim(),
+                string.Equals(expiringSoon, "true", StringComparison.OrdinalIgnoreCase),
+                string.IsNullOrWhiteSpace(companyId) ? null : Guid.TryParse(companyId, out var company) ? company : Guid.Empty,
+                PageNumberOf(page),
+                PageSizeOf(pageSize)),
+            cancellationToken);
+
+        return Results.Ok(result);
+    }
+
+    private static int PageNumberOf(string? page) =>
+        string.IsNullOrWhiteSpace(page) ? 1 : int.TryParse(page, out var number) ? number : 0;
+
+    private static int PageSizeOf(string? pageSize) =>
+        string.IsNullOrWhiteSpace(pageSize) ? ListEmployeesQuery.DefaultPageSize : int.TryParse(pageSize, out var size) ? size : 0;
+
+    private static async Task<IResult> CreateEmployeeAsync(
+        Guid tenantId, CreateEmployeeRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var detail = await dispatcher.SendAsync(new CreateEmployeeCommand(tenantId, request), cancellationToken);
+
+        return Results.Created($"/api/v1/tenants/{tenantId}/hr/employees/{detail.Employee.Id}", detail);
+    }
+
+    private static async Task<IResult> GetEmployeeAsync(
+        Guid tenantId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetEmployeeQuery(tenantId, employeeId), cancellationToken));
+
+    private static async Task<IResult> UpdateEmployeeAsync(
+        Guid tenantId,
+        Guid employeeId,
+        EmployeeRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateEmployeeCommand(tenantId, employeeId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> UpdateEmployeePaymentAsync(
+        Guid tenantId,
+        Guid employeeId,
+        PaymentRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateEmployeePaymentCommand(tenantId, employeeId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> DeactivateEmployeeAsync(
+        Guid tenantId, Guid employeeId, DeactivateRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new DeactivateEmployeeCommand(tenantId, employeeId, request), cancellationToken));
+
+    private static async Task<IResult> DeleteEmployeeAsync(
+        Guid tenantId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new DeleteEmployeeCommand(tenantId, employeeId), cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ListEmployeeActivityAsync(
+        Guid tenantId,
+        Guid employeeId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? page = null,
+        string? pageSize = null) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListEmployeeActivityQuery(tenantId, employeeId, PageNumberOf(page), PageSizeOf(pageSize)), cancellationToken));
+
+    private static async Task<IResult> ListAvailableMembersAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListAvailableMembersQuery(tenantId), cancellationToken));
 
     // La fecha llega como texto y el handler la lee, ya autorizado: un valor mal formado que dejara al binding automático
     // lanzaría una BadHttpRequestException, y ApiExceptionHandler la reduce a 500.

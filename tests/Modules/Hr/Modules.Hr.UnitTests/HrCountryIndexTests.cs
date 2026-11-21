@@ -35,4 +35,34 @@ public sealed class HrCountryIndexTests
     [Fact]
     public void NamesListsTheCatalogForTheValidValuesSheet() =>
         Assert.Equal(["Colombia", "Perú", "Venezuela"], Index.Names);
+
+    // El índice de las pruebas del alta: cuatro países de prueba, no el catálogo completo de Geografía.
+    private static readonly HrCountryIndex FourCountries = new(
+    [
+        new HrCountryRef("CO", "Colombia"),
+        new HrCountryRef("PE", "Perú"),
+        new HrCountryRef("VE", "Venezuela"),
+        new HrCountryRef("US", "Estados Unidos"),
+    ]);
+
+    [Fact]
+    public void ACodeOutsideTheCatalogIsUnknown()
+    {
+        // Tiene forma de país, pero no está en la lista de Geografía.
+        Assert.False(FourCountries.IsKnown("DE"));
+        Assert.True(FourCountries.IsKnown("US"));
+    }
+
+    [Fact]
+    public void NamesMatchWithoutAccents()
+    {
+        Assert.Equal("PE", FourCountries.FindByCodeOrName("peru")?.Code);
+        Assert.Equal("PE", FourCountries.FindByCodeOrName(" PERÚ ")?.Code);
+        Assert.Equal("PE", FourCountries.FindByCodeOrName("pe")?.Code);
+        Assert.Equal("US", FourCountries.FindByCodeOrName("estados unidos")?.Code);
+    }
+
+    [Fact]
+    public void NamesAreListedForTheTemplate() =>
+        Assert.Equal(["Colombia", "Perú", "Venezuela", "Estados Unidos"], FourCountries.Names);
 }
