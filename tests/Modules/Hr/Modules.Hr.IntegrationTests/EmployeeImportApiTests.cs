@@ -444,7 +444,7 @@ public sealed class EmployeeImportApiTests : IClassFixture<HrApiFixture>
             account.Style.NumberFormat.Format = "0";
             using var stream = new MemoryStream();
             workbook.SaveAs(stream);
-            file = ExactNumber(stream.ToArray(), "W2", "1234567890123456");
+            file = ExactNumber(stream.ToArray(), "V2", "1234567890123456");
         }
 
         var result = await OkAsync(await ConfirmAsync(tenant, file));
