@@ -228,6 +228,68 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                     b.ToTable("departments", "geography");
                 });
 
+            modelBuilder.Entity("Modules.Geography.Domain.Region", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country_code");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("name");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CountryCode", "Code")
+                        .IsUnique();
+
+                    b.ToTable("regions", "geography");
+                });
+
+            modelBuilder.Entity("Modules.Geography.Domain.RegionCity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("RegionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("region_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RegionId", "Code")
+                        .IsUnique();
+
+                    b.ToTable("region_cities", "geography");
+                });
+
             modelBuilder.Entity("Modules.Geography.Domain.UnresolvedCity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -431,6 +493,15 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                     b.HasOne("Modules.Geography.Domain.Department", null)
                         .WithMany()
                         .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Geography.Domain.RegionCity", b =>
+                {
+                    b.HasOne("Modules.Geography.Domain.Region", null)
+                        .WithMany()
+                        .HasForeignKey("RegionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -26,6 +26,7 @@ public static class GeographyInfrastructureExtensions
 
         services.AddScoped<IDepartmentRepository, DepartmentRepository>();
         services.AddScoped<ICityRepository, CityRepository>();
+        services.AddScoped<IRegionRepository, RegionRepository>();
         services.AddScoped<ICitySynonymRepository, CitySynonymRepository>();
         services.AddScoped<IUnresolvedCityRepository, UnresolvedCityRepository>();
         // Un puerto y no un caso de uso del dispatcher: lo llama Bootstrapper (SC-06, SC-13), sin sesión ni tenant.
@@ -35,6 +36,7 @@ public static class GeographyInfrastructureExtensions
         // Spec 2026-10-26 D-C6: los eventos de sinónimos, en el outbox de plataforma dentro de la transacción de Geography.
         services.AddScoped<IGeographyEventPublisher, GeographyEventPublisher>();
         services.AddScoped<GeographySeeder>();
+        services.AddScoped<RegionSeeder>();
 
         return services;
     }
