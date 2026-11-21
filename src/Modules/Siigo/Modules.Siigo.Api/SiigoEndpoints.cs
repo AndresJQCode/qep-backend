@@ -135,6 +135,14 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // El PDF vive en Siigo: se pide al descargar. Mismo permiso que generar la factura (admin y billing de fábrica).
+        invoice.MapGet("/{invoiceId:guid}/pdf", GetInvoicePdfAsync)
+            .Produces(StatusCodes.Status200OK, contentType: "application/pdf")
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         invoice.MapPost("/", IssueInvoiceAsync)
             .Produces<IReadOnlyList<SiigoInvoiceDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -205,6 +213,13 @@ public static class SiigoEndpoints
     private static async Task<IResult> GetInvoicesAsync(
         Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetSiigoInvoicesQuery(tenantId, orderId), cancellationToken));
+
+    private static async Task<IResult> GetInvoicePdfAsync(
+        Guid tenantId, Guid orderId, Guid invoiceId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var pdf = await dispatcher.QueryAsync(new GetSiigoInvoicePdfQuery(tenantId, orderId, invoiceId), cancellationToken);
+        return Results.File(pdf.Content, "application/pdf", pdf.FileName);
+    }
 
     // El cuerpo es opcional: sin él se usa la propuesta de pagos de la cuenta de cobro.
     private static async Task<IResult> IssueInvoiceAsync(

@@ -1763,6 +1763,7 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-21: las llamadas a Siigo que fallaron. El validador entra con AddValidatorsFromAssemblyContaining del módulo.
         services.AddScoped<IQueryHandler<ListSiigoCallFailuresQuery, SiigoCallFailurePageDto>, ListSiigoCallFailuresHandler>();
         services.AddScoped<IQueryHandler<GetSiigoCallFailureQuery, SiigoCallFailureDetailDto>, GetSiigoCallFailureHandler>();
+        services.AddScoped<IQueryHandler<GetSiigoInvoicePdfQuery, SiigoInvoicePdfDto>, GetSiigoInvoicePdfHandler>();
         services.AddScoped<ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>, IssueSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>, StampSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>, ResolveSiigoInvoiceHandler>();

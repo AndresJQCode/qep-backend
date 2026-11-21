@@ -92,6 +92,11 @@ public sealed class SiigoInvoice
     /// <summary>Se puede mandar a la DIAN: existe en Siigo (con su id) y no está ya estampada.</summary>
     public bool CanStamp => Status is SiigoInvoiceStatus.Created or SiigoInvoiceStatus.StampRejected && SiigoInvoiceId is not null;
 
+    /// <summary>Tiene PDF en Siigo: existe allá con su id (una <c>Created</c>, <c>Stamped</c> o <c>StampRejected</c>). Una resuelta a mano
+    /// no tiene id, así que no se puede pedir.</summary>
+    public bool HasPdf =>
+        SiigoInvoiceId is not null && Status is (SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected);
+
     public static SiigoInvoice PendingFor(
         Guid id,
         Guid tenantId,

@@ -8,7 +8,8 @@ namespace Modules.Siigo.Application.Invoicing;
 /// <c>siigo.invoice.*</c> (los pagos que no suman llegan como <c>siigo.invoice.totals_mismatch</c> con <c>expectedPaymentsTotal</c>, para que
 /// la pantalla muestre el total de Siigo junto al de QEP) y <c>orderChanged</c> dice que el pedido ya no estaba en la versión armada.
 /// <c>orderMarkFailed</c> avisa que la factura existe pero el pedido no se pudo marcar (se anuló o alguien lo marcó a mano): la pantalla
-/// lo muestra y el siguiente «Generar» reintenta sólo la marca. <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
+/// lo muestra y el siguiente «Generar» reintenta sólo la marca. <c>hasPdf</c> dice si la pantalla ofrece «Descargar PDF»: la factura existe en
+/// Siigo con su id (la pantalla no puede deducirlo del estado: una resuelta a mano no tiene id). <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
 /// </summary>
 public sealed record SiigoInvoiceDto(
     Guid Id,
@@ -24,7 +25,8 @@ public sealed record SiigoInvoiceDto(
     int Attempts,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    bool OrderMarkFailed = false)
+    bool OrderMarkFailed = false,
+    bool HasPdf = false)
 {
     public static SiigoInvoiceDto From(SiigoInvoice invoice, bool orderMarkFailed = false) =>
         new(
@@ -41,7 +43,8 @@ public sealed record SiigoInvoiceDto(
             invoice.Attempts,
             invoice.CreatedAt,
             invoice.UpdatedAt,
-            orderMarkFailed);
+            orderMarkFailed,
+            invoice.HasPdf);
 }
 
 /// <summary>Un pago de la factura armada. <paramref name="ProofId"/> dice de qué comprobante sale; <c>null</c> es el saldo.</summary>

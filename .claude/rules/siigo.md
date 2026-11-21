@@ -47,3 +47,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   quedar un centavo abajo y `invalid_total_payments` rechaza. `SiigoInvoiceBuilder` dimensiona los pagos con ese total (`computedOrderTotal`) y no con
   el de QEP; un saldo de hasta un peso (`Tolerance`) es redondeo y se suma al último comprobante en vez de salir como un segundo pago a crédito, y un
   comprobante que pasa por no más de un peso se recorta. Nada de esto lee el total del error de Siigo: sigue vigente la regla de arriba.
+- **El PDF de la factura no se guarda: se pide a Siigo en cada descarga** (`GET …/siigo-invoice/{invoiceId}/pdf`, `GetSiigoInvoicePdfHandler`).
+  Mismo permiso que generar (`siigo.invoice.issue`: de fábrica `admin` y `billing`), así que un rol con ese permiso también lo ve. Siigo lo
+  entrega como `{"base64": "…"}` (campo tomado de la documentación del SDK, no probado contra una cuenta real: si falla, mirar ese campo
+  primero). Sólo lo tiene una fila con id de Siigo y `Created`, `Stamped` o `StampRejected` (`SiigoInvoice.HasPdf`, que viaja como `hasPdf`);
+  una resuelta a mano no tiene id y no se puede pedir.

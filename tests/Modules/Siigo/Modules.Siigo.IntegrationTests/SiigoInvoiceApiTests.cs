@@ -266,6 +266,73 @@ public sealed class SiigoInvoiceApiTests
         Assert.Equal(("Stamped", "cufe-1"), (row.GetProperty("status").GetString(), row.GetProperty("cufe").GetString()));
     }
 
+    private const string SiigoInvoiceGuid = "d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f";
+
+    private static async Task<Guid> InvoiceIdAsync(InvoicingWorld world) =>
+        (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0].GetProperty("id").GetGuid();
+
+    [Fact]
+    public async Task ACreatedInvoiceOffersItsPdfAndTheDownloadReturnsTheSiigoFile()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var rows = await ReadAsync(await PostAsync(world));
+        Assert.True(rows[0].GetProperty("hasPdf").GetBoolean());
+        world.Siigo.On($"/v1/invoices/{SiigoInvoiceGuid}/pdf", HttpStatusCode.OK, """{"base64":"JVBERi0xLjQ="}""");
+        var id = await InvoiceIdAsync(world);
+
+        var response = await world.Client.GetAsync($"{world.BaseRoute}/{id}/pdf", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/pdf", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("%PDF-1.4"u8.ToArray(), await response.Content.ReadAsByteArrayAsync(Ct));
+        Assert.Equal("FV-1-123.pdf", response.Content.Headers.ContentDisposition?.FileNameStar ?? response.Content.Headers.ContentDisposition?.FileName);
+    }
+
+    [Fact]
+    public async Task ARejectedInvoiceHasNoPdfAndItsDownloadIs404WithoutCallingSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.BadRequest, """{"Errors":[{"Code":"invalid_item","Message":"x"}]}"""));
+        await PostAsync(world);
+        var id = await InvoiceIdAsync(world);
+        var listed = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+
+        var response = await world.Client.GetAsync($"{world.BaseRoute}/{id}/pdf", Ct);
+
+        Assert.False(listed.GetProperty("hasPdf").GetBoolean());
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path.EndsWith("/pdf", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ThePdfOfAnotherOrdersInvoiceIs404()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await PostAsync(world));
+
+        var response = await world.Client.GetAsync($"{world.BaseRoute}/{Guid.NewGuid()}/pdf", Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task WithoutTheInvoicePermissionThePdfIs403AndSiigoIsNotCalled()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await PostAsync(world));
+        var id = await InvoiceIdAsync(world);
+        using var other = CreateClient(world.Factory, world.Tenant.OwnerUserId, world.TenantId, SiigoPermissions.SettingsManage);
+
+        var response = await other.GetAsync($"{world.BaseRoute}/{id}/pdf", Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path.EndsWith("/pdf", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task ThePreviewReportsAnUnlinkedAdvisorWithoutCallingSiigoUsers()
     {
