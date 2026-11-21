@@ -142,7 +142,7 @@ public sealed class WholesaleOffers(
 
         var rounding = await priceRounding.GetAsync(wholesalerTenantId, terms.Currency, cancellationToken);
         var (items, total) = await catalog.SearchSellableAsync(
-            wholesalerTenantId, terms.Currency, categoryIds, search, page, pageSize, cancellationToken);
+            wholesalerTenantId, terms.Currency, categoryIds, null, null, search, page, pageSize, cancellationToken);
 
         return new WholesaleOfferPage(
             terms.Currency,

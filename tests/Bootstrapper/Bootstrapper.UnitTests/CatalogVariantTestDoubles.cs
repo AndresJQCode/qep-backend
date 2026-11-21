@@ -55,6 +55,32 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
             (matching.Skip((page - 1) * pageSize).Take(pageSize).ToList(), matching.Count));
     }
 
+    /// <summary>Las últimas exclusiones que llegaron a <see cref="SearchActiveFilteredAsync"/>.</summary>
+    public (IReadOnlyCollection<Guid>? Categories, IReadOnlyCollection<Guid>? Products)? LastExclusions { get; private set; }
+
+    public Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId, string? search, string? pricedInCurrency, IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds, IReadOnlyCollection<Guid>? excludedProductIds, int page, int pageSize,
+        CancellationToken cancellationToken)
+    {
+        SearchCalls++;
+        LastCategoryIds = categoryIds;
+        LastExclusions = (excludedCategoryIds, excludedProductIds);
+        var matching = products
+            .Where(product => product.TenantId == tenantId && product.IsActive)
+            .Where(product => excludedProductIds is null || !excludedProductIds.Contains(product.Id.Value))
+            .Where(product => pricedInCurrency is null
+                || product.Variants.Any(variant => variant.IsActive && variant.PriceIn(pricedInCurrency) is not null))
+            .ToList();
+        return Task.FromResult<(IReadOnlyList<Product>, int)>(
+            (matching.Skip((page - 1) * pageSize).Take(pageSize).ToList(), matching.Count));
+    }
+
+    public Task<IReadOnlyList<Product>> FindByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Product>>(
+            products.Where(product => product.TenantId == tenantId && productIds.Contains(product.Id)).ToList());
+
     public Task<IReadOnlyList<Product>> ListForExportAsync(
         Guid tenantId, string? search, string? name, string? code, bool? isActive, ProductKind? kind, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();

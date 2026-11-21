@@ -28,6 +28,32 @@ public interface IProductRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Spec 2026-11-20 (listas de precios del mayorista): una página de productos **activos** como <see cref="SearchAsync"/>
+    /// (búsqueda por código o nombre, <paramref name="categoryIds"/> ya expandida a sus descendientes), más tres filtros en la
+    /// consulta, para que el total y la página sean verdad: <paramref name="pricedInCurrency"/> deja sólo los que tienen una
+    /// variante activa con precio en esa moneda (null no filtra); <paramref name="excludedCategoryIds"/> quita los de esas
+    /// categorías (ya expandida; un producto sin categoría no cae por ésta) y <paramref name="excludedProductIds"/> quita esos
+    /// productos. Null o vacía no excluye nada.
+    /// </summary>
+    Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId,
+        string? search,
+        string? pricedInCurrency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-20: los productos de esos ids con sus variantes, sin escalas, galería ni seguimiento. Un id desconocido o de
+    /// otro tenant simplemente no aparece.
+    /// </summary>
+    Task<IReadOnlyList<Product>> FindByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken);
+
+    /// <summary>
     /// La misma página que <see cref="SearchAsync"/> —mismo filtro, mismo orden, mismo total—
     /// pero proyectada a lo que pinta la grilla del listado, sin traer variantes ni escalas.
     /// </summary>

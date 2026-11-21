@@ -185,7 +185,7 @@ public static class WholesaleEndpoints
     {
         var list = await dispatcher.SendAsync(
             new CreatePriceListCommand(
-                tenantId, request.Name, request.DiscountPercent, request.Visibility, request.CategoryIds ?? [], request.ShowPrices),
+                tenantId, request.Name, request.DiscountPercent, request.Visibility, request.CategoryIds ?? [], request.ShowPrices, request.Exclusions),
             cancellationToken);
 
         return Results.Created($"/api/v1/tenants/{tenantId}/wholesale/price-lists/{list.Id}", list);
@@ -197,7 +197,7 @@ public static class WholesaleEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
-            new PreviewPriceListCommand(tenantId, request.DiscountPercent, request.Visibility, request.CategoryIds ?? []),
+            new PreviewPriceListCommand(tenantId, request.DiscountPercent, request.Visibility, request.CategoryIds ?? [], request.Exclusions),
             cancellationToken));
 
     private static async Task<IResult> UpdatePriceListAsync(
@@ -218,7 +218,8 @@ public static class WholesaleEndpoints
                 request.DiscountPercent,
                 request.Visibility,
                 request.CategoryIds ?? [],
-                request.ShowPrices),
+                request.ShowPrices,
+                request.Exclusions),
             cancellationToken);
 
         return Results.Ok(list);
@@ -355,10 +356,19 @@ public static class WholesaleEndpoints
 
 /// <summary>El cuerpo de alta y edición de una lista. <c>Visibility</c> como texto: un valor raro es 422, no 400.</summary>
 public sealed record PriceListWriteRequest(
-    string Name, decimal DiscountPercent, string Visibility, IReadOnlyList<Guid>? CategoryIds, bool? ShowPrices = null);
+    string Name,
+    decimal DiscountPercent,
+    string Visibility,
+    IReadOnlyList<Guid>? CategoryIds,
+    bool? ShowPrices = null,
+    IReadOnlyList<PriceListExclusionInput>? Exclusions = null);
 
 /// <summary>La lista sin guardar para «Así lo ve el distribuidor»: los términos sin el nombre.</summary>
-public sealed record PriceListPreviewRequest(decimal DiscountPercent, string Visibility, IReadOnlyList<Guid>? CategoryIds);
+public sealed record PriceListPreviewRequest(
+    decimal DiscountPercent,
+    string Visibility,
+    IReadOnlyList<Guid>? CategoryIds,
+    IReadOnlyList<PriceListExclusionInput>? Exclusions = null);
 
 /// <summary>Invitar a un distribuidor: sus datos y lo que el mayorista elige para la relación. Con <c>Phone</c> sale también
 /// el aviso por WhatsApp (spec 2026-11-18) por <c>WhatsAppConnectionId</c>, o por la única conexión lista si no viene.</summary>

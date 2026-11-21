@@ -112,6 +112,63 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         return (items, total);
     }
 
+    public async Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId,
+        string? search,
+        string? pricedInCurrency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var source = Aggregates().AsNoTracking();
+        if (pricedInCurrency is not null)
+        {
+            source = source.Where(product => product.Variants.Any(variant =>
+                variant.IsActive && variant.Prices.Any(price => price.Currency == pricedInCurrency)));
+        }
+
+        if (excludedProductIds is { Count: > 0 })
+        {
+            var hiddenProducts = excludedProductIds.Select(id => new ProductId(id)).ToArray();
+            source = source.Where(product => !hiddenProducts.Contains(product.Id));
+        }
+
+        if (excludedCategoryIds is { Count: > 0 })
+        {
+            // Mismo tipo exacto que en SearchQueryAsync (ProductCategoryId?). Un producto sin categoría nunca cae por acá:
+            // el NOT IN con null no da verdadero, por eso el null se pregunta aparte.
+            var hiddenCategories = excludedCategoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            source = source.Where(product => product.CategoryId == null || !hiddenCategories.Contains(product.CategoryId));
+        }
+
+        var (ordered, total) = await SearchQueryAsync(
+            source, tenantId, search, null, null, isActive: true, categoryIds, cancellationToken);
+        var items = await ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    public async Task<IReadOnlyList<Product>> FindByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.Products
+            .AsNoTracking()
+            .Include(product => product.Variants)
+            .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id))
+            .ToListAsync(cancellationToken);
+    }
+
     // Con variantes, el listado de productos no trae el agregado (con 2.048 variantes por
     // producto y sus escalas, una página de 200 serían cientos de miles de filas para pintar una
     // grilla). Proyecta lo que la fila muestra y, en una segunda consulta agrupada en la base, el

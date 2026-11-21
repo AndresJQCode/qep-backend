@@ -25,6 +25,7 @@ public sealed class GetPriceListHandler(
             : await catalog.FindCategoriesAsync(query.TenantId, list.CategoryIds, cancellationToken);
         var counts = await usage.CountByPriceListAsync(query.TenantId, cancellationToken);
 
-        return PriceListMapping.ToDetail(list, categories, counts.GetValueOrDefault(list.Id));
+        var exclusions = await PriceListTerms.ExclusionDtosAsync(catalog, query.TenantId, list, cancellationToken);
+        return PriceListMapping.ToDetail(list, categories, counts.GetValueOrDefault(list.Id), exclusions);
     }
 }
