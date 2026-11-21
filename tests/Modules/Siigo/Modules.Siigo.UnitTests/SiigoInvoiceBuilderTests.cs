@@ -9,14 +9,9 @@ namespace Modules.Siigo.UnitTests;
 /// se mandaría a Siigo.</summary>
 public sealed class SiigoInvoiceBuilderTests
 {
-    private const string Seller = "629";
-
     private static SiigoBuildResult Build(
-        SiigoInvoiceInput? input = null,
-        SiigoSettings? settings = null,
-        IReadOnlyList<SiigoPaymentOverride>? overrides = null,
-        string? sellerId = Seller) =>
-        SiigoInvoiceBuilder.Build(input ?? Order(), settings ?? Settings(), sellerId, overrides);
+        SiigoInvoiceInput? input = null, SiigoSettings? settings = null, IReadOnlyList<SiigoPaymentOverride>? overrides = null) =>
+        SiigoInvoiceBuilder.Build(input ?? Order(), settings ?? Settings(), overrides);
 
     private static SiigoWithholdingInput ReteFuente(decimal amount = 2000m) =>
         new(ReteFuenteRate, "Retefuente 2,5 %", TaxCountries.RetefuenteType, amount);
@@ -122,27 +117,40 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
-    public void TheSellerIsTheResolvedOne()
+    public void TheSellerIsTheLinkedSiigoUser()
     {
-        using var json = Json(Ready(Build(sellerId: "744")));
+        var settings = Settings();
+        settings.ReplaceSellerLinks([new SiigoSellerLink(Advisor, "744", "ANDREA RITUAL")]);
+
+        using var json = Json(Ready(Build(settings: settings)));
 
         Assert.Equal(744, json.RootElement.GetProperty("seller").GetInt32());
     }
 
     [Fact]
-    public void WithoutASellerTheInvoiceIsNotReady()
+    public void AnUnlinkedAdvisorIsNotReady()
     {
-        var result = Assert.IsType<SiigoBuildResult.NotReady>(Build(sellerId: null));
+        var result = Assert.IsType<SiigoBuildResult.NotReady>(Build(settings: Settings(linkAdvisor: false)));
 
-        Assert.Equal(new SiigoMissing("seller_not_found", null, "asesora1@ritualbotanico.com"), Assert.Single(result.Missing));
+        Assert.Equal(new SiigoMissing("seller_unlinked", Advisor.ToString(), "Andrea Ritual"), Assert.Single(result.Missing));
     }
 
     [Fact]
-    public void TheMissingSellerIsReportedWithTheOtherMissing()
+    public void AnAdvisorThatNoLongerResolvesIsUnlinkedWithoutLabel()
     {
-        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(settings: Settings(linkVariants: false), sellerId: null)).Missing;
+        var input = Order() with { AdvisorMembershipId = Guid.CreateVersion7(), AdvisorLabel = null };
 
-        Assert.Contains(missing, value => value.Code == "seller_not_found");
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(input)).Missing);
+
+        Assert.Equal(("seller_unlinked", (string?)null), (missing.Code, missing.Label));
+    }
+
+    [Fact]
+    public void TheUnlinkedSellerIsReportedWithTheOtherMissing()
+    {
+        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(settings: Settings(linkVariants: false, linkAdvisor: false))).Missing;
+
+        Assert.Contains(missing, value => value.Code == "seller_unlinked");
         Assert.Contains(missing, value => value.Code == "variant_unlinked");
     }
 
@@ -184,6 +192,7 @@ public sealed class SiigoInvoiceBuilderTests
             [
                 "settings_incomplete:company",
                 "settings_incomplete:document",
+                $"seller_unlinked:{Advisor}",
                 $"variant_unlinked:{Line1Variant}",
                 $"variant_unlinked:{Line2Variant}",
                 "tax_unlinked:19",

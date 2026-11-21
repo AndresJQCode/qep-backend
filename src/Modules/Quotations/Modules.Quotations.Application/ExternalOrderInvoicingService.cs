@@ -71,7 +71,8 @@ public sealed class ExternalOrderInvoicingService(
             order.BuyerNotes,
             party,
             order.Version,
-            advisors.GetValueOrDefault(order.AdvisorId.Value)?.Email);
+            order.AdvisorId.Value,
+            advisors.GetValueOrDefault(order.AdvisorId.Value)?.Label);
     }
 
     public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>

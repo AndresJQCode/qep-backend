@@ -58,13 +58,13 @@ public sealed class SiigoOrderSourceTests
     }
 
     [Fact]
-    public async Task TheAdvisorEmailTravels()
+    public async Task TheAdvisorTravels()
     {
         var source = new SiigoOrderSource(new FakeInvoicing(Order()), new FakeGeography());
 
         var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
 
-        Assert.Equal("asesora1@ritualbotanico.com", input!.AdvisorEmail);
+        Assert.Equal((AdvisorId, "Andrea Ritual"), (input!.AdvisorMembershipId, input.AdvisorLabel));
     }
 
     [Fact]
@@ -115,7 +115,10 @@ public sealed class SiigoOrderSourceTests
             new ExternalInvoicingParty(
                 false, PartyPersonType.Juridica, PartyIdentificationType.Nit, "900123456-1", "Verde SAS", "Calle 1", CityId, Guid.CreateVersion7(), "CO", "a@b.co", "300"),
             7,
-            "asesora1@ritualbotanico.com");
+            AdvisorId,
+            "Andrea Ritual");
+
+    private static readonly Guid AdvisorId = Guid.Parse("0193a1b2-000c-7000-8000-00000000000c");
 
     private sealed class FakeInvoicing(ExternalInvoicingOrder order) : IExternalOrderInvoicing
     {

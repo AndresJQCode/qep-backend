@@ -50,10 +50,8 @@ public static class SiigoInvoiceBuilder
 
     private const string SupportedCurrency = "COP";
 
-    /// <param name="sellerId">El usuario de Siigo del asesor del pedido (<see cref="SiigoSellerResolver"/>, spec 2026-11-20). Sin él la
-    /// factura no está lista: no hay vendedor por defecto.</param>
     public static SiigoBuildResult Build(
-        SiigoInvoiceInput input, SiigoSettings settings, string? sellerId, IReadOnlyList<SiigoPaymentOverride>? overrides)
+        SiigoInvoiceInput input, SiigoSettings settings, IReadOnlyList<SiigoPaymentOverride>? overrides)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(settings);
@@ -69,6 +67,9 @@ public static class SiigoInvoiceBuilder
         var separateFreight = hasFreight && settings.FreightSeparateInvoice;
         var plan = PlanPayments(input, separateFreight);
 
+        // El vendedor es el usuario de Siigo vinculado al asesor del pedido (spec 2026-11-20, vendedores vinculados). Sin vínculo la factura
+        // no está lista: no hay vendedor por defecto.
+        var sellerId = settings.SellerFor(input.AdvisorMembershipId);
         var missing = new List<SiigoMissing>();
         CollectMissing(input, settings, sellerId, hasFreight, plan, overrides, missing);
         if (missing.Count > 0)
@@ -158,7 +159,7 @@ public static class SiigoInvoiceBuilder
 
         if (sellerId is null)
         {
-            missing.Add(new SiigoMissing(SiigoMissing.SellerNotFound, null, input.AdvisorEmail));
+            missing.Add(new SiigoMissing(SiigoMissing.SellerUnlinked, input.AdvisorMembershipId.ToString(), input.AdvisorLabel));
         }
 
         foreach (var line in input.Lines.DistinctBy(line => line.VariantId))
