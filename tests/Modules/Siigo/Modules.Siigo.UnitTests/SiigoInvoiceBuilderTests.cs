@@ -480,6 +480,30 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
+    public void TheObservationsCarryTheShippingAddressWhenTheOrderHasOne()
+    {
+        var input = Order() with { BuyerNotes = "Entregar en portería", ShippingAddress = "Calle 1 # 2-3", ShippingCity = "Bogotá" };
+
+        using var json = Json(Ready(Build(input)));
+
+        Assert.Equal(
+            "Pedido P-1042, Importante!! Dirección de despacho: Calle 1 # 2-3, Bogotá",
+            json.RootElement.GetProperty("observations").GetString());
+    }
+
+    [Fact]
+    public void TheObservationsDropTheCityWhenTheShippingPartyHasNone()
+    {
+        var input = Order() with { ShippingAddress = "Calle 1 # 2-3", ShippingCity = null };
+
+        using var json = Json(Ready(Build(input)));
+
+        Assert.Equal(
+            "Pedido P-1042, Importante!! Dirección de despacho: Calle 1 # 2-3",
+            json.RootElement.GetProperty("observations").GetString());
+    }
+
+    [Fact]
     public void TheObservationsAreCutAtFourThousandCharacters()
     {
         var input = Order() with { BuyerNotes = new string('x', 5000) };
