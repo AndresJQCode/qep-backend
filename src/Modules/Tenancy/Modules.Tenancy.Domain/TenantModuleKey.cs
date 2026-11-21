@@ -110,8 +110,12 @@ public static class TenantModuleKeys
     /// (lo que se factura es un <c>Order</c>) y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Siigo = TenantModuleKey.Define("siigo");
 
+    /// <summary>Spec 2026-11-20 (RRHH fase 1). Depende de <see cref="Companies"/> (la empresa empleadora) y queda fuera de
+    /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Hr = TenantModuleKey.Define("hr");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo, Hr];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -142,6 +146,8 @@ public static class TenantModuleKeys
         [Wholesale] = [Orders],
         // Spec 2026-11-18 (integración Siigo): lo que se factura es un pedido.
         [Siigo] = [Orders],
+        // Spec 2026-11-20 (RRHH fase 1): la empresa empleadora es una empresa de Companies.
+        [Hr] = [Companies],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>
