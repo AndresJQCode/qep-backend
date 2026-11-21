@@ -36,3 +36,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
   `Created` y la respuesta lleva `orderMarkFailed`; el siguiente `POST` reintenta sólo la marca. Nunca deja el `POST` fallando.
+- **La factura no lleva `additional_fields.purchase_order`.** Siigo lo rechaza con `document_settings` (`Params: ["additional_fields.purchase_order"]`) si el
+  tipo de comprobante no tiene la orden de compra configurada, y Ritual Botánico factura sin él. El número del pedido ya va en `observations`.
+- **Los pagos suman el total que calcula Siigo, no el de QEP.** QEP saca el IVA de un precio con IVA incluido como bruto − neto; Siigo lo redondea por
+  línea desde la base ya redondeada (`ValorBase = round(cant × precio − descuento, 2)`, `IVA = round(base × % / 100, 2)`), así que su total puede
+  quedar un centavo abajo y `invalid_total_payments` rechaza. `SiigoInvoiceBuilder` dimensiona los pagos con ese total (`computedOrderTotal`) y no con
+  el de QEP; un saldo de hasta un peso (`Tolerance`) es redondeo y se suma al último comprobante en vez de salir como un segundo pago a crédito, y un
+  comprobante que pasa por no más de un peso se recorta. Nada de esto lee el total del error de Siigo: sigue vigente la regla de arriba.

@@ -385,10 +385,54 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal([(9001, 6000m), (9001, 5900m)], freightPayments.EnumerateArray().Select(payment => (payment.GetProperty("id").GetInt32(), payment.GetProperty("value").GetDecimal())));
     }
 
+    // Números reales de un pedido: 102 × 137.600 con 35 % de descuento. QEP saca el IVA como bruto − neto (1.456.594,29); Siigo lo redondea
+    // desde la base ya redondeada (1.456.594,28), así que su total es un centavo menor y los pagos tienen que sumar ESE total.
+    private static SiigoInvoiceInput VatCentOrder(params SiigoPaymentProofInput[] proofs) =>
+        Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 102m, 7666285.71m, 35m, 19, 1456594.29m)],
+            ProductsTotal = 9122880.00m, Total = 9122880.00m, NetTotal = 9122880.00m,
+            PaymentProofs = proofs,
+        };
+
+    private static (int Id, decimal Value)[] PaymentsOf(System.Text.Json.JsonDocument json) =>
+        [.. json.RootElement.GetProperty("payments").EnumerateArray()
+            .Select(payment => (payment.GetProperty("id").GetInt32(), payment.GetProperty("value").GetDecimal()))];
+
+    [Fact]
+    public void ThePaymentsAddUpToTheTotalSiigoComputesWhenTheVatRoundsDifferently()
+    {
+        // El comprobante es el neto de QEP completo (9.122.880,00): pasa por un centavo del total de Siigo y se recorta a él.
+        using var json = Json(Ready(Build(VatCentOrder(new SiigoPaymentProofInput(ProofA, 9122880.00m)))));
+
+        Assert.Equal([(9001, 9122879.99m)], PaymentsOf(json));
+    }
+
+    [Fact]
+    public void ACentOfRoundingIsFoldedIntoTheProofInsteadOfASecondBalancePayment()
+    {
+        // El comprobante quedó en pesos enteros: lo que falta (0,99) es redondeo, no un saldo. Va dentro del comprobante, en un solo pago.
+        using var json = Json(Ready(Build(VatCentOrder(new SiigoPaymentProofInput(ProofA, 9122879.00m)))));
+
+        var payments = json.RootElement.GetProperty("payments");
+        Assert.Equal(1, payments.GetArrayLength());
+        Assert.Equal(9122879.99m, payments[0].GetProperty("value").GetDecimal());
+        Assert.False(payments[0].TryGetProperty("due_date", out _));
+    }
+
+    [Fact]
+    public void AnOrderWithoutProofsStillGetsItsBalanceAsTheSiigoComputedTotal()
+    {
+        using var json = Json(Ready(Build(VatCentOrder())));
+
+        Assert.Equal([(9001, 9122879.99m)], PaymentsOf(json));
+        Assert.Equal("2026-11-18", json.RootElement.GetProperty("payments")[0].GetProperty("due_date").GetString());
+    }
+
     [Fact]
     public void ProofsAboveTheNetAreRejected()
     {
-        var input = Order() with { PaymentProofs = [new SiigoPaymentProofInput(ProofA, 209000.01m)] };
+        var input = Order() with { PaymentProofs = [new SiigoPaymentProofInput(ProofA, 209001.01m)] };
 
         var exception = Assert.Throws<SiigoDomainException>(() => Build(input));
 
@@ -462,7 +506,7 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
-    public void TheHeaderCarriesTheDocumentSellerDateAndPurchaseOrder()
+    public void TheHeaderCarriesTheDocumentSellerAndDateButNoPurchaseOrder()
     {
         var input = Order() with { BuyerNotes = "Entregar en portería" };
 
@@ -474,7 +518,8 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal(10, root.GetProperty("cost_center").GetInt32());
         Assert.Equal("2026-11-18", root.GetProperty("date").GetString());
         Assert.Equal("Pedido P-1042. Entregar en portería", root.GetProperty("observations").GetString());
-        Assert.Equal("P1042", root.GetProperty("additional_fields").GetProperty("purchase_order").GetProperty("number").GetString());
+        // Siigo rechaza `additional_fields.purchase_order` con `document_settings` si el comprobante no lo tiene configurado (prueba real, 2026-11-20).
+        Assert.False(root.TryGetProperty("additional_fields", out _));
         Assert.Equal("900123456", root.GetProperty("customer").GetProperty("identification").GetString());
         Assert.Equal(0, root.GetProperty("customer").GetProperty("branch_office").GetInt32());
     }
