@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -10,8 +9,6 @@ namespace Modules.Siigo.Infrastructure.Api;
 /// </summary>
 internal static partial class SiigoCurl
 {
-    private const int MaxLoggedBody = 8000;
-
     public static string Build(HttpRequestMessage request, string? body)
     {
         var curl = new StringBuilder("curl.exe -X ").Append(request.Method.Method).Append(" \"").Append(request.RequestUri).Append('"');
@@ -29,15 +26,6 @@ internal static partial class SiigoCurl
         }
 
         return curl.ToString();
-    }
-
-    /// <summary>El curl y lo que Siigo contestó (<paramref name="status"/> nulo si no hubo respuesta: timeout o red).</summary>
-    public static string Describe(HttpRequestMessage request, string? requestBody, int? status, string? responseBody)
-    {
-        var reply = responseBody is { Length: > MaxLoggedBody } ? responseBody[..MaxLoggedBody] + "…" : responseBody;
-        return $"{Build(request, requestBody)}\nResponse: "
-            + (status is { } code ? "HTTP " + code.ToString(CultureInfo.InvariantCulture) : "no response")
-            + (string.IsNullOrEmpty(reply) ? string.Empty : "\n" + reply);
     }
 
     [GeneratedRegex("\"access_key\"\\s*:\\s*\"[^\"]*\"")]
