@@ -487,6 +487,12 @@ public static class QepServiceCollectionExtensions
             Modules.Loans.Application.VoidCapitalPaymentHandler>();
         // Lo reutilizan los mutadores de préstamos, cuotas y abonos.
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
+
+        // Hr, spec 2026-11-20. A mano y con ruta completa, como Loans: un handler olvidado responde 500.
+        services.AddScoped<SalaryRules>();
+        services.AddScoped<
+            IQueryHandler<GetSalaryRulesQuery, SalaryRulesDto>,
+            GetSalaryRulesHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 

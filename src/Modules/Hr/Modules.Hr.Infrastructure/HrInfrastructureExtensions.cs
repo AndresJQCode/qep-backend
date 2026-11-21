@@ -25,6 +25,7 @@ public static class HrInfrastructureExtensions
 
         services.AddScoped<IHrUnitOfWork, HrUnitOfWork>();
         services.AddScoped<IHrAuditPublisher, HrAuditPublisher>();
+        services.AddScoped<ILegalParameterSource, LegalParameterSource>();
 
         return services;
     }
