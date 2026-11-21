@@ -13,7 +13,7 @@ public sealed class HrCountryIndex
     {
         _byCode = countries.ToDictionary(country => country.Code, StringComparer.Ordinal);
         _byFoldedName = countries
-            .GroupBy(country => HrText.Fold(country.Name), StringComparer.Ordinal)
+            .GroupBy(country => HrText.Fold(country.Name) ?? string.Empty, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         Names = countries.Select(country => country.Name).ToList();
     }
@@ -32,6 +32,6 @@ public sealed class HrCountryIndex
             return byCode;
         }
 
-        return _byFoldedName.GetValueOrDefault(HrText.Fold(trimmed));
+        return HrText.Fold(trimmed) is { } folded ? _byFoldedName.GetValueOrDefault(folded) : null;
     }
 }

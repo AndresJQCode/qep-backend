@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Hr.Application;
+using Modules.Hr.Infrastructure.Excel;
 using Modules.Hr.Infrastructure.Persistence;
 
 namespace Modules.Hr.Infrastructure;
@@ -29,6 +30,8 @@ public static class HrInfrastructureExtensions
         services.AddScoped<IHrSettingsRepository, HrSettingsRepository>();
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeActivityLog, EmployeeActivityLog>();
+        services.AddScoped<IExcelEmployeeImporter, ClosedXmlEmployeeImporter>();
+        services.AddScoped<IEmployeeImportTemplateBuilder, ClosedXmlEmployeeImportTemplateBuilder>();
 
         return services;
     }

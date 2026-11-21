@@ -27,23 +27,36 @@ internal static class EmployeeCountry
         }
     }
 
-    public static void Ensure(string country, HrDocumentType documentType, bool foreignPensionExempt)
+    /// <summary>El cruce país–documento (null si cuadra): una sola tabla para el alta, la edición y la importación.</summary>
+    public static string? DocumentMismatch(string country, HrDocumentType documentType)
     {
         var colombian = string.Equals(country, Colombia, StringComparison.Ordinal);
         if (documentType == HrDocumentType.CC && !colombian)
         {
-            HrFieldErrors.Throw("country", "Con cédula de ciudadanía el país es Colombia.");
+            return "Con cédula de ciudadanía el país es Colombia.";
         }
 
-        if (documentType != HrDocumentType.CC && colombian)
+        return documentType != HrDocumentType.CC && colombian
+            ? "Con un documento extranjero el país no puede ser Colombia."
+            : null;
+    }
+
+    /// <summary>FI-EMP-017 (Ley 100/1993, art. 15): sólo quien no es de acá puede quedar exento de pensión (null si cuadra).</summary>
+    public static string? PensionExemptionNotAllowed(string country, bool foreignPensionExempt) =>
+        foreignPensionExempt && string.Equals(country, Colombia, StringComparison.Ordinal)
+            ? "Sólo un empleado de otro país puede estar exento de pensión."
+            : null;
+
+    public static void Ensure(string country, HrDocumentType documentType, bool foreignPensionExempt)
+    {
+        if (DocumentMismatch(country, documentType) is { } mismatch)
         {
-            HrFieldErrors.Throw("country", "Con un documento extranjero el país no puede ser Colombia.");
+            HrFieldErrors.Throw("country", mismatch);
         }
 
-        // FI-EMP-017 (Ley 100/1993, art. 15): sólo quien no es de acá puede quedar exento de pensión.
-        if (foreignPensionExempt && colombian)
+        if (PensionExemptionNotAllowed(country, foreignPensionExempt) is { } notAllowed)
         {
-            HrFieldErrors.Throw("foreignPensionExempt", "Sólo un empleado de otro país puede estar exento de pensión.");
+            HrFieldErrors.Throw("foreignPensionExempt", notAllowed);
         }
     }
 }

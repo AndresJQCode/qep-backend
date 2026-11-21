@@ -211,6 +211,29 @@ public static class HrEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Importación por Excel: las tres rutas van antes de `/employees/{employeeId:guid}`. Todo con `hr.contract.manage` (y el handler
+        // exige también los otros tres de empleados y contratos), también la plantilla. Antiforgery apagado como en Contratos de
+        // servicio: el CSRF lo frena X-Qep-Client, no el token de formulario.
+        group.MapGet("/employees/import/template", GetImportTemplateAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/employees/import/preview", PreviewImportAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Produces<EmployeeImportPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
+        group.MapPost("/employees/import", ImportAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Produces<EmployeeImportResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
         group.MapGet("/employees/{employeeId:guid}", GetEmployeeAsync)
             .RequireAuthorization(HrPermissions.EmployeeRead)
             .Produces<EmployeeDetailDto>()
@@ -437,6 +460,37 @@ public static class HrEndpoints
         var detail = await dispatcher.SendAsync(new CreateEmployeeCommand(tenantId, request), cancellationToken);
 
         return Results.Created($"/api/v1/tenants/{tenantId}/hr/employees/{detail.Employee.Id}", detail);
+    }
+
+    private const string ExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    private static async Task<IResult> GetImportTemplateAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var template = await dispatcher.QueryAsync(new GetEmployeeImportTemplateQuery(tenantId), cancellationToken);
+
+        return Results.File(template.Content, ExcelContentType, template.FileName);
+    }
+
+    // IFormFile anulable: sin archivo el handler responde 422 hr.import.file_required y no un 400 del binding.
+    private static async Task<IResult> PreviewImportAsync(
+        Guid tenantId, IFormFile? file, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var preview = await dispatcher.SendAsync(
+            new PreviewEmployeeImportCommand(tenantId, file?.FileName ?? string.Empty, file?.Length ?? 0, content), cancellationToken);
+
+        return Results.Ok(preview);
+    }
+
+    private static async Task<IResult> ImportAsync(
+        Guid tenantId, IFormFile? file, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var result = await dispatcher.SendAsync(
+            new ImportEmployeesCommand(tenantId, file?.FileName ?? string.Empty, file?.Length ?? 0, content), cancellationToken);
+
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> GetEmployeeAsync(

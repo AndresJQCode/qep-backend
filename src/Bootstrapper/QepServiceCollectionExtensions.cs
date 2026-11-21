@@ -592,6 +592,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetHrFileDownloadUrlQuery, Modules.Hr.Application.HrDownloadUrlDto>,
             Modules.Hr.Application.GetHrFileDownloadUrlHandler>();
+        // La importación de empleados por Excel (spec 2026-11-20): plantilla, vista previa y confirmación comparten análisis.
+        services.AddScoped<Modules.Hr.Application.EmployeeImportCatalogs>();
+        services.AddScoped<Modules.Hr.Application.EmployeeImportAnalyzer>();
+        services.AddScoped<Modules.Hr.Application.IHrPhoneNormalizer, HrPhoneNormalizer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetEmployeeImportTemplateQuery, Modules.Hr.Application.EmployeeImportTemplateFile>,
+            Modules.Hr.Application.GetEmployeeImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.PreviewEmployeeImportCommand, Modules.Hr.Application.EmployeeImportPreviewDto>,
+            Modules.Hr.Application.PreviewEmployeeImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ImportEmployeesCommand, Modules.Hr.Application.EmployeeImportResultDto>,
+            Modules.Hr.Application.ImportEmployeesHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
