@@ -928,6 +928,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListDepartmentsQuery, IReadOnlyList<DepartmentDto>>,
             ListDepartmentsHandler>();
         services.AddScoped<
+            IQueryHandler<ListCountriesQuery, IReadOnlyList<CountryDto>>,
+            ListCountriesHandler>();
+        services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
         // Spec 2026-10-26 §6: las lecturas de la consola de ciudades del operador. La política exige el permiso y el handler

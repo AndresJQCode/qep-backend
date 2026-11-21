@@ -27,6 +27,7 @@ namespace Modules.Geography.Infrastructure.Seed;
 /// </summary>
 internal sealed class GeographySeeder(GeographyDbContext dbContext)
 {
+    internal const string CountriesResourceSuffix = "Seed.Data.countries.json";
     internal const string DepartmentsResourceSuffix = "Seed.Data.departments.json";
     internal const string CitiesResourceSuffix = "Seed.Data.localities.json";
     internal const string CoordinadoraCitiesResourceSuffix = "Seed.Data.coordinadora-cities.json";
@@ -34,11 +35,34 @@ internal sealed class GeographySeeder(GeographyDbContext dbContext)
 
     public async Task SeedAsync(CancellationToken cancellationToken)
     {
+        await SeedCountriesAsync(cancellationToken);
         var departmentsByCode = await SeedDepartmentsAsync(cancellationToken);
         var citiesByCode = await SeedCitiesAsync(departmentsByCode, cancellationToken);
         SeedCoordinadoraNames(citiesByCode);
         SeedCommonNames(citiesByCode);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    // Upsert por código, igual que los departamentos: crea o renombra, nunca borra (un país que sale del
+    // archivo sigue en la tabla; lo que lo referencie no se rompe).
+    private async Task SeedCountriesAsync(CancellationToken cancellationToken)
+    {
+        var records = DivipolaDataParser.ParseCountries(OpenResource(CountriesResourceSuffix));
+
+        var existing = await dbContext.Countries
+            .ToDictionaryAsync(country => country.Code, cancellationToken);
+
+        foreach (var record in records)
+        {
+            if (existing.TryGetValue(record.Code, out var country))
+            {
+                country.Rename(record.Name);
+            }
+            else
+            {
+                dbContext.Countries.Add(Country.Create(record.Code, record.Name));
+            }
+        }
     }
 
     private async Task<Dictionary<string, DepartmentId>> SeedDepartmentsAsync(

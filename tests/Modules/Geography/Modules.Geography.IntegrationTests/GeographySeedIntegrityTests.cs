@@ -35,6 +35,48 @@ public sealed class GeographySeedIntegrityTests
         Assert.Equal(1122, cityCount);
     }
 
+    [Fact]
+    public async Task ReseedingDoesNotChangeTheCountryCount()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        // Fuerza a que el host arranque (y con él, la migración + el primer seed).
+        using var warmUpClient = factory.CreateClient();
+
+        await factory.Services.InitializeGeographyDatabaseAsync(
+            TestContext.Current.CancellationToken);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+        Assert.Equal(41, await dbContext.Countries.CountAsync(TestContext.Current.CancellationToken));
+    }
+
+    // Cada arranque reconcilia el nombre contra countries.json: uno cambiado a mano vuelve al del archivo.
+    [Fact]
+    public async Task ReseedingReconcilesACountryNameThatDrifted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var warmUpClient = factory.CreateClient();
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+            await dbContext.Database.ExecuteSqlRawAsync(
+                "UPDATE geography.countries SET name = 'Colombia (editado)' WHERE code = 'CO'",
+                TestContext.Current.CancellationToken);
+        }
+
+        await factory.Services.InitializeGeographyDatabaseAsync(
+            TestContext.Current.CancellationToken);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<GeographyDbContext>();
+        var colombia = await verifyContext.Countries.AsNoTracking().SingleAsync(
+            country => country.Code == "CO", TestContext.Current.CancellationToken);
+        Assert.Equal("Colombia", colombia.Name);
+    }
+
     // El nombre de Coordinadora sale del snapshot embebido en cada arranque. 05002 está en el
     // snapshot; 13030 (ALTOS DEL ROSARIO) Coordinadora no lo lista, así que queda null.
     [Fact]
