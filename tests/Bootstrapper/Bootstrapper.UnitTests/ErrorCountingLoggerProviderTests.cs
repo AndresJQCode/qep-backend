@@ -56,6 +56,23 @@ public sealed class ErrorCountingLoggerProviderTests
             harness.Entries("Error", "true") + harness.Entries("Error", "false") + harness.Entries("Critical", "true") + harness.Entries("Critical", "false"));
     }
 
+    // Un choque de índice único lo traduce el UnitOfWork a un 409 de dominio, pero EF ya lo registró en Error con su excepción:
+    // contarlo dispararía la alerta de excepciones no controladas con un camino normal (crear un producto con código repetido).
+    [Theory]
+    [InlineData("Microsoft.EntityFrameworkCore.Update")]
+    [InlineData("Microsoft.EntityFrameworkCore.Database.Command")]
+    public void EntityFrameworkErrorsAreNotCounted(string category)
+    {
+        using var harness = new Harness();
+        var logger = harness.Provider.CreateLogger(category);
+
+        logger.LogError(new InvalidOperationException("duplicate key"), "SaveChangesFailed");
+
+        Assert.False(logger.IsEnabled(LogLevel.Error));
+        Assert.DoesNotContain(harness.Measurements, m => m.Name == ErrorsName);
+        Assert.Equal(0, harness.Entries("Error", "true"));
+    }
+
     [Fact]
     public void NoTagCarriesTheMessage()
     {
@@ -164,13 +181,12 @@ public sealed class ErrorCountingLoggerProviderTests
     private sealed class Harness : IDisposable
     {
         private readonly Meter _meter = new("test-" + Guid.NewGuid());
-        private readonly ErrorCountingLoggerProvider _provider;
         private readonly MeterListener _listener = new();
 
         public Harness()
         {
-            _provider = new ErrorCountingLoggerProvider(_meter);
-            Logger = _provider.CreateLogger("Tests.Cat");
+            Provider = new ErrorCountingLoggerProvider(_meter);
+            Logger = Provider.CreateLogger("Tests.Cat");
             _listener.InstrumentPublished = (instrument, l) =>
             {
                 if (ReferenceEquals(instrument.Meter, _meter))
@@ -190,6 +206,8 @@ public sealed class ErrorCountingLoggerProviderTests
             });
             _listener.Start();
         }
+
+        public ErrorCountingLoggerProvider Provider { get; }
 
         public ILogger Logger { get; }
 
@@ -212,7 +230,7 @@ public sealed class ErrorCountingLoggerProviderTests
         public void Dispose()
         {
             _listener.Dispose();
-            _provider.Dispose();
+            Provider.Dispose();
             _meter.Dispose();
         }
     }

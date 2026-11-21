@@ -21,6 +21,7 @@ namespace BuildingBlocks.Observability;
 public sealed class ErrorCountingLoggerProvider : ILoggerProvider
 {
     private const string NoException = "none";
+    private const string IgnoredCategoryPrefix = "Microsoft.EntityFrameworkCore.";
 
     // Índice = (Critical ? 2 : 0) + (con excepción ? 1 : 0).
     private readonly long[] _entries = new long[4];
@@ -72,10 +73,15 @@ public sealed class ErrorCountingLoggerProvider : ILoggerProvider
 
     private sealed class CountingLogger(ErrorCountingLoggerProvider owner, string category) : ILogger
     {
+        // EF registra en Error (con su excepción) los choques de índice único que el UnitOfWork ya traduce a un 409 de dominio:
+        // contarlos dispararía la alerta de excepciones no controladas con un camino normal. Un error de base que de verdad se escapa
+        // sale por el manejador de excepciones o por el worker que lo atrapa, y esos sí cuentan.
+        private readonly bool _counted = !category.StartsWith(IgnoredCategoryPrefix, StringComparison.Ordinal);
+
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
 
-        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error && logLevel != LogLevel.None;
+        public bool IsEnabled(LogLevel logLevel) => _counted && logLevel >= LogLevel.Error && logLevel != LogLevel.None;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {

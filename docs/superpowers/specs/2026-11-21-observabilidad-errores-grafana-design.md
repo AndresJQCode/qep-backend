@@ -70,6 +70,10 @@ y el motivo.
   los proveedores que lo implementan, lo deja tal cual. Una prueba fija que el orden de registro frente a la redacción no cambia el conteo.
 - Las fallas de Siigo y Meta que `ApiExceptionHandler` mapea a 502/503 se loguean en `Warning`: no suman aquí, y no disparan la alerta
   de excepciones. Las vigila `qep_siigo_call_failures_total` y `http_client_*`.
+- **Las categorías `Microsoft.EntityFrameworkCore.*` no cuentan** (revisión final, 2026-11-21): EF registra en `Error`, con su excepción, los choques de
+  índice único que el `UnitOfWork` ya traduce a un 409 de dominio (`catalog.product.code_taken`). Contarlos dispararía la alerta de excepciones con
+  un camino normal, y la serie de la alerta no tiene `category` para filtrarlos en Grafana. Un error de base que de verdad se escapa sale por
+  `ApiExceptionHandler` o por el worker que lo atrapa, y esos sí cuentan.
 - Un `TaskCanceledException`/`OperationCanceledException` logueado en `Error` cuenta igual: si alguien lo loguea así, es ruido que
   conviene ver.
 
