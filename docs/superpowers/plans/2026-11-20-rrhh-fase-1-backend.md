@@ -230,7 +230,7 @@ tres `SenaApprentice*`, `StudentLaw789` y `StudentDecree055`; `Employee` y `Univ
 // SiteDto (sede)
 { "id": "uuid", "company": CompanyRefDto,          // fija desde que se crea
   "name": "Sede principal", "address": "Cra 1 # 2-3" | null, "city": MunicipalityRefDto | null,
-  "compensationFund": "Comfama" | null, "archived": false,
+  "compensationFund": "<nombre de la lista fija>" | null, "archived": false,
   "inUse": true,                      // la usa un centro de trabajo o un registro de cargo y lugar: no se puede eliminar (llamada del plan)
   "version": 3 }
 
@@ -263,7 +263,7 @@ tres `SenaApprentice*`, `StudentLaw789` y `StudentDecree055`; `Employee` y `Univ
   "city": MunicipalityRefDto | null,
   "member": MemberRefDto | null,
   "healthProvider": null, "pensionFund": null, "severanceFund": null,
-  "occupationalRiskProvider": null, "compensationFund": null,
+  "occupationalRiskProvider": null,
   "contributorSubtype": "Standard",
   "foreignPensionExempt": false,
   "restDays": ["Sunday"],                         // orden lunes→domingo
@@ -431,7 +431,7 @@ registran **antes** que `/hr/employees/{id:guid}`.
 // SiteRequest
 { "companyId": "uuid",                           // requerido al crear: empresa ACTIVA del tenant ⇒ si no, 422 errors.companyId;
                                                  // en el PUT igual al guardado ⇒ si cambia, 422 errors.companyId
-  "name": "string 1..100", "address": "string ≤ 200" | null, "cityId": "uuid" | null, "compensationFund": "string ≤ 120" | null }
+  "name": "string 1..100", "address": "string ≤ 200" | null, "cityId": "uuid" | null, "compensationFund": "uno de GET /hr/settings → compensationFunds" | null }   // fuera de la lista ⇒ 422 errors.compensationFund
 // (llamada del plan) además de la empresa, sólo el nombre es requerido: la fase 1 no calcula con la sede.
 
 // WorkplaceRequest
@@ -456,7 +456,7 @@ registran **antes** que `/hr/employees/{id:guid}`.
   "cityId": null,                                // del catálogo de Geografía; inexistente ⇒ 422 errors.cityId
   "memberId": null,                              // membresía activa del tenant
   "healthProvider": null, "pensionFund": null, "severanceFund": null,
-  "occupationalRiskProvider": null, "compensationFund": null,   // ≤ 120 cada uno
+  "occupationalRiskProvider": null,   // ≤ 120 cada uno; sin caja: es de la sede (delta 2026-11-21)
   "contributorSubtype": "Standard" | null,       // null ⇒ Standard
   "foreignPensionExempt": false | null,          // null ⇒ false; true sólo con country != "CO" ⇒ si no, 422 errors.foreignPensionExempt
   "restDays": ["Sunday"] | null                  // null ⇒ ["Sunday"]; 1..6 días distintos (llamada del plan: siete días de descanso no es un contrato)
@@ -563,7 +563,7 @@ El frontend pinta el piso y el SMMLV desde `GET /hr/salary-rules?date=` (el 422 
 
 - Hoja `Empleados`, columnas en este orden: `NOMBRES`, `APELLIDOS`, `TIPO DE DOCUMENTO`, `NÚMERO DE DOCUMENTO`, `PAÍS`,
   `FECHA DE NACIMIENTO`, `CELULAR`, `CORREO PERSONAL`, `CORREO CORPORATIVO`, `DIRECCIÓN`, `CIUDAD`, `EPS`,
-  `FONDO DE PENSIONES`, `FONDO DE CESANTÍAS`, `ARL`, `CAJA DE COMPENSACIÓN`, `SUBTIPO DE COTIZANTE`, `EXENTO DE PENSIÓN`,
+  `FONDO DE PENSIONES`, `FONDO DE CESANTÍAS`, `ARL`, `SUBTIPO DE COTIZANTE`, `EXENTO DE PENSIÓN`,
   `DÍAS DE DESCANSO`, `MEDIO DE PAGO`, `BANCO`, `TIPO DE CUENTA`, `NÚMERO DE CUENTA`, `EMPRESA`, `TIPO DE CONTRATO`,
   `DURACIÓN`, `TIPO DE SALARIO`, `FECHA DE INGRESO`, `FECHA DE FIN`, `SALARIO`, `TELETRABAJADOR`, `CARGO`, `ÁREA`,
   `CENTRO DE TRABAJO`, `FECHA DE RETIRO`, `MOTIVO DE RETIRO` (36).
@@ -1025,7 +1025,7 @@ Código puro, sin base: todo se prueba con unitarias.
       (misma normalización que `HrText.Fold` de la Tarea 10, que la reusa).
   - `sealed record EmployeeProfile(string FirstName, string LastName, HrDocumentType DocumentType, string DocumentNumber,
     string Country, DateOnly? BirthDate, string? Phone, string? PersonalEmail, string? WorkEmail, string? Address, Guid? CityId, Guid? MemberId,
-    string? HealthProvider, string? PensionFund, string? SeveranceFund, string? OccupationalRiskProvider, string? CompensationFund,
+    string? HealthProvider, string? PensionFund, string? SeveranceFund, string? OccupationalRiskProvider,
     ContributorSubtype ContributorSubtype, bool ForeignPensionExempt, IReadOnlyList<DayOfWeek> RestDays)` — llega validado:
     `Country` ya resuelto (nunca nulo, alfa-2 en mayúsculas) y cruzado con el documento por `EmployeeCountry` (Tarea 8).
   - `sealed record PaymentDetails(PaymentMethod Method, string? BankName, BankAccountType? BankAccountType, string? BankAccountNumber)`.
