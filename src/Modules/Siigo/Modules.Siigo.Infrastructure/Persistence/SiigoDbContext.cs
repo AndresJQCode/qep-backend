@@ -63,7 +63,6 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         settings.Property(value => value.TenantId).HasColumnName("tenant_id");
         settings.Property(value => value.CompanyId).HasColumnName("company_id");
         settings.Property(value => value.DocumentTypeId).HasColumnName("document_type_id").HasMaxLength(SiigoSettings.IdMaxLength);
-        settings.Property(value => value.SellerId).HasColumnName("seller_id").HasMaxLength(SiigoSettings.IdMaxLength);
         settings.Property(value => value.CostCenterId).HasColumnName("cost_center_id").HasMaxLength(SiigoSettings.IdMaxLength);
         settings.Property(value => value.WarehouseId).HasColumnName("warehouse_id").HasMaxLength(SiigoSettings.IdMaxLength);
         // §5.2: un false explícito en el modelo y en la columna. Sin cuenta de pruebas, una factura emitida no se borra.

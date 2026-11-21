@@ -186,7 +186,7 @@ internal static class SiigoInvoicingHarness
         var settings = await repository.FindOrCreateAsync(tenant.TenantId, connectionId, withVariantLinks: true, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException("The settings of the connection were not created.");
         settings.AssignCompany(company.Id);
-        settings.UpdateDocument(new SiigoDocumentSettings("24446", "629", "11", "3", sendToDian, false, freightSeparate, "FLETE"));
+        settings.UpdateDocument(new SiigoDocumentSettings("24446", "11", "3", sendToDian, false, freightSeparate, "FLETE"));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
         settings.UpdatePayments(new SiigoPaymentSettings(
             [new SiigoPaymentLink(BankAccountKey.Normalize(company.BankName, company.AccountNumber)!, "5101")],

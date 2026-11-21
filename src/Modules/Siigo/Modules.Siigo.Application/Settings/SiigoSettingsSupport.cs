@@ -119,7 +119,6 @@ internal static class SiigoSettingsSupport
             company?.Name,
             new SiigoDocumentDto(
                 settings.DocumentTypeId,
-                settings.SellerId,
                 settings.CostCenterId,
                 settings.WarehouseId,
                 settings.SendToDian,

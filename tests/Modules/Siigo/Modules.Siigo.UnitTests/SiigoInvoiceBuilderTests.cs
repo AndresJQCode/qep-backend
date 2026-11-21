@@ -229,7 +229,7 @@ public sealed class SiigoInvoiceBuilderTests
     public void FreightWithoutItsProductIsMissing()
     {
         var settings = Settings();
-        settings.UpdateDocument(new SiigoDocumentSettings("24446", "629", "10", "1", false, false, false, null));
+        settings.UpdateDocument(new SiigoDocumentSettings("24446", "10", "1", false, false, false, null));
         var input = Order() with { FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19, Total = 220900m, NetTotal = 220900m };
 
         var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(input, settings)).Missing;

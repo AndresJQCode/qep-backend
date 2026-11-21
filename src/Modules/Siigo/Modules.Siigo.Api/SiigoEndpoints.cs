@@ -240,7 +240,6 @@ public static class SiigoEndpoints
                     tenantId,
                     connectionId,
                     request.DocumentTypeId,
-                    request.SellerId,
                     request.CostCenterId,
                     request.WarehouseId,
                     request.SendToDian ?? false,
@@ -335,10 +334,10 @@ public sealed record SiigoProductLinkRequest(string? SiigoProductId, string? Cod
 /// <summary>El cuerpo de <c>PUT …/company</c>. Opcional en el binding: una empresa que falta es un 422 con <c>errors</c>.</summary>
 public sealed record SiigoCompanyRequest(Guid? CompanyId);
 
-/// <summary>El cuerpo de <c>PUT …/document</c>. Los interruptores ausentes valen <c>false</c>, como de fábrica.</summary>
+/// <summary>El cuerpo de <c>PUT …/document</c>. Los interruptores ausentes valen <c>false</c>, como de fábrica. Un <c>sellerId</c> (frontend
+/// anterior a la spec 2026-11-20) se ignora: el vendedor es el asesor de cada pedido.</summary>
 public sealed record SiigoDocumentRequest(
     string? DocumentTypeId,
-    string? SellerId,
     string? CostCenterId,
     string? WarehouseId,
     bool? SendToDian,

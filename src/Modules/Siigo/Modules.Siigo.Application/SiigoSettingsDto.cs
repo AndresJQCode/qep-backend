@@ -24,7 +24,6 @@ public sealed record SiigoConnectionDto(string Name, string Status);
 /// <summary>El paso «Documento». <c>SendToDian</c> es <c>false</c> de fábrica: la pantalla avisa mientras esté apagado.</summary>
 public sealed record SiigoDocumentDto(
     string? DocumentTypeId,
-    string? SellerId,
     string? CostCenterId,
     string? WarehouseId,
     bool SendToDian,
