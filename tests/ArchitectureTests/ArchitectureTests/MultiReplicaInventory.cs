@@ -242,6 +242,8 @@ public static class MultiReplicaInventory
             "Modules/Siigo/Modules.Siigo.Infrastructure/Api/SiigoTokenCache.cs:17 — caché de token por pod; un token de más por réplica no tiene efecto (Siigo acepta varios vivos y un 401 lo renueva)"),
         new("Modules.Siigo.Infrastructure.Api.SiigoApiClient", StateClassification.PerPodByDesign,
             "Modules/Siigo/Modules.Siigo.Infrastructure/Api/SiigoApiClient.cs:21-25 — IMemoryCache de 5 min con las listas de Siigo (comprobantes, usuarios, impuestos…) por conexión; un pod puede mostrar una lista hasta 5 min más vieja que otro, y la creación de facturas y los clientes no se cachean"),
+        new("Modules.Siigo.Infrastructure.Api.SiigoMetrics", StateClassification.PerPodByDesign,
+            "Modules/Siigo/Modules.Siigo.Infrastructure/Api/SiigoMetrics.cs:27 — contadores de fallas por pod; Prometheus los suma entre réplicas por etiqueta (operation, reason)"),
         new("Modules.Integrations.Infrastructure.Meta.InstagramAppSettings", StateClassification.PerPodByDesign,
             "Modules/Integrations/Modules.Integrations.Infrastructure/Meta/MetaInstagramOptions.cs:88-93 — opciones leídas al construir; igual en cada pod"),
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyAppSettings", StateClassification.PerPodByDesign,
