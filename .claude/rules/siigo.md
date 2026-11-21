@@ -27,9 +27,6 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
-- **`Siigo:DebugCurl` (apagado por defecto) loguea como curl, con su respuesta, sólo las llamadas a Siigo que fallan** (`SiigoCurlLogHandler`,
-  categoría propia; el token y la `access_key` salen enmascarados). El cuerpo lleva datos del cliente: se prende en el ConfigMap sólo
-  mientras se diagnostica y se vuelve a apagar. Una llamada exitosa nunca se loguea: su respuesta trae el token de `/auth`.
 - **Una llamada a Siigo que falla deja su curl en el log de fallas (`platform/request-log`), sin interruptor.** El detalle de la fila lleva el
   `curl.exe` de la petición (token y `access_key` enmascarados) y la respuesta de Siigo, con datos del cliente: sólo lo lee quien tiene
   `RequestLogRead`. Dos caminos: la factura y el sellado no lanzan, así que `SiigoApiClient` escribe la fila por `ISiigoCallFailureLog`
