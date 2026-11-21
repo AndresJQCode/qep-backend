@@ -65,6 +65,7 @@ using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.CallFailures;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Application.Products;
 using Modules.Siigo.Application.Settings;
@@ -1628,11 +1629,13 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
         services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
-        services.AddScoped<ISiigoCallFailureLog, SiigoCallFailureLog>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
         services.AddScoped<IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>, PreviewSiigoInvoiceHandler>();
         services.AddScoped<IQueryHandler<SiigoInvoiceAvailabilityQuery, SiigoInvoiceAvailabilityDto>, SiigoInvoiceAvailabilityHandler>();
         services.AddScoped<IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>, GetSiigoInvoicesHandler>();
+        // Spec 2026-11-21: las llamadas a Siigo que fallaron. El validador entra con AddValidatorsFromAssemblyContaining del módulo.
+        services.AddScoped<IQueryHandler<ListSiigoCallFailuresQuery, SiigoCallFailurePageDto>, ListSiigoCallFailuresHandler>();
+        services.AddScoped<IQueryHandler<GetSiigoCallFailureQuery, SiigoCallFailureDetailDto>, GetSiigoCallFailureHandler>();
         services.AddScoped<ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>, IssueSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>, StampSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>, ResolveSiigoInvoiceHandler>();
@@ -2452,6 +2455,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
                 SiigoPermissions.SettingsManage,
                 SiigoPermissions.InvoiceIssue,
+                // Spec 2026-11-21: ver las llamadas a Siigo que fallaron; el cuerpo lleva datos del cliente, así que sólo admin de fábrica.
+                SiigoPermissions.CallsRead,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
@@ -3491,6 +3496,17 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("siigo.invoice", "Facturas en Siigo", "invoice"),
         });
+        // Spec 2026-11-21: con [siigo], ModuleEntitlementMask la quita al apagar el módulo y el editor de roles no la ofrece.
+        services.AddSingleton(new PermissionDefinition(
+            SiigoPermissions.CallsRead,
+            "Ver las fallas de Siigo",
+            "Permite ver las llamadas a Siigo que fallaron, con la petición y la respuesta: incluyen datos del cliente.",
+            "Siigo",
+            "high",
+            RequiredModules: [ModuleKeys.Siigo])
+        {
+            Shape = new("siigo.calls", "Fallas de las llamadas a Siigo", "read"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -4028,6 +4044,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 SiigoPermissions.InvoiceIssue,
                 policy => AddPermissionRequirement(policy, SiigoPermissions.InvoiceIssue))
+            .AddPolicy(
+                SiigoPermissions.CallsRead,
+                policy => AddPermissionRequirement(policy, SiigoPermissions.CallsRead))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 ServiceContractsPermissions.Read,

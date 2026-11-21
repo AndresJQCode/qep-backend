@@ -72,20 +72,9 @@ internal static class RequestFailureCapture
             // `ToString()` y no sólo el mensaje: trae el tipo, la pila y las internas. Un timeout
             // de `HttpClient` tiene un mensaje inútil ("A task was canceled") y una traza que dice
             // exactamente contra qué servicio se cayó.
-            WithDiagnostic(exception),
+            exception.ToString(),
             TraceIdOf(httpContext),
             occurredAt);
-
-    /// <summary>
-    /// La clave con que una excepción trae el curl de la llamada saliente que la causó (el de Siigo, hoy). Va en <c>Exception.Data</c>
-    /// y no en el mensaje: el mensaje puede llegar al cliente, el detalle sólo lo lee el operador de la pantalla del log.
-    /// </summary>
-    public const string DiagnosticDataKey = "request.diagnostic";
-
-    private static string WithDiagnostic(Exception exception) =>
-        exception.Data[DiagnosticDataKey] is string { Length: > 0 } diagnostic
-            ? $"{exception}\n\n--- Outgoing request ---\n{diagnostic}"
-            : exception.ToString();
 
     /// <summary>
     /// La fila de una falla que no tuvo excepción: la que escriben la autenticación, la

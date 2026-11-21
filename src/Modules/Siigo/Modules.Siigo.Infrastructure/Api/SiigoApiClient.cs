@@ -106,7 +106,7 @@ internal sealed class SiigoApiClient(
             query.Append("&code=").Append(Uri.EscapeDataString(code.Trim()));
         }
 
-        var reply = await GetAsync(credentials, query.ToString(), cancellationToken);
+        var reply = await GetAsync(credentials, SiigoCallOperation.ProductSearch, query.ToString(), null, cancellationToken);
         var items = SiigoJson.Items(reply.Body)
             .Select(item => new SiigoProductOption(
                 SiigoJson.Text(item, "id") ?? string.Empty,
@@ -151,7 +151,11 @@ internal sealed class SiigoApiClient(
         SiigoCredentials credentials, string identification, CancellationToken cancellationToken)
     {
         var reply = await GetAsync(
-            credentials, $"v1/customers?identification={Uri.EscapeDataString(identification.Trim())}", cancellationToken);
+            credentials,
+            SiigoCallOperation.CustomerFind,
+            $"v1/customers?identification={Uri.EscapeDataString(identification.Trim())}",
+            null,
+            cancellationToken);
         return SiigoJson.Items(reply.Body)
             .Where(item => SiigoJson.Bool(item, "active", fallback: true))
             .Select(item => new SiigoCustomerRef(
@@ -164,6 +168,7 @@ internal sealed class SiigoApiClient(
     {
         ArgumentNullException.ThrowIfNull(request);
         var reply = await CallAsync(credentials, HttpMethod.Post, "v1/customers", SiigoJson.CustomerBody(request), null, cancellationToken);
+        await ReportFailureAsync(credentials, SiigoCallOperation.CustomerCreate, reply, null, null, cancellationToken);
         ThrowUnlessSuccess(reply);
         using var document = SiigoJson.Parse(reply.Body);
         var id = document is null ? null : SiigoJson.Text(document.RootElement, "id");
@@ -186,7 +191,7 @@ internal sealed class SiigoApiClient(
         }
 
         var reply = await CallAsync(credentials, HttpMethod.Post, "v1/invoices", request.Json, idempotencyKey, cancellationToken);
-        await ReportFailureAsync(reply, cancellationToken);
+        await ReportFailureAsync(credentials, SiigoCallOperation.InvoiceCreate, reply, idempotencyKey, null, cancellationToken);
         if (reply.TransientReason is { } transient)
         {
             return new SiigoInvoiceOutcome.Transient(transient);
@@ -225,7 +230,7 @@ internal sealed class SiigoApiClient(
     {
         var reply = await CallAsync(
             credentials, HttpMethod.Post, $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/stamp", "{}", null, cancellationToken);
-        await ReportFailureAsync(reply, cancellationToken);
+        await ReportFailureAsync(credentials, SiigoCallOperation.InvoiceStamp, reply, null, siigoInvoiceId, cancellationToken);
         if (reply.TransientReason is { } transient)
         {
             return new SiigoStampOutcome.Transient(transient);
@@ -248,7 +253,12 @@ internal sealed class SiigoApiClient(
     public async Task<IReadOnlyList<SiigoError>> GetStampErrorsAsync(
         SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
     {
-        var reply = await GetAsync(credentials, $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/stamp/errors", cancellationToken);
+        var reply = await GetAsync(
+            credentials,
+            SiigoCallOperation.StampErrors,
+            $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/stamp/errors",
+            siigoInvoiceId,
+            cancellationToken);
         // Sin errores es «la DIAN no rechazó nada», no un rechazo sin causa.
         return SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false);
     }
@@ -290,13 +300,13 @@ internal sealed class SiigoApiClient(
     private async Task<IReadOnlyList<JsonElement>> ReadAllPagesAsync(SiigoCredentials credentials, string path, CancellationToken cancellationToken)
     {
         var separator = path.Contains('?', StringComparison.Ordinal) ? '&' : '?';
-        var reply = await GetAsync(credentials, path, cancellationToken);
+        var reply = await GetAsync(credentials, SiigoCallOperation.ListRead, path, null, cancellationToken);
         var items = new List<JsonElement>(SiigoJson.Items(reply.Body));
         var pagination = SiigoJson.Pagination(reply.Body);
         var pageSize = pagination.PageSize is > 0 ? pagination.PageSize.Value : DefaultListPageSize;
         for (var page = 2; page <= MaxListPages && pagination.TotalResults is { } total && items.Count < total; page++)
         {
-            reply = await GetAsync(credentials, $"{path}{separator}page={page}&page_size={pageSize}", cancellationToken);
+            reply = await GetAsync(credentials, SiigoCallOperation.ListRead, $"{path}{separator}page={page}&page_size={pageSize}", null, cancellationToken);
             var pageItems = SiigoJson.Items(reply.Body);
             if (pageItems.Count == 0)
             {
@@ -310,39 +320,46 @@ internal sealed class SiigoApiClient(
         return items;
     }
 
-    private async Task<Reply> GetAsync(SiigoCredentials credentials, string path, CancellationToken cancellationToken)
+    // Las lecturas lanzan: antes de lanzar, la falla va a la tabla de fallas (una fila por llamada, y la excepción además llega al log de requests).
+    private async Task<Reply> GetAsync(
+        SiigoCredentials credentials, SiigoCallOperation operation, string path, string? siigoInvoiceId, CancellationToken cancellationToken)
     {
         var reply = await CallAsync(credentials, HttpMethod.Get, path, null, null, cancellationToken);
+        await ReportFailureAsync(credentials, operation, reply, null, siigoInvoiceId, cancellationToken);
         ThrowUnlessSuccess(reply);
         return reply;
     }
 
-    // La creación de facturas y el sellado no lanzan: el rechazo es un resultado y se guarda en la fila. Su curl va al log de fallas por el
-    // puerto, porque ninguna excepción lo llevaría. Las lecturas sí lanzan, y el curl viaja en Exception.Data (ver WithDiagnostic).
-    private async Task ReportFailureAsync(Reply reply, CancellationToken cancellationToken)
+    // Spec 2026-11-21: toda llamada que falla deja su curl y la respuesta de Siigo en siigo.call_failures, lance o no el método que sigue
+    // (la creación de facturas y el sellado devuelven el rechazo como resultado). Una respuesta buena no deja nada. Una falla de /auth se
+    // reporta como Auth, sea quien sea el método que la pidió. Sin Partner-Id no hay petición y no hay nada que reportar.
+    private async Task ReportFailureAsync(
+        SiigoCredentials credentials,
+        SiigoCallOperation operation,
+        Reply reply,
+        string? idempotencyKey,
+        string? siigoInvoiceId,
+        CancellationToken cancellationToken)
     {
-        if (failures is null || reply.Diagnostic is null)
+        if (failures is null || reply.Capture is not { } capture)
         {
             return;
         }
 
-        var reason = reply.TransientReason ?? (reply.CredentialsRejected ? "credentials_rejected" : $"http_{(int?)reply.Status}");
-        await failures.RecordAsync(new SiigoCallFailure((int?)reply.Status, reason, reply.Diagnostic), cancellationToken);
-    }
-
-    /// <summary>La clave con que el curl de una llamada fallida viaja en la excepción hasta <c>RequestFailureCapture</c> (Api), que la agrega
-    /// al detalle: el mismo literal, porque Siigo no ve a Api. Cambiar uno sin el otro compila y deja el detalle sin curl.</summary>
-    public const string DiagnosticDataKey = "request.diagnostic";
-
-    private static TException WithDiagnostic<TException>(TException exception, Reply reply)
-        where TException : Exception
-    {
-        if (reply.Diagnostic is not null)
-        {
-            exception.Data[DiagnosticDataKey] = reply.Diagnostic;
-        }
-
-        return exception;
+        var reason = reply.TransientReason ?? (reply.CredentialsRejected ? "credentials_rejected" : $"http_{capture.Status}");
+        await failures.RecordAsync(
+            new SiigoCallFailureReport(
+                credentials.ConnectionId,
+                string.Equals(capture.Path, "auth", StringComparison.Ordinal) ? SiigoCallOperation.Auth : operation,
+                capture.Method,
+                capture.Path,
+                capture.Status,
+                reason,
+                idempotencyKey,
+                siigoInvoiceId,
+                capture.RequestCurl,
+                capture.ResponseBody),
+            cancellationToken);
     }
 
     // Las lecturas lanzan; la creación de facturas y el sellado no (ver ISiigoApi).
@@ -350,14 +367,12 @@ internal sealed class SiigoApiClient(
     {
         if (reply.TransientReason is { } transient)
         {
-            throw WithDiagnostic(
-                new ServiceUnavailableException(SiigoErrorCodes.Unavailable, $"Siigo did not answer in time or failed ({transient})."), reply);
+            throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, $"Siigo did not answer in time or failed ({transient}).");
         }
 
         if (reply.CredentialsRejected)
         {
-            throw WithDiagnostic(
-                new ResourceConflictException(SiigoErrorCodes.ConnectionUnavailable, "Siigo rejected the credentials of this connection."), reply);
+            throw new ResourceConflictException(SiigoErrorCodes.ConnectionUnavailable, "Siigo rejected the credentials of this connection.");
         }
 
         if (!reply.Success)
@@ -365,11 +380,9 @@ internal sealed class SiigoApiClient(
             // Sólo los códigos de Siigo, nunca sus mensajes: repiten los valores rechazados (documento, dirección, nombre).
             var codes = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false).Select(error => error.Code).Distinct().Take(5);
             var detail = string.Join(", ", codes);
-            throw WithDiagnostic(
-                new UpstreamServiceException(
-                    "siigo.unexpected_response",
-                    $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}"),
-                reply);
+            throw new UpstreamServiceException(
+                "siigo.unexpected_response",
+                $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}");
         }
     }
 
@@ -411,7 +424,7 @@ internal sealed class SiigoApiClient(
             tokens.Invalidate(credentials.ConnectionId, token);
             if (attempt > 0)
             {
-                return Reply.Rejected(reply.Diagnostic);
+                return Reply.Rejected(reply.Capture);
             }
         }
     }
@@ -428,7 +441,7 @@ internal sealed class SiigoApiClient(
         if (!reply.Success)
         {
             // 401, 403 y el resto de los 4xx de /auth son la clave o el usuario; 429 y 5xx ya salieron arriba como transitorios.
-            return (null, Reply.Rejected(reply.Diagnostic));
+            return (null, Reply.Rejected(reply.Capture));
         }
 
         using var document = SiigoJson.Parse(reply.Body);
@@ -469,17 +482,19 @@ internal sealed class SiigoApiClient(
             using var response = await httpClient.SendAsync(request, cancellationToken);
             var text = await response.Content.ReadAsStringAsync(cancellationToken);
             // El curl sólo de lo que falló: una respuesta buena (la de /auth) trae el token y no se guarda en ninguna parte.
-            var diagnostic = response.IsSuccessStatusCode ? null : SiigoCurl.Describe(request, body, (int)response.StatusCode, text);
-            return Reply.From(response.StatusCode, text, diagnostic);
+            var capture = response.IsSuccessStatusCode
+                ? null
+                : new FailureCapture(method.Method, path, (int)response.StatusCode, SiigoCurl.Build(request, body), text);
+            return Reply.From(response.StatusCode, text, capture);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // El timeout del HttpClient, no una cancelación de quien llama.
-            return Reply.Transient("timeout", SiigoCurl.Describe(request, body, null, null));
+            return Reply.Transient("timeout", new FailureCapture(method.Method, path, null, SiigoCurl.Build(request, body), null));
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException)
         {
-            return Reply.Transient("network", SiigoCurl.Describe(request, body, null, null));
+            return Reply.Transient("network", new FailureCapture(method.Method, path, null, SiigoCurl.Build(request, body), null));
         }
     }
 
@@ -492,24 +507,30 @@ internal sealed class SiigoApiClient(
     /// <summary>Lo que volvió de una llamada: el status y el cuerpo, o el motivo por el que no se pudo (transitorio) o las credenciales
     /// no sirvieron. El cuerpo puede traer datos del cliente: nunca se imprime.</summary>
     private sealed record Reply(
-        HttpStatusCode? Status, string Body, string? TransientReason, bool CredentialsRejected, string? Diagnostic = null)
+        HttpStatusCode? Status, string Body, string? TransientReason, bool CredentialsRejected, FailureCapture? Capture = null)
     {
         public bool Success => Status is { } status && (int)status is >= 200 and < 300;
 
-        public static Reply From(HttpStatusCode status, string body, string? diagnostic = null)
+        public static Reply From(HttpStatusCode status, string body, FailureCapture? capture = null)
         {
             var code = (int)status;
             // 429 y 5xx (y un 3xx, que no se sigue) no dicen nada de la petición: se reintenta.
             return code is 429 or >= 500 or (>= 300 and < 400) or 408
-                ? new Reply(status, string.Empty, $"http_{code}", false, diagnostic)
-                : new Reply(status, body, null, false, diagnostic);
+                ? new Reply(status, string.Empty, $"http_{code}", false, capture)
+                : new Reply(status, body, null, false, capture);
         }
 
-        public static Reply Transient(string reason, string? diagnostic = null) => new(null, string.Empty, reason, false, diagnostic);
+        public static Reply Transient(string reason, FailureCapture? capture = null) => new(null, string.Empty, reason, false, capture);
 
-        public static Reply Rejected(string? diagnostic = null) => new(null, string.Empty, null, true, diagnostic);
+        public static Reply Rejected(FailureCapture? capture = null) => new(null, string.Empty, null, true, capture);
 
-        /// <summary>El curl de la petición que falló y la respuesta de Siigo: lleva datos del cliente, nunca se imprime.</summary>
         public override string ToString() => "Reply { }";
+    }
+
+    /// <summary>La petición que falló (curl con el token y la <c>access_key</c> enmascarados) y lo que Siigo contestó, antes de que
+    /// <see cref="Reply"/> descarte el cuerpo de un 5xx. Lleva datos del cliente: sólo viaja a <see cref="ISiigoCallFailureLog"/>.</summary>
+    private sealed record FailureCapture(string Method, string Path, int? Status, string RequestCurl, string? ResponseBody)
+    {
+        public override string ToString() => "FailureCapture { }";
     }
 }

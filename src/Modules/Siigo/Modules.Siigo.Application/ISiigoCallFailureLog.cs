@@ -1,21 +1,34 @@
+using Modules.Siigo.Domain;
+
 namespace Modules.Siigo.Application;
 
 /// <summary>
-/// Una llamada a Siigo que falló, lista para el log de fallas de la aplicación (la pantalla <c>platform/request-log</c>).
-/// <paramref name="Diagnostic"/> es el <c>curl</c> reproducible de la petición (token y <c>access_key</c> enmascarados) y la respuesta de
-/// Siigo; lleva el cuerpo de la factura o del cliente, es decir datos personales, y por eso sólo viaja a ese log, que lee el operador.
+/// Una llamada a Siigo que falló, lista para guardarse en <c>siigo.call_failures</c> (spec 2026-11-21). <paramref name="RequestCurl"/> es
+/// el <c>curl</c> reproducible de la petición, con el token y la <c>access_key</c> enmascarados; <paramref name="ResponseBody"/>, lo que
+/// Siigo contestó (nulo si no hubo respuesta). <paramref name="IdempotencyKey"/> es la de la factura que se intentó crear y
+/// <paramref name="SiigoInvoiceId"/> la del sellado: atan la fila a <c>siigo.invoices</c>. Llevan datos del cliente: el <c>ToString</c> no
+/// los escribe.
 /// </summary>
-public sealed record SiigoCallFailure(int? Status, string Reason, string Diagnostic)
+public sealed record SiigoCallFailureReport(
+    Guid ConnectionId,
+    SiigoCallOperation Operation,
+    string Method,
+    string Path,
+    int? Status,
+    string Reason,
+    string? IdempotencyKey,
+    string? SiigoInvoiceId,
+    string RequestCurl,
+    string? ResponseBody)
 {
-    public override string ToString() => "SiigoCallFailure { }";
+    public override string ToString() => "SiigoCallFailureReport { }";
 }
 
 /// <summary>
-/// Puerto hacia el log de fallas de la aplicación. Lo llama el cliente de Siigo cuando la llamada de una factura falla <b>sin lanzar</b>
-/// (rechazo o fallo transitorio): una excepción ya llega a ese log por el manejador de la API, con el curl en <c>Exception.Data</c>.
-/// No propaga sus propios errores: quien lo llama está a punto de devolver el resultado real.
+/// Puerto hacia el registro de fallas de las llamadas a Siigo. Lo llama el cliente de Siigo en cada llamada que falla, lance o no el
+/// método que sigue. <b>No propaga sus propios errores</b>: quien lo llama está a punto de devolver el resultado real de Siigo.
 /// </summary>
 public interface ISiigoCallFailureLog
 {
-    Task RecordAsync(SiigoCallFailure failure, CancellationToken cancellationToken);
+    Task RecordAsync(SiigoCallFailureReport report, CancellationToken cancellationToken);
 }

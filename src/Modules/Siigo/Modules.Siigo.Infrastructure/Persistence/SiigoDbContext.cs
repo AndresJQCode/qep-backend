@@ -36,6 +36,8 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
 
     internal DbSet<SiigoPaymentLink> PaymentLinks => Set<SiigoPaymentLink>();
 
+    internal DbSet<SiigoCallFailure> CallFailures => Set<SiigoCallFailure>();
+
     // Proyecciones de escritura (ExcludeFromMigrations): Audit es dueño de audit.entries y Tenancy de platform.outbox_messages.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -52,6 +54,7 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         ConfigureWithholdingLink(modelBuilder);
         ConfigurePaymentLink(modelBuilder);
         ConfigureInvoice(modelBuilder);
+        ConfigureCallFailure(modelBuilder);
     }
 
     private static void ConfigureSettings(ModelBuilder modelBuilder)
@@ -204,6 +207,32 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
             .HasFilter("status NOT IN ('Rejected', 'Failed')");
         // La consulta de «¿hay una abierta?» de la marca manual (Pending y Unknown), por pedido.
         invoice.HasIndex(value => new { value.TenantId, value.OrderId }).HasDatabaseName("IX_invoices_tenant_order");
+    }
+
+    // Spec 2026-11-21: las llamadas a Siigo que fallaron. Append-only; la expiración (7 días) la hace SiigoCallFailureLog al escribir.
+    private static void ConfigureCallFailure(ModelBuilder modelBuilder)
+    {
+        var failure = modelBuilder.Entity<SiigoCallFailure>();
+        failure.ToTable("call_failures", Schema);
+        failure.HasKey(value => value.Id).HasName("PK_call_failures");
+        failure.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        failure.Property(value => value.TenantId).HasColumnName("tenant_id");
+        failure.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        failure.Property(value => value.Operation).HasColumnName("operation").HasConversion<string>().HasMaxLength(SiigoCallFailure.OperationMaxLength);
+        failure.Property(value => value.Method).HasColumnName("method").HasMaxLength(SiigoCallFailure.MethodMaxLength);
+        failure.Property(value => value.Path).HasColumnName("path").HasMaxLength(SiigoCallFailure.PathMaxLength);
+        failure.Property(value => value.Status).HasColumnName("status");
+        failure.Property(value => value.Reason).HasColumnName("reason").HasMaxLength(SiigoCallFailure.ReasonMaxLength);
+        failure.Property(value => value.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(SiigoInvoice.KeyMaxLength);
+        failure.Property(value => value.SiigoInvoiceId).HasColumnName("siigo_invoice_id").HasMaxLength(SiigoInvoice.SiigoIdMaxLength);
+        failure.Property(value => value.RequestCurl).HasColumnName("request_curl").HasColumnType("text");
+        failure.Property(value => value.ResponseBody).HasColumnName("response_body").HasColumnType("text");
+        failure.Property(value => value.SubjectId).HasColumnName("subject_id");
+        failure.Property(value => value.TraceId).HasColumnName("trace_id").HasMaxLength(SiigoCallFailure.TraceIdMaxLength);
+        failure.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        // La lista del tenant, de la más nueva a la más vieja; y la expiración, que busca lo vencido de todos los tenants.
+        failure.HasIndex(value => new { value.TenantId, value.OccurredAt }).IsDescending(false, true).HasDatabaseName("IX_call_failures_tenant_occurred");
+        failure.HasIndex(value => value.OccurredAt).HasDatabaseName("IX_call_failures_occurred");
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
