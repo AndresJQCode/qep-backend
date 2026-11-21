@@ -107,7 +107,7 @@ public sealed class SiigoSettingsApiTests
         Assert.Equal("Siigo principal", settings["connection"]!["name"]!.GetValue<string>());
         Assert.Equal("Active", settings["connection"]!["status"]!.GetValue<string>());
         var steps = settings["readiness"]!.AsArray().Select(step => step!.AsObject()).ToList();
-        Assert.Equal(["Credentials", "Company", "Document", "Taxes", "Payments", "Products"], steps.Select(step => step["step"]!.GetValue<string>()));
+        Assert.Equal(["Credentials", "Company", "Document", "Taxes", "Payments", "Sellers", "Products"], steps.Select(step => step["step"]!.GetValue<string>()));
         var company = steps.Single(step => step["step"]!.GetValue<string>() == "Company");
         Assert.False(company["complete"]!.GetValue<bool>());
         Assert.Equal(["company_missing"], company["missingCodes"]!.AsArray().Select(code => code!.GetValue<string>()));
