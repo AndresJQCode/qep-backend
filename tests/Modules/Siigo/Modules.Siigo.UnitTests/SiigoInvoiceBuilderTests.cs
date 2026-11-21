@@ -9,14 +9,9 @@ namespace Modules.Siigo.UnitTests;
 /// se mandaría a Siigo.</summary>
 public sealed class SiigoInvoiceBuilderTests
 {
-    private const string Seller = "629";
-
     private static SiigoBuildResult Build(
-        SiigoInvoiceInput? input = null,
-        SiigoSettings? settings = null,
-        IReadOnlyList<SiigoPaymentOverride>? overrides = null,
-        string? sellerId = Seller) =>
-        SiigoInvoiceBuilder.Build(input ?? Order(), settings ?? Settings(), sellerId, overrides);
+        SiigoInvoiceInput? input = null, SiigoSettings? settings = null, IReadOnlyList<SiigoPaymentOverride>? overrides = null) =>
+        SiigoInvoiceBuilder.Build(input ?? Order(), settings ?? Settings(), overrides);
 
     private static SiigoWithholdingInput ReteFuente(decimal amount = 2000m) =>
         new(ReteFuenteRate, "Retefuente 2,5 %", TaxCountries.RetefuenteType, amount);
@@ -122,27 +117,40 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
-    public void TheSellerIsTheResolvedOne()
+    public void TheSellerIsTheLinkedSiigoUser()
     {
-        using var json = Json(Ready(Build(sellerId: "744")));
+        var settings = Settings();
+        settings.ReplaceSellerLinks([new SiigoSellerLink(Advisor, "744", "ANDREA RITUAL")]);
+
+        using var json = Json(Ready(Build(settings: settings)));
 
         Assert.Equal(744, json.RootElement.GetProperty("seller").GetInt32());
     }
 
     [Fact]
-    public void WithoutASellerTheInvoiceIsNotReady()
+    public void AnUnlinkedAdvisorIsNotReady()
     {
-        var result = Assert.IsType<SiigoBuildResult.NotReady>(Build(sellerId: null));
+        var result = Assert.IsType<SiigoBuildResult.NotReady>(Build(settings: Settings(linkAdvisor: false)));
 
-        Assert.Equal(new SiigoMissing("seller_not_found", null, "asesora1@ritualbotanico.com"), Assert.Single(result.Missing));
+        Assert.Equal(new SiigoMissing("seller_unlinked", Advisor.ToString(), "Andrea Ritual"), Assert.Single(result.Missing));
     }
 
     [Fact]
-    public void TheMissingSellerIsReportedWithTheOtherMissing()
+    public void AnAdvisorThatNoLongerResolvesIsUnlinkedWithoutLabel()
     {
-        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(settings: Settings(linkVariants: false), sellerId: null)).Missing;
+        var input = Order() with { AdvisorMembershipId = Guid.CreateVersion7(), AdvisorLabel = null };
 
-        Assert.Contains(missing, value => value.Code == "seller_not_found");
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(input)).Missing);
+
+        Assert.Equal(("seller_unlinked", (string?)null), (missing.Code, missing.Label));
+    }
+
+    [Fact]
+    public void TheUnlinkedSellerIsReportedWithTheOtherMissing()
+    {
+        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(settings: Settings(linkVariants: false, linkAdvisor: false))).Missing;
+
+        Assert.Contains(missing, value => value.Code == "seller_unlinked");
         Assert.Contains(missing, value => value.Code == "variant_unlinked");
     }
 
@@ -184,13 +192,14 @@ public sealed class SiigoInvoiceBuilderTests
             [
                 "settings_incomplete:company",
                 "settings_incomplete:document",
+                $"seller_unlinked:{Advisor}",
                 $"variant_unlinked:{Line1Variant}",
                 $"variant_unlinked:{Line2Variant}",
                 "tax_unlinked:19",
                 $"withholding_unlinked:{ReteIcaRate}",
                 "customer_identification_missing:",
                 "customer_city_missing:",
-                "payment_unlinked:credit",
+                $"payment_unlinked:{BankKey}",
             ],
             missing.Select(value => $"{value.Code}:{value.Reference}"));
     }
@@ -282,29 +291,42 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
-    public void TheBalanceGoesToCreditWithItsDueDate()
+    public void TheBalanceGoesToTheAccountPaymentTypeDueOnTheInvoiceDate()
     {
         var input = Order() with { PaymentProofs = [new SiigoPaymentProofInput(ProofA, 100000m)] };
 
         using var json = Json(Ready(Build(input)));
-        var balance = json.RootElement.GetProperty("payments")[1];
+        var payments = json.RootElement.GetProperty("payments");
+        var balance = payments[1];
 
-        Assert.Equal(9002, balance.GetProperty("id").GetInt32());
+        // Spec 2026-11-20: el saldo usa la forma de pago de la cuenta de cobro, igual que los comprobantes, y vence el día de la factura.
+        Assert.False(payments[0].TryGetProperty("due_date", out _));
+        Assert.Equal(9001, balance.GetProperty("id").GetInt32());
         Assert.Equal(109000m, balance.GetProperty("value").GetDecimal());
-        Assert.Equal("2026-12-18", balance.GetProperty("due_date").GetString());
+        Assert.Equal("2026-11-18", balance.GetProperty("due_date").GetString());
     }
 
     [Fact]
-    public void TheBalanceGoesToCashOnDeliveryWhenTheOrderIs()
+    public void ACashOnDeliveryBalanceAlsoGoesToTheAccountPaymentType()
     {
         var input = Order() with { CashOnDelivery = true, PaymentProofs = [new SiigoPaymentProofInput(ProofA, 100000m)] };
 
         using var json = Json(Ready(Build(input)));
         var balance = json.RootElement.GetProperty("payments")[1];
 
-        Assert.Equal(9003, balance.GetProperty("id").GetInt32());
+        Assert.Equal(9001, balance.GetProperty("id").GetInt32());
         Assert.Equal(109000m, balance.GetProperty("value").GetDecimal());
-        Assert.False(balance.TryGetProperty("due_date", out _));
+        Assert.Equal("2026-11-18", balance.GetProperty("due_date").GetString());
+    }
+
+    [Fact]
+    public void CreditAndCashOnDeliveryNotConfiguredNoLongerMakeAnythingMissing()
+    {
+        var settings = Settings();
+        settings.UpdatePayments(new SiigoPaymentSettings([new SiigoPaymentLink(BankKey, "9001")], null, null, null, null));
+
+        Assert.IsType<SiigoBuildResult.Ready>(Build(settings: settings));
+        Assert.IsType<SiigoBuildResult.Ready>(Build(Order() with { CashOnDelivery = true }, settings));
     }
 
     [Fact]
@@ -318,13 +340,28 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
-    public void AnOrderWithoutAnAccountUsesTheDefaultPaymentType()
+    public void AnOrderWithoutAnAccountIsUnlinkedWithNoReferenceEvenWithADefaultConfigured()
     {
         var input = Order() with { BillingAccountKey = null, PaymentProofs = [new SiigoPaymentProofInput(ProofA, 209000m)] };
 
-        using var json = Json(Ready(Build(input)));
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(input)).Missing);
 
-        Assert.Equal(9004, json.RootElement.GetProperty("payments")[0].GetProperty("id").GetInt32());
+        Assert.Equal("payment_unlinked", missing.Code);
+        Assert.Null(missing.Reference);
+    }
+
+    [Fact]
+    public void AnUnlinkedAccountIsReportedOnceForProofsAndBalance()
+    {
+        var input = Order() with
+        {
+            BillingAccountKey = "BANCO RENOMBRADO|000123456",
+            PaymentProofs = [new SiigoPaymentProofInput(ProofA, 100000m)],
+        };
+
+        var missing = Assert.IsType<SiigoBuildResult.NotReady>(Build(input)).Missing;
+
+        Assert.Single(missing, value => value.Code == "payment_unlinked");
     }
 
     [Fact]
@@ -340,12 +377,12 @@ public sealed class SiigoInvoiceBuilderTests
         using var order = Json(drafts[0]);
         using var freight = Json(drafts[1]);
 
-        // 209.000 cubren el pedido y los 6.000 que sobran se van a la de flete; el saldo del flete (5.900) va a crédito.
+        // 209.000 cubren el pedido y los 6.000 que sobran se van a la de flete; el saldo del flete (5.900) va a la misma forma de pago.
         var orderPayments = order.RootElement.GetProperty("payments");
         Assert.Equal(1, orderPayments.GetArrayLength());
         Assert.Equal(209000m, orderPayments[0].GetProperty("value").GetDecimal());
         var freightPayments = freight.RootElement.GetProperty("payments");
-        Assert.Equal([(9001, 6000m), (9002, 5900m)], freightPayments.EnumerateArray().Select(payment => (payment.GetProperty("id").GetInt32(), payment.GetProperty("value").GetDecimal())));
+        Assert.Equal([(9001, 6000m), (9001, 5900m)], freightPayments.EnumerateArray().Select(payment => (payment.GetProperty("id").GetInt32(), payment.GetProperty("value").GetDecimal())));
     }
 
     [Fact]

@@ -43,8 +43,9 @@ public sealed record ExternalInvoicingParty(
 /// La foto del pedido que un facturador externo necesita (spec 2026-11-18 §5.5). <paramref name="ProductsTotal"/> es la suma de las
 /// líneas con IVA (sin envío); <paramref name="Total"/> incluye el envío; <paramref name="NetTotal"/> es <c>Total</c> menos las
 /// retenciones. La cuenta de cobro viaja como banco y número: la clave con que cada integración la vincula es suya. <paramref name="Version"/>
-/// es la del pedido al armar. <paramref name="AdvisorEmail"/> es el correo de Identity del asesor del pedido (null si ya no resuelve): con él
-/// Siigo elige el vendedor de la factura (spec 2026-11-20).
+/// es la del pedido al armar. <paramref name="AdvisorMembershipId"/> es la membresía del asesor del pedido: con ella Siigo busca el vendedor
+/// vinculado (spec 2026-11-20, vendedores vinculados); <paramref name="AdvisorLabel"/> es su nombre o, sin nombre, su correo, para el texto
+/// del faltante (null si ya no resuelve).
 /// </summary>
 public sealed record ExternalInvoicingOrder(
     Guid OrderId,
@@ -68,7 +69,8 @@ public sealed record ExternalInvoicingOrder(
     string? BuyerNotes,
     ExternalInvoicingParty BilledParty,
     long Version,
-    string? AdvisorEmail);
+    Guid AdvisorMembershipId,
+    string? AdvisorLabel);
 
 /// <summary>
 /// El puerto que un facturador externo (Siigo) usa sobre los pedidos (spec 2026-11-18 §5.5). El adaptador vive en Bootstrapper; este

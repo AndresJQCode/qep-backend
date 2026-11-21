@@ -560,6 +560,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Wholesale.Application.ListWholesaleCategoriesQuery, Modules.Wholesale.Application.WholesaleCategoriesResponse>,
             Modules.Wholesale.Application.ListWholesaleCategoriesHandler>();
         services.AddScoped<
+            IQueryHandler<Modules.Wholesale.Application.ListWholesaleProductsQuery, Modules.Wholesale.Application.WholesaleProductsResponse>,
+            Modules.Wholesale.Application.ListWholesaleProductsHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Wholesale.Application.ListDistributorsQuery, Modules.Wholesale.Application.DistributorsResponse>,
             Modules.Wholesale.Application.ListDistributorsHandler>();
         services.AddScoped<
@@ -1606,6 +1609,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<UpdateSiigoDocumentCommand, SiigoSettingsDto>, UpdateSiigoDocumentHandler>();
         services.AddScoped<ICommandHandler<UpdateSiigoTaxesCommand, SiigoSettingsDto>, UpdateSiigoTaxesHandler>();
         services.AddScoped<ICommandHandler<UpdateSiigoPaymentsCommand, SiigoSettingsDto>, UpdateSiigoPaymentsHandler>();
+        // Spec 2026-11-20: el paso «Vendedores» (vínculo asesor → usuario de Siigo) y su vinculación por correo.
+        services.AddScoped<ICommandHandler<UpdateSiigoSellersCommand, SiigoSettingsDto>, UpdateSiigoSellersHandler>();
+        services.AddScoped<ICommandHandler<AutoLinkSiigoSellersByEmailCommand, SiigoSellerAutoLinkResultDto>, AutoLinkSiigoSellersByEmailHandler>();
+        services.AddScoped<ISiigoMemberDirectory, SiigoMemberDirectory>();
         services.AddScoped<IQueryHandler<ListSiigoOptionsQuery, IReadOnlyList<SiigoOptionDto>>, ListSiigoOptionsHandler>();
         // Paso 6 (Tarea 7): los vínculos de las variantes con los productos de Siigo.
         services.AddScoped<IQueryHandler<ListSiigoVariantLinksQuery, SiigoVariantLinksPageDto>, ListSiigoVariantLinksHandler>();

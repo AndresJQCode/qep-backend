@@ -61,7 +61,8 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
                 party.Phone),
             order.CompanyId,
             order.Version,
-            order.AdvisorEmail);
+            order.AdvisorMembershipId,
+            order.AdvisorLabel);
     }
 
     public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>

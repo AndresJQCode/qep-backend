@@ -159,4 +159,70 @@ public sealed class PriceListTests
         list.Update("Lista", 10m, PriceListVisibility.AllActive, [], Now.AddHours(1), showPrices: false);
 
         Assert.Equal((false, 2L), (list.ShowPrices, list.Version));
-    }}
+    }
+    // Spec 2026-11-20 (ocultar categorías y productos): las exclusiones.
+    [Fact]
+    public void CreateKeepsDistinctExclusionsAndEmptyByDefault()
+    {
+        var category = Guid.CreateVersion7();
+        var product = Guid.CreateVersion7();
+
+        var plain = PriceList.Create(Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now);
+        var list = PriceList.Create(
+            Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now, exclusions:
+            [
+                new PriceListExclusion(PriceListExclusionKind.Category, category),
+                new PriceListExclusion(PriceListExclusionKind.Product, product),
+                new PriceListExclusion(PriceListExclusionKind.Category, category),
+            ]);
+
+        Assert.Empty(plain.Exclusions);
+        Assert.Equal(
+            [new PriceListExclusion(PriceListExclusionKind.Category, category), new PriceListExclusion(PriceListExclusionKind.Product, product)],
+            list.Exclusions);
+    }
+
+    [Fact]
+    public void UpdateReplacesExclusionsAndBumpsTheVersion()
+    {
+        var product = Guid.CreateVersion7();
+        var list = PriceList.Create(
+            Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now,
+            exclusions: [new PriceListExclusion(PriceListExclusionKind.Product, product)]);
+
+        list.Update("Lista", 10m, PriceListVisibility.AllActive, [], Now.AddHours(1), showPrices: true, exclusions: []);
+
+        Assert.Empty(list.Exclusions);
+        Assert.Equal(2L, list.Version);
+    }
+
+    [Fact]
+    public void ExclusionsSurviveAllActiveVisibility()
+    {
+        var category = Guid.CreateVersion7();
+
+        var list = PriceList.Create(
+            Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now,
+            exclusions: [new PriceListExclusion(PriceListExclusionKind.Category, category)]);
+
+        Assert.Single(list.Exclusions);
+    }
+
+    [Fact]
+    public void TooManyHiddenCategoriesOrProductsAreRejected()
+    {
+        var categories = Enumerable.Range(0, PriceList.MaxHiddenCategories + 1)
+            .Select(_ => new PriceListExclusion(PriceListExclusionKind.Category, Guid.CreateVersion7())).ToList();
+        var products = Enumerable.Range(0, PriceList.MaxHiddenProducts + 1)
+            .Select(_ => new PriceListExclusion(PriceListExclusionKind.Product, Guid.CreateVersion7())).ToList();
+
+        var first = Assert.Throws<WholesaleDomainException>(() =>
+            PriceList.Create(Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now, exclusions: categories));
+        var second = Assert.Throws<WholesaleDomainException>(() =>
+            PriceList.Create(Tenant, "Lista", 10m, PriceListVisibility.AllActive, [], Now, exclusions: products));
+
+        Assert.Equal(WholesaleErrorCodes.PriceListExclusionsTooMany, first.Code);
+        Assert.Equal(WholesaleErrorCodes.PriceListExclusionsTooMany, second.Code);
+        Assert.Equal((200, 1000), (PriceList.MaxHiddenCategories, PriceList.MaxHiddenProducts));
+    }
+}

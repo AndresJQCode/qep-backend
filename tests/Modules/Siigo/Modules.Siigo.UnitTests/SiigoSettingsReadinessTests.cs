@@ -32,21 +32,35 @@ public sealed class SiigoSettingsReadinessTests
     }
 
     [Fact]
-    public void WithEverythingTheSixStepsAreComplete()
+    public void WithEverythingTheSevenStepsAreComplete()
     {
         var settings = NewSettings();
         settings.AssignCompany(Guid.CreateVersion7());
         settings.UpdateDocument(new SiigoDocumentSettings("doc-1", null, null, false, false, false, null));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
-        settings.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
+        settings.UpdatePayments(new SiigoPaymentSettings([new SiigoPaymentLink("BANCO|1", "pay-1")], null, null, null, null));
+        settings.ReplaceSellerLinks([new SiigoSellerLink(Guid.CreateVersion7(), "800", "VANESA HERNANDEZ")]);
 
         var steps = SiigoSettingsReadiness.Evaluate(settings);
 
         Assert.Equal(
-            [SiigoSetupStep.Credentials, SiigoSetupStep.Company, SiigoSetupStep.Document, SiigoSetupStep.Taxes, SiigoSetupStep.Payments, SiigoSetupStep.Products],
+            [
+                SiigoSetupStep.Credentials, SiigoSetupStep.Company, SiigoSetupStep.Document, SiigoSetupStep.Taxes, SiigoSetupStep.Payments,
+                SiigoSetupStep.Sellers, SiigoSetupStep.Products,
+            ],
             steps.Select(step => step.Step));
         Assert.All(steps, step => Assert.True(step.Complete));
         Assert.All(steps, step => Assert.Empty(step.MissingCodes));
+    }
+
+    [Fact]
+    public void WithoutSellerLinksTheSellersStepNamesWhatIsMissing()
+    {
+        var settings = NewSettings();
+        Assert.Equal(["seller_link_missing"], Step(settings, SiigoSetupStep.Sellers).MissingCodes);
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(Guid.CreateVersion7(), "800", "VANESA HERNANDEZ")]);
+        Assert.True(Step(settings, SiigoSetupStep.Sellers).Complete);
     }
 
     [Fact]
@@ -96,14 +110,14 @@ public sealed class SiigoSettingsReadinessTests
     }
 
     [Fact]
-    public void ADefaultOrAnAccountPaymentTypeCompletesThePaymentsStep()
+    public void AnAccountPaymentTypeCompletesThePaymentsStepButCreditOrDefaultDoNot()
     {
         var withDefault = NewSettings();
-        withDefault.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
+        withDefault.UpdatePayments(new SiigoPaymentSettings([], "pay-3", 30, "pay-4", "pay-1"));
         var withAccount = NewSettings();
         withAccount.UpdatePayments(new SiigoPaymentSettings([new SiigoPaymentLink("BANCO|1", "pay-2")], null, null, null, null));
 
-        Assert.True(Step(withDefault, SiigoSetupStep.Payments).Complete);
+        Assert.False(Step(withDefault, SiigoSetupStep.Payments).Complete);
         Assert.True(Step(withAccount, SiigoSetupStep.Payments).Complete);
     }
 

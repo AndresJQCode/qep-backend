@@ -107,7 +107,7 @@ public sealed class SiigoSettingsApiTests
         Assert.Equal("Siigo principal", settings["connection"]!["name"]!.GetValue<string>());
         Assert.Equal("Active", settings["connection"]!["status"]!.GetValue<string>());
         var steps = settings["readiness"]!.AsArray().Select(step => step!.AsObject()).ToList();
-        Assert.Equal(["Credentials", "Company", "Document", "Taxes", "Payments", "Products"], steps.Select(step => step["step"]!.GetValue<string>()));
+        Assert.Equal(["Credentials", "Company", "Document", "Taxes", "Payments", "Sellers", "Products"], steps.Select(step => step["step"]!.GetValue<string>()));
         var company = steps.Single(step => step["step"]!.GetValue<string>() == "Company");
         Assert.False(company["complete"]!.GetValue<bool>());
         Assert.Equal(["company_missing"], company["missingCodes"]!.AsArray().Select(code => code!.GetValue<string>()));
@@ -551,5 +551,158 @@ public sealed class SiigoSettingsApiTests
         var response = await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private static async Task<(HttpClient Client, JsonObject Settings)> OpenSellersAsync(World world)
+    {
+        var client = Manager(world.Factory, world.Tenant);
+        var settings = (await client.GetFromJsonAsync<JsonObject>(SettingsRoute(world.TenantId, world.ConnectionId), Ct))!;
+        return (client, settings);
+    }
+
+    private static Guid OwnerMembership(JsonObject settings) =>
+        Assert.Single(settings["sellers"]!.AsArray())!["membershipId"]!.GetValue<Guid>();
+
+    [Fact]
+    public async Task TheSettingsListEveryActiveMemberAsASeller()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+
+        var (client, settings) = await OpenSellersAsync(world);
+        using var _ = client;
+
+        var owner = Assert.Single(settings["sellers"]!.AsArray())!;
+        Assert.Equal(world.Tenant.Email, owner["email"]!.GetValue<string>());
+        Assert.True(owner["active"]!.GetValue<bool>());
+        Assert.Null(owner["siigoUserId"]);
+        Assert.Null(settings["sellersAutoLinkedAt"]);
+        Assert.Null(settings["productsAutoLinkedAt"]);
+        var step = settings["readiness"]!.AsArray().Single(row => row!["step"]!.GetValue<string>() == "Sellers")!;
+        Assert.Equal(["seller_link_missing"], step["missingCodes"]!.AsArray().Select(code => code!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task SavingSellersLinksAndCompletesTheStep()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        var (client, settings) = await OpenSellersAsync(world);
+        using var _ = client;
+        var owner = OwnerMembership(settings);
+
+        var saved = await PutAsync(
+            client,
+            SettingsRoute(world.TenantId, world.ConnectionId, "sellers"),
+            new { sellers = new[] { new { membershipId = owner, siigoUserId = "800", siigoUserName = "VANESA HERNANDEZ" } } },
+            "\"0\"");
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal("\"1\"", saved.Headers.ETag?.Tag);
+        var body = (await saved.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        var row = Assert.Single(body["sellers"]!.AsArray())!;
+        Assert.Equal(("800", "VANESA HERNANDEZ"), (row["siigoUserId"]!.GetValue<string>(), row["siigoUserName"]!.GetValue<string>()));
+        var step = body["readiness"]!.AsArray().Single(value => value!["step"]!.GetValue<string>() == "Sellers")!;
+        Assert.True(step["complete"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task ASellerOfAnotherTenantIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        var (client, _) = await OpenSellersAsync(world);
+        using var __ = client;
+
+        var response = await PutAsync(
+            client,
+            SettingsRoute(world.TenantId, world.ConnectionId, "sellers"),
+            new { sellers = new[] { new { membershipId = Guid.CreateVersion7(), siigoUserId = "800", siigoUserName = "VANESA" } } },
+            "\"0\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("siigo.settings.member_not_found", await CodeAsync(response));
+    }
+
+    [Fact]
+    public async Task ARepeatedMemberIs422WithTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        var (client, settings) = await OpenSellersAsync(world);
+        using var _ = client;
+        var owner = OwnerMembership(settings);
+
+        var response = await PutAsync(
+            client,
+            SettingsRoute(world.TenantId, world.ConnectionId, "sellers"),
+            new
+            {
+                sellers = new[]
+                {
+                    new { membershipId = owner, siigoUserId = "800", siigoUserName = "A" },
+                    new { membershipId = owner, siigoUserId = "744", siigoUserName = "B" },
+                },
+            },
+            "\"0\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Contains("sellers", problem["errors"]!.AsObject().Select(pair => pair.Key));
+    }
+
+    [Fact]
+    public async Task AutoLinkLinksMembersWhoseEmailMatches()
+    {
+        await using var database = await StartDatabaseAsync();
+        var siigo = new FakeSiigoApi();
+        var world = await ArrangeAsync(database, siigo);
+        using var factory = world.Factory;
+        siigo.On(
+            "/v1/users",
+            HttpStatusCode.OK,
+            $$"""{"pagination":{"page":1,"page_size":25,"total_results":1},"results":[{"id":800,"first_name":"VANESA","last_name":"HERNANDEZ","email":" {{world.Tenant.Email.ToUpperInvariant()}} ","active":true}]}""");
+        using var client = Manager(factory, world.Tenant);
+
+        var response = await client.PostAsync(SettingsRoute(world.TenantId, world.ConnectionId, "sellers/auto-link"), null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Equal(1, body["linked"]!.GetValue<int>());
+        var row = Assert.Single(body["settings"]!["sellers"]!.AsArray())!;
+        Assert.Equal(("800", "VANESA HERNANDEZ"), (row["siigoUserId"]!.GetValue<string>(), row["siigoUserName"]!.GetValue<string>()));
+        Assert.NotNull(body["settings"]!["sellersAutoLinkedAt"]);
+    }
+
+    [Fact]
+    public async Task AutoLinkLeavesExistingLinksAloneAndMarksTheStepEvenWithoutMatches()
+    {
+        await using var database = await StartDatabaseAsync();
+        var siigo = new FakeSiigoApi();
+        var world = await ArrangeAsync(database, siigo);
+        using var factory = world.Factory;
+        var (client, settings) = await OpenSellersAsync(world);
+        using var _ = client;
+        var owner = OwnerMembership(settings);
+        (await PutAsync(
+            client,
+            SettingsRoute(world.TenantId, world.ConnectionId, "sellers"),
+            new { sellers = new[] { new { membershipId = owner, siigoUserId = "630", siigoUserName = "OTRO" } } },
+            "\"0\"")).EnsureSuccessStatusCode();
+        siigo.On(
+            "/v1/users",
+            HttpStatusCode.OK,
+            $$"""{"pagination":{"page":1,"page_size":25,"total_results":1},"results":[{"id":629,"first_name":"Ana","email":"{{world.Tenant.Email}}","active":true}]}""");
+
+        var response = await client.PostAsync(SettingsRoute(world.TenantId, world.ConnectionId, "sellers/auto-link"), null, Ct);
+
+        var body = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Equal(0, body["linked"]!.GetValue<int>());
+        Assert.Equal("630", Assert.Single(body["settings"]!["sellers"]!.AsArray())!["siigoUserId"]!.GetValue<string>());
+        Assert.NotNull(body["settings"]!["sellersAutoLinkedAt"]);
     }
 }

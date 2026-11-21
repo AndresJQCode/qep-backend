@@ -142,4 +142,64 @@ public sealed class SiigoSettingsTests
 
         Assert.Equal(SiigoErrorCodes.SettingsCreditInvalid, error.Code);
     }
+
+    [Fact]
+    public void ReplaceSellerLinksReplacesTheStepAndSellerForFindsIt()
+    {
+        var settings = NewSettings();
+        var vanesa = Guid.CreateVersion7();
+        var andrea = Guid.CreateVersion7();
+        settings.ReplaceSellerLinks([new SiigoSellerLink(vanesa, "800", "VANESA HERNANDEZ"), new SiigoSellerLink(andrea, "744", "ANDREA RITUAL")]);
+        var version = settings.Version;
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(andrea, " 745 ", "ANDREA NUEVA")]);
+
+        Assert.Null(settings.SellerFor(vanesa));
+        Assert.Equal("745", settings.SellerFor(andrea));
+        var link = Assert.Single(settings.SellerLinks);
+        Assert.Equal((settings.ConnectionId, settings.TenantId, "ANDREA NUEVA"), (link.ConnectionId, link.TenantId, link.SiigoUserName));
+        Assert.Equal(version + 1, settings.Version);
+    }
+
+    [Fact]
+    public void ASellerLinkClampsTheNameAndFallsBackToTheId()
+    {
+        var settings = NewSettings();
+        var long250 = new string('N', 250);
+        var member = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(member, "800", long250), new SiigoSellerLink(other, "744", "   ")]);
+
+        Assert.Equal(SiigoSellerLink.UserNameMaxLength, settings.SellerLinks.Single(l => l.MembershipId == member).SiigoUserName.Length);
+        Assert.Equal("744", settings.SellerLinks.Single(l => l.MembershipId == other).SiigoUserName);
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(member, "800", ""), new SiigoSellerLink(other, "744", long250)]);
+
+        Assert.Equal("800", settings.SellerLinks.Single(l => l.MembershipId == member).SiigoUserName);
+        Assert.Equal(SiigoSellerLink.UserNameMaxLength, settings.SellerLinks.Single(l => l.MembershipId == other).SiigoUserName.Length);
+    }
+
+    [Fact]
+    public void ARepeatedMemberIsADuplicateLink()
+    {
+        var member = Guid.CreateVersion7();
+
+        var error = Assert.Throws<SiigoDomainException>(
+            () => NewSettings().ReplaceSellerLinks([new SiigoSellerLink(member, "800", "A"), new SiigoSellerLink(member, "744", "B")]));
+
+        Assert.Equal(SiigoErrorCodes.SettingsDuplicateLink, error.Code);
+    }
+
+    [Fact]
+    public void MarkingTheAutoLinkKeepsTheDateWithoutBumpingTheVersion()
+    {
+        var settings = NewSettings();
+
+        settings.MarkSellersAutoLinked(At);
+        settings.MarkProductsAutoLinked(At.AddMinutes(1));
+
+        Assert.Equal((At, At.AddMinutes(1)), (settings.SellersAutoLinkedAt, settings.ProductsAutoLinkedAt));
+        Assert.Equal(0, settings.Version);
+    }
 }

@@ -61,8 +61,8 @@ public sealed record SiigoBilledPartyInput(
 
 /// <summary>El pedido tal como Siigo lo necesita para armar la factura. <paramref name="CompanyId"/> elige la conexión;
 /// <paramref name="OrderVersion"/> es la versión del pedido al armar (la fila guarda si cambió después, spec §5.4);
-/// <paramref name="AdvisorEmail"/> es el correo del asesor, con el que se elige el vendedor (spec 2026-11-20). Null si el asesor ya no
-/// resuelve.</summary>
+/// <paramref name="AdvisorMembershipId"/> es la membresía del asesor: su vínculo da el vendedor (spec 2026-11-20, vendedores vinculados);
+/// <paramref name="AdvisorLabel"/>, su nombre o correo para el faltante (null si ya no resuelve).</summary>
 public sealed record SiigoInvoiceInput(
     Guid OrderId,
     string OrderNumber,
@@ -84,4 +84,5 @@ public sealed record SiigoInvoiceInput(
     SiigoBilledPartyInput BilledParty,
     Guid? CompanyId,
     long OrderVersion,
-    string? AdvisorEmail);
+    Guid AdvisorMembershipId,
+    string? AdvisorLabel);

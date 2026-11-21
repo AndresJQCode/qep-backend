@@ -147,8 +147,9 @@ public sealed class OrderExternalInvoicingApiTests(SharedQuotationsHost sharedHo
         Assert.NotNull(party.CityId);
         Assert.NotNull(party.DepartmentId);
         Assert.Equal(approved.BillingAccount!.CompanyId, order.CompanyId);
-        // El owner creó el pedido y es su asesor: su correo de Identity es con el que Siigo elige el vendedor (spec 2026-11-20).
-        Assert.Matches("^owner-[0-9a-f]{32}@example\\.com$", order.AdvisorEmail);
+        // El owner creó el pedido y es su asesor: Siigo busca el vendedor por su membresía; sin nombre cargado, la etiqueta es su correo.
+        Assert.NotEqual(Guid.Empty, order.AdvisorMembershipId);
+        Assert.Matches(@"^owner-[0-9a-f]{32}@example\.com$", order.AdvisorLabel);
     }
 
     [Fact]

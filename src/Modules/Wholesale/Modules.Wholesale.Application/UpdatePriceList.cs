@@ -13,11 +13,12 @@ public sealed record UpdatePriceListCommand(
     decimal DiscountPercent,
     string Visibility,
     IReadOnlyList<Guid> CategoryIds,
-    bool? ShowPrices = null)
+    bool? ShowPrices = null,
+    IReadOnlyList<PriceListExclusionInput>? Exclusions = null)
     : ICommand<PriceListDetailDto>, IPriceListTermsCommand;
 
 /// <summary>
-/// Reemplaza los términos de la lista. Orden: 403 → 422 de validación → 404 → 412 → 409 nombre → 422 categorías. Los
+/// Reemplaza los términos de la lista. Orden: 403 → 422 de validación → 404 → 412 → 409 nombre → 422 categorías y exclusiones. Los
 /// distribuidores que la usan ven el cambio de inmediato: la lista no se copia a la relación.
 /// </summary>
 public sealed class UpdatePriceListHandler(
@@ -47,9 +48,10 @@ public sealed class UpdatePriceListHandler(
 
         var categoryIds = PriceListTerms.CategoryIdsOf(command);
         var categories = await PriceListTerms.RequireCategoriesAsync(catalog, command.TenantId, categoryIds, cancellationToken);
+        await PriceListTerms.RequireExclusionsAsync(catalog, command.TenantId, command, cancellationToken);
 
         var now = clock.UtcNow;
-        list.Update(name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now, command.ShowPrices ?? list.ShowPrices);
+        list.Update(name, command.DiscountPercent, PriceListTerms.VisibilityOf(command), categoryIds, now, command.ShowPrices ?? list.ShowPrices, PriceListTerms.ExclusionsOf(command));
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
@@ -62,6 +64,7 @@ public sealed class UpdatePriceListHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         var counts = await usage.CountByPriceListAsync(command.TenantId, cancellationToken);
-        return PriceListMapping.ToDetail(list, categories, counts.GetValueOrDefault(list.Id));
+        var exclusions = await PriceListTerms.ExclusionDtosAsync(catalog, command.TenantId, list, cancellationToken);
+        return PriceListMapping.ToDetail(list, categories, counts.GetValueOrDefault(list.Id), exclusions);
     }
 }

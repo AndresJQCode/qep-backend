@@ -278,6 +278,20 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid[]")
                         .HasColumnName("category_ids");
 
+                    b.PrimitiveCollection<List<Guid>>("_excludedCategoryIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("excluded_category_ids")
+                        .HasDefaultValueSql("'{}'::uuid[]");
+
+                    b.PrimitiveCollection<List<Guid>>("_excludedProductIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("excluded_product_ids")
+                        .HasDefaultValueSql("'{}'::uuid[]");
+
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId", "NormalizedName")

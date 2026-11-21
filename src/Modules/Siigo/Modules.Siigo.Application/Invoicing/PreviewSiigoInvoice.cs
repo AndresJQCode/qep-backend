@@ -7,20 +7,16 @@ namespace Modules.Siigo.Application.Invoicing;
 public sealed record PreviewSiigoInvoiceQuery(Guid TenantId, Guid OrderId) : IQuery<SiigoInvoicePreviewDto>;
 
 /// <summary>
-/// Spec 2026-11-18 §6.3: la factura armada, los faltantes y la propuesta de pagos, <b>sin escribir nada y sin llamar a Siigo salvo la
-/// lista de usuarios</b> (cacheada 5 minutos, releída si el asesor no aparece), con la que se elige el vendedor del asesor del pedido (spec 2026-11-20 §4.6): así un asesor
-/// sin usuario en Siigo se ve antes de pulsar «Facturar». Nunca busca ni crea el cliente. Lee con las credenciales de configuración
-/// (también una conexión pausada: pausar es dejar de facturar, no dejar de mirar). El pedido se valida con las mismas precondiciones de
-/// la marca manual, y la moneda, la empresa y la conexión configurada son 422 como al generar; lo que falta del pedido sale como lista,
-/// no como error.
+/// Spec 2026-11-18 §6.3: la factura armada, los faltantes y la propuesta de pagos, <b>sin escribir nada y sin llamar a Siigo</b> (ni
+/// siquiera para buscar o crear el cliente; el vendedor sale del vínculo del asesor, spec 2026-11-20). El pedido se valida con las mismas
+/// precondiciones de la marca manual, y la moneda, la empresa y la conexión configurada son 422 como al generar; lo que falta del pedido
+/// sale como lista, no como error.
 /// </summary>
 public sealed class PreviewSiigoInvoiceHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ISiigoOrderSource orders,
-    ISiigoSettingsRepository settingsRepository,
-    ISiigoConnectionDirectory connections,
-    ISiigoApi api) : IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>
+    ISiigoSettingsRepository settingsRepository) : IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>
 {
     public async Task<SiigoInvoicePreviewDto> HandleAsync(PreviewSiigoInvoiceQuery query, CancellationToken cancellationToken)
     {
@@ -28,11 +24,7 @@ public sealed class PreviewSiigoInvoiceHandler(
         await SiigoInvoiceSupport.AuthorizeAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
         var context = await SiigoInvoiceSupport.LoadAsync(orders, settingsRepository, query.TenantId, query.OrderId, cancellationToken);
 
-        var credentials = await SiigoInvoiceSupport.SetupCredentialsAsync(
-            connections, query.TenantId, context.Settings.ConnectionId, cancellationToken);
-        var sellerId = await SiigoInvoiceSupport.ResolveSellerAsync(api, credentials, context.Input.AdvisorEmail, cancellationToken);
-
-        return SiigoInvoiceBuilder.Build(context.Input, context.Settings, sellerId, null) switch
+        return SiigoInvoiceBuilder.Build(context.Input, context.Settings, null) switch
         {
             SiigoBuildResult.Ready ready => new SiigoInvoicePreviewDto(
                 [

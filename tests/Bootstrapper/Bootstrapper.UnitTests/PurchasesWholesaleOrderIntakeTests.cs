@@ -330,7 +330,7 @@ public sealed class PurchasesWholesaleOrderIntakeTests
             }
 
             var terms = new WholesaleTerms(
-                Guid.CreateVersion7(), Customer, Advisor, Company, Currency, 4.8m, null, "Distribuidor estándar", TermsShowPrices);
+                Guid.CreateVersion7(), Customer, Advisor, Company, Currency, 4.8m, null, "Distribuidor estándar", [], [], TermsShowPrices);
             IReadOnlyDictionary<Guid, WholesaleOffer> found = variantIds.ToDictionary(id => id, id => Offers[id]);
             return Task.FromResult((terms, found));
         }

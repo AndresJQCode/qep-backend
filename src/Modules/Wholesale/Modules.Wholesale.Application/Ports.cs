@@ -37,6 +37,13 @@ public interface IDistributorUsage
 /// <summary>Una categoría del catálogo del mayorista con su nombre.</summary>
 public sealed record WholesaleCategoryRef(Guid Id, string Name);
 
+/// <summary>
+/// Spec 2026-11-20: un producto del catálogo del mayorista para elegir qué ocultar. <c>Code</c> es el de su única variante (con
+/// varias, <c>null</c>); <c>VariantCount</c> todas las que tiene; <c>ImageUrl</c> la principal si el archivo es del tenant.
+/// </summary>
+public sealed record WholesaleProductRef(
+    Guid Id, string? Code, string Name, Guid? CategoryId, int VariantCount, string? ImageUrl);
+
 /// <summary>Un nodo del árbol plano de categorías del mayorista.</summary>
 public sealed record WholesaleCategoryNode(Guid Id, string Name, Guid? ParentId);
 
@@ -68,18 +75,34 @@ public interface IWholesaleCatalogReader
     Task<IReadOnlyDictionary<Guid, WholesaleCategoryRef>> FindCategoriesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-20: en lote, los productos del tenant con esos ids (activos o no); uno ajeno o borrado no viene.</summary>
+    Task<IReadOnlyDictionary<Guid, WholesaleProductRef>> FindProductsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-20, el selector de productos a ocultar: una página de productos activos con precio en
+    /// <paramref name="currency"/>, por nombre; <c>Total</c> cuenta productos. <paramref name="categoryId"/> filtra con
+    /// descendientes; <paramref name="search"/> busca en código o nombre.
+    /// </summary>
+    Task<(IReadOnlyList<WholesaleProductRef> Items, int Total)> SearchProductsAsync(
+        Guid tenantId, string currency, Guid? categoryId, string? search, int page, int pageSize, CancellationToken cancellationToken);
+
     /// <summary>Todas las categorías del tenant como árbol plano, ordenadas por nombre (ruling W5).</summary>
     Task<IReadOnlyList<WholesaleCategoryNode>> ListCategoriesAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Hasta <paramref name="take"/> variantes vendibles con precio en <paramref name="currency"/>, ordenadas por nombre de
     /// producto y posición (D-11), y cuántos productos activos entran en el filtro. <paramref name="categoryIds"/> <c>null</c> es
-    /// todo el catálogo activo; si no, esas categorías y sus descendientes (D-9).
+    /// todo el catálogo activo; si no, esas categorías y sus descendientes (D-9). Spec 2026-11-20: los productos de
+    /// <paramref name="excludedCategoryIds"/> (con sus descendientes) y <paramref name="excludedProductIds"/> no entran, ni en la
+    /// muestra ni en el total; <c>null</c> o vacía no excluye nada.
     /// </summary>
     Task<(IReadOnlyList<WholesaleSampleVariant> Items, int TotalProducts)> SampleAsync(
         Guid tenantId,
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
         int take,
         CancellationToken cancellationToken);
 
@@ -90,12 +113,15 @@ public interface IWholesaleCatalogReader
     /// <summary>
     /// Una página de productos activos (nombre de producto y posición) con sus variantes vendibles en
     /// <paramref name="currency"/>; <paramref name="search"/> busca en código o nombre. <paramref name="categoryIds"/> como en
-    /// <see cref="SampleAsync"/>. <c>Total</c> cuenta productos: la página es de productos, como el selector de cotizaciones.
+    /// <see cref="SampleAsync"/>, y las exclusiones también (en la consulta, así <c>Total</c> y la página son verdad).
+    /// <c>Total</c> cuenta productos: la página es de productos, como el selector de cotizaciones.
     /// </summary>
     Task<(IReadOnlyList<WholesaleSellableVariant> Items, int Total)> SearchSellableAsync(
         Guid tenantId,
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
         string? search,
         int page,
         int pageSize,

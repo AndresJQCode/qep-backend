@@ -8,6 +8,7 @@ public enum SiigoSetupStep
     Document,
     Taxes,
     Payments,
+    Sellers,
     Products,
 }
 
@@ -27,6 +28,7 @@ public static class SiigoSettingsReadiness
     public const string DocumentTypeMissing = "document_type_missing";
     public const string TaxLinkMissing = "tax_link_missing";
     public const string PaymentLinkMissing = "payment_link_missing";
+    public const string SellerLinkMissing = "seller_link_missing";
 
     public static IReadOnlyList<SiigoStepReadiness> Evaluate(SiigoSettings settings)
     {
@@ -38,6 +40,7 @@ public static class SiigoSettingsReadiness
             Of(SiigoSetupStep.Document, settings.DocumentTypeId is null ? DocumentTypeMissing : null),
             Of(SiigoSetupStep.Taxes, HasTaxLink(settings) ? null : TaxLinkMissing),
             Of(SiigoSetupStep.Payments, HasPaymentLink(settings) ? null : PaymentLinkMissing),
+            Of(SiigoSetupStep.Sellers, settings.SellerLinks.Count > 0 ? null : SellerLinkMissing),
             Of(SiigoSetupStep.Products),
         ];
     }
@@ -48,10 +51,8 @@ public static class SiigoSettingsReadiness
         || settings.WithholdingLinks.Any(link => !string.IsNullOrWhiteSpace(link.SiigoTaxId));
 
     private static bool HasPaymentLink(SiigoSettings settings) =>
-        !string.IsNullOrWhiteSpace(settings.DefaultPaymentTypeId)
-        || !string.IsNullOrWhiteSpace(settings.CreditPaymentTypeId)
-        || !string.IsNullOrWhiteSpace(settings.CashOnDeliveryPaymentTypeId)
-        || settings.PaymentLinks.Any(link => !string.IsNullOrWhiteSpace(link.SiigoPaymentTypeId));
+        // Crédito, contraentrega y por defecto ya no se usan al facturar (spec 2026-11-20): sólo cuentan los vínculos por cuenta de cobro.
+        settings.PaymentLinks.Any(link => !string.IsNullOrWhiteSpace(link.SiigoPaymentTypeId));
 
     private static SiigoStepReadiness Of(SiigoSetupStep step, params string?[] missing)
     {
