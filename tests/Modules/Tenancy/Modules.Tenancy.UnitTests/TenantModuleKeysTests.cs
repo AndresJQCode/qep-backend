@@ -38,7 +38,10 @@ public sealed class TenantModuleKeysTests
         Assert.Equal(
             [TenantModuleKeys.Catalog, TenantModuleKeys.Customers, TenantModuleKeys.Companies],
             TenantModuleKeys.DependenciesOf(TenantModuleKeys.Quotations));
-        Assert.Equal([TenantModuleKeys.Quotations], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Orders));
+        // Un pedido se crea sin cotización (spec 2026-10-15): orders y quotations son independientes.
+        Assert.Equal(
+            [TenantModuleKeys.Catalog, TenantModuleKeys.Customers, TenantModuleKeys.Companies],
+            TenantModuleKeys.DependenciesOf(TenantModuleKeys.Orders));
         Assert.Equal(
             [TenantModuleKeys.Catalog, TenantModuleKeys.Companies],
             TenantModuleKeys.DependenciesOf(TenantModuleKeys.Pos));
