@@ -936,6 +936,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion<string>()
             .HasMaxLength(20);
         item.Property(value => value.CostCapturedAt).HasColumnName("cost_captured_at");
+        // Spec 2026-11-21: la línea de regalo. Sin índice: la clave (variante, regalo) la hace cumplir el dominio.
+        item.Property(value => value.IsGift).HasColumnName("is_gift").HasDefaultValue(false).IsRequired();
         item.Ignore(value => value.Amounts);
         item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
         // Mismo motivo que IX_quotation_items_variant: la consulta de uso de Catalog.
