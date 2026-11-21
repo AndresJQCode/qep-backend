@@ -20,7 +20,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   usó: no se pudo leer y sus esquemas no están publicados.
 - **No hay reenvío de una guía.** Coordinadora no tiene clave de idempotencia: un timeout o un 5xx al crear deja la fila en `Unknown`
   y la resuelve una persona (`POST …/resolve`), nunca un reintento automático. Una `Pending` cuyo reclamo de 2 min venció pasa a
-  `Unknown` al leerla (`ExpireIfStale`). «Reintentar la Pending» generaría dos guías que Coordinadora cobra.
+  `Unknown` al leerla (`ExpireIfStale`). «Reintentar la Pending» generaría dos guías que Coordinadora cobra. Por lo mismo, **sólo un
+  SOAP Fault del lado del cliente (`Sender`/`Client`) es un rechazo** que libera el pedido; un `Receiver`/`Server` o un código propio pudo
+  llegar después de crear la guía y queda `Unknown` (`CoordinadoraSoap.IsClientFault`). Y la llamada posterior al commit corre con
+  `CancellationToken.None`: si el request se cancela mientras Coordinadora contesta, el número de guía se guarda igual.
 - **Una cuenta de Coordinadora por tenant** (`maxConnections: 1` en el proveedor): el módulo toma «la conexión del tenant» sin que el
   pedido elija cuál. Si el proveedor pasa a admitir varias, `CoordinadoraShipmentSupport.LoadAsync` necesita un criterio para elegir.
 - **El probador de la conexión no verifica credenciales:** llama `Cotizador.departamentos`, que no las lleva. Ninguna lectura barata

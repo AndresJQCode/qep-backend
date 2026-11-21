@@ -124,18 +124,28 @@ internal static class CoordinadoraSoap
             return null;
         }
 
-        /// <summary>El texto del cuerpo, aplanado, para un rastreo cuyos campos no se conocen (V-5).</summary>
-        public string BodyText()
+        /// <summary>El texto del cuerpo, aplanado, para un rastreo cuyos campos no se conocen (V-5). Un elemento cuyo nombre contenga
+        /// alguno de <paramref name="excludedNameFragments"/> sale sin su valor: es lo que evita que el destinatario llegue a <c>tracking_detail</c>.</summary>
+        public string BodyText(IReadOnlyCollection<string>? excludedNameFragments = null)
         {
             var body = Document.Descendants(Envelope + "Body").FirstOrDefault() ?? Document.Root;
-            return body is null
-                ? string.Empty
-                : string.Join(
-                    " | ",
-                    body.Descendants()
-                        .Where(element => !element.HasElements && !string.IsNullOrWhiteSpace(element.Value))
-                        .Select(element => $"{element.Name.LocalName}: {element.Value.Trim()}"));
+            if (body is null)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(
+                " | ",
+                body.Descendants()
+                    .Where(element => !element.HasElements && !string.IsNullOrWhiteSpace(element.Value))
+                    .Select(element => IsExcluded(element.Name.LocalName, excludedNameFragments)
+                        ? $"{element.Name.LocalName}: …"
+                        : $"{element.Name.LocalName}: {element.Value.Trim()}"));
         }
+
+        private static bool IsExcluded(string localName, IReadOnlyCollection<string>? fragments) =>
+            fragments is not null
+            && fragments.Any(fragment => localName.Contains(fragment, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary><c>null</c> si el cuerpo no es XML.</summary>
@@ -173,6 +183,19 @@ internal static class CoordinadoraSoap
         scope.Descendants()
             .FirstOrDefault(element => string.Equals(element.Name.LocalName, localName, StringComparison.Ordinal) && !element.HasElements)
             ?.Value.Trim();
+
+    /// <summary>Si el código del Fault es del lado del cliente: <c>Sender</c> (SOAP 1.2) o <c>Client</c> (SOAP 1.1), con o sin prefijo. Todo
+    /// lo demás (<c>Receiver</c>, <c>Server</c>, un código propio) es del servidor: no dice que la operación no haya quedado hecha.</summary>
+    public static bool IsClientFault(string code) =>
+        FaultKind(code) is "sender" or "client";
+
+    /// <summary>La parte local del código del Fault, en minúsculas (<c>env:Sender</c> → <c>sender</c>).</summary>
+    public static string FaultKind(string code)
+    {
+        var local = (code ?? string.Empty).Trim();
+        var colon = local.LastIndexOf(':');
+        return (colon >= 0 ? local[(colon + 1)..] : local).ToLowerInvariant();
+    }
 
     /// <summary>Un número que Coordinadora devuelve como texto (<c>"12345.00"</c>), con cultura invariante.</summary>
     public static decimal? Number(string? text) =>

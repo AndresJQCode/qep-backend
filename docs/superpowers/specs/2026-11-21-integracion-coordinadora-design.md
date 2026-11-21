@@ -207,9 +207,11 @@ revalidación en el handler (doble capa). Responde la guía (§5.5).
    un `GET`) y la versión del pedido. **Commit.**
 4. **Llamar** `Guias_generarGuia`, fuera de la transacción y sin reintentos.
 5. **Resultado:** 2xx con `codigo_remision` → `Created` con `guide_number` y, si la respuesta trae el PDF, `label_pdf`.
-   Error de validación de Coordinadora → `Rejected` con `error_code` y `error_detail` (recortado; el mensaje es de
-   Coordinadora y puede repetir datos del destinatario, así que la fila guarda los **200 primeros caracteres** y la pantalla
-   lo muestra sólo a quien tiene el permiso). Timeout, 5xx o red → **`Unknown`**: no se sabe si se generó.
+   Un Fault del lado del cliente (`Sender`/`Client`: datos inválidos, credenciales) → `Rejected` con `error_code` y
+   `error_detail` (recortado; el mensaje es de Coordinadora y puede repetir datos del destinatario, así que la fila guarda los
+   **200 primeros caracteres** y la pantalla lo muestra sólo a quien tiene el permiso). Timeout, 5xx sin Fault, red, o un Fault
+   del servidor (`Receiver`/`Server`, que pudo llegar después de crear la guía) → **`Unknown`**: no se sabe si se generó. La
+   llamada y el guardado del resultado corren con un token que no depende del request: cerrar la pestaña no pierde el número.
 
 ### 5.5 Estado y pantalla
 
@@ -303,7 +305,8 @@ absolutas y HTTPS. El sandbox se usa cambiando las URL en el ambiente, no por co
 - **V-3** El tipo de `recaudos` (se manda el valor como texto). Dónde: `CoordinadoraGuideBuilder`.
 - **V-4** Que el AGS acepte `Cotizador.cotizar` por JSON-RPC con `params: {"p": {...}}` y la forma de su `result`.
   Dónde: `CoordinadoraApiClient.QuoteAsync` y `CoordinadoraQuoteDto`.
-- **V-5** Los campos de `Guias_rastreoSimple` (se guardan `estado`/`descripcion` si vienen, y el texto del resultado si no).
+- **V-5** Los campos de `Guias_rastreoSimple` (se guardan `estado`/`descripcion` si vienen, y el texto del resultado si no, sin
+  los elementos que nombren al destinatario: `tracking_detail` sale en el `GET`).
 
 ## 10. Frontend
 

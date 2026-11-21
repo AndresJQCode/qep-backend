@@ -57,7 +57,10 @@ public sealed class CreateCoordinadoraShipmentHandler(
         var (row, credentials) = await PrepareAsync(command, memberId, cancellationToken);
         if (credentials is not null)
         {
-            await SendAsync(row, credentials, cancellationToken);
+            // Con la fila ya commiteada, la llamada y su resultado no dependen del request: si la persona cierra la pestaña mientras
+            // Coordinadora contesta, el número de guía que llegue se guarda igual. Sin eso, una guía creada quedaría Pending → Unknown.
+            // El tope lo pone el timeout de 30 s del cliente HTTP.
+            await SendAsync(row, credentials, CancellationToken.None);
         }
 
         return CoordinadoraShipmentDto.From(row);

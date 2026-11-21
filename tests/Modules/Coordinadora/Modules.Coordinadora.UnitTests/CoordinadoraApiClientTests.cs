@@ -83,6 +83,20 @@ public sealed class CoordinadoraApiClientTests : IDisposable
         Assert.Equal(("-32000", "apikey invalida"), (rejected.Code, rejected.Message));
     }
 
+    // Un error sin message no se vuelca: su data podría ecoar los parámetros, apikey y clave incluidas, y el mensaje llega al 422.
+    [Fact]
+    public async Task AJsonRpcErrorWithoutMessageNeverEchoesTheRequest()
+    {
+        var body = "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":13,\"data\":{\"p\":{\"apikey\":\"" + ApiKey + "\",\"clave\":\"" + ApiPassword + "\"}}},\"id\":1}";
+        _api.On("/ags/1.5/server.php", HttpStatusCode.OK, body);
+
+        var outcome = await _client.QuoteAsync(Credentials, new CoordinadoraQuoteRequest("{}"), TestContext.Current.CancellationToken);
+
+        var rejected = Assert.IsType<CoordinadoraQuoteOutcome.Rejected>(outcome);
+        Assert.Equal(("13", "error"), (rejected.Code, rejected.Message));
+        Assert.DoesNotContain(ApiKey, rejected.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AResultThatCarriesAnErrorIsARejectionToo()
     {
@@ -163,15 +177,31 @@ public sealed class CoordinadoraApiClientTests : IDisposable
         Assert.Equal(64, CoordinadoraApiClient.GuidesPasswordHash(GuidesPassword).Length);
     }
 
-    [Fact]
-    public async Task AFaultIsARejectionEvenWithHttp500()
+    [Theory]
+    [InlineData("env:Sender")]
+    [InlineData("SOAP-ENV:Client")]
+    public async Task AClientFaultIsARejectionEvenWithHttp500(string code)
     {
-        _api.On("/ws/guias/1.6/server.php", HttpStatusCode.InternalServerError, Fault("env:Sender", "Ciudad de destino no valida: 11001000"));
+        _api.On("/ws/guias/1.6/server.php", HttpStatusCode.InternalServerError, Fault(code, "Ciudad de destino no valida: 11001000"));
 
         var outcome = await _client.CreateGuideAsync(Credentials, new CoordinadoraGuideRequest("{}"), TestContext.Current.CancellationToken);
 
         var rejected = Assert.IsType<CoordinadoraGuideOutcome.Rejected>(outcome);
-        Assert.Equal(("env:Sender", "Ciudad de destino no valida: 11001000"), (rejected.Code, rejected.Message));
+        Assert.Equal((code, "Ciudad de destino no valida: 11001000"), (rejected.Code, rejected.Message));
+    }
+
+    // Un Fault del servidor pudo llegar después de crear la guía: sin clave de idempotencia, liberar el pedido generaría dos.
+    [Theory]
+    [InlineData("env:Receiver", "fault_receiver")]
+    [InlineData("SOAP-ENV:Server", "fault_server")]
+    [InlineData("ERR-500", "fault_err-500")]
+    public async Task AServerFaultOnCreateIsTransientNotARejection(string code, string reason)
+    {
+        _api.On("/ws/guias/1.6/server.php", HttpStatusCode.InternalServerError, Fault(code, "Error interno"));
+
+        var outcome = await _client.CreateGuideAsync(Credentials, new CoordinadoraGuideRequest("{}"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(reason, Assert.IsType<CoordinadoraGuideOutcome.Transient>(outcome).Reason);
     }
 
     [Fact]
@@ -242,10 +272,12 @@ public sealed class CoordinadoraApiClientTests : IDisposable
         var known = await _client.TrackAsync(Credentials, "1", TestContext.Current.CancellationToken);
         Assert.Equal(new CoordinadoraTracking("EN REPARTO", "Salio a reparto"), known);
 
-        _api.On("/ws/guias/1.6/server.php", HttpStatusCode.OK, Soap("<return><situacion>ENTREGADO</situacion><fecha>2026-11-22</fecha></return>"));
+        _api.On("/ws/guias/1.6/server.php", HttpStatusCode.OK, Soap("<return><situacion>ENTREGADO</situacion><fecha>2026-11-22</fecha><nombre_destinatario>Pedro Pérez</nombre_destinatario><telefono>3189023450</telefono></return>"));
         var unknown = await _client.TrackAsync(Credentials, "1", TestContext.Current.CancellationToken);
         Assert.Null(unknown.Status);
-        Assert.Equal("situacion: ENTREGADO | fecha: 2026-11-22", unknown.Detail);
+        // Lo que nombra al destinatario sale sin valor: tracking_detail vuelve en el GET.
+        Assert.Equal("situacion: ENTREGADO | fecha: 2026-11-22 | nombre_destinatario: … | telefono: …", unknown.Detail);
+        Assert.DoesNotContain("Pedro", unknown.Detail, StringComparison.Ordinal);
     }
 
     [Fact]

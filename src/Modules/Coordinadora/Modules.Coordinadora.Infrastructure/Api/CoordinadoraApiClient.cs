@@ -29,6 +29,9 @@ internal sealed class CoordinadoraApiClient(HttpClient httpClient, IOptions<Coor
     public const string TrackOperation = "Guias_rastreoSimple";
     public const string CancelOperation = "Guias_anularGuia";
 
+    /// <summary>Fragmentos de nombre de elemento que delatan un dato del destinatario: no entran en el rastreo aplanado (V-5).</summary>
+    internal static readonly string[] RecipientFieldFragments = ["destinatario", "direccion", "telefono", "nombre", "nit", "documento", "correo", "email", "remitente"];
+
     /// <summary>Sin redirecciones: las claves no viajan a otro host.</summary>
     internal static SocketsHttpHandler CreatePrimaryHandler() => new() { AllowAutoRedirect = false };
 
@@ -84,7 +87,8 @@ internal sealed class CoordinadoraApiClient(HttpClient httpClient, IOptions<Coor
             var root = document.RootElement;
             if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("error", out var error) && error.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
             {
-                return new CoordinadoraQuoteOutcome.Rejected(JsonText(error, "code") ?? "error", JsonText(error, "message") ?? error.ToString());
+                // Sin message no se vuelca el objeto: podría ecoar los parámetros recibidos, apikey y clave incluidas.
+                return new CoordinadoraQuoteOutcome.Rejected(JsonText(error, "code") ?? "error", JsonText(error, "message") ?? "error");
             }
 
             if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("result", out var result) && result.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
@@ -93,7 +97,7 @@ internal sealed class CoordinadoraApiClient(HttpClient httpClient, IOptions<Coor
                 if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("error", out var resultError)
                     && resultError.ValueKind is not (JsonValueKind.Null or JsonValueKind.False or JsonValueKind.Undefined))
                 {
-                    return new CoordinadoraQuoteOutcome.Rejected(JsonText(resultError, "code") ?? "error", JsonText(resultError, "message") ?? resultError.ToString());
+                    return new CoordinadoraQuoteOutcome.Rejected(JsonText(resultError, "code") ?? "error", JsonText(resultError, "message") ?? "error");
                 }
 
                 return new CoordinadoraQuoteOutcome.Quoted(result.GetRawText(), FreightTotalOf(result));
@@ -156,7 +160,12 @@ internal sealed class CoordinadoraApiClient(HttpClient httpClient, IOptions<Coor
 
         if (parsed.Fault is { } fault)
         {
-            return new CoordinadoraGuideOutcome.Rejected(fault.Code, fault.Message);
+            // Sólo un Fault del lado del cliente (Sender/Client: datos inválidos, credenciales) dice que Coordinadora NO creó la guía. Un
+            // Receiver/Server (o uno sin código conocido) puede haber fallado después de crearla; sin clave de idempotencia, liberar el pedido
+            // generaría una segunda guía: queda Unknown y la resuelve una persona.
+            return CoordinadoraSoap.IsClientFault(fault.Code)
+                ? new CoordinadoraGuideOutcome.Rejected(fault.Code, fault.Message)
+                : new CoordinadoraGuideOutcome.Transient($"fault_{CoordinadoraSoap.FaultKind(fault.Code)}");
         }
 
         var guideNumber = parsed.Text("codigo_remision");
@@ -185,8 +194,9 @@ internal sealed class CoordinadoraApiClient(HttpClient httpClient, IOptions<Coor
         // V-5: los nombres probables primero; si no vienen, el cuerpo aplanado para que la pantalla muestre algo y el campo se descubra.
         var status = parsed.Text("estado", "estado_guia", "estado_actual", "descripcion_estado");
         var detail = parsed.Text("descripcion", "detalle", "novedad", "observacion", "observaciones");
+        // El cuerpo aplanado deja fuera lo que nombre al destinatario (nombre, dirección, teléfono, documento): tracking_detail sale en el GET.
         return status is null && detail is null
-            ? new CoordinadoraTracking(null, CoordinadoraText.Cap(parsed.BodyText(), CoordinadoraShipment.TrackingDetailMaxLength))
+            ? new CoordinadoraTracking(null, CoordinadoraText.Cap(parsed.BodyText(RecipientFieldFragments), CoordinadoraShipment.TrackingDetailMaxLength))
             : new CoordinadoraTracking(status, detail);
     }
 
