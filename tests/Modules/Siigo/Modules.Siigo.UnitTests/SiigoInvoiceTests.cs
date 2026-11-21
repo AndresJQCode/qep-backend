@@ -39,7 +39,7 @@ public sealed class SiigoInvoiceTests
         Assert.True(invoice.IsBeingSent(Now.AddSeconds(30)));
         Assert.False(invoice.IsBeingSent(Now + SiigoInvoice.SendLease + TimeSpan.FromSeconds(1)));
 
-        invoice.MarkTransient(Now.AddSeconds(31));
+        invoice.MarkTransient(null, Now.AddSeconds(31));
 
         Assert.False(invoice.IsBeingSent(Now.AddSeconds(32)));
         Assert.Equal(SiigoInvoiceStatus.Pending, invoice.Status);

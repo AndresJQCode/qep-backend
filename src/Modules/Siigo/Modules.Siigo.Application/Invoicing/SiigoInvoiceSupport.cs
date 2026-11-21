@@ -79,6 +79,16 @@ internal static class SiigoInvoiceSupport
                 .OrderBy(row => row.Kind),
         ];
 
+    /// <summary>El código <c>siigo.invoice.*</c> de un intento que no se sabe cómo terminó (<c>SiigoInvoiceOutcome.Transient.Reason</c>). Lo que
+    /// el tenant no puede corregir (Partner-Id o token que faltan) cae en <c>unavailable</c>: quien lo arregla lo ve en Grafana.</summary>
+    public static string TransientCodeOf(string reason) => reason switch
+    {
+        "timeout" => SiigoErrorCodes.InvoiceTimeout,
+        "network" => SiigoErrorCodes.InvoiceNetwork,
+        "http_429" => SiigoErrorCodes.InvoiceRateLimited,
+        _ => SiigoErrorCodes.InvoiceUnavailable,
+    };
+
     public static string ErrorCodeOf(IReadOnlyList<SiigoError> errors)
     {
         if (errors.Any(error => string.Equals(error.Code, SiigoApiErrors.InvalidTotalPayments, StringComparison.OrdinalIgnoreCase)))
