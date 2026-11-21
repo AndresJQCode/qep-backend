@@ -396,6 +396,55 @@ public sealed class HrSettingsApiTests : IClassFixture<HrSettingsApiTests.World>
     }
 
     [Fact]
+    public async Task TheSettingsListTheFixedCompensationFunds()
+    {
+        using var tenant = await NewTenantAsync();
+
+        var funds = (await SettingsAsync(tenant)).GetProperty("compensationFunds").EnumerateArray().Select(fund => fund.GetString()!).ToArray();
+
+        Assert.Equal(42, funds.Length);
+        Assert.Equal(funds.Length, funds.Distinct().Count());
+        Assert.Contains("COMFAMA", funds);
+    }
+
+    [Fact]
+    public async Task ASiteAcceptsACatalogFundAndNone()
+    {
+        using var tenant = await NewTenantAsync();
+        var company = await CompanyAsync(tenant);
+
+        var withFund = await CreatedAsync(
+            tenant.Hr, $"{tenant.Url}/sites",
+            new { companyId = company.Id, name = "Medellín", address = (string?)null, cityId = (Guid?)null, compensationFund = "COMFAMA" });
+        var without = await SiteAsync(tenant, company.Id, "Bogotá");
+
+        Assert.Equal("COMFAMA", withFund.GetProperty("compensationFund").GetString());
+        Assert.Equal(JsonValueKind.Null, without.GetProperty("compensationFund").ValueKind);
+    }
+
+    [Fact]
+    public async Task ASiteRejectsAFreeTextFundWith422()
+    {
+        using var tenant = await NewTenantAsync();
+        var company = await CompanyAsync(tenant);
+        var site = await SiteAsync(tenant, company.Id);
+
+        var create = await tenant.Hr.PostAsJsonAsync(
+            $"{tenant.Url}/sites",
+            new { companyId = company.Id, name = "Cali", address = (string?)null, cityId = (Guid?)null, compensationFund = "Caja inventada" },
+            Ct);
+        var update = await PutAsync(
+            tenant.Hr, $"{tenant.Url}/sites/{site.GetProperty("id").GetGuid()}",
+            new { companyId = company.Id, name = "Principal", address = (string?)null, cityId = (Guid?)null, compensationFund = "comfama" },
+            "\"1\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, create.StatusCode);
+        Assert.Equal(["compensationFund"], ErrorKeys(await JsonOfAsync(create)));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, update.StatusCode);
+        Assert.Equal(["compensationFund"], ErrorKeys(await JsonOfAsync(update)));
+    }
+
+    [Fact]
     public async Task ACityThatDoesNotExistIs422()
     {
         using var tenant = await NewTenantAsync();

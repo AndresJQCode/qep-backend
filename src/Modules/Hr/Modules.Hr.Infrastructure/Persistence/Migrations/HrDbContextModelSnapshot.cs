@@ -273,11 +273,6 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
 
-                    b.Property<string>("CompensationFund")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)")
-                        .HasColumnName("compensation_fund");
-
                     b.Property<string>("ContributorSubtype")
                         .IsRequired()
                         .HasMaxLength(32)

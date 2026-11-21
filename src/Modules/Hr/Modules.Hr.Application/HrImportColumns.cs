@@ -31,7 +31,6 @@ public static class HrImportColumns
     public const string PensionFund = "FONDO DE PENSIONES";
     public const string SeveranceFund = "FONDO DE CESANTÍAS";
     public const string OccupationalRiskProvider = "ARL";
-    public const string CompensationFund = "CAJA DE COMPENSACIÓN";
     public const string ContributorSubtype = "SUBTIPO DE COTIZANTE";
     public const string ForeignPensionExempt = "EXENTO DE PENSIÓN";
     public const string RestDays = "DÍAS DE DESCANSO";
@@ -56,7 +55,7 @@ public static class HrImportColumns
     public static readonly IReadOnlyList<string> Ordered =
     [
         FirstName, LastName, DocumentType, DocumentNumber, Country, BirthDate, Phone, PersonalEmail, WorkEmail, Address, City,
-        HealthProvider, PensionFund, SeveranceFund, OccupationalRiskProvider, CompensationFund, ContributorSubtype,
+        HealthProvider, PensionFund, SeveranceFund, OccupationalRiskProvider, ContributorSubtype,
         ForeignPensionExempt, RestDays, PaymentMethod, BankName, BankAccountType, BankAccountNumber, Company, ContractType,
         Duration, SalaryType, StartDate, EndDate, Salary, Teleworker, Position, Area, Workplace, RetirementDate, RetirementReason,
     ];

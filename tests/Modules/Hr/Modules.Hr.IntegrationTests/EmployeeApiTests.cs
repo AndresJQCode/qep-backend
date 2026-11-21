@@ -45,6 +45,8 @@ public sealed class EmployeeApiTests : IClassFixture<HrApiFixture>
         Assert.Equal(1, employee.GetProperty("version").GetInt64());
         Assert.Equal(["Sunday"], employee.GetProperty("restDays").EnumerateArray().Select(day => day.GetString()));
         Assert.Equal("CO", employee.GetProperty("country").GetString());
+        // La caja de compensación es de la sede, no de la ficha (decisión del owner, 2026-11-21).
+        Assert.False(employee.TryGetProperty("compensationFund", out _));
         Assert.True(detail.GetProperty("canReadContract").GetBoolean());
         Assert.True(detail.GetProperty("canDelete").GetBoolean());
         var contract = detail.GetProperty("contract");

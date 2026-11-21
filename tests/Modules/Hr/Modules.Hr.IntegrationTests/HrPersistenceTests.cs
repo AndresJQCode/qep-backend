@@ -98,7 +98,7 @@ public sealed class HrPersistenceTests : IClassFixture<HrPersistenceTests.World>
     private static EmployeeProfile Profile(
         string document, string first = "Ana", string last = "Pérez", Guid? memberId = null, string country = "CO") => new(
             first, last, HrDocumentType.CC, document, country, null, null, null, null, null, null, memberId,
-            null, null, null, null, null, ContributorSubtype.Standard, false, [DayOfWeek.Saturday, DayOfWeek.Sunday]);
+            null, null, null, null, ContributorSubtype.Standard, false, [DayOfWeek.Saturday, DayOfWeek.Sunday]);
 
     private static NewContract Contract(
         Settings settings,
