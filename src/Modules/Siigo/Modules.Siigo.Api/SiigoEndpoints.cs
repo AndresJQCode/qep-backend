@@ -178,16 +178,17 @@ public static class SiigoEndpoints
 
     private static async Task<IResult> ListCallFailuresAsync(
         Guid tenantId,
-        int? page,
-        int? pageSize,
+        string? page,
+        string? pageSize,
         string? operation,
-        int? status,
-        DateTimeOffset? from,
-        DateTimeOffset? to,
+        string? status,
+        string? from,
+        string? to,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
+        // Todo como texto: un valor ilegible es 422 con su campo (ListSiigoCallFailuresValidator), no un 400 de enlace sin errors.
         Results.Ok(await dispatcher.QueryAsync(
-            new ListSiigoCallFailuresQuery(tenantId, operation, status, from, to, page ?? 1, pageSize ?? 0), cancellationToken));
+            new ListSiigoCallFailuresQuery(tenantId, operation, status, from, to, page, pageSize), cancellationToken));
 
     private static async Task<IResult> GetCallFailureAsync(
         Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
