@@ -13,6 +13,7 @@ internal static class SiigoSettingsSteps
     public const string Document = "document";
     public const string Taxes = "taxes";
     public const string Payments = "payments";
+    public const string Sellers = "sellers";
 }
 
 /// <summary>Lo que comparten los casos de uso de la configuración (spec 2026-11-18 §5.3): la doble capa de autorización, la conexión del
@@ -65,6 +66,7 @@ internal static class SiigoSettingsSupport
         SiigoConnectionInfo connection,
         ISiigoCompanyDirectory companies,
         ISiigoTaxRateDirectory taxRates,
+        ISiigoMemberDirectory members,
         CancellationToken cancellationToken)
     {
         SiigoCompanyRef? company = null;
@@ -112,6 +114,19 @@ internal static class SiigoSettingsSupport
                 .Select(link => new SiigoAccountLinkDto(link.BankAccountKey, null, null, link.SiigoPaymentTypeId, InCompany: false)))
             .ToArray();
 
+        // Los miembros activos y, aparte, los vínculos de quien ya no está (para verlo y poder quitarlo), por nombre o correo.
+        var roster = await members.ListAsync(
+            settings.TenantId, [.. settings.SellerLinks.Select(link => link.MembershipId)], cancellationToken);
+        var sellers = roster
+            .Select(member =>
+            {
+                var link = settings.SellerLinks.FirstOrDefault(value => value.MembershipId == member.MembershipId);
+                return new SiigoSellerDto(
+                    member.MembershipId, member.DisplayName, member.Email, member.Active, link?.SiigoUserId, link?.SiigoUserName);
+            })
+            .OrderBy(seller => seller.Name ?? seller.Email ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         return new SiigoSettingsDto(
             settings.ConnectionId,
             new SiigoConnectionDto(connection.Name, connection.Status),
@@ -132,6 +147,9 @@ internal static class SiigoSettingsSupport
                 settings.CreditDays,
                 settings.CashOnDeliveryPaymentTypeId,
                 settings.DefaultPaymentTypeId),
+            sellers,
+            settings.SellersAutoLinkedAt,
+            settings.ProductsAutoLinkedAt,
             settings.Version,
             ReadinessOf(settings, connection));
     }

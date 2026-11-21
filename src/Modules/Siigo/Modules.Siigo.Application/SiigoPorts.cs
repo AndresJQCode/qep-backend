@@ -53,6 +53,20 @@ public interface ISiigoCompanyDirectory
 public sealed record SiigoWithholdingRef(Guid TaxRateId, string Name, string Type, decimal Percentage);
 
 /// <summary>Catalog y Companies. Las tasas que el paso «Impuestos y retenciones» ofrece vincular.</summary>
+/// <summary>Un miembro del tenant que puede ser asesor de un pedido. <paramref name="Active"/> es false para una membresía que ya no está
+/// activa pero conserva su vínculo de vendedor.</summary>
+public sealed record SiigoMemberRef(Guid MembershipId, string? DisplayName, string? Email, bool Active);
+
+/// <summary>
+/// Spec 2026-11-20 (vendedores vinculados) §4.1: los miembros que el paso «Vendedores» ofrece. Todas las membresías activas del tenant,
+/// sin filtro de rol (el asesor de un pedido puede ser cualquier miembro), más las de <c>alsoInclude</c> (las que ya tienen vínculo)
+/// aunque no estén activas. Nunca una de otro tenant. El adaptador vive en Bootstrapper: Siigo no lee Tenancy ni Identity.
+/// </summary>
+public interface ISiigoMemberDirectory
+{
+    Task<IReadOnlyList<SiigoMemberRef>> ListAsync(Guid tenantId, IReadOnlyCollection<Guid> alsoInclude, CancellationToken cancellationToken);
+}
+
 public interface ISiigoTaxRateDirectory
 {
     /// <summary>Los porcentajes de IVA (enteros) de las tasas que usan los productos activos del tenant. Incluye siempre el 0.</summary>

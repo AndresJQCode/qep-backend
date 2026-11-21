@@ -60,6 +60,7 @@ public sealed class UpdateSiigoTaxesHandler(
     ISiigoSettingsRepository settingsRepository,
     ISiigoCompanyDirectory companies,
     ISiigoTaxRateDirectory taxRates,
+    ISiigoMemberDirectory members,
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
@@ -80,7 +81,7 @@ public sealed class UpdateSiigoTaxesHandler(
         settings.ReplaceWithholdingLinks(MergeWithholdings(settings, command.Withholdings!, await OfferedRatesAsync(settings, cancellationToken)));
         SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoSettingsSteps.Taxes, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, cancellationToken);
+        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, members, cancellationToken);
     }
 
     private async Task<HashSet<Guid>> OfferedRatesAsync(SiigoSettings settings, CancellationToken cancellationToken) =>

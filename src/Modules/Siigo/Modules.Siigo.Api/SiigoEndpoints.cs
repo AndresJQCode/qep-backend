@@ -58,6 +58,19 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        group.MapPut("/sellers", UpdateSellersAsync)
+            .Produces<SiigoSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/sellers/auto-link", AutoLinkSellersAsync)
+            .Produces<SiigoSellerAutoLinkResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         group.MapGet("/options/{list}", ListOptionsAsync)
             .Produces<IReadOnlyList<SiigoOptionDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -297,6 +310,27 @@ public static class SiigoEndpoints
                     RequireVersion(httpContext)),
                 cancellationToken));
 
+    private static async Task<IResult> UpdateSellersAsync(
+        Guid tenantId,
+        Guid connectionId,
+        SiigoSellersRequest request,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken) =>
+        Respond(
+            httpContext,
+            await dispatcher.SendAsync(
+                new UpdateSiigoSellersCommand(
+                    tenantId,
+                    connectionId,
+                    request.Sellers?.Select(seller => new SiigoSellerLinkInput(seller.MembershipId, seller.SiigoUserId, seller.SiigoUserName)).ToArray(),
+                    RequireVersion(httpContext)),
+                cancellationToken));
+
+    private static async Task<IResult> AutoLinkSellersAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new AutoLinkSiigoSellersByEmailCommand(tenantId, connectionId), cancellationToken));
+
     private static async Task<IResult> ListOptionsAsync(
         Guid tenantId, Guid connectionId, string list, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListSiigoOptionsQuery(tenantId, connectionId, list), cancellationToken));
@@ -362,6 +396,12 @@ public sealed record SiigoWithholdingLinkRequest(Guid? TaxRateId, string? SiigoT
 public sealed record SiigoTaxesRequest(IReadOnlyList<SiigoVatLinkRequest>? Vat, IReadOnlyList<SiigoWithholdingLinkRequest>? Withholdings);
 
 public sealed record SiigoAccountLinkRequest(string? BankAccountKey, string? SiigoPaymentTypeId);
+
+/// <summary>Una fila del cuerpo de <c>PUT …/sellers</c>.</summary>
+public sealed record SiigoSellerLinkRequest(Guid MembershipId, string? SiigoUserId, string? SiigoUserName);
+
+/// <summary>El cuerpo de <c>PUT …/sellers</c> (spec 2026-11-20 §4.2).</summary>
+public sealed record SiigoSellersRequest(IReadOnlyList<SiigoSellerLinkRequest>? Sellers);
 
 /// <summary>El cuerpo de <c>PUT …/payments</c>.</summary>
 public sealed record SiigoPaymentsRequest(

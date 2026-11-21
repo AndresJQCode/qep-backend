@@ -10,6 +10,9 @@ public static class SiigoErrorCodes
     /// <summary>422: la empresa no existe en el tenant o está inactiva.</summary>
     public const string SettingsCompanyInvalid = "siigo.settings.company_invalid";
 
+    /// <summary>422: un vendedor se vincula a una membresía que no es del tenant ni tenía vínculo (spec 2026-11-20).</summary>
+    public const string SettingsMemberNotFound = "siigo.settings.member_not_found";
+
     /// <summary>422: una lista de vínculos repite su clave (porcentaje, tasa o cuenta).</summary>
     public const string SettingsDuplicateLink = "siigo.settings.duplicate_link";
 

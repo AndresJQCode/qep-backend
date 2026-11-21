@@ -33,6 +33,7 @@ public sealed class AssignSiigoCompanyHandler(
     ISiigoSettingsRepository settingsRepository,
     ISiigoCompanyDirectory companies,
     ISiigoTaxRateDirectory taxRates,
+    ISiigoMemberDirectory members,
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
@@ -68,6 +69,6 @@ public sealed class AssignSiigoCompanyHandler(
         settings.AssignCompany(company.Id);
         SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoSettingsSteps.Company, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, cancellationToken);
+        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, members, cancellationToken);
     }
 }
