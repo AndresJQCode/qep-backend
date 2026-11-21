@@ -1502,6 +1502,13 @@ internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
     public static FixedTenantModules WithoutOrders => new(
         TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders])));
 
+    /// <summary>Un tenant que sólo vende por pedidos: cotizaciones oculta, pedidos prendido.</summary>
+    public static FixedTenantModules WithoutQuotations => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations])));
+
+    public static FixedTenantModules WithoutQuotationsNorOrders => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders])));
+
     public int FindCalls { get; private set; }
 
     public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
