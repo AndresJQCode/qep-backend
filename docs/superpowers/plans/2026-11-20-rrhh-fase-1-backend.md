@@ -1837,8 +1837,8 @@ además de errores, y la plantilla depende de la configuración del tenant.
     `HrCompanyRef? SingleCompany` (la única activa, o `null` si hay varias), `PositionId? FindPosition(string text)`,
     `AreaId? FindArea(string text)`, `HrWorkplaceMatch FindWorkplace(string text, Guid companyId)` (`Found(Workplace)`,
     `NotFound`, `OtherCompany`) — sólo **no archivados** (centro con sede no archivada); el centro se busca **entre los de
-    sedes de `companyId`** por `Fold("<centro> - <sede>")` y, si el nombre del centro es único en esa empresa, también por
-    `Fold("<centro>")` **(llamada del plan)**; si no aparece ahí pero sí en una sede de otra empresa ⇒ `OtherCompany`;
+    sedes de `companyId`** sólo por `Fold("<centro> - <sede>")` (decisión del owner, 2026-11-21: el nombre solo del centro no se
+    acepta, aunque sea único); si no aparece ahí pero sí en una sede de otra empresa ⇒ `OtherCompany`;
     `IReadOnlyList<string> CompanyLabels` (`"<nombre> - <NIT>"`, por nombre), `PositionLabels`, `AreaLabels`,
     `WorkplaceLabels` (para la plantilla).
   - `IHrPhoneNormalizer.ToE164(string phone) : string?` (adaptador sobre `IPhoneNumberNormalizer` de Customers, país `CO`).
@@ -1904,13 +1904,13 @@ además de errores, y la plantilla depende de la configuración del tenant.
     `MatchesWithoutAccentsOrCase`; `TheDivipolaNameAlsoMatches`; `ARepeatedNameIsAmbiguous`;
     `TheDepartmentResolvesTheAmbiguity` (`"Barbosa - Santander"`); `AnUnknownCityIsNotFound`.
   - `HrSettingsIndexTests` (dos empresas activas, «Comercializadora QEP S.A.S.» `900123456` con la sede «Principal» y otra
-    con la sede «Norte»): `AWorkplaceMatchesWithItsSite` (`"bodega - principal"`); `AUniqueWorkplaceNameAlsoMatchesAlone`;
+    con la sede «Norte»): `AWorkplaceMatchesWithItsSite` (`"bodega - principal"`); `ABareWorkplaceNameDoesNotMatchEvenWhenUnique`;
     `ARepeatedWorkplaceNameNeedsTheSite` (centro «Bodega» en dos sedes de la misma empresa: `"Bodega"` ⇒ `NotFound`);
     `ArchivedSettingsAreNotOffered`; `ACompanyMatchesByNameAndTaxId` (`"comercializadora qep s.a.s. - 900123456"`);
     `WithSeveralCompaniesThereIsNoSingle` (`SingleCompany == null`; con una sola, esa);
     `AWorkplaceOfAnotherCompanyIsOtherCompany` (`"Planta - Norte"` buscado en la primera ⇒ `OtherCompany`);
-    `ASameNamedWorkplaceResolvesInsideTheRowCompany` (centro «Bodega» en una sede de cada empresa: `"Bodega"` con cada
-    empresa ⇒ el suyo).
+    `ASameNamedWorkplaceResolvesInsideTheRowCompany` (centro «Bodega» en una sede de cada empresa: `"Bodega - Principal"` y
+    `"Bodega - Norte"` con su empresa ⇒ el suyo; `"Bodega"` ⇒ `NotFound`).
   - `EmployeeImportRowParserTests` (hoy 2026-11-20, tabla legal sembrada, normalizador que acepta `3001234567` ⇒
     `+573001234567`): teoría `EachRuleReportsItsCodeAndField` con una fila por código de la lista del contrato;
     `ARowCanCarrySeveralErrors`; `LabelsAreComparedWithoutAccents` (`"termino fijo"`, `"aprendiz sena lectiva"`, `"AHORROS"`,
