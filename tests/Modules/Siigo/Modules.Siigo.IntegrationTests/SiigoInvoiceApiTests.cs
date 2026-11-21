@@ -110,12 +110,14 @@ public sealed class SiigoInvoiceApiTests
 
         var first = (await ReadAsync(await PostAsync(world)))[0];
         Assert.Equal("Pending", first.GetProperty("status").GetString());
+        Assert.Equal("siigo.invoice.unavailable", first.GetProperty("errorCode").GetString());
         Assert.False((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
 
         world.Siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "id-1", 0m));
         var retried = (await ReadAsync(await PostAsync(world)))[0];
 
         Assert.Equal("Created", retried.GetProperty("status").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, retried.GetProperty("errorCode").ValueKind);
         var calls = InvoiceCalls(world.Siigo);
         Assert.Equal(2, calls.Count);
         Assert.Equal(calls[0].Body, calls[1].Body);
