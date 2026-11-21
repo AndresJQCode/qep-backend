@@ -162,6 +162,25 @@ public sealed class SiigoSettingsTests
     }
 
     [Fact]
+    public void ASellerLinkClampsTheNameAndFallsBackToTheId()
+    {
+        var settings = NewSettings();
+        var long250 = new string('N', 250);
+        var member = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(member, "800", long250), new SiigoSellerLink(other, "744", "   ")]);
+
+        Assert.Equal(SiigoSellerLink.UserNameMaxLength, settings.SellerLinks.Single(l => l.MembershipId == member).SiigoUserName.Length);
+        Assert.Equal("744", settings.SellerLinks.Single(l => l.MembershipId == other).SiigoUserName);
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(member, "800", ""), new SiigoSellerLink(other, "744", long250)]);
+
+        Assert.Equal("800", settings.SellerLinks.Single(l => l.MembershipId == member).SiigoUserName);
+        Assert.Equal(SiigoSellerLink.UserNameMaxLength, settings.SellerLinks.Single(l => l.MembershipId == other).SiigoUserName.Length);
+    }
+
+    [Fact]
     public void ARepeatedMemberIsADuplicateLink()
     {
         var member = Guid.CreateVersion7();

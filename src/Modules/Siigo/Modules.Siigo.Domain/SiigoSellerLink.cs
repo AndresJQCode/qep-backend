@@ -19,7 +19,7 @@ public sealed class SiigoSellerLink
     {
         MembershipId = membershipId;
         SiigoUserId = siigoUserId.Trim();
-        SiigoUserName = siigoUserName.Trim();
+        SiigoUserName = FitName(siigoUserName, SiigoUserId);
     }
 
     public Guid ConnectionId { get; internal set; }
@@ -35,6 +35,16 @@ public sealed class SiigoSellerLink
     internal void Relink(string siigoUserId, string siigoUserName)
     {
         SiigoUserId = siigoUserId.Trim();
-        SiigoUserName = siigoUserName.Trim();
+        SiigoUserName = FitName(siigoUserName, SiigoUserId);
+    }
+
+    // El nombre viene de Siigo (o del navegador) y la columna mide 200: se recorta aquí para que ninguna ruta de
+    // escritura, incluido el auto-link, reviente el guardado. Sin nombre se muestra el id, nunca una cadena vacía.
+    private static string FitName(string name, string fallback)
+    {
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0)
+            return fallback;
+        return trimmed.Length <= UserNameMaxLength ? trimmed : trimmed[..UserNameMaxLength].TrimEnd();
     }
 }
