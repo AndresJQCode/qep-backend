@@ -40,13 +40,14 @@ public sealed class HrSettingsIndexTests
     }
 
     [Fact]
-    public void AUniqueWorkplaceNameAlsoMatchesAlone()
+    public void ABareWorkplaceNameDoesNotMatchEvenWhenUnique()
     {
         var main = NewSite(Qep, "Principal");
         var warehouse = NewWorkplace(main, "Bodega");
         var index = Build([main], [warehouse]);
 
-        Assert.Equal(HrWorkplaceOutcome.Found, index.FindWorkplace("BODEGA", Qep.Id).Outcome);
+        Assert.Equal(HrWorkplaceOutcome.NotFound, index.FindWorkplace("BODEGA", Qep.Id).Outcome);
+        Assert.Equal(HrWorkplaceOutcome.Found, index.FindWorkplace("BODEGA - PRINCIPAL", Qep.Id).Outcome);
     }
 
     [Fact]
@@ -142,7 +143,8 @@ public sealed class HrSettingsIndexTests
         var northWarehouse = NewWorkplace(north, "Bodega");
         var index = Build([main, north], [qepWarehouse, northWarehouse]);
 
-        Assert.Equal(qepWarehouse.Id, index.FindWorkplace("Bodega", Qep.Id).Workplace!.Id);
-        Assert.Equal(northWarehouse.Id, index.FindWorkplace("Bodega", North.Id).Workplace!.Id);
+        Assert.Equal(qepWarehouse.Id, index.FindWorkplace("Bodega - Principal", Qep.Id).Workplace!.Id);
+        Assert.Equal(northWarehouse.Id, index.FindWorkplace("Bodega - Norte", North.Id).Workplace!.Id);
+        Assert.Equal(HrWorkplaceOutcome.NotFound, index.FindWorkplace("Bodega", Qep.Id).Outcome);
     }
 }

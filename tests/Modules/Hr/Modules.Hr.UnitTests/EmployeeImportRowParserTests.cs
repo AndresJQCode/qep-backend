@@ -158,6 +158,7 @@ public sealed class EmployeeImportRowParserTests
     [InlineData("area_not_found", "area", "ÁREA=Fantasma")]
     [InlineData("workplace_not_found", "workplace", "CENTRO DE TRABAJO=Fantasma")]
     [InlineData("workplace_not_found", "workplace", "CENTRO DE TRABAJO=")]
+    [InlineData("workplace_not_found", "workplace", "CENTRO DE TRABAJO=Bodega")]
     [InlineData("retirement_date_invalid", "retirementDate", "FECHA DE RETIRO=nunca")]
     [InlineData("retirement_date_in_future", "retirementDate", "FECHA DE RETIRO=2026-12-01;MOTIVO DE RETIRO=Renuncia")]
     [InlineData("retirement_before_start", "retirementDate", "FECHA DE RETIRO=2026-01-01;MOTIVO DE RETIRO=Renuncia")]

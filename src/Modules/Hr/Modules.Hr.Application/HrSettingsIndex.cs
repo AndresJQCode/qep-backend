@@ -26,7 +26,7 @@ public sealed class HrSettingsIndex
     private readonly List<(Area Area, string Key)> _areas;
     private readonly List<WorkplaceEntry> _workplaces;
 
-    private sealed record WorkplaceEntry(Workplace Workplace, Guid CompanyId, string FullKey, string NameKey, string Label);
+    private sealed record WorkplaceEntry(Workplace Workplace, Guid CompanyId, string FullKey, string Label);
 
     public HrSettingsIndex(HrSettingsSnapshot settings, IReadOnlyList<HrCompanyRef> activeCompanies)
     {
@@ -53,7 +53,7 @@ public sealed class HrSettingsIndex
             {
                 var site = sites[workplace.SiteId];
                 var label = $"{workplace.Name}{Separator}{site.Name}";
-                return new WorkplaceEntry(workplace, site.CompanyId, Fold(label), Fold(workplace.Name), label);
+                return new WorkplaceEntry(workplace, site.CompanyId, Fold(label), label);
             })
             .ToList();
     }
@@ -96,8 +96,8 @@ public sealed class HrSettingsIndex
         _workplaces.FirstOrDefault(entry => entry.Workplace.Id == workplace.Id)?.Label ?? workplace.Name;
 
     /// <summary>
-    /// Un centro se busca <b>entre los de las sedes de <paramref name="companyId"/></b> por «centro - sede» y, si su nombre es único
-    /// en esa empresa, también por el nombre solo (llamada del plan: el nombre del centro sólo es único por sede). Un centro que
+    /// Un centro se busca <b>entre los de las sedes de <paramref name="companyId"/></b> sólo por «centro - sede» (decisión del
+    /// owner: el nombre del centro sólo es único por sede, así que el nombre solo no se acepta). Un centro que
     /// existe pero sólo en una sede de otra empresa es <see cref="HrWorkplaceOutcome.OtherCompany"/>.
     /// </summary>
     public HrWorkplaceMatch FindWorkplace(string text, Guid companyId)
@@ -122,13 +122,7 @@ public sealed class HrSettingsIndex
     private static WorkplaceEntry? Resolve(List<WorkplaceEntry> candidates, string key)
     {
         var byFullKey = candidates.Where(entry => entry.FullKey == key).ToList();
-        if (byFullKey.Count == 1)
-        {
-            return byFullKey[0];
-        }
-
-        var byName = candidates.Where(entry => entry.NameKey == key).ToList();
-        return byFullKey.Count == 0 && byName.Count == 1 ? byName[0] : null;
+        return byFullKey.Count == 1 ? byFullKey[0] : null;
     }
 
     private static string Fold(string text) => HrText.Fold(text) ?? string.Empty;
