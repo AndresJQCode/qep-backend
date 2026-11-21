@@ -8,7 +8,7 @@ public sealed record PreviewSiigoInvoiceQuery(Guid TenantId, Guid OrderId) : IQu
 
 /// <summary>
 /// Spec 2026-11-18 §6.3: la factura armada, los faltantes y la propuesta de pagos, <b>sin escribir nada y sin llamar a Siigo salvo la
-/// lista de usuarios</b> (cacheada 5 minutos), con la que se elige el vendedor del asesor del pedido (spec 2026-11-20 §4.6): así un asesor
+/// lista de usuarios</b> (cacheada 5 minutos, releída si el asesor no aparece), con la que se elige el vendedor del asesor del pedido (spec 2026-11-20 §4.6): así un asesor
 /// sin usuario en Siigo se ve antes de pulsar «Facturar». Nunca busca ni crea el cliente. Lee con las credenciales de configuración
 /// (también una conexión pausada: pausar es dejar de facturar, no dejar de mirar). El pedido se valida con las mismas precondiciones de
 /// la marca manual, y la moneda, la empresa y la conexión configurada son 422 como al generar; lo que falta del pedido sale como lista,
@@ -30,7 +30,7 @@ public sealed class PreviewSiigoInvoiceHandler(
 
         var credentials = await SiigoInvoiceSupport.SetupCredentialsAsync(
             connections, query.TenantId, context.Settings.ConnectionId, cancellationToken);
-        var sellerId = SiigoSellerResolver.Resolve(context.Input.AdvisorEmail, await api.ListUsersAsync(credentials, cancellationToken));
+        var sellerId = await SiigoInvoiceSupport.ResolveSellerAsync(api, credentials, context.Input.AdvisorEmail, cancellationToken);
 
         return SiigoInvoiceBuilder.Build(context.Input, context.Settings, sellerId, null) switch
         {

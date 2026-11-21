@@ -281,6 +281,24 @@ public sealed class SiigoInvoiceApiTests
     }
 
     [Fact]
+    public async Task TheSellerIsFoundRightAfterTheUserIsCreatedInSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+        var before = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
+        Assert.Equal("seller_not_found", Assert.Single(before.GetProperty("missing").EnumerateArray()).GetProperty("code").GetString());
+
+        // Alguien crea el usuario del asesor en Siigo: la lista cacheada no lo tiene, pero un faltante vuelve a preguntarle a Siigo.
+        world.Siigo.On(
+            "/v1/users",
+            HttpStatusCode.OK,
+            $$"""{"pagination":{"page":1,"page_size":25,"total_results":1},"results":[{"id":629,"first_name":"Ana","email":"{{world.Tenant.Email}}","active":true}]}""");
+        var after = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
+
+        Assert.Empty(after.GetProperty("missing").EnumerateArray());
+    }
+
+    [Fact]
     public async Task IssuingWithAnAdvisorWithoutSiigoUserIsRefused()
     {
         await using var database = await StartDatabaseAsync();

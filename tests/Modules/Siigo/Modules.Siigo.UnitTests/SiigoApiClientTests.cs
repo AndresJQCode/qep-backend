@@ -321,7 +321,7 @@ public sealed class SiigoApiClientTests : IDisposable
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
         _api.On("/v1/users", HttpStatusCode.OK, Fixture.Read("users.json"));
 
-        var users = await _client.ListUsersAsync(Credentials, TestContext.Current.CancellationToken);
+        var users = await _client.ListUsersAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
 
         // El 631 está inactivo: no se ofrece ni puede ser vendedor.
         Assert.Equal(
@@ -339,7 +339,7 @@ public sealed class SiigoApiClientTests : IDisposable
             (HttpStatusCode.OK, $$"""{"pagination":{"page":1,"page_size":25,"total_results":26},"results":[{{first}}]}"""),
             (HttpStatusCode.OK, """{"pagination":{"page":2,"page_size":25,"total_results":26},"results":[{"id":9999,"first_name":"Ultima","email":"ultima@empresa.test","active":true}]}"""));
 
-        var users = await _client.ListUsersAsync(Credentials, TestContext.Current.CancellationToken);
+        var users = await _client.ListUsersAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
 
         Assert.Equal(26, users.Count);
         Assert.Equal("9999", users[^1].Id);
@@ -347,6 +347,19 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.Equal(
             ["", "?page=2&page_size=25"],
             _api.Requests.Where(request => request.Path == "/v1/users").Select(request => request.Query));
+    }
+
+    [Fact]
+    public async Task ARefreshReadsTheUsersAgainAndKeepsThemCached()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/users", HttpStatusCode.OK, Fixture.Read("users.json"));
+
+        await _client.ListUsersAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+        await _client.ListUsersAsync(Credentials, refresh: true, TestContext.Current.CancellationToken);
+        await _client.ListUsersAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, _api.Requests.Count(request => request.Path == "/v1/users"));
     }
 
     [Fact]
@@ -398,11 +411,11 @@ public sealed class SiigoApiClientTests : IDisposable
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
         _api.On("/v1/users", HttpStatusCode.OK, Fixture.Read("users.json"));
 
-        await _client.ListUsersAsync(Credentials, TestContext.Current.CancellationToken);
-        await _client.ListUsersAsync(Credentials, TestContext.Current.CancellationToken);
+        await _client.ListUsersAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
+        await _client.ListUsersAsync(Credentials, refresh: false, TestContext.Current.CancellationToken);
         Assert.Single(_api.Requests, request => request.Path == "/v1/users");
 
-        await _client.ListUsersAsync(Credentials with { ConnectionId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken);
+        await _client.ListUsersAsync(Credentials with { ConnectionId = Guid.CreateVersion7() }, refresh: false, TestContext.Current.CancellationToken);
         Assert.Equal(2, _api.Requests.Count(request => request.Path == "/v1/users"));
     }
 

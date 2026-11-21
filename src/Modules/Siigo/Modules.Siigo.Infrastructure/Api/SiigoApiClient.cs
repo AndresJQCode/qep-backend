@@ -59,8 +59,8 @@ internal sealed class SiigoApiClient(
     public Task<IReadOnlyList<SiigoOption>> ListDocumentTypesAsync(SiigoCredentials credentials, CancellationToken cancellationToken) =>
         CachedAsync(credentials, "document-types", () => ReadOptionsAsync(credentials, "v1/document-types?type=FV", cancellationToken));
 
-    public Task<IReadOnlyList<SiigoUser>> ListUsersAsync(SiigoCredentials credentials, CancellationToken cancellationToken) =>
-        CachedAsync(credentials, "users", async () => (IReadOnlyList<SiigoUser>)
+    public Task<IReadOnlyList<SiigoUser>> ListUsersAsync(SiigoCredentials credentials, bool refresh, CancellationToken cancellationToken) =>
+        CachedAsync(credentials, "users", refresh, async () => (IReadOnlyList<SiigoUser>)
         [
             .. (await ReadAllPagesAsync(credentials, "v1/users", cancellationToken))
                 .Where(item => SiigoJson.Bool(item, "active", fallback: true))
@@ -252,10 +252,14 @@ internal sealed class SiigoApiClient(
 
     // --- Transporte ---
 
-    private async Task<IReadOnlyList<T>> CachedAsync<T>(SiigoCredentials credentials, string list, Func<Task<IReadOnlyList<T>>> read)
+    private Task<IReadOnlyList<T>> CachedAsync<T>(SiigoCredentials credentials, string list, Func<Task<IReadOnlyList<T>>> read) =>
+        CachedAsync(credentials, list, refresh: false, read);
+
+    private async Task<IReadOnlyList<T>> CachedAsync<T>(
+        SiigoCredentials credentials, string list, bool refresh, Func<Task<IReadOnlyList<T>>> read)
     {
         var key = $"siigo:{credentials.ConnectionId}:{list}";
-        if (cache.TryGetValue(key, out IReadOnlyList<T>? cached) && cached is not null)
+        if (!refresh && cache.TryGetValue(key, out IReadOnlyList<T>? cached) && cached is not null)
         {
             return cached;
         }

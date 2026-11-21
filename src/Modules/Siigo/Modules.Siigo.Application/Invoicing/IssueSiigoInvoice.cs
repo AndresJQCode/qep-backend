@@ -159,7 +159,7 @@ public sealed class IssueSiigoInvoiceHandler(
         // El vendedor es el usuario de Siigo del asesor (spec 2026-11-20): se leen los usuarios antes de armar, así que las credenciales
         // van primero. Una conexión no operativa sigue siendo 409 y sin filas, como antes.
         var credentials = await SiigoInvoiceSupport.CredentialsAsync(connections, command.TenantId, context.Settings.ConnectionId, cancellationToken);
-        var sellerId = SiigoSellerResolver.Resolve(context.Input.AdvisorEmail, await api.ListUsersAsync(credentials, cancellationToken));
+        var sellerId = await SiigoInvoiceSupport.ResolveSellerAsync(api, credentials, context.Input.AdvisorEmail, cancellationToken);
 
         var drafts = SiigoInvoiceBuilder.Build(context.Input, context.Settings, sellerId, overrides) switch
         {
