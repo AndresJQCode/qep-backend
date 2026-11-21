@@ -206,6 +206,9 @@ public sealed class AiProviderCredentialsTests
         public Task<IReadOnlyList<ConnectionListing>> ListByProviderAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) =>
             Task.FromResult(Listings.TryGetValue(providerKey, out var listings) ? listings : []);
 
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
         {
             Resolved = (tenantId, connectionId);

@@ -11,7 +11,7 @@ public sealed class SiigoSettingsTests
     private static SiigoSettings NewSettings() => SiigoSettings.Create(Guid.CreateVersion7(), Guid.CreateVersion7());
 
     private static SiigoDocumentSettings Document(bool sendToDian = false) =>
-        new("doc-1", "seller-1", null, null, sendToDian, false, false, null);
+        new("doc-1", null, null, sendToDian, false, false, null);
 
     [Fact]
     public void ANewSettingsHasDianOffAndEverythingElseEmpty()
@@ -24,7 +24,6 @@ public sealed class SiigoSettingsTests
         Assert.Equal(0, settings.Version);
         Assert.Null(settings.CompanyId);
         Assert.Null(settings.DocumentTypeId);
-        Assert.Null(settings.SellerId);
         Assert.Null(settings.CashOnDeliveryPaymentTypeId);
         Assert.Empty(settings.VariantLinks);
         Assert.Empty(settings.TaxLinks);
@@ -59,7 +58,7 @@ public sealed class SiigoSettingsTests
     {
         var settings = NewSettings();
 
-        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "seller-1", "cc-1", "wh-1", true, true, true, "FLETE"));
+        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "cc-1", "wh-1", true, true, true, "FLETE"));
 
         Assert.True(settings.SendToDian);
         Assert.True(settings.SendMail);

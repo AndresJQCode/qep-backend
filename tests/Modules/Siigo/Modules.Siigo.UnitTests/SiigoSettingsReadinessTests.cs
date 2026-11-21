@@ -20,14 +20,15 @@ public sealed class SiigoSettingsReadinessTests
     }
 
     [Fact]
-    public void WithoutDocumentTypeOrSellerTheDocumentStepNamesWhatIsMissing()
+    public void WithoutDocumentTypeTheDocumentStepNamesWhatIsMissing()
     {
         var settings = NewSettings();
 
-        Assert.Equal(["document_type_missing", "seller_missing"], Step(settings, SiigoSetupStep.Document).MissingCodes);
+        Assert.Equal(["document_type_missing"], Step(settings, SiigoSetupStep.Document).MissingCodes);
 
-        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", null, null, null, false, false, false, null));
-        Assert.Equal(["seller_missing"], Step(settings, SiigoSetupStep.Document).MissingCodes);
+        // El vendedor ya no se configura: es el asesor de cada pedido (spec 2026-11-20).
+        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", null, null, false, false, false, null));
+        Assert.True(Step(settings, SiigoSetupStep.Document).Complete);
     }
 
     [Fact]
@@ -35,7 +36,7 @@ public sealed class SiigoSettingsReadinessTests
     {
         var settings = NewSettings();
         settings.AssignCompany(Guid.CreateVersion7());
-        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "seller-1", null, null, false, false, false, null));
+        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", null, null, false, false, false, null));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
         settings.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
 

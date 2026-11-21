@@ -18,7 +18,8 @@ public sealed class ExternalOrderInvoicingService(
     ITenantClock tenantClock,
     IQuotationSettingsStore settingsStore,
     ITenantDirectory tenantDirectory,
-    IQuotationCustomerLookup customerLookup)
+    IQuotationCustomerLookup customerLookup,
+    IQuotationAdvisorLookup advisorLookup)
     : IExternalOrderInvoicing
 {
     public async Task<ExternalInvoicingOrder?> GetForInvoicingAsync(
@@ -37,6 +38,7 @@ public sealed class ExternalOrderInvoicingService(
 
         var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
         var party = await ResolvePartyAsync(tenantId, order, cancellationToken);
+        var advisors = await advisorLookup.FindAsync(tenantId, [order.AdvisorId.Value], cancellationToken);
         var items = order.Items.OrderBy(item => item.Position).ToList();
         return new ExternalInvoicingOrder(
             order.Id.Value,
@@ -68,7 +70,8 @@ public sealed class ExternalOrderInvoicingService(
             order.BillingAccount?.AccountNumber,
             order.BuyerNotes,
             party,
-            order.Version);
+            order.Version,
+            advisors.GetValueOrDefault(order.AdvisorId.Value)?.Email);
     }
 
     public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>

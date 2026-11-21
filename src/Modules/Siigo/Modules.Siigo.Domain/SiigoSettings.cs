@@ -1,10 +1,10 @@
 namespace Modules.Siigo.Domain;
 
-/// <summary>El paso «Documento» del asistente (spec 2026-11-18 §5.3): comprobante, vendedor, centro de costo, bodega, los interruptores
-/// y el código del producto que factura el flete. Los ids son los de Siigo, como texto.</summary>
+/// <summary>El paso «Documento» del asistente (spec 2026-11-18 §5.3): comprobante, centro de costo, bodega, los interruptores y el
+/// código del producto que factura el flete. Los ids son los de Siigo, como texto. El vendedor no se configura: es el asesor de cada
+/// pedido (spec 2026-11-20).</summary>
 public sealed record SiigoDocumentSettings(
     string? DocumentTypeId,
-    string? SellerId,
     string? CostCenterId,
     string? WarehouseId,
     bool SendToDian,
@@ -28,7 +28,7 @@ public sealed record SiigoVariantLinkInput(Guid VariantId, string Code, string S
 /// Spec 2026-11-18 §5.2: la configuración de una conexión de Siigo, una fila por conexión (PK <see cref="ConnectionId"/>), con los
 /// vínculos de impuestos, retenciones, cuentas de cobro y productos. Nace vacía al primer acceso. <b>Toda escritura sube
 /// <see cref="Version"/></b>, que es el <c>If-Match</c> de los <c>PUT</c> y el token de concurrencia de la fila; sin esa regla, dos
-/// pestañas se pisarían en silencio. Los ids de Siigo (comprobante, vendedor, impuestos…) son texto: la lista de Siigo no se copia y
+/// pestañas se pisarían en silencio. Los ids de Siigo (comprobante, impuestos…) son texto: la lista de Siigo no se copia y
 /// la validez de cada uno se revisa al leerla en vivo, no acá. Nunca guarda la clave de acceso: esa es de la conexión de Integrations.
 /// </summary>
 public sealed class SiigoSettings
@@ -55,8 +55,6 @@ public sealed class SiigoSettings
     public Guid? CompanyId { get; private set; }
 
     public string? DocumentTypeId { get; private set; }
-
-    public string? SellerId { get; private set; }
 
     public string? CostCenterId { get; private set; }
 
@@ -115,7 +113,6 @@ public sealed class SiigoSettings
     {
         ArgumentNullException.ThrowIfNull(document);
         DocumentTypeId = Id(document.DocumentTypeId);
-        SellerId = Id(document.SellerId);
         CostCenterId = Id(document.CostCenterId);
         WarehouseId = Id(document.WarehouseId);
         SendToDian = document.SendToDian;

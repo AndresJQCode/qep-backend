@@ -119,7 +119,6 @@ internal static class SiigoSettingsSupport
             company?.Name,
             new SiigoDocumentDto(
                 settings.DocumentTypeId,
-                settings.SellerId,
                 settings.CostCenterId,
                 settings.WarehouseId,
                 settings.SendToDian,
@@ -137,8 +136,9 @@ internal static class SiigoSettingsSupport
             ReadinessOf(settings, connection));
     }
 
-    // Las credenciales las decide la conexión de Integrations, no la fila: una conexión pausada o con la clave rechazada deja el paso
-    // incompleto, con el estado como código.
+    // Las credenciales las decide la conexión de Integrations, no la fila: una conexión con la clave rechazada deja el paso incompleto,
+    // con el estado como código. Una pausada está configurada: pausar es dejar de facturar, no le quita nada a la credencial, y
+    // connection.status lo sigue diciendo.
     private static IReadOnlyList<SiigoStepReadinessDto> ReadinessOf(SiigoSettings settings, SiigoConnectionInfo connection) =>
         [
             .. SiigoSettingsReadiness.Evaluate(settings).Select(step => step.Step == SiigoSetupStep.Credentials
@@ -147,7 +147,7 @@ internal static class SiigoSettingsSupport
         ];
 
     private static SiigoStepReadinessDto CredentialsStep(SiigoConnectionInfo connection) =>
-        string.Equals(connection.Status, "Active", StringComparison.Ordinal)
+        connection.Status is "Active" or "Paused"
             ? new SiigoStepReadinessDto(SiigoSetupStep.Credentials.ToString(), true, [])
             : new SiigoStepReadinessDto(SiigoSetupStep.Credentials.ToString(), false, [$"connection_{ToSnakeCase(connection.Status)}"]);
 

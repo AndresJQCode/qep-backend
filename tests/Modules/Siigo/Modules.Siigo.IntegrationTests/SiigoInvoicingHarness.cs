@@ -104,7 +104,8 @@ internal static class SiigoInvoicingHarness
         bool freightSeparate = false,
         bool freight = false,
         bool linkProduct = true,
-        bool markPaid = true)
+        bool markPaid = true,
+        bool advisorInSiigo = true)
     {
         var connectionString = database.GetConnectionString();
         var siigo = new FakeSiigoApi();
@@ -151,6 +152,12 @@ internal static class SiigoInvoicingHarness
             ? FakeSiigoApi.Respond(System.Net.HttpStatusCode.OK, """{"pagination":{"page":1,"page_size":25,"total_results":0},"results":[]}""")
             : FakeSiigoApi.Respond(System.Net.HttpStatusCode.Created, """{"id":"c-1","identification":"900123456","active":true}"""));
         siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f", 0m));
+        // El vendedor es el asesor del pedido (el owner que lo creó), cruzado por correo (spec 2026-11-20). Sin él en Siigo, sólo otro usuario.
+        var sellerEmail = advisorInSiigo ? tenant.Email : "otro@empresa.test";
+        siigo.On(
+            "/v1/users",
+            System.Net.HttpStatusCode.OK,
+            $$"""{"pagination":{"page":1,"page_size":100,"total_results":1},"results":[{"id":629,"first_name":"Ana","last_name":"Gomez","email":"{{sellerEmail}}","active":true}]}""");
         return new InvoicingWorld(factory, siigo, tenant, client, connectionString, connectionId, orderId, orderNumber, variantId, customerId, company);
     }
 
@@ -179,7 +186,7 @@ internal static class SiigoInvoicingHarness
         var settings = await repository.FindOrCreateAsync(tenant.TenantId, connectionId, withVariantLinks: true, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException("The settings of the connection were not created.");
         settings.AssignCompany(company.Id);
-        settings.UpdateDocument(new SiigoDocumentSettings("24446", "629", "11", "3", sendToDian, false, freightSeparate, "FLETE"));
+        settings.UpdateDocument(new SiigoDocumentSettings("24446", "11", "3", sendToDian, false, freightSeparate, "FLETE"));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
         settings.UpdatePayments(new SiigoPaymentSettings(
             [new SiigoPaymentLink(BankAccountKey.Normalize(company.BankName, company.AccountNumber)!, "5101")],

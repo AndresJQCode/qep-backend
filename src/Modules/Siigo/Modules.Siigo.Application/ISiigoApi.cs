@@ -9,8 +9,12 @@ public sealed record SiigoCredentials(Guid ConnectionId, string Username, string
     public override string ToString() => $"SiigoCredentials {{ ConnectionId = {ConnectionId} }}";
 }
 
-/// <summary>Una opción de una lista de Siigo (comprobante, vendedor, centro de costo, bodega, forma de pago).</summary>
+/// <summary>Una opción de una lista de Siigo (comprobante, centro de costo, bodega, forma de pago).</summary>
 public sealed record SiigoOption(string Id, string Name, string? Description = null);
+
+/// <summary>Un usuario activo de Siigo. <paramref name="Email"/> es con lo que se cruza el asesor del pedido para elegir el vendedor de
+/// la factura (spec 2026-11-20).</summary>
+public sealed record SiigoUser(string Id, string Name, string? Email);
 
 /// <summary>Un impuesto de <c>GET /v1/taxes</c>. <paramref name="Type"/> llega como <c>IVA</c>, <c>Retefuente</c>, <c>ReteICA</c>…; el
 /// porcentaje de ReteICA viene por mil.</summary>
@@ -108,8 +112,9 @@ public interface ISiigoApi
     /// <summary><c>GET /v1/document-types?type=FV</c>.</summary>
     Task<IReadOnlyList<SiigoOption>> ListDocumentTypesAsync(SiigoCredentials credentials, CancellationToken cancellationToken);
 
-    /// <summary><c>GET /v1/users</c>.</summary>
-    Task<IReadOnlyList<SiigoOption>> ListUsersAsync(SiigoCredentials credentials, CancellationToken cancellationToken);
+    /// <summary><c>GET /v1/users</c>, sólo los activos y de todas las páginas. Cacheada como las demás listas; con
+    /// <paramref name="refresh"/> se vuelve a leer de Siigo y la caché queda con lo nuevo.</summary>
+    Task<IReadOnlyList<SiigoUser>> ListUsersAsync(SiigoCredentials credentials, bool refresh, CancellationToken cancellationToken);
 
     /// <summary><c>GET /v1/cost-centers</c>.</summary>
     Task<IReadOnlyList<SiigoOption>> ListCostCentersAsync(SiigoCredentials credentials, CancellationToken cancellationToken);

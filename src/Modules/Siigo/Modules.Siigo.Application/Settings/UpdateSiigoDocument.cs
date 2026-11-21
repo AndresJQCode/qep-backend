@@ -5,13 +5,12 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Siigo.Application.Settings;
 
-/// <summary><c>PUT …/document</c> (<c>siigo.settings.manage</c>): comprobante, vendedor, centro de costo, bodega, los interruptores y el
+/// <summary><c>PUT …/document</c> (<c>siigo.settings.manage</c>): comprobante, centro de costo, bodega, los interruptores y el
 /// producto del flete. Reemplaza el paso entero; <paramref name="ExpectedVersion"/> llega por <c>If-Match</c>.</summary>
 public sealed record UpdateSiigoDocumentCommand(
     Guid TenantId,
     Guid ConnectionId,
     string? DocumentTypeId,
-    string? SellerId,
     string? CostCenterId,
     string? WarehouseId,
     bool SendToDian,
@@ -20,14 +19,13 @@ public sealed record UpdateSiigoDocumentCommand(
     string? FreightProductCode,
     long ExpectedVersion) : ICommand<SiigoSettingsDto>;
 
-/// <summary>La forma del cuerpo (§5.2): comprobante y vendedor son requeridos para facturar y los largos son los de las columnas. Cada
+/// <summary>La forma del cuerpo (§5.2): el comprobante es requerido para facturar y los largos son los de las columnas. Cada
 /// error lleva el campo en camelCase (422 <c>validation.failed</c> con <c>errors</c>).</summary>
 public sealed class UpdateSiigoDocumentValidator : AbstractValidator<UpdateSiigoDocumentCommand>
 {
     public UpdateSiigoDocumentValidator()
     {
         RuleFor(command => command.DocumentTypeId).NotEmpty().MaximumLength(SiigoSettings.IdMaxLength).OverridePropertyName("documentTypeId");
-        RuleFor(command => command.SellerId).NotEmpty().MaximumLength(SiigoSettings.IdMaxLength).OverridePropertyName("sellerId");
         RuleFor(command => command.CostCenterId).MaximumLength(SiigoSettings.IdMaxLength).OverridePropertyName("costCenterId");
         RuleFor(command => command.WarehouseId).MaximumLength(SiigoSettings.IdMaxLength).OverridePropertyName("warehouseId");
         RuleFor(command => command.FreightProductCode)
@@ -63,7 +61,6 @@ public sealed class UpdateSiigoDocumentHandler(
 
         settings.UpdateDocument(new SiigoDocumentSettings(
             command.DocumentTypeId,
-            command.SellerId,
             command.CostCenterId,
             command.WarehouseId,
             command.SendToDian,

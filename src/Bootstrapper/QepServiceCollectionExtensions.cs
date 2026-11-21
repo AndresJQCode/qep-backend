@@ -1623,6 +1623,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
         services.AddScoped<IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>, PreviewSiigoInvoiceHandler>();
+        services.AddScoped<IQueryHandler<SiigoInvoiceAvailabilityQuery, SiigoInvoiceAvailabilityDto>, SiigoInvoiceAvailabilityHandler>();
         services.AddScoped<IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>, GetSiigoInvoicesHandler>();
         services.AddScoped<ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>, IssueSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>, StampSiigoInvoiceHandler>();

@@ -62,6 +62,35 @@ internal static class SiigoInvoiceSupport
                 $"The Siigo connection cannot be used right now ({resolution.UnavailableReason}).");
     }
 
+    /// <summary>Las credenciales para leer (la vista previa): también una conexión pausada. Si no hay ninguna usable, el mismo 409
+    /// <c>siigo.connection_unavailable</c>.</summary>
+    public static async Task<SiigoCredentials> SetupCredentialsAsync(
+        ISiigoConnectionDirectory connections, Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        var resolution = await connections.ResolveForSetupAsync(tenantId, connectionId, cancellationToken);
+        return resolution.Credentials
+            ?? throw new ResourceConflictException(
+                SiigoErrorCodes.ConnectionUnavailable,
+                $"The Siigo connection cannot be used right now ({resolution.UnavailableReason}).");
+    }
+
+    /// <summary>
+    /// El vendedor del asesor del pedido (spec 2026-11-20). Primero con la lista cacheada; si no aparece, una vez más leyendo de Siigo: el
+    /// arreglo de un <c>seller_not_found</c> es crear el usuario en Siigo, y la caché (5 minutos, por réplica) no puede seguir negándolo
+    /// después. Sin correo no hay a quién buscar y no se llama de nuevo.
+    /// </summary>
+    public static async Task<string?> ResolveSellerAsync(
+        ISiigoApi api, SiigoCredentials credentials, string? advisorEmail, CancellationToken cancellationToken)
+    {
+        var seller = SiigoSellerResolver.Resolve(advisorEmail, await api.ListUsersAsync(credentials, refresh: false, cancellationToken));
+        if (seller is not null || string.IsNullOrWhiteSpace(advisorEmail))
+        {
+            return seller;
+        }
+
+        return SiigoSellerResolver.Resolve(advisorEmail, await api.ListUsersAsync(credentials, refresh: true, cancellationToken));
+    }
+
     public static SiigoInvoiceKind ParseKind(string? kind) =>
         string.IsNullOrWhiteSpace(kind) ? SiigoInvoiceKind.Order : Enum.Parse<SiigoInvoiceKind>(kind, ignoreCase: true);
 

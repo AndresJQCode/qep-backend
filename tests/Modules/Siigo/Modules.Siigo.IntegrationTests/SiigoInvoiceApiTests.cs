@@ -267,6 +267,68 @@ public sealed class SiigoInvoiceApiTests
     }
 
     [Fact]
+    public async Task ThePreviewReportsAnAdvisorWithoutSiigoUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+
+        var preview = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
+
+        var missing = Assert.Single(preview.GetProperty("missing").EnumerateArray());
+        Assert.Equal("seller_not_found", missing.GetProperty("code").GetString());
+        Assert.Equal(JsonValueKind.Null, missing.GetProperty("reference").ValueKind);
+        Assert.Equal(world.Tenant.Email, missing.GetProperty("label").GetString());
+    }
+
+    [Fact]
+    public async Task TheSellerIsFoundRightAfterTheUserIsCreatedInSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+        var before = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
+        Assert.Equal("seller_not_found", Assert.Single(before.GetProperty("missing").EnumerateArray()).GetProperty("code").GetString());
+
+        // Alguien crea el usuario del asesor en Siigo: la lista cacheada no lo tiene, pero un faltante vuelve a preguntarle a Siigo.
+        world.Siigo.On(
+            "/v1/users",
+            HttpStatusCode.OK,
+            $$"""{"pagination":{"page":1,"page_size":25,"total_results":1},"results":[{"id":629,"first_name":"Ana","email":"{{world.Tenant.Email}}","active":true}]}""");
+        var after = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
+
+        Assert.Empty(after.GetProperty("missing").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task IssuingWithAnAdvisorWithoutSiigoUserIsRefused()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+
+        var response = await PostAsync(world);
+
+        var text = await response.Content.ReadAsStringAsync(Ct);
+        AssertRejectedCode(response, HttpStatusCode.UnprocessableEntity, "siigo.invoice.not_ready", text);
+        using var json = JsonDocument.Parse(text);
+        Assert.Equal(
+            ["seller_not_found"],
+            json.RootElement.GetProperty("details").GetProperty("missing").EnumerateArray().Select(item => item.GetProperty("code").GetString()));
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers");
+        Assert.Equal(0, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
+    }
+
+    [Fact]
+    public async Task TheIssuedInvoiceCarriesTheAdvisorAsSeller()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        await ReadAsync(await PostAsync(world));
+
+        using var body = JsonDocument.Parse(InvoiceCalls(world.Siigo).Single().Body!);
+        Assert.Equal(629, body.RootElement.GetProperty("seller").GetInt32());
+    }
+
+    [Fact]
     public async Task ThePreviewShowsDraftsAndPaymentsWithoutWritingOrCallingSiigo()
     {
         await using var database = await StartDatabaseAsync();
@@ -280,6 +342,49 @@ public sealed class SiigoInvoiceApiTests
         Assert.Empty(preview.GetProperty("missing").EnumerateArray());
         Assert.Equal(0, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
         Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers");
+    }
+
+    // La pantalla del pedido sólo ofrece «Facturar en Siigo» si la conexión de la empresa del pedido sirve: el backend lo dice, el
+    // navegador no cruza conexiones con empresas.
+    [Fact]
+    public async Task AvailabilityIsTrueWhenTheConnectionOfTheOrderCompanyIsActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var availability = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+
+        Assert.True(availability.GetProperty("available").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, availability.GetProperty("reason").ValueKind);
+        await AssertUntouchedAsync(world);
+    }
+
+    [Fact]
+    public async Task AvailabilityIsFalseWithConnectionUnavailableWhenTheConnectionOfTheOrderCompanyIsPaused()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ExecuteAsync(world.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+
+        var availability = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+
+        Assert.False(availability.GetProperty("available").GetBoolean());
+        Assert.Equal("siigo.connection_unavailable", availability.GetProperty("reason").GetString());
+        await AssertUntouchedAsync(world);
+    }
+
+    [Fact]
+    public async Task AvailabilityIsFalseWithNoConnectionWhenNoConnectionInvoicesForTheOrderCompany()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.settings SET company_id = NULL");
+
+        var availability = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+
+        Assert.False(availability.GetProperty("available").GetBoolean());
+        Assert.Equal("siigo.invoice.no_connection", availability.GetProperty("reason").GetString());
+        await AssertUntouchedAsync(world);
     }
 
     [Fact]

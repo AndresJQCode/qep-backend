@@ -231,9 +231,10 @@ public sealed class SiigoSettingsApiTests
         Assert.Equal("\"1\"", saved.Headers.ETag?.Tag);
         var body = (await saved.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
         var document = body["document"]!;
-        Assert.Equal(("24446", "629", "11", true, true, "FLETE"), (
+        // El cuerpo trae sellerId como lo manda un frontend viejo: se ignora, porque el vendedor es el asesor del pedido (spec 2026-11-20).
+        Assert.False(document.AsObject().ContainsKey("sellerId"));
+        Assert.Equal(("24446", "11", true, true, "FLETE"), (
             document["documentTypeId"]!.GetValue<string>(),
-            document["sellerId"]!.GetValue<string>(),
             document["costCenterId"]!.GetValue<string>(),
             document["sendToDian"]!.GetValue<bool>(),
             document["freightSeparateInvoice"]!.GetValue<bool>(),
@@ -243,7 +244,7 @@ public sealed class SiigoSettingsApiTests
     }
 
     [Fact]
-    public async Task ADocumentWithoutVoucherOrSellerIs422WithTheFieldNames()
+    public async Task ADocumentWithoutVoucherIs422WithTheFieldName()
     {
         await using var database = await StartDatabaseAsync();
         var world = await ArrangeAsync(database, new FakeSiigoApi());
@@ -259,7 +260,7 @@ public sealed class SiigoSettingsApiTests
         Assert.Equal("validation.failed", problem["code"]!.GetValue<string>());
         var errors = problem["errors"]!.AsObject().Select(pair => pair.Key).ToList();
         Assert.Contains("documentTypeId", errors);
-        Assert.Contains("sellerId", errors);
+        Assert.DoesNotContain("sellerId", errors);
     }
 
     [Fact]
@@ -454,6 +455,28 @@ public sealed class SiigoSettingsApiTests
         {
             Assert.Equal(("IVA", 19m), (items[0]!["type"]!.GetValue<string>(), items[0]!["percentage"]!.GetValue<decimal>()));
         }
+    }
+
+    // Pausar es dejar de facturar, no dejar de configurar: el asistente lee de Siigo y el paso «Conexión» queda completo.
+    [Fact]
+    public async Task APausedConnectionCanStillBeConfigured()
+    {
+        await using var database = await StartDatabaseAsync();
+        var siigo = new FakeSiigoApi();
+        var world = await ArrangeAsync(database, siigo);
+        using var factory = world.Factory;
+        using var client = Manager(factory, world.Tenant);
+        await ExecuteAsync(world.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+
+        var options = await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId, "options/document-types"), Ct);
+        var settings = await client.GetFromJsonAsync<JsonObject>(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, options.StatusCode);
+        Assert.Equal(1, siigo.CallsTo("/v1/document-types"));
+        Assert.Equal("Paused", settings!["connection"]!["status"]!.GetValue<string>());
+        var credentials = settings["readiness"]!.AsArray().Single(step => step!["step"]!.GetValue<string>() == "Credentials")!;
+        Assert.True(credentials["complete"]!.GetValue<bool>());
+        Assert.Empty(credentials["missingCodes"]!.AsArray());
     }
 
     [Fact]
