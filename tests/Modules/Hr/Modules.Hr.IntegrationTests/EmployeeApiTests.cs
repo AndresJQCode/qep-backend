@@ -517,6 +517,28 @@ public sealed class EmployeeApiTests : IClassFixture<HrApiFixture>
         Assert.Equal(JsonValueKind.Null, body.GetProperty("contract").ValueKind);
     }
 
+    // La desactivación sólo pide hr.employee.*: quien la hace sin leer contratos recibe la ficha enmascarada, como en el GET.
+    [Fact]
+    public async Task ADeactivationByAManagerWithoutContractReadAnswersMasked()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        var detail = await HireAsync(
+            tenant,
+            HireBody(setup, payment: new { paymentMethod = "BankTransfer", bankName = "Bancolombia", bankAccountType = "Savings", bankAccountNumber = "123" }));
+        using var manager = tenant.Client(HrPermissions.EmployeeRead, HrPermissions.EmployeeManage);
+
+        var response = await manager.PostAsJsonAsync($"{EmployeeUrl(tenant, detail)}/deactivate", new { date = "2026-11-30" }, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var masked = await JsonOfAsync(response);
+        Assert.False(masked.GetProperty("canReadContract").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, masked.GetProperty("employee").GetProperty("payment").ValueKind);
+        Assert.Equal(JsonValueKind.Null, masked.GetProperty("contract").ValueKind);
+        Assert.Empty(masked.GetProperty("previousContracts").EnumerateArray());
+        Assert.Equal("Deactivated", masked.GetProperty("employee").GetProperty("status").GetString());
+    }
+
     [Fact]
     public async Task DeactivatingBeforeTheStartIs422OnDate()
     {
