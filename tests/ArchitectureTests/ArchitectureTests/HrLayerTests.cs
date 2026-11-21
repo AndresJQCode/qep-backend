@@ -12,7 +12,7 @@ public sealed class HrLayerTests
     public void DomainDoesNotReferenceOuterLayers()
     {
         AssertDoesNotReference(
-            typeof(HrDomainException).Assembly,
+            typeof(Employee).Assembly,
             typeof(HrPermissions).Assembly,
             typeof(HrInfrastructureExtensions).Assembly,
             typeof(HrEndpoints).Assembly);
@@ -78,7 +78,7 @@ public sealed class HrLayerTests
     {
         Assembly[] layers =
         [
-            typeof(HrDomainException).Assembly,
+            typeof(Employee).Assembly,
             typeof(HrPermissions).Assembly,
             typeof(HrInfrastructureExtensions).Assembly,
             typeof(HrEndpoints).Assembly,
