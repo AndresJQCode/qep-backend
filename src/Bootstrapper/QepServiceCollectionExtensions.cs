@@ -556,6 +556,35 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.ListEmployeeActivityQuery, ActivityPageDto>,
             Modules.Hr.Application.ListEmployeeActivityHandler>();
+        // El contrato del empleado (spec 2026-11-20): lo que comparten las escrituras y un handler por ruta.
+        services.AddScoped<Modules.Hr.Application.ContractWrites>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.AddSalaryCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.AddSalaryHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RewriteSalaryCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RewriteSalaryHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.AddAssignmentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.AddAssignmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.RenewContractCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.RenewContractHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ConvertContractToIndefiniteCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.ConvertContractToIndefiniteHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ChangeContractTypeCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.ChangeContractTypeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.TerminateContractCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.TerminateContractHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ReincorporateEmployeeCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.ReincorporateEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetHrDocumentCommand, Modules.Hr.Application.EmployeeDetailDto>,
+            Modules.Hr.Application.SetHrDocumentHandler>();
         // Los PDF de contratos y registros (spec 2026-11-20): la sesión de subida y la URL firmada de descarga.
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.OpenHrUploadSessionCommand, Modules.Hr.Application.HrUploadSessionDto>,

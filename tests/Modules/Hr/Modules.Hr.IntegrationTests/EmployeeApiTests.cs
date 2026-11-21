@@ -573,6 +573,26 @@ public sealed class EmployeeApiTests : IClassFixture<HrApiFixture>
         Assert.Equal("hr.employee.not_deletable", CodeOf(problem));
     }
 
+    // Sólo un alta sin ningún movimiento se elimina: un segundo salario ya es un movimiento.
+    [Fact]
+    public async Task AnEmployeeWithASecondSalaryIs422NotDeletable()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        var detail = await HireAsync(tenant, setup);
+        var raise = await tenant.Hr.PostAsJsonAsync(
+            $"{EmployeeUrl(tenant, detail)}/contracts/{detail.GetProperty("contract").GetProperty("id").GetGuid()}/salaries",
+            new { effectiveDate = "2026-12-01", amount = 2_800_000m },
+            Ct);
+        Assert.Equal(HttpStatusCode.OK, raise.StatusCode);
+
+        var shown = await GetEmployeeAsync(tenant, detail);
+        var problem = await ProblemAsync(await tenant.Hr.DeleteAsync(EmployeeUrl(tenant, detail), Ct), HttpStatusCode.UnprocessableEntity);
+
+        Assert.False(shown.GetProperty("canDelete").GetBoolean());
+        Assert.Equal("hr.employee.not_deletable", CodeOf(problem));
+    }
+
     [Fact]
     public async Task MembersAvailableListsActiveMembershipsWithoutALinkedEmployee()
     {

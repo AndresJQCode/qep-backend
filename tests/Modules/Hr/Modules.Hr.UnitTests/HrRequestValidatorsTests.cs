@@ -140,4 +140,39 @@ public sealed class HrRequestValidatorsTests
     [Fact]
     public void AHireWithoutContractFails() =>
         Assert.Equal(["contract"], FailedHire(Hire() with { Contract = null }));
+
+    [Fact]
+    public void ASalaryWithoutEffectiveDateFails() =>
+        Assert.Equal(["effectiveDate"], Failed(new SalaryRequestValidator(), new SalaryRequest(null, 2_800_000m, null, null, null)));
+
+    [Fact]
+    public void AnAssignmentWithoutWorkplaceFails() =>
+        Assert.Equal(
+            ["workplaceId"],
+            Failed(new AssignmentRequestValidator(), new AssignmentRequest(new DateOnly(2026, 12, 1), PositionId, null, null, null)));
+
+    // La reincorporación y la conversión reciben el `NewContractRequest` suelto: las claves no llevan el prefijo del alta.
+    [Fact]
+    public void AReincorporationWithoutCompanyFails() =>
+        Assert.Equal(["contract.companyId"], Failed(new NewContractRequestValidator(), Contract(Terms() with { CompanyId = null })));
+
+    [Fact]
+    public void ATerminationWithoutReasonFails() =>
+        Assert.Equal(
+            ["reason"],
+            Failed(new TerminateRequestValidator(), new TerminateRequest(null, new DateOnly(2026, 11, 30), null)));
+
+    [Fact]
+    public void AnUnknownReasonFails() =>
+        Assert.Equal(
+            ["reason"],
+            Failed(new TerminateRequestValidator(), new TerminateRequest("Fired", new DateOnly(2026, 11, 30), null)));
+
+    [Fact]
+    public void ARewriteWithoutConfirmationPassesValidation() =>
+        Assert.Empty(Failed(new SalaryRewriteRequestValidator(), new SalaryRewriteRequest(2_900_000m, null, null, null)));
+
+    [Fact]
+    public void ARenewalWithoutNewEndDateFails() =>
+        Assert.Equal(["newEndDate"], Failed(new RenewalRequestValidator(), new RenewalRequest(null, null)));
 }

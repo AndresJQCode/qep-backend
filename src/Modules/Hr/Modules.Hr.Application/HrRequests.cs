@@ -83,3 +83,21 @@ public sealed record NewContractRequest(
     InitialAssignmentRequest? Assignment);
 
 public sealed record DeactivateRequest(DateOnly? Date);
+
+/// <summary>Un salario nuevo: rige desde <c>effectiveDate</c>, después del último registro y no después del fin del contrato.</summary>
+public sealed record SalaryRequest(
+    DateOnly? EffectiveDate, decimal? Amount, bool? Teleworker, bool? AcknowledgeBelowMinimum, Guid? DocumentFileId);
+
+/// <summary>Reescribe un registro: conserva su fecha. <c>ConfirmRewrite</c> distinto de <c>true</c> es 422 <c>hr.salary.rewrite_unconfirmed</c>.</summary>
+public sealed record SalaryRewriteRequest(decimal? Amount, bool? Teleworker, bool? AcknowledgeBelowMinimum, bool? ConfirmRewrite);
+
+/// <summary>Un cargo y lugar nuevo; la sede sale del centro de trabajo.</summary>
+public sealed record AssignmentRequest(
+    DateOnly? EffectiveDate, Guid? PositionId, Guid? AreaId, Guid? WorkplaceId, Guid? DocumentFileId);
+
+public sealed record RenewalRequest(DateOnly? NewEndDate, Guid? DocumentFileId);
+
+public sealed record TerminateRequest(string? Reason, DateOnly? Date, string? Notes);
+
+/// <summary>El PDF de un contrato o de un registro; <c>null</c> lo quita.</summary>
+public sealed record DocumentRequest(Guid? FileId);

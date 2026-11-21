@@ -25,6 +25,7 @@ public static class HrEndpoints
         MapSettings(group);
         MapFiles(group);
         MapEmployees(group);
+        MapContracts(group);
 
         return endpoints;
     }
@@ -264,6 +265,137 @@ public static class HrEndpoints
             .Produces<IReadOnlyList<MemberRefDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
     }
+
+    // El contrato del empleado: toda ruta es `hr.contract.manage` (y el handler exige también `employee.read` y `contract.read`). Sólo
+    // el `PUT` de salario lleva `If-Match`; en las demás, una escritura concurrente igual responde 412 porque la versión del empleado es
+    // token de concurrencia.
+    private static void MapContracts(RouteGroupBuilder group)
+    {
+        const string Contract = "/employees/{employeeId:guid}/contracts/{contractId:guid}";
+
+        group.MapPost("/employees/{employeeId:guid}/reincorporate", ReincorporateAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<NewContractRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPost($"{Contract}/salaries", AddSalaryAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<SalaryRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPut($"{Contract}/salaries/{{salaryId:guid}}", RewriteSalaryAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<SalaryRewriteRequest>("application/json")
+            .ProducesContractWrite()
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost($"{Contract}/assignments", AddAssignmentAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<AssignmentRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPost($"{Contract}/renewals", RenewAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<RenewalRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPost($"{Contract}/convert-to-indefinite", ConvertToIndefiniteAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .ProducesContractWrite();
+
+        group.MapPost($"{Contract}/conversion", ChangeTypeAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<NewContractRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPost($"{Contract}/terminate", TerminateAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<TerminateRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPut($"{Contract}/document", (Guid tenantId, Guid employeeId, Guid contractId, DocumentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                SetDocumentAsync(tenantId, employeeId, contractId, HrDocumentTarget.Contract, null, request, dispatcher, cancellationToken))
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<DocumentRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPut($"{Contract}/salaries/{{recordId:guid}}/document", (Guid tenantId, Guid employeeId, Guid contractId, Guid recordId, DocumentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                SetDocumentAsync(tenantId, employeeId, contractId, HrDocumentTarget.Salary, recordId, request, dispatcher, cancellationToken))
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<DocumentRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPut($"{Contract}/assignments/{{recordId:guid}}/document", (Guid tenantId, Guid employeeId, Guid contractId, Guid recordId, DocumentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                SetDocumentAsync(tenantId, employeeId, contractId, HrDocumentTarget.Assignment, recordId, request, dispatcher, cancellationToken))
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<DocumentRequest>("application/json")
+            .ProducesContractWrite();
+
+        group.MapPut($"{Contract}/renewals/{{recordId:guid}}/document", (Guid tenantId, Guid employeeId, Guid contractId, Guid recordId, DocumentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                SetDocumentAsync(tenantId, employeeId, contractId, HrDocumentTarget.Renewal, recordId, request, dispatcher, cancellationToken))
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<DocumentRequest>("application/json")
+            .ProducesContractWrite();
+    }
+
+    private static RouteHandlerBuilder ProducesContractWrite(this RouteHandlerBuilder builder) => builder
+        .Produces<EmployeeDetailDto>()
+        .ProducesProblem(StatusCodes.Status403Forbidden)
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+        .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+    private static async Task<IResult> ReincorporateAsync(
+        Guid tenantId, Guid employeeId, NewContractRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ReincorporateEmployeeCommand(tenantId, employeeId, request), cancellationToken));
+
+    private static async Task<IResult> AddSalaryAsync(
+        Guid tenantId, Guid employeeId, Guid contractId, SalaryRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new AddSalaryCommand(tenantId, employeeId, contractId, request), cancellationToken));
+
+    private static async Task<IResult> RewriteSalaryAsync(
+        Guid tenantId,
+        Guid employeeId,
+        Guid contractId,
+        Guid salaryId,
+        SalaryRewriteRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RewriteSalaryCommand(tenantId, employeeId, contractId, salaryId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> AddAssignmentAsync(
+        Guid tenantId, Guid employeeId, Guid contractId, AssignmentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new AddAssignmentCommand(tenantId, employeeId, contractId, request), cancellationToken));
+
+    private static async Task<IResult> RenewAsync(
+        Guid tenantId, Guid employeeId, Guid contractId, RenewalRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new RenewContractCommand(tenantId, employeeId, contractId, request), cancellationToken));
+
+    private static async Task<IResult> ConvertToIndefiniteAsync(
+        Guid tenantId, Guid employeeId, Guid contractId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ConvertContractToIndefiniteCommand(tenantId, employeeId, contractId), cancellationToken));
+
+    private static async Task<IResult> ChangeTypeAsync(
+        Guid tenantId, Guid employeeId, Guid contractId, NewContractRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ChangeContractTypeCommand(tenantId, employeeId, contractId, request), cancellationToken));
+
+    private static async Task<IResult> TerminateAsync(
+        Guid tenantId, Guid employeeId, Guid contractId, TerminateRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new TerminateContractCommand(tenantId, employeeId, contractId, request), cancellationToken));
+
+    private static async Task<IResult> SetDocumentAsync(
+        Guid tenantId,
+        Guid employeeId,
+        Guid contractId,
+        HrDocumentTarget target,
+        Guid? recordId,
+        DocumentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new SetHrDocumentCommand(tenantId, employeeId, contractId, target, recordId, request.FileId), cancellationToken));
 
     // Los números llegan como texto y el handler los valida, ya autorizado: un `page=abc` que dejara al binding automático lanzaría una
     // BadHttpRequestException, y ApiExceptionHandler la reduce a 500. Lo que no se puede leer se pasa como 0 para que el validador

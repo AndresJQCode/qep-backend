@@ -199,3 +199,46 @@ public sealed class DeactivateRequestValidator : HrValidator<DeactivateRequest>
     public DeactivateRequestValidator() =>
         RuleFor(request => request.Date).NotNull().WithMessage("Escribe la fecha de desactivación.");
 }
+
+public sealed class SalaryRequestValidator : HrValidator<SalaryRequest>
+{
+    public SalaryRequestValidator()
+    {
+        RuleFor(request => request.EffectiveDate).NotNull().WithMessage("Escribe la fecha desde la que rige.");
+        RuleFor(request => request.Amount).MustBeMoney();
+    }
+}
+
+// `confirmRewrite` no se valida acá: su ausencia es el código de dominio hr.salary.rewrite_unconfirmed, para que el frontend abra la
+// confirmación en vez de marcar un campo.
+public sealed class SalaryRewriteRequestValidator : HrValidator<SalaryRewriteRequest>
+{
+    public SalaryRewriteRequestValidator() => RuleFor(request => request.Amount).MustBeMoney();
+}
+
+public sealed class AssignmentRequestValidator : HrValidator<AssignmentRequest>
+{
+    public AssignmentRequestValidator()
+    {
+        RuleFor(request => request.EffectiveDate).NotNull().WithMessage("Escribe la fecha desde la que rige.");
+        RuleFor(request => request.PositionId).MustBeAnId("Elige un cargo.");
+        RuleFor(request => request.WorkplaceId).MustBeAnId("Elige un centro de trabajo.");
+    }
+}
+
+public sealed class RenewalRequestValidator : HrValidator<RenewalRequest>
+{
+    public RenewalRequestValidator() =>
+        RuleFor(request => request.NewEndDate).NotNull().WithMessage("Escribe la nueva fecha de terminación.");
+}
+
+public sealed class TerminateRequestValidator : HrValidator<TerminateRequest>
+{
+    public TerminateRequestValidator()
+    {
+        RuleFor(request => request.Reason)
+            .MustBeAnEnum<TerminateRequest, TerminationReason>("Elige un motivo de terminación válido.");
+        RuleFor(request => request.Date).NotNull().WithMessage("Escribe la fecha de terminación.");
+        RuleFor(request => request.Notes).MaxTrimmed(1000, "Las notas");
+    }
+}
