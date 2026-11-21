@@ -63,3 +63,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   de lo que falta); Siigo sin responder o la conexión caída reintenta (`Retry`) con espera creciente; el resto de la tanda sigue. El timbre
   sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre calla y sólo queda la
   red de seguridad de 30 s. Tope de 50 pedidos por tanda.
+
+- **`qep_siigo_call_failures_total{operation,reason}` no lleva tenant, conexión ni ruta** (cardinalidad): el tenant se busca en `siigo.call_failures`
+  o por `TraceId`. Lo suma `SiigoApiClient.RecordAsync` **antes** de la guarda de captura, así que cuentan también las fallas sin curl
+  (`partner_id_missing`). Un motivo nuevo que alimente `RecordAsync` aparece solo; uno que deba sembrarse en cero para que su alerta dispare
+  desde el primer evento (`increase()` toma la primera muestra como base) entra en la lista fija de `SiigoMetrics`. El log del cliente HTTP
+  sigue apagado: contar no agrega líneas de log (`SiigoNoLeakTests`).

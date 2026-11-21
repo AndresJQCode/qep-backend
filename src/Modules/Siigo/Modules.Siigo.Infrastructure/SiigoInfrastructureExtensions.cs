@@ -56,6 +56,8 @@ public static class SiigoInfrastructureExtensions
         // El caché de tokens es singleton y no ve IClock (scoped): lee la hora del TimeProvider, el del sistema si nadie registró otro.
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<SiigoTokenCache>();
+        // Contadores de fallas por pod (qep_siigo_call_failures_total); Prometheus los suma entre réplicas (MultiReplicaInventory).
+        services.AddSingleton<SiigoMetrics>();
         services.AddHttpClient<ISiigoApi, SiigoApiClient>(SiigoApiClient.HttpClientName, SiigoApiClient.ConfigureClient)
             .ConfigurePrimaryHttpMessageHandler(() => SiigoApiClient.CreatePrimaryHandler())
             .RemoveAllLoggers();

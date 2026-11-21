@@ -25,7 +25,8 @@ internal sealed class SiigoApiClient(
     IOptions<SiigoOptions> options,
     SiigoTokenCache tokens,
     IMemoryCache cache,
-    ISiigoCallFailureLog? failures = null) : ISiigoApi
+    ISiigoCallFailureLog? failures = null,
+    SiigoMetrics? metrics = null) : ISiigoApi
 {
     public const string HttpClientName = "siigo";
 
@@ -402,6 +403,11 @@ internal sealed class SiigoApiClient(
         string? siigoInvoiceId,
         CancellationToken cancellationToken)
     {
+        // Antes de la guarda: cuentan también las fallas sin captura (partner_id_missing) y los hosts sin ISiigoCallFailureLog.
+        // Misma regla de operación que la fila: una falla de /auth es Auth, sea quien sea el método que la pidió.
+        metrics?.RecordFailure(
+            string.Equals(capture?.Path, "auth", StringComparison.Ordinal) ? SiigoCallOperation.Auth : operation, reason);
+
         if (failures is null || capture is null)
         {
             return;
