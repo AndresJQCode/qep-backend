@@ -31,6 +31,13 @@ public static class WholesaleEndpoints
             .Produces<WholesaleCategoriesResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // Spec 2026-11-20: los productos que la lista puede mostrar, para elegir cuáles ocultar; mismo permiso que las categorías.
+        endpoints.MapGet("/api/v1/tenants/{tenantId:guid}/wholesale/products", ListProductsAsync)
+            .WithTags("Wholesale")
+            .RequireAuthorization(WholesalePermissions.PriceListManage)
+            .Produces<WholesaleProductsResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         return endpoints;
     }
 
@@ -168,6 +175,17 @@ public static class WholesaleEndpoints
     private static async Task<IResult> ListCategoriesAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListWholesaleCategoriesQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> ListProductsAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? search = null,
+        Guid? categoryId = null,
+        int page = 1,
+        int pageSize = ListWholesaleProductsHandler.MaxPageSize) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListWholesaleProductsQuery(tenantId, search, categoryId, page, pageSize), cancellationToken));
 
     private static async Task<IResult> ListPriceListsAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
