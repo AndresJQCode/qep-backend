@@ -38,7 +38,7 @@ public sealed class AutoLinkSiigoVariantsByCodeHandler(
         await SiigoSettingsSupport.ConnectionAsync(connections, command.TenantId, command.ConnectionId, cancellationToken);
         var memberId = await memberships.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
             ?? throw SiigoAuthorization.Denied();
-        var resolution = await connections.ResolveAsync(command.TenantId, command.ConnectionId, cancellationToken);
+        var resolution = await connections.ResolveForSetupAsync(command.TenantId, command.ConnectionId, cancellationToken);
         if (resolution.Credentials is not { } credentials)
         {
             throw new ResourceConflictException(

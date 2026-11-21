@@ -44,7 +44,7 @@ public sealed class ListSiigoOptionsHandler(
             throw new ResourceNotFoundException("siigo.options.list_unknown", "That Siigo list does not exist.");
         }
 
-        var resolution = await connections.ResolveAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var resolution = await connections.ResolveForSetupAsync(query.TenantId, query.ConnectionId, cancellationToken);
         if (resolution.Credentials is not { } credentials)
         {
             throw new ResourceConflictException(

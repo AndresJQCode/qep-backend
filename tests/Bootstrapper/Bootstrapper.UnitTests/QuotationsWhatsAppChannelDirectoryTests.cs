@@ -254,6 +254,9 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             return this;
         }
 
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult(tenantId == TenantId && resolved.GetValueOrDefault(connectionId) is { } connection
                 ? ConnectionResolution.Resolved(connection)

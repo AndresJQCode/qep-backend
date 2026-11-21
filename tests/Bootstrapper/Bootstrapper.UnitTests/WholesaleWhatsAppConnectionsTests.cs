@@ -80,6 +80,9 @@ public sealed class WholesaleWhatsAppConnectionsTests
                 tenantId == TenantId ? _resolved.Where(connection => connection.ProviderKey == providerKey).ToList() : []);
         }
 
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult(tenantId == TenantId && _resolved.FirstOrDefault(connection => connection.Id == connectionId) is { } found
                 ? ConnectionResolution.Resolved(found)

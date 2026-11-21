@@ -94,7 +94,7 @@ public sealed class SearchSiigoProductsHandler(
         await validator.ValidateAndThrowAsync(query, cancellationToken);
         await SiigoSettingsSupport.ConnectionAsync(connections, query.TenantId, query.ConnectionId, cancellationToken);
 
-        var resolution = await connections.ResolveAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var resolution = await connections.ResolveForSetupAsync(query.TenantId, query.ConnectionId, cancellationToken);
         if (resolution.Credentials is not { } credentials)
         {
             throw new ResourceConflictException(
