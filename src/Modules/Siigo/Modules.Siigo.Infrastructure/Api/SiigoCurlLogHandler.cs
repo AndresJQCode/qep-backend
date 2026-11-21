@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
 namespace Modules.Siigo.Infrastructure.Api;
@@ -51,25 +49,5 @@ internal sealed partial class SiigoCurlLogHandler(ILogger<SiigoCurlLogHandler> l
     [LoggerMessage(Level = LogLevel.Warning, Message = "Siigo call failed. Request: {Curl}\nResponse: {Status}\n{Body}")]
     private static partial void LogFailure(ILogger logger, string curl, string status, string body);
 
-    private static string BuildCurl(HttpRequestMessage request, string? body)
-    {
-        var curl = new StringBuilder("curl.exe -X ").Append(request.Method.Method).Append(" \"").Append(request.RequestUri).Append('"');
-        foreach (var header in request.Headers)
-        {
-            var value = header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
-                ? "Bearer <TOKEN>"
-                : string.Join(", ", header.Value);
-            curl.Append(" -H \"").Append(header.Key).Append(": ").Append(value).Append('"');
-        }
-
-        if (body is not null)
-        {
-            curl.Append(" -H \"Content-Type: application/json\" -d '").Append(AccessKey().Replace(body, "\"access_key\":\"<ACCESS_KEY>\"")).Append('\'');
-        }
-
-        return curl.ToString();
-    }
-
-    [GeneratedRegex("\"access_key\"\\s*:\\s*\"[^\"]*\"")]
-    private static partial Regex AccessKey();
+    private static string BuildCurl(HttpRequestMessage request, string? body) => SiigoCurl.Build(request, body);
 }
