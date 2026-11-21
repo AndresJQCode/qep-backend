@@ -1936,6 +1936,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, LoansUserReferenceProbe>();
+        services.AddScoped<IUserReferenceProbe, HrUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, PurchasesUserReferenceProbe>();
         services.AddScoped<IUserReferenceProbe, SupportUserReferenceProbe>();
 
