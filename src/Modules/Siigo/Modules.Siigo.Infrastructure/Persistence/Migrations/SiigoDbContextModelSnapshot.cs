@@ -324,11 +324,6 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("products_auto_linked_at");
 
-                    b.Property<string>("SellerId")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("seller_id");
-
                     b.Property<DateTimeOffset?>("SellersAutoLinkedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("sellers_auto_linked_at");
