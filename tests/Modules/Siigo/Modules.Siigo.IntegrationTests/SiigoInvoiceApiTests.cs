@@ -344,6 +344,49 @@ public sealed class SiigoInvoiceApiTests
         Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers");
     }
 
+    // La pantalla del pedido sólo ofrece «Facturar en Siigo» si la conexión de la empresa del pedido sirve: el backend lo dice, el
+    // navegador no cruza conexiones con empresas.
+    [Fact]
+    public async Task AvailabilityIsTrueWhenTheConnectionOfTheOrderCompanyIsActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var availability = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+
+        Assert.True(availability.GetProperty("available").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, availability.GetProperty("reason").ValueKind);
+        await AssertUntouchedAsync(world);
+    }
+
+    [Fact]
+    public async Task AvailabilityIsFalseWithConnectionUnavailableWhenTheConnectionOfTheOrderCompanyIsPaused()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ExecuteAsync(world.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+
+        var availability = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+
+        Assert.False(availability.GetProperty("available").GetBoolean());
+        Assert.Equal("siigo.connection_unavailable", availability.GetProperty("reason").GetString());
+        await AssertUntouchedAsync(world);
+    }
+
+    [Fact]
+    public async Task AvailabilityIsFalseWithNoConnectionWhenNoConnectionInvoicesForTheOrderCompany()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.settings SET company_id = NULL");
+
+        var availability = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+
+        Assert.False(availability.GetProperty("available").GetBoolean());
+        Assert.Equal("siigo.invoice.no_connection", availability.GetProperty("reason").GetString());
+        await AssertUntouchedAsync(world);
+    }
+
     [Fact]
     public async Task TheRealStatusAdapterSeesOpenInvoices()
     {
