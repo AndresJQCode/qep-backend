@@ -69,6 +69,8 @@ public sealed class UpdateSiigoSellersHandler(
                 command.TenantId, [.. settings.SellerLinks.Select(link => link.MembershipId)], cancellationToken))
             .Select(member => member.MembershipId)
             .ToHashSet();
+        // Un vínculo que ya existe se conoce aunque la membresía se haya purgado: se puede conservar o quitar.
+        known.UnionWith(settings.SellerLinks.Select(link => link.MembershipId));
         if (linked.FirstOrDefault(seller => !known.Contains(seller.MembershipId)) is { } stranger)
         {
             throw new SiigoDomainException(

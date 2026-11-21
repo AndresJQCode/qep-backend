@@ -124,6 +124,11 @@ internal static class SiigoSettingsSupport
                 return new SiigoSellerDto(
                     member.MembershipId, member.DisplayName, member.Email, member.Active, link?.SiigoUserId, link?.SiigoUserName);
             })
+            // Una membresía purgada ya no sale del directorio, pero su vínculo sigue en la base: se muestra como fila inactiva para
+            // poder verlo y quitarlo, en vez de dejarlo huérfano e invisible.
+            .Concat(settings.SellerLinks
+                .Where(link => roster.All(member => member.MembershipId != link.MembershipId))
+                .Select(link => new SiigoSellerDto(link.MembershipId, null, null, Active: false, link.SiigoUserId, link.SiigoUserName)))
             .OrderBy(seller => seller.Name ?? seller.Email ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
