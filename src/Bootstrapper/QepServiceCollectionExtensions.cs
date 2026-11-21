@@ -493,6 +493,37 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetSalaryRulesQuery, SalaryRulesDto>,
             GetSalaryRulesHandler>();
+        // Lo que comparten los casos de uso de la configuración: empresas, «¿está lista?» y el armado de los DTO.
+        services.AddScoped<Modules.Hr.Application.HrCompanyRefs>();
+        services.AddScoped<Modules.Hr.Application.HrSetup>();
+        services.AddScoped<Modules.Hr.Application.HrSettingsComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetHrSettingsQuery, Modules.Hr.Application.HrSettingsDto>,
+            Modules.Hr.Application.GetHrSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateSiteCommand, Modules.Hr.Application.SiteDto>,
+            Modules.Hr.Application.CreateSiteHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateSiteCommand, Modules.Hr.Application.SiteDto>,
+            Modules.Hr.Application.UpdateSiteHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateWorkplaceCommand, Modules.Hr.Application.WorkplaceDto>,
+            Modules.Hr.Application.CreateWorkplaceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateWorkplaceCommand, Modules.Hr.Application.WorkplaceDto>,
+            Modules.Hr.Application.UpdateWorkplaceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.CreateNamedSettingCommand, object>,
+            Modules.Hr.Application.CreateNamedSettingHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.UpdateNamedSettingCommand, object>,
+            Modules.Hr.Application.UpdateNamedSettingHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ArchiveSettingCommand, object>,
+            Modules.Hr.Application.ArchiveSettingHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteSettingCommand, bool>,
+            Modules.Hr.Application.DeleteSettingHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -1468,7 +1499,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
-        // Hr aún no tiene validadores concretos (llegan con las Tareas 6 a 10): se escanea el ensamblado, porque HrPermissions es
+        // Hr: se escanea el ensamblado (sólo registra validadores públicos, y todos los de Hr lo son), porque HrPermissions es
         // estática y no sirve de argumento de tipo.
         services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
@@ -1765,6 +1796,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IOrderVariantCostLookup, CatalogVariantCostLookup>();
         services.AddScoped<IPosCategoryLookup, PosCategoryLookup>();
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
+        // Hr: la empresa empleadora y la sede entran por su propio puerto (HrLayerTests.NoHrLayerReferencesCompanies).
+        services.AddScoped<Modules.Hr.Application.IHrCompanyLookup, HrCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
         services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();
 
@@ -1916,6 +1949,9 @@ public static class QepServiceCollectionExtensions
         // otro, y el composition root cablea el puerto que declara `companies` contra los
         // repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICompanyGeographyLookup, CompanyGeographyLookup>();
+
+        // Hr: ciudades y países de Geography por su puerto (HrLayerTests.NoHrLayerReferencesGeography).
+        services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
 
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.

@@ -1,11 +1,15 @@
+using System.Globalization;
 using BuildingBlocks.Application;
 using Modules.Hr.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Hr.Application;
 
-/// <param name="Date">Nulo ⇒ hoy en el calendario del tenant.</param>
-public sealed record GetSalaryRulesQuery(Guid TenantId, DateOnly? Date) : IQuery<SalaryRulesDto>;
+/// <param name="Date">
+/// <c>yyyy-MM-dd</c> tal como llegó en la URL; nulo o vacío ⇒ hoy en el calendario del tenant. Se lee en el handler y no en el
+/// endpoint: así un llamador de otro tenant recibe 403 y no un 422 sobre un dato que todavía no puede ver.
+/// </param>
+public sealed record GetSalaryRulesQuery(Guid TenantId, string? Date) : IQuery<SalaryRulesDto>;
 
 /// <summary>Los valores legales vigentes a la fecha, y los tipos de contrato que pueden quedar bajo el mínimo sin confirmar.</summary>
 public sealed record SalaryRulesDto(
@@ -26,7 +30,20 @@ public sealed class GetSalaryRulesHandler(
         await HrAuthorization.EnsureAsync(
             executionContext, tenantModules, query.TenantId, cancellationToken, HrPermissions.ContractRead);
 
-        var date = query.Date
+        // Mal formada es un 422 con errors.date: un valor que dejara al binding automático lanzaría una BadHttpRequestException,
+        // y ApiExceptionHandler la reduce a 500.
+        DateOnly? requested = null;
+        if (!string.IsNullOrWhiteSpace(query.Date))
+        {
+            if (!DateOnly.TryParseExact(query.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            {
+                HrFieldErrors.Throw("date", "La fecha no es válida. Usa el formato aaaa-mm-dd.");
+            }
+
+            requested = parsed;
+        }
+
+        var date = requested
             ?? (await tenantClock.GetAsync(query.TenantId, cancellationToken)).Today;
         var floor = await salaryRules.FloorAtAsync(date, cancellationToken);
 

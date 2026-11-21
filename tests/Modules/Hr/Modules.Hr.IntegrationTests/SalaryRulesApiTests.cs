@@ -96,4 +96,38 @@ public sealed class SalaryRulesApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    [Fact]
+    public async Task AMalformedDateIs422WithTheDateField()
+    {
+        var (database, factory) = await OpenAtAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateFullAccess(factory);
+
+        var response = await client.GetAsync(RulesUrl("?date=20-11-2026"), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        Assert.True(document.RootElement.GetProperty("errors").TryGetProperty("date", out var dateErrors));
+        Assert.NotEqual(JsonValueKind.Null, dateErrors.ValueKind);;
+    }
+
+    // La fecha se lee en el handler, ya autorizado: quien opera en otro tenant recibe 403 y no un 422 sobre un dato que todavía
+    // no puede ver.
+    [Fact]
+    public async Task AWrongTenantWithAMalformedDateIs403()
+    {
+        var (database, factory) = await OpenAtAsync();
+        await using var _ = database;
+        using var __ = factory;
+        await SeedTenantAsync(factory, OtherTenantId);
+        using var outsider = CreateClient(factory, OtherSubjectId, OtherTenantId, HrPermissions.ContractRead);
+
+        var response = await outsider.GetAsync(RulesUrl("?date=garbage"), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        Assert.Equal("authorization.denied", document.RootElement.GetProperty("code").GetString());
+    }
 }
