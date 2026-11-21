@@ -5,9 +5,58 @@
 > tareas se ejecutan en **cuatro bloques**, un implementador por bloque, una revisión por bloque y la revisión fuerte una sola vez al final.
 > Cada tarea conserva su commit.
 
-**Estado:** Bloques A y B implementados (2026-11-21). A: `03798bb` (llave del módulo), `d05482e` (esqueleto, permisos y roles), `b773221`
-(tipos y festivos). B: `13f4fad` (dominio), `df7bff1` (motor de disponibilidad) y la persistencia con su migración (Tarea 6). Las desviaciones
-respecto a lo que decía este plan están en «Correcciones durante la implementación».
+## Estado y traspaso (2026-11-21)
+
+Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A y B (Tareas 1 a 6).** Faltan los Bloques C y D.
+
+| Tarea | Estado | Commit |
+| --- | --- | --- |
+| 1 Llave de módulo `scheduling` | Hecha | `03798bb` |
+| 2 Esqueleto, permisos, alcance, roles | Hecha | `d05482e` |
+| 3 Tipos de horario, códigos, festivos | Hecha | `b773221` |
+| 4 Dominio | Hecha | `13f4fad` |
+| 5 Motor de disponibilidad | Hecha | `df7bff1` |
+| 6 Persistencia, migración, aprovisionador | Hecha | `4fc9cbc` |
+| 7 Configuración (sedes, recursos, servicios, reglas, `setup`) | **Por hacer** | |
+| 8 Franjas, sesiones publicadas, bloqueos | Por hacer | |
+| 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Por hacer | |
+| 10 Calendario y escritorio (lecturas BFF) | Por hacer | |
+| 11 Clientes: fusión y borrado | Por hacer | |
+| 12 Recordatorio por WhatsApp (dos commits) | Por hacer | |
+| 13 Verificación final | Por hacer | |
+
+**Lo primero que hay que correr en tu máquina** (el trabajo hasta aquí se hizo en un contenedor sin Docker, con el SDK 10.0.115 y un
+Postgres 16 nativo; `global.json` no se tocó en ningún commit):
+
+1. `dotnet restore Backend.slnx --locked-mode` y `dotnet build Backend.slnx`. Con el SDK 10.0.115 daba un solo error, en
+   `MediaByteRangeTests` (Mensajería, CA1859), que no es de la Agenda; con el 10.0.400 debería no aparecer. Si aparece, no es de este trabajo.
+2. `dotnet test tests/Modules/Scheduling/Modules.Scheduling.IntegrationTests`: **las 16 pruebas de persistencia nunca corrieron con
+   Testcontainers**, sólo contra un Postgres 16 nativo (16 de 16). Con Postgres 18 (`postgres:18-alpine`) deberían dar igual; si alguna falla, es
+   lo primero que hay que mirar.
+3. Las unitarias y de arquitectura ya pasan: `Modules.Scheduling.UnitTests` (115), `ArchitectureTests` (303), `Modules.Authorization.UnitTests`
+   (81), `Modules.Tenancy.UnitTests` (477).
+4. Los 122 fallos de `Bootstrapper.UnitTests` que se vieron eran todos de Docker no disponible (Valkey, candado de arranque, fusión de
+   clientes); con Docker no deberían estar.
+
+**Cómo seguir:** la Tarea 7 abre el Bloque C y es la primera que necesita el host de la API y su harness (`SchedulingApiHarness`, calco de
+`HrApiHarness`). Los repositorios nacen con su caso de uso (corrección 11). El aprovisionador (`ISchedulingProvisioner`) ya existe pero
+nadie lo llama todavía: lo invoca cada caso de uso antes de leer, con el nombre del tenant que da un puerto de Bootstrapper (corrección 12).
+
+**Trampas ya vividas (no repetirlas):**
+- Los analizadores rechazan nombres: `*Exception` en un tipo que no lo es (CA1711), parámetros `to`/`end`/`from` en interfaces (CA1716) y
+  `.First()` sobre una lista indexable (CA1826).
+- Cada categoría de permiso necesita su etiqueta en `PermissionVocabulary`, y cada `(entidad, acción)` de la matriz de roles es única.
+- Un rol de sistema con un permiso de núcleo (Clientes) se vuelve asignable en un tenant sin la Agenda: por eso los roles no los llevan.
+- La migración inicial lleva dos sentencias a mano (`CREATE EXTENSION btree_gist` y la restricción `EX_sessions_resource_occupancy`):
+  si se regenera, hay que volver a agregarlas. La prueba `TheMigrationAppliesFromScratchAndTheModelHasNoPendingChanges` lo ataja.
+- Npgsql sólo escribe `DateTimeOffset` con offset cero: todo instante se convierte a UTC antes de guardar.
+- `dotnet-ef` debe ser la 10.0.13 (la de EF Core del repo).
+
+**Pendiente de decidir (owner):** la posición de «Agenda» en el menú del frontend; si cualquier cita bloquea borrar al cliente (D-11, la spec
+dice que sí); y si un recordatorio por WhatsApp necesita el consentimiento del cliente (Tarea 12).
+
+**`docs/estado.md`:** no se toca en esta rama. Al mergear a `develop`, agregar la fila «Agenda: citas, franjas, recursos y cupos» (backend,
+Bloques A y B construidos) con estos commits y el enlace a la spec y a este plan, y el renglón del Registro.
 
 **Spec:** `docs/superpowers/specs/2026-11-21-agenda-citas-design.md` (aprobada por el owner el 2026-11-21). Este plan la baja a tareas y
 **corrige tres puntos de la spec** tras leer el código (sección «Correcciones a la spec»).
