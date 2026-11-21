@@ -17,5 +17,6 @@ internal sealed class HrCompanyLookup(ICompanyRepository companies) : IHrCompany
             ? ToRef(company)
             : null;
 
-    private static HrCompanyRef ToRef(Company company) => new(company.Id.Value, company.Name, company.TaxId, company.IsActive);
+    private static HrCompanyRef ToRef(Company company) => new(company.Id.Value, company.Name, company.TaxId, company.IsActive,
+        string.IsNullOrWhiteSpace(company.Country) ? Company.ColombiaCountryCode : company.Country);
 }

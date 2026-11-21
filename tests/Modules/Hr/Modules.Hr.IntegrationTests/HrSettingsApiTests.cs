@@ -445,6 +445,51 @@ public sealed class HrSettingsApiTests : IClassFixture<HrSettingsApiTests.World>
     }
 
     [Fact]
+    public async Task EveryCompanyInTheSettingsCarriesItsCountry()
+    {
+        using var tenant = await NewTenantAsync();
+        await CompanyAsync(tenant, "Beta S.A.S.");
+        await CreateForeignCompanyAsync(tenant.Admin, tenant.Id, "Andes Inc.");
+
+        var companies = (await SettingsAsync(tenant)).GetProperty("companies").EnumerateArray().ToArray();
+
+        Assert.Equal(
+            [("Andes Inc.", "US"), ("Beta S.A.S.", "CO")],
+            companies.Select(company => (company.GetProperty("name").GetString()!, company.GetProperty("country").GetString()!)));
+    }
+
+    [Fact]
+    public async Task ASiteOfAForeignCompanyHasNoFund()
+    {
+        using var tenant = await NewTenantAsync();
+        var foreign = await CreateForeignCompanyAsync(tenant.Admin, tenant.Id);
+
+        var rejected = await tenant.Hr.PostAsJsonAsync(
+            $"{tenant.Url}/sites",
+            new { companyId = foreign.Id, name = "Miami", address = (string?)null, cityId = (Guid?)null, compensationFund = "COMFAMA" },
+            Ct);
+        var created = await SiteAsync(tenant, foreign.Id, "Miami");
+        var update = await PutAsync(
+            tenant.Hr, $"{tenant.Url}/sites/{created.GetProperty("id").GetGuid()}",
+            new { companyId = foreign.Id, name = "Miami", address = (string?)null, cityId = (Guid?)null, compensationFund = "COMFAMA" },
+            "\"1\"");
+        var cleared = await PutAsync(
+            tenant.Hr, $"{tenant.Url}/sites/{created.GetProperty("id").GetGuid()}",
+            new { companyId = foreign.Id, name = "Miami", address = (string?)null, cityId = (Guid?)null, compensationFund = (string?)null },
+            "\"1\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        var problem = await JsonOfAsync(rejected);
+        Assert.Equal(["compensationFund"], ErrorKeys(problem));
+        Assert.Equal(
+            "La caja de compensación sólo aplica a empresas de Colombia.",
+            problem.GetProperty("errors").GetProperty("compensationFund")[0].GetString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, update.StatusCode);
+        Assert.Equal(["compensationFund"], ErrorKeys(await JsonOfAsync(update)));
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+    }
+
+    [Fact]
     public async Task ACityThatDoesNotExistIs422()
     {
         using var tenant = await NewTenantAsync();

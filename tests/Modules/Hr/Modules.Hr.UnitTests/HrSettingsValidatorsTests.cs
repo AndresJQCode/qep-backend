@@ -36,20 +36,6 @@ public sealed class HrSettingsValidatorsTests
     }
 
     [Fact]
-    public async Task ASiteAcceptsACatalogFundOrNone()
-    {
-        await new SiteRequestValidator().ValidateAndThrowAsync(Site() with { CompensationFund = "COMFAMA" }, Ct);
-        await new SiteRequestValidator().ValidateAndThrowAsync(Site() with { CompensationFund = null }, Ct);
-        await new SiteRequestValidator().ValidateAndThrowAsync(Site() with { CompensationFund = "  " }, Ct);
-    }
-
-    [Theory]
-    [InlineData("Caja inventada")]
-    [InlineData("comfama")]
-    public async Task ASiteRejectsAFundOutsideTheCatalog(string fund) =>
-        Assert.Equal(["compensationFund"], await FailedFieldsAsync(new SiteRequestValidator(), Site() with { CompensationFund = fund }));
-
-    [Fact]
     public async Task AValidSitePasses() =>
         await new SiteRequestValidator().ValidateAndThrowAsync(Site(), Ct);
 

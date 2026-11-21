@@ -9,4 +9,4 @@ public interface IHrCompanyLookup
     Task<HrCompanyRef?> FindAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
 }
 
-public sealed record HrCompanyRef(Guid Id, string Name, string TaxId, bool IsActive);
+public sealed record HrCompanyRef(Guid Id, string Name, string TaxId, bool IsActive, string Country = "CO");
