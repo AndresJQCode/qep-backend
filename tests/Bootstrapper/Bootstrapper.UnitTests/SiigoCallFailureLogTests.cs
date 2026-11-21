@@ -11,7 +11,7 @@ namespace Bootstrapper.UnitTests;
 public sealed class SiigoCallFailureLogTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 21, 15, 0, 0, TimeSpan.Zero);
-    private static readonly SiigoCallFailure Failure = new(400, "http_400", "curl.exe -X POST \"https://api.siigo.com/v1/invoices\"\nResponse: HTTP 400");
+    private static readonly SiigoCallFailureReport Failure = new(400, "http_400", "curl.exe -X POST \"https://api.siigo.com/v1/invoices\"\nResponse: HTTP 400");
 
     private sealed class RecordingLog : IRequestFailureLog
     {

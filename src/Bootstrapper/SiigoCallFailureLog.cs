@@ -27,7 +27,7 @@ internal sealed class SiigoCallFailureLog(
 
     private static readonly string[] MutatingMethods = [HttpMethods.Post, HttpMethods.Put, HttpMethods.Patch, HttpMethods.Delete];
 
-    public async Task RecordAsync(SiigoCallFailure failure, CancellationToken cancellationToken)
+    public async Task RecordAsync(SiigoCallFailureReport failure, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(failure);
         if (accessor.HttpContext is not { } http || !MutatingMethods.Contains(http.Request.Method, StringComparer.OrdinalIgnoreCase))

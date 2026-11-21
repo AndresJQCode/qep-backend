@@ -64,4 +64,7 @@ public static class SiigoErrorCodes
 
     /// <summary>404: el pedido no tiene factura de Siigo de ese tipo.</summary>
     public const string InvoiceNotFound = "siigo.invoice.not_found";
+
+    /// <summary>404: la falla de llamada a Siigo que se pide no existe en el tenant (o ya expiró a los 7 días).</summary>
+    public const string CallFailureNotFound = "siigo.call_failure.not_found";
 }

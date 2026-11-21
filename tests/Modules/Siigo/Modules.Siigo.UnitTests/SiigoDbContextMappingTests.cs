@@ -11,6 +11,12 @@ namespace Modules.Siigo.UnitTests;
 /// </summary>
 public sealed class SiigoDbContextMappingTests
 {
+    private static readonly string[] CallFailureColumns =
+    [
+        "id", "tenant_id", "connection_id", "operation", "method", "path", "status", "reason", "idempotency_key", "siigo_invoice_id",
+        "request_curl", "response_body", "subject_id", "trace_id", "occurred_at",
+    ];
+
     [Fact]
     public void TheModelHasNoChangesPendingAMigration()
     {
@@ -25,6 +31,25 @@ public sealed class SiigoDbContextMappingTests
         using var context = new SiigoDbContextFactory().CreateDbContext([]);
 
         Assert.Null(context.Model.FindEntityType(typeof(SiigoSettings))!.FindProperty("SellerId"));
+    }
+
+    [Fact]
+    public void TheCallFailuresMapToTheirTableWithTheirColumnsAndIndexes()
+    {
+        using var context = new SiigoDbContextFactory().CreateDbContext([]);
+
+        var failure = context.Model.FindEntityType(typeof(SiigoCallFailure))!;
+
+        Assert.Equal(("call_failures", "siigo"), (failure.GetTableName(), failure.GetSchema()));
+        Assert.Equal("PK_call_failures", failure.FindPrimaryKey()!.GetName());
+        Assert.Equal(
+            CallFailureColumns.Order(StringComparer.Ordinal),
+            failure.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
+        Assert.Equal(40, failure.FindProperty(nameof(SiigoCallFailure.Operation))!.GetMaxLength());
+        Assert.Equal("text", failure.FindProperty(nameof(SiigoCallFailure.RequestCurl))!.GetColumnType());
+        Assert.Equal("text", failure.FindProperty(nameof(SiigoCallFailure.ResponseBody))!.GetColumnType());
+        Assert.Contains(failure.GetIndexes(), index => index.GetDatabaseName() == "IX_call_failures_tenant_occurred");
+        Assert.Contains(failure.GetIndexes(), index => index.GetDatabaseName() == "IX_call_failures_occurred");
     }
 
     [Fact]

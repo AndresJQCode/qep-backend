@@ -51,9 +51,9 @@ public sealed class SiigoApiClientTests : IDisposable
 
     private sealed class RecordingFailureLog : ISiigoCallFailureLog
     {
-        public List<SiigoCallFailure> Recorded { get; } = [];
+        public List<SiigoCallFailureReport> Recorded { get; } = [];
 
-        public Task RecordAsync(SiigoCallFailure failure, CancellationToken cancellationToken)
+        public Task RecordAsync(SiigoCallFailureReport failure, CancellationToken cancellationToken)
         {
             Recorded.Add(failure);
             return Task.CompletedTask;

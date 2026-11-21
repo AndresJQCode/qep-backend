@@ -327,7 +327,7 @@ internal sealed class SiigoApiClient(
         }
 
         var reason = reply.TransientReason ?? (reply.CredentialsRejected ? "credentials_rejected" : $"http_{(int?)reply.Status}");
-        await failures.RecordAsync(new SiigoCallFailure((int?)reply.Status, reason, reply.Diagnostic), cancellationToken);
+        await failures.RecordAsync(new SiigoCallFailureReport((int?)reply.Status, reason, reply.Diagnostic), cancellationToken);
     }
 
     /// <summary>La clave con que el curl de una llamada fallida viaja en la excepción hasta <c>RequestFailureCapture</c> (Api), que la agrega

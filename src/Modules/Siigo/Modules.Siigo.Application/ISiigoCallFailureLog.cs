@@ -5,9 +5,9 @@ namespace Modules.Siigo.Application;
 /// <paramref name="Diagnostic"/> es el <c>curl</c> reproducible de la petición (token y <c>access_key</c> enmascarados) y la respuesta de
 /// Siigo; lleva el cuerpo de la factura o del cliente, es decir datos personales, y por eso sólo viaja a ese log, que lee el operador.
 /// </summary>
-public sealed record SiigoCallFailure(int? Status, string Reason, string Diagnostic)
+public sealed record SiigoCallFailureReport(int? Status, string Reason, string Diagnostic)
 {
-    public override string ToString() => "SiigoCallFailure { }";
+    public override string ToString() => "SiigoCallFailureReport { }";
 }
 
 /// <summary>
@@ -17,5 +17,5 @@ public sealed record SiigoCallFailure(int? Status, string Reason, string Diagnos
 /// </summary>
 public interface ISiigoCallFailureLog
 {
-    Task RecordAsync(SiigoCallFailure failure, CancellationToken cancellationToken);
+    Task RecordAsync(SiigoCallFailureReport failure, CancellationToken cancellationToken);
 }
