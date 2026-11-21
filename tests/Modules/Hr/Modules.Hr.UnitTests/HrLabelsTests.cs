@@ -40,14 +40,14 @@ public sealed class HrLabelsTests
     }
 
     [Fact]
-    public void TryParseIgnoresAccentsCaseAndSpacesAndAlsoTakesTheMemberName()
+    public void TryParseIgnoresAccentsCaseAndSpacesAndOnlyTakesLabels()
     {
         Assert.True(HrLabels.TryParse<ContractDuration>("  termino   FIJO ", out var duration));
         Assert.Equal(ContractDuration.FixedTerm, duration);
         Assert.True(HrLabels.TryParse<HrDocumentType>("cedula de extranjeria", out var type));
         Assert.Equal(HrDocumentType.CE, type);
-        Assert.True(HrLabels.TryParse<HrDocumentType>("ppt", out var byName));
-        Assert.Equal(HrDocumentType.PPT, byName);
+        Assert.False(HrLabels.TryParse<HrDocumentType>("ppt", out _));
+        Assert.False(HrLabels.TryParse<ContractDuration>("FixedTerm", out _));
         Assert.False(HrLabels.TryParse<ContractDuration>("eterno", out _));
         Assert.False(HrLabels.TryParse<ContractDuration>("   ", out _));
         Assert.False(HrLabels.TryParse<ContractDuration>(null, out _));

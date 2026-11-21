@@ -128,10 +128,14 @@ public sealed class EmployeeImportRowParserTests
     [InlineData("foreign_pension_exempt_not_allowed", "foreignPensionExempt", "EXENTO DE PENSIÓN=Sí")]
     [InlineData("rest_days_invalid", "restDays", "DÍAS DE DESCANSO=funday")]
     [InlineData("payment_method_invalid", "paymentMethod", "MEDIO DE PAGO=Cheque")]
+    [InlineData("payment_method_invalid", "paymentMethod", "BANCO=Bancolombia")]
+    [InlineData("payment_method_invalid", "paymentMethod", "NÚMERO DE CUENTA=123")]
+    [InlineData("duration_invalid", "duration", "DURACIÓN=FixedTerm")]
+    [InlineData("document_type_invalid", "documentType", "TIPO DE DOCUMENTO=CC")]
     [InlineData("bank_incomplete", "bankName", "MEDIO DE PAGO=Transferencia bancaria")]
     [InlineData("bank_not_allowed", "bankName", "MEDIO DE PAGO=Otro;BANCO=Bancolombia")]
     [InlineData("bank_account_type_invalid", "bankAccountType", "MEDIO DE PAGO=Transferencia bancaria;BANCO=Bancolombia;TIPO DE CUENTA=Fiducia;NÚMERO DE CUENTA=123")]
-    [InlineData("bank_account_number_invalid", "bankAccountNumber", "BANCO=Bancolombia;TIPO DE CUENTA=Ahorros;NÚMERO DE CUENTA=abc")]
+    [InlineData("bank_account_number_invalid", "bankAccountNumber", "MEDIO DE PAGO=Transferencia bancaria;BANCO=Bancolombia;TIPO DE CUENTA=Ahorros;NÚMERO DE CUENTA=abc")]
     [InlineData("company_required", "company", "#companies=2")]
     [InlineData("company_not_found", "company", "EMPRESA=Otra empresa - 1")]
     [InlineData("contract_type_invalid", "contractType", "TIPO DE CONTRATO=Voluntario")]
@@ -161,7 +165,7 @@ public sealed class EmployeeImportRowParserTests
     [InlineData("retirement_reason_invalid", "retirementReason", "FECHA DE RETIRO=2026-10-31;MOTIVO DE RETIRO=Aburrimiento")]
     [InlineData("text_too_long", "firstName", "NOMBRES={long}")]
     [InlineData("text_too_long", "address", "DIRECCIÓN={long}")]
-    [InlineData("text_too_long", "bankName", "BANCO={long};TIPO DE CUENTA=Ahorros;NÚMERO DE CUENTA=123")]
+    [InlineData("text_too_long", "bankName", "MEDIO DE PAGO=Transferencia bancaria;BANCO={long};TIPO DE CUENTA=Ahorros;NÚMERO DE CUENTA=123")]
     public void EachRuleReportsItsCodeAndField(string code, string field, string spec)
     {
         var (row, context) = FromSpec(spec);
@@ -211,6 +215,7 @@ public sealed class EmployeeImportRowParserTests
             ("TIPO DE CONTRATO", "aprendiz sena lectiva"),
             ("DURACIÓN", "termino fijo"),
             ("FECHA DE FIN", "2026-12-31"),
+            ("MEDIO DE PAGO", "transferencia bancaria"),
             ("BANCO", "Bancolombia"),
             ("TIPO DE CUENTA", "AHORROS"),
             ("NÚMERO DE CUENTA", "123456")));
@@ -330,7 +335,7 @@ public sealed class EmployeeImportRowParserTests
     [InlineData("peru", "PE")]
     public void ACountryMatchesByCodeOrSpanishName(string text, string expected)
     {
-        var result = Parse(Row(("TIPO DE DOCUMENTO", "PPT"), ("PAÍS", text)));
+        var result = Parse(Row(("TIPO DE DOCUMENTO", "Permiso por protección temporal"), ("PAÍS", text)));
 
         Assert.Empty(result.Errors);
         Assert.Equal(expected, result.Row!.Profile.Country);
@@ -341,7 +346,7 @@ public sealed class EmployeeImportRowParserTests
     [InlineData("XX")]
     public void AnUnknownCountryIsCountryInvalid(string text)
     {
-        var result = Parse(Row(("TIPO DE DOCUMENTO", "PPT"), ("PAÍS", text)));
+        var result = Parse(Row(("TIPO DE DOCUMENTO", "Permiso por protección temporal"), ("PAÍS", text)));
 
         var issue = Assert.Single(result.Errors);
         Assert.Equal("hr.import.row.country_invalid", issue.Code);
@@ -351,7 +356,7 @@ public sealed class EmployeeImportRowParserTests
     [Fact]
     public void ACcFromAnotherCountryIsAMismatch()
     {
-        var result = Parse(Row(("TIPO DE DOCUMENTO", "CC"), ("PAÍS", "Venezuela")));
+        var result = Parse(Row(("TIPO DE DOCUMENTO", "Cédula de ciudadanía"), ("PAÍS", "Venezuela")));
 
         var issue = Assert.Single(result.Errors);
         Assert.Equal("hr.import.row.country_document_mismatch", issue.Code);
@@ -361,8 +366,8 @@ public sealed class EmployeeImportRowParserTests
     [Fact]
     public void PensionExemptionIsCheckedAgainstTheCountry()
     {
-        var foreigner = Parse(Row(("TIPO DE DOCUMENTO", "PPT"), ("PAÍS", "Venezuela"), ("EXENTO DE PENSIÓN", "Sí")));
-        var colombian = Parse(Row(("TIPO DE DOCUMENTO", "CC"), ("EXENTO DE PENSIÓN", "Sí")));
+        var foreigner = Parse(Row(("TIPO DE DOCUMENTO", "Permiso por protección temporal"), ("PAÍS", "Venezuela"), ("EXENTO DE PENSIÓN", "Sí")));
+        var colombian = Parse(Row(("TIPO DE DOCUMENTO", "Cédula de ciudadanía"), ("EXENTO DE PENSIÓN", "Sí")));
 
         Assert.Empty(foreigner.Errors);
         Assert.True(foreigner.Row!.Profile.ForeignPensionExempt);

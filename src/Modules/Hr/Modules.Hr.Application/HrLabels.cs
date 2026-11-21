@@ -139,8 +139,8 @@ public static class HrLabels
     };
 
     /// <summary>
-    /// La etiqueta o el nombre del miembro, sin mayúsculas, tildes ni espacios de más (<see cref="HrText.Fold"/>): la importación
-    /// acepta «término fijo» y también <c>FixedTerm</c>. Nunca un número.
+    /// La etiqueta, sin mayúsculas, tildes ni espacios de más (<see cref="HrText.Fold"/>): la importación acepta «término fijo» y no
+    /// el nombre del miembro (<c>FixedTerm</c>), porque el contrato sólo acepta las listas de «Valores válidos».
     /// </summary>
     public static bool TryParse<TEnum>(string? text, out TEnum value)
         where TEnum : struct, Enum
@@ -153,8 +153,7 @@ public static class HrLabels
 
         foreach (var (member, label) in LabelsOf<TEnum>())
         {
-            if (string.Equals(HrText.Fold(label), folded, StringComparison.Ordinal)
-                || string.Equals(HrText.Fold(member.ToString()), folded, StringComparison.Ordinal))
+            if (string.Equals(HrText.Fold(label), folded, StringComparison.Ordinal))
             {
                 value = member;
                 return true;

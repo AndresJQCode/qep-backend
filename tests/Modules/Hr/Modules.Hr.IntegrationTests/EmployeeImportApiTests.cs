@@ -354,14 +354,14 @@ public sealed class EmployeeImportApiTests : IClassFixture<HrApiFixture>
     }
 
     [Theory]
-    [InlineData("NoFile", "hr.import.file_required")]
-    [InlineData("Xls", "hr.import.extension_invalid")]
-    [InlineData("TooLarge", "hr.import.too_large")]
-    [InlineData("Garbage", "hr.import.unreadable")]
-    [InlineData("OtherHeaders", "hr.import.header_mismatch")]
-    [InlineData("OnlyHeaders", "hr.import.empty")]
-    [InlineData("TooManyRows", "hr.import.too_many_rows")]
-    public async Task FileErrors(string kind, string expectedCode)
+    [InlineData("NoFile", "hr.import.file_required", "Adjunta un archivo .xlsx.")]
+    [InlineData("Xls", "hr.import.extension_invalid", "Sólo se aceptan archivos .xlsx.")]
+    [InlineData("TooLarge", "hr.import.too_large", "El archivo pasa de 5 MB.")]
+    [InlineData("Garbage", "hr.import.unreadable", "No pudimos leer el archivo como un libro de Excel.")]
+    [InlineData("OtherHeaders", "hr.import.header_mismatch", "Las columnas no coinciden con la plantilla. Descarga la plantilla de nuevo.")]
+    [InlineData("OnlyHeaders", "hr.import.empty", "El archivo no tiene filas con datos.")]
+    [InlineData("TooManyRows", "hr.import.too_many_rows", "El archivo tiene más de 1000 filas.")]
+    public async Task FileErrors(string kind, string expectedCode, string expectedMessage)
     {
         using var tenant = await NewTenantAsync(_fixture);
         await SeedSetupAsync(tenant);
@@ -379,7 +379,78 @@ public sealed class EmployeeImportApiTests : IClassFixture<HrApiFixture>
         };
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal(expectedCode, CodeOf(await JsonOfAsync(response)));
+        var problem = await JsonOfAsync(response);
+        Assert.Equal(expectedCode, CodeOf(problem));
+        Assert.Equal(expectedMessage, problem.GetProperty("detail").GetString());
+    }
+
+    // ClosedXML serializa los números con 15 cifras: se reescribe el valor del xml para que la celda numérica traiga los 16 dígitos exactos.
+    private static byte[] ExactNumber(byte[] workbook, string cellReference, string digits)
+    {
+        using var source = new MemoryStream(workbook);
+        using var output = new MemoryStream();
+        using (var archive = new System.IO.Compression.ZipArchive(source, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+        {
+            var entry = archive.GetEntry("xl/worksheets/sheet1.xml")!;
+            string xml;
+            using (var reader = new StreamReader(entry.Open()))
+            {
+                xml = reader.ReadToEnd();
+            }
+
+            var patched = System.Text.RegularExpressions.Regex.Replace(
+                xml, $"(<(?:x:)?c r=\"{cellReference}\"[^>]*><(?:x:)?v>)[^<]*(</(?:x:)?v>)", $"${{1}}{digits}${{2}}");
+            Assert.NotEqual(xml, patched);
+            entry.Delete();
+            using var writer = new StreamWriter(archive.CreateEntry("xl/worksheets/sheet1.xml").Open());
+            writer.Write(patched);
+        }
+
+        source.Position = 0;
+        source.CopyTo(output);
+        return output.ToArray();
+    }
+
+    [Fact]
+    public async Task NumericCellsKeepTheirDisplayedDigits()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        await SeedSetupAsync(tenant);
+        var row = Row("x", ("TIPO DE DOCUMENTO", "Cédula de ciudadanía"));
+        byte[] file;
+        using (var workbook = new XLWorkbook())
+        {
+            var sheet = workbook.Worksheets.Add("Empleados");
+            for (var column = 0; column < HrImportColumns.Ordered.Count; column++)
+            {
+                sheet.Cell(1, column + 1).Value = HrImportColumns.Ordered[column];
+                if (row.GetValueOrDefault(HrImportColumns.Ordered[column]) is { } text)
+                {
+                    sheet.Cell(2, column + 1).Value = text;
+                }
+            }
+
+            // Sin el formato de texto de la plantilla: un número con ceros a la izquierda y una cuenta de 16 dígitos.
+            var document = sheet.Cell(2, HrImportColumns.Ordered.ToList().IndexOf(HrImportColumns.DocumentNumber) + 1);
+            document.Value = 1234;
+            document.Style.NumberFormat.Format = "00000000";
+            var method = sheet.Cell(2, HrImportColumns.Ordered.ToList().IndexOf(HrImportColumns.PaymentMethod) + 1);
+            method.Value = "Transferencia bancaria";
+            sheet.Cell(2, HrImportColumns.Ordered.ToList().IndexOf(HrImportColumns.BankName) + 1).Value = "Bancolombia";
+            sheet.Cell(2, HrImportColumns.Ordered.ToList().IndexOf(HrImportColumns.BankAccountType) + 1).Value = "Ahorros";
+            var account = sheet.Cell(2, HrImportColumns.Ordered.ToList().IndexOf(HrImportColumns.BankAccountNumber) + 1);
+            account.Value = 1234567890123456L;
+            account.Style.NumberFormat.Format = "0";
+            using var stream = new MemoryStream();
+            workbook.SaveAs(stream);
+            file = ExactNumber(stream.ToArray(), "W2", "1234567890123456");
+        }
+
+        var result = await OkAsync(await ConfirmAsync(tenant, file));
+
+        var detail = await ImportedEmployeeAsync(tenant, result, 0);
+        Assert.Equal("00001234", detail.GetProperty("employee").GetProperty("documentNumber").GetString());
+        Assert.Equal("1234567890123456", detail.GetProperty("employee").GetProperty("payment").GetProperty("bankAccountNumber").GetString());
     }
 
     [Fact]

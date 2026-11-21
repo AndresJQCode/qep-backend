@@ -65,13 +65,13 @@ public sealed class EmployeeImportAnalyzer(
         var rows = await importer.ReadAsync(content, cancellationToken);
         if (rows.Count == 0)
         {
-            throw new HrDomainException(HrErrorCodes.ImportEmpty, "The file has no rows with data.");
+            throw new HrDomainException(HrErrorCodes.ImportEmpty, "El archivo no tiene filas con datos.");
         }
 
         if (rows.Count > HrImportColumns.MaxRows)
         {
             throw new HrDomainException(
-                HrErrorCodes.ImportTooManyRows, $"The file has {rows.Count} rows; the limit is {HrImportColumns.MaxRows}.");
+                HrErrorCodes.ImportTooManyRows, $"El archivo tiene más de {HrImportColumns.MaxRows} filas.");
         }
 
         var settings = await catalogs.LoadSettingsAsync(tenantId, cancellationToken);
@@ -148,18 +148,18 @@ public sealed class EmployeeImportAnalyzer(
     {
         if (string.IsNullOrWhiteSpace(fileName) || sizeInBytes <= 0)
         {
-            throw new HrDomainException(HrErrorCodes.ImportFileRequired, "Attach the .xlsx file to import.");
+            throw new HrDomainException(HrErrorCodes.ImportFileRequired, "Adjunta un archivo .xlsx.");
         }
 
         if (!fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
         {
-            throw new HrDomainException(HrErrorCodes.ImportExtensionInvalid, "Only .xlsx files can be imported.");
+            throw new HrDomainException(HrErrorCodes.ImportExtensionInvalid, "Sólo se aceptan archivos .xlsx.");
         }
 
         if (sizeInBytes > HrImportColumns.MaxSizeInBytes)
         {
             throw new HrDomainException(
-                HrErrorCodes.ImportTooLarge, $"The file is larger than {HrImportColumns.MaxSizeInBytes / (1024 * 1024)} MB.");
+                HrErrorCodes.ImportTooLarge, $"El archivo pasa de {HrImportColumns.MaxSizeInBytes / (1024 * 1024)} MB.");
         }
 
         return fileName.Trim();

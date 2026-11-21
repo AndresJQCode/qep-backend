@@ -414,12 +414,13 @@ public static partial class EmployeeImportRowParser
             PaymentMethod method;
             if (methodText is null)
             {
-                if (!anyBankData)
+                if (anyBankData)
                 {
-                    return null;
+                    // Sin medio de pago los datos del banco no significan nada: el contrato no infiere uno.
+                    Error(HrErrorCodes.ImportRow.PaymentMethodInvalid, "paymentMethod", "Elige el medio de pago: hay datos del banco sin medio de pago.");
                 }
 
-                method = PaymentMethod.BankTransfer;
+                return null;
             }
             else if (!HrLabels.TryParse(methodText, out method))
             {

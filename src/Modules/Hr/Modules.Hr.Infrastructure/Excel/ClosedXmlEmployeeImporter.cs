@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using Modules.Hr.Application;
 using Modules.Hr.Domain;
@@ -10,7 +11,7 @@ namespace Modules.Hr.Infrastructure.Excel;
 /// primera hoja y ubica las 36 columnas por su encabezado, no por posición, y devuelve el texto crudo de cada celda. Las reglas
 /// viven en Application.
 /// </summary>
-internal sealed class ClosedXmlEmployeeImporter : IExcelEmployeeImporter
+internal sealed partial class ClosedXmlEmployeeImporter : IExcelEmployeeImporter
 {
     public Task<IReadOnlyList<ExcelEmployeeRow>> ReadAsync(Stream content, CancellationToken cancellationToken)
     {
@@ -23,15 +24,27 @@ internal sealed class ClosedXmlEmployeeImporter : IExcelEmployeeImporter
         {
             // Un archivo corrupto, protegido o que no es un .xlsx revienta ClosedXML con excepciones de bajo nivel que no le dicen
             // nada a quien lo subió: el archivo no se puede leer, y eso es todo lo que hay que decir.
-            throw new HrDomainException(HrErrorCodes.ImportUnreadable, "The file could not be read as an Excel workbook.");
+            throw new HrDomainException(HrErrorCodes.ImportUnreadable, "No pudimos leer el archivo como un libro de Excel.");
         }
 
         using (workbook)
         {
             var sheet = workbook.Worksheets.FirstOrDefault()
-                ?? throw new HrDomainException(HrErrorCodes.ImportUnreadable, "The workbook has no sheets.");
+                ?? throw new HrDomainException(HrErrorCodes.ImportUnreadable, "El libro de Excel no tiene hojas.");
             return Task.FromResult<IReadOnlyList<ExcelEmployeeRow>>(Read(sheet, cancellationToken));
         }
+    }
+
+    [GeneratedRegex("^0+$")]
+    private static partial Regex DigitsOnlyFormat();
+
+    // El formateo de ClosedXML redondea a 15 cifras significativas; un entero exacto (hasta 2^53) se rellena a mano para no alterar una cuenta.
+    private static string PaddedDigits(IXLCell cell)
+    {
+        var value = cell.GetDouble();
+        return value is >= 0 and < 9_007_199_254_740_992 && value == Math.Floor(value)
+            ? ((long)value).ToString(CultureInfo.InvariantCulture).PadLeft(cell.Style.NumberFormat.Format.Length, '0')
+            : cell.GetFormattedString();
     }
 
     private static List<ExcelEmployeeRow> Read(IXLWorksheet worksheet, CancellationToken cancellationToken)
@@ -44,7 +57,7 @@ internal sealed class ClosedXmlEmployeeImporter : IExcelEmployeeImporter
             {
                 throw new HrDomainException(
                     HrErrorCodes.ImportHeaderMismatch,
-                    "The file does not have the template's columns. Download the template and try again.");
+                    "Las columnas no coinciden con la plantilla. Descarga la plantilla de nuevo.");
             }
 
             indexes[expected] = index;
@@ -97,6 +110,9 @@ internal sealed class ClosedXmlEmployeeImporter : IExcelEmployeeImporter
         var raw = cell.DataType switch
         {
             XLDataType.DateTime => DateOnly.FromDateTime(cell.GetDateTime()).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            // Un formato de sólo ceros («00001234», «0») es el texto que la persona ve: conserva los ceros a la izquierda. El resto se
+            // lee como número invariante, porque un formato de moneda o fecha regional no lo entiende el parser.
+            XLDataType.Number when DigitsOnlyFormat().IsMatch(cell.Style.NumberFormat.Format) => PaddedDigits(cell),
             XLDataType.Number => cell.GetDouble().ToString("0.##########", CultureInfo.InvariantCulture),
             _ => cell.GetString(),
         };

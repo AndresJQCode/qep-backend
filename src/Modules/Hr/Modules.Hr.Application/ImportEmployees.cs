@@ -42,7 +42,7 @@ public sealed class ImportEmployeesHandler(
             command.TenantId, command.FileName, command.SizeInBytes, command.Content, cancellationToken);
         if (analysis.Errors.Count > 0)
         {
-            throw new HrDomainException(HrErrorCodes.ImportRowsInvalid, "The file has rows with errors.");
+            throw new HrDomainException(HrErrorCodes.ImportRowsInvalid, "El archivo tiene filas con errores. Corrígelas y vuelve a intentar.");
         }
 
         var tenantId = command.TenantId;
