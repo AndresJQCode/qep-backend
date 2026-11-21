@@ -1,0 +1,26 @@
+namespace Modules.Scheduling.Domain;
+
+/// <summary>
+/// Los códigos de dominio de la Agenda (plan 2026-11-21, «Contrato HTTP»). Sólo existen los que el contrato nombra: un código nuevo se
+/// agrega a la tabla del plan primero. Todos llevan el prefijo <c>scheduling.</c>. El status lo decide el tipo de excepción, no el código:
+/// <c>slot_taken</c> y <c>session_full</c> viajan en un <c>ResourceConflictException</c> (409) y el resto en un
+/// <c>SchedulingDomainException</c> (422). Un recurso fuera de alcance no tiene código propio: es 403 <c>authorization.denied</c>.
+/// </summary>
+public static class SchedulingErrorCodes
+{
+    // 409
+    public const string SlotTaken = "scheduling.appointment.slot_taken";
+    public const string SessionFull = "scheduling.appointment.session_full";
+
+    // 422
+    public const string InvalidTransition = "scheduling.appointment.invalid_transition";
+    public const string OutsideRules = "scheduling.appointment.outside_rules";
+    public const string BeforeStart = "scheduling.appointment.before_start";
+    public const string ClosureOverlapsAppointments = "scheduling.closure.overlaps_appointments";
+    public const string ResourceHasFutureAppointments = "scheduling.resource.has_future_appointments";
+    public const string ServiceInUse = "scheduling.service.in_use";
+    public const string MainLocationCannotBeArchived = "scheduling.location.main_cannot_be_archived";
+    public const string SessionNotPublishedMode = "scheduling.session.not_published_mode";
+    public const string ReminderTemplateMissing = "scheduling.reminder.template_missing";
+    public const string ReminderConnectionInvalid = "scheduling.reminder.connection_invalid";
+}

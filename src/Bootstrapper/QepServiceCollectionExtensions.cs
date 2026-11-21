@@ -2137,6 +2137,8 @@ public static class QepServiceCollectionExtensions
         Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);
         services.AddAppRealtime();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
+        // Spec 2026-11-21 (Agenda), D-10: los festivos de las franjas, por puerto y con el adaptador de Bootstrapper (calco del de Soporte).
+        services.AddScoped<ISchedulingHolidayCalendar, SchedulingHolidayCalendar>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
         // Notifications; Soporte sólo declara los puertos.
         services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
