@@ -73,10 +73,20 @@ y el motivo.
 - Un `TaskCanceledException`/`OperationCanceledException` logueado en `Error` cuenta igual: si alguien lo loguea así, es ruido que
   conviene ver.
 
+- **Serie de alerta sembrada** (ajuste del builder, 2026-11-21): `increase()` toma la primera muestra de una serie como base, así que
+  la primera excepción de un `category`/`exception_type` nuevo no dispararía una alerta sobre `qep.log.errors`. Para la alerta hay un
+  segundo instrumento, `ObservableCounter<long>` `qep.log.error_entries` (`qep_log_error_entries_total`), con solo `level`
+  (`Error`, `Critical`) y `has_exception` (`true`, `false`): cuatro series que nacen en cero y se reportan siempre. Un
+  `ObservableCounter` no depende de que el exportador ya esté escuchando cuando se siembra (precedente: `MessagingMetrics`).
+  El proveedor recibe el `Meter` por constructor (`QepObservability.Meter` en producción, uno propio en cada prueba).
+
 ### 2. Contador de fallas de Siigo
 
 - Clase `SiigoMetrics` en `Modules.Siigo.Infrastructure`, meter `Qep.Siigo`, registrada como singleton e inyectada en `SiigoApiClient`.
-- Instrumento: `Counter<long>` `qep.siigo.call_failures`, unidad `{call}`. En Prometheus: `qep_siigo_call_failures_total`.
+- Instrumento: `ObservableCounter<long>` `qep.siigo.call_failures`, unidad `{call}`. En Prometheus: `qep_siigo_call_failures_total`.
+  Nace sembrado en cero para cada operación × los motivos fijos (`timeout`, `network`, `credentials_rejected`, `invalid_response`,
+  `partner_id_missing`, `auth_without_token`), por la razón de `increase()` de la sección 1. Los `http_<status>` nacen al ocurrir.
+  Un motivo vacío (`http_` sin status) se cuenta como `unknown`.
 - Se suma en `SiigoApiClient.RecordAsync` **antes** de la guarda `failures is null || capture is null`. Así cuentan también las fallas sin
   captura (`partner_id_missing`) y los hosts sin `ISiigoCallFailureLog`.
 - Etiquetas:
@@ -92,7 +102,8 @@ El documento de `migracion-k8s` define paneles y reglas. Este repo garantiza los
 
 | Serie | Etiquetas | Uso propuesto |
 |---|---|---|
-| `qep_log_errors_total` | `level`, `category`, `exception_type` | Errores por categoría y tipo; alerta de excepciones no controladas |
+| `qep_log_errors_total` | `level`, `category`, `exception_type` | Errores por categoría y tipo (paneles, no alertas) |
+| `qep_log_error_entries_total` | `level`, `has_exception` | Alerta de excepciones no controladas |
 | `qep_siigo_call_failures_total` | `operation`, `reason` | Fila Siigo; alertas de credenciales y transitorios |
 | `http_client_request_duration_seconds_*` | `server_address`, `http_response_status_code`, `error_type` | Errores por host externo (ya existe) |
 | `qep_queue_*` | `queue` | Fila «¿Seguro desplegar?» (ya existe) |
@@ -103,7 +114,7 @@ Alertas aprobadas por el owner (umbrales iniciales):
 |---|---|---|
 | Siigo rechaza las credenciales | `increase(qep_siigo_call_failures_total{reason="credentials_rejected"}[5m]) > 0` | crítica |
 | Siigo con fallas transitorias | `sum(increase(qep_siigo_call_failures_total{reason=~"timeout\|network\|http_(408\|429\|5..)"}[10m])) > 3` | aviso |
-| Excepciones no controladas | `sum(increase(qep_log_errors_total{exception_type!="none"}[5m])) > 0` | aviso |
+| Excepciones no controladas | `sum(increase(qep_log_error_entries_total{has_exception="true"}[5m])) > 0` | aviso |
 
 ## Pendientes y decisiones del builder
 
