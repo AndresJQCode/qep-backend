@@ -38,7 +38,7 @@ internal sealed class SiigoApiClient(
 
     /// <summary>Tope de páginas, el mismo del auto-vínculo: un Siigo que siguiera devolviendo páginas llenas no cuelga la petición.</summary>
     private const int MaxProductPages = 1000;
-    private const int ListPageSize = 100;
+    private const int DefaultListPageSize = 25;
     private const int MaxListPages = 100;
 
     // Si el token viene sin expires_in, lo que Siigo documenta: un día.
@@ -274,25 +274,30 @@ internal sealed class SiigoApiClient(
         ];
 
     /// <summary>
-    /// Todas las páginas de una lista. Siigo pagina de a 25 por defecto, y leer sólo la primera dejaba fuera al usuario, la bodega o el
-    /// centro de costo 26 (spec 2026-11-20 §4.3). Se piden de a <see cref="ListPageSize"/> hasta juntar <c>total_results</c> o recibir
-    /// una página vacía; una respuesta sin <c>pagination</c> (un arreglo pelado) es la lista entera. <see cref="MaxListPages"/> corta
-    /// una paginación que no termina.
+    /// Todas las páginas de una lista. Siigo pagina algunas de a 25 por defecto, y leer sólo la primera dejaba fuera al usuario, la bodega
+    /// o el centro de costo 26 (spec 2026-11-20 §4.3). La primera petición va tal cual, sin parámetros de página: los endpoints que
+    /// devuelven un arreglo pelado no se tocan. Sólo si la respuesta trae <c>pagination</c> y faltan resultados se piden las siguientes,
+    /// con el <c>page_size</c> que Siigo dijo usar, hasta juntar <c>total_results</c> o recibir una página vacía.
+    /// <see cref="MaxListPages"/> corta una paginación que no termina.
     /// </summary>
     private async Task<IReadOnlyList<JsonElement>> ReadAllPagesAsync(SiigoCredentials credentials, string path, CancellationToken cancellationToken)
     {
         var separator = path.Contains('?', StringComparison.Ordinal) ? '&' : '?';
-        var items = new List<JsonElement>();
-        for (var page = 1; page <= MaxListPages; page++)
+        var reply = await GetAsync(credentials, path, cancellationToken);
+        var items = new List<JsonElement>(SiigoJson.Items(reply.Body));
+        var pagination = SiigoJson.Pagination(reply.Body);
+        var pageSize = pagination.PageSize is > 0 ? pagination.PageSize.Value : DefaultListPageSize;
+        for (var page = 2; page <= MaxListPages && pagination.TotalResults is { } total && items.Count < total; page++)
         {
-            var reply = await GetAsync(credentials, $"{path}{separator}page={page}&page_size={ListPageSize}", cancellationToken);
+            reply = await GetAsync(credentials, $"{path}{separator}page={page}&page_size={pageSize}", cancellationToken);
             var pageItems = SiigoJson.Items(reply.Body);
-            items.AddRange(pageItems);
-            var pagination = SiigoJson.Pagination(reply.Body);
-            if (pageItems.Count == 0 || pagination.TotalResults is not { } total || items.Count >= total)
+            if (pageItems.Count == 0)
             {
                 break;
             }
+
+            items.AddRange(pageItems);
+            pagination = SiigoJson.Pagination(reply.Body);
         }
 
         return items;

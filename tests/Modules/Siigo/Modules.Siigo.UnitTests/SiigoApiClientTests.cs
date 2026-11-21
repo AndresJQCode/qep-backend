@@ -299,7 +299,7 @@ public sealed class SiigoApiClientTests : IDisposable
 
         var options = await _client.ListDocumentTypesAsync(Credentials, TestContext.Current.CancellationToken);
 
-        Assert.Equal("?type=FV&page=1&page_size=100", _api.Requests.Last().Query);
+        Assert.Equal("?type=FV", _api.Requests.Last().Query);
         var option = Assert.Single(options);
         Assert.Equal(new SiigoOption("24446", "Factura de venta", "Factura de venta electrónica"), option);
     }
@@ -312,7 +312,7 @@ public sealed class SiigoApiClientTests : IDisposable
 
         await _client.ListPaymentTypesAsync(Credentials, TestContext.Current.CancellationToken);
 
-        Assert.Equal("?document_type=FV&page=1&page_size=100", _api.Requests.Last().Query);
+        Assert.Equal("?document_type=FV", _api.Requests.Last().Query);
     }
 
     [Fact]
@@ -333,18 +333,19 @@ public sealed class SiigoApiClientTests : IDisposable
     public async Task ListsFollowEveryPageUntilTotalResults()
     {
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
-        var first = string.Join(",", Enumerable.Range(1, 100).Select(id => $$"""{"id":{{id}},"first_name":"U{{id}}","email":"u{{id}}@empresa.test","active":true}"""));
+        var first = string.Join(",", Enumerable.Range(1, 25).Select(id => $$"""{"id":{{id}},"first_name":"U{{id}}","email":"u{{id}}@empresa.test","active":true}"""));
         _api.OnSequence(
             "/v1/users",
-            (HttpStatusCode.OK, $$"""{"pagination":{"page":1,"page_size":100,"total_results":101},"results":[{{first}}]}"""),
-            (HttpStatusCode.OK, """{"pagination":{"page":2,"page_size":100,"total_results":101},"results":[{"id":9999,"first_name":"Ultima","email":"ultima@empresa.test","active":true}]}"""));
+            (HttpStatusCode.OK, $$"""{"pagination":{"page":1,"page_size":25,"total_results":26},"results":[{{first}}]}"""),
+            (HttpStatusCode.OK, """{"pagination":{"page":2,"page_size":25,"total_results":26},"results":[{"id":9999,"first_name":"Ultima","email":"ultima@empresa.test","active":true}]}"""));
 
         var users = await _client.ListUsersAsync(Credentials, TestContext.Current.CancellationToken);
 
-        Assert.Equal(101, users.Count);
+        Assert.Equal(26, users.Count);
         Assert.Equal("9999", users[^1].Id);
+        // La primera petición va tal cual (como antes del arreglo); las siguientes piden la página con el tamaño que Siigo dijo usar.
         Assert.Equal(
-            ["?page=1&page_size=100", "?page=2&page_size=100"],
+            ["", "?page=2&page_size=25"],
             _api.Requests.Where(request => request.Path == "/v1/users").Select(request => request.Query));
     }
 
@@ -364,11 +365,17 @@ public sealed class SiigoApiClientTests : IDisposable
     public async Task APathWithQueryKeepsItAndAddsThePage()
     {
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
-        _api.On("/v1/document-types", HttpStatusCode.OK, """[{"id":24446,"name":"Factura de venta","active":true}]""");
+        _api.OnSequence(
+            "/v1/payment-types",
+            (HttpStatusCode.OK, """{"pagination":{"page":1,"page_size":1,"total_results":2},"results":[{"id":1,"name":"Uno","active":true}]}"""),
+            (HttpStatusCode.OK, """{"pagination":{"page":2,"page_size":1,"total_results":2},"results":[{"id":2,"name":"Dos","active":true}]}"""));
 
-        await _client.ListDocumentTypesAsync(Credentials, TestContext.Current.CancellationToken);
+        var types = await _client.ListPaymentTypesAsync(Credentials, TestContext.Current.CancellationToken);
 
-        Assert.Equal("?type=FV&page=1&page_size=100", Assert.Single(_api.Requests, request => request.Path == "/v1/document-types").Query);
+        Assert.Equal(["1", "2"], types.Select(type => type.Id));
+        Assert.Equal(
+            ["?document_type=FV", "?document_type=FV&page=2&page_size=1"],
+            _api.Requests.Where(request => request.Path == "/v1/payment-types").Select(request => request.Query));
     }
 
     [Fact]
