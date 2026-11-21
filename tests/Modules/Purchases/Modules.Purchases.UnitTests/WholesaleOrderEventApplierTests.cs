@@ -19,11 +19,71 @@ public sealed class WholesaleOrderEventApplierTests
     private readonly FakePurchasesCatalogWriter _writer = new();
     private readonly FakePurchasesAudit _audit = new();
     private readonly FakePurchasesUnitOfWork _unitOfWork = new();
+    private readonly FakePurchasesProductImages _images = new();
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private WholesaleOrderEventApplier Applier() =>
-        new(_orders, _writer, _audit, _unitOfWork, NullLogger<WholesaleOrderEventApplier>.Instance);
+        new(_orders, _writer, _images, _audit, _unitOfWork, NullLogger<WholesaleOrderEventApplier>.Instance);
+
+    // Mayorista imagen del producto (spec 2026-11-21): la foto se copia después del commit, sólo a lo que Compras creó.
+    [Fact]
+    public async Task TheImageOfACreatedProductIsCopiedAfterTheApprovalIsApplied()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+        var line = order.Lines[0];
+        var applier = Applier();
+
+        await applier.ApplyApprovedAsync(Approval(order, Final(line, 2m)), Later, Ct);
+        Assert.Empty(_images.Copies);
+
+        await applier.CopyPendingImagesAsync(Later, Ct);
+
+        var copy = Assert.Single(_images.Copies);
+        Assert.Equal(
+            (TenantId, Wholesaler, line.SupplierVariantId!.Value, _writer.Existing["SKU-1"]),
+            (copy.BuyerTenantId, copy.SupplierTenantId, copy.SupplierVariantId, copy.ProductId));
+    }
+
+    [Fact]
+    public async Task AProductThatAlreadyExistedGetsNoImage()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+        _writer.Existing["SKU-1"] = Guid.CreateVersion7();
+        var applier = Applier();
+
+        await applier.ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m)), Later, Ct);
+        await applier.CopyPendingImagesAsync(Later, Ct);
+
+        Assert.Empty(_images.Copies);
+    }
+
+    [Fact]
+    public async Task AFailingImageCopyNeverThrowsAndTheOtherCopiesStillRun()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder(
+            [PurchaseOrderTestData.LinkedLine(code: "SKU-1"), PurchaseOrderTestData.LinkedLine(code: "SKU-2")]));
+        _images.Fails = true;
+        var applier = Applier();
+
+        await applier.ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m), Final(order.Lines[1], 1m)), Later, Ct);
+        await applier.CopyPendingImagesAsync(Later, Ct);
+
+        Assert.Equal(2, _images.Copies.Count);
+    }
+
+    [Fact]
+    public async Task ARepeatedApprovalLeavesNoImageToCopy()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+        await Applier().ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m)), Later, Ct);
+
+        var repeated = Applier();
+        await repeated.ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m)), Later, Ct);
+        await repeated.CopyPendingImagesAsync(Later, Ct);
+
+        Assert.Empty(_images.Copies);
+    }
 
     private static WholesaleApprovedLine Final(PurchaseOrderLine line, decimal quantity, decimal unitPrice = 11900m) =>
         new(line.Id, line.SupplierVariantId!.Value, line.Code, line.Name, quantity, unitPrice, line.TaxRatePercent);

@@ -102,6 +102,9 @@ internal sealed partial class WholesaleOrderEventsProcessor(IServiceScopeFactory
         await Claims.MarkProcessedAsync(message, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        // Spec 2026-11-21: las fotos de los productos creados se copian ya confirmado todo. Nunca lanza por la foto.
+        await applier.CopyPendingImagesAsync(message.Now, cancellationToken);
     }
 
     // Sin intento (null) falló el reclamo mismo: no se contó nada y el mensaje vuelve en el tick siguiente.
