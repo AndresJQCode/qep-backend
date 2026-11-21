@@ -138,10 +138,11 @@ public static class AvailabilityEngine
     private static bool IsClosed(AvailabilityQuery query, ResourceId resource, DateTimeOffset start, DateTimeOffset end) =>
         query.Closures.Any(closure => closure.AppliesTo(resource) && closure.Overlaps(start, end));
 
-    /// <summary>Minutos locales de un día del tenant a un instante. Un rango que termina a las 24:00 cae en la medianoche siguiente.</summary>
+    /// <summary>Minutos locales de un día del tenant a un instante en UTC (Npgsql sólo escribe <c>timestamptz</c> con offset cero). Un rango
+    /// que termina a las 24:00 cae en la medianoche siguiente.</summary>
     private static DateTimeOffset ToInstant(DateOnly day, int minuteOfDay, TimeZoneInfo timeZone)
     {
         var local = day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified).AddMinutes(minuteOfDay);
-        return new DateTimeOffset(local, timeZone.GetUtcOffset(local));
+        return new DateTimeOffset(local, timeZone.GetUtcOffset(local)).ToUniversalTime();
     }
 }

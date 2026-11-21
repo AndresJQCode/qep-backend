@@ -1,5 +1,8 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Scheduling.Application;
+using Modules.Scheduling.Infrastructure.Persistence;
 
 namespace Modules.Scheduling.Infrastructure;
 
@@ -9,9 +12,19 @@ public static class SchedulingInfrastructureExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        _ = configuration.GetConnectionString("QepDatabase")
+        var connectionString = configuration.GetConnectionString("QepDatabase")
             ?? throw new InvalidOperationException(
                 "Connection string 'QepDatabase' is required.");
+
+        services.AddDbContext<SchedulingDbContext>(options =>
+            options.UseNpgsql(
+                connectionString,
+                npgsql => npgsql.MigrationsHistoryTable(
+                    "__ef_migrations_history",
+                    SchedulingDbContext.Schema)));
+
+        services.AddScoped<ISchedulingUnitOfWork, SchedulingUnitOfWork>();
+        services.AddScoped<ISchedulingProvisioner, SchedulingProvisioner>();
 
         return services;
     }

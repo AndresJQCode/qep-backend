@@ -35,6 +35,7 @@ using Modules.Geography.Infrastructure;
 using Modules.Hr.Api;
 using Modules.Hr.Infrastructure;
 using Modules.Scheduling.Api;
+using Modules.Scheduling.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
@@ -537,6 +538,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Hr (spec 2026-11-20): after Audit (writes audit.entries) and after Companies (hr.sites and hr.employment_contracts have FKs to
     // companies.companies). Memberships, cities, countries and files are soft references.
     await services.InitializeHrDatabaseAsync(
+        cancellationToken);
+
+    // Scheduling (spec 2026-11-21): sin llaves foráneas a otros módulos (clientes, miembros, conversaciones y plantillas son referencias
+    // blandas), pero detrás de Hr por orden de despliegue; crea btree_gist para la restricción de exclusión de las sesiones.
+    await services.InitializeSchedulingDatabaseAsync(
         cancellationToken);
 
     // Support (spec 2026-11-14): después de Audit (escribe en audit.entries) y de Companies: support.form_versions lleva una FK real a

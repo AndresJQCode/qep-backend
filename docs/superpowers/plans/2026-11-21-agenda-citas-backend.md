@@ -5,8 +5,9 @@
 > tareas se ejecutan en **cuatro bloques**, un implementador por bloque, una revisión por bloque y la revisión fuerte una sola vez al final.
 > Cada tarea conserva su commit.
 
-**Estado:** Bloque A implementado (2026-11-21): `03798bb` (llave del módulo), `d05482e` (esqueleto, permisos y roles), `b773221` (tipos y
-festivos). Las desviaciones respecto a lo que decía este plan están en «Correcciones durante la implementación».
+**Estado:** Bloques A y B implementados (2026-11-21). A: `03798bb` (llave del módulo), `d05482e` (esqueleto, permisos y roles), `b773221`
+(tipos y festivos). B: `13f4fad` (dominio), `df7bff1` (motor de disponibilidad) y la persistencia con su migración (Tarea 6). Las desviaciones
+respecto a lo que decía este plan están en «Correcciones durante la implementación».
 
 **Spec:** `docs/superpowers/specs/2026-11-21-agenda-citas-design.md` (aprobada por el owner el 2026-11-21). Este plan la baja a tareas y
 **corrige tres puntos de la spec** tras leer el código (sección «Correcciones a la spec»).
@@ -58,6 +59,21 @@ La spec se corrige en el mismo commit que este plan.
    El adaptador de festivos es `ISchedulingHolidayCalendar.HolidaysAsync(tenantId, firstDay, lastDay)` (CA1716 reserva `to` y `end`).
 9. **Cada categoría de permiso necesita su etiqueta** en `PermissionVocabulary.CategoryLabels` (`["Agenda"] = "Agenda"`); sin ella falla
    `EveryActionAndCategoryHasALabel`. El permiso `agenda.read_all` ocupa la celda `scheduling.agenda` / `read` de la matriz de roles.
+
+10. **El motor devuelve instantes en UTC**: Npgsql sólo escribe `timestamptz` con offset cero, y un `DateTimeOffset` con el offset del tenant
+    (-05:00) habría fallado al guardar la primera sesión.
+11. **Los repositorios no se crean en la Tarea 6**: cada uno nace con el caso de uso que lo usa (Tareas 7 a 10), para que ninguno exista sin
+    una prueba que lo ejerza. La Tarea 6 deja el `SchedulingDbContext`, la migración, `ISchedulingUnitOfWork` y `ISchedulingProvisioner`.
+12. **`ISchedulingProvisioner.EnsureAsync(tenantId, mainLocationName, ct)`** recibe el nombre de la sede: Infrastructure no conoce a Tenancy, y
+    el caso de uso lo lee de `ITenantDirectory.GetDisplayNameAsync` por un puerto de Bootstrapper (Tarea 7). Con las reglas ya creadas
+    devuelve sin abrir transacción: una lectura por clave.
+13. **Mapeo de las listas**: los servicios y recursos de una franja van en columnas `uuid[]` (el orden de los recursos es el de la asignación
+    «primero libre») y las semanas y la fecha puntual en `jsonb`. Son pocas franjas por tenant y se filtran en memoria; sus ids no tienen FK
+    (los revisa Application al guardar). La proyección de `audit.entries` entra con la auditoría (Tarea 9), no antes.
+14. **Verificación sin Docker**: las pruebas de integración usan Testcontainers y no corren en un contenedor sin Docker. Las de persistencia
+    de la Tarea 6 se corrieron contra un Postgres 16 nativo con una copia local de `SchedulingDatabase` (no commiteada): 16 de 16 en verde. Para
+    comprobar que la prueba vigila lo que dice, se desactivó la restricción de exclusión en la migración y fallaron exactamente las dos de
+    solapamiento. Las de arriba de la API (Tareas 7 en adelante) sí necesitan el harness de siempre.
 
 ## Global Constraints
 
