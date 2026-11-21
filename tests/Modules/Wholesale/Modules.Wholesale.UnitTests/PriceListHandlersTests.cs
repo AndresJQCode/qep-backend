@@ -225,7 +225,7 @@ public sealed class PriceListHandlersTests
             Assert.Equal((_tenant, _context.SubjectId, "price_list", created.Id.ToString(), "success"),
                 (entry.TenantId, entry.ActorId, entry.ResourceType, entry.ResourceId, entry.Outcome)));
         Assert.Equal([Now, Now.AddHours(1), Now.AddHours(2)], _audit.Entries.Select(entry => entry.OccurredAt));
-        Assert.Equal(["name", "discountPercent", "visibility", "categoryIds", "showPrices"], _audit.Entries[0].ChangedFields);
+        Assert.Equal(["name", "discountPercent", "visibility", "categoryIds", "showPrices", "exclusions"], _audit.Entries[0].ChangedFields);
         Assert.Equal(3, _unitOfWork.Saves);
         Assert.Empty(_lists.Lists);
     }
@@ -346,5 +346,112 @@ public sealed class PriceListHandlersTests
 
         Assert.False(detail.ShowPrices);
         Assert.Equal([("Oculta", false), ("Visible", true)], response.Items.Select(item => (item.Name, item.ShowPrices)));
+    }
+
+    // Spec 2026-11-20: exclusions.
+    private static PriceListExclusionInput Hide(string kind, Guid id) => new(kind, id);
+
+    [Fact]
+    public async Task CreateStoresExclusionsAndReturnsThemWithNamesCategoriesFirst()
+    {
+        var kitchen = _catalog.AddCategory("Cocina");
+        var home = _catalog.AddCategory("Hogar");
+        var pot = _catalog.AddProduct("P-1", "Olla", home, cop: 10m);
+        var pan = _catalog.AddProduct("P-2", "Arepera", kitchen, cop: 10m);
+        var potId = _catalog.ProductIdOf(pot);
+        var panId = _catalog.ProductIdOf(pan);
+
+        var detail = await CreateHandler().HandleAsync(
+            new CreatePriceListCommand(
+                _tenant, "Mayoristas", 15m, "AllActive", [],
+                Exclusions: [Hide("Product", potId), Hide("Category", home), Hide("Product", panId), Hide("Category", kitchen)]),
+            Ct);
+
+        Assert.Equal(
+            [
+                new PriceListExclusionDto("Category", kitchen, "Cocina", null, null),
+                new PriceListExclusionDto("Category", home, "Hogar", null, null),
+                new PriceListExclusionDto("Product", panId, "Arepera", "P-2", "Cocina"),
+                new PriceListExclusionDto("Product", potId, "Olla", "P-1", "Hogar"),
+            ],
+            detail.Exclusions);
+        Assert.Equal(4, Assert.Single(_lists.Lists.Values).Exclusions.Count);
+        Assert.Contains("exclusions", Assert.Single(_audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task CreateWithoutExclusionsReturnsAnEmptyList()
+    {
+        var detail = await CreateHandler().HandleAsync(new CreatePriceListCommand(_tenant, "Mayoristas", 15m, "AllActive", []), Ct);
+
+        Assert.NotNull(detail.Exclusions);
+        Assert.Empty(detail.Exclusions!);
+    }
+
+    [Fact]
+    public async Task CreateWithAnUnknownDestinationIs422OnItsIndex()
+    {
+        var home = _catalog.AddCategory("Hogar");
+
+        var error = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() => CreateHandler().HandleAsync(
+            new CreatePriceListCommand(
+                _tenant, "Mayoristas", 15m, "AllActive", [],
+                Exclusions: [Hide("Category", home), Hide("Product", Guid.CreateVersion7()), Hide("Category", Guid.CreateVersion7())]),
+            Ct));
+
+        Assert.Equal(["Exclusions[1]", "Exclusions[2]"], error.Errors.Select(failure => failure.PropertyName).ToArray());
+        Assert.Empty(_lists.Lists);
+        Assert.Equal(0, _unitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task UpdateReplacesExclusionsAndBumpsTheVersion()
+    {
+        var home = _catalog.AddCategory("Hogar");
+        var list = SeedList("Mayoristas");
+
+        var detail = await UpdateHandler().HandleAsync(
+            new UpdatePriceListCommand(
+                _tenant, list.Id.Value, 1, "Mayoristas", 10m, "AllActive", [], Exclusions: [Hide("Category", home)]),
+            Ct);
+        var cleared = await UpdateHandler().HandleAsync(
+            new UpdatePriceListCommand(_tenant, list.Id.Value, 2, "Mayoristas", 10m, "AllActive", []), Ct);
+
+        Assert.Equal([new PriceListExclusionDto("Category", home, "Hogar", null, null)], detail.Exclusions);
+        Assert.Equal((2L, 3L), (detail.Version, cleared.Version));
+        Assert.Empty(cleared.Exclusions!);
+        Assert.Contains("exclusions", _audit.Entries[0].ChangedFields);
+    }
+
+    [Fact]
+    public async Task GetDropsExclusionsWhoseDestinationNoLongerExistsAndListCarriesTheCounts()
+    {
+        var home = _catalog.AddCategory("Hogar");
+        var gone = Guid.CreateVersion7();
+        var pot = _catalog.AddProduct("P-1", "Olla", home, cop: 10m);
+        var potId = _catalog.ProductIdOf(pot);
+        var deleted = _catalog.AddProduct("P-2", "Vieja", home, cop: 10m);
+        var deletedId = _catalog.ProductIdOf(deleted);
+        _catalog.DeletedProducts.Add(deletedId);
+        var list = _lists.Seed(PriceList.Create(
+            _tenant, "Mayoristas", 10m, PriceListVisibility.AllActive, [], Now,
+            exclusions:
+            [
+                new PriceListExclusion(PriceListExclusionKind.Category, home),
+                new PriceListExclusion(PriceListExclusionKind.Category, gone),
+                new PriceListExclusion(PriceListExclusionKind.Product, potId),
+                new PriceListExclusion(PriceListExclusionKind.Product, deletedId),
+            ]));
+
+        var detail = await GetHandler().HandleAsync(new GetPriceListQuery(_tenant, list.Id.Value), Ct);
+        var summary = Assert.Single((await ListHandler().HandleAsync(new ListPriceListsQuery(_tenant), Ct)).Items);
+
+        Assert.Equal(
+            [
+                new PriceListExclusionDto("Category", home, "Hogar", null, null),
+                new PriceListExclusionDto("Product", potId, "Olla", "P-1", "Hogar"),
+            ],
+            detail.Exclusions);
+        Assert.Equal((2, 2), (summary.HiddenCategoryCount, summary.HiddenProductCount));
     }
 }

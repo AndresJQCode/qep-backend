@@ -11,9 +11,19 @@ public sealed class PriceList
 
     public const int MaxCategories = 200;
 
+    /// <summary>Spec 2026-11-20: tope de categorías excluidas por lista.</summary>
+    public const int MaxHiddenCategories = 200;
+
+    /// <summary>Spec 2026-11-20: tope de productos excluidos por lista.</summary>
+    public const int MaxHiddenProducts = 1000;
+
     private const int DiscountDecimals = 2;
 
     private List<Guid> _categoryIds = [];
+
+    private List<Guid> _excludedCategoryIds = [];
+
+    private List<Guid> _excludedProductIds = [];
 
     // EF Core materializa por acá; Create es el único punto de entrada de código.
     private PriceList()
@@ -40,6 +50,20 @@ public sealed class PriceList
     /// <summary>Spec 2026-11-19: con <c>false</c> el distribuidor de esta lista no recibe montos (catálogo y vista previa de Compras). Por defecto <c>true</c>.</summary>
     public bool ShowPrices { get; private set; } = true;
 
+    /// <summary>
+    /// Spec 2026-11-20: lo que el distribuidor no ve aunque esté en el alcance de la lista, categorías primero y luego productos,
+    /// sin repetir. Se guarda en dos columnas, pero el dominio expone una sola lista.
+    /// </summary>
+    public IReadOnlyList<PriceListExclusion> Exclusions =>
+        [
+            .. _excludedCategoryIds.Select(id => new PriceListExclusion(PriceListExclusionKind.Category, id)),
+            .. _excludedProductIds.Select(id => new PriceListExclusion(PriceListExclusionKind.Product, id)),
+        ];
+
+    public IReadOnlyList<Guid> ExcludedCategoryIds => _excludedCategoryIds;
+
+    public IReadOnlyList<Guid> ExcludedProductIds => _excludedProductIds;
+
     public long Version { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -53,9 +77,11 @@ public sealed class PriceList
         PriceListVisibility visibility,
         IReadOnlyCollection<Guid> categoryIds,
         DateTimeOffset now,
-        bool showPrices = true)
+        bool showPrices = true,
+        IReadOnlyCollection<PriceListExclusion>? exclusions = null)
     {
         var terms = Normalize(name, discountPercent, visibility, categoryIds);
+        var (hiddenCategories, hiddenProducts) = NormalizeExclusions(exclusions);
         return new PriceList
         {
             Id = PriceListId.New(),
@@ -65,6 +91,8 @@ public sealed class PriceList
             Visibility = visibility,
             ShowPrices = showPrices,
             _categoryIds = terms.CategoryIds,
+            _excludedCategoryIds = hiddenCategories,
+            _excludedProductIds = hiddenProducts,
             Version = 1,
             CreatedAt = now,
             UpdatedAt = now,
@@ -77,17 +105,38 @@ public sealed class PriceList
         PriceListVisibility visibility,
         IReadOnlyCollection<Guid> categoryIds,
         DateTimeOffset now,
-        bool showPrices)
+        bool showPrices,
+        IReadOnlyCollection<PriceListExclusion>? exclusions = null)
     {
         // Se valida todo antes de asignar: un cambio rechazado no deja la lista a medias.
         var terms = Normalize(name, discountPercent, visibility, categoryIds);
+        var (hiddenCategories, hiddenProducts) = NormalizeExclusions(exclusions);
         Name = terms.Name;
         DiscountPercent = discountPercent;
         Visibility = visibility;
         ShowPrices = showPrices;
         _categoryIds = terms.CategoryIds;
+        _excludedCategoryIds = hiddenCategories;
+        _excludedProductIds = hiddenProducts;
         Version++;
         UpdatedAt = now;
+    }
+
+    /// <summary>Sin repetir y en el orden recibido; con más de los topes, el dominio da el código y el validador el campo.</summary>
+    private static (List<Guid> Categories, List<Guid> Products) NormalizeExclusions(
+        IReadOnlyCollection<PriceListExclusion>? exclusions)
+    {
+        var distinct = (exclusions ?? []).Distinct().ToList();
+        var categories = distinct.Where(item => item.Kind == PriceListExclusionKind.Category).Select(item => item.Id).ToList();
+        var products = distinct.Where(item => item.Kind == PriceListExclusionKind.Product).Select(item => item.Id).ToList();
+        if (categories.Count > MaxHiddenCategories || products.Count > MaxHiddenProducts)
+        {
+            throw new WholesaleDomainException(
+                WholesaleErrorCodes.PriceListExclusionsTooMany,
+                $"Una lista oculta a lo sumo {MaxHiddenCategories} categorías y {MaxHiddenProducts} productos.");
+        }
+
+        return (categories, products);
     }
 
     private static (string Name, List<Guid> CategoryIds) Normalize(

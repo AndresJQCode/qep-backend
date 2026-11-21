@@ -13,7 +13,8 @@ public sealed record PreviewPriceListCommand(
     Guid TenantId,
     decimal DiscountPercent,
     string Visibility,
-    IReadOnlyList<Guid> CategoryIds)
+    IReadOnlyList<Guid> CategoryIds,
+    IReadOnlyList<PriceListExclusionInput>? Exclusions = null)
     : ICommand<PriceListPreviewDto>, IPriceListTermsCommand;
 
 /// <summary>
@@ -51,8 +52,21 @@ public sealed class PreviewPriceListHandler(
         }
 
         var rounding = await priceRounding.GetAsync(command.TenantId, currency, cancellationToken);
+        var exclusions = PriceListTerms.ExclusionsOf(command);
+        var hiddenCategories = exclusions.Where(item => item.Kind == PriceListExclusionKind.Category).Select(item => item.Id).ToArray();
+        var hiddenProducts = exclusions.Where(item => item.Kind == PriceListExclusionKind.Product).Select(item => item.Id).ToArray();
         var (items, totalProducts) = await catalog.SampleAsync(
-            command.TenantId, currency, categoryIds, SampleSize, cancellationToken);
+            command.TenantId, currency, categoryIds, hiddenCategories, hiddenProducts, SampleSize, cancellationToken);
+
+        // Spec 2026-11-20: cuántos esconden las exclusiones = el total del alcance sin ellas menos el total con ellas. Sólo se
+        // pregunta con exclusiones; sin ellas la vista previa cuesta lo de siempre.
+        var hidden = 0;
+        if (exclusions.Count > 0)
+        {
+            var (_, unfilteredTotal) = await catalog.SampleAsync(
+                command.TenantId, currency, categoryIds, [], [], take: 1, cancellationToken);
+            hidden = Math.Max(0, unfilteredTotal - totalProducts);
+        }
 
         return new PriceListPreviewDto(
             currency,
@@ -64,6 +78,7 @@ public sealed class PreviewPriceListHandler(
                     item.Name,
                     item.BasePrice,
                     WholesalePricing.ListPrice(item.BasePrice, command.DiscountPercent, rounding)))
-                .ToList());
+                .ToList(),
+            hidden);
     }
 }

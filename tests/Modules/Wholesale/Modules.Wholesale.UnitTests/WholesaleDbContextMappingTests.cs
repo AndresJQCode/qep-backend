@@ -50,6 +50,19 @@ public sealed class WholesaleDbContextMappingTests
     }
 
     [Fact]
+    public void PriceListExclusionsAreTwoUuidArrayColumns()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var priceLists = context.Model.FindEntityType(typeof(PriceList))!;
+
+        var categories = priceLists.FindProperty("_excludedCategoryIds")!;
+        var products = priceLists.FindProperty("_excludedProductIds")!;
+
+        Assert.Equal(("excluded_category_ids", "uuid[]"), (categories.GetColumnName(), categories.GetColumnType()));
+        Assert.Equal(("excluded_product_ids", "uuid[]"), (products.GetColumnName(), products.GetColumnType()));
+    }
+
+    [Fact]
     public void TheTokenHashIsTheOnlyTokenColumn()
     {
         using var context = new WholesaleDbContextFactory().CreateDbContext([]);

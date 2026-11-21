@@ -31,7 +31,7 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
 
         await using var scope = Factory.Services.CreateAsyncScope();
         var reader = scope.ServiceProvider.GetRequiredService<IWholesaleCatalogReader>();
-        var (items, _) = await reader.SampleAsync(tenant.TenantId, "COP", null, 20, Ct);
+        var (items, _) = await reader.SampleAsync(tenant.TenantId, "COP", null, null, null, 20, Ct);
 
         var item = Assert.Single(items);
         Assert.Equal((priced, "A-1", "Olla", 10_000m), (item.VariantId, item.Code, item.Name, item.BasePrice));
@@ -52,7 +52,7 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
 
         await using var scope = Factory.Services.CreateAsyncScope();
         var reader = scope.ServiceProvider.GetRequiredService<IWholesaleCatalogReader>();
-        var (items, total) = await reader.SampleAsync(tenant.TenantId, "COP", [home], 20, Ct);
+        var (items, total) = await reader.SampleAsync(tenant.TenantId, "COP", [home], null, null, 20, Ct);
 
         Assert.Equal(["Cojín", "Olla"], items.Select(item => item.Name));
         Assert.Equal(2, total);
@@ -105,9 +105,9 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
         await using var scope = Factory.Services.CreateAsyncScope();
         var reader = scope.ServiceProvider.GetRequiredService<IWholesaleCatalogReader>();
         var (byCategory, categoryTotal) = await reader.SearchSellableAsync(
-            tenant.TenantId, "COP", [home], null, 1, 50, Ct);
-        var (byText, textTotal) = await reader.SearchSellableAsync(tenant.TenantId, "COP", [home], "olla", 1, 50, Ct);
-        var (byCode, _) = await reader.SearchSellableAsync(tenant.TenantId, "COP", null, "F-1", 1, 50, Ct);
+            tenant.TenantId, "COP", [home], null, null, null, 1, 50, Ct);
+        var (byText, textTotal) = await reader.SearchSellableAsync(tenant.TenantId, "COP", [home], null, null, "olla", 1, 50, Ct);
+        var (byCode, _) = await reader.SearchSellableAsync(tenant.TenantId, "COP", null, null, null, "F-1", 1, 50, Ct);
 
         Assert.Equal(["Cojín", "Olla"], byCategory.Select(item => item.Name));
         Assert.Equal(2, categoryTotal);

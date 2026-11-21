@@ -134,4 +134,36 @@ public sealed class PreviewPriceListTests
         Assert.Equal("authorization.denied", error.Code);
         Assert.Empty(_catalog.SampleCalls);
     }
+
+    // Spec 2026-11-20: exclusions and hiddenProducts.
+    [Fact]
+    public async Task PreviewPassesTheExclusionsToTheReaderAndCountsWhatTheyHide()
+    {
+        var home = _catalog.AddCategory("Hogar");
+        var kitchen = _catalog.AddCategory("Cocina", parentId: home);
+        _catalog.AddProduct("H-1", "Olla", home, cop: 20000m);
+        _catalog.AddProduct("K-1", "Cuchillo", kitchen, cop: 30000m);
+        var loose = _catalog.AddProduct("L-1", "Tetera", home, cop: 40000m);
+
+        var preview = await Handler().HandleAsync(
+            new PreviewPriceListCommand(
+                _tenant, 10m, "AllActive", [],
+                [new PriceListExclusionInput("Category", kitchen), new PriceListExclusionInput("Product", _catalog.ProductIdOf(loose))]),
+            Ct);
+
+        Assert.Equal(["Olla"], preview.Items.Select(item => item.Name));
+        Assert.Equal((1, 2), (preview.TotalProducts, preview.HiddenProducts));
+        Assert.Contains(_catalog.SampleExclusions, call => call.Categories!.SequenceEqual([kitchen]) && call.Products!.Count == 1);
+    }
+
+    [Fact]
+    public async Task PreviewWithoutExclusionsHidesNothingAndAsksTheReaderOnce()
+    {
+        _catalog.AddProduct("H-1", "Olla", categoryId: null, cop: 20000m);
+
+        var preview = await Handler().HandleAsync(new PreviewPriceListCommand(_tenant, 10m, "AllActive", []), Ct);
+
+        Assert.Equal(0, preview.HiddenProducts);
+        Assert.Single(_catalog.SampleCalls);
+    }
 }

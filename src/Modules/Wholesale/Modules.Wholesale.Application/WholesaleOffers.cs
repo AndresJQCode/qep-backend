@@ -9,7 +9,9 @@ namespace Modules.Wholesale.Application;
 /// Fase 3: los términos de una relación <c>Active</c>, leídos para el comprador. <paramref name="AdvisorMembershipId"/> es el
 /// asesor del distribuidor (ruling X5: un solo nombre); <paramref name="VisibleCategoryIds"/> <c>null</c> es «todo el catálogo
 /// activo», si no, las categorías de la lista (sus descendientes también se ven). <paramref name="PriceListName"/> es la
-/// tarjeta «Tarifa» de la adenda del contrato.
+/// tarjeta «Tarifa» de la adenda del contrato. Spec 2026-11-20: <paramref name="HiddenCategoryIds"/> y
+/// <paramref name="HiddenProductIds"/> son lo que la lista excluye (vacías cuando no hay): lo excluido gana sobre el alcance, una
+/// categoría excluida oculta también sus descendientes y un producto excluido, todas sus variantes.
 /// </summary>
 public sealed record WholesaleTerms(
     Guid DistributorId,
@@ -20,6 +22,8 @@ public sealed record WholesaleTerms(
     decimal DiscountPercent,
     IReadOnlyCollection<Guid>? VisibleCategoryIds,
     string PriceListName,
+    IReadOnlyCollection<Guid> HiddenCategoryIds,
+    IReadOnlyCollection<Guid> HiddenProductIds,
     bool ShowPrices = true);
 
 /// <summary>Una variante con su precio de lista para el distribuidor (IVA incluido, con el redondeo del mayorista).</summary>
@@ -100,6 +104,8 @@ public sealed class WholesaleOffers(
             list.DiscountPercent,
             list.Visibility == PriceListVisibility.AllActive ? null : list.CategoryIds.ToArray(),
             list.Name,
+            list.ExcludedCategoryIds.ToArray(),
+            list.ExcludedProductIds.ToArray(),
             list.ShowPrices);
     }
 
@@ -142,7 +148,8 @@ public sealed class WholesaleOffers(
 
         var rounding = await priceRounding.GetAsync(wholesalerTenantId, terms.Currency, cancellationToken);
         var (items, total) = await catalog.SearchSellableAsync(
-            wholesalerTenantId, terms.Currency, categoryIds, search, page, pageSize, cancellationToken);
+            wholesalerTenantId, terms.Currency, categoryIds, terms.HiddenCategoryIds, terms.HiddenProductIds, search, page, pageSize,
+            cancellationToken);
 
         return new WholesaleOfferPage(
             terms.Currency,
@@ -158,6 +165,11 @@ public sealed class WholesaleOffers(
     {
         var all = await catalog.ListCategoriesAsync(wholesalerTenantId, cancellationToken);
         var visible = terms.VisibleCategoryIds is { } listed ? DescendantsOf(all, listed) : all.Select(node => node.Id).ToHashSet();
+        if (terms.HiddenCategoryIds.Count > 0)
+        {
+            // Spec 2026-11-20: lo excluido gana. Se quita la categoría y todo su subárbol; el padre no se toca.
+            visible.ExceptWith(DescendantsOf(all, terms.HiddenCategoryIds));
+        }
 
         // Un nodo cuyo padre no se ve (o no existe) sale como raíz: el árbol que llega al comprador nunca apunta afuera de sí mismo.
         return all
@@ -198,6 +210,8 @@ public sealed class WholesaleOffers(
         var rounding = await priceRounding.GetAsync(wholesalerTenantId, terms.Currency, cancellationToken);
         var found = await catalog.FindSellableAsync(wholesalerTenantId, terms.Currency, variantIds, cancellationToken);
         var visible = terms.VisibleCategoryIds?.ToHashSet();
+        var hiddenCategories = terms.HiddenCategoryIds.ToHashSet();
+        var hiddenProducts = terms.HiddenProductIds.ToHashSet();
 
         var offers = new Dictionary<Guid, WholesaleOffer>();
         foreach (var id in variantIds.Distinct())
@@ -208,6 +222,13 @@ public sealed class WholesaleOffers(
             }
 
             if (visible is not null && !item.CategoryPath.Any(visible.Contains))
+            {
+                throw NotVisible(item.Code);
+            }
+
+            // Spec 2026-11-20: el camino de la variante es su categoría y sus ancestros, así que tocar una categoría excluida es
+            // estar en ella o debajo de ella.
+            if (hiddenProducts.Contains(item.ProductId) || item.CategoryPath.Any(hiddenCategories.Contains))
             {
                 throw NotVisible(item.Code);
             }
