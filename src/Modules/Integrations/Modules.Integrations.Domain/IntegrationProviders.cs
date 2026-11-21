@@ -124,7 +124,9 @@ public static class IntegrationProviders
         "zenvia",
         "Zenvia (WhatsApp)",
         IntegrationCategory.Messaging,
-        [TenantModuleKeys.Quotations],
+        // Cotizaciones y pedidos (la plantilla de pedido es un campo de la conexión): un tenant que oculta uno de los dos
+        // sigue configurándolo.
+        [TenantModuleKeys.Quotations, TenantModuleKeys.Orders],
         [
             new FieldDefinition(
                 ZenviaFieldKeys.ApiToken,

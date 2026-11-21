@@ -41,9 +41,9 @@ public sealed class ReadHandlersTests
     public async Task TheCatalogIsEmptyButPresentWhenNoConsumingModuleIsOn()
     {
         var bed = new IntegrationsTestBed();
-        // Ni quotations (Zenvia) ni messaging (whatsapp-cloud) ni copilot, que sin dependencias deja ver anthropic y openai (spec 2026-11-17).
+        // Ni quotations ni orders (Zenvia) ni messaging (whatsapp-cloud) ni copilot, que sin dependencias deja ver anthropic y openai (spec 2026-11-17).
         bed.Modules.Sets[bed.TenantId] = TenantModuleSet.FromStored(
-            TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Messaging, TenantModuleKeys.Copilot]));
+            TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders, TenantModuleKeys.Messaging, TenantModuleKeys.Copilot]));
 
         var catalog = await bed.CatalogHandler().HandleAsync(new GetIntegrationsCatalogQuery(bed.TenantId), Ct);
 
