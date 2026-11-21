@@ -23,6 +23,7 @@ public static class HrEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         MapSettings(group);
+        MapFiles(group);
 
         return endpoints;
     }
@@ -152,6 +153,42 @@ public static class HrEndpoints
                 .ProducesProblem(StatusCodes.Status404NotFound)
                 .ProducesProblem(StatusCodes.Status409Conflict);
         }
+    }
+
+    // Los PDF: abrir la sesión es `hr.contract.manage` (y el handler exige también el `read`); bajar es `hr.contract.read`.
+    private static void MapFiles(RouteGroupBuilder group)
+    {
+        group.MapPost("/files/upload-session", OpenUploadSessionAsync)
+            .RequireAuthorization(HrPermissions.ContractManage)
+            .Accepts<HrUploadSessionRequest>("application/json")
+            .Produces<HrUploadSessionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/files/{fileId:guid}", GetFileAsync)
+            .RequireAuthorization(HrPermissions.ContractRead)
+            .Produces<HrDownloadUrlDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+    }
+
+    private static async Task<IResult> OpenUploadSessionAsync(
+        Guid tenantId, HrUploadSessionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        // Un campo ausente es un archivo inválido: el handler lo rechaza con hr.file.invalid.
+        var session = await dispatcher.SendAsync(
+            new OpenHrUploadSessionCommand(tenantId, request.FileName ?? string.Empty, request.MimeType ?? string.Empty, request.SizeBytes ?? 0),
+            cancellationToken);
+
+        return Results.Ok(session);
+    }
+
+    private static async Task<IResult> GetFileAsync(
+        Guid tenantId, Guid fileId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var url = await dispatcher.QueryAsync(new GetHrFileDownloadUrlQuery(tenantId, fileId), cancellationToken);
+
+        return Results.Ok(url);
     }
 
     // La fecha llega como texto y el handler la lee, ya autorizado: un valor mal formado que dejara al binding automático

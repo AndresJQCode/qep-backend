@@ -524,6 +524,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.DeleteSettingCommand, bool>,
             Modules.Hr.Application.DeleteSettingHandler>();
+        // Los PDF de contratos y registros (spec 2026-11-20): la sesión de subida y la URL firmada de descarga.
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.OpenHrUploadSessionCommand, Modules.Hr.Application.HrUploadSessionDto>,
+            Modules.Hr.Application.OpenHrUploadSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetHrFileDownloadUrlQuery, Modules.Hr.Application.HrDownloadUrlDto>,
+            Modules.Hr.Application.GetHrFileDownloadUrlHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -1944,6 +1951,9 @@ public static class QepServiceCollectionExtensions
         // Y los archivos de chatbot (spec 2026-11-18): en uso mientras los nombre un chatbot, una versión, una plantilla guardada o un
         // mensaje de la bandeja.
         services.AddScoped<IChatbotMediaReferences, ChatbotMediaReferences>();
+        // Spec 2026-11-20: el PDF de un contrato o de un registro de RRHH sobre Storage (dueño HrDocument, sin pasar por sus handlers ni
+        // sus permisos: lo autoriza hr.contract.manage). Hr no referencia Storage (HrLayerTests).
+        services.AddScoped<Modules.Hr.Application.IHrDocumentStore, HrDocumentStore>();
 
         // Mismo patrón (CAT-05) entre `companies` y `geography`: ninguno de los dos referencia al
         // otro, y el composition root cablea el puerto que declara `companies` contra los
