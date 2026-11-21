@@ -39,6 +39,8 @@ using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
+using Modules.Hr.Application;
+using Modules.Hr.Infrastructure;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Application;
@@ -1460,6 +1462,9 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        // Hr aún no tiene validadores concretos (llegan con las Tareas 6 a 10): se escanea el ensamblado, porque HrPermissions es
+        // estática y no sirve de argumento de tipo.
+        services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
@@ -1481,6 +1486,7 @@ public static class QepServiceCollectionExtensions
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
+        services.AddHrInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
         services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
@@ -2452,6 +2458,13 @@ public static class QepServiceCollectionExtensions
                 // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
+                // Spec 2026-11-20 (RRHH fase 1): empleados y contratos los administra quien administra la empresa; ningún otro rol de
+                // sistema los lleva (el salario y los datos bancarios son sensibles).
+                HrPermissions.EmployeeRead,
+                HrPermissions.EmployeeManage,
+                HrPermissions.ContractRead,
+                HrPermissions.ContractManage,
+                HrPermissions.SettingsManage,
                 // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
@@ -3541,6 +3554,58 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("loans.loan", "Préstamos", "manage"),
         });
+        // Spec 2026-11-20 (RRHH fase 1): con [hr], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo
+        // ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. Ver el empleado no incluye su contrato ni su dinero.
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.EmployeeRead,
+            "Ver empleados",
+            "Permite ver la lista, la ficha, el historial de acciones y la configuración de RRHH, sin salario, cargo ni datos bancarios.",
+            "Recursos humanos",
+            "low",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.employee", "Empleados", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.EmployeeManage,
+            "Gestionar empleados",
+            "Permite editar los datos personales y de seguridad social, desactivar y eliminar empleados.",
+            "Recursos humanos",
+            "medium",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.employee", "Empleados", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.ContractRead,
+            "Ver contratos y salarios",
+            "Permite ver contratos, salarios, cargos y sedes con su historial, prórrogas y datos bancarios.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.contract", "Contratos laborales", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.ContractManage,
+            "Gestionar contratos",
+            "Permite crear empleados, registrar salarios y cambios de cargo, prorrogar, convertir, terminar, reincorporar, editar los datos bancarios e importar.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.contract", "Contratos laborales", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.SettingsManage,
+            "Configurar RRHH",
+            "Permite crear, editar, archivar y eliminar sedes, centros de trabajo, áreas y cargos.",
+            "Recursos humanos",
+            "medium",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.settings", "Configuración de RRHH", "manage"),
+        });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -4036,6 +4101,22 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 LoansPermissions.Manage,
                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            // Spec 2026-11-20 (RRHH): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                HrPermissions.EmployeeRead,
+                policy => AddPermissionRequirement(policy, HrPermissions.EmployeeRead))
+            .AddPolicy(
+                HrPermissions.EmployeeManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.EmployeeManage))
+            .AddPolicy(
+                HrPermissions.ContractRead,
+                policy => AddPermissionRequirement(policy, HrPermissions.ContractRead))
+            .AddPolicy(
+                HrPermissions.ContractManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.ContractManage))
+            .AddPolicy(
+                HrPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.SettingsManage))
             // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 SupportPermissions.Read,

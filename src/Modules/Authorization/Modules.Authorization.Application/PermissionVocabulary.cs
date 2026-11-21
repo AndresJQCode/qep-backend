@@ -67,6 +67,7 @@ public static class PermissionVocabulary
         ["Compras"] = "Compras",
         ["Mayorista"] = "Mayorista",
         ["Siigo"] = "Siigo",
+        ["Recursos humanos"] = "Recursos humanos",
         ["Tienda"] = "Tienda",
         ["uncategorized"] = "Sin categoría",
     };

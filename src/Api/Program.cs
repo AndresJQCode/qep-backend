@@ -53,6 +53,8 @@ using Modules.Siigo.Api;
 using Modules.Siigo.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
+using Modules.Hr.Api;
+using Modules.Hr.Infrastructure;
 using Modules.Loans.Api;
 using Modules.Loans.Infrastructure;
 using Modules.Purchases.Api;
@@ -413,6 +415,8 @@ app.MapWholesaleInvitationEndpoints();
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
+// Spec 2026-11-20: recursos humanos (empleados, contratos y su configuración).
+app.MapHrEndpoints();
 // Spec 2026-11-14: soporte (tickets y PQRSF).
 app.MapSupportEndpoints();
 // Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
@@ -526,6 +530,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Loans (spec 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
     // referencias blandas.
     await services.InitializeLoansDatabaseAsync(
+        cancellationToken);
+
+    // Hr (spec 2026-11-20): after Audit (writes audit.entries) and after Companies (hr.sites and hr.employment_contracts have FKs to
+    // companies.companies). Memberships, cities, countries and files are soft references.
+    await services.InitializeHrDatabaseAsync(
         cancellationToken);
 
     // Support (spec 2026-11-14): después de Audit (escribe en audit.entries) y de Companies: support.form_versions lleva una FK real a

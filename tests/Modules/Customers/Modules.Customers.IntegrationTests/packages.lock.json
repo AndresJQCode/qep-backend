@@ -760,6 +760,8 @@
           "Modules.Customers.Infrastructure": "[1.0.0, )",
           "Modules.Geography.Api": "[1.0.0, )",
           "Modules.Geography.Infrastructure": "[1.0.0, )",
+          "Modules.Hr.Api": "[1.0.0, )",
+          "Modules.Hr.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Api": "[1.0.0, )",
           "Modules.Integrations.Infrastructure": "[1.0.0, )",
@@ -824,6 +826,8 @@
           "Modules.Customers.Infrastructure": "[1.0.0, )",
           "Modules.Geography.Application": "[1.0.0, )",
           "Modules.Geography.Infrastructure": "[1.0.0, )",
+          "Modules.Hr.Application": "[1.0.0, )",
+          "Modules.Hr.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Application": "[1.0.0, )",
@@ -1227,6 +1231,43 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Geography.Application": "[1.0.0, )",
           "Modules.Geography.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.hr.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Hr.Application": "[1.0.0, )",
+          "Modules.Hr.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.hr.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Hr.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.hr.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.hr.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Hr.Application": "[1.0.0, )",
+          "Modules.Hr.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
