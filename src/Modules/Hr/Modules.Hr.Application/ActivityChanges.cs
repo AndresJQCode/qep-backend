@@ -101,10 +101,11 @@ internal static class ActivityChanges
         Change("status", EmployeeStatus.Active, EmployeeStatus.Deactivated),
         Change("date", null, date, sensitive: true)]);
 
+    /// <param name="previousStatus">El estado con el que el empleado llegó: <c>Retired</c> si lo terminaron, <c>Deactivated</c> si lo desactivaron.</param>
     public static IReadOnlyList<ActivityChange> Reincorporated(
-        EmploymentContract next, IReadOnlyDictionary<Guid, string> names) => Collect(
+        EmployeeStatus previousStatus, EmploymentContract next, IReadOnlyDictionary<Guid, string> names) => Collect(
         [
-            Change("status", EmployeeStatus.Retired, EmployeeStatus.Active),
+            Change("status", previousStatus, EmployeeStatus.Active),
             .. ContractFields(null, next, names),
             Change("amount", null, next.Salaries[0].Amount, sensitive: true),
             .. AssignmentFields(null, next.Assignments[0], names),

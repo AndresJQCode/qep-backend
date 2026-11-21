@@ -346,6 +346,34 @@ public sealed class EmployeeContractApiTests : IClassFixture<HrApiFixture>
         Assert.Single(back.GetProperty("previousContracts").EnumerateArray());
     }
 
+    // El historial dice de qué estado vuelve: un desactivado no es un retirado.
+    [Theory]
+    [InlineData(false, "Retired")]
+    [InlineData(true, "Deactivated")]
+    public async Task TheReincorporationHistoryRecordsTheRealPreviousStatus(bool deactivate, string expectedBefore)
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        var detail = await HireAsync(tenant, setup);
+        if (deactivate)
+        {
+            await OkAsync(await tenant.Hr.PostAsJsonAsync($"{EmployeeUrl(tenant, detail)}/deactivate", new { date = "2026-11-30" }, Ct));
+        }
+        else
+        {
+            await OkAsync(await TerminateAsync(tenant, detail));
+        }
+
+        await OkAsync(await ReincorporateAsync(tenant, detail, NewContractBody(setup, "2026-12-15")));
+
+        var activity = await JsonOfAsync(await tenant.Hr.GetAsync($"{EmployeeUrl(tenant, detail)}/activity", Ct));
+        var entry = activity.GetProperty("items").EnumerateArray()
+            .Single(item => item.GetProperty("action").GetString() == "EmployeeReincorporated");
+        var status = entry.GetProperty("changes").EnumerateArray().Single(change => change.GetProperty("field").GetString() == "status");
+        Assert.Equal(expectedBefore, status.GetProperty("before").GetString());
+        Assert.Equal("Active", status.GetProperty("after").GetString());
+    }
+
     [Fact]
     public async Task ReincorporatingOnThePreviousEndIs422StartNotAfterPrevious()
     {

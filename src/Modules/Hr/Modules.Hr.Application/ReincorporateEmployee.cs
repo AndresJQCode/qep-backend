@@ -28,6 +28,7 @@ public sealed class ReincorporateEmployeeHandler(
             command.TenantId, command.Request, string.Empty, requireActiveCompany: true, cancellationToken);
         var calendar = await writes.CalendarAsync(command.TenantId, cancellationToken);
 
+        var previousStatus = employee.Status;
         ContractRules.Run(() => employee.Reincorporate(next, floor, calendar.UtcNow));
 
         var created = employee.ActiveContract!;
@@ -38,7 +39,7 @@ public sealed class ReincorporateEmployeeHandler(
             HrActivityAction.EmployeeReincorporated,
             HrActivityCategory.Lifecycle,
             created.Id.Value,
-            ActivityChanges.Reincorporated(created, names),
+            ActivityChanges.Reincorporated(previousStatus, created, names),
             HrAuditActions.EmployeeReincorporated,
             HrAuditActions.Resources.Employee,
             employee.Id.Value,

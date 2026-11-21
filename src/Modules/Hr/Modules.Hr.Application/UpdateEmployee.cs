@@ -6,12 +6,12 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Hr.Application;
 
-/// <param name="IfMatch">La versiÃ³n que la pantalla cargÃ³; llega por <c>If-Match</c>, crudo: el caso de uso lo lee ya autorizado.</param>
+/// <param name="IfMatch">La versión que la pantalla cargó; llega por <c>If-Match</c>, crudo: el caso de uso lo lee ya autorizado.</param>
 public sealed record UpdateEmployeeCommand(Guid TenantId, Guid EmployeeId, EmployeeRequest Request, string? IfMatch)
     : ICommand<EmployeeDetailDto>;
 
 /// <summary>
-/// Edita la ficha: el <c>PUT</c> reemplaza todo, asÃ­ que <c>country: null</c> vuelve a tomar el paÃ­s del tenant. Quien edita sin
+/// Edita la ficha: el <c>PUT</c> reemplaza todo, así que <c>country: null</c> vuelve a tomar el país del tenant. Quien edita sin
 /// <c>hr.contract.read</c> recibe la ficha enmascarada, igual que en el <c>GET</c> (Review Focus 2).
 /// </summary>
 public sealed class UpdateEmployeeHandler(

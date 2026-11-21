@@ -105,6 +105,22 @@ public sealed class ActivityChangesTests
         Assert.All(changes, change => Assert.True(change.Sensitive));
     }
 
+    // El estado anterior de una reincorporación es el que tenía el empleado: Retired si lo terminaron, Deactivated si lo desactivaron.
+    [Theory]
+    [InlineData(EmployeeStatus.Retired)]
+    [InlineData(EmployeeStatus.Deactivated)]
+    public void ReincorporationRecordsTheRealPreviousStatus(EmployeeStatus previous)
+    {
+        var contract = Hire().ActiveContract!;
+
+        var changes = ActivityChanges.Reincorporated(previous, contract, new Dictionary<Guid, string>());
+
+        var status = changes.Single(change => change.Field == "status");
+        Assert.Equal(previous.ToString(), Text(status.Before));
+        Assert.Equal("Active", Text(status.After));
+        Assert.False(status.Sensitive);
+    }
+
     [Fact]
     public void TerminationKeepsTheStatusVisibleAndHidesTheReason()
     {

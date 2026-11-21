@@ -47,7 +47,7 @@ public sealed class CreateEmployeeHandler(
         if (!await setup.IsCompleteAsync(tenantId, cancellationToken))
         {
             throw new HrDomainException(
-                HrErrorCodes.SetupIncomplete, "Configure una empresa activa con sede y centro de trabajo, y un cargo, antes de dar de alta.");
+                HrErrorCodes.SetupIncomplete, "Configura una empresa activa con sede y centro de trabajo, y un cargo, antes de dar de alta.");
         }
 
         var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
