@@ -12,6 +12,7 @@ using Modules.Integrations.Infrastructure.OpenAi;
 using Modules.Integrations.Infrastructure.Persistence;
 using Modules.Integrations.Infrastructure.SecretProtection;
 using Modules.Integrations.Infrastructure.Shopify;
+using Modules.Integrations.Infrastructure.Coordinadora;
 using Modules.Integrations.Infrastructure.Siigo;
 using Modules.Integrations.Infrastructure.Verification;
 using Modules.Integrations.Infrastructure.Zenvia;
@@ -111,6 +112,13 @@ public static class IntegrationsInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => SiigoConnectionTester.CreatePrimaryHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, SiigoConnectionTester>();
+        // Spec 2026-11-21 (integración Coordinadora) §5.1: el probador comprueba que el AGS responde (sin credenciales: ninguna lectura
+        // barata las verifica). Mismo patrón de cliente, por paridad con el del módulo, que sí manda las claves en el cuerpo.
+        services.AddOptions<CoordinadoraTesterOptions>().Bind(configuration.GetSection(CoordinadoraTesterOptions.SectionName));
+        services.AddHttpClient(CoordinadoraConnectionTester.HttpClientName, CoordinadoraConnectionTester.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => CoordinadoraConnectionTester.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IProviderConnectionTester, CoordinadoraConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production

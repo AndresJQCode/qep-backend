@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "coordinadora"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -161,14 +161,24 @@ public sealed class TenantModuleKeysTests
         Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Siigo));
     }
 
-    // Spec 2026-11-20 (RRHH fase 1): la empresa empleadora es una empresa de Companies; se prende por tenant.
+    // Spec 2026-11-20 (RRHH fase 1): la empresa empleadora es una empresa de Companies; se prende por tenant. Ya no es la última:
+    // coordinadora va después.
     [Fact]
-    public void HrIsTheLastKnownKeyOutsideTheDefaults()
+    public void HrIsAKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Hr, TenantModuleKey.Parse("hr"));
-        Assert.Equal("hr", TenantModuleKeys.All[^1].Value);
-        Assert.Equal(23, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Hr, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-21 (integración Coordinadora): la guía se genera para un pedido, así que depende de orders; se prende por tenant.
+    [Fact]
+    public void CoordinadoraIsTheLastKnownKeyOutsideTheDefaults()
+    {
+        Assert.Same(TenantModuleKeys.Coordinadora, TenantModuleKey.Parse("coordinadora"));
+        Assert.Equal("coordinadora", TenantModuleKeys.All[^1].Value);
+        Assert.Equal(24, TenantModuleKeys.All.Count);
+        Assert.DoesNotContain(TenantModuleKeys.Coordinadora, TenantModuleKeys.DefaultForNewTenants);
+        Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Coordinadora));
     }
 
     [Fact]

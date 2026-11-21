@@ -15,6 +15,35 @@ public sealed class IntegrationCatalogTests
         [new FieldDefinition("apiKey", "Clave", FieldKind.Secret, required: true, maxLength: 64, pattern: null, invalidMessage: "Revisa la clave.")],
         maxConnections: 1);
 
+    // Spec 2026-11-21 (integración Coordinadora) §5.1: la fila literal del proveedor. Dos juegos de credenciales (AGS y guías) y el
+    // NIT; ninguno de los tres secretos deja ver un sufijo.
+    [Fact]
+    public void CoordinadoraIsInTheCatalogWithItsFieldsAndOnboarding()
+    {
+        var provider = IntegrationProviders.Coordinadora;
+
+        Assert.Equal("coordinadora", provider.Key);
+        Assert.Equal("Coordinadora", provider.DisplayName);
+        Assert.Equal(IntegrationCategory.Shipping, provider.Category);
+        Assert.Equal([TenantModuleKeys.Coordinadora], provider.ConsumingModules);
+        Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
+        Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
+        Assert.False(provider.RequiresTenantEnablement);
+        Assert.Equal(
+            ["nit", "apiKey", "apiPassword", "clientId", "guidesUser", "guidesPassword"],
+            provider.Fields.Select(field => field.Key));
+        Assert.All(provider.Fields, field => Assert.True(field.Required));
+        Assert.All(provider.Fields, field => Assert.False(field.Internal));
+        Assert.Equal(["apiKey", "apiPassword", "guidesPassword"], provider.SecretFields.Select(field => field.Key));
+        Assert.All(provider.SecretFields, field => Assert.Equal(0, field.RevealSuffix));
+        Assert.Equal(@"^[0-9]{5,15}\z", provider.FindField("nit")!.Pattern!.ToString());
+        Assert.True(provider.FindField("nit")!.HasValidShape("900123456"));
+        Assert.False(provider.FindField("nit")!.HasValidShape("900.123.456-7"));
+        Assert.True(provider.FindField("apiKey")!.HasValidShape("ab12CD-ef"));
+        Assert.False(provider.FindField("apiKey")!.HasValidShape("con espacio"));
+        Assert.Same(provider, IntegrationProviders.Parse("coordinadora"));
+    }
+
     // Spec 2026-11-18 (integración Siigo): la fila literal del proveedor nuevo.
     [Fact]
     public void SiigoIsInTheCatalogWithItsFieldsAndOnboarding()
@@ -65,7 +94,7 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(@"^[0-9]{6}\z", provider.FindField("registrationPin")!.Pattern!.ToString());
         Assert.Null(provider.FindField("displayPhoneNumber")!.Pattern);
         Assert.Equal(
-            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic, IntegrationProviders.OpenAi, IntegrationProviders.Siigo],
+            [IntegrationProviders.Zenvia, IntegrationProviders.WhatsAppCloud, IntegrationProviders.Instagram, IntegrationProviders.Shopify, IntegrationProviders.ExternalApi, IntegrationProviders.Anthropic, IntegrationProviders.OpenAi, IntegrationProviders.Siigo, IntegrationProviders.Coordinadora],
             IntegrationProviders.All);
         Assert.Equal(ProviderOnboarding.Form, IntegrationProviders.Zenvia.Onboarding);
     }

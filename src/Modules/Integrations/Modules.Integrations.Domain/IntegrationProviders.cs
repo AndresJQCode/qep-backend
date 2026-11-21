@@ -95,6 +95,21 @@ public static class SiigoFieldKeys
     public const string AccountName = "accountName";
 }
 
+/// <summary>Spec 2026-11-21 (integración Coordinadora) §5.1. Dos juegos de credenciales que da Coordinadora al cliente: el del AGS
+/// (<see cref="ApiKey"/> y <see cref="ApiPassword"/>, el <c>apikey</c> y la <c>clave</c> del cotizador) y el del servidor de guías
+/// (<see cref="ClientId"/>, <see cref="GuidesUser"/> y <see cref="GuidesPassword"/>: <c>id_cliente</c>, <c>usuario</c> y la contraseña,
+/// que viaja como su SHA-256). <see cref="Nit"/> es el NIT del cliente ante Coordinadora, sin dígito de verificación. Todos los escribe
+/// una persona.</summary>
+public static class CoordinadoraFieldKeys
+{
+    public const string Nit = "nit";
+    public const string ApiKey = "apiKey";
+    public const string ApiPassword = "apiPassword";
+    public const string ClientId = "clientId";
+    public const string GuidesUser = "guidesUser";
+    public const string GuidesPassword = "guidesPassword";
+}
+
 /// <summary>
 /// La lista cerrada de proveedores, como <see cref="TenantModuleKeys.All"/> (spec 2026-10-08,
 /// «Catálogo»). Cada proveedor entra con el spec de su consumidor, porque sin módulo consumidor nunca
@@ -109,6 +124,9 @@ public static class IntegrationProviders
     // El id de una plantilla de Zenvia es un UUID (`d0e79149-ed61-4784-9883-d86807f46ce5`).
     private const string ZenviaTemplateIdPattern =
         @"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z";
+
+    /// <summary>ASCII visible sin espacios, el patrón de los tokens de Zenvia y de la clave de Siigo.</summary>
+    private const string PrintableWithoutSpaces = @"^[\x21-\x7E]+\z";
 
     private const string ZenviaTemplateIdMessage =
         "Copia el ID de la plantilla tal como aparece en Zenvia (formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).";
@@ -394,7 +412,47 @@ public static class IntegrationProviders
         onboarding: ProviderOnboarding.Form,
         requiresTenantEnablement: false);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic, OpenAi, Siigo];
+    /// <summary>Spec 2026-11-21 (integración Coordinadora) §5.1: la cuenta de Coordinadora del tenant, que consume el módulo
+    /// <c>coordinadora</c> para cotizar y generar guías desde el pedido. Estrena la categoría <see cref="IntegrationCategory.Shipping"/>.
+    /// Sin habilitación por tenant: tener el módulo alcanza. Las claves sólo exigen texto imprimible sin espacios (el formato es de
+    /// Coordinadora y lo juzgan sus servidores); el NIT va sólo con dígitos, sin puntos ni dígito de verificación, que es como lo
+    /// recibe el cotizador.</summary>
+    public static readonly IntegrationProvider Coordinadora = new(
+        "coordinadora",
+        "Coordinadora",
+        IntegrationCategory.Shipping,
+        [TenantModuleKeys.Coordinadora],
+        [
+            new FieldDefinition(
+                CoordinadoraFieldKeys.Nit, "NIT", FieldKind.Text,
+                required: true, maxLength: 15, pattern: @"^[0-9]{5,15}\z",
+                invalidMessage: "Escribe el NIT sólo con dígitos, sin puntos ni dígito de verificación."),
+            new FieldDefinition(
+                CoordinadoraFieldKeys.ApiKey, "API key (cotizador)", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: PrintableWithoutSpaces,
+                invalidMessage: "La API key sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla de Coordinadora."),
+            new FieldDefinition(
+                CoordinadoraFieldKeys.ApiPassword, "Clave (cotizador)", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: PrintableWithoutSpaces,
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla de Coordinadora."),
+            new FieldDefinition(
+                CoordinadoraFieldKeys.ClientId, "Id de cliente (guías)", FieldKind.Text,
+                required: true, maxLength: 32, pattern: @"^[0-9A-Za-z_-]{1,32}\z",
+                invalidMessage: "El id de cliente de guías sólo lleva letras, números, guion y guion bajo."),
+            new FieldDefinition(
+                CoordinadoraFieldKeys.GuidesUser, "Usuario (guías)", FieldKind.Text,
+                required: true, maxLength: 128, pattern: PrintableWithoutSpaces,
+                invalidMessage: "Escribe el usuario de guías tal como te lo dio Coordinadora, sin espacios."),
+            new FieldDefinition(
+                CoordinadoraFieldKeys.GuidesPassword, "Contraseña (guías)", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: PrintableWithoutSpaces,
+                invalidMessage: "La contraseña de guías sólo puede tener letras, números y símbolos, sin espacios."),
+        ],
+        DefaultMaxConnections,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic, OpenAi, Siigo, Coordinadora];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>
