@@ -59,17 +59,18 @@ envían hoy la cotización y el pedido.
 - **Zenvia:** sube el PDF a una clave aleatoria bajo un prefijo propio `invoices/` del bucket público (sin id de pedido ni número de
   factura en la clave), manda esa URL en `fields.documentUrl` con `invoiceTemplateId`. Sin bucket público configurado, el envío **falla**
   (nunca cae a URL firmada).
-- Total: el de la factura de Siigo si la fila lo guarda; si no, el del pedido. **Decisión del builder** al ver qué guarda `siigo.invoices`;
-  nunca inventar un campo.
+- Total: `SiigoInvoice.SiigoTotal` (el que devolvió Siigo al crearla); si es `null`, el total del pedido. Decidido tras leer
+  `SiigoInvoice`: `Number` y `SiigoTotal` ya existen, no se agrega columna.
 
 **Messaging.** Tipo de plantilla nuevo `Invoice` (migración que ensancha el discriminador, como `AddOrderTemplateKind`),
 `InvoiceTemplateDefinition` (nombre versionado `qep_factura`, `qep_factura_v2`…), aprovisionamiento y readiness como `Order`. Texto base:
 «Hola {{nombre_contacto}}, te enviamos la factura {{numero_factura}} por un total de {{valor_total}}. Adjuntamos el documento.».
 **Zenvia:** campo opcional `invoiceTemplateId` en la conexión (como `orderTemplateId`); sin él, ese canal no puede enviar facturas.
 
-**Disponibilidad (`GET` del pedido).** El detalle ya trae `hasPdf`; se agrega `canSendWhatsApp` por factura (hay canal listo y el cliente
-tiene teléfono) para que el botón no muestre una acción que va a fallar. Frontend: botón en el detalle del pedido (spec aparte en
-`qep-frontend`).
+**Disponibilidad.** `GET …/siigo-invoice/` (`GetSiigoInvoicesHandler`, ya devuelve `hasPdf` por factura) suma `canSendWhatsApp` a
+`SiigoInvoiceDto`: `hasPdf` y hay un canal que puede enviar facturas y el cliente del pedido tiene teléfono. Se calcula una vez por
+petición (una consulta de canales y una de cliente), no por factura. Es una pista para el botón; el `POST` revalida todo. Frontend: botón
+en el detalle del pedido (spec aparte en `qep-frontend`).
 
 **Errores (códigos nuevos, 422 salvo indicación).** `siigo.invoice.whatsapp_no_channel`, `siigo.invoice.whatsapp_no_phone`,
 `siigo.invoice.whatsapp_send_failed` (con el motivo de Meta/Zenvia), `siigo.invoice.not_found` (404, existente).
@@ -98,7 +99,16 @@ adoptable). Integración (una vez al final del bloque): endpoint con permisos, y
 conexión de Zenvia. 3. Regla de lifecycle de `invoices/`. 4. Desplegar el backend, luego el frontend. Sin los pasos 2 y 3 el botón no
 aparece (`canSendWhatsApp = false`) o el envío por Zenvia falla ruidosamente.
 
+## Decisiones de diseño cerradas (2026-11-21)
+
+- **Ruta:** `POST …/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp`, en el mismo grupo `siigo-invoice` de `SiigoEndpoints`.
+  Responde 204; el error lleva el código de dominio.
+- **Puerto:** `ISiigoInvoiceWhatsAppSender` en `SiigoPorts.cs` (Application de Siigo); su adaptador, `SiigoInvoiceWhatsAppSender`, en
+  `src/Bootstrapper/Siigo*.cs`, que es donde `SiigoLayerTests` permite el cruce.
+- **Texto de la plantilla:** el de arriba. Es sólo el inicial: el admin lo edita al crearla, como cotización y pedido.
+- **Total:** `SiigoTotal` con respaldo al total del pedido (arriba).
+
 ## Queda para el builder
 
-Qué total guarda `siigo.invoices`; forma exacta de la ruta y del DTO de disponibilidad; texto final de la plantilla; si el puerto vive en
-`Modules.Siigo.Application` junto a `ISiigoApi`.
+Sólo detalle de implementación: nombres exactos de clases de prueba, y confirmar contra una cuenta real de Siigo el campo `base64` del PDF
+(ya anotado como no probado en `.claude/rules/siigo.md`).
