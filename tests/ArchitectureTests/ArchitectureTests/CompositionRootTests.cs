@@ -21,6 +21,7 @@ using Modules.Pipeline.Application;
 using Modules.Pos.Application;
 using Modules.Purchases.Application;
 using Modules.Reporting.Application;
+using Modules.Scheduling.Application;
 using Modules.ServiceContracts.Application;
 using Modules.Shopify.Application;
 using Modules.Siigo.Application;
@@ -353,7 +354,8 @@ public sealed class CompositionRootTests
         // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18)
         // + el de las fallas de las llamadas a Siigo (siigo.calls.read, spec 2026-11-21)
         // + the five hr.* permissions (spec 2026-11-20).
-        Assert.Equal(100, PermissionConstants().Length);
+        // + los cinco de la Agenda (scheduling.*, spec 2026-11-21).
+        Assert.Equal(105, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -942,6 +944,107 @@ public sealed class CompositionRootTests
             Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-21 (Agenda): los cinco permisos exigen el módulo <c>scheduling</c> (apagado, el editor de roles los oculta y la API
+    /// responde un 403 pelado) y de fábrica van a <c>admin</c> y a los dos roles de sistema de la Agenda; ni asesor, ni facturación, ni
+    /// cajero. Configurar servicios, reglas y estructura (<c>settings.manage</c>) es sólo de admin.
+    /// </summary>
+    [Fact]
+    public void TheSchedulingPermissionsRequireTheModuleAndGoToAdminAndTheSchedulingRoles()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (SchedulingPermissions.AppointmentRead, "scheduling.appointment", "Citas", "read"),
+            (SchedulingPermissions.AppointmentManage, "scheduling.appointment", "Citas", "manage"),
+            (SchedulingPermissions.AvailabilityManage, "scheduling.availability", "Franjas y bloqueos", "manage"),
+            (SchedulingPermissions.AgendaReadAll, "scheduling.agenda", "Todas las agendas", "read"),
+            (SchedulingPermissions.SettingsManage, "scheduling.settings", "Configuración de la agenda", "manage"),
+        ];
+        Assert.Equal(
+            [
+                "scheduling.appointment.read", "scheduling.appointment.manage", "scheduling.availability.manage",
+                "scheduling.agenda.read_all", "scheduling.settings.manage",
+            ],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Agenda", definition.Category);
+            Assert.Equal([ModuleKeys.Scheduling], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+
+        string[] manager = [.. catalog.PermissionsFor("scheduling_manager")];
+        string[] schedulingProvider = [.. catalog.PermissionsFor("scheduling_provider")];
+        Assert.Equal(
+            new[]
+            {
+                SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage, SchedulingPermissions.AgendaReadAll,
+            }.Order(StringComparer.Ordinal),
+            manager.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            new[]
+            {
+                SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage, SchedulingPermissions.AvailabilityManage,
+            }.Order(StringComparer.Ordinal),
+            schedulingProvider.Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(SchedulingPermissions.SettingsManage, manager);
+        Assert.DoesNotContain(SchedulingPermissions.SettingsManage, schedulingProvider);
+        Assert.DoesNotContain(SchedulingPermissions.AgendaReadAll, schedulingProvider);
+    }
+
+    /// <summary>
+    /// Los roles de sistema de la Agenda concedían sólo permisos de la Agenda: con el módulo apagado no son asignables, y con él prendido
+    /// sí. Si llevaran un permiso de núcleo (por ejemplo el de Clientes), un tenant sin Agenda vería «Gestor de agenda» en su lista
+    /// (<c>RoleAssignability</c>, spec 2026-11-15). Por eso la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como
+    /// en el POS (spec 2026-10-14, decisión 4).
+    /// </summary>
+    [Fact]
+    public void TheSchedulingRolesAreAssignableOnlyWithTheSchedulingModule()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var mask = provider.GetRequiredService<ModuleEntitlementMask>();
+        var withScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All);
+        var withoutScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All.Where(key => key != ModuleKeys.Scheduling));
+
+        foreach (var role in new[] { "scheduling_manager", "scheduling_provider" })
+        {
+            Assert.Contains(role, catalog.ListRoles().Select(definition => definition.Role));
+            var permissions = catalog.PermissionsFor(role);
+            Assert.All(permissions, permission => Assert.StartsWith("scheduling.", permission));
+            Assert.True(RoleAssignability.IsAssignable(permissions, withScheduling, isOperatorTenant: false, mask));
+            Assert.False(RoleAssignability.IsAssignable(permissions, withoutScheduling, isOperatorTenant: false, mask));
+        }
+    }
+
+    /// <summary>La otra mitad de un permiso nuevo: sin su política, <c>RequireAuthorization</c> no resuelve y la ruta responde 500, no 403.</summary>
+    [Fact]
+    public async Task TheSchedulingPermissionsHaveTheirPolicies()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[]
+        {
+            SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage, SchedulingPermissions.AvailabilityManage,
+            SchedulingPermissions.AgendaReadAll, SchedulingPermissions.SettingsManage,
+        })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
         }
     }
 

@@ -34,6 +34,7 @@ using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
 using Modules.Hr.Api;
 using Modules.Hr.Infrastructure;
+using Modules.Scheduling.Api;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
@@ -417,6 +418,7 @@ app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
 // Spec 2026-11-20: recursos humanos (empleados, contratos y su configuración).
 app.MapHrEndpoints();
+app.MapSchedulingEndpoints();
 // Spec 2026-11-14: soporte (tickets y PQRSF).
 app.MapSupportEndpoints();
 // Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).

@@ -25,6 +25,7 @@ using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
+using Modules.Authorization.Domain;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Application;
 using Modules.Automations.Application.Engine;
@@ -63,6 +64,8 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
+using Modules.Scheduling.Application;
+using Modules.Scheduling.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
@@ -1587,6 +1590,8 @@ public static class QepServiceCollectionExtensions
         // Hr: se escanea el ensamblado (sólo registra validadores públicos, y todos los de Hr lo son), porque HrPermissions es
         // estática y no sirve de argumento de tipo.
         services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
+        // Scheduling: igual que Hr, por ensamblado (SchedulingPermissions es estática y no sirve de argumento de tipo).
+        services.AddValidatorsFromAssembly(typeof(SchedulingPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
@@ -1609,6 +1614,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddHrInfrastructure(configuration);
+        services.AddSchedulingInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
         services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
@@ -2614,6 +2620,13 @@ public static class QepServiceCollectionExtensions
                 HrPermissions.ContractRead,
                 HrPermissions.ContractManage,
                 HrPermissions.SettingsManage,
+                // Spec 2026-11-21 (Agenda): admin lleva los cinco; los dos roles de sistema de la Agenda llevan los operativos y ninguno
+                // la configuración (servicios, reglas y estructura son del administrador).
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage,
+                SchedulingPermissions.AgendaReadAll,
+                SchedulingPermissions.SettingsManage,
                 // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
@@ -2748,6 +2761,33 @@ public static class QepServiceCollectionExtensions
                 PosPermissions.SaleCreate,
                 PosPermissions.SaleCustomer,
                 PosPermissions.RegisterOperate
+            ]));
+        // Spec 2026-11-21 (Agenda), D-13: roles de sistema en código, no se crean al activar el módulo; con el módulo apagado no son
+        // asignables (RoleAssignability). Llevan sólo permisos de la Agenda, a propósito: uno de núcleo (Clientes) los haría asignables
+        // en un tenant sin Agenda, así que la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS.
+        // Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador.
+        services.AddSingleton(new RoleDefinition(
+            SystemRoleKeys.SchedulingManager,
+            "Gestor de agenda",
+            "Ve y administra las agendas de todos los médicos o recursos: citas, franjas y bloqueos.",
+            "Tenancy",
+            "medium",
+            [
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage,
+                SchedulingPermissions.AgendaReadAll
+            ]));
+        services.AddSingleton(new RoleDefinition(
+            SystemRoleKeys.SchedulingProvider,
+            "Profesional de agenda",
+            "Ve y administra su propia agenda: la del recurso vinculado a su usuario.",
+            "Tenancy",
+            "medium",
+            [
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -3766,6 +3806,59 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("hr.settings", "Configuración de RRHH", "manage"),
         });
+        // Spec 2026-11-21 (Agenda): con [scheduling], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no
+        // lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. `agenda.read_all` no concede acciones: sólo amplía
+        // sobre qué recursos valen las demás.
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AppointmentRead,
+            "Ver citas",
+            "Permite ver el calendario, las citas y los espacios libres de los recursos a los que tiene alcance.",
+            "Agenda",
+            "low",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.appointment", "Citas", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AppointmentManage,
+            "Gestionar citas",
+            "Permite crear, confirmar, reprogramar, cancelar y marcar como asistidas las citas de los recursos a los que tiene alcance.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.appointment", "Citas", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AvailabilityManage,
+            "Gestionar franjas y bloqueos",
+            "Permite abrir y cerrar franjas, publicar sesiones y bloquear horas de los recursos a los que tiene alcance.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.availability", "Franjas y bloqueos", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AgendaReadAll,
+            "Ver todas las agendas",
+            "Amplía el alcance de los demás permisos de la Agenda a todos los recursos del tenant; sin él, sólo los vinculados a su membresía.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.agenda", "Todas las agendas", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.SettingsManage,
+            "Configurar la agenda",
+            "Permite crear sedes, recursos y servicios, y cambiar las reglas de reserva y el recordatorio.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.settings", "Configuración de la agenda", "manage"),
+        });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -4280,6 +4373,22 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 HrPermissions.SettingsManage,
                 policy => AddPermissionRequirement(policy, HrPermissions.SettingsManage))
+            // Spec 2026-11-21 (Agenda): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SchedulingPermissions.AppointmentRead,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AppointmentRead))
+            .AddPolicy(
+                SchedulingPermissions.AppointmentManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AppointmentManage))
+            .AddPolicy(
+                SchedulingPermissions.AvailabilityManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AvailabilityManage))
+            .AddPolicy(
+                SchedulingPermissions.AgendaReadAll,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AgendaReadAll))
+            .AddPolicy(
+                SchedulingPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.SettingsManage))
             // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 SupportPermissions.Read,

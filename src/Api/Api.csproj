@@ -20,6 +20,8 @@
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Infrastructure\Modules.ServiceContracts.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Hr\Modules.Hr.Api\Modules.Hr.Api.csproj" />
     <ProjectReference Include="..\Modules\Hr\Modules.Hr.Infrastructure\Modules.Hr.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Api\Modules.Scheduling.Api.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Infrastructure\Modules.Scheduling.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Api\Modules.Loans.Api.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Purchases\Modules.Purchases.Api\Modules.Purchases.Api.csproj" />
