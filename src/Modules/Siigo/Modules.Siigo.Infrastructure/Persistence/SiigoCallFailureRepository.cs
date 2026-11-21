@@ -29,12 +29,13 @@ internal sealed class SiigoCallFailureRepository(SiigoDbContext dbContext) : ISi
             query = query.Where(failure => failure.Status == code);
         }
 
-        if (since is { } start)
+        // Npgsql rechaza un offset distinto de cero en un parámetro timestamptz: la hora local que manda la pantalla se pasa a UTC.
+        if (since?.ToUniversalTime() is { } start)
         {
             query = query.Where(failure => failure.OccurredAt >= start);
         }
 
-        if (until is { } end)
+        if (until?.ToUniversalTime() is { } end)
         {
             query = query.Where(failure => failure.OccurredAt <= end);
         }

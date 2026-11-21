@@ -115,6 +115,10 @@ public sealed class SiigoCallFailuresApiTests
         Assert.Equal(2, await TotalAsync("?status=502"));
         Assert.Equal(1, await TotalAsync("?operation=InvoiceCreate&status=502"));
         Assert.Equal(1, await TotalAsync($"?to={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-25).ToString("O"))}"));
+        // Hora local de Colombia (-05:00): Npgsql rechaza un offset distinto de cero en timestamptz, así que el repositorio convierte a UTC.
+        var colombian = TimeSpan.FromHours(-5);
+        Assert.Equal(1, await TotalAsync($"?to={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-25).ToOffset(colombian).ToString("O"))}"));
+        Assert.Equal(2, await TotalAsync($"?from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-15).ToOffset(colombian).ToString("O"))}"));
     }
 
     [Fact]
