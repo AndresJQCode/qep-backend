@@ -38,7 +38,7 @@ public sealed class SiigoSettingsReadinessTests
         settings.AssignCompany(Guid.CreateVersion7());
         settings.UpdateDocument(new SiigoDocumentSettings("doc-1", null, null, false, false, false, null));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
-        settings.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
+        settings.UpdatePayments(new SiigoPaymentSettings([new SiigoPaymentLink("BANCO|1", "pay-1")], null, null, null, null));
         settings.ReplaceSellerLinks([new SiigoSellerLink(Guid.CreateVersion7(), "800", "VANESA HERNANDEZ")]);
 
         var steps = SiigoSettingsReadiness.Evaluate(settings);
@@ -110,14 +110,14 @@ public sealed class SiigoSettingsReadinessTests
     }
 
     [Fact]
-    public void ADefaultOrAnAccountPaymentTypeCompletesThePaymentsStep()
+    public void AnAccountPaymentTypeCompletesThePaymentsStepButCreditOrDefaultDoNot()
     {
         var withDefault = NewSettings();
-        withDefault.UpdatePayments(new SiigoPaymentSettings([], null, null, null, "pay-1"));
+        withDefault.UpdatePayments(new SiigoPaymentSettings([], "pay-3", 30, "pay-4", "pay-1"));
         var withAccount = NewSettings();
         withAccount.UpdatePayments(new SiigoPaymentSettings([new SiigoPaymentLink("BANCO|1", "pay-2")], null, null, null, null));
 
-        Assert.True(Step(withDefault, SiigoSetupStep.Payments).Complete);
+        Assert.False(Step(withDefault, SiigoSetupStep.Payments).Complete);
         Assert.True(Step(withAccount, SiigoSetupStep.Payments).Complete);
     }
 

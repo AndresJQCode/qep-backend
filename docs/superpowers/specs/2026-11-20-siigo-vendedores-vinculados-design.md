@@ -146,3 +146,19 @@ backend, no en el navegador: cambiar de equipo o de sesión no lo repite.
 - `SiigoSettingsDto` expone `sellersAutoLinkedAt` y `productsAutoLinkedAt` (null = nunca se intentó).
 - El intento automático lo dispara la pantalla (§ frontend); el botón sigue para volver a intentar después. Un intento que
   falla (409 conexión, 503 Siigo) no fija la marca: se reintenta la próxima vez que se abre el paso.
+
+## 10. El saldo usa la forma de pago de la cuenta de cobro (owner, 2026-11-20)
+
+En el paso «Formas de pago» el tenant no usa «Crédito» ni «Otras formas de pago»: los comprobantes son opcionales, casi todo
+pedido tiene saldo, y la cuenta «Crédito» de la propia empresa ya está vinculada en «Cuentas de cobro». Regla nueva:
+
+1. El **saldo** (lo que no cubren los comprobantes) usa la misma forma de pago de Siigo que los comprobantes: la vinculada a la
+   cuenta de cobro del pedido. Crédito y contraentrega ya no se usan al facturar (también con `CashOnDelivery`).
+2. **Pedido sin cuenta de cobro** (`BillingAccountKey` nulo): ya no cae a `DefaultPaymentTypeId`; falta `payment_unlinked` con
+   `Reference = null`.
+3. **Cuenta sin vincular**: `payment_unlinked` con la clave de la cuenta, **una sola vez**, venga el dinero de comprobantes o de saldo.
+4. **Vencimiento del saldo** (`due_date`) = la fecha de la factura (`input.Today`). Los pagos de comprobantes siguen sin `due_date`.
+5. **Readiness del paso Pagos**: completo si hay al menos un vínculo de cuenta con id de Siigo; crédito, contraentrega y por defecto
+   ya no cuentan.
+6. **Sin migración ni retiro de campos**: las columnas `credit_*`, `cash_on_delivery_*`, `default_*` y los campos del `PUT` se
+   quedan (las migraciones corren al arrancar y las réplicas viejas aún los mapean). El frontend nuevo los manda en `null`.

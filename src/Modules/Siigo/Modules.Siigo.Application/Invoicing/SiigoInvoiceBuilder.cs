@@ -5,7 +5,7 @@ using Modules.Siigo.Domain;
 namespace Modules.Siigo.Application.Invoicing;
 
 /// <summary>Un pago de la factura armada, para que la vista previa lo muestre. <paramref name="ProofId"/> es el comprobante del que sale
-/// (<c>null</c> en el saldo, que va a crédito o contraentrega); <paramref name="DueDate"/> sólo en el crédito.</summary>
+/// (<c>null</c> en el saldo, que va a la forma de pago de la cuenta de cobro); <paramref name="DueDate"/> sólo en el saldo, el día de la factura.</summary>
 public sealed record SiigoDraftPayment(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly? DueDate);
 
 /// <summary>Una factura armada: su tipo, el cuerpo ya serializado y el cliente que habría que crear si Siigo no lo tiene.
@@ -234,26 +234,14 @@ public static class SiigoInvoiceBuilder
         IReadOnlyList<SiigoPaymentOverride> overrides,
         List<SiigoMissing> missing)
     {
-        // Cada comprobante necesita una forma de pago: la elegida o la propuesta por la cuenta de cobro. Se reporta una vez por cuenta.
+        // Spec 2026-11-20: comprobantes y saldo usan la forma de pago de la cuenta de cobro. Si hace falta alguna y no hay vínculo
+        // (o el pedido no tiene cuenta), se reporta una sola vez, con la clave de la cuenta o sin referencia.
         var proposed = ProposedPaymentType(input, settings);
-        var needsProposal = plan.Proofs.Any(
-            part => !overrides.Any(value => value.Kind == part.Kind && value.ProofId == part.ProofId));
-        if (needsProposal && proposed is null)
+        var needsPayment = plan.Balances.Any(balance => balance.Amount > 0)
+            || plan.Proofs.Any(part => !overrides.Any(value => value.Kind == part.Kind && value.ProofId == part.ProofId));
+        if (needsPayment && proposed is null)
         {
             missing.Add(new SiigoMissing(SiigoMissing.PaymentUnlinked, input.BillingAccountKey, null));
-        }
-
-        // El saldo va a contraentrega o a crédito, y sin esa forma de pago no hay a dónde mandarlo.
-        if (plan.Balances.Any(balance => balance.Amount > 0))
-        {
-            if (input.CashOnDelivery && string.IsNullOrWhiteSpace(settings.CashOnDeliveryPaymentTypeId))
-            {
-                missing.Add(new SiigoMissing(SiigoMissing.PaymentUnlinked, "cash_on_delivery", null));
-            }
-            else if (!input.CashOnDelivery && (string.IsNullOrWhiteSpace(settings.CreditPaymentTypeId) || settings.CreditDays is null))
-            {
-                missing.Add(new SiigoMissing(SiigoMissing.PaymentUnlinked, "credit", null));
-            }
         }
     }
 
@@ -305,9 +293,10 @@ public static class SiigoInvoiceBuilder
 
     private static string? ProposedPaymentType(SiigoInvoiceInput input, SiigoSettings settings)
     {
+        // Sin cuenta de cobro no hay a dónde mandar el pago: ya no se cae a una forma de pago por defecto.
         if (input.BillingAccountKey is null)
         {
-            return Text(settings.DefaultPaymentTypeId);
+            return null;
         }
 
         return Text(settings.PaymentLinks.FirstOrDefault(link => link.BankAccountKey == input.BillingAccountKey)?.SiigoPaymentTypeId);
@@ -331,9 +320,8 @@ public static class SiigoInvoiceBuilder
         var balance = plan.Balances.Single(value => value.Kind == kind).Amount;
         if (balance > 0)
         {
-            payments.Add(input.CashOnDelivery
-                ? new SiigoDraftPayment(null, settings.CashOnDeliveryPaymentTypeId!, balance, null)
-                : new SiigoDraftPayment(null, settings.CreditPaymentTypeId!, balance, input.Today.AddDays(settings.CreditDays!.Value)));
+            // El saldo vence el día de la factura y va a la misma forma de pago que los comprobantes (spec 2026-11-20).
+            payments.Add(new SiigoDraftPayment(null, proposed!, balance, input.Today));
         }
 
         return payments;

@@ -51,10 +51,8 @@ public static class SiigoSettingsReadiness
         || settings.WithholdingLinks.Any(link => !string.IsNullOrWhiteSpace(link.SiigoTaxId));
 
     private static bool HasPaymentLink(SiigoSettings settings) =>
-        !string.IsNullOrWhiteSpace(settings.DefaultPaymentTypeId)
-        || !string.IsNullOrWhiteSpace(settings.CreditPaymentTypeId)
-        || !string.IsNullOrWhiteSpace(settings.CashOnDeliveryPaymentTypeId)
-        || settings.PaymentLinks.Any(link => !string.IsNullOrWhiteSpace(link.SiigoPaymentTypeId));
+        // Crédito, contraentrega y por defecto ya no se usan al facturar (spec 2026-11-20): sólo cuentan los vínculos por cuenta de cobro.
+        settings.PaymentLinks.Any(link => !string.IsNullOrWhiteSpace(link.SiigoPaymentTypeId));
 
     private static SiigoStepReadiness Of(SiigoSetupStep step, params string?[] missing)
     {
