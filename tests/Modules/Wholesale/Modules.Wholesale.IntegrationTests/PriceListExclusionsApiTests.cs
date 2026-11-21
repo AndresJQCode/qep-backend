@@ -210,4 +210,95 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
         Assert.Equal(WholesaleErrorCodes.ProductNotVisible, hiddenByProduct.Code);
         Assert.Equal(2, visible.Count);
     }
+
+    // Regla 4 del spec: una categoría excluida no toca a un producto sin categoría; sólo se oculta excluyéndolo a él.
+    [Fact]
+    public async Task AProductWithoutCategoryStaysVisibleUnderAnExcludedCategoryAndFallsOnlyByItsOwnId()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var home = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Hogar");
+        var tools = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Ferretería");
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "H-1", "Cojín", 5_000m, home);
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "F-1", "Martillo", 30_000m, tools);
+        var loose = await ProductOfAsync(await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "S-1", "Suelto", 1_000m));
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var reader = scope.ServiceProvider.GetRequiredService<IWholesaleCatalogReader>();
+
+        var (underCategory, categoryTotal) = await reader.SearchSellableAsync(
+            tenant.TenantId, "COP", null, [home], null, null, 1, 50, Ct);
+        var (sample, sampleTotal) = await reader.SampleAsync(tenant.TenantId, "COP", null, [home], null, 20, Ct);
+        var (byId, idTotal) = await reader.SearchSellableAsync(tenant.TenantId, "COP", null, [home], [loose], null, 1, 50, Ct);
+
+        Assert.Equal(["Martillo", "Suelto"], underCategory.Select(item => item.ProductName).Order());
+        Assert.Equal(2, categoryTotal);
+        Assert.Equal((2, 2), (sample.Count, sampleTotal));
+        Assert.Equal(["Martillo"], byId.Select(item => item.ProductName));
+        Assert.Equal(1, idTotal);
+    }
+
+    [Fact]
+    public async Task ThePickerIsOrderedByNameAcrossPagesAlsoWhenSearching()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        // El más corto es el más parecido a «olla» (manda la relevancia), pero el último por nombre.
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "O-1", "Olla zzz", 1_000m);
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "O-2", "Olla mmm con un nombre bastante largo", 1_000m);
+        await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "O-3", "Olla aaa con un nombre todavía más largo que el anterior", 1_000m);
+        var url = $"/api/v1/tenants/{tenant.TenantId}/wholesale/products?search=olla&pageSize=1";
+
+        var names = new List<string>();
+        for (var page = 1; page <= 3; page++)
+        {
+            var result = (await manager.GetFromJsonAsync<WholesaleProductsResponse>($"{url}&page={page}", Ct))!;
+            names.Add(Assert.Single(result.Items).Name);
+        }
+
+        Assert.Equal(names.Order(StringComparer.CurrentCultureIgnoreCase), names);
+    }
+
+    [Fact]
+    public async Task ACategoryOrProductOfAnotherTenantIsRefusedOnCreateAndUpdateAndNeverShownInTheDetail()
+    {
+        var mine = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var other = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, mine);
+        using var otherManager = WholesaleApiHarness.CreateManager(Factory, other);
+        var foreignCategory = await WholesaleApiHarness.CreateCategoryAsync(otherManager, other.TenantId, "Ajena");
+        var foreignProduct = await ProductOfAsync(
+            await WholesaleApiHarness.CreateVariantAsync(otherManager, other.TenantId, "X-1", "Producto ajeno", 1_000m));
+        var exclusions = new[] { new { kind = "Category", id = foreignCategory }, new { kind = "Product", id = foreignProduct } };
+
+        var created = await manager.PostAsJsonAsync(
+            WholesaleApiHarness.PriceListsUrl(mine.TenantId),
+            new { name = "Oro", discountPercent = 10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), exclusions },
+            Ct);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, mine.TenantId, "Plata", 5m);
+        var updated = await manager.SendAsync(
+            WholesaleApiHarness.WithIfMatch(
+                new HttpRequestMessage(HttpMethod.Put, $"{WholesaleApiHarness.PriceListsUrl(mine.TenantId)}/{list.Id}")
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        name = "Plata", discountPercent = 5m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), exclusions,
+                    }),
+                },
+                list.Version),
+            Ct);
+
+        foreach (var response in new[] { created, updated })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            using var body = JsonDocument.Parse(await WholesaleApiHarness.BodyAsync(response));
+            var errors = body.RootElement.GetProperty("errors");
+            Assert.True(errors.TryGetProperty("Exclusions[0]", out _));
+            Assert.True(errors.TryGetProperty("Exclusions[1]", out _));
+        }
+
+        var detail = (await manager.GetFromJsonAsync<PriceListDetailDto>(
+            $"{WholesaleApiHarness.PriceListsUrl(mine.TenantId)}/{list.Id}", Ct))!;
+        Assert.Empty(detail.Exclusions!);
+        Assert.Equal(1L, detail.Version);
+    }
 }

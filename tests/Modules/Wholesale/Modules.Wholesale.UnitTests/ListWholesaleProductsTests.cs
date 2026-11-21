@@ -60,4 +60,15 @@ public sealed class ListWholesaleProductsTests
         await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             Handler(context: denied).HandleAsync(new ListWholesaleProductsQuery(_tenant, null, null, 1, 50), Ct));
     }
+
+    [Fact]
+    public async Task AnAbsurdPageNumberIsClampedAndDoesNotOverflow()
+    {
+        _catalog.AddProduct("A-1", "Olla", categoryId: null, cop: 10m);
+
+        var page = await Handler().HandleAsync(new ListWholesaleProductsQuery(_tenant, null, null, int.MaxValue, 50), Ct);
+
+        Assert.Equal(ListWholesaleProductsHandler.MaxPage, page.Page);
+        Assert.Empty(page.Items);
+    }
 }

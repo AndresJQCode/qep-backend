@@ -30,11 +30,14 @@ public sealed class ListWholesaleProductsHandler(
 {
     public const int MaxPageSize = 50;
 
+    /// <summary>Tope de la página para que <c>(page - 1) * pageSize</c> no desborde un <c>int</c>; más allá, la página vacía.</summary>
+    public const int MaxPage = 100_000;
+
     public async Task<WholesaleProductsResponse> HandleAsync(ListWholesaleProductsQuery query, CancellationToken cancellationToken)
     {
         WholesaleAuthorization.EnsureAuthorized(executionContext, query.TenantId, WholesalePermissions.PriceListManage);
 
-        var page = Math.Max(1, query.Page);
+        var page = Math.Clamp(query.Page, 1, MaxPage);
         var pageSize = query.PageSize < 1 ? MaxPageSize : Math.Min(query.PageSize, MaxPageSize);
         var search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim();
         var currency = await defaultCurrency.GetAsync(query.TenantId, cancellationToken);

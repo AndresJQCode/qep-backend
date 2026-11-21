@@ -33,7 +33,8 @@ public interface IProductRepository
     /// consulta, para que el total y la página sean verdad: <paramref name="pricedInCurrency"/> deja sólo los que tienen una
     /// variante activa con precio en esa moneda (null no filtra); <paramref name="excludedCategoryIds"/> quita los de esas
     /// categorías (ya expandida; un producto sin categoría no cae por ésta) y <paramref name="excludedProductIds"/> quita esos
-    /// productos. Null o vacía no excluye nada.
+    /// productos. Null o vacía no excluye nada. Con <paramref name="orderByName"/> el orden es siempre por nombre (un selector que
+    /// se pagina), aun con <paramref name="search"/>; sin él, con búsqueda manda la relevancia, como <see cref="SearchAsync"/>.
     /// </summary>
     Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
         Guid tenantId,
@@ -42,15 +43,16 @@ public interface IProductRepository
         IReadOnlyCollection<Guid>? categoryIds,
         IReadOnlyCollection<Guid>? excludedCategoryIds,
         IReadOnlyCollection<Guid>? excludedProductIds,
+        bool orderByName,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Spec 2026-11-20: los productos de esos ids con sus variantes, sin escalas, galería ni seguimiento. Un id desconocido o de
-    /// otro tenant simplemente no aparece.
+    /// Spec 2026-11-20: lo mínimo de esos productos, proyectado en la base (sin cargar el agregado): un id desconocido o de otro
+    /// tenant simplemente no aparece.
     /// </summary>
-    Task<IReadOnlyList<Product>> FindByIdsAsync(
+    Task<IReadOnlyList<ProductBasics>> FindBasicsByIdsAsync(
         Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken);
 
     /// <summary>
@@ -282,6 +284,13 @@ public interface IProductRepository
     /// </summary>
     Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Un producto reducido a nombre, categoría y variantes (<see cref="IProductRepository.FindBasicsByIdsAsync"/>).
+/// <paramref name="SingleVariantCode"/> es el código de su única variante; con varias, <c>null</c>.
+/// </summary>
+public sealed record ProductBasics(
+    ProductId Id, string Name, ProductCategoryId? CategoryId, int VariantCount, string? SingleVariantCode);
 
 /// <summary>Una fila del listado de productos (<see cref="IProductRepository.SearchSummariesAsync"/>).</summary>
 /// <param name="ImageFileId">El archivo de la primera foto de la galería.</param>

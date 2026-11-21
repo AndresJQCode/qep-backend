@@ -185,10 +185,10 @@ internal sealed class WriterProductRepository : IProductRepository
 
     public Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
         Guid tenantId, string? search, string? pricedInCurrency, IReadOnlyCollection<Guid>? categoryIds,
-        IReadOnlyCollection<Guid>? excludedCategoryIds, IReadOnlyCollection<Guid>? excludedProductIds, int page, int pageSize,
-        CancellationToken cancellationToken) => throw new NotSupportedException();
+        IReadOnlyCollection<Guid>? excludedCategoryIds, IReadOnlyCollection<Guid>? excludedProductIds, bool orderByName, int page,
+        int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public Task<IReadOnlyList<Product>> FindByIdsAsync(
+    public Task<IReadOnlyList<ProductBasics>> FindBasicsByIdsAsync(
         Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 

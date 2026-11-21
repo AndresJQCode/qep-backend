@@ -58,7 +58,7 @@ internal sealed class WholesaleCatalogReader(
 
         var hidden = await ExpandAsync(tenantId, excludedCategoryIds is { Count: > 0 } ? excludedCategoryIds : null, cancellationToken);
         var (found, total) = await products.SearchActiveFilteredAsync(
-            tenantId, null, null, expanded, hidden, excludedProductIds, page: 1, pageSize: take, cancellationToken);
+            tenantId, null, null, expanded, hidden, excludedProductIds, orderByName: false, page: 1, pageSize: take, cancellationToken);
         var valueNames = await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, found, cancellationToken);
 
         var items = new List<WholesaleSampleVariant>(found.Count);
@@ -127,6 +127,7 @@ internal sealed class WholesaleCatalogReader(
             expanded,
             hidden,
             excludedProductIds,
+            orderByName: false,
             page,
             pageSize,
             cancellationToken);
@@ -145,8 +146,11 @@ internal sealed class WholesaleCatalogReader(
         }
 
         // Acotada al tenant: un id ajeno o borrado simplemente no aparece.
-        var found = await products.FindByIdsAsync(tenantId, ids.Select(id => new ProductId(id)).ToArray(), cancellationToken);
-        return found.ToDictionary(product => product.Id.Value, product => RefOf(product, imageUrl: null));
+        var found = await products.FindBasicsByIdsAsync(tenantId, ids.Select(id => new ProductId(id)).ToArray(), cancellationToken);
+        return found.ToDictionary(
+            product => product.Id.Value,
+            product => new WholesaleProductRef(
+                product.Id.Value, product.SingleVariantCode, product.Name, product.CategoryId?.Value, product.VariantCount, null));
     }
 
     public async Task<(IReadOnlyList<WholesaleProductRef> Items, int Total)> SearchProductsAsync(
@@ -172,12 +176,13 @@ internal sealed class WholesaleCatalogReader(
             expanded,
             null,
             null,
+            orderByName: true,
             page,
             pageSize,
             cancellationToken);
         var files = await CatalogVariantReads.LoadImagesAsync(images, found.Select(product => product.ImageFileId), cancellationToken);
+        // El orden por nombre lo pone la consulta (también con búsqueda): reordenar la página en memoria no lo arreglaría.
         var items = found
-            .OrderBy(product => product.Name, StringComparer.CurrentCultureIgnoreCase)
             .Select(product => RefOf(product, CatalogVariantReads.ImageUrlOf(product.ImageFileId, files, tenantId)))
             .ToList();
         return (items, total);

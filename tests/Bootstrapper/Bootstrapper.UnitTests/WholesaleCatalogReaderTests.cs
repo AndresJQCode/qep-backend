@@ -160,4 +160,29 @@ public sealed class WholesaleCatalogReaderTests
         Assert.Equal((1, world.Product.Id.Value, "https://cdn.example.co/main.png", 2), (total, row.Id, row.ImageUrl, row.VariantCount));
         Assert.Equal(new[] { parent, child }.Order(), products.LastCategoryIds!.Order());
     }
+
+    [Fact]
+    public async Task FindProductsNeverReturnsAProductOfAnotherTenant()
+    {
+        var world = VariantWorld.Create(TenantId, Now);
+        var (reader, _, _, _, _) = ReaderWithTree(world, new FakeProductImageLookup());
+
+        var found = await reader.FindProductsAsync(Guid.CreateVersion7(), [world.Product.Id.Value], Ct);
+
+        Assert.Empty(found);
+    }
+
+    [Fact]
+    public async Task SearchProductsAsksTheRepositoryForNameOrderAndTheBuyerCatalogDoesNot()
+    {
+        var world = VariantWorld.Create(TenantId, Now);
+        var (reader, products, _, _, _) = ReaderWithTree(world, new FakeProductImageLookup());
+
+        await reader.SearchProductsAsync(TenantId, "COP", null, "cam", 1, 50, Ct);
+        var picker = products.LastOrderByName;
+        await reader.SearchSellableAsync(TenantId, "COP", null, null, null, "cam", 1, 50, Ct);
+
+        Assert.True(picker);
+        Assert.False(products.LastOrderByName);
+    }
 }
