@@ -132,8 +132,8 @@ Lo que el tenant abre. Cada franja declara:
 - **Servicios** que se reservan en ella (uno o varios) y **recursos** que la atienden (uno o varios, ordenados).
 - **Repetición**: semanal (por día de la semana, uno o varios rangos de minutos locales `[from, to)`, 0..1440) o **puntual**
   (una fecha), con vigencia `valid_from` / `valid_to` opcional y `closes_on_holidays` (festivos de Colombia).
-  El formato es el de los horarios de atención de Mensajería (`WeekdayHours`, `TimeRange`, `ExceptionHours`); Scheduling no
-  puede depender de Messaging (D-10).
+  El formato se parece al de los horarios de atención de Mensajería, pero Scheduling no puede depender de Messaging: declara sus
+  propios `TimeRange`, `WeekdayHours` y `DateException` (D-10).
 - **`capacity_per_resource`** (≥ 1). Con 3 recursos y cupo 1 caben 3 citas a la misma hora, una por recurso.
 - **`session_mode`**, sólo con cupo > 1 y una franja más larga que el servicio:
   `FirstBookingOpens` (la primera reserva abre la sesión; las demás se suman al mismo servicio e inicio) o
@@ -188,8 +188,8 @@ Estados `Pending`, `Confirmed`, `Cancelled`, `Completed`, `NoShow`:
 - El cliente por canal puede cancelar hasta `client_cancel_cutoff_hours` antes; el back office no tiene ese tope.
 
 **`BookAppointment`** es una transacción: valida permiso, tenant y alcance → recalcula que el inicio es válido (reglas
-incluidas) → bloquea la fila del recurso → busca o crea la sesión → comprueba cupo → inserta la cita, su historial, la
-auditoría y el evento de outbox en la misma transacción (`IAuditRecorder`). Admite `clientRequestId` idempotente para el
+incluidas) → bloquea la fila del recurso → busca o crea la sesión → comprueba cupo → inserta la cita, su historial y
+la auditoría en la misma transacción. Admite `clientRequestId` idempotente para el
 agente. Cuando el cliente no elige recurso, **la asignación se hace aquí**, dentro de la transacción, y no al leer la
 disponibilidad: lo contrario deja a dos clientes con el mismo «primero libre».
 
@@ -213,8 +213,8 @@ esta fase por decisión del owner; todas se escriben con `If-Match` y `settings.
 ### Auditoría e historial
 
 Cada transición de una cita escribe una entrada de historial (`appointment_events`, la que dibuja la tarjeta «Historial») y
-una auditoría atómica con `IAuditRecorder`, no por outbox: son operaciones del usuario, no efectos operativos. Las acciones
-viven en `SchedulingAuditActions`.
+una auditoría con el mismo mecanismo que Hr (`ISchedulingAuditPublisher`, calco de `IHrAuditPublisher`); el módulo no publica
+eventos. Las acciones viven en `SchedulingAuditActions`.
 
 ### Integración con Clientes (gotcha de SQL entre módulos)
 
@@ -246,10 +246,10 @@ nombre (`Pending`, `FirstBookingOpens`); una colección editable vuelve entera y
 de validación lleva el mapa `errors`. Cada escritura lleva `If-Match` con la `version` de la fila. Ningún status se arma a
 mano en un handler.
 
-Códigos nuevos, entre otros: `scheduling.appointment.slot_taken`, `scheduling.appointment.outside_rules`,
-`scheduling.appointment.session_full`, `scheduling.appointment.invalid_transition`,
-`scheduling.resource.not_in_scope` (403), `scheduling.resource.has_future_appointments`,
-`scheduling.closure.overlaps_appointments`, `scheduling.service.in_use`.
+Códigos nuevos, entre otros: `scheduling.appointment.slot_taken` y `…session_full` (409, `ResourceConflictException`);
+`scheduling.appointment.outside_rules`, `…invalid_transition`, `scheduling.resource.has_future_appointments`,
+`scheduling.closure.overlaps_appointments` y `scheduling.service.in_use` (422). Un recurso fuera de alcance no tiene código
+propio: responde 403 `authorization.denied`. El mapeo de status es por **tipo de excepción** y `ApiExceptionHandler` no cambia.
 
 ## Decisiones
 
@@ -264,7 +264,7 @@ Códigos nuevos, entre otros: `scheduling.appointment.slot_taken`, `scheduling.a
 | D-7 | Alcance por permiso `scheduling.agenda.read_all` + miembro vinculado al recurso; el médico administra su agenda completa | 2026-11-21 |
 | D-8 | Doble reserva imposible por una restricción de exclusión sobre sesiones, no sólo por código | 2026-11-21 |
 | D-9 | **El recordatorio por WhatsApp entra en esta fase** (plantilla `Appointment`, trabajo programado) | 2026-11-21 |
-| D-10 | Los formatos de horario semanal y los festivos de Colombia no se importan de Messaging (ver «Al implementador») | 2026-11-21 |
+| D-10 | Los festivos de Colombia entran por un puerto con adaptador en Bootstrapper (como Soporte); los tipos de rango se declaran en Scheduling. No se mueve nada de Mensajería | 2026-11-21 |
 | D-11 | Cualquier cita bloquea el borrado del cliente; la fusión mueve las citas | 2026-11-21 |
 | D-12 | Un bloqueo que cruza citas vigentes se rechaza hasta reprogramarlas; nada se mueve en silencio | 2026-11-21 |
 | D-13 | Dos roles de sistema, `scheduling_manager` y `scheduling_provider`, definidos en código; ninguno lleva `settings.manage` | 2026-11-21 |
@@ -273,17 +273,15 @@ Códigos nuevos, entre otros: `scheduling.appointment.slot_taken`, `scheduling.a
 
 Cosas que la spec no resuelve a propósito y que el plan debe verificar contra el código **antes** de escribir tareas:
 
-1. **`btree_gist`.** No hay precedente de una *exclusion constraint* en el repo. Verificar que la extensión se pueda crear en
-   las bases de producción y de las pruebas (`CREATE EXTENSION`). Si no, la alternativa es el bloqueo de fila del recurso más
-   una comprobación de solapamiento en la misma transacción, con la prueba de concurrencia como garantía; la decisión D-8
-   se reescribe entonces.
-2. **Tipos compartidos con Mensajería.** `WeekdayHours`, `TimeRange`, `ExceptionHours` y `ColombianHolidays` viven en
-   `Modules.Messaging.Domain`. Lo limpio es moverlos a `BuildingBlocks.Domain` en un commit previo, sin cambio de
-   comportamiento, y que ambos módulos los usen. Copiarlos es la salida si el movimiento resulta invasivo.
+1. **`btree_gist`: resuelto.** Las migraciones de Mensajería ya hacen `CREATE EXTENSION IF NOT EXISTS btree_gin` en producción y
+   `btree_gist` es del mismo paquete; la migración lo crea igual. Si una base concreta lo negara, el remedio es bloquear la fila del
+   recurso sin restricción, y la decisión D-8 se reescribe.
+2. **Tipos compartidos con Mensajería: resuelto (D-10).** No se mueve ni se copia nada: los festivos entran por
+   `ISchedulingHolidayCalendar`, con el adaptador de Bootstrapper sobre `ColombianHolidays`, calco de `SupportBusinessCalendarSource`.
 3. **Permisos de Clientes** que llevan los dos roles, y si `admin` recibe los permisos nuevos solo o hay que listarlos (se
    listan, como Hr, en la definición de `admin`; confirmarlo).
-4. **Forma del mapeo de errores** de los códigos nuevos en `ApiExceptionHandler` (cuáles son 409 y cuáles 422), y la
-   traducción por **nombre de índice** de la restricción, no sólo por `SqlState`, en Infrastructure.
+4. **Mapeo de errores: resuelto en el plan.** `slot_taken` y `session_full` son 409; el resto, 422; fuera de alcance, 403. La
+   restricción de exclusión se traduce en Infrastructure por **nombre de índice**, no sólo por `SqlState`.
 5. **Política de WhatsApp** para un recordatorio como plantilla de utilidad: cómo trata Mensajería el consentimiento y la
    ventana de 24 horas, y si hace falta registrar un consentimiento del cliente. Si hay un requisito, entra al plan.
 6. **Orden del ítem «Agenda» en el menú lateral.** Lo decide el owner y lo fija `sidebar-nav-items.test.ts` en el
