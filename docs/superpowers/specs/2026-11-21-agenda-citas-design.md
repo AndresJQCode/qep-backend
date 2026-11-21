@@ -80,11 +80,13 @@ recibe solo; el administrador los asigna.
 
 | Clave | Nombre | Permisos |
 | --- | --- | --- |
-| `scheduling_manager` | Gestor de agenda | `appointment.read/manage`, `availability.manage`, `agenda.read_all` y la lectura y creación de clientes |
+| `scheduling_manager` | Gestor de agenda | `appointment.read/manage`, `availability.manage` y `agenda.read_all` |
 | `scheduling_provider` | Profesional de agenda | Los mismos, **sin** `agenda.read_all`: ve y administra sólo su recurso |
 
-Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador. Un tenant que quiera otra
-combinación crea un rol custom en «Roles y permisos». Los permisos de Clientes exactos se fijan al escribir el plan.
+Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador. **Tampoco llevan permisos de Clientes**: uno de
+núcleo haría asignable «Gestor de agenda» en un tenant sin la Agenda. Buscar y crear el cliente de la cita va por rutas propias de la
+Agenda (`GET` y `POST …/scheduling/customers`, con `appointment.manage`), como el POS con `/pos/customers`. Un tenant que quiera otra
+combinación crea un rol custom en «Roles y permisos». 
 
 ### Aprovisionamiento: sede principal y reglas por defecto
 
@@ -278,8 +280,8 @@ Cosas que la spec no resuelve a propósito y que el plan debe verificar contra e
    recurso sin restricción, y la decisión D-8 se reescribe.
 2. **Tipos compartidos con Mensajería: resuelto (D-10).** No se mueve ni se copia nada: los festivos entran por
    `ISchedulingHolidayCalendar`, con el adaptador de Bootstrapper sobre `ColombianHolidays`, calco de `SupportBusinessCalendarSource`.
-3. **Permisos de Clientes** que llevan los dos roles, y si `admin` recibe los permisos nuevos solo o hay que listarlos (se
-   listan, como Hr, en la definición de `admin`; confirmarlo).
+3. **Permisos de Clientes y de `admin`: resuelto.** Los roles no llevan permisos de Clientes, y `admin` recibe los cinco porque se
+   listan, como los de Hr, en su definición.
 4. **Mapeo de errores: resuelto en el plan.** `slot_taken` y `session_full` son 409; el resto, 422; fuera de alcance, 403. La
    restricción de exclusión se traduce en Infrastructure por **nombre de índice**, no sólo por `SqlState`.
 5. **Política de WhatsApp** para un recordatorio como plantilla de utilidad: cómo trata Mensajería el consentimiento y la

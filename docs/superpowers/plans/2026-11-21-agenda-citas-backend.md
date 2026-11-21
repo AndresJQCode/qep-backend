@@ -5,6 +5,9 @@
 > tareas se ejecutan en **cuatro bloques**, un implementador por bloque, una revisión por bloque y la revisión fuerte una sola vez al final.
 > Cada tarea conserva su commit.
 
+**Estado:** Bloque A implementado (2026-11-21): `03798bb` (llave del módulo), `d05482e` (esqueleto, permisos y roles), `b773221` (tipos y
+festivos). Las desviaciones respecto a lo que decía este plan están en «Correcciones durante la implementación».
+
 **Spec:** `docs/superpowers/specs/2026-11-21-agenda-citas-design.md` (aprobada por el owner el 2026-11-21). Este plan la baja a tareas y
 **corrige tres puntos de la spec** tras leer el código (sección «Correcciones a la spec»).
 
@@ -40,6 +43,21 @@ La spec se corrige en el mismo commit que este plan.
    restricción) **no se implementa**; sólo se documenta como remedio si una base concreta lo negara.
 4. **Auditoría.** La spec decía `IAuditRecorder` y outbox; Hr y Loans usan un `I<Modulo>AuditPublisher` propio sin eventos de outbox.
    Scheduling copia `IHrAuditPublisher` y **no publica eventos**. La tarea 9 verifica en `HrAuditPublisher` cuál de los dos caminos usa.
+
+## Correcciones durante la implementación
+
+5. **Los roles de sistema no llevan permisos de Clientes.** Con `customers.customer.read|manage` en el rol, un tenant sin Agenda vería
+   «Gestor de agenda» como asignable (`RoleAssignability` ofrece el rol si concede al menos un permiso que el tenant tiene, y los de Clientes
+   son de núcleo). La prueba `TheSchedulingRolesAreAssignableOnlyWithTheSchedulingModule` lo fija. La búsqueda y el alta de clientes de la
+   cita irán por la propia Agenda, como en el POS (spec 2026-10-14, decisión 4): `GET` y `POST …/scheduling/customers`, con
+   `appointment.manage`, y su adaptador en Bootstrapper (calco de `PosCustomerLookup`). Entra en la Tarea 9.
+6. **`SchedulingDomainException` se movió de la Tarea 3 a la 2**, porque `SchedulingLayerTests` necesita un tipo del ensamblado de dominio.
+7. **`SchedulingAuthorization` no devuelve el `ResourceScope`.** Autoriza (tenant, permisos y módulo) y expone `CanSeeEveryAgenda`; resolver
+   los recursos vinculados a la membresía necesita el repositorio de recursos y entra en la Tarea 7 (`ResourceScope.For`).
+8. **`DateException` se llama `DateHours`**: el analizador CA1711 rechaza un tipo que no es excepción y termina en «Exception».
+   El adaptador de festivos es `ISchedulingHolidayCalendar.HolidaysAsync(tenantId, firstDay, lastDay)` (CA1716 reserva `to` y `end`).
+9. **Cada categoría de permiso necesita su etiqueta** en `PermissionVocabulary.CategoryLabels` (`["Agenda"] = "Agenda"`); sin ella falla
+   `EveryActionAndCategoryHasALabel`. El permiso `agenda.read_all` ocupa la celda `scheduling.agenda` / `read` de la matriz de roles.
 
 ## Global Constraints
 
@@ -116,6 +134,7 @@ Enums con su nombre. Colecciones de tamaño fijo completas, aun en cero.
 | `GET appointments/{id}` | `appointment.read` | Con historial |
 | `POST appointments/{id}/confirm` · `/cancel` · `/attend` · `/no-show` | `appointment.manage` | Transiciones |
 | `PUT appointments/{id}/reschedule` | `appointment.manage` | Cambia de sesión, conserva id y estado |
+| `GET customers?search=`, `POST customers` | `appointment.manage` | Buscar y crear el cliente de la cita sin el padrón de Clientes (punto 5) |
 | `GET/POST/PUT locations`, `…/{id}/archive` | `settings.manage` (lectura: `appointment.read`) | La principal no se archiva |
 | `GET/POST/PUT resources`, `…/{id}/archive` | alta y estructura: `settings.manage`; datos y vínculo de **su** recurso: `availability.manage` | Archivar con citas futuras → 422 `resource.has_future_appointments` |
 | `GET/POST/PUT services`, `…/{id}/archive` | `settings.manage` | `service.in_use` si tiene citas futuras |
@@ -158,7 +177,7 @@ resourceName,start,source,requestedAgo}], unmarked[{…}], upcoming[{…}] }`. �
 ```
 src/Modules/Scheduling/
   Modules.Scheduling.Domain/        ids; enums (AppointmentStatus, AppointmentSource, SessionMode, ConfirmationMode, AssignmentRule,
-                                    BlockKind); TimeRange, WeekdayHours, DateException; Location, Resource, Service, AvailabilityBlock,
+                                    BlockKind); TimeRange, WeekdayHours, DateHours; Location, Resource, Service, AvailabilityBlock,
                                     Closure, Session, Appointment, AppointmentEvent, SchedulingSettings, SchedulingDefaults;
                                     SchedulingErrorCodes, SchedulingDomainException
   Modules.Scheduling.Application/   SchedulingPermissions, SchedulingAuthorization, ResourceScope, SchedulingValidator,
@@ -219,7 +238,7 @@ Calco del commit que agregó `hr` (migración `20261121015802_AddHrModuleKey`, `
   `scheduling.settings.manage`). `ResourceScope`: `All` o un conjunto de `resourceId` resueltos del miembro
   (`ISchedulingMemberDirectory.FindBySubjectAsync` + `resources.member_id`); `Includes(resourceId)`. `SchedulingAuthorization.EnsureAsync(tenantId,
   required permissions, …)` devuelve el `ResourceScope`. Roles: `scheduling_manager` («Gestor de agenda») con `appointment.*`,
-  `availability.manage`, `agenda.read_all`, `customers.customer.read` y `customers.customer.manage`; `scheduling_provider` («Profesional de agenda»)
+  `availability.manage` y `agenda.read_all`, y **ningún** permiso de Clientes (corrección 5); `scheduling_provider` («Profesional de agenda»)
   con lo mismo **sin** `agenda.read_all`. Ninguno lleva `settings.manage`.
 
 - [ ] **Step 1: Pruebas que fallan.** `SchedulingLayerTests` (capas y que Scheduling no referencia `Modules.Customers.*`, `Modules.Tenancy.*`
@@ -230,13 +249,13 @@ Calco del commit que agregó `hr` (migración `20261121015802_AddHrModuleKey`, `
 - [ ] **Step 3: Implementar**, `dotnet restore Backend.slnx` y commitear los `packages.lock.json`.
 - [ ] **Step 4: GREEN.** `ArchitectureTests`, `CompositionRootTests`, `SystemRoleKeysTests`, `RoleAssignabilityTests`.
 - [ ] **Step 5: Verificar** que `admin` recibe los permisos (la definición de `admin` los lista, como los de Hr) y que los permisos de
-  Clientes de los roles son los de `CustomersPermissions` (`customers.customer.read`, `customers.customer.manage`).
+  Clientes: ninguno (corrección 5).
 - [ ] **Step 6: Commit** — `feat(scheduling): module skeleton, permissions, scope and system roles`
 
 ### Task 3: Tipos puros, calendario de festivos y reloj
 
 **Files:**
-- Create: `TimeRange`, `WeekdayHours`, `DateException`, `SchedulingErrorCodes`, `SchedulingDomainException`
+- Create: `TimeRange`, `WeekdayHours`, `DateHours`, `SchedulingErrorCodes`
 - Create: `ISchedulingHolidayCalendar` (Application) y `src/Bootstrapper/SchedulingHolidayCalendar.cs`, calco de
   `SupportBusinessCalendarSource` (festivos sólo con país `CO`)
 - Test: `tests/Bootstrapper/Bootstrapper.UnitTests/SchedulingHolidayCalendarTests.cs`
