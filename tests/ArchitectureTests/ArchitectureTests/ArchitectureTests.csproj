@@ -62,6 +62,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Wholesale\Modules.Wholesale.Application\Modules.Wholesale.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Wholesale\Modules.Wholesale.Domain\Modules.Wholesale.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Wholesale\Modules.Wholesale.Infrastructure\Modules.Wholesale.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Coordinadora\Modules.Coordinadora.Api\Modules.Coordinadora.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Coordinadora\Modules.Coordinadora.Application\Modules.Coordinadora.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Coordinadora\Modules.Coordinadora.Domain\Modules.Coordinadora.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Coordinadora\Modules.Coordinadora.Infrastructure\Modules.Coordinadora.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Siigo\Modules.Siigo.Api\Modules.Siigo.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Siigo\Modules.Siigo.Application\Modules.Siigo.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Siigo\Modules.Siigo.Domain\Modules.Siigo.Domain.csproj" />

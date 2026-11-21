@@ -474,6 +474,8 @@
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Api": "[1.0.0, )",
           "Modules.Companies.Infrastructure": "[1.0.0, )",
+          "Modules.Coordinadora.Api": "[1.0.0, )",
+          "Modules.Coordinadora.Infrastructure": "[1.0.0, )",
           "Modules.Customers.Api": "[1.0.0, )",
           "Modules.Customers.Infrastructure": "[1.0.0, )",
           "Modules.Geography.Api": "[1.0.0, )",
@@ -540,6 +542,8 @@
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Application": "[1.0.0, )",
           "Modules.Companies.Infrastructure": "[1.0.0, )",
+          "Modules.Coordinadora.Application": "[1.0.0, )",
+          "Modules.Coordinadora.Infrastructure": "[1.0.0, )",
           "Modules.Customers.Application": "[1.0.0, )",
           "Modules.Customers.Infrastructure": "[1.0.0, )",
           "Modules.Geography.Application": "[1.0.0, )",
@@ -878,6 +882,42 @@
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.Companies.Application": "[1.0.0, )",
           "Modules.Companies.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.coordinadora.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Coordinadora.Application": "[1.0.0, )",
+          "Modules.Coordinadora.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.coordinadora.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Coordinadora.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.coordinadora.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.coordinadora.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Coordinadora.Application": "[1.0.0, )",
+          "Modules.Coordinadora.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

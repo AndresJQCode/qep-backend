@@ -28,6 +28,8 @@ using Modules.Catalog.Api;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Api;
 using Modules.Companies.Infrastructure;
+using Modules.Coordinadora.Api;
+using Modules.Coordinadora.Infrastructure;
 using Modules.Customers.Api;
 using Modules.Customers.Infrastructure;
 using Modules.Geography.Api;
@@ -394,6 +396,8 @@ app.MapShopifyProductEndpoints();
 app.MapShopifyOrderEditEndpoints();
 // Spec 2026-11-18: Siigo (configuración por conexión y factura electrónica de un pedido).
 app.MapSiigoEndpoints();
+// Spec 2026-11-21: Coordinadora (configuración de la conexión y guía de un pedido).
+app.MapCoordinadoraEndpoints();
 app.MapMessagingEndpoints();
 // Spec 2026-10-30 §5.2: la API externa, autenticada con X-Api-Key. Después de Messaging, de cuyos handlers depende.
 app.MapExternalApi();
@@ -511,6 +515,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Siigo (spec 2026-11-18): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, pedido, cliente,
     // producto y empresa son referencias blandas.
     await services.InitializeSiigoDatabaseAsync(
+        cancellationToken);
+
+    // Coordinadora (spec 2026-11-21): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, pedido y ciudad son
+    // referencias blandas.
+    await services.InitializeCoordinadoraDatabaseAsync(
         cancellationToken);
 
     // Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de

@@ -448,7 +448,8 @@ public static class IntegrationProviders
                 required: true, maxLength: 256, pattern: PrintableWithoutSpaces,
                 invalidMessage: "La contraseña de guías sólo puede tener letras, números y símbolos, sin espacios."),
         ],
-        DefaultMaxConnections,
+        // Una cuenta de Coordinadora por tenant (spec §5.1): el módulo elige «la conexión del tenant» sin preguntar cuál.
+        maxConnections: 1,
         onboarding: ProviderOnboarding.Form,
         requiresTenantEnablement: false);
 

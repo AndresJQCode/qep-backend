@@ -35,6 +35,10 @@ using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
 using Modules.Companies.Infrastructure;
+using Modules.Coordinadora.Application;
+using Modules.Coordinadora.Application.Settings;
+using Modules.Coordinadora.Application.Shipments;
+using Modules.Coordinadora.Infrastructure;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
@@ -1235,6 +1239,8 @@ public static class QepServiceCollectionExtensions
         // la marca manual hace antes de marcar. Quotations declara los dos puertos; el segundo lo implementa Bootstrapper sobre siigo.invoices.
         services.AddScoped<IExternalOrderInvoicing, ExternalOrderInvoicingService>();
         services.AddScoped<IExternalInvoiceStatus, SiigoOpenInvoiceCheck>();
+        // Spec 2026-11-21 §5.7: el pedido visto por una transportadora externa (Coordinadora). Sólo lectura: el pedido no cambia por tener guía.
+        services.AddScoped<IExternalOrderShipping, ExternalOrderShippingService>();
         // Spec 2026-10-29 §8.3: el borrador de cotización sin sesión que pide un agente IA (create_quotation_draft); Ai lo
         // consume por un adaptador (AiQuotationDrafts).
         services.AddScoped<IExternalQuotationWriter, ExternalQuotationService>();
@@ -1771,6 +1777,25 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateSiigoInvoiceBatchCommand, SiigoInvoiceBatchDto>, CreateSiigoInvoiceBatchHandler>();
         services.AddScoped<IQueryHandler<GetSiigoInvoiceBatchQuery, SiigoInvoiceBatchDto>, GetSiigoInvoiceBatchHandler>();
         services.AddScoped<ISiigoBatchItemInvoker, SiigoBatchItemInvoker>();
+
+        // Coordinadora (spec 2026-11-21): la guía de un pedido. Sólo ve Tenancy (y Audit para su auditoría propia); la conexión
+        // (Integrations), el pedido (Quotations) y la ciudad (Geography) entran por los puertos de CoordinadoraPorts.cs, cuyos adaptadores
+        // viven en CoordinadoraAdapters.cs (CoordinadoraLayerTests). Sin hosted services ni singletons con estado.
+        services.AddCoordinadoraInfrastructure(configuration);
+        services.AddScoped<ICoordinadoraConnectionDirectory, CoordinadoraConnectionDirectory>();
+        services.AddScoped<ICoordinadoraGeographyLookup, CoordinadoraGeographyLookup>();
+        services.AddScoped<ICoordinadoraOrderSource, CoordinadoraOrderSource>();
+        services.AddValidatorsFromAssemblyContaining<UpdateCoordinadoraSettingsValidator>();
+        services.AddScoped<IQueryHandler<GetCoordinadoraSettingsQuery, CoordinadoraSettingsDto>, GetCoordinadoraSettingsHandler>();
+        services.AddScoped<ICommandHandler<UpdateCoordinadoraSettingsCommand, CoordinadoraSettingsDto>, UpdateCoordinadoraSettingsHandler>();
+        services.AddScoped<IQueryHandler<GetCoordinadoraShipmentQuery, CoordinadoraShipmentDto>, GetCoordinadoraShipmentHandler>();
+        services.AddScoped<IQueryHandler<PreviewCoordinadoraShipmentQuery, CoordinadoraShipmentPreviewDto>, PreviewCoordinadoraShipmentHandler>();
+        services.AddScoped<IQueryHandler<GetCoordinadoraLabelQuery, CoordinadoraLabelDto>, GetCoordinadoraLabelHandler>();
+        services.AddScoped<ICommandHandler<QuoteCoordinadoraShipmentCommand, CoordinadoraQuoteDto>, QuoteCoordinadoraShipmentHandler>();
+        services.AddScoped<ICommandHandler<CreateCoordinadoraShipmentCommand, CoordinadoraShipmentDto>, CreateCoordinadoraShipmentHandler>();
+        services.AddScoped<ICommandHandler<TrackCoordinadoraShipmentCommand, CoordinadoraShipmentDto>, TrackCoordinadoraShipmentHandler>();
+        services.AddScoped<ICommandHandler<CancelCoordinadoraShipmentCommand, CoordinadoraShipmentDto>, CancelCoordinadoraShipmentHandler>();
+        services.AddScoped<ICommandHandler<ResolveCoordinadoraShipmentCommand, CoordinadoraShipmentDto>, ResolveCoordinadoraShipmentHandler>();
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
         services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
@@ -2601,6 +2626,9 @@ public static class QepServiceCollectionExtensions
                 SiigoPermissions.InvoiceIssue,
                 // Spec 2026-11-21: ver las llamadas a Siigo que fallaron; el cuerpo lleva datos del cliente, así que sólo admin de fábrica.
                 SiigoPermissions.CallsRead,
+                // Spec 2026-11-21 (integración Coordinadora) §5.6: configurar la conexión y generar guías.
+                CoordinadoraPermissions.SettingsManage,
+                CoordinadoraPermissions.ShipmentManage,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
@@ -2674,6 +2702,8 @@ public static class QepServiceCollectionExtensions
                 // (OrderApprove) queda afuera a proposito: quien registra el pedido no lo revisa.
                 OrdersPermissions.OrderRead,
                 OrdersPermissions.OrderManage,
+                // Spec 2026-11-21 (integración Coordinadora) §5.6: quien prepara el pedido genera su guía. Configurar la conexión es de admin.
+                CoordinadoraPermissions.ShipmentManage,
                 // Solo los dos reportes de su trabajo diario. Cambios de precio y padron de
                 // clientes quedan en admin: son la vista agregada del negocio, no la operacion.
                 ReportingPermissions.OrdersRead,
@@ -3658,6 +3688,28 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("siigo.calls", "Fallas de las llamadas a Siigo", "read"),
         });
+        // Spec 2026-11-21 (integración Coordinadora) §5.6: con [coordinadora], ModuleEntitlementMask quita el permiso al apagar el módulo y
+        // el editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            CoordinadoraPermissions.SettingsManage,
+            "Configurar Coordinadora",
+            "Permite configurar la conexión de Coordinadora: remitente, cuenta, producto y paquete por defecto.",
+            "Coordinadora",
+            "high",
+            RequiredModules: [ModuleKeys.Coordinadora])
+        {
+            Shape = new("coordinadora.settings", "Configuración de Coordinadora", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            CoordinadoraPermissions.ShipmentManage,
+            "Generar guías de Coordinadora",
+            "Permite cotizar, generar, imprimir, seguir y anular la guía de Coordinadora de un pedido.",
+            "Coordinadora",
+            "medium",
+            RequiredModules: [ModuleKeys.Coordinadora])
+        {
+            Shape = new("coordinadora.shipment", "Guías de Coordinadora", "manage"),
+        });
         // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
         services.AddSingleton(new PermissionDefinition(
             ApiAccessPermissions.ApiKeyManage,
@@ -4250,6 +4302,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 SiigoPermissions.CallsRead,
                 policy => AddPermissionRequirement(policy, SiigoPermissions.CallsRead))
+            // Spec 2026-11-21 (integración Coordinadora): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                CoordinadoraPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, CoordinadoraPermissions.SettingsManage))
+            .AddPolicy(
+                CoordinadoraPermissions.ShipmentManage,
+                policy => AddPermissionRequirement(policy, CoordinadoraPermissions.ShipmentManage))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 ServiceContractsPermissions.Read,

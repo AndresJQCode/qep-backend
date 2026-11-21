@@ -11,6 +11,7 @@ using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
 using Modules.Catalog.Application;
+using Modules.Coordinadora.Application;
 using Modules.Customers.Application;
 using Modules.Geography.Application;
 using Modules.Hr.Application;
@@ -325,7 +326,7 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las dos <c>coordinadora.*</c> del spec 2026-11-21.</summary>
     [Fact]
     public void PermissionDiscoveryFindsTheHundredConstants()
     {
@@ -352,8 +353,9 @@ public sealed class CompositionRootTests
         // + los tres de mayorista (spec 2026-11-17)
         // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18)
         // + el de las fallas de las llamadas a Siigo (siigo.calls.read, spec 2026-11-21)
-        // + the five hr.* permissions (spec 2026-11-20).
-        Assert.Equal(100, PermissionConstants().Length);
+        // + the five hr.* permissions (spec 2026-11-20)
+        // + los dos de Coordinadora (coordinadora.settings.manage, coordinadora.shipment.manage, spec 2026-11-21).
+        Assert.Equal(102, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -1391,6 +1393,55 @@ public sealed class CompositionRootTests
 
         HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
             .CreateHandler(Modules.Ai.Infrastructure.Model.OpenAi.OpenAiModelClient.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-21 (integración Coordinadora) §5.6: los dos permisos exigen el módulo <c>coordinadora</c>; admin lleva los dos y el
+    /// asesor sólo el de guías (es quien prepara el pedido). Configurar la conexión es de admin. Facturación y cajero, ninguno.
+    /// </summary>
+    [Fact]
+    public void TheCoordinadoraPermissionsRequireTheModuleAndGoToAdminAndAdvisor()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        var all = new[] { CoordinadoraPermissions.SettingsManage, CoordinadoraPermissions.ShipmentManage };
+
+        Assert.Equal(["coordinadora.settings.manage", "coordinadora.shipment.manage"], all);
+        foreach (var permission in all)
+        {
+            Assert.Equal([ModuleKeys.Coordinadora], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+
+        Assert.Contains(CoordinadoraPermissions.ShipmentManage, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(CoordinadoraPermissions.SettingsManage, catalog.PermissionsFor("advisor"));
+    }
+
+    /// <summary>Spec 2026-11-21 §6: ni el cliente del módulo (<c>coordinadora</c>: las claves y el destinatario viajan en el cuerpo) ni el del
+    /// probador (<c>integrations.coordinadora</c>) tienen loggers ni siguen redirecciones. Los nombres van literales porque los dos clientes
+    /// son internos de sus módulos.</summary>
+    [Theory]
+    [InlineData("coordinadora")]
+    [InlineData("integrations.coordinadora")]
+    public void TheCoordinadoraHttpClientsHaveNoLoggersAndNoRedirects(string name)
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(name);
         while (handler is DelegatingHandler delegating)
         {
             Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);

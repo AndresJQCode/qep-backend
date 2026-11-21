@@ -26,7 +26,8 @@ public sealed class IntegrationCatalogTests
         Assert.Equal("Coordinadora", provider.DisplayName);
         Assert.Equal(IntegrationCategory.Shipping, provider.Category);
         Assert.Equal([TenantModuleKeys.Coordinadora], provider.ConsumingModules);
-        Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
+        // Una cuenta por tenant: el módulo toma «la conexión del tenant» sin preguntar cuál.
+        Assert.Equal(1, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.Form, provider.Onboarding);
         Assert.False(provider.RequiresTenantEnablement);
         Assert.Equal(

@@ -214,6 +214,15 @@
     <Project Path="tests/Modules/Siigo/Modules.Siigo.UnitTests/Modules.Siigo.UnitTests.csproj" />
     <Project Path="tests/Modules/Siigo/Modules.Siigo.IntegrationTests/Modules.Siigo.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Coordinadora/">
+    <Project Path="src/Modules/Coordinadora/Modules.Coordinadora.Api/Modules.Coordinadora.Api.csproj" />
+    <Project Path="src/Modules/Coordinadora/Modules.Coordinadora.Application/Modules.Coordinadora.Application.csproj" />
+    <Project Path="src/Modules/Coordinadora/Modules.Coordinadora.Domain/Modules.Coordinadora.Domain.csproj" />
+    <Project Path="src/Modules/Coordinadora/Modules.Coordinadora.Infrastructure/Modules.Coordinadora.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Coordinadora/">
+    <Project Path="tests/Modules/Coordinadora/Modules.Coordinadora.UnitTests/Modules.Coordinadora.UnitTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Support/">
     <Project Path="src/Modules/Support/Modules.Support.Api/Modules.Support.Api.csproj" />
     <Project Path="src/Modules/Support/Modules.Support.Application/Modules.Support.Application.csproj" />
