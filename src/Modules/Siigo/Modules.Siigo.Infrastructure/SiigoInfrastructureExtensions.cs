@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Siigo.Application;
 using Modules.Siigo.Infrastructure.Api;
@@ -48,7 +49,11 @@ public static class SiigoInfrastructureExtensions
         services.AddSingleton<SiigoTokenCache>();
         services.AddHttpClient<ISiigoApi, SiigoApiClient>(SiigoApiClient.HttpClientName, SiigoApiClient.ConfigureClient)
             .ConfigurePrimaryHttpMessageHandler(() => SiigoApiClient.CreatePrimaryHandler())
-            .RemoveAllLoggers();
+            .RemoveAllLoggers()
+            // Diagnóstico (Siigo:DebugCurl, apagado por defecto): su propia categoría de log; apagado, pasa de largo.
+            .AddHttpMessageHandler(provider => new SiigoCurlLogHandler(
+                provider.GetRequiredService<ILogger<SiigoCurlLogHandler>>(),
+                provider.GetRequiredService<IOptions<SiigoOptions>>().Value.DebugCurl));
 
         return services;
     }

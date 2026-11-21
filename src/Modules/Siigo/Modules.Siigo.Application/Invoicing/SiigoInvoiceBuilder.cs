@@ -484,11 +484,16 @@ public static class SiigoInvoiceBuilder
         return result;
     }
 
+    // Con dirección de despacho el texto es el que pidió el owner (2026-11-20) y reemplaza a la nota del comprador; sin ella (recogida en
+    // tienda, parte de envío vacía) queda la forma de antes.
     private static string Observations(SiigoInvoiceInput input)
     {
-        var text = string.IsNullOrWhiteSpace(input.BuyerNotes)
-            ? $"Pedido {input.OrderNumber}"
-            : $"Pedido {input.OrderNumber}. {input.BuyerNotes.Trim()}";
+        var text = !string.IsNullOrWhiteSpace(input.ShippingAddress)
+            ? $"Pedido {input.OrderNumber}, Importante!! Dirección de despacho: {input.ShippingAddress.Trim()}"
+                + (string.IsNullOrWhiteSpace(input.ShippingCity) ? string.Empty : $", {input.ShippingCity.Trim()}")
+            : string.IsNullOrWhiteSpace(input.BuyerNotes)
+                ? $"Pedido {input.OrderNumber}"
+                : $"Pedido {input.OrderNumber}. {input.BuyerNotes.Trim()}";
         return text.Length <= ObservationsMaxLength ? text : text[..ObservationsMaxLength];
     }
 

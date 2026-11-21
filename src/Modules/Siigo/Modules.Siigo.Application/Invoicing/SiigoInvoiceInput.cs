@@ -85,4 +85,6 @@ public sealed record SiigoInvoiceInput(
     Guid? CompanyId,
     long OrderVersion,
     Guid AdvisorMembershipId,
-    string? AdvisorLabel);
+    string? AdvisorLabel,
+    string? ShippingAddress = null,
+    string? ShippingCity = null);
