@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "scheduling"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -166,14 +166,26 @@ public sealed class TenantModuleKeysTests
     public void HrIsTheLastKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Hr, TenantModuleKey.Parse("hr"));
-        Assert.Equal("hr", TenantModuleKeys.All[^1].Value);
-        Assert.Equal(23, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Hr, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]
     public void HrDependsOnCompanies() =>
         Assert.Equal([TenantModuleKeys.Companies], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Hr));
+
+    // Spec 2026-11-21 (Agenda): toda cita es de un cliente; se prende por tenant.
+    [Fact]
+    public void SchedulingIsTheLastKnownKeyOutsideTheDefaults()
+    {
+        Assert.Same(TenantModuleKeys.Scheduling, TenantModuleKey.Parse("scheduling"));
+        Assert.Equal("scheduling", TenantModuleKeys.All[^1].Value);
+        Assert.Equal(24, TenantModuleKeys.All.Count);
+        Assert.DoesNotContain(TenantModuleKeys.Scheduling, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    [Fact]
+    public void SchedulingDependsOnCustomers() =>
+        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Scheduling));
 
     [Fact]
     public void MessagingHasNoDependencies() =>

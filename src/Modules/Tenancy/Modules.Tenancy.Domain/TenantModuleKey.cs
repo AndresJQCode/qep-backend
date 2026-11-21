@@ -114,8 +114,13 @@ public static class TenantModuleKeys
     /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Hr = TenantModuleKey.Define("hr");
 
+    /// <summary>Spec 2026-11-21 (Agenda): citas, franjas, recursos y cupos. Depende de <see cref="Customers"/> (toda cita es de un
+    /// cliente) y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant. Mensajería es opcional: sin ella la Agenda
+    /// funciona y sólo el recordatorio por WhatsApp no se ofrece.</summary>
+    public static readonly TenantModuleKey Scheduling = TenantModuleKey.Define("scheduling");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo, Hr];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo, Hr, Scheduling];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -148,6 +153,8 @@ public static class TenantModuleKeys
         [Siigo] = [Orders],
         // Spec 2026-11-20 (RRHH fase 1): la empresa empleadora es una empresa de Companies.
         [Hr] = [Companies],
+        // Spec 2026-11-21 (Agenda): toda cita es de un cliente.
+        [Scheduling] = [Customers],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>
