@@ -62,7 +62,7 @@ public sealed class ListSiigoOptionsHandler(
         var options = query.List switch
         {
             SiigoOptionLists.DocumentTypes => await api.ListDocumentTypesAsync(credentials, cancellationToken),
-            SiigoOptionLists.Users => await api.ListUsersAsync(credentials, cancellationToken),
+            SiigoOptionLists.Users => [.. (await api.ListUsersAsync(credentials, refresh: false, cancellationToken)).Select(user => new SiigoOption(user.Id, user.Name))],
             SiigoOptionLists.CostCenters => await api.ListCostCentersAsync(credentials, cancellationToken),
             SiigoOptionLists.Warehouses => await api.ListWarehousesAsync(credentials, cancellationToken),
             _ => await api.ListPaymentTypesAsync(credentials, cancellationToken),

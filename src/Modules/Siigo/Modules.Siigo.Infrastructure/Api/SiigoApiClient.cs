@@ -38,6 +38,8 @@ internal sealed class SiigoApiClient(
 
     /// <summary>Tope de páginas, el mismo del auto-vínculo: un Siigo que siguiera devolviendo páginas llenas no cuelga la petición.</summary>
     private const int MaxProductPages = 1000;
+    private const int DefaultListPageSize = 25;
+    private const int MaxListPages = 100;
 
     // Si el token viene sin expires_in, lo que Siigo documenta: un día.
     private static readonly TimeSpan DefaultTokenLifetime = TimeSpan.FromHours(24);
@@ -57,8 +59,14 @@ internal sealed class SiigoApiClient(
     public Task<IReadOnlyList<SiigoOption>> ListDocumentTypesAsync(SiigoCredentials credentials, CancellationToken cancellationToken) =>
         CachedAsync(credentials, "document-types", () => ReadOptionsAsync(credentials, "v1/document-types?type=FV", cancellationToken));
 
-    public Task<IReadOnlyList<SiigoOption>> ListUsersAsync(SiigoCredentials credentials, CancellationToken cancellationToken) =>
-        CachedAsync(credentials, "users", () => ReadOptionsAsync(credentials, "v1/users", cancellationToken));
+    public Task<IReadOnlyList<SiigoUser>> ListUsersAsync(SiigoCredentials credentials, bool refresh, CancellationToken cancellationToken) =>
+        CachedAsync(credentials, "users", refresh, async () => (IReadOnlyList<SiigoUser>)
+        [
+            .. (await ReadAllPagesAsync(credentials, "v1/users", cancellationToken))
+                .Where(item => SiigoJson.Bool(item, "active", fallback: true))
+                .Select(item => new SiigoUser(SiigoJson.Text(item, "id") ?? string.Empty, SiigoJson.NameOf(item), SiigoJson.Text(item, "email")))
+                .Where(user => user.Id.Length > 0),
+        ]);
 
     public Task<IReadOnlyList<SiigoOption>> ListCostCentersAsync(SiigoCredentials credentials, CancellationToken cancellationToken) =>
         CachedAsync(credentials, "cost-centers", () => ReadOptionsAsync(credentials, "v1/cost-centers", cancellationToken));
@@ -72,10 +80,9 @@ internal sealed class SiigoApiClient(
     public Task<IReadOnlyList<SiigoTaxOption>> ListTaxesAsync(SiigoCredentials credentials, CancellationToken cancellationToken) =>
         CachedAsync(credentials, "taxes", async () =>
         {
-            var reply = await GetAsync(credentials, "v1/taxes", cancellationToken);
             return (IReadOnlyList<SiigoTaxOption>)
             [
-                .. SiigoJson.Items(reply.Body).Select(item => new SiigoTaxOption(
+                .. (await ReadAllPagesAsync(credentials, "v1/taxes", cancellationToken)).Select(item => new SiigoTaxOption(
                     SiigoJson.Text(item, "id") ?? string.Empty,
                     SiigoJson.Text(item, "name") ?? string.Empty,
                     SiigoJson.Text(item, "type") ?? string.Empty,
@@ -245,10 +252,14 @@ internal sealed class SiigoApiClient(
 
     // --- Transporte ---
 
-    private async Task<IReadOnlyList<T>> CachedAsync<T>(SiigoCredentials credentials, string list, Func<Task<IReadOnlyList<T>>> read)
+    private Task<IReadOnlyList<T>> CachedAsync<T>(SiigoCredentials credentials, string list, Func<Task<IReadOnlyList<T>>> read) =>
+        CachedAsync(credentials, list, refresh: false, read);
+
+    private async Task<IReadOnlyList<T>> CachedAsync<T>(
+        SiigoCredentials credentials, string list, bool refresh, Func<Task<IReadOnlyList<T>>> read)
     {
         var key = $"siigo:{credentials.ConnectionId}:{list}";
-        if (cache.TryGetValue(key, out IReadOnlyList<T>? cached) && cached is not null)
+        if (!refresh && cache.TryGetValue(key, out IReadOnlyList<T>? cached) && cached is not null)
         {
             return cached;
         }
@@ -258,16 +269,42 @@ internal sealed class SiigoApiClient(
         return value;
     }
 
-    private async Task<IReadOnlyList<SiigoOption>> ReadOptionsAsync(SiigoCredentials credentials, string path, CancellationToken cancellationToken)
-    {
-        var reply = await GetAsync(credentials, path, cancellationToken);
-        return
+    private async Task<IReadOnlyList<SiigoOption>> ReadOptionsAsync(SiigoCredentials credentials, string path, CancellationToken cancellationToken) =>
         [
-            .. SiigoJson.Items(reply.Body)
+            .. (await ReadAllPagesAsync(credentials, path, cancellationToken))
                 .Where(item => SiigoJson.Bool(item, "active", fallback: true))
                 .Select(item => new SiigoOption(SiigoJson.Text(item, "id") ?? string.Empty, SiigoJson.NameOf(item), SiigoJson.Text(item, "description")))
                 .Where(option => option.Id.Length > 0),
         ];
+
+    /// <summary>
+    /// Todas las páginas de una lista. Siigo pagina algunas de a 25 por defecto, y leer sólo la primera dejaba fuera al usuario, la bodega
+    /// o el centro de costo 26 (spec 2026-11-20 §4.3). La primera petición va tal cual, sin parámetros de página: los endpoints que
+    /// devuelven un arreglo pelado no se tocan. Sólo si la respuesta trae <c>pagination</c> y faltan resultados se piden las siguientes,
+    /// con el <c>page_size</c> que Siigo dijo usar, hasta juntar <c>total_results</c> o recibir una página vacía.
+    /// <see cref="MaxListPages"/> corta una paginación que no termina.
+    /// </summary>
+    private async Task<IReadOnlyList<JsonElement>> ReadAllPagesAsync(SiigoCredentials credentials, string path, CancellationToken cancellationToken)
+    {
+        var separator = path.Contains('?', StringComparison.Ordinal) ? '&' : '?';
+        var reply = await GetAsync(credentials, path, cancellationToken);
+        var items = new List<JsonElement>(SiigoJson.Items(reply.Body));
+        var pagination = SiigoJson.Pagination(reply.Body);
+        var pageSize = pagination.PageSize is > 0 ? pagination.PageSize.Value : DefaultListPageSize;
+        for (var page = 2; page <= MaxListPages && pagination.TotalResults is { } total && items.Count < total; page++)
+        {
+            reply = await GetAsync(credentials, $"{path}{separator}page={page}&page_size={pageSize}", cancellationToken);
+            var pageItems = SiigoJson.Items(reply.Body);
+            if (pageItems.Count == 0)
+            {
+                break;
+            }
+
+            items.AddRange(pageItems);
+            pagination = SiigoJson.Pagination(reply.Body);
+        }
+
+        return items;
     }
 
     private async Task<Reply> GetAsync(SiigoCredentials credentials, string path, CancellationToken cancellationToken)

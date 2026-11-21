@@ -50,8 +50,10 @@ public static class SiigoInvoiceBuilder
 
     private const string SupportedCurrency = "COP";
 
+    /// <param name="sellerId">El usuario de Siigo del asesor del pedido (<see cref="SiigoSellerResolver"/>, spec 2026-11-20). Sin él la
+    /// factura no está lista: no hay vendedor por defecto.</param>
     public static SiigoBuildResult Build(
-        SiigoInvoiceInput input, SiigoSettings settings, IReadOnlyList<SiigoPaymentOverride>? overrides)
+        SiigoInvoiceInput input, SiigoSettings settings, string? sellerId, IReadOnlyList<SiigoPaymentOverride>? overrides)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(settings);
@@ -68,7 +70,7 @@ public static class SiigoInvoiceBuilder
         var plan = PlanPayments(input, separateFreight);
 
         var missing = new List<SiigoMissing>();
-        CollectMissing(input, settings, hasFreight, plan, overrides, missing);
+        CollectMissing(input, settings, sellerId, hasFreight, plan, overrides, missing);
         if (missing.Count > 0)
         {
             return new SiigoBuildResult.NotReady(missing);
@@ -102,11 +104,11 @@ public static class SiigoInvoiceBuilder
 
         var drafts = new List<SiigoInvoiceDraft>
         {
-            Draft(input, settings, identification, SiigoInvoiceKind.Order, lines, orderIncludesFreight ? freight : null, plan, overrides, customerRequest),
+            Draft(input, settings, sellerId!, identification, SiigoInvoiceKind.Order, lines, orderIncludesFreight ? freight : null, plan, overrides, customerRequest),
         };
         if (separateFreight)
         {
-            drafts.Add(Draft(input, settings, identification, SiigoInvoiceKind.Freight, [], freight, plan, overrides, customerRequest));
+            drafts.Add(Draft(input, settings, sellerId!, identification, SiigoInvoiceKind.Freight, [], freight, plan, overrides, customerRequest));
         }
 
         return new SiigoBuildResult.Ready(drafts);
@@ -115,6 +117,7 @@ public static class SiigoInvoiceBuilder
     private static SiigoInvoiceDraft Draft(
         SiigoInvoiceInput input,
         SiigoSettings settings,
+        string sellerId,
         string identification,
         SiigoInvoiceKind kind,
         IReadOnlyList<ResolvedItem> lines,
@@ -126,7 +129,7 @@ public static class SiigoInvoiceBuilder
         var payments = Payments(input, settings, kind, plan, overrides);
         return new SiigoInvoiceDraft(
             kind,
-            Serialize(Body(input, settings, identification, kind, lines, freight, payments, overrides)),
+            Serialize(Body(input, settings, sellerId, identification, kind, lines, freight, payments, overrides)),
             customer,
             payments.Sum(payment => payment.Value),
             payments);
@@ -137,6 +140,7 @@ public static class SiigoInvoiceBuilder
     private static void CollectMissing(
         SiigoInvoiceInput input,
         SiigoSettings settings,
+        string? sellerId,
         bool hasFreight,
         PaymentPlan plan,
         IReadOnlyList<SiigoPaymentOverride> overrides,
@@ -150,6 +154,11 @@ public static class SiigoInvoiceBuilder
         foreach (var step in SiigoSettingsReadiness.Evaluate(settings).Where(step => !step.Complete && step.Step is SiigoSetupStep.Company or SiigoSetupStep.Document))
         {
             missing.Add(new SiigoMissing(SiigoMissing.SettingsIncomplete, step.Step.ToString().ToLowerInvariant(), null));
+        }
+
+        if (sellerId is null)
+        {
+            missing.Add(new SiigoMissing(SiigoMissing.SellerNotFound, null, input.AdvisorEmail));
         }
 
         foreach (var line in input.Lines.DistinctBy(line => line.VariantId))
@@ -384,6 +393,7 @@ public static class SiigoInvoiceBuilder
     private static Dictionary<string, object?> Body(
         SiigoInvoiceInput input,
         SiigoSettings settings,
+        string sellerId,
         string identification,
         SiigoInvoiceKind kind,
         IReadOnlyList<ResolvedItem> lines,
@@ -424,7 +434,7 @@ public static class SiigoInvoiceBuilder
             body["cost_center"] = IdValue(costCenter);
         }
 
-        body["seller"] = IdValue(settings.SellerId!);
+        body["seller"] = IdValue(sellerId);
         body["stamp"] = new Dictionary<string, object?> { ["send"] = settings.SendToDian };
         body["mail"] = new Dictionary<string, object?> { ["send"] = settings.SendMail };
         body["observations"] = observations;
