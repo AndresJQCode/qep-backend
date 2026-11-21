@@ -156,7 +156,12 @@ public sealed class IssueSiigoInvoiceHandler(
                 SiigoInvoiceSupport.ParseKind(choice.Kind), choice.ProofId, choice.SiigoPaymentTypeId!.Trim()))
             .ToList();
 
-        var drafts = SiigoInvoiceBuilder.Build(context.Input, context.Settings, context.Settings.SellerId, overrides) switch
+        // El vendedor es el usuario de Siigo del asesor (spec 2026-11-20): se leen los usuarios antes de armar, así que las credenciales
+        // van primero. Una conexión no operativa sigue siendo 409 y sin filas, como antes.
+        var credentials = await SiigoInvoiceSupport.CredentialsAsync(connections, command.TenantId, context.Settings.ConnectionId, cancellationToken);
+        var sellerId = SiigoSellerResolver.Resolve(context.Input.AdvisorEmail, await api.ListUsersAsync(credentials, cancellationToken));
+
+        var drafts = SiigoInvoiceBuilder.Build(context.Input, context.Settings, sellerId, overrides) switch
         {
             SiigoBuildResult.Ready ready => ready.Drafts,
             SiigoBuildResult.NotReady notReady => throw new SiigoInvoiceNotReadyException(notReady.Missing),
@@ -164,7 +169,6 @@ public sealed class IssueSiigoInvoiceHandler(
             _ => throw new InvalidOperationException("Unknown build result."),
         };
 
-        var credentials = await SiigoInvoiceSupport.CredentialsAsync(connections, command.TenantId, context.Settings.ConnectionId, cancellationToken);
         await EnsureCustomerAsync(credentials, context.Input, drafts[0], cancellationToken);
 
         var toSend = new List<SiigoInvoice>();

@@ -267,6 +267,50 @@ public sealed class SiigoInvoiceApiTests
     }
 
     [Fact]
+    public async Task ThePreviewReportsAnAdvisorWithoutSiigoUser()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+
+        var preview = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/preview", Ct));
+
+        var missing = Assert.Single(preview.GetProperty("missing").EnumerateArray());
+        Assert.Equal("seller_not_found", missing.GetProperty("code").GetString());
+        Assert.Equal(JsonValueKind.Null, missing.GetProperty("reference").ValueKind);
+        Assert.Equal(world.Tenant.Email, missing.GetProperty("label").GetString());
+    }
+
+    [Fact]
+    public async Task IssuingWithAnAdvisorWithoutSiigoUserIsRefused()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, advisorInSiigo: false);
+
+        var response = await PostAsync(world);
+
+        var text = await response.Content.ReadAsStringAsync(Ct);
+        AssertRejectedCode(response, HttpStatusCode.UnprocessableEntity, "siigo.invoice.not_ready", text);
+        using var json = JsonDocument.Parse(text);
+        Assert.Equal(
+            ["seller_not_found"],
+            json.RootElement.GetProperty("details").GetProperty("missing").EnumerateArray().Select(item => item.GetProperty("code").GetString()));
+        Assert.DoesNotContain(world.Siigo.Calls, call => call.Path is "/v1/invoices" or "/v1/customers");
+        Assert.Equal(0, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
+    }
+
+    [Fact]
+    public async Task TheIssuedInvoiceCarriesTheAdvisorAsSeller()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        await ReadAsync(await PostAsync(world));
+
+        using var body = JsonDocument.Parse(InvoiceCalls(world.Siigo).Single().Body!);
+        Assert.Equal(629, body.RootElement.GetProperty("seller").GetInt32());
+    }
+
+    [Fact]
     public async Task ThePreviewShowsDraftsAndPaymentsWithoutWritingOrCallingSiigo()
     {
         await using var database = await StartDatabaseAsync();

@@ -62,6 +62,18 @@ internal static class SiigoInvoiceSupport
                 $"The Siigo connection cannot be used right now ({resolution.UnavailableReason}).");
     }
 
+    /// <summary>Las credenciales para leer (la vista previa): también una conexión pausada. Si no hay ninguna usable, el mismo 409
+    /// <c>siigo.connection_unavailable</c>.</summary>
+    public static async Task<SiigoCredentials> SetupCredentialsAsync(
+        ISiigoConnectionDirectory connections, Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        var resolution = await connections.ResolveForSetupAsync(tenantId, connectionId, cancellationToken);
+        return resolution.Credentials
+            ?? throw new ResourceConflictException(
+                SiigoErrorCodes.ConnectionUnavailable,
+                $"The Siigo connection cannot be used right now ({resolution.UnavailableReason}).");
+    }
+
     public static SiigoInvoiceKind ParseKind(string? kind) =>
         string.IsNullOrWhiteSpace(kind) ? SiigoInvoiceKind.Order : Enum.Parse<SiigoInvoiceKind>(kind, ignoreCase: true);
 
