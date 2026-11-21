@@ -140,8 +140,9 @@ backend, no en el navegador: cambiar de equipo o de sesión no lo repite.
 - `SiigoSettings` gana `SellersAutoLinkedAt` y `ProductsAutoLinkedAt` (`DateTimeOffset?`), columnas
   `sellers_auto_linked_at` y `products_auto_linked_at` en `siigo.settings`, en la misma migración `AddSiigoSellerLinks`.
 - Los dos auto-link (`POST …/sellers/auto-link` y el existente `POST …/products/auto-link`) **siempre** fijan su marca, aunque
-  no vinculen nada, y guardan. Hoy el de productos sólo guarda si vinculó algo: pasa a guardar siempre. Fijar la marca es una
-  escritura del agregado y sube `Version` (`Touch`), como cualquier otra.
+  no vinculen nada, y guardan. Hoy el de productos sólo guarda si vinculó algo: pasa a guardar siempre. Fijar la marca **no**
+  sube `Version`: es un registro, no configuración, y subirla dejaría vieja la versión que la pantalla acaba de leer. La versión
+  sube (una vez) sólo si el auto-link vinculó algo.
 - `SiigoSettingsDto` expone `sellersAutoLinkedAt` y `productsAutoLinkedAt` (null = nunca se intentó).
 - El intento automático lo dispara la pantalla (§ frontend); el botón sigue para volver a intentar después. Un intento que
   falla (409 conexión, 503 Siigo) no fija la marca: se reintenta la próxima vez que se abre el paso.

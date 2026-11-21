@@ -109,6 +109,22 @@ public sealed class SiigoProductLinksApiTests
     }
 
     [Fact]
+    public async Task AutoLinkMarksTheProductsStepEvenWithoutMatches()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.On("/v1/products", HttpStatusCode.OK, SiigoProductsPage(1, 100, 0));
+
+        var response = await world.Client.PostAsync(Route(world.TenantId, world.ConnectionId, "products/auto-link"), content: null, Ct);
+        await EnsureSuccessAsync(response);
+
+        // La marca es la que evita que la pantalla vuelva a vincular sola al abrir el paso (spec 2026-11-20 §9).
+        Assert.Equal(0, (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["linked"]!.GetValue<int>());
+        var settings = (await world.Client.GetFromJsonAsync<JsonObject>(Route(world.TenantId, world.ConnectionId, "settings"), Ct))!;
+        Assert.NotNull(settings["productsAutoLinkedAt"]);
+    }
+
+    [Fact]
     public async Task AutoLinkSkipsAmbiguousCodes()
     {
         await using var database = await StartDatabaseAsync();

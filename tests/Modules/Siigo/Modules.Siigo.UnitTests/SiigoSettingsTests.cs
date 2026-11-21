@@ -173,7 +173,7 @@ public sealed class SiigoSettingsTests
     }
 
     [Fact]
-    public void MarkingTheAutoLinkKeepsTheDateAndBumpsTheVersion()
+    public void MarkingTheAutoLinkKeepsTheDateWithoutBumpingTheVersion()
     {
         var settings = NewSettings();
 
@@ -181,6 +181,6 @@ public sealed class SiigoSettingsTests
         settings.MarkProductsAutoLinked(At.AddMinutes(1));
 
         Assert.Equal((At, At.AddMinutes(1)), (settings.SellersAutoLinkedAt, settings.ProductsAutoLinkedAt));
-        Assert.Equal(2, settings.Version);
+        Assert.Equal(0, settings.Version);
     }
 }

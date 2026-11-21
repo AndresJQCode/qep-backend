@@ -163,19 +163,13 @@ public sealed class SiigoSettings
     public string? SellerFor(Guid membershipId) =>
         _sellerLinks.Find(link => link.MembershipId == membershipId)?.SiigoUserId;
 
-    /// <summary>Deja constancia de que ya se intentó vincular vendedores por correo; vinculen o no, la pantalla no lo repite sola.</summary>
-    public void MarkSellersAutoLinked(DateTimeOffset at)
-    {
-        SellersAutoLinkedAt = at;
-        Touch();
-    }
+    /// <summary>Deja constancia de que ya se intentó vincular vendedores por correo; vinculen o no, la pantalla no lo repite sola. No sube
+    /// <see cref="Version"/>: es un registro, no configuración, y subirla dejaría vieja la versión que la pantalla acaba de leer (un 412 en
+    /// el siguiente guardado sin que nadie haya cambiado nada). Si el auto-link vinculó algo, la versión ya subió con los vínculos.</summary>
+    public void MarkSellersAutoLinked(DateTimeOffset at) => SellersAutoLinkedAt = at;
 
     /// <summary>Igual que <see cref="MarkSellersAutoLinked"/>, para productos.</summary>
-    public void MarkProductsAutoLinked(DateTimeOffset at)
-    {
-        ProductsAutoLinkedAt = at;
-        Touch();
-    }
+    public void MarkProductsAutoLinked(DateTimeOffset at) => ProductsAutoLinkedAt = at;
 
     /// <summary>Igual que <see cref="ReplaceTaxLinks"/>, por <c>TaxRateId</c>.</summary>
     public void ReplaceWithholdingLinks(IReadOnlyList<SiigoWithholdingLink> links)
