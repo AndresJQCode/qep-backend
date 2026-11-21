@@ -1179,6 +1179,14 @@ public sealed class Order
         ProductKind kind = ProductKind.Physical,
         SalesUnit salesUnit = SalesUnit.Unit)
     {
+        // Un pedido mayorista no admite regalos: su precio sale de la orden de compra del distribuidor y la factura no los lleva.
+        if (Source == OrderSource.Wholesale)
+        {
+            throw new QuotationsDomainException(
+                "order.gift.wholesale_not_supported",
+                "Un pedido mayorista no admite regalos.");
+        }
+
         ArgumentNullException.ThrowIfNull(costs);
         EnsureEditable("Gifts can only be added while the order is editable.");
         var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
@@ -1283,14 +1291,16 @@ public sealed class Order
     public void RemoveItem(OrderItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable("Products can only be removed while the order is editable.");
-        if (_items.Count == 1)
+        // Un regalo no sostiene el pedido: sin una línea pagada no hay qué facturar. Quitar un regalo siempre se puede.
+        var target = FindItem(itemId);
+        if (!target.IsGift && _items.Count(item => !item.IsGift) == 1)
         {
             throw new QuotationsDomainException(
                 "order.item.last_item_required",
                 "The last remaining item cannot be removed from the order.");
         }
 
-        _items.Remove(FindItem(itemId));
+        _items.Remove(target);
         Touch(updatedBy, occurredAt);
     }
 
@@ -2366,6 +2376,14 @@ public sealed class Order
             }
 
             _items.Add(candidate);
+        }
+
+        // Las pagadas conservan su orden y los regalos van después, también en su orden: nunca dos líneas con la misma posición.
+        var position = 1;
+        foreach (var line in _items.Where(item => !item.IsGift).OrderBy(item => item.Position)
+                     .Concat(_items.Where(item => item.IsGift).OrderBy(item => item.Position)).ToArray())
+        {
+            line.MoveTo(position++);
         }
     }
 

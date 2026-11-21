@@ -171,6 +171,9 @@ public sealed class OrderItem
             id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat,
             position, currency, rounding, kind, salesUnit, occurredAt, isGift);
 
+    /// <summary>Renumera la línea tras reemplazar las de una edición externa, para que dos no compartan posición.</summary>
+    internal void MoveTo(int position) => Position = position;
+
     internal void LinkPurchaseOrderLine(Guid? purchaseOrderLineId) => SourcePurchaseOrderLineId = purchaseOrderLineId;
 
     /// <summary>D-4: el precio de lista de un pedido mayorista se corrige a mano. Reprecia con la cantidad, el descuento y la
