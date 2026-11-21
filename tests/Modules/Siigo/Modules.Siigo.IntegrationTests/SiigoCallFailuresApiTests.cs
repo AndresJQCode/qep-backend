@@ -140,17 +140,44 @@ public sealed class SiigoCallFailuresApiTests
         Assert.Equal([oldest], second["items"]!.AsArray().Select(item => item!["id"]!.GetValue<Guid>()));
     }
 
-    [Fact]
-    public async Task AnUnknownOperationFilterIs422()
+    [Theory]
+    [InlineData("operation=Nonsense", "operation")]
+    [InlineData("operation=3", "operation")]
+    [InlineData("operation=Auth,ListRead", "operation")]
+    [InlineData("status=abc", "status")]
+    [InlineData("status=99", "status")]
+    [InlineData("from=ayer", "from")]
+    [InlineData("to=ayer", "to")]
+    [InlineData("page=x", "page")]
+    [InlineData("pageSize=x", "pageSize")]
+    public async Task AnUnreadableFilterIs422WithItsField(string query, string field)
     {
         await using var database = await StartDatabaseAsync();
         var (factory, tenant, _) = await ArrangeAsync(database);
         using var __ = factory;
         using var client = Reader(factory, tenant);
 
-        var response = await client.GetAsync(Route(tenant.TenantId) + "?operation=Nonsense", Ct);
+        var response = await client.GetAsync(Route(tenant.TenantId) + "?" + query, Ct);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var errors = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["errors"]!.AsObject();
+        Assert.Contains(errors, entry => string.Equals(entry.Key, field, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ADateWithoutTimeIsReadAsUtcMidnight()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (factory, tenant, connectionString) = await ArrangeAsync(database);
+        using var _ = factory;
+        await SeedAsync(connectionString, tenant.TenantId, minutesAgo: 10);
+        using var client = Reader(factory, tenant);
+
+        var tomorrow = DateTimeOffset.UtcNow.AddDays(1).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var yesterday = DateTimeOffset.UtcNow.AddDays(-1).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        Assert.Equal(0, (await client.GetFromJsonAsync<JsonObject>(Route(tenant.TenantId) + $"?from={tomorrow}", Ct))!["total"]!.GetValue<int>());
+        Assert.Equal(1, (await client.GetFromJsonAsync<JsonObject>(Route(tenant.TenantId) + $"?from={yesterday}", Ct))!["total"]!.GetValue<int>());
     }
 
     [Fact]

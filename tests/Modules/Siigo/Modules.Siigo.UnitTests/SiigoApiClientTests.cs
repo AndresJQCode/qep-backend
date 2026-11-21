@@ -165,6 +165,35 @@ public sealed class SiigoApiClientTests : IDisposable
     }
 
     [Fact]
+    public async Task AnInvoiceAnsweredWithoutIdLeavesAnInvalidResponseReport()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.Created, """{"name":"FV-sin-id"}""");
+
+        var outcome = await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(("invalid_response", SiigoCallOperation.InvoiceCreate, 201, "abc123"), (report.Reason, report.Operation, report.Status, report.IdempotencyKey));
+        Assert.Contains("FV-sin-id", report.ResponseBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAuthAnsweredWithoutTokenIsReportedWithoutItsBody()
+    {
+        _api.On("/auth", HttpStatusCode.OK, """{"expires_in":86400,"note":"SENTINEL-BODY"}""");
+
+        var outcome = await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal((SiigoCallOperation.Auth, "auth_without_token"), (report.Operation, report.Reason));
+        Assert.Null(report.ResponseBody);
+        Assert.Contains("<ACCESS_KEY>", report.RequestCurl, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccessKey, report.RequestCurl, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AStampFailureCarriesTheSiigoInvoiceId()
     {
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
