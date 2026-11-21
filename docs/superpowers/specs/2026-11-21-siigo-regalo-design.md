@@ -35,8 +35,12 @@ Fuente: [API · Crear Factura, «Facturar productos de obsequio»](https://devel
 - `SiigoInvoiceBuilder.Resolve` deriva el precio de `Subtotal / (cantidad × factor)`; con `factor = 0` devuelve `price = 0, discount = 0`, sin
   `tax_base` ni `taxpayer`. Por eso un regalo hoy lo rechazaría Siigo.
 - **La línea se identifica por variante.** `Order.AddItemCore` rechaza la misma variante dos veces (`order.item.duplicate_product`),
-  `OrderItemEdits` concilia por `VariantId`, y hay un índice único por variante en la base. Un regalo de la misma variante que se vende
-  choca con las tres.
+  y `OrderItemEdits` concilia por `VariantId` (un `ToDictionary` que lanza con dos líneas de la misma variante). La base **no** tiene
+  índice único por variante (`IX_order_items_variant` es normal): la unicidad es sólo del dominio. Un regalo de la misma variante que se
+  vende choca con las dos reglas de código.
+- `OrderPricingRecalculation` reescribe el descuento de **todas** las líneas (escalas, piso global) y cuenta todas las cantidades para el
+  mínimo de compra; `Order.ReplaceExternalLines` (sincronización de Shopify) borra las líneas cuya variante no llega. Un regalo tiene que
+  sobrevivir a las dos.
 
 ## Enfoques considerados
 
@@ -50,12 +54,14 @@ Fuente: [API · Crear Factura, «Facturar productos de obsequio»](https://devel
 - `OrderItem.IsGift` (bool, por defecto `false`). Una línea de regalo se crea con descuento 100 % y no admite otro descuento ni precio
   distinto del de lista; `Subtotal` e `IVA` quedan en 0 y `UnitPrice` guarda el precio real (con IVA incluido, como el resto).
 - La clave de la línea pasa de `VariantId` a **`(VariantId, IsGift)`**: puede haber una línea pagada y una de regalo de la misma
-  variante, nunca dos de la misma clase. `AddItemCore`, `OrderItemEdits` y el índice único se ajustan a la clave nueva.
+  variante, nunca dos de la misma clase. `AddItemCore` se ajusta a la clave nueva; `OrderItemEdits` (la lista deseada del `PUT`) trabaja
+  **sólo con líneas pagadas**: los regalos tienen su propio alta y baja, y ni las escalas, ni el mínimo de compra, ni la sincronización
+  externa los tocan.
 - Un regalo sólo se agrega mientras el pedido sea editable (misma regla de `AddItem`); la cantidad se edita, el descuento no.
 
 **Aplicación y API.**
-- Un caso de uso propio para agregar el regalo (`AddOrderGift`: variante + cantidad) o `IsGift` en `OrderItemAddition`; elegir al plan.
-  Mismo permiso que editar el pedido (`OrderManage`) y la misma doble capa de tenant.
+- Casos de uso propios: `AddOrderGift` (variante + cantidad) y `RemoveOrderGift` (id de la línea). Cambiar la cantidad es quitar y volver
+  a agregar (decisión mía, YAGNI). Mismo permiso que editar el pedido (`OrderManage`) y la misma doble capa de tenant.
 - El detalle del pedido y la lista de líneas devuelven `isGift`. Motivo (BFF): la pantalla dibuja el regalo distinto y no puede
   deducirlo de un descuento del 100 %.
 
@@ -81,7 +87,7 @@ Fuente: [API · Crear Factura, «Facturar productos de obsequio»](https://devel
 
 - Con una factura real (`send_to_dian` apagado): que `taxpayer: "Company"` deje el total en 10.000 y que `tax_base` sin IVA sea lo que Siigo espera.
 - Que el contador confirme el tratamiento del IVA asumido por la empresa y la cuenta contrapartida en Siigo.
-- Nombre exacto del índice único por variante y de la migración (lo fija el plan).
+- La migración es sólo la columna `is_gift` (sin índices nuevos).
 
 ## Fuera del backend
 
