@@ -121,6 +121,8 @@ public static class QepObservability
             options.IncludeScopes = true;
             options.UseUtcTimestamp = true;
         });
+        // Solo cuenta (qep_log_errors_total / qep_log_error_entries_total): no escribe ni cambia lo que sale por la consola.
+        logging.AddProvider(new ErrorCountingLoggerProvider(Meter));
         return logging;
     }
 }
