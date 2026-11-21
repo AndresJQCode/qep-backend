@@ -16,4 +16,8 @@ public sealed class SiigoOptions
     public string? BaseUrl { get; set; } = DefaultBaseUrl;
 
     public string? PartnerId { get; set; }
+
+    /// <summary>Diagnóstico, apagado por defecto: loguea como curl, con su respuesta, las llamadas a Siigo que fallan. El cuerpo lleva datos
+    /// personales: se prende sólo mientras se diagnostica.</summary>
+    public bool DebugCurl { get; set; }
 }
