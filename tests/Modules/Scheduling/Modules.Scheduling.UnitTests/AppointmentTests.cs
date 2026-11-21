@@ -1,0 +1,151 @@
+using Modules.Scheduling.Domain;
+
+namespace Modules.Scheduling.UnitTests;
+
+// Spec 2026-11-21 (Agenda), «Citas»: Pending → Confirmed | Cancelled; Confirmed → Cancelled | Completed | NoShow; los tres últimos son
+// terminales. Completed y NoShow sólo después de la hora de inicio. Reprogramar conserva el id y el estado.
+public sealed class AppointmentTests
+{
+    private static readonly Guid Tenant = Guid.CreateVersion7();
+    private static readonly Guid Actor = Guid.CreateVersion7();
+    private static readonly DateTimeOffset Created = new(2026, 11, 21, 15, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Start = new(2026, 11, 24, 14, 0, 0, TimeSpan.Zero);
+
+    private static Appointment NewAppointment(AppointmentStatus status = AppointmentStatus.Confirmed, AppointmentSource source = AppointmentSource.BackOffice) =>
+        Appointment.Create(
+            AppointmentId.New(), Tenant, LocationId.New(), ResourceId.New(), ServiceId.New(), Guid.CreateVersion7(), SessionId.New(),
+            blockId: null, Start, Start.AddMinutes(30), status, source, conversationId: null, note: "  Primera vez ", Actor, Created);
+
+    [Fact]
+    public void ACreatedAppointmentKeepsItsStatusSourceAndLeavesACreatedEvent()
+    {
+        var appointment = NewAppointment(AppointmentStatus.Pending, AppointmentSource.Channel);
+
+        Assert.Equal((AppointmentStatus.Pending, AppointmentSource.Channel), (appointment.Status, appointment.Source));
+        Assert.Equal("Primera vez", appointment.Note);
+        Assert.Equal(1, appointment.Version);
+        var created = Assert.Single(appointment.Events);
+        Assert.Equal((AppointmentAction.Created, Actor, Created), (created.Action, created.ActorMemberId, created.At));
+    }
+
+    [Theory]
+    [InlineData(AppointmentStatus.Cancelled)]
+    [InlineData(AppointmentStatus.Completed)]
+    [InlineData(AppointmentStatus.NoShow)]
+    public void AnAppointmentCannotBeBornInATerminalState(AppointmentStatus status) =>
+        Assert.Throws<ArgumentException>(() => NewAppointment(status));
+
+    [Fact]
+    public void APendingAppointmentIsConfirmedOnce()
+    {
+        var appointment = NewAppointment(AppointmentStatus.Pending);
+
+        appointment.Confirm(Actor, Created.AddMinutes(5));
+
+        Assert.Equal(AppointmentStatus.Confirmed, appointment.Status);
+        Assert.Equal(AppointmentAction.Confirmed, appointment.Events[^1].Action);
+        Assert.Equal(2, appointment.Version);
+        AssertInvalid(() => appointment.Confirm(Actor, Created.AddMinutes(6)));
+    }
+
+    [Theory]
+    [InlineData(AppointmentStatus.Pending)]
+    [InlineData(AppointmentStatus.Confirmed)]
+    public void AnOpenAppointmentCanBeCancelledWithItsReason(AppointmentStatus status)
+    {
+        var appointment = NewAppointment(status);
+
+        appointment.Cancel("  El cliente no puede ir ", Actor, Created.AddMinutes(5));
+
+        Assert.Equal(AppointmentStatus.Cancelled, appointment.Status);
+        Assert.Equal("El cliente no puede ir", appointment.CancelReason);
+        Assert.Equal(AppointmentAction.Cancelled, appointment.Events[^1].Action);
+    }
+
+    [Fact]
+    public void ACancelledAppointmentCannotBeConfirmedMovedOrMarked()
+    {
+        var appointment = NewAppointment();
+        appointment.Cancel(null, Actor, Created.AddMinutes(1));
+
+        AssertInvalid(() => appointment.Confirm(Actor, Start.AddHours(1)));
+        AssertInvalid(() => appointment.MarkAttended(Actor, Start.AddHours(1)));
+        AssertInvalid(() => appointment.MarkNoShow(Actor, Start.AddHours(1)));
+        AssertInvalid(() => appointment.Cancel(null, Actor, Start.AddHours(1)));
+        AssertInvalid(() => appointment.Reschedule(ResourceId.New(), SessionId.New(), Start.AddDays(1), Start.AddDays(1).AddMinutes(30), Actor, Start));
+    }
+
+    [Fact]
+    public void OnlyAConfirmedAppointmentCanBeMarkedAndOnlyAfterItsStart()
+    {
+        var pending = NewAppointment(AppointmentStatus.Pending);
+        AssertInvalid(() => pending.MarkAttended(Actor, Start.AddHours(1)));
+
+        var confirmed = NewAppointment();
+        var early = Assert.Throws<SchedulingDomainException>(() => confirmed.MarkAttended(Actor, Start.AddMinutes(-1)));
+        Assert.Equal(SchedulingErrorCodes.BeforeStart, early.Code);
+
+        confirmed.MarkAttended(Actor, Start);
+        Assert.Equal(AppointmentStatus.Completed, confirmed.Status);
+        AssertInvalid(() => confirmed.MarkNoShow(Actor, Start.AddHours(1)));
+    }
+
+    [Fact]
+    public void ANoShowIsMarkedAfterTheStartAndIsTerminal()
+    {
+        var appointment = NewAppointment();
+
+        var early = Assert.Throws<SchedulingDomainException>(() => appointment.MarkNoShow(Actor, Start.AddMinutes(-5)));
+        Assert.Equal(SchedulingErrorCodes.BeforeStart, early.Code);
+        appointment.MarkNoShow(Actor, Start.AddMinutes(45));
+
+        Assert.Equal(AppointmentStatus.NoShow, appointment.Status);
+        AssertInvalid(() => appointment.Cancel(null, Actor, Start.AddHours(2)));
+    }
+
+    [Theory]
+    [InlineData(AppointmentStatus.Pending)]
+    [InlineData(AppointmentStatus.Confirmed)]
+    public void RescheduleKeepsTheIdAndTheStatusAndLeavesAnEvent(AppointmentStatus status)
+    {
+        var appointment = NewAppointment(status);
+        var id = appointment.Id;
+        var newResource = ResourceId.New();
+        var newSession = SessionId.New();
+        var newStart = Start.AddDays(2);
+
+        appointment.Reschedule(newResource, newSession, newStart, newStart.AddMinutes(30), Actor, Created.AddMinutes(10));
+
+        Assert.Equal((id, status), (appointment.Id, appointment.Status));
+        Assert.Equal((newResource, newSession, newStart, newStart.AddMinutes(30)),
+            (appointment.ResourceId, appointment.SessionId, appointment.StartsAt, appointment.EndsAt));
+        Assert.Equal(AppointmentAction.Rescheduled, appointment.Events[^1].Action);
+    }
+
+    [Fact]
+    public void ARescheduleToABackwardsRangeIsRejected() =>
+        Assert.Throws<ArgumentException>(() =>
+            NewAppointment().Reschedule(ResourceId.New(), SessionId.New(), Start, Start.AddMinutes(-10), Actor, Created));
+
+    [Fact]
+    public void TheReminderIsRecordedOnceAndOnlyForAnOpenAppointment()
+    {
+        var appointment = NewAppointment();
+
+        appointment.RecordReminderSent(Created.AddHours(1));
+
+        Assert.Equal(Created.AddHours(1), appointment.ReminderSentAt);
+        Assert.Equal(AppointmentAction.ReminderSent, appointment.Events[^1].Action);
+        Assert.Throws<InvalidOperationException>(() => appointment.RecordReminderSent(Created.AddHours(2)));
+
+        var cancelled = NewAppointment();
+        cancelled.Cancel(null, Actor, Created.AddMinutes(1));
+        AssertInvalid(() => cancelled.RecordReminderSent(Created.AddHours(1)));
+    }
+
+    private static void AssertInvalid(Action action)
+    {
+        var error = Assert.Throws<SchedulingDomainException>(action);
+        Assert.Equal(SchedulingErrorCodes.InvalidTransition, error.Code);
+    }
+}
