@@ -660,6 +660,29 @@ public sealed class SiigoApiClientTests : IDisposable
     }
 
     [Fact]
+    public async Task TheInvoicePdfIsReadFromItsBase64Field()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/inv-1/pdf", HttpStatusCode.OK, """{"base64":"JVBERi0xLjQ="}""");
+
+        var pdf = await _client.GetInvoicePdfAsync(Credentials, "inv-1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("%PDF-1.4"u8.ToArray(), pdf);
+    }
+
+    [Fact]
+    public async Task AnInvoicePdfAnswerWithoutContentRaisesServiceUnavailable()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/inv-1/pdf", HttpStatusCode.OK, "{}");
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(
+            () => _client.GetInvoicePdfAsync(Credentials, "inv-1", TestContext.Current.CancellationToken));
+
+        Assert.Equal("siigo.unavailable", error.Code);
+    }
+
+    [Fact]
     public async Task AFailedListCallThatIsTransientRaisesServiceUnavailable()
     {
         _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));

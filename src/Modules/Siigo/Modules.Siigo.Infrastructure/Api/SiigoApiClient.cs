@@ -245,6 +245,23 @@ internal sealed class SiigoApiClient(
         return new SiigoStampOutcome.Stamped(document is null ? null : SiigoJson.Cufe(document.RootElement));
     }
 
+    public async Task<byte[]> GetInvoicePdfAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
+    {
+        var reply = await GetAsync(credentials, $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}/pdf", cancellationToken);
+        using var document = SiigoJson.Parse(reply.Body);
+        var encoded = document is null ? null : SiigoJson.Text(document.RootElement, "base64");
+        try
+        {
+            return string.IsNullOrWhiteSpace(encoded)
+                ? throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, "Siigo answered the invoice PDF without content.")
+                : Convert.FromBase64String(encoded);
+        }
+        catch (FormatException)
+        {
+            throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, "Siigo answered the invoice PDF with unreadable content.");
+        }
+    }
+
     public async Task<IReadOnlyList<SiigoError>> GetStampErrorsAsync(
         SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
     {
