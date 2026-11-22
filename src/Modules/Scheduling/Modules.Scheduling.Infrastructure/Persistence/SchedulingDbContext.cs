@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Modules.Audit.Domain;
+using Modules.Audit.Infrastructure.Persistence;
 using Modules.Scheduling.Domain;
 
 namespace Modules.Scheduling.Infrastructure.Persistence;
@@ -17,6 +19,9 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
     public const string SessionOccupancyConstraint = "EX_sessions_resource_occupancy";
 
     public const string SessionUniqueIndex = "IX_sessions_resource_service_start";
+
+    /// <summary>Un miembro atiende un solo recurso por sede. Se traduce por nombre en <see cref="SchedulingUnitOfWork"/>.</summary>
+    public const string ResourceMemberUniqueIndex = "IX_resources_location_member";
 
     private static readonly ValueConverter<LocationId, Guid> LocationIdConverter = new(id => id.Value, value => new LocationId(value));
     private static readonly ValueConverter<ResourceId, Guid> ResourceIdConverter = new(id => id.Value, value => new ResourceId(value));
@@ -43,8 +48,12 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
 
     public DbSet<SchedulingSettings> Settings => Set<SchedulingSettings>();
 
+    // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
+    internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureLocation(modelBuilder);
         ConfigureResource(modelBuilder);
         ConfigureService(modelBuilder);

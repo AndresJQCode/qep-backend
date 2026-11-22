@@ -37,6 +37,7 @@ public sealed class CreateServiceHandler(
     ITenantClock tenantClock,
     SchedulingFirstAccess firstAccess,
     IServiceRepository services,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<ServiceRequest> validator)
     : ICommandHandler<CreateServiceCommand, ServiceDto>
@@ -55,6 +56,9 @@ public sealed class CreateServiceHandler(
             ServiceId.New(), command.TenantId, request.Name!, request.DurationMinutes!.Value, request.BufferMinutes ?? 0,
             request.BookableByChannel ?? false, now);
         services.Add(service);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ServiceCreated,
+            SchedulingAuditActions.Resources.Service, service.Id.Value, ["name", "durationMinutes", "bufferMinutes", "bookableByChannel"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Service(service);
@@ -66,6 +70,7 @@ public sealed class UpdateServiceHandler(
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     IServiceRepository services,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<ServiceRequest> validator)
     : ICommandHandler<UpdateServiceCommand, ServiceDto>
@@ -84,8 +89,32 @@ public sealed class UpdateServiceHandler(
 
         var request = command.Request;
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var changed = new List<string>();
+        if (service.Name != request.Name!.Trim())
+        {
+            changed.Add("name");
+        }
+
+        if (service.DurationMinutes != request.DurationMinutes!.Value)
+        {
+            changed.Add("durationMinutes");
+        }
+
+        if (service.BufferMinutes != (request.BufferMinutes ?? 0))
+        {
+            changed.Add("bufferMinutes");
+        }
+
+        if (service.BookableByChannel != (request.BookableByChannel ?? false))
+        {
+            changed.Add("bookableByChannel");
+        }
+
         service.Update(
             request.Name!, request.DurationMinutes!.Value, request.BufferMinutes ?? 0, request.BookableByChannel ?? false, now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ServiceUpdated,
+            SchedulingAuditActions.Resources.Service, service.Id.Value, changed, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Service(service);
@@ -98,6 +127,7 @@ public sealed class ArchiveServiceHandler(
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     IServiceRepository services,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork)
     : ICommandHandler<ArchiveServiceCommand, ServiceDto>
 {
@@ -119,6 +149,9 @@ public sealed class ArchiveServiceHandler(
         }
 
         service.Archive(now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ServiceArchived,
+            SchedulingAuditActions.Resources.Service, service.Id.Value, ["archived"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Service(service);

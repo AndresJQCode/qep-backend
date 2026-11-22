@@ -163,6 +163,27 @@ internal static class SchedulingApiHarness
         return await client.SendAsync(request, Ct);
     }
 
+    /// <summary>
+    /// Las filas de <c>audit.entries</c> de una acción sobre un recurso del tenant: la auditoría atómica no tiene API de lectura acá.
+    /// Verifica el efecto que importa (la fila existe con acción y entidad correctas), no sólo el status HTTP.
+    /// </summary>
+    public static async Task<int> CountAuditEntriesAsync(
+        QepApiFactory factory, string tenantId, string action, string resourceType, Guid resourceId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var tenant = Guid.Parse(tenantId);
+        var id = resourceId.ToString();
+        return await db.Database
+            .SqlQuery<int>(
+                $"""
+                SELECT count(*)::int AS "Value" FROM audit.entries
+                WHERE tenant_id = {tenant} AND action = {action} AND resource_type = {resourceType} AND resource_id = {id}
+                  AND source = 'scheduling' AND outcome = 'success'
+                """)
+            .SingleAsync(Ct);
+    }
+
     public static string CodeOf(JsonElement problem) => problem.GetProperty("code").GetString()!;
 
     public static bool HasError(JsonElement problem, string key) =>

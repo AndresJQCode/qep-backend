@@ -24,6 +24,7 @@ public static class SchedulingInfrastructureExtensions
                     SchedulingDbContext.Schema)));
 
         services.AddScoped<ISchedulingUnitOfWork, SchedulingUnitOfWork>();
+        services.AddScoped<ISchedulingAuditPublisher, SchedulingAuditPublisher>();
         services.AddScoped<ISchedulingProvisioner, SchedulingProvisioner>();
         services.AddScoped<ILocationRepository, LocationRepository>();
         services.AddScoped<IResourceRepository, ResourceRepository>();

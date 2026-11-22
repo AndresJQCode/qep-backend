@@ -35,6 +35,7 @@ public sealed class UpdateSettingsHandler(
     ITenantClock tenantClock,
     SchedulingFirstAccess firstAccess,
     ISchedulingSettingsRepository settings,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<SettingsRequest> validator)
     : ICommandHandler<UpdateSettingsCommand, SettingsDto>
@@ -54,6 +55,47 @@ public sealed class UpdateSettingsHandler(
 
         var request = command.Request;
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var changed = new List<string>();
+        if (row.ConfirmationMode != Enum.Parse<ConfirmationMode>(request.ConfirmationMode!, ignoreCase: false))
+        {
+            changed.Add("confirmationMode");
+        }
+
+        if (row.MinNoticeMinutes != request.MinNoticeMinutes!.Value)
+        {
+            changed.Add("minNoticeMinutes");
+        }
+
+        if (row.HorizonDays != request.HorizonDays!.Value)
+        {
+            changed.Add("horizonDays");
+        }
+
+        if (row.ClientCancelCutoffHours != request.ClientCancelCutoffHours!.Value)
+        {
+            changed.Add("clientCancelCutoffHours");
+        }
+
+        if (row.ReminderEnabled != (request.ReminderEnabled ?? false))
+        {
+            changed.Add("reminderEnabled");
+        }
+
+        if (row.ReminderOffsetHours != request.ReminderOffsetHours!.Value)
+        {
+            changed.Add("reminderOffsetHours");
+        }
+
+        if (row.ReminderConnectionId != request.ReminderConnectionId)
+        {
+            changed.Add("reminderConnectionId");
+        }
+
+        if (row.ReminderTemplateId != request.ReminderTemplateId)
+        {
+            changed.Add("reminderTemplateId");
+        }
+
         // El dominio exige la conexión y la plantilla del recordatorio con su código (422); el validador ya acotó los rangos.
         row.Update(
             Enum.Parse<ConfirmationMode>(request.ConfirmationMode!, ignoreCase: false),
@@ -65,6 +107,9 @@ public sealed class UpdateSettingsHandler(
             request.ReminderConnectionId,
             request.ReminderTemplateId,
             now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SettingsUpdated,
+            SchedulingAuditActions.Resources.Settings, command.TenantId, changed, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Settings(row);

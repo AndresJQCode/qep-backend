@@ -83,6 +83,7 @@ public sealed class CreateResourceHandler(
     ILocationRepository locations,
     IResourceRepository resources,
     ISchedulingMemberDirectory members,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     SchedulingComposer composer,
     IValidator<ResourceRequest> validator)
@@ -112,6 +113,9 @@ public sealed class CreateResourceHandler(
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         var resource = Resource.Create(ResourceId.New(), command.TenantId, location.Id, request.DisplayName!, request.MemberId, now);
         resources.Add(resource);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ResourceCreated,
+            SchedulingAuditActions.Resources.Resource, resource.Id.Value, ["displayName", "memberId"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await composer.ResourceAsync(command.TenantId, resource, cancellationToken);
@@ -129,6 +133,7 @@ public sealed class UpdateResourceHandler(
     ResourceScopeResolver scopeResolver,
     IResourceRepository resources,
     ISchedulingMemberDirectory members,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     SchedulingComposer composer,
     IValidator<ResourceRequest> validator)
@@ -166,7 +171,21 @@ public sealed class UpdateResourceHandler(
             members, resources, command.TenantId, resource.LocationId, request.MemberId, resource.MemberId, resource.Id, cancellationToken);
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+        var changed = new List<string>();
+        if (resource.DisplayName != request.DisplayName!.Trim())
+        {
+            changed.Add("displayName");
+        }
+
+        if (resource.MemberId != request.MemberId)
+        {
+            changed.Add("memberId");
+        }
+
         resource.Update(request.DisplayName!, request.MemberId, now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ResourceUpdated,
+            SchedulingAuditActions.Resources.Resource, resource.Id.Value, changed, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await composer.ResourceAsync(command.TenantId, resource, cancellationToken);
@@ -179,6 +198,7 @@ public sealed class ArchiveResourceHandler(
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     IResourceRepository resources,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     SchedulingComposer composer)
     : ICommandHandler<ArchiveResourceCommand, ResourceDto>
@@ -201,6 +221,9 @@ public sealed class ArchiveResourceHandler(
         }
 
         resource.Archive(now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ResourceArchived,
+            SchedulingAuditActions.Resources.Resource, resource.Id.Value, ["archived"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await composer.ResourceAsync(command.TenantId, resource, cancellationToken);

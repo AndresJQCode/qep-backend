@@ -29,6 +29,7 @@ public sealed class PublishSessionHandler(
     IServiceRepository services,
     ISessionRepository sessions,
     ISchedulingHolidayCalendar holidays,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<PublishSessionRequest> validator)
     : ICommandHandler<PublishSessionCommand, PublishedSessionDto>
@@ -101,6 +102,9 @@ public sealed class PublishSessionHandler(
             SessionId.New(), command.TenantId, resourceId, serviceId, startsAt, endsAt, service.BufferMinutes,
             block.CapacityPerResource, isPublished: true, calendar.UtcNow);
         sessions.Add(session);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SessionPublished,
+            SchedulingAuditActions.Resources.Session, session.Id.Value, ["blockId", "resourceId", "serviceId", "startsAt"], calendar.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.PublishedSession(session);
@@ -134,8 +138,10 @@ public sealed class PublishSessionHandler(
 public sealed class RemovePublishedSessionHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
+    ITenantClock tenantClock,
     ResourceScopeResolver scopeResolver,
     ISessionRepository sessions,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork)
     : ICommandHandler<RemovePublishedSessionCommand, PublishedSessionRemovedResult>
 {
@@ -164,7 +170,11 @@ public sealed class RemovePublishedSessionHandler(
                 "Esa sesión tiene citas. Reprográmalas o cancélalas antes de quitarla.");
         }
 
+        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         sessions.Remove(session);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SessionRemoved,
+            SchedulingAuditActions.Resources.Session, session.Id.Value, ["removed"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new PublishedSessionRemovedResult();

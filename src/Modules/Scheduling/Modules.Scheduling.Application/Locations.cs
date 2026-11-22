@@ -38,6 +38,7 @@ public sealed class CreateLocationHandler(
     ITenantClock tenantClock,
     SchedulingFirstAccess firstAccess,
     ILocationRepository locations,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<LocationRequest> validator)
     : ICommandHandler<CreateLocationCommand, LocationDto>
@@ -53,6 +54,9 @@ public sealed class CreateLocationHandler(
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         var location = Location.Create(LocationId.New(), command.TenantId, command.Request.Name!, isMain: false, now);
         locations.Add(location);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.LocationCreated,
+            SchedulingAuditActions.Resources.Location, location.Id.Value, ["name"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Location(location);
@@ -64,6 +68,7 @@ public sealed class UpdateLocationHandler(
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     ILocationRepository locations,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<LocationRequest> validator)
     : ICommandHandler<UpdateLocationCommand, LocationDto>
@@ -82,6 +87,9 @@ public sealed class UpdateLocationHandler(
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         location.Rename(command.Request.Name!, now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.LocationUpdated,
+            SchedulingAuditActions.Resources.Location, location.Id.Value, ["name"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Location(location);
@@ -94,6 +102,7 @@ public sealed class ArchiveLocationHandler(
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     ILocationRepository locations,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork)
     : ICommandHandler<ArchiveLocationCommand, LocationDto>
 {
@@ -108,6 +117,9 @@ public sealed class ArchiveLocationHandler(
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         location.Archive(now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.LocationArchived,
+            SchedulingAuditActions.Resources.Location, location.Id.Value, ["archived"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Location(location);

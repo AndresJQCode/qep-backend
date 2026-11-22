@@ -144,6 +144,7 @@ public sealed class CreateBlockHandler(
     IResourceRepository resources,
     IServiceRepository services,
     IAvailabilityBlockRepository blocks,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<BlockRequest> validator)
     : ICommandHandler<CreateBlockCommand, BlockDto>
@@ -166,6 +167,9 @@ public sealed class CreateBlockHandler(
         var block = AvailabilityBlock.Create(
             AvailabilityBlockId.New(), command.TenantId, locationId, BlockInput.ToDefinition(command.Request, serviceIds, resourceIds), now);
         blocks.Add(block);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.BlockCreated,
+            SchedulingAuditActions.Resources.Block, block.Id.Value, ["name", "kind", "schedule", "capacityPerResource", "resourceIds", "serviceIds"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Block(block);
@@ -180,6 +184,7 @@ public sealed class UpdateBlockHandler(
     IResourceRepository resources,
     IServiceRepository services,
     IAvailabilityBlockRepository blocks,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<BlockRequest> validator)
     : ICommandHandler<UpdateBlockCommand, BlockDto>
@@ -207,6 +212,9 @@ public sealed class UpdateBlockHandler(
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         block.Update(BlockInput.ToDefinition(command.Request, serviceIds, resourceIds), now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.BlockUpdated,
+            SchedulingAuditActions.Resources.Block, block.Id.Value, ["definition"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Block(block);
@@ -220,6 +228,7 @@ public sealed class ArchiveBlockHandler(
     ITenantClock tenantClock,
     ResourceScopeResolver scopeResolver,
     IAvailabilityBlockRepository blocks,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork)
     : ICommandHandler<ArchiveBlockCommand, BlockDto>
 {
@@ -235,6 +244,9 @@ public sealed class ArchiveBlockHandler(
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         block.Archive(now);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.BlockArchived,
+            SchedulingAuditActions.Resources.Block, block.Id.Value, ["archived"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Block(block);

@@ -54,6 +54,7 @@ public sealed class CreateClosureHandler(
     ILocationRepository locations,
     IResourceRepository resources,
     IClosureRepository closures,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<ClosureRequest> validator)
     : ICommandHandler<CreateClosureCommand, ClosureDto>
@@ -90,6 +91,9 @@ public sealed class CreateClosureHandler(
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         var closure = Closure.Create(ClosureId.New(), command.TenantId, locationId, resourceId, startsAt, endsAt, request.Reason, now);
         closures.Add(closure);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ClosureCreated,
+            SchedulingAuditActions.Resources.Closure, closure.Id.Value, ["resourceId", "startsAt", "endsAt", "reason"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Closure(closure);
@@ -130,8 +134,10 @@ public sealed class CreateClosureHandler(
 public sealed class DeleteClosureHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
+    ITenantClock tenantClock,
     ResourceScopeResolver scopeResolver,
     IClosureRepository closures,
+    ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork)
     : ICommandHandler<DeleteClosureCommand, ClosureDeletedResult>
 {
@@ -148,7 +154,11 @@ public sealed class DeleteClosureHandler(
             throw SchedulingAuthorization.Denied();
         }
 
+        var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         closures.Remove(closure);
+        SchedulingAudit.Publish(
+            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ClosureDeleted,
+            SchedulingAuditActions.Resources.Closure, closure.Id.Value, ["deleted"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new ClosureDeletedResult();
