@@ -73,6 +73,7 @@ public static class NotificationsInfrastructureExtensions
         services.AddSingleton<InAppOutboxConsumer, ExportsInAppConsumer>();
         services.AddSingleton<InAppOutboxConsumer, ConversationsInAppConsumer>();
         services.AddSingleton<InAppOutboxConsumer, WholesaleInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, BillingInAppConsumer>();
         services.AddScoped<IInAppNotificationRepository, InAppNotificationRepository>();
         services.AddHostedService<NotificationsDeliveryWorker>();
         services.AddHostedService<InAppNotificationRetentionWorker>();
