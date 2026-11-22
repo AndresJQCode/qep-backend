@@ -38,6 +38,8 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportUnclassifiedRepository, SupportUnclassifiedRepository>();
         services.AddScoped<ISupportReplyRepository, SupportReplyRepository>();
         services.AddScoped<ISupportAuditPublisher, SupportAuditPublisher>();
+        // Spec 2026-11-22 §12: the events for the bell go to the platform outbox in the same unit of work as the ticket change.
+        services.AddScoped<ISupportIntegrationEvents, SupportIntegrationEvents>();
 
         // Fase 3, formulario público (plan F7, F8, F14, F16, F17).
         services.AddScoped<ISupportTicketAccessRepository, SupportTicketAccessRepository>();

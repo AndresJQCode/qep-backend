@@ -133,9 +133,13 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    // Proyección de escritura de platform.outbox_messages (ExcludeFromMigrations): Tenancy es dueña de la tabla. Spec 2026-11-22 §12.
+    internal DbSet<SupportOutboxMessage> Outbox => Set<SupportOutboxMessage>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+        ConfigureOutboxProjection(modelBuilder);
         ConfigureSettings(modelBuilder);
         ConfigureTicketType(modelBuilder);
         ConfigureTicket(modelBuilder);
@@ -153,6 +157,21 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureLegalAcceptance(modelBuilder);
         ConfigureTicketAttachment(modelBuilder);
         ConfigureTicketNote(modelBuilder);
+    }
+
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<SupportOutboxMessage>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
     }
 
     // Spec 2026-11-15 §5.4: two insert-only tables. The ticket cascades like the other ticket tables; the author is a soft reference
