@@ -125,7 +125,9 @@ public static class TenantModuleKeys
     private static readonly Dictionary<TenantModuleKey, TenantModuleKey[]> Dependencies = new()
     {
         [Quotations] = [Catalog, Customers, Companies],
-        [Orders] = [Quotations],
+        // Un pedido nace sin cotización (spec 2026-10-15) y se vende sin ella: depende de lo que la
+        // cotización ya exigía, no de ella, para que la consola de plataforma pueda ocultar cotizaciones.
+        [Orders] = [Catalog, Customers, Companies],
         [Pos] = [Catalog, Companies],
         // Spec 2026-10-13 D30: sin messaging el triage queda vacío; sin quotations no llegan eventos.
         [Pipeline] = [Customers],

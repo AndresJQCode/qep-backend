@@ -328,7 +328,7 @@ public sealed class IntegrationCatalogTests
 
         Assert.Equal("Zenvia (WhatsApp)", zenvia.DisplayName);
         Assert.Equal(IntegrationCategory.Messaging, zenvia.Category);
-        Assert.Equal([TenantModuleKeys.Quotations], zenvia.ConsumingModules);
+        Assert.Equal([TenantModuleKeys.Quotations, TenantModuleKeys.Orders], zenvia.ConsumingModules);
         Assert.Equal(20, zenvia.MaxConnections);
         Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId"], zenvia.Fields.Select(field => field.Key));
 
@@ -379,7 +379,18 @@ public sealed class IntegrationCatalogTests
     [Fact]
     public void AProviderIsHiddenWhenItsModulesAreOff() =>
         Assert.False(IntegrationProviders.Zenvia.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders]))));
+
+    // Zenvia envía cotizaciones y pedidos (order.whatsapp.not_configured): el tenant que oculta cotizaciones y vende por
+    // pedidos sigue configurándolo, y el que oculta pedidos y cotiza también.
+    [Fact]
+    public void ZenviaIsVisibleWithOnlyOrdersOrOnlyQuotations()
+    {
+        Assert.True(IntegrationProviders.Zenvia.IsVisibleFor(
             TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations]))));
+        Assert.True(IntegrationProviders.Zenvia.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))));
+    }
 
     // Contratado pero apagado por una dependencia: cuenta lo efectivo, como en TenantModuleGuard.
     [Fact]

@@ -4050,6 +4050,17 @@ public static class QepServiceCollectionExtensions
                     policy.RequireClaim(
                         QepClaimTypes.Permission, QuotationsPermissions.QuotationManage, OrdersPermissions.OrderManage, TenancyPermissions.SettingsUpdate);
                 })
+            // Leer las opciones de envio: leer cotizaciones o leer pedidos. Un tenant que oculta cotizaciones pierde
+            // QuotationRead por el modulo (ModuleEntitlementMask), asi que sin OrderRead aqui su formulario de pedido
+            // no podria dibujar la entrega.
+            .AddPolicy(
+                QuotationsPolicies.ShippingOptionsRead,
+                policy =>
+                {
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(
+                        QepClaimTypes.Permission, QuotationsPermissions.QuotationRead, OrdersPermissions.OrderRead);
+                })
             // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que
             // TaxRateRead/TaxRateManage y ClassificationRead/ClassificationManage.

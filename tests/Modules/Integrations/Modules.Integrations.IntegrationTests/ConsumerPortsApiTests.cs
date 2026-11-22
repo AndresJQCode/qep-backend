@@ -129,7 +129,9 @@ public sealed class ConsumerPortsApiTests
             "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'integrations.connection-needs-attention.v1' AND payload->>'connectionId' = @id",
             ("id", rejected.Id.ToString())));
 
+        // Zenvia lo consumen cotizaciones y pedidos: se apagan los dos (spec 2026-11-21).
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "inactive");
+        await SetModuleStatusAsync(connectionString, tenant.TenantId, "orders", "inactive");
         using (var scope = factory.Services.CreateScope())
         {
             Assert.Null((await scope.ServiceProvider.GetRequiredService<IIntegrationConnections>()
