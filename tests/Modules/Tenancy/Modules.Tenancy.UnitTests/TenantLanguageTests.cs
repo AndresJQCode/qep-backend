@@ -65,6 +65,28 @@ public sealed class TenantLanguageTests
         Assert.Equal(1, tenant.Version);
     }
 
+    // Quien registra el tenant puede elegir el idioma desde el alta (spec 2026-11-22, i18n).
+    [Theory]
+    [InlineData(null, "es-419")]
+    [InlineData("es-es", "es-ES")]
+    public void CreateTakesTheLanguageOfTheRegistration(string? requested, string stored)
+    {
+        var tenant = Tenant.Create(
+            TenantId.New(), "qcode-demo", "QCode Demo", "es-CO", "America/Bogota", "yyyy-MM-dd",
+            MembershipId.New(), CreatedAt, requested);
+
+        Assert.Equal(stored, tenant.Language);
+    }
+
+    [Fact]
+    public void ARegistrationWithAnUnsupportedLanguageFailsBeforeCreatingAnything()
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Tenant.EnsureValidRegistration("acme", "Acme", "es-CO", "America/Bogota", "dd/MM/yyyy", "en-US"));
+
+        Assert.Equal("tenancy.settings.language.invalid", exception.Code);
+    }
+
     private static bool Change(Tenant tenant, string? language) =>
         tenant.UpdateSettings(
             tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,

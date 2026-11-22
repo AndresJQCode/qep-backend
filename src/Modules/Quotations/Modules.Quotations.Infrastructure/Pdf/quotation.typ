@@ -17,7 +17,11 @@
 // documento —membrete y pie— y el renglón de vigencia, que un pedido no tiene. `kind` llega como texto
 // ("Quotation" / "Order", `QuotationPdfKind`); cualquier otro valor se imprime como cotización.
 #let es-pedido = data.kind == "Order"
-#let documento = if es-pedido { "Pedido" } else { "Cotización" }
+// Spec 2026-11-22 (i18n): el idioma del tenant. En España la cotización es «Presupuesto» —masculino, como el pedido— y el
+// asesor, «Comercial» (owner). Cualquier otro valor se imprime como Latinoamérica.
+#let espana = data.language == "es-ES"
+#let documento = if es-pedido { "Pedido" } else if espana { "Presupuesto" } else { "Cotización" }
+#let masculino = es-pedido or espana
 
 #let tinta = rgb("#14181F")
 // 5.8:1 sobre blanco. Los rótulos van en 7pt y a esa medida un gris "de diseño" deja de leerse.
@@ -255,16 +259,16 @@
     #v(3pt, weak: true)
     #par(leading: 0.6em)[
       #if hay-emisor [#renglon("N.°", data.quotationNumber) \ ]
-      // Concuerda con el documento: «la cotización», emitida; «el pedido», emitido.
-      #renglon(if es-pedido { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
+      // Concuerda con el documento: «la cotización», emitida; «el pedido» y «el presupuesto», emitido.
+      #renglon(if masculino { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
       // Un pedido no vence: "Sin vencimiento" se leería como una condición comercial que nadie pactó.
       #if not es-pedido [
         #renglon(
-          "Válida hasta",
+          if masculino { "Válido hasta" } else { "Válida hasta" },
           if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
         ) \
       ]
-      #renglon("Asesor", if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
+      #renglon(if espana { "Comercial" } else { "Asesor" }, if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
       #renglon("Cliente", if data.customerName == "" { vacio } else { data.customerName })
       #if data.customerCuc != "" [ \ #renglon("NIT / CUC", data.customerCuc)]
       #if data.customerContact != "" [ \ #renglon("Contacto", data.customerContact)]

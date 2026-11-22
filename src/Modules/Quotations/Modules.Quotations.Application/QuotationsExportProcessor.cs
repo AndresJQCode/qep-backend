@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildingBlocks.Domain.Localization;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -24,6 +25,12 @@ public sealed class QuotationsExportProcessor(
 
     public const string FilePrefix = "cotizaciones";
 
+    /// <summary>Spec 2026-11-22 (i18n): en España la cotización es «presupuesto» (owner). Tiene que coincidir
+    /// con el diccionario <c>es-ES</c> del frontend y con <c>QuotationsExportKindText</c> de Notifications.</summary>
+    public const string SpainSheetName = "Presupuestos";
+
+    public const string SpainFilePrefix = "presupuestos";
+
     /// <summary>Las de la tabla del listado, en su orden (D8), con la moneda aparte del total
     /// —la tabla la pinta junto al importe y en una planilla tiene que poder filtrarse—. Sin
     /// tildes, como Reporting. Anchos fijos: medir el contenido obligaría a recorrerlo dos veces;
@@ -38,6 +45,10 @@ public sealed class QuotationsExportProcessor(
         new("Moneda", 10),
         new("Total", 16),
     ];
+
+    /// <summary>Las mismas, con «Comercial» en lugar de «Asesor» (glosario de España, owner 2026-11-22).</summary>
+    public static readonly IReadOnlyList<ExportColumn> SpainColumns =
+        [.. Columns.Select(column => column.Header == "Asesor" ? column with { Header = "Comercial" } : column)];
 
     public ExportJobKind Kind => ExportJobKind.Quotations;
 
@@ -57,8 +68,10 @@ public sealed class QuotationsExportProcessor(
         var settings = await tenantDirectory.GetRegionalSettingsAsync(
             new TenantId(job.TenantId), cancellationToken);
         var dateTimePattern = RegionalDateFormat.WithTime(settings?.DateFormat);
+        // El archivo es del tenant, no de quien lo pidió: va en el idioma del tenant (spec 2026-11-22).
+        var spain = SupportedLanguages.OrDefault(settings?.Language) == SupportedLanguages.SpainSpanish;
 
-        using var workbook = writer.Create(SheetName, Columns);
+        using var workbook = writer.Create(spain ? SpainSheetName : SheetName, spain ? SpainColumns : Columns);
         var rowCount = await ExportBatchLoop.WriteAllAsync<Quotation, QuotationExportCursor>(
             workbook,
             (after, limit, ct) => repository.ListForExportAsync(
@@ -89,7 +102,7 @@ public sealed class QuotationsExportProcessor(
                 "Empty: no quotations matched the export filters when the export ran.");
         }
 
-        var fileName = ExportFileNames.For(FilePrefix, calendar.ToLocal(generatedAt));
+        var fileName = ExportFileNames.For(spain ? SpainFilePrefix : FilePrefix, calendar.ToLocal(generatedAt));
         var upload = await storage.UploadAsync(
             job.TenantId, job.Id, fileName, workbook.Complete(), cancellationToken);
         return new ExportJobResult(fileName, rowCount, upload.DownloadUrl, upload.ExpiresAt);

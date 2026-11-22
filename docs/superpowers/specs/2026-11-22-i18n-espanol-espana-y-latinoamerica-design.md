@@ -1,8 +1,8 @@
 # Idioma del producto: español de España y de Latinoamérica (i18n) — diseño
 
 **Fecha:** 2026-11-22 · **Estado:** decisiones del owner tomadas en conversación el 2026-11-22; backend construido en
-`claude/festive-noether-ablt1w` · **Repo:** `qep-backend`. El diccionario de la interfaz vive en `qep-frontend`, que necesita su
-propio spec.
+`claude/festive-noether-ablt1w` · **Repo:** `qep-backend`. El diccionario de la interfaz vive en `qep-frontend`; su spec es
+`qep-frontend/docs/superpowers/specs/2026-11-22-i18n-espanol-espana-y-latinoamerica-frontend-design.md`.
 
 ## Intención
 
@@ -14,11 +14,11 @@ los correos que manda.
 
 | #    | Decisión |
 | ---- | -------- |
-| D-I1 | **Alcance de esta entrega:** guardar y publicar el idioma, y localizar los correos. PDF, plantillas de WhatsApp, Excel, historial y `detail` de los errores quedan fuera (ver «Pendiente»). |
+| D-I1 | **Alcance:** guardar y publicar el idioma, y localizar los correos. Ampliado el mismo día: idioma al registrar, PDF de cotización y pedido, y Excel de cotizaciones. Plantillas de WhatsApp, nombres de roles y permisos, historial y `detail` de los errores quedan fuera (ver «Pendiente»). |
 | D-I2 | **Origen:** cada persona elige su idioma **por tenant**, igual que el tema (`UserPreference`, SDD-OD-17). Si no eligió, se usa el idioma del tenant. |
 | D-I3 | **Códigos:** `es-419` y `es-ES` (BCP 47). No es `es-CO`: el idioma no es el formato regional, y `DefaultCulture`, `NumberFormat` y `DateFormat` siguen como estaban. |
 | D-I4 | **Por defecto:** `es-419`. Los tenants actuales son colombianos y los textos ya están escritos así, así que nadie ve un cambio. |
-| D-I5 | **Glosario de España en los correos:** «cotización» → «presupuesto»; «radicado» → «número de caso». Tiene que coincidir con el diccionario `es-ES` del frontend. |
+| D-I5 | **Glosario de España:** «cotización» → «presupuesto»; «radicado» → «número de caso»; y para la interfaz también «celular» → «móvil», «bodega» → «almacén», «abono» → «pago parcial» y «asesor» → «comercial». Tiene que coincidir con el diccionario `es-ES` del frontend. |
 
 ## Diseño
 
@@ -47,6 +47,21 @@ los correos que manda.
     tenant (`SupportOpeningSender`). El parámetro `radicado` del enlace de consulta es contrato con el formulario público y **no** se
     traduce.
 
+- **Registro:** `POST /auth/register-tenant` y `POST /auth/password/register-tenant` aceptan `language` opcional. Ausente o `""` es
+  `es-419`, y un valor fuera del catálogo responde `422 tenancy.settings.language.invalid` antes de crear nada (`EnsureValidRegistration`).
+- **PDF de cotización y de pedido** (`quotation.typ`): sale en el idioma **del tenant**, no del que descarga, porque el documento es
+  del tenant. En `es-ES` la cotización es «Presupuesto», masculino («Emitido», «Válido hasta»), y el rótulo «Asesor» pasa a
+  «Comercial», también en el pedido. El idioma viaja en `data.language`.
+  - **Regeneración:** el PDF guardado se vence por la huella (`QuotationPdfSectionsBuilder.Fingerprint`), sin columna nueva. Solo
+    entra a la huella un idioma distinto de `es-419`, así que **el despliegue no regenera ningún PDF** de los tenants de hoy y pasar un
+    tenant a `es-ES` regenera los suyos en el siguiente export.
+  - **Nombre del archivo:** una sola regla, `QuotationPdfFileName`: `Presupuesto-N.pdf` en `es-ES`. La usan el renderer, la descarga y
+    el adjunto que llega por WhatsApp (`WhatsAppQuotationMessage.Language`). El texto de la plantilla de WhatsApp no cambia.
+- **Excel de cotizaciones** (`QuotationsExportProcessor`): en `es-ES` la hoja es «Presupuestos», el archivo `presupuestos-….xlsx` y la
+  columna «Asesor» se llama «Comercial». Va en el idioma del tenant. El correo de aviso va en el de quien exportó, así que una persona
+  en `es-ES` dentro de un tenant `es-419` recibe «Tu exportación de presupuestos» con el archivo `cotizaciones-….xlsx`. Es aceptable:
+  el archivo es de la organización. **La hoja del ERP (Excel de pedidos) no se toca** (D-R8).
+
 ## Despliegue
 
 Las dos migraciones son **aditivas** (`AddTenantLanguage`, `AddUserPreferenceLanguage`). Un pod viejo que inserta un tenant deja
@@ -55,10 +70,9 @@ respuestas no rompen a un frontend viejo, y los del cuerpo son opcionales.
 
 ## Pendiente (no se asume)
 
-- **Textos del backend fuera de los correos:** PDF de cotización y pedido, plantillas de WhatsApp (que Meta aprueba por idioma), Excel,
-  historial de cambios, mensajes del bot y el `detail` de `ApiExceptionHandler`. Cada uno necesita su decisión: por ejemplo, si un PDF
-  sale en el idioma del tenant o en el de quien lo descarga.
+- **Textos del backend que siguen en `es-419`:** plantillas de WhatsApp (Meta las aprueba por idioma), nombres y descripciones de
+  roles y permisos (el rol de sistema «Asesor», `/authorization/catalog`), historial de cambios, mensajes del bot, variables del PDF
+  (`{asesor}` en `QuotationPdfVariables`) y el `detail` de `ApiExceptionHandler`. El owner decidió no tocar roles ni permisos en esta
+  entrega.
 - **Correos sin tenant** (restablecer contraseña, verificar correo, comprador): salen en `es-419`. Su texto ya es igual en los dos
   idiomas, así que hoy no hay diferencia; habrá que decidirlo cuando la haya.
-- **Selector en el registro de un tenant:** `register-tenant` no recibe `language`, así que el tenant nuevo arranca en `es-419` y se
-  cambia en Configuración.

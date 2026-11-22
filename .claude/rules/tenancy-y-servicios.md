@@ -53,6 +53,8 @@ tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false
   2026-11-22, i18n). Lo usan `/auth/preferences`, `/auth/me` y los correos (`OutboxDeliveryWorker.ResolveLanguageAsync`); un camino
   nuevo que arme la regla a mano puede decir en el correo otro idioma que en la pantalla, sin error. El idioma **no** es el formato
   regional: no lo derives de `DefaultCulture` (`es-CO`) ni cambies separadores con él. La preferencia guarda `null` («el del
-  tenant»), nunca una copia del idioma del tenant. El glosario de España en los correos («presupuesto», «número de caso»;
-  `QuotationsExportKindText`, `SupportOpeningEmailTemplate`) tiene que coincidir con el diccionario `es-ES` del frontend: si cambia
-  uno, cambian los dos.
+  tenant»), nunca una copia del idioma del tenant. El glosario de España del backend («presupuesto», «número de caso», «comercial»;
+  `QuotationsExportKindText`, `SupportOpeningEmailTemplate`, `QuotationsExportProcessor`, `QuotationPdfFileName` y `quotation.typ`)
+  tiene que coincidir con el diccionario `es-ES` del frontend: si cambia uno, cambian los dos. Y el idioma entra a la huella del PDF
+  **sólo** cuando no es `es-419` (`QuotationPdfSectionsBuilder.Fingerprint`): hacerlo siempre cambia la huella de todos los PDF
+  guardados y el siguiente export los regenera a todos.

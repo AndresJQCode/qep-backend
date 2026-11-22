@@ -42,6 +42,20 @@ public sealed class QuotationsMetaWhatsAppSenderTests
         Assert.Equal(Pdf, send.Document.ToArray());
     }
 
+    // Spec 2026-11-22 (i18n): el PDF llega al cliente con el nombre del documento en el idioma del tenant.
+    [Fact]
+    public async Task InSpainThePdfReachesTheCustomerAsABudget()
+    {
+        var outbound = new RecordingOutbound();
+        var storage = new StubStorage(StorageKey, Pdf);
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567");
+
+        await NewSender(outbound, storage, new StubReadiness(Approved))
+            .SendQuotationAsync(channel, "573001234567", Message() with { Language = "es-ES" }, Ct);
+
+        Assert.Equal("Presupuesto-COT-000123.pdf", Assert.Single(outbound.Sends).DocumentFileName);
+    }
+
     [Theory]
     [MemberData(nameof(NotSentResults))]
     public async Task AnythingButSentIsSendFailed(QuotationTemplateSendResult result)

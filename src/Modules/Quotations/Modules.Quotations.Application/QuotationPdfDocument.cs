@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using BuildingBlocks.Domain.Localization;
 
 namespace Modules.Quotations.Application;
 
@@ -97,7 +98,11 @@ public sealed record QuotationPdfDocument(
     /// <summary>Las secciones configurables del tenant ya resueltas para este documento (spec 2026-11-16 §5.3), o null sin
     /// secciones. No las arma el mapper sino el proveedor, que es quien lee el contenido del tenant
     /// (<see cref="QuotationPdfSectionsBuilder.Build"/>).</summary>
-    QuotationPdfSections? Sections = null);
+    QuotationPdfSections? Sections = null,
+    /// <summary>El idioma del tenant (spec 2026-11-22, i18n): <c>es-419</c> o <c>es-ES</c>. La plantilla decide con él el
+    /// nombre del documento («Cotización» o «Presupuesto»), su concordancia y el rótulo del asesor («Comercial» en España).
+    /// El documento es del tenant, no de quien lo descarga.</summary>
+    string Language = SupportedLanguages.Default);
 
 /// <summary>
 /// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara

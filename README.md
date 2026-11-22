@@ -1517,10 +1517,15 @@ formato regional: `defaultCulture`, `numberFormat` y `dateFormat` no cambian con
 | `GET`/`PUT /auth/preferences` | `language` | Lo que eligió la persona en este tenant, o `null` para seguir al tenant. En el `PUT`: ausente o `null` conserva, `""` vuelve al del tenant, y un valor fuera del catálogo responde `422 identity.preference.language.invalid`. |
 | `GET`/`PUT /auth/preferences` | `effectiveLanguage` | El diccionario que tiene que cargar la pantalla: el elegido, si no el del tenant. |
 | `/auth/me`, `POST /auth/session` | `activeTenants[].language` | El idioma **efectivo** de la persona en cada tenant, disponible antes de la primera pintura. |
+| `POST /auth/register-tenant`, `POST /auth/password/register-tenant` | `language` | Opcional; ausente o `""` es `es-419`. |
 
 Los correos ya están en español neutro con tuteo, y solo cambian los términos que en España se dicen distinto: «cotización»
 es «presupuesto» (correos de exportación, en el idioma efectivo de quien exportó) y «radicado» es «número de caso» (correo de apertura
 de Soporte, en el idioma del tenant). El parámetro `radicado` del enlace de consulta no se traduce.
+
+El PDF de cotización y de pedido y el Excel de cotizaciones van en el idioma del tenant: en `es-ES` dicen «Presupuesto» y
+«Comercial», y los archivos se llaman `Presupuesto-N.pdf` y `presupuestos-….xlsx`. Pasar un tenant a `es-ES` regenera sus PDF guardados
+en el siguiente export, porque el idioma entra a la huella; el despliegue no regenera ninguno.
 
 ### Invitación de memberships
 

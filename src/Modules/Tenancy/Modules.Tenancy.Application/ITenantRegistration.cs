@@ -7,7 +7,9 @@ public sealed record TenantRegistrationData(
     string Slug,
     string DefaultCulture,
     string TimeZone,
-    string DateFormat);
+    string DateFormat,
+    // Spec 2026-11-22 (i18n): null es el por defecto (es-419).
+    string? Language = null);
 
 /// <summary>
 /// Crea un tenant nuevo y su membresía de owner en una sola unidad de trabajo (ADR 0017).

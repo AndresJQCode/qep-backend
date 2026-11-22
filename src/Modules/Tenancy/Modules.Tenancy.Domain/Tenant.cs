@@ -28,7 +28,8 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? language)
     {
         Id = id;
         OwnerMembershipId = ownerMembershipId;
@@ -37,6 +38,7 @@ public sealed class Tenant
         DefaultCulture = ValidateCulture(defaultCulture);
         TimeZone = ValidateTimeZone(timeZone);
         DateFormat = ValidateDateFormat(dateFormat);
+        Language = language is null ? SupportedLanguages.Default : ValidateLanguage(language);
         Status = TenantStatus.Active;
         Version = 1;
         CreatedAt = createdAt;
@@ -143,14 +145,15 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? language = null)
     {
         // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo. El constructor recibe el slug ya
         // validado y normalizado, así que no lo vuelve a validar.
         var normalizedSlug = ValidateSlug(slug);
         EnsureNotReserved(normalizedSlug);
         return new(id, normalizedSlug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
-            createdAt);
+            createdAt, language);
     }
 
     /// <summary>
@@ -162,7 +165,8 @@ public sealed class Tenant
         string displayName,
         string defaultCulture,
         string timeZone,
-        string dateFormat)
+        string dateFormat,
+        string? language = null)
     {
         var normalizedSlug = ValidateSlug(slug);
         EnsureNotReserved(normalizedSlug);
@@ -170,6 +174,11 @@ public sealed class Tenant
         ValidateCulture(defaultCulture);
         ValidateTimeZone(timeZone);
         ValidateDateFormat(dateFormat);
+        if (language is not null)
+        {
+            ValidateLanguage(language);
+        }
+
         return normalizedSlug;
     }
 
