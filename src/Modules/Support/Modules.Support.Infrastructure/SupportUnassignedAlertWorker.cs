@@ -126,11 +126,15 @@ internal sealed partial class SupportUnassignedAlertWorker(
 
         var claimed = 0;
         IReadOnlyList<Guid>? recipients = null;
+        // One scope for the whole tenant pass: the provider resolves the schedule and the time zone once and reuses them for every candidate
+        // (it memoizes per instance), instead of three or four queries per ticket. The claim and the event still use a scope per ticket.
+        await using var tenantScope = scopeFactory.CreateAsyncScope();
+        var hours = tenantScope.ServiceProvider.GetRequiredService<IBusinessHoursProvider>();
         foreach (var ticketId in candidates)
         {
             try
             {
-                var outcome = await AlertAsync(settings, ticketId, now, recipients, cancellationToken);
+                var outcome = await AlertAsync(settings, ticketId, now, hours, recipients, cancellationToken);
                 recipients = outcome.Recipients;
                 if (outcome.UnderThreshold)
                 {
@@ -161,6 +165,7 @@ internal sealed partial class SupportUnassignedAlertWorker(
         SupportTenantSettings settings,
         Guid ticketId,
         DateTimeOffset now,
+        IBusinessHoursProvider hours,
         IReadOnlyList<Guid>? knownRecipients,
         CancellationToken cancellationToken)
     {
@@ -176,7 +181,7 @@ internal sealed partial class SupportUnassignedAlertWorker(
 
         // The floor of the clock: turning the alert on does not fire for tickets that were already waiting.
         var from = settings.UnassignedAlertEnabledAt is { } enabledAt && enabledAt > since ? enabledAt : since;
-        var elapsed = await services.GetRequiredService<IBusinessHoursProvider>().ElapsedBusinessSecondsAsync(
+        var elapsed = await hours.ElapsedBusinessSecondsAsync(
             settings.TenantId, settings.UnassignedAlertScheduleId, from, now, cancellationToken);
         if (elapsed.BusinessSeconds < settings.UnassignedAlertHours * 3600L)
         {

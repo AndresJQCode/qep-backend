@@ -329,7 +329,7 @@ genérico. `data` según `kind` (los nombres son contrato; `null` es explícito,
 `PUT …/support/settings` (con `If-Match`, como hoy) acepta `unassignedAlert` **opcional**: ausente o `null` conserva lo guardado
 (el frontend publicado no lo manda; mismo criterio que `surveyEnabled`). Con valor, viaja entero:
 `{ enabled, thresholdHours, scheduleId, recipientIds }`. Errores: 422 `validation.failed` con `errors` en
-`unassignedAlert.thresholdHours`, `unassignedAlert.recipientIds` (más de 20, repetidos, o vacío con `enabled`); 422
+`UnassignedAlert.ThresholdHours`, `UnassignedAlert.RecipientIds` (rutas de propiedad en PascalCase, la convención del repo; el frontend baja la primera letra de cada segmento y las lee como `unassignedAlert.thresholdHours`; más de 20, repetidos, o vacío con `enabled`); 422
 `support.settings.alert_recipient_invalid` si un id no puede gestionar tickets; 422 `support.settings.alert_schedule_invalid` si
 `scheduleId` no es un horario del tenant (`errors` no aplica: es un id elegido de una lista). La auditoría nombra `unassignedAlert` en
 `changedFields`. Un solo `PUT`, una sola versión.

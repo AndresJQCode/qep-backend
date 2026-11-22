@@ -13,6 +13,11 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// </summary>
 internal sealed class BusinessHoursProvider(IBusinessHoursRepository schedules, ITenantClock tenantClock) : IBusinessHoursProvider
 {
+    // The provider is scoped, so these live as long as one request or one worker pass over a tenant: a pass that asks about many tickets
+    // resolves the schedule and the zone once. A schedule edited during that pass is read with its old shape until the next one.
+    private readonly Dictionary<(Guid TenantId, Guid? ScheduleId), BusinessHoursSchedule?> _resolved = [];
+    private readonly Dictionary<Guid, TimeZoneInfo> _zones = [];
+
     public async Task<IReadOnlyList<BusinessHoursScheduleRef>> ListSchedulesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         (await schedules.ListAsync(tenantId, cancellationToken))
             .Select(schedule => new BusinessHoursScheduleRef(
@@ -27,26 +32,40 @@ internal sealed class BusinessHoursProvider(IBusinessHoursRepository schedules, 
             return true;
         }
 
-        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
-        return schedule.IsOpenAt(instant, calendar.TimeZone);
+        return schedule.IsOpenAt(instant, await ZoneAsync(tenantId, cancellationToken));
     }
 
     public async Task<BusinessHoursSpan> ElapsedBusinessSecondsAsync(
         Guid tenantId, Guid? scheduleId, DateTimeOffset fromInstant, DateTimeOffset toInstant, CancellationToken cancellationToken)
     {
         var schedule = await ResolveAsync(tenantId, scheduleId, cancellationToken);
-        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
-        return new BusinessHoursSpan(BusinessHoursClock.BusinessSeconds(schedule, fromInstant, toInstant, calendar.TimeZone), schedule?.Id);
+        var zone = await ZoneAsync(tenantId, cancellationToken);
+        return new BusinessHoursSpan(BusinessHoursClock.BusinessSeconds(schedule, fromInstant, toInstant, zone), schedule?.Id);
     }
 
     // The single place that decides which schedule rules: a null or deleted id falls to the default, and no default means none.
     private async Task<BusinessHoursSchedule?> ResolveAsync(Guid tenantId, Guid? scheduleId, CancellationToken cancellationToken)
     {
-        if (scheduleId is { } id && await schedules.FindAsync(tenantId, id, cancellationToken) is { } chosen)
+        if (_resolved.TryGetValue((tenantId, scheduleId), out var known))
         {
-            return chosen;
+            return known;
         }
 
-        return await schedules.FindDefaultAsync(tenantId, cancellationToken);
+        var schedule = scheduleId is { } id && await schedules.FindAsync(tenantId, id, cancellationToken) is { } chosen
+            ? chosen
+            : await schedules.FindDefaultAsync(tenantId, cancellationToken);
+        _resolved[(tenantId, scheduleId)] = schedule;
+        return schedule;
+    }
+
+    private async Task<TimeZoneInfo> ZoneAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        if (!_zones.TryGetValue(tenantId, out var zone))
+        {
+            zone = (await tenantClock.GetAsync(tenantId, cancellationToken)).TimeZone;
+            _zones[tenantId] = zone;
+        }
+
+        return zone;
     }
 }

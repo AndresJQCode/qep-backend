@@ -69,7 +69,8 @@ internal sealed class SupportUnassignedAlertStore(SupportDbContext dbContext)
     /// <summary>
     /// The claim of the alert of this stretch: <c>true</c> if this call inserted it, <c>false</c> if another replica (or an earlier tick) had.
     /// It must run in the transaction that also saves the event, so a claim never exists without its event (or without the note that there
-    /// was nobody to tell).
+    /// was nobody to tell). The insert selects from the ticket, so it only happens if the ticket is still unassigned, in a status that
+    /// counts and in the same stretch: a ticket assigned or moved between the worker's read and this statement gets no claim and no event.
     /// </summary>
     public async Task<bool> TryClaimAsync(
         Guid tenantId,
@@ -81,7 +82,13 @@ internal sealed class SupportUnassignedAlertStore(SupportDbContext dbContext)
         await dbContext.Database.ExecuteSqlAsync(
             $"""
             INSERT INTO support.unassigned_alerts (ticket_id, unassigned_since, tenant_id, recipient_count, alerted_at)
-            VALUES ({ticketId}, {unassignedSince.ToUniversalTime()}, {tenantId}, {recipientCount}, {now.ToUniversalTime()})
+            SELECT t.id, t.unassigned_since, t.tenant_id, {recipientCount}, {now.ToUniversalTime()}
+            FROM support.tickets t
+            WHERE t.id = {ticketId}
+              AND t.tenant_id = {tenantId}
+              AND t.assignee_member_id IS NULL
+              AND t.unassigned_since = {unassignedSince.ToUniversalTime()}
+              AND t.status IN ('New', 'Open', 'WaitingInternal')
             ON CONFLICT (ticket_id, unassigned_since) DO NOTHING
             """,
             cancellationToken) == 1;

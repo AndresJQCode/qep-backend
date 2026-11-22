@@ -151,7 +151,7 @@ public static class MultiReplicaInventory
         new("Modules.ApiAccess.Infrastructure.ApiKeyRequestPurgeWorker", WorkerClassification.Idempotent,
             "Modules/ApiAccess/Modules.ApiAccess.Infrastructure/ApiKeyRequestPurgeWorker.cs:61 — DELETE por corte"),
         new("Modules.Support.Infrastructure.SupportUnassignedAlertWorker", WorkerClassification.Idempotent,
-            "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportUnassignedAlertStore.cs:83-85 (TryClaimAsync) y :29-35 (HealAsync) — el reclamo es un INSERT … ON CONFLICT (ticket_id, unassigned_since) DO NOTHING en la misma transacción que el evento del outbox: dos réplicas sobre el mismo ticket y el mismo tramo, la segunda inserta cero filas y no publica; la sanación de unassigned_since (HealAsync) es un UPDATE sólo de filas con null y no toca version"),
+            "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportUnassignedAlertStore.cs:75-94 (TryClaimAsync) y :26-36 (HealAsync) — el reclamo es un INSERT … ON CONFLICT (ticket_id, unassigned_since) DO NOTHING en la misma transacción que el evento del outbox: dos réplicas sobre el mismo ticket y el mismo tramo, la segunda inserta cero filas y no publica; la sanación de unassigned_since (HealAsync) es un UPDATE sólo de filas con null y no toca version"),
         new("Modules.Support.Infrastructure.SupportThreadFollowWorker", WorkerClassification.Idempotent,
             "Modules/Support/Modules.Support.Infrastructure/SupportThreadFollowWorker.cs:9-13 — idempotente por índices (IX_ticket_messages_ticket_message, PK_unclassified_messages); el segundo pod choca y no duplica"),
 

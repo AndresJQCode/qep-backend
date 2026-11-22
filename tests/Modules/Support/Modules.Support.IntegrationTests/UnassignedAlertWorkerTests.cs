@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
 using Modules.Support.Domain;
 using Modules.Support.Infrastructure;
+using Modules.Support.Infrastructure.Persistence;
 using Modules.Support.Infrastructure.Persistence.Migrations;
 using Testcontainers.PostgreSql;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
@@ -77,6 +78,27 @@ public sealed class UnassignedAlertWorkerTests : IAsyncLifetime
 
         await RunAsync(T0.AddHours(6));
 
+        Assert.Equal(0, await EventCountAsync(ticket));
+    }
+
+    // The worker reads the ticket, counts hours and reads the recipients before it claims: a ticket assigned in that window must get
+    // neither a claim nor an event. The claim statement selects from the ticket, so it is the one that refuses.
+    [Fact]
+    public async Task ATicketAssignedAfterTheCandidateReadGetsNoClaim()
+    {
+        var (tenant, _) = await ArmedTenantAsync(hours: 4, schedule: null);
+        var ticket = await UnassignedTicketAsync(tenant, T0);
+        await UpdateTicketAsync(Factory, tenant, ticket.Id, value => value.Assign(Guid.CreateVersion7(), Guid.CreateVersion7(), T0.AddHours(1)));
+
+        bool won;
+        await using (var scope = Factory.Services.CreateAsyncScope())
+        {
+            won = await scope.ServiceProvider.GetRequiredService<SupportUnassignedAlertStore>()
+                .TryClaimAsync(tenant, ticket.Id.Value, T0, 1, T0.AddHours(5), Ct);
+        }
+
+        Assert.False(won);
+        Assert.Equal(0L, await ScalarAsync(Factory, "SELECT count(*) FROM support.unassigned_alerts WHERE ticket_id = @id", ("id", ticket.Id.Value)));
         Assert.Equal(0, await EventCountAsync(ticket));
     }
 
