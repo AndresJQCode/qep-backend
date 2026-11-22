@@ -7,7 +7,7 @@
 
 ## Estado y traspaso (2026-11-21)
 
-Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A y B (Tareas 1 a 6).** Faltan los Bloques C y D.
+Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A y B (Tareas 1 a 6) y la Tarea 7.** Faltan las Tareas 8 a 10 del Bloque C y el Bloque D.
 
 | Tarea | Estado | Commit |
 | --- | --- | --- |
@@ -17,7 +17,7 @@ Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. *
 | 4 Dominio | Hecha | `13f4fad` |
 | 5 Motor de disponibilidad | Hecha | `df7bff1` |
 | 6 Persistencia, migración, aprovisionador | Hecha | `4fc9cbc` |
-| 7 Configuración (sedes, recursos, servicios, reglas, `setup`) | **Por hacer** | |
+| 7 Configuración (sedes, recursos, servicios, reglas, `setup`) | Hecha | `9c7b5de92` |
 | 8 Franjas, sesiones publicadas, bloqueos | Por hacer | |
 | 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Por hacer | |
 | 10 Calendario y escritorio (lecturas BFF) | Por hacer | |
