@@ -132,7 +132,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 
 ## Bloque 1 — Dominio y migración
 
-### Tarea 1: el tipo interno
+### Task 1: el tipo interno
 
 **Files:**
 - Modify: `Support/Modules.Support.Domain/SupportTicketType.cs`, `Support/Modules.Support.Domain/SupportTicketTypeDefaults.cs`,
@@ -161,7 +161,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 - [ ] **Paso 4:** `dotnet test tests/Modules/Support/Modules.Support.UnitTests --filter "FullyQualifiedName~SupportTicketTypeTests"`. Esperado: PASS.
 - [ ] **Paso 5:** commit `feat(support): add the locked internal ticket type`.
 
-### Tarea 2: el ticket interno
+### Task 2: el ticket interno
 
 **Files:**
 - Modify: `Support/Modules.Support.Domain/SupportTicket.cs`, `SupportTicketStatus.cs`, `SupportTicketIntake.cs`, `SupportReplyChannel.cs`,
@@ -217,7 +217,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 - [ ] **Paso 4:** `dotnet test tests/Modules/Support/Modules.Support.UnitTests --filter "FullyQualifiedName~SupportTicketInternalTests|FullyQualifiedName~SupportTicketStatusesTests|FullyQualifiedName~SupportTicketTests"`. Esperado: PASS (las de `SupportTicketTests` siguen verdes).
 - [ ] **Paso 5:** commit `feat(support): model internal tickets with a free due date`.
 
-### Tarea 3: persistencia, siembra y migración
+### Task 3: persistencia, siembra y migración
 
 **Files:**
 - Modify: `Support/Modules.Support.Infrastructure/Persistence/SupportDbContext.cs`, `SupportProvisioner.cs`,
@@ -277,7 +277,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 
 ## Bloque 2 — Permiso y puerta única (antes de cualquier endpoint nuevo)
 
-### Tarea 4: permiso `support.task.use` y políticas
+### Task 4: permiso `support.task.use` y políticas
 
 **Files:**
 - Modify: `Support/Modules.Support.Application/SupportPermissions.cs`, `SupportPolicies.cs`;
@@ -300,7 +300,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 - [ ] **Paso 4:** `dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~CompositionRootTests"`. Esperado: PASS.
 - [ ] **Paso 5:** commit `feat(support): add the support.task.use permission to every factory role`.
 
-### Tarea 5: la tabla de acceso y `SupportTicketScope`
+### Task 5: la tabla de acceso y `SupportTicketScope`
 
 **Files:**
 - Create: `Support/Modules.Support.Application/Access/SupportTicketAccessPolicy.cs`, `Access/SupportTicketScope.cs`
@@ -343,7 +343,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 - [ ] **Paso 4:** `dotnet test tests/Modules/Support/Modules.Support.UnitTests --filter "FullyQualifiedName~SupportTicketAccessPolicyTests"`. Esperado: PASS.
 - [ ] **Paso 5:** commit `feat(support): decide ticket access in one table and one scoped service`.
 
-### Tarea 6: todos los caminos por la puerta, y su prueba de cobertura
+### Task 6: todos los caminos por la puerta, y su prueba de cobertura
 
 **Files:**
 - Modify (handlers, uno por uno; la columna «Puerta» es lo que llaman en vez de `SupportAuthorization.Ensure*` + `tickets.FindAsync`):
@@ -425,7 +425,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
   `SupportTicketNotesApiTests`, `SupportTicketNoteFilesApiTests`, `SupportTicketRepliesApiTests` (una clase por corrida).
 - [ ] **Paso 5:** commit `refactor(support): route every ticket path through the ticket scope`.
 
-### Tarea 7: el hub aplica la misma tabla
+### Task 7: el hub aplica la misma tabla
 
 **Files:**
 - Modify: `Support/Modules.Support.Application/SupportRealtimeTopics.cs`, `Support/Modules.Support.Api/SupportRealtimeAuthorizer.cs`
@@ -457,7 +457,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 
 ## Bloque 3 — Alta y reglas
 
-### Tarea 8: el contrato de lectura
+### Task 8: el contrato de lectura
 
 **Files:**
 - Modify: `Support/Modules.Support.Application/SupportDtos.cs`, `Tickets/SupportTicketDtoComposer.cs`, `TicketTypes/ListTicketTypes.cs`
@@ -482,7 +482,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 - [ ] **Paso 4:** GREEN por nombre; `SupportTicketTypesApiTests` y `SupportTicketsApiTests` completas.
 - [ ] **Paso 5:** commit `feat(support): expose isInternal and the creator on tickets and types`.
 
-### Tarea 9: candidatos, `POST /tasks` y el evento de asignación
+### Task 9: candidatos, `POST /tasks` y el evento de asignación
 
 **Files:**
 - Modify: `Support/Modules.Support.Application/ISupportMemberDirectory.cs`, `src/Bootstrapper/SupportMemberDirectory.cs`,
@@ -541,7 +541,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
   `SupportEndpointPoliciesTests`; `CompositionRootTests`.
 - [ ] **Paso 5:** commit `feat(support): create internal tasks through POST /tasks`.
 
-### Tarea 10: reglas de los internos sobre lo que ya existe
+### Task 10: reglas de los internos sobre lo que ya existe
 
 **Files:**
 - Modify: `Tickets/CreateTicket.cs`, `Conversations/CreateTicketFromConversation.cs`, `Tickets/SupportTicketRules.cs`,
@@ -575,7 +575,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
   `SupportTicketsApiTests`, `SupportConversationTicketsApiTests`, `SupportTicketTypesApiTests` (de a una).
 - [ ] **Paso 5:** commit `feat(support): keep internal tickets out of every external-only path`.
 
-### Tarea 11: `PUT /tickets/{id}/due-date`
+### Task 11: `PUT /tickets/{id}/due-date`
 
 **Files:**
 - Create: `Support/Modules.Support.Application/Tickets/ChangeTicketDueDate.cs`
@@ -603,7 +603,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 
 ## Bloque 4 — Lectura, filtros y tiempo real
 
-### Tarea 12: `kind`, `createdBy=me`, participante y resumen
+### Task 12: `kind`, `createdBy=me`, participante y resumen
 
 **Files:**
 - Modify: `Tickets/ListTickets.cs`, `SupportReadModels.cs`, `ISupportTicketRepository.cs`, `Persistence/SupportTicketRepository.cs`,
@@ -632,7 +632,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 - [ ] **Paso 4:** GREEN por nombre; regresión completa de `SupportInboxApiTests`.
 - [ ] **Paso 5:** commit `feat(support): filter the inbox by kind, creator and participant`.
 
-### Tarea 13: los avisos llegan a los participantes
+### Task 13: los avisos llegan a los participantes
 
 **Files:**
 - Modify: `Support/Modules.Support.Application/ISupportRealtime.cs`, `Support/Modules.Support.Infrastructure/SupportRealtimeNotifier.cs`,
@@ -663,7 +663,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
 
 ## Bloque 5 — Reportes y exclusiones
 
-### Tarea 14: reportes, formulario público, consulta y listados por conversación
+### Task 14: reportes, formulario público, consulta y listados por conversación
 
 **Files:**
 - Modify: `Persistence/SupportReportRepository.cs` (`ListTicketsAsync` y `ListSurveysAsync` con `!ticket.IsInternal`),
