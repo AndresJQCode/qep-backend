@@ -194,7 +194,6 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         employee.Property(value => value.PensionFund).HasColumnName("pension_fund").HasMaxLength(120);
         employee.Property(value => value.SeveranceFund).HasColumnName("severance_fund").HasMaxLength(120);
         employee.Property(value => value.OccupationalRiskProvider).HasColumnName("occupational_risk_provider").HasMaxLength(120);
-        employee.Property(value => value.CompensationFund).HasColumnName("compensation_fund").HasMaxLength(120);
         employee.Property(value => value.ContributorSubtype).HasColumnName("contributor_subtype").HasConversion<string>().HasMaxLength(32);
         employee.Property(value => value.ForeignPensionExempt).HasColumnName("foreign_pension_exempt");
         employee.Property(value => value.RestDays)

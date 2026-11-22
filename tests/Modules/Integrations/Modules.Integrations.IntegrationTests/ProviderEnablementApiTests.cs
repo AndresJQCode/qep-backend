@@ -193,7 +193,9 @@ public sealed class ProviderEnablementApiTests
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
         var tenant = await RegisterTenantAsync(factory);
+        // Zenvia lo consumen cotizaciones y pedidos: se apagan los dos (spec 2026-11-21).
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "inactive");
+        await SetModuleStatusAsync(connectionString, tenant.TenantId, "orders", "inactive");
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
 
         var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());

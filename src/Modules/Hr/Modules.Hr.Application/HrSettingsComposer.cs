@@ -40,7 +40,8 @@ public sealed class HrSettingsComposer(
                 .Select(position => new PositionDto(position.Id.Value, position.Name, position.Archived, snapshot.InUse.Contains(position.Id.Value), position.Version))
                 .OrderBy(dto => dto.Name, StringComparer.CurrentCultureIgnoreCase).ThenBy(dto => dto.Id)
                 .ToList(),
-            await setup.IsCompleteAsync(tenantId, cancellationToken));
+            await setup.IsCompleteAsync(tenantId, cancellationToken),
+            HrCompensationFunds.Names);
     }
 
     public async Task<SiteDto> SiteAsync(Guid tenantId, Site site, CancellationToken cancellationToken)
