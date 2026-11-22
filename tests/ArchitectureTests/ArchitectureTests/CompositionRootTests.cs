@@ -947,41 +947,41 @@ public sealed class CompositionRootTests
         }
     }
 
-    /// <summary>
-    /// Spec 2026-11-21 (nómina): los cuatro permisos exigen el módulo <c>payroll</c> y van sólo a admin; ni asesor, ni facturación,
-    /// ni cajero. Todos ven plata.
-    /// </summary>
-    [Fact]
-    public void ThePayrollPermissionsRequireThePayrollModuleAndGoOnlyToAdmin()
-    {
-        using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
-        var definitions = RegisteredPermissionDefinitions()
-            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
-
-        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
-        [
-            (PayrollPermissions.PeriodRead, "payroll.period", "Períodos de nómina", "read"),
-            (PayrollPermissions.PeriodManage, "payroll.period", "Períodos de nómina", "manage"),
-            (PayrollPermissions.PeriodApprove, "payroll.period", "Períodos de nómina", "approve"),
-            (PayrollPermissions.SettingsManage, "payroll.settings", "Configuración de nómina", "manage"),
-        ];
-        Assert.Equal(
-            ["payroll.period.read", "payroll.period.manage", "payroll.period.approve", "payroll.settings.manage"],
-            expected.Select(row => row.Permission));
-        foreach (var (permission, entity, entityLabel, action) in expected)
-        {
-            var definition = definitions[permission];
-            Assert.Equal("Nómina", definition.Category);
-            Assert.Equal([ModuleKeys.Payroll], definition.RequiredModules!.ToArray());
-            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
-        }
-    }
-
+    /// <summary>
+    /// Spec 2026-11-21 (nómina): los cuatro permisos exigen el módulo <c>payroll</c> y van sólo a admin; ni asesor, ni facturación,
+    /// ni cajero. Todos ven plata.
+    /// </summary>
+    [Fact]
+    public void ThePayrollPermissionsRequireThePayrollModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (PayrollPermissions.PeriodRead, "payroll.period", "Períodos de nómina", "read"),
+            (PayrollPermissions.PeriodManage, "payroll.period", "Períodos de nómina", "manage"),
+            (PayrollPermissions.PeriodApprove, "payroll.period", "Períodos de nómina", "approve"),
+            (PayrollPermissions.SettingsManage, "payroll.settings", "Configuración de nómina", "manage"),
+        ];
+        Assert.Equal(
+            ["payroll.period.read", "payroll.period.manage", "payroll.period.approve", "payroll.settings.manage"],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Nómina", definition.Category);
+            Assert.Equal([ModuleKeys.Payroll], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
     /// <summary>
     /// Spec 2026-11-17 (compras, P-3 propuesta): los dos permisos exigen el módulo <c>purchases</c> (apagado, el editor de roles
     /// los oculta y la API responde un 403 pelado) y van sólo a admin; ni asesor, ni facturación, ni cajero.

@@ -174,5 +174,9 @@ public sealed class PayrollLegalValuesTests
         Assert.Equal(set.ArlRate(ArlClass.V), copy!.ArlRate(ArlClass.V));
         Assert.Equal(set.SolidarityBrackets, copy.SolidarityBrackets);
         Assert.Equal(set.ConnectivityAllowanceSince, copy.ConnectivityAllowanceSince);
+        Assert.Equal(set.WeeklyHours, copy.WeeklyHours);
+        Assert.Equal(0.012m, copy.SolidarityRate(16m));
+        Assert.Equal(0.02m, copy.SolidarityRate(25m));
+        Assert.Null(copy.SolidarityRate(25.01m));
     }
 }
