@@ -69,7 +69,6 @@ internal static class HrTestData
         null,
         null,
         null,
-        null,
         ContributorSubtype.Standard,
         false,
         [DayOfWeek.Sunday]);

@@ -42,6 +42,8 @@ public sealed record PositionDto(Guid Id, string Name, bool Archived, bool InUse
 /// <c>GET /hr/settings</c>: todo lo que las pantallas necesitan en una sola llamada. <c>Companies</c> son las empresas
 /// <b>activas</b> del tenant: el frontend las lee de acá y nunca de Companies (un rol con RRHH puede no tener permiso sobre
 /// Empresas). <c>SetupComplete</c>: hay una empresa activa con una sede y un centro sin archivar, y un cargo sin archivar.
+/// <c>CompensationFunds</c>: las cajas que una sede puede elegir (catálogo fijo en código); el selector las lee de acá y no las
+/// duplica.
 /// </summary>
 public sealed record HrSettingsDto(
     IReadOnlyList<CompanyRefDto> Companies,
@@ -49,4 +51,5 @@ public sealed record HrSettingsDto(
     IReadOnlyList<WorkplaceDto> Workplaces,
     IReadOnlyList<AreaDto> Areas,
     IReadOnlyList<PositionDto> Positions,
-    bool SetupComplete);
+    bool SetupComplete,
+    IReadOnlyList<string> CompensationFunds);

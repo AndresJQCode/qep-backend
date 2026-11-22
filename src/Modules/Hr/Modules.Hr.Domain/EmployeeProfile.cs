@@ -21,7 +21,6 @@ public sealed record EmployeeProfile(
     string? PensionFund,
     string? SeveranceFund,
     string? OccupationalRiskProvider,
-    string? CompensationFund,
     ContributorSubtype ContributorSubtype,
     bool ForeignPensionExempt,
     IReadOnlyList<DayOfWeek> RestDays);

@@ -250,6 +250,30 @@ internal static class HrApiHarness
         return new CompanyRef(body.Id, name, taxId);
     }
 
+    /// <summary>Una empresa de Estados Unidos (documento <c>TAX_ID</c>, ciudad por nombre): país distinto de Colombia.</summary>
+    public static async Task<CompanyRef> CreateForeignCompanyAsync(
+        HttpClient client, Guid tenantId, string name = "Andes Inc.")
+    {
+        var taxId = $"{Random.Shared.Next(10, 99)}-{Random.Shared.Next(1000000, 9999999)}";
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name,
+                bankAccounts = new[] { new { bankName = "Chase", accountNumber = $"{Random.Shared.Next(100000000, 999999999)}", currency = "USD" } },
+                chargesVat = false,
+                taxId,
+                country = "US",
+                documentType = "TAX_ID",
+                cityName = "Miami",
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var body = await response.Content.ReadFromJsonAsync<IdDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return new CompanyRef(body.Id, name, taxId);
+    }
+
     /// <summary>Desactiva la empresa por <c>POST /companies/{id}/deactivate</c>.</summary>
     public static async Task DeactivateCompanyAsync(HttpClient client, Guid tenantId, Guid companyId)
     {

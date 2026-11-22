@@ -54,7 +54,6 @@ internal static class EmployeeRules
         HrText.Clean(request.PensionFund),
         HrText.Clean(request.SeveranceFund),
         HrText.Clean(request.OccupationalRiskProvider),
-        HrText.Clean(request.CompensationFund),
         request.ContributorSubtype is null ? ContributorSubtype.Standard : Enum.Parse<ContributorSubtype>(request.ContributorSubtype),
         request.ForeignPensionExempt ?? false,
         request.RestDays is null
@@ -78,7 +77,6 @@ internal static class EmployeeRules
         employee.PensionFund,
         employee.SeveranceFund,
         employee.OccupationalRiskProvider,
-        employee.CompensationFund,
         employee.ContributorSubtype,
         employee.ForeignPensionExempt,
         employee.RestDays);

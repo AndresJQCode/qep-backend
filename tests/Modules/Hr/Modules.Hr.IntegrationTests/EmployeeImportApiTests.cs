@@ -151,14 +151,15 @@ public sealed class EmployeeImportApiTests : IClassFixture<HrApiFixture>
         var data = workbook.Worksheet("Empleados");
         var values = workbook.Worksheet("Valores válidos");
 
-        Assert.Equal(36, HrImportColumns.Ordered.Count);
-        for (var column = 0; column < 36; column++)
+        Assert.Equal(35, HrImportColumns.Ordered.Count);
+        Assert.DoesNotContain("CAJA DE COMPENSACIÓN", HrImportColumns.Ordered);
+        for (var column = 0; column < 35; column++)
         {
             Assert.Equal(HrImportColumns.Ordered[column], data.Cell(1, column + 1).GetString());
         }
 
         Assert.Equal("PAÍS", data.Cell(1, 5).GetString());
-        Assert.Equal("EMPRESA", data.Cell(1, 24).GetString());
+        Assert.Equal("EMPRESA", data.Cell(1, 23).GetString());
         Assert.Equal(["Bodega - Principal"], ListUnder(values, "Centros de trabajo"));
         Assert.Equal([$"{setup.Company.Name} - {setup.Company.TaxId}"], ListUnder(values, "Empresas"));
         Assert.Contains("Colombia", ListUnder(values, "Países"));
@@ -443,7 +444,7 @@ public sealed class EmployeeImportApiTests : IClassFixture<HrApiFixture>
             account.Style.NumberFormat.Format = "0";
             using var stream = new MemoryStream();
             workbook.SaveAs(stream);
-            file = ExactNumber(stream.ToArray(), "W2", "1234567890123456");
+            file = ExactNumber(stream.ToArray(), "V2", "1234567890123456");
         }
 
         var result = await OkAsync(await ConfirmAsync(tenant, file));

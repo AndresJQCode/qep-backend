@@ -64,7 +64,6 @@ public sealed partial class EmployeeRequestValidator : HrValidator<EmployeeReque
         RuleFor(request => request.PensionFund).MaxTrimmed(120, "El fondo de pensiones");
         RuleFor(request => request.SeveranceFund).MaxTrimmed(120, "El fondo de cesantías");
         RuleFor(request => request.OccupationalRiskProvider).MaxTrimmed(120, "La ARL");
-        RuleFor(request => request.CompensationFund).MaxTrimmed(120, "La caja de compensación");
         RuleFor(request => request.ContributorSubtype)
             .Must(subtype => subtype is null || HrEnums.TryParse<ContributorSubtype>(subtype, out _))
             .WithMessage("Elige un subtipo de cotizante válido.");
