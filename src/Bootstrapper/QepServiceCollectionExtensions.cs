@@ -608,6 +608,29 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.ImportEmployeesCommand, Modules.Hr.Application.EmployeeImportResultDto>,
             Modules.Hr.Application.ImportEmployeesHandler>();
+
+        // Payroll, spec 2026-11-21. A mano y con ruta completa, como Hr: un handler olvidado responde 500.
+        services.AddScoped<Modules.Payroll.Application.PayrollCompanies>();
+        services.AddScoped<Modules.Payroll.Application.ConceptCatalog>();
+        services.AddScoped<Modules.Payroll.Application.PayrollSettingsComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListPayrollCompaniesQuery, IReadOnlyList<Modules.Payroll.Application.PayrollCompanyDto>>,
+            Modules.Payroll.Application.ListPayrollCompaniesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.GetPayrollSettingsQuery, Modules.Payroll.Application.PayrollSettingsDto>,
+            Modules.Payroll.Application.GetPayrollSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdatePayrollSettingsCommand, Modules.Payroll.Application.PayrollSettingsDto>,
+            Modules.Payroll.Application.UpdatePayrollSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.CreateConceptCommand, Modules.Payroll.Application.PayrollConceptDto>,
+            Modules.Payroll.Application.CreateConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateConceptCommand, Modules.Payroll.Application.PayrollConceptDto>,
+            Modules.Payroll.Application.UpdateConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ArchiveConceptCommand, Modules.Payroll.Application.PayrollConceptDto>,
+            Modules.Payroll.Application.ArchiveConceptHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 

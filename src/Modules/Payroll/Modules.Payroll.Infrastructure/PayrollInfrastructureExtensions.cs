@@ -25,6 +25,8 @@ public static class PayrollInfrastructureExtensions
 
         services.AddScoped<IPayrollUnitOfWork, PayrollUnitOfWork>();
         services.AddScoped<IPayrollAuditPublisher, PayrollAuditPublisher>();
+        services.AddScoped<ICompanyPayrollSettingsRepository, CompanyPayrollSettingsRepository>();
+        services.AddScoped<IPayrollConceptRepository, PayrollConceptRepository>();
 
         return services;
     }

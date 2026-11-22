@@ -6,6 +6,12 @@ namespace Modules.Payroll.Application;
 /// </summary>
 public static class PayrollAuditActions
 {
+    public const string SettingsUpdated = "payroll.settings.updated";
+    public const string ConceptCreated = "payroll.concept.created";
+    public const string ConceptUpdated = "payroll.concept.updated";
+    public const string ConceptArchived = "payroll.concept.archived";
+    public const string ConceptUnarchived = "payroll.concept.unarchived";
+
     public static class Resources
     {
         public const string Period = "period";
