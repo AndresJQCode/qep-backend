@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Net.Http.Json;
 using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.Extensions.Configuration;
@@ -191,6 +192,47 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
         scene.Tenant.Dispose();
     }
 
+    [Fact]
+    public async Task AnOutdatedPeriodSaysSo()
+    {
+        var scene = await NewSceneAsync(_fixture);
+        await LiquidateAsync(scene);
+        var captured = await PutAsync(
+            scene.Tenant.Payroll,
+            $"{scene.PeriodUrl}/employees/{scene.EmployeeId}/inputs",
+            new
+            {
+                overtime = Array.Empty<object>(),
+                incomes = new[] { new { conceptId = Guid.Parse("00000000-0000-0000-0002-000000000001"), amount = 100_000m, salaryConstitutive = true } },
+                deductions = Array.Empty<object>(),
+            },
+            await VersionAsync(scene.Tenant.Payroll, scene.PeriodUrl));
+        Assert.Equal(HttpStatusCode.OK, captured.StatusCode);
+
+        using var workbook = await WorkbookOfAsync(await ExportAsync(scene));
+
+        Assert.Equal("Liquidado (desactualizado)", workbook.Worksheet("Resumen").Cell(4, 2).GetString());
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
+    public async Task APeriodWhoseSourceChangedSaysSo()
+    {
+        var scene = await NewSceneAsync(_fixture);
+        await LiquidateAsync(scene);
+        var employee = await JsonOfAsync(await scene.Tenant.Payroll.GetAsync($"{scene.Tenant.HrBase}/employees/{scene.EmployeeId}", Ct));
+        var contractId = employee.GetProperty("contract").GetProperty("id").GetGuid();
+        var raise = await scene.Tenant.Payroll.PostAsJsonAsync(
+            $"{scene.Tenant.HrBase}/employees/{scene.EmployeeId}/contracts/{contractId}/salaries",
+            new { effectiveDate = "2026-11-05", amount = 2_000_000m },
+            Ct);
+        Assert.True(raise.StatusCode == HttpStatusCode.OK, await BodyAsync(raise));
+
+        using var workbook = await WorkbookOfAsync(await ExportAsync(scene));
+
+        Assert.Equal("Liquidado (desactualizado)", workbook.Worksheet("Resumen").Cell(4, 2).GetString());
+        scene.Tenant.Dispose();
+    }
     [Fact]
     public async Task ExportNeedsPeriodRead()
     {

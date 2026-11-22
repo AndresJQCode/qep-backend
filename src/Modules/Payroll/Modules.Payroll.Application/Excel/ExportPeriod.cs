@@ -21,6 +21,7 @@ public sealed class ExportPeriodHandler(
     IPayrollPeriodRepository periods,
     IPayrollResultStore results,
     PayrollCompanies companies,
+    PeriodApprovals approvals,
     IPayrollWorkbookBuilder builder)
     : IQueryHandler<ExportPeriodQuery, PayrollExportFile>
 {
@@ -40,6 +41,13 @@ public sealed class ExportPeriodHandler(
         var company = await companies.RequireAsync(query.TenantId, period.CompanyId, cancellationToken);
         var stored = await results.ListAsync(query.TenantId, period.Id, cancellationToken);
         var calendar = await tenantClock.GetAsync(query.TenantId, cancellationToken);
+
+        // The figures come from what was stored, so a stale file must say it: the period was edited after liquidating, or Hr and the settings
+        // moved (only a Liquidado is compared; an approved or closed one is a snapshot).
+        var state = await approvals.StateAsync(period, withSource: true, cancellationToken);
+        var statusLabel = period.Outdated || state.SourceChanged
+            ? $"{PayrollLabels.PeriodStatuses[period.Status]} (desactualizado)"
+            : PayrollLabels.PeriodStatuses[period.Status];
 
         var rows = stored
             .Select(result => new PayrollWorkbookRow(
@@ -63,7 +71,7 @@ public sealed class ExportPeriodHandler(
             period.StartDate,
             period.EndDate,
             PayrollLabels.Halves[period.Half],
-            PayrollLabels.PeriodStatuses[period.Status],
+            statusLabel,
             calendar.ToLocal(calendar.UtcNow),
             rows,
             PayrollSummary.Sum(stored.Select(result => result.Liquidation.Summary)),
