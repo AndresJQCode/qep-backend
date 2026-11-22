@@ -75,11 +75,20 @@ public sealed class CreateTaskHandler(
         await SupportTicketRules.EnsureTaskAssigneeAsync(members, command.TenantId, command.AssigneeMemberId, cancellationToken);
 
         // Las dos provisiones abren su propia transacción: van antes de BeginTransactionAsync. El tipo interno se asegura ANTES de
-        // buscarlo: un tenant aprovisionado entre la migración y hoy todavía no lo tiene.
+        // buscarlo: un tenant aprovisionado entre la migración y hoy todavía no lo tiene. Se lee primero y sólo se siembra si falta:
+        // lo normal es que ya exista, y así el alta no abre una transacción con un INSERT en cada llamada.
         await provisioner.EnsureAsync(command.TenantId, cancellationToken);
-        await provisioner.EnsureInternalTypeAsync(command.TenantId, cancellationToken);
-        var type = await types.FindInternalAsync(command.TenantId, cancellationToken)
-            ?? throw new InvalidOperationException($"Tenant '{command.TenantId}' has no internal ticket type after provisioning it.");
+        var type = await types.FindInternalAsync(command.TenantId, cancellationToken);
+        if (type is null)
+        {
+            await provisioner.EnsureInternalTypeAsync(command.TenantId, cancellationToken);
+            type = await types.FindInternalAsync(command.TenantId, cancellationToken);
+        }
+
+        if (type is null)
+        {
+            throw new InvalidOperationException($"Tenant '{command.TenantId}' has no internal ticket type after provisioning it.");
+        }
 
         // Ya validada la forma: TryParse no falla acá.
         DateOnly? dueOn = command.DueOn is { } text && GetSupportReportValidator.TryParse(text, out var date) ? date : null;
