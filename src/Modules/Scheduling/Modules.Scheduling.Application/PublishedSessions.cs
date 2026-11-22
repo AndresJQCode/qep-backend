@@ -97,6 +97,7 @@ public sealed class PublishSessionHandler(
         // instead of inserting a second one; an active row is a real conflict.
         var session = await sessions.FindByKeyAsync(command.TenantId, resourceId, serviceId, startsAt, cancellationToken);
         string action;
+        IReadOnlyCollection<string> auditedFields = ["blockId", "resourceId", "serviceId", "startsAt"];
         if (session is null)
         {
             session = Session.Create(
@@ -111,13 +112,26 @@ public sealed class PublishSessionHandler(
         }
         else
         {
+            // A reactivation lists what the row took from the current service and block, not the key it already had.
+            var reactivated = new List<string>();
+            if (session.EndsAt != endsAt || session.OccupiesUntil != endsAt.AddMinutes(service.BufferMinutes))
+            {
+                reactivated.Add("endsAt");
+            }
+
+            if (session.Capacity != block.CapacityPerResource)
+            {
+                reactivated.Add("capacity");
+            }
+
+            auditedFields = reactivated;
             session.Republish(endsAt, service.BufferMinutes, block.CapacityPerResource, calendar.UtcNow);
             action = SchedulingAuditActions.SessionReactivated;
         }
 
         SchedulingAudit.Publish(
             auditPublisher, executionContext, command.TenantId, action,
-            SchedulingAuditActions.Resources.Session, session.Id.Value, ["blockId", "resourceId", "serviceId", "startsAt"], calendar.UtcNow);
+            SchedulingAuditActions.Resources.Session, session.Id.Value, auditedFields, calendar.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.PublishedSession(session);

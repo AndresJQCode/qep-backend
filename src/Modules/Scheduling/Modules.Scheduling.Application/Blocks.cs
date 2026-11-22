@@ -268,10 +268,12 @@ public sealed class UpdateBlockHandler(
         await BlockInput.EnsureReferencesAsync(resources, services, command.TenantId, resourceIds, serviceIds, block, cancellationToken);
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
-        block.Update(BlockInput.ToDefinition(command.Request, serviceIds, resourceIds), now);
+        var definition = BlockInput.ToDefinition(command.Request, serviceIds, resourceIds);
+        var changedFields = BlockChanges.Between(block, definition);
+        block.Update(definition, now);
         SchedulingAudit.Publish(
             auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.BlockUpdated,
-            SchedulingAuditActions.Resources.Block, block.Id.Value, ["definition"], now);
+            SchedulingAuditActions.Resources.Block, block.Id.Value, changedFields, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Block(block);
