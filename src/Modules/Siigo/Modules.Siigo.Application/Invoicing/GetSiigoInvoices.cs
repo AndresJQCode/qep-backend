@@ -52,14 +52,14 @@ public sealed partial class GetSiigoInvoicesHandler(
     }
 
     // `canSendWhatsApp` es una pista opcional: si la pregunta falla por lo que sea, la lista sigue entera (con Created y Rejected a la
-    // vista) y la pista queda en false. La cancelación sí sube. El log lleva sólo el tipo de la excepción: ni ids, ni teléfono, ni URL.
+    // vista) y la pista queda en false. La cancelación de la petición sí sube (un timeout del HttpClient llega como TaskCanceledException y no cuenta como tal). El log lleva sólo el tipo de la excepción: ni ids, ni teléfono, ni URL.
     private async Task<bool> CanSendAsync(GetSiigoInvoicesQuery query, CancellationToken cancellationToken)
     {
         try
         {
             return await whatsApp.CanSendAsync(query.TenantId, query.OrderId, cancellationToken);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
             LogCanSendFailed(exception.GetType().Name);
             return false;

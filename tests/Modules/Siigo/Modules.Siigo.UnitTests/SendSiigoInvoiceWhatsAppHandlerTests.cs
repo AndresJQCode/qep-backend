@@ -154,8 +154,21 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
     public async Task ACancelledAvailabilityCheckStillPropagates()
     {
         var harness = new Harness([CreatedRow()], canSendFailure: new OperationCanceledException());
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => harness.List());
+        await Assert.ThrowsAsync<OperationCanceledException>(() => harness.List(cancelled.Token));
+    }
+
+    // Un timeout del HttpClient llega como TaskCanceledException aunque nadie haya cancelado la petición: es una falla, no una cancelación.
+    [Fact]
+    public async Task ATimeoutThatIsNotACancellationOfTheRequestFallsBackToNoHint()
+    {
+        var harness = new Harness([CreatedRow()], canSendFailure: new TaskCanceledException("timeout"));
+
+        var list = await harness.List();
+
+        Assert.All(list, dto => Assert.False(dto.CanSendWhatsApp));
     }
 
     [Fact]
@@ -207,10 +220,10 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
                 Context, new AllModules(), new ActiveConnections(), Api.Instance, new StubInvoices(Rows), Delivery, UnitOfWork, Audit, new FixedClock(Now))
                 .HandleAsync(new SendSiigoInvoiceWhatsAppCommand(TenantId, OrderId, invoiceId), TestContext.Current.CancellationToken);
 
-        public async Task<IReadOnlyList<SiigoInvoiceDto>> List() =>
+        public async Task<IReadOnlyList<SiigoInvoiceDto>> List(CancellationToken? cancellationToken = null) =>
             await new GetSiigoInvoicesHandler(
                 Context, new AllModules(), new StubInvoices(Rows), UnitOfWork, new FixedClock(Now), Delivery, NullLogger<GetSiigoInvoicesHandler>.Instance)
-                .HandleAsync(new GetSiigoInvoicesQuery(TenantId, OrderId), TestContext.Current.CancellationToken);
+                .HandleAsync(new GetSiigoInvoicesQuery(TenantId, OrderId), cancellationToken ?? TestContext.Current.CancellationToken);
 
         public void AssertNothingCalled()
         {
