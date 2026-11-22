@@ -96,8 +96,11 @@ public sealed class NotificationsDeliveryWorkerTests
             .Build();
         var services = new ServiceCollection().AddNotificationsInfrastructure(configuration);
 
-        var hosted = Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IHostedService));
-        Assert.Equal(typeof(NotificationsDeliveryWorker), hosted.ImplementationType);
+        // One loop for every consumer (emails and the bell's); the only other hosted service is the bell's hourly retention.
+        var hosted = services.Where(descriptor => descriptor.ServiceType == typeof(IHostedService)).ToList();
+        Assert.Single(hosted, descriptor => descriptor.ImplementationType == typeof(NotificationsDeliveryWorker));
+        Assert.Single(hosted, descriptor => descriptor.ImplementationType == typeof(InAppNotificationRetentionWorker));
+        Assert.Equal(2, hosted.Count);
         // 14 con la invitación de mayorista (spec 2026-11-17); 15 con el código de correo y 17 con los dos avisos de correo
         // cambiado del distribuidor (spec 2026-11-19).
         Assert.Equal(17, services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)

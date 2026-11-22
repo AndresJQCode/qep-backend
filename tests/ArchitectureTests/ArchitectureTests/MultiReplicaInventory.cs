@@ -146,6 +146,8 @@ public static class MultiReplicaInventory
             "Modules/Buyers/Modules.Buyers.Infrastructure/BuyerHousekeepingWorker.cs:134-180 — DELETE por corte"),
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyInstallSweeper", WorkerClassification.Idempotent,
             "Modules/Integrations/Modules.Integrations.Infrastructure/Shopify/ShopifyInstallSweeper.cs:86 — DELETE por corte"),
+        new("Modules.Notifications.Infrastructure.InApp.InAppNotificationRetentionWorker", WorkerClassification.Idempotent,
+            "Modules/Notifications/Modules.Notifications.Infrastructure/InApp/InAppNotificationRetentionWorker.cs (PurgeAsync) — DELETE por corte en lotes y UPDATE que sólo toca las filas que aún guardan el enlace; repetirlos no encuentra nada"),
         new("Modules.ApiAccess.Infrastructure.ApiKeyRequestPurgeWorker", WorkerClassification.Idempotent,
             "Modules/ApiAccess/Modules.ApiAccess.Infrastructure/ApiKeyRequestPurgeWorker.cs:61 — DELETE por corte"),
         new("Modules.Support.Infrastructure.SupportThreadFollowWorker", WorkerClassification.Idempotent,
