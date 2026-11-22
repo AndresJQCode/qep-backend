@@ -181,6 +181,18 @@ D-1 a D-13 de la spec. Dos de este plan: **PD-1** la sesión se desactiva (`is_a
 publicadas; **PD-2** el inicio válido de un servicio dentro de una franja se genera **cada `duration` minutos alineado al inicio de la
 ventana**, no cada `duration + buffer` (el margen sólo ocupa; deja huecos predecibles y no cambia la rejilla que ve el cliente).
 
+Decisiones del owner posteriores a la Tarea 8:
+
+- **PD-3** quitar una sesión publicada sin citas la borra; con sólo citas canceladas la **desactiva** (`is_active = false`, además deja de ser
+  publicada) porque la llave foránea del historial impide borrarla; con alguna cita no cancelada responde 422 `session.has_appointments`.
+  Publicar de nuevo en la misma clave (recurso, servicio, inicio) **reactiva** la fila con el rango y el cupo actuales; una fila activa sigue
+  dando 409 `slot_taken`. Una sesión inactiva no ocupa (la restricción `EX_sessions_resource_occupancy` ya es `WHERE (is_active)`) ni se ofrece
+  (el motor ya filtra por `IsActive`). Auditoría: `scheduling.session.deactivated` y `scheduling.session.reactivated`.
+- **PD-4** archivar un recurso o un servicio saca su id de `resourceIds`/`serviceIds` de **todas** las franjas del tenant, en la misma
+  transacción (los ids están en `uuid[]` sin llave foránea; el filtro es en memoria). La franja que se queda sin recursos o sin servicios se
+  archiva con ellos. Cada franja tocada deja `block.updated` y, si se archivó, `block.archived`. `resource.has_future_appointments` y
+  `service.in_use` siguen bloqueando antes.
+
 ---
 
 ## Contrato HTTP
@@ -233,7 +245,7 @@ resourceName,start,source,requestedAgo}], unmarked[{…}], upcoming[{…}] }`. �
 | `scheduling.appointment.invalid_transition`, `…outside_rules`, `…before_start` | 422 |
 | `scheduling.closure.overlaps_appointments`, `scheduling.resource.has_future_appointments`, `scheduling.service.in_use` | 422 |
 | `scheduling.resource.member_already_linked` (carrera sobre el índice único sede+miembro, traducida en Infrastructure por nombre de índice) | 422 |
-| `scheduling.session.has_appointments` (una sesión con citas, aun canceladas, no se quita) | 422 |
+| `scheduling.session.has_appointments` (una sesión con alguna cita **no cancelada** no se quita; con sólo canceladas se desactiva, ver PD-3) | 422 |
 | `scheduling.location.not_found`, `scheduling.resource.not_found`, `scheduling.service.not_found`, `scheduling.block.not_found`, `scheduling.closure.not_found`, `scheduling.session.not_found` | 404 |
 | `scheduling.location.main_cannot_be_archived`, `scheduling.session.not_published_mode` | 422 |
 | `scheduling.reminder.template_missing`, `…connection_invalid` | 422 |
