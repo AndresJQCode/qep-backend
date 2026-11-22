@@ -68,11 +68,14 @@ public sealed class OrderGiftHandlerTests
         var add = new AddOrderGiftHandler(
             orders, quotations, unitOfWork, audit, new StubQuotationProductPricingLookup(catalog),
             new FixedQuotationSettingsStore(new QuotationSettings(6, new Dictionary<string, decimal>())),
-            new FixedTenantPriceRounding(), new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
+            new FixedTenantPriceRounding(), new StubQuotationProductLookup(catalog.ToDictionary(
+                product => product.VariantId,
+                product => new QuotationVariantRef(
+                    product.VariantId, product.ProductId, product.Name, product.Code, null, product.Scales))),
             membership, tenantDirectory, context, clock, new AddOrderGiftValidator(),
-            new RecordingOrderVariantCostLookup(), new StubWholesaleLinePricing());
+            new RecordingOrderVariantCostLookup());
         var remove = new RemoveOrderGiftHandler(
-            orders, quotations, unitOfWork, audit, membership, context, clock);
+            orders, quotations, unitOfWork, audit, membership, context, clock, new RemoveOrderGiftValidator());
         return new Harness(orders, audit, add, remove);
     }
 
@@ -208,7 +211,7 @@ public sealed class OrderGiftHandlerTests
 
         var added = Assert.Single(harness.Orders.History);
         Assert.Equal(OrderHistoryEventType.ItemsChanged, added.EventType);
-        Assert.Contains("regalo", added.Details);
+        Assert.Equal("Agregó de regalo Aceite x3.", added.Details);
         Assert.Equal(["quotation.order.gift_added"], harness.Audit.Actions);
 
         var giftId = order.Items.Single(item => item.IsGift).Id.Value;
@@ -217,6 +220,65 @@ public sealed class OrderGiftHandlerTests
 
         Assert.Equal(2, harness.Orders.History.Count);
         Assert.Equal(OrderHistoryEventType.ItemsChanged, harness.Orders.History[1].EventType);
+        Assert.Equal("Quitó el regalo Aceite.", harness.Orders.History[1].Details);
         Assert.Equal(["quotation.order.gift_added", "quotation.order.gift_removed"], harness.Audit.Actions);
+    }
+
+    [Fact]
+    public async Task AddGiftOnANonEditableOrderIsRejected()
+    {
+        var order = NewOrder();
+        order.Cancel(Advisor, "Cliente desistió", Now);
+        var harness = NewHarness(order, null, Variant(V2, 2_000m, 0));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => harness.Add.HandleAsync(
+            new AddOrderGiftCommand(TenantId, order.Id.Value, V2, 1m), TestContext.Current.CancellationToken));
+
+        Assert.Equal(ExternalOrderErrors.NotEditable, error.Code);
+        Assert.Empty(harness.Orders.History);
+        Assert.Empty(harness.Audit.Actions);
+    }
+
+    [Fact]
+    public async Task ASecondGiftOfTheSameVariantIsRejected()
+    {
+        var order = NewOrder();
+        var harness = NewHarness(order, null, Variant(V2, 2_000m, 0));
+        await harness.Add.HandleAsync(
+            new AddOrderGiftCommand(TenantId, order.Id.Value, V2, 1m), TestContext.Current.CancellationToken);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => harness.Add.HandleAsync(
+            new AddOrderGiftCommand(TenantId, order.Id.Value, V2, 1m), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.item.duplicate_product", error.Code);
+        Assert.Single(order.Items, item => item.IsGift);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task AGiftWithQuantityZeroOrLessFailsValidation(int quantity)
+    {
+        var order = NewOrder();
+        var harness = NewHarness(order, null, Variant(V2, 2_000m, 0));
+
+        await Assert.ThrowsAsync<FluentValidation.ValidationException>(() => harness.Add.HandleAsync(
+            new AddOrderGiftCommand(TenantId, order.Id.Value, V2, quantity), TestContext.Current.CancellationToken));
+
+        Assert.DoesNotContain(order.Items, item => item.IsGift);
+    }
+
+    [Fact]
+    public async Task AGiftOnAWholesaleOrderIsRejectedThroughTheHandler()
+    {
+        var order = WholesaleOrderFixtures.Wholesale(WholesaleOrderFixtures.Line(V1, 2m, 1_000m));
+        var harness = NewHarness(order, null, Variant(V2, 2_000m, 0));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => harness.Add.HandleAsync(
+            new AddOrderGiftCommand(TenantId, order.Id.Value, V2, 1m), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.gift.wholesale_not_supported", error.Code);
+        Assert.DoesNotContain(order.Items, item => item.IsGift);
+        Assert.Empty(harness.Audit.Actions);
     }
 }

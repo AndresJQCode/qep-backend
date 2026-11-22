@@ -36,8 +36,7 @@ public sealed class AddOrderGiftHandler(
     IExecutionContext executionContext,
     IClock clock,
     IValidator<AddOrderGiftCommand> validator,
-    IOrderVariantCostLookup costLookup,
-    IWholesaleLinePricing wholesalePricing)
+    IOrderVariantCostLookup costLookup)
     : ICommandHandler<AddOrderGiftCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -69,19 +68,15 @@ public sealed class AddOrderGiftHandler(
             pricingLookup, command.TenantId, [command.VariantId], cancellationToken);
         var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
             costLookup, command.TenantId, order, [command.VariantId], cancellationToken);
-        var listPrices = await OrderItemEdits.WholesaleListPricesAsync(
-            wholesalePricing, order, command.TenantId, [command.VariantId], cancellationToken);
+        // Un pedido mayorista no llega acá con un regalo: Order.AddGift lo rechaza.
         // isRetail: true salta las escalas a propósito: el regalo va a precio de lista y su descuento es el fijo del 100 %,
         // así que un producto con las escalas a medio configurar no impide regalarlo.
         var pricing = QuotationProductPricingResolver.Resolve(
             products.GetValueOrDefault(command.VariantId), command.TenantId, command.VariantId,
             command.Quantity, order.Currency, isRetail: true);
-        var listUnitPrice = order.Source == OrderSource.Wholesale
-            ? listPrices.GetValueOrDefault(command.VariantId, pricing.Pricing.UnitPrice)
-            : pricing.Pricing.UnitPrice;
 
         order.AddGift(
-            OrderItemId.New(), command.VariantId, pricing.ProductId, command.Quantity, listUnitPrice,
+            OrderItemId.New(), command.VariantId, pricing.ProductId, command.Quantity, pricing.Pricing.UnitPrice,
             pricing.Pricing.TaxPercentage, costs, updatedBy, now, pricing.Kind, pricing.SalesUnit);
         orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
             OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.ItemsChanged,

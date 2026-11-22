@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -8,6 +9,14 @@ namespace Modules.Quotations.Application;
 /// misma variante no se quita por acá.</summary>
 public sealed record RemoveOrderGiftCommand(Guid TenantId, Guid OrderId, Guid ItemId) : ICommand<OrderDetailDto>;
 
+public sealed class RemoveOrderGiftValidator : AbstractValidator<RemoveOrderGiftCommand>
+{
+    public RemoveOrderGiftValidator()
+    {
+        RuleFor(command => command.ItemId).NotEmpty();
+    }
+}
+
 public sealed class RemoveOrderGiftHandler(
     IOrderRepository orderRepository,
     IQuotationRepository quotationRepository,
@@ -15,7 +24,8 @@ public sealed class RemoveOrderGiftHandler(
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IValidator<RemoveOrderGiftCommand> validator)
     : ICommandHandler<RemoveOrderGiftCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -24,6 +34,7 @@ public sealed class RemoveOrderGiftHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, OrdersPermissions.OrderManage);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
