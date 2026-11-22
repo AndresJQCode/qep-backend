@@ -150,6 +150,6 @@ public sealed class SupportReportsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.Equal(
             before.GetProperty("byStatus").GetRawText(), after.GetProperty("byStatus").GetRawText());
         Assert.DoesNotContain(
-            after.GetProperty("byType").EnumerateArray(), row => row.GetProperty("typeName").GetString() == "Tarea interna");
+            after.GetProperty("byType").EnumerateArray(), row => row.GetProperty("name").GetString() == "Tarea interna");
     }
 }

@@ -601,6 +601,17 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
         var rig = await RigAsync();
         var filed = await FileNamedAsync(rig);
         var task = await SupportTicketSeed.SaveInternalTicketAsync(rig.Factory, rig.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7());
+        // Una tarea no tiene acceso propio; se le copia el del ticket radicado (mismo PIN) para que sólo el filtro de la consulta la
+        // esconda: sin él, el radicado de la tarea con ese PIN abriría.
+        await ExecuteAsync(
+            rig.Factory,
+            """
+            INSERT INTO support.ticket_access
+                (ticket_id, tenant_id, pin_hash, failed_attempts, locked_until, pin_issued_at, last_sent_at, last_sent_channel, last_failure_code)
+            SELECT @task, tenant_id, pin_hash, 0, NULL, pin_issued_at, last_sent_at, last_sent_channel, last_failure_code
+            FROM support.ticket_access WHERE tenant_id = @tenant LIMIT 1
+            """,
+            ("task", task.Id.Value), ("tenant", rig.TenantId));
 
         var responses = new[]
         {
