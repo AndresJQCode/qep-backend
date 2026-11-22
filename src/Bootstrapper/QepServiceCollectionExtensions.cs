@@ -51,6 +51,8 @@ using Modules.Loans.Infrastructure;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Payroll.Application;
+using Modules.Payroll.Infrastructure;
 using Modules.Pipeline.Application;
 using Modules.Pipeline.Infrastructure;
 using Modules.Platform.Application;
@@ -606,6 +608,89 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.ImportEmployeesCommand, Modules.Hr.Application.EmployeeImportResultDto>,
             Modules.Hr.Application.ImportEmployeesHandler>();
+
+        // Payroll, spec 2026-11-21. A mano y con ruta completa, como Hr: un handler olvidado responde 500.
+        services.AddScoped<Modules.Payroll.Application.PayrollCompanies>();
+        services.AddScoped<Modules.Payroll.Application.ConceptCatalog>();
+        services.AddScoped<Modules.Payroll.Application.PayrollSettingsComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListPayrollCompaniesQuery, IReadOnlyList<Modules.Payroll.Application.PayrollCompanyDto>>,
+            Modules.Payroll.Application.ListPayrollCompaniesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.GetPayrollSettingsQuery, Modules.Payroll.Application.PayrollSettingsDto>,
+            Modules.Payroll.Application.GetPayrollSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdatePayrollSettingsCommand, Modules.Payroll.Application.PayrollSettingsDto>,
+            Modules.Payroll.Application.UpdatePayrollSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.CreateConceptCommand, Modules.Payroll.Application.PayrollConceptDto>,
+            Modules.Payroll.Application.CreateConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateConceptCommand, Modules.Payroll.Application.PayrollConceptDto>,
+            Modules.Payroll.Application.UpdateConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ArchiveConceptCommand, Modules.Payroll.Application.PayrollConceptDto>,
+            Modules.Payroll.Application.ArchiveConceptHandler>();
+        // Períodos: el compositor y los actores los comparten todos los casos de uso del período.
+        services.AddScoped<Modules.Payroll.Application.PeriodActors>();
+        services.AddScoped<Modules.Payroll.Application.PeriodComposer>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.EnsureCurrentPeriodsCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.EnsureCurrentPeriodsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListPeriodsQuery, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.ListPeriodsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.GetPeriodQuery, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.GetPeriodHandler>();
+        services.AddScoped<Modules.Payroll.Application.PayrollEmployees>();
+        services.AddScoped<Modules.Payroll.Application.RecurringAccumulation>();
+        services.AddScoped<Modules.Payroll.Application.RecurringConceptComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.GetPeriodEmployeeQuery, Modules.Payroll.Application.PayrollEmployeeDetailDto>,
+            Modules.Payroll.Application.GetPeriodEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateEmployeeInputsCommand, Modules.Payroll.Application.PayrollEmployeeDetailDto>,
+            Modules.Payroll.Application.UpdateEmployeeInputsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListRecurringConceptsQuery, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.ListRecurringConceptsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.CreateRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.CreateRecurringConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.UpdateRecurringConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ToggleRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.ToggleRecurringConceptHandler>();
+        services.AddScoped<Modules.Payroll.Application.LiquidationPlanner>();
+        services.AddScoped<Modules.Payroll.Application.PeriodApprovals>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.LiquidatePeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.LiquidatePeriodHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ApprovePeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.ApprovePeriodHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ClosePeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.ClosePeriodHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ReopenPeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.ReopenPeriodHandler>();
+        services.AddScoped<Modules.Payroll.Application.InputsImportAnalyzer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.GetInputsImportTemplateQuery, Modules.Payroll.Application.InputsImportTemplateFile>,
+            Modules.Payroll.Application.GetInputsImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.PreviewInputsImportCommand, Modules.Payroll.Application.InputsImportPreviewDto>,
+            Modules.Payroll.Application.PreviewInputsImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ImportInputsCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.ImportInputsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ExportPeriodQuery, Modules.Payroll.Application.PayrollExportFile>,
+            Modules.Payroll.Application.ExportPeriodHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -1587,6 +1672,8 @@ public static class QepServiceCollectionExtensions
         // Hr: se escanea el ensamblado (sólo registra validadores públicos, y todos los de Hr lo son), porque HrPermissions es
         // estática y no sirve de argumento de tipo.
         services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
+        // Payroll: igual que Hr, PayrollPermissions es estática y no sirve de argumento de tipo.
+        services.AddValidatorsFromAssembly(typeof(PayrollPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
@@ -1609,6 +1696,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddHrInfrastructure(configuration);
+        services.AddPayrollInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
         services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
@@ -1896,6 +1984,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         // Hr: la empresa empleadora y la sede entran por su propio puerto (HrLayerTests.NoHrLayerReferencesCompanies).
         services.AddScoped<Modules.Hr.Application.IHrCompanyLookup, HrCompanyLookup>();
+        // Payroll lee los valores legales de Hr por su propio puerto (PayrollLayerTests.NoPayrollLayerReferencesHr).
+        services.AddScoped<Modules.Payroll.Application.IPayrollLegalValues, PayrollLegalValues>();
+        // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
+        services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
+        services.AddScoped<Modules.Payroll.Application.IPayrollMemberDirectory, PayrollMemberDirectory>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
         services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();
 
@@ -2614,6 +2707,11 @@ public static class QepServiceCollectionExtensions
                 HrPermissions.ContractRead,
                 HrPermissions.ContractManage,
                 HrPermissions.SettingsManage,
+                // Spec 2026-11-21 (nómina): los cuatro permisos ven plata; sólo admin los lleva de fábrica.
+                PayrollPermissions.PeriodRead,
+                PayrollPermissions.PeriodManage,
+                PayrollPermissions.PeriodApprove,
+                PayrollPermissions.SettingsManage,
                 // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
@@ -3766,6 +3864,48 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("hr.settings", "Configuración de RRHH", "manage"),
         });
+        // Spec 2026-11-21 (nómina): con [payroll], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo
+        // ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. Todos ven plata: riesgo alto.
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.PeriodRead,
+            "Ver nómina",
+            "Permite ver los períodos de nómina, la liquidación de cada empleado con su rastro de cálculo y exportar el resumen a Excel.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.period", "Períodos de nómina", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.PeriodManage,
+            "Liquidar nómina",
+            "Permite abrir quincenas, registrar horas extras, ingresos y deducciones, liquidar, cerrar y reabrir.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.period", "Períodos de nómina", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.PeriodApprove,
+            "Aprobar nómina",
+            "Permite aprobar una quincena liquidada.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.period", "Períodos de nómina", "approve"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.SettingsManage,
+            "Configurar nómina",
+            "Permite cambiar la configuración de nómina de cada empresa, sus conceptos y los conceptos recurrentes de cada empleado.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.settings", "Configuración de nómina", "manage"),
+        });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -4291,6 +4431,23 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 HrPermissions.SettingsManage,
                 policy => AddPermissionRequirement(policy, HrPermissions.SettingsManage))
+            // Spec 2026-11-21 (nómina): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                PayrollPermissions.PeriodRead,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.PeriodRead))
+            .AddPolicy(
+                PayrollPermissions.PeriodManage,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.PeriodManage))
+            .AddPolicy(
+                PayrollPermissions.PeriodApprove,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.PeriodApprove))
+            .AddPolicy(
+                PayrollPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.SettingsManage))
+            // Spec 2026-11-21 (nómina): leer empresas y configuración basta con ver períodos o con configurar; no es un permiso.
+            .AddPolicy(
+                PayrollPolicies.SettingsView,
+                policy => AddAnyPermissionRequirement(policy, PayrollPermissions.PeriodRead, PayrollPermissions.SettingsManage))
             // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 SupportPermissions.Read,

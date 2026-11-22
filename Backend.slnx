@@ -184,6 +184,16 @@
     <Project Path="tests/Modules/Hr/Modules.Hr.UnitTests/Modules.Hr.UnitTests.csproj" />
     <Project Path="tests/Modules/Hr/Modules.Hr.IntegrationTests/Modules.Hr.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Payroll/">
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Api/Modules.Payroll.Api.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Application/Modules.Payroll.Application.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Domain/Modules.Payroll.Domain.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Infrastructure/Modules.Payroll.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Payroll/">
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.UnitTests/Modules.Payroll.UnitTests.csproj" />
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.IntegrationTests/Modules.Payroll.IntegrationTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Purchases/">
     <Project Path="src/Modules/Purchases/Modules.Purchases.Api/Modules.Purchases.Api.csproj" />
     <Project Path="src/Modules/Purchases/Modules.Purchases.Application/Modules.Purchases.Application.csproj" />

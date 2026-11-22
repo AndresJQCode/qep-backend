@@ -525,6 +525,40 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Hr.Domain.LegalParameterBracket", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("key");
+
+                    b.Property<DateOnly>("EffectiveFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("effective_from");
+
+                    b.Property<decimal>("LowerBound")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)")
+                        .HasColumnName("lower_bound");
+
+                    b.Property<decimal>("Rate")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("rate");
+
+                    b.Property<decimal?>("UpperBound")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)")
+                        .HasColumnName("upper_bound");
+
+                    b.HasKey("Key", "EffectiveFrom", "LowerBound");
+
+                    b.ToTable("legal_parameter_brackets", "hr", t =>
+                        {
+                            t.HasCheckConstraint("CK_legal_parameter_brackets_key", "key IN ('SolidarityFund')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Hr.Domain.LegalParameterValue", b =>
                 {
                     b.Property<string>("Key")
@@ -537,15 +571,15 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         .HasColumnName("effective_from");
 
                     b.Property<decimal>("Value")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
                         .HasColumnName("value");
 
                     b.HasKey("Key", "EffectiveFrom");
 
                     b.ToTable("legal_parameters", "hr", t =>
                         {
-                            t.HasCheckConstraint("CK_legal_parameters_key", "key IN ('Smmlv','IntegralSalaryFloor')");
+                            t.HasCheckConstraint("CK_legal_parameters_key", "key IN ('Smmlv','IntegralSalaryFloor','TransportAllowance','ConnectivityAllowanceSince','HealthEmployeeRate','HealthEmployerRate','PensionEmployeeRate','PensionEmployerRate','HighRiskPensionTotalRate','ArlClassIRate','ArlClassIIRate','ArlClassIIIRate','ArlClassIVRate','ArlClassVRate','CompensationFundRate','IcbfRate','SenaRate','SeveranceProvisionRate','PremiumProvisionRate','VacationProvisionRate','SeveranceInterestProvisionRate','TransportAllowanceCapSmmlv','NonSalaryCapRate','ExonerationThresholdSmmlv','IbcCapSmmlv','SundaySurchargeRate','WeeklyHours','ExtraDayRate','ExtraNightRate','NightSurchargeRate')");
                         });
                 });
 

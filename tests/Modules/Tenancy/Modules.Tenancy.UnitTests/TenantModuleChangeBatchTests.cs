@@ -96,6 +96,16 @@ public sealed class TenantModuleChangeBatchTests
             Rejected(stored, ChangeReason.Contract, [new(Hr, On)]).Code);
     }
 
+    // Spec 2026-11-21 (nómina): payroll depende de hr.
+    [Fact]
+    public void EnablingPayrollWithoutHrIsInconsistent()
+    {
+        var stored = new Dictionary<TenantModuleKey, TenantModuleStatus> { [Companies] = On, [Hr] = Off };
+
+        Assert.Equal(TenantModuleChangeBatch.InconsistentDependenciesCode,
+            Rejected(stored, ChangeReason.Contract, [new(Payroll, On)]).Code);
+    }
+
     // §3, ejemplo 3 (D9): un par roto heredado que el lote no toca no bloquea.
     [Fact]
     public void AnInheritedBrokenPairDoesNotBlockActivatingPos()
