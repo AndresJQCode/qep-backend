@@ -617,6 +617,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<Guid?>("CreatedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_member_id");
+
                     b.Property<Guid?>("CustomerId")
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");
@@ -675,6 +679,12 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(false)
                         .HasColumnName("is_anonymous");
+
+                    b.Property<bool>("IsInternal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_internal");
 
                     b.Property<int>("LastEventOrdinal")
                         .HasColumnType("integer")
@@ -796,6 +806,9 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_tickets_tenant_conversation")
                         .HasFilter("conversation_id IS NOT NULL");
 
+                    b.HasIndex("TenantId", "CreatedByMemberId")
+                        .HasDatabaseName("IX_tickets_created_by");
+
                     b.HasIndex("TenantId", "CustomerId")
                         .HasDatabaseName("IX_tickets_tenant_customer");
 
@@ -820,13 +833,15 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_tickets_follow", "NOT follow_thread OR (conversation_id IS NOT NULL AND follow_since IS NOT NULL)");
 
-                            t.HasCheckConstraint("CK_tickets_intake", "intake IN ('Manual','Conversation','PublicForm')");
+                            t.HasCheckConstraint("CK_tickets_intake", "intake IN ('Manual','Conversation','PublicForm','Internal')");
+
+                            t.HasCheckConstraint("CK_tickets_internal", "(NOT is_internal OR (customer_id IS NULL AND conversation_id IS NULL AND manual_medium IS NULL AND NOT is_anonymous AND requester_first_names IS NULL AND requester_last_names IS NULL AND requester_business_name IS NULL AND requester_document_type IS NULL AND requester_document_number IS NULL AND requester_email IS NULL AND requester_mobile_phone IS NULL AND requester_landline_phone IS NULL AND requester_country_code IS NULL AND requester_address IS NULL AND requester_city_id IS NULL AND requester_city_name IS NULL)) AND ((reply_channel = 'None') = is_internal)");
 
                             t.HasCheckConstraint("CK_tickets_manual_medium", "manual_medium IN ('Phone','InPerson','Email','Letter','Other')");
 
                             t.HasCheckConstraint("CK_tickets_priority", "priority IN ('Low','Medium','High','Urgent')");
 
-                            t.HasCheckConstraint("CK_tickets_reply_channel", "reply_channel IN ('Thread','WhatsAppTemplate','Email','Portal')");
+                            t.HasCheckConstraint("CK_tickets_reply_channel", "reply_channel IN ('Thread','WhatsAppTemplate','Email','Portal','None')");
 
                             t.HasCheckConstraint("CK_tickets_status", "status IN ('New','Open','WaitingOnCustomer','WaitingInternal','Resolved','Closed')");
                         });
@@ -985,7 +1000,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_events", "support", t =>
                         {
-                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked','Extended','PriorityChanged','PinReissued')");
+                            t.HasCheckConstraint("CK_ticket_events_kind", "kind IN ('Created','StatusChanged','AssigneeChanged','TypeChanged','CustomerChanged','MessagePinned','MessageReleased','MessageClassified','MessageDismissed','FollowThreadChanged','ReplySent','ConversationLinked','Extended','PriorityChanged','PinReissued','DueDateChanged')");
                         });
                 });
 
@@ -1228,7 +1243,7 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_replies", "support", t =>
                         {
-                            t.HasCheckConstraint("CK_ticket_replies_channel", "channel IN ('Thread','WhatsAppTemplate','Email','Portal')");
+                            t.HasCheckConstraint("CK_ticket_replies_channel", "channel IN ('Thread','WhatsAppTemplate','Email','Portal','None')");
 
                             t.HasCheckConstraint("CK_ticket_replies_delivery", "delivery IN ('Text','Template','Email','Portal')");
 
@@ -1419,6 +1434,12 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
+                    b.Property<bool>("IsInternal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_internal");
+
                     b.Property<bool>("IsPublished")
                         .HasColumnType("boolean")
                         .HasColumnName("is_published");
@@ -1462,6 +1483,8 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.ToTable("ticket_types", "support", t =>
                         {
+                            t.HasCheckConstraint("CK_ticket_types_internal", "NOT is_internal OR (term_business_days IS NULL AND NOT term_is_legal AND NOT requires_formal_response AND NOT is_published AND is_active)");
+
                             t.HasCheckConstraint("CK_ticket_types_legal_term", "NOT term_is_legal OR term_business_days IS NOT NULL");
 
                             t.HasCheckConstraint("CK_ticket_types_term", "term_business_days IS NULL OR term_business_days BETWEEN 1 AND 365");
@@ -1520,6 +1543,54 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                     b.ToTable("unclassified_messages", "support", t =>
                         {
                             t.HasCheckConstraint("CK_unclassified_messages_resolution", "resolution IN ('Assigned','Dismissed','Reassigned')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Infrastructure.Persistence.SupportOutboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("event_name");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("outbox_messages", "platform", t =>
+                        {
+                            t.ExcludeFromMigrations();
                         });
                 });
 
