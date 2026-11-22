@@ -1046,9 +1046,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
-        var all = new[] { WholesalePermissions.PriceListManage, WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage };
+        var all = new[] { WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage };
 
-        Assert.Equal(["wholesale.price_list.manage", "wholesale.distributor.read", "wholesale.distributor.manage"], all);
+        Assert.Equal(["wholesale.distributor.read", "wholesale.distributor.manage"], all);
         foreach (var permission in all)
         {
             Assert.Equal("Mayorista", definitions[permission].Category);
@@ -1061,6 +1061,31 @@ public sealed class CompositionRootTests
         Assert.Contains(WholesalePermissions.DistributorRead, catalog.PermissionsFor("advisor"));
         Assert.DoesNotContain(WholesalePermissions.DistributorManage, catalog.PermissionsFor("advisor"));
         Assert.DoesNotContain(WholesalePermissions.PriceListManage, catalog.PermissionsFor("advisor"));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 (D-10): las listas de precios son de Catalog. Un solo permiso, sin el módulo mayorista (el POS, la tienda y
+    /// las cotizaciones las usan sin él), sólo en admin, y Mayorista lo nombra con el mismo literal porque no referencia Catalog.
+    /// </summary>
+    [Fact]
+    public void ThePriceListPermissionIsCatalogsAndGoesToAdminOnly()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definition = Assert.Single(
+            RegisteredPermissionDefinitions(), item => item.Permission == CatalogPermissions.PriceListManage);
+
+        Assert.Equal("catalog.price_list.manage", CatalogPermissions.PriceListManage);
+        Assert.Equal(CatalogPermissions.PriceListManage, WholesalePermissions.PriceListManage);
+        Assert.Equal("Catalog", definition.Category);
+        Assert.Equal([ModuleKeys.Catalog], definition.RequiredModules!.ToArray());
+        Assert.Contains(CatalogPermissions.PriceListManage, catalog.PermissionsFor("admin"));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.DoesNotContain(CatalogPermissions.PriceListManage, catalog.PermissionsFor(role));
+        }
+
+        Assert.DoesNotContain(RegisteredPermissionDefinitions(), item => item.Permission == "wholesale.price_list.manage");
     }
 
     /// <summary>

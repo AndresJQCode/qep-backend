@@ -1,7 +1,8 @@
 # Listas de precios por canal (2026-11-22)
 
 Spec del frontend: pendiente (`qep-frontend`, pantallas «Listas de precios» y «Precios por canal»).
-Plan: pendiente, después del visto bueno de este documento.
+Estado: aprobado por el owner el 2026-11-22 («Ok continuar»: rango propuesto de D-3 y P-1 fuera de alcance) y construido en la rama
+`claude/price-list-by-channel-kkjwkr`. Lo que la construcción ajustó respecto de la primera versión está marcado **(ajuste)**.
 
 ## Problema
 
@@ -38,12 +39,13 @@ más barata que el POS.
   3. si no tiene ninguno de los dos: sin precio, el mismo caso que hoy (`PriceMissing` en el POS, oculta en la tienda,
      `quotation.item.product_price_unavailable` en la cotización).
 
-  Un precio fijo **sí** le da precio en esa moneda a una variante sin base en ella. La regla vive una sola vez, en
-  `PriceList.PriceFor` del dominio, y nadie la copia.
-- **D-3. El ajuste es un porcentaje con signo.** `adjustmentPercent` de −100 a 1000, con dos decimales como máximo: negativo es
-  descuento, positivo es recargo y 0 es «igual al base» (útil para una lista que sólo tiene precios fijos). El
-  `discountPercent` de 0 a 100 de las listas mayoristas equivale a `adjustmentPercent = −discountPercent`. **Los límites son
-  una propuesta: confírmalos.**
+  **(ajuste)** Un precio fijo **sólo reemplaza**: una variante sin precio base en una moneda sigue sin precio en ella en todo
+  canal. Así el «tiene precio en la moneda» que la tienda, el POS y el mayorista filtran en SQL vale igual con lista, sin
+  reescribir esas consultas. La regla vive una sola vez, en `PriceList.PriceFor` del dominio, y nadie la copia.
+- **D-3. El ajuste es un porcentaje con signo.** `adjustmentPercent` de −100 a 999,99, con dos decimales como máximo (la columna
+  es `numeric(5,2)`, como la de la lista mayorista): negativo es descuento, positivo es recargo y 0 es «igual al base» (útil para
+  una lista que sólo tiene precios fijos). El `discountPercent` de 0 a 100 de las listas mayoristas equivale a
+  `adjustmentPercent = −discountPercent`. **(ajuste)** El tope es 999,99 y no 1000: es lo que cabe en la columna.
 - **D-4. Canales con asignación global: `Pos`, `Store` y `Quotations`.** Es un enum nuevo, `PriceChannel`, y se guarda en
   `catalog.channel_price_lists` (una fila por tenant y canal, o ninguna = precio base, O-3/O-4). Los distribuidores no van en
   esa tabla: cada uno tiene su lista asignada (O-9).
@@ -67,14 +69,30 @@ más barata que el POS.
 - **D-7. Unificación con Mayorista (O-5, O-8).** La lista de Catalog tiene, además del precio, los campos que hoy tiene
   `Wholesale.Domain.PriceList`: `Visibility` (`AllActive`/`Categories`), `CategoryIds`, exclusiones de categorías y productos
   (mismos topes: 200, 200, 1000) y `ShowPrices`. **Sólo los lee el catálogo del distribuidor** (`WholesaleOffers`). POS, tienda
-  y cotizaciones los ignoran: la tienda sigue usando `VisibleInStore` del producto. Las rutas
-  `/wholesale/price-lists/*` y el permiso `wholesale.price_list.manage` se retiran en el mismo cambio.
-- **D-8. Sin migración de datos (O-5).** Una migración de Wholesale borra `FK_distributors_price_lists_price_list_id` y la
-  tabla `wholesale.price_lists`, vuelve nullable `distributors.price_list_id` y la deja en `NULL` en todas las filas. Un
-  distribuidor sin lista ve el catálogo **cerrado**, sin productos y con `showPrices: false`, hasta que alguien le asigne una.
-  Es el mismo criterio de D-14 del spec 2026-11-19: sin información no se muestra un precio. Invitar y editar un distribuidor
-  siguen exigiendo `priceListId`. Antes de desplegar se confirma en producción que `wholesale.price_lists` está vacía (paso
-  manual del plan).
+  y cotizaciones los ignoran: la tienda sigue usando `VisibleInStore` del producto. El CRUD `/wholesale/price-lists/*` y el
+  permiso `wholesale.price_list.manage` se retiran en el mismo cambio.
+
+  **(ajuste)** Se quedan en Mayorista las tres rutas que se arman con el lector del catálogo del distribuidor:
+  `POST /wholesale/price-lists/preview` (ahora con `adjustmentPercent`; sólo aplica el ajuste, los precios fijos se ven en su
+  tabla), `GET /wholesale/categories` y `GET /wholesale/products`. Piden `catalog.price_list.manage` **y**
+  `wholesale.distributor.read`: el segundo lo quita `ModuleEntitlementMask` con el módulo apagado, así que sin «wholesale»
+  siguen en 403. El precio de la vista previa sale del mismo resolutor de Catalog (`IPriceListPricing.BookForAdjustmentAsync`).
+
+  **(ajuste)** Lo que ve el distribuidor no cambia de forma: `priceList.discountPercent` del catálogo y
+  `basePrice`/`discountPercent`/`listPrice` de cada oferta siguen viajando. El descuento es el ajuste con el signo al revés (un
+  recargo es un descuento negativo), acotado a −999,99…100 porque la orden de compra lo guarda en `numeric(5,2)`. Con precio
+  fijo se deriva del base y el fijo; si no cabe, la oferta va sin descuento y con el fijo como base, para que «base y descuento»
+  siempre cierre. El lado del mayorista sí cambia: `DistributorPriceListDto` es `{ id, name, adjustmentPercent, exists }`.
+- **D-8. Sin migración de datos (O-5).** **(ajuste, expand/contract)** La migración de Wholesale `MovePriceListsToCatalog` sólo
+  borra `FK_distributors_price_lists_price_list_id` y su índice: `distributors.price_list_id` sigue `NOT NULL` y desde ahora
+  guarda el id de una lista de Catalog, sin FK. La tabla `wholesale.price_lists` **no** se borra en esta versión porque los pods
+  viejos del rollout todavía la leen; queda sin uso y la borra una migración de contrato posterior (`DROP TABLE IF EXISTS`,
+  pendiente). Un distribuidor cuya lista no existe en Catalog —todos los de antes de la unificación— no ve precios: recibe el
+  mismo 403 `wholesale.relationship.inactive` que ya daba una lista faltante, y en la pantalla del mayorista sale con
+  `priceList.exists: false` para que le asignen una. Es el mismo criterio de D-14 del spec 2026-11-19: sin información no se
+  muestra un precio. Invitar y editar un distribuidor siguen exigiendo `priceListId` (404 `wholesale.price_list.not_found` si no
+  es una lista de Catalog del tenant). Antes de desplegar se confirma en producción que `wholesale.price_lists` está vacía
+  (paso manual).
 - **D-9. Los precios fijos se editan aparte del encabezado.** Una lista puede tener miles de filas (2.048 variantes por
   producto), así que no viajan en el `PUT` de la lista. Se paginan y se editan por lote (D-12), con el mismo `If-Match` de la
   lista: todo cambio de precios fijos sube su `Version`. Un precio fijo de una variante borrada se va por `CASCADE`, como su
@@ -112,7 +130,7 @@ permiso (`CatalogAuthorization`), y otro tenant responde 403.
 | `GET /price-lists/{id}/overrides?search=&page=&pageSize=` | — | Página de `{ variantId, productId, code, name, currency, basePrice, amount }`. `basePrice` es nullable y le ahorra a la pantalla otra consulta para mostrar «base → lista» |
 | `PUT /price-lists/{id}/overrides` | `{ set: [{ variantId, currency, amount }], remove: [{ variantId, currency }] }` (`If-Match`, hasta 500 filas) | `{ version, rows }`: las filas escritas, en el orden recibido |
 | `GET /channel-prices` | — | `{ channels: [{ channel, priceList: { id, name } \| null }] }`: siempre los tres canales y en orden fijo, incluso sin lista (precedente `ReportStatusSliceDto`) |
-| `PUT /channel-prices` | `{ channels: [{ channel, priceListId \| null }] }` | Lo mismo que el `GET` |
+| `PUT /channel-prices` | `{ channels: [{ channel, priceListId \| null }] }` | Lo mismo que el `GET`. Un canal que no viene no cambia; sin `If-Match` (gana la última escritura, como el acceso rápido del POS) |
 
 ```
 PriceListWrite   { name, adjustmentPercent, visibility: 'AllActive'|'Categories', categoryIds, exclusions, showPrices? }
@@ -142,10 +160,18 @@ adjustmentPercent }`).
 Todo método de repositorio recibe `tenantId`. La traducción de los índices únicos (`name_taken`) va en Infrastructure, por
 nombre de índice.
 
+## Despliegue
+
+Aditivo: Catalog agrega tres tablas (`AddPriceLists`) y Wholesale sólo suelta una FK y un índice (`MovePriceListsToCatalog`). Un
+pod viejo durante el rollout sigue usando `wholesale.price_lists`, que no se borra; un distribuidor que alguien invite desde un
+pod viejo con una lista vieja queda sin lista en el código nuevo (D-8). No hay clientes usando las listas mayoristas en
+producción (O-5), así que se acepta. Pendiente: la migración de contrato que borra `wholesale.price_lists`.
+
 ## Fuera de alcance (pendiente de decisión)
 
 - **P-1. Agente de IA y copiloto** (`AiAgentSources`, `CopilotDirectoryTools`): ¿con qué canal responden precios? Propuesta:
-  el copiloto con `Quotations` y el agente que habla con clientes con `Store`. Mientras no se decida, siguen con el precio base.
+  el copiloto con `Quotations` y el agente que habla con clientes con `Store`. Mientras no se decida, siguen con el precio base
+  (owner, 2026-11-22: fuera de esta entrega).
 - **P-2. Ver y editar los precios de canal desde la ficha del producto.** En esta entrega se editan desde la lista.
 - **P-3. Reporte de cambios de precio** (`PriceChangeReportSource`): sigue cubriendo sólo el precio base y las escalas.
 - **P-4. Vigencias o temporadas** de una lista (descartado en O-4 para esta entrega).

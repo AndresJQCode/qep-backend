@@ -82,17 +82,6 @@ internal sealed class DistributorRepository(WholesaleDbContext dbContext) : IDis
         return rows.ToDictionary(row => row.Status, row => row.Count);
     }
 
-    // Cualquier estado: una lista con un distribuidor bloqueado tampoco se borra.
-    public async Task<IReadOnlyDictionary<PriceListId, int>> CountByPriceListAsync(Guid tenantId, CancellationToken cancellationToken)
-    {
-        var rows = await dbContext.Distributors.AsNoTracking()
-            .Where(distributor => distributor.TenantId == tenantId)
-            .GroupBy(distributor => distributor.PriceListId)
-            .Select(group => new { PriceListId = group.Key, Count = group.Count() })
-            .ToListAsync(cancellationToken);
-        return rows.ToDictionary(row => row.PriceListId, row => row.Count);
-    }
-
     public void Add(Distributor distributor) => dbContext.Distributors.Add(distributor);
 
     public void Remove(Distributor distributor) => dbContext.Distributors.Remove(distributor);

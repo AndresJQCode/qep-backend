@@ -20,9 +20,7 @@ public static class WholesaleErrorCodes
     public const string RelationshipInactive = "wholesale.relationship.inactive";
 
     // 409
-    public const string PriceListInUse = "wholesale.price_list.in_use";
 
-    public const string PriceListNameTaken = "wholesale.price_list.name_taken";
 
     public const string DistributorIdentificationTaken = "wholesale.distributor.identification_taken";
 
@@ -38,7 +36,6 @@ public static class WholesaleErrorCodes
     public const string InvitationExpired = "wholesale.invitation.expired";
 
     // 422
-    public const string PriceListCategoryNotFound = "wholesale.price_list.category_not_found";
 
     public const string DistributorAdvisorInvalid = "wholesale.distributor.advisor_invalid";
 
@@ -62,18 +59,10 @@ public static class WholesaleErrorCodes
     // 422 de guarda: los invariantes de la lista. El validador de Application los atrapa antes con el campo
     // (validation.failed), así que no forman parte del contrato; existen para que el agregado no confíe en quien lo llama
     // (mismo patrón que suppliers.supplier.name_required).
-    public const string PriceListNameRequired = "wholesale.price_list.name_required";
 
-    public const string PriceListNameTooLong = "wholesale.price_list.name_too_long";
 
-    public const string PriceListDiscountInvalid = "wholesale.price_list.discount_invalid";
 
-    public const string PriceListVisibilityInvalid = "wholesale.price_list.visibility_invalid";
 
-    public const string PriceListCategoriesRequired = "wholesale.price_list.categories_required";
 
-    public const string PriceListCategoriesTooMany = "wholesale.price_list.categories_too_many";
 
-    /// <summary>Spec 2026-11-20: más exclusiones de las que caben en una lista.</summary>
-    public const string PriceListExclusionsTooMany = "wholesale.price_list.exclusions_too_many";
 }

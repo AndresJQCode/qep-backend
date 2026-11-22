@@ -33,7 +33,7 @@ public sealed record InviteDistributorCommand(
 public sealed class InviteDistributorHandler(
     IExecutionContext executionContext,
     IClock clock,
-    IPriceListRepository priceLists,
+    IWholesalePriceLists priceLists,
     IDistributorRepository distributors,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
@@ -129,7 +129,7 @@ public sealed class InviteDistributorHandler(
 internal static class DistributorTerms
 {
     public static async Task EnsureValidAsync(
-        IPriceListRepository priceLists,
+        IWholesalePriceLists priceLists,
         IWholesaleMemberDirectory members,
         IWholesaleCompanyLookup companies,
         Guid tenantId,

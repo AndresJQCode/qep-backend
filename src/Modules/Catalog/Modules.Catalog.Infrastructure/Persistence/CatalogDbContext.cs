@@ -36,6 +36,20 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     internal DbSet<CatalogOutboxMessage> Outbox => Set<CatalogOutboxMessage>();
 
+    /// <summary>Spec 2026-11-22: las listas de precios. Públicos para el lector cruzado de Bootstrapper (Mayorista).</summary>
+    public DbSet<PriceList> PriceLists => Set<PriceList>();
+
+    public DbSet<PriceListOverride> PriceListOverrides => Set<PriceListOverride>();
+
+    public DbSet<ChannelPriceList> ChannelPriceLists => Set<ChannelPriceList>();
+
+    /// <summary>La llave del índice único del nombre de una lista: <c>lower(name)</c>, calculada por la base.</summary>
+    internal const string PriceListNormalizedName = "NormalizedName";
+
+    internal const string PriceListNameIndex = "IX_price_lists_tenant_normalized_name";
+
+    internal const string ChannelPriceListForeignKey = "FK_channel_price_lists_price_lists_price_list_id";
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureProduct(modelBuilder);
@@ -48,7 +62,91 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         ConfigureProductCategory(modelBuilder);
         ConfigurePriceScale(modelBuilder);
         ConfigureProductPriceChange(modelBuilder);
+        ConfigurePriceLists(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
+    }
+
+    // Spec 2026-11-22. Calca el mapeo de wholesale.price_lists (enums como texto de 16, arreglos uuid[], version bigint a mano),
+    // más el ajuste con signo y las dos tablas nuevas.
+    private static void ConfigurePriceLists(ModelBuilder modelBuilder)
+    {
+        const string categoryIds = "_categoryIds";
+        const string excludedCategoryIds = "_excludedCategoryIds";
+        const string excludedProductIds = "_excludedProductIds";
+
+        var list = modelBuilder.Entity<PriceList>();
+        list.ToTable("price_lists", "catalog");
+        list.HasKey(value => value.Id);
+        list.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new PriceListId(value))
+            .ValueGeneratedNever();
+        list.Property(value => value.TenantId).HasColumnName("tenant_id");
+        list.Property(value => value.Name).HasColumnName("name").HasMaxLength(PriceList.NameMaxLength);
+        list.Property<string>(PriceListNormalizedName)
+            .HasColumnName("normalized_name")
+            .HasMaxLength(PriceList.NameMaxLength)
+            .HasComputedColumnSql("lower(name)", stored: true);
+        list.Property(value => value.AdjustmentPercent).HasColumnName("adjustment_percent").HasPrecision(5, 2);
+        list.Property(value => value.Visibility).HasColumnName("visibility").HasConversion<string>().HasMaxLength(16);
+        list.Ignore(value => value.CategoryIds);
+        list.Property<List<Guid>>(categoryIds)
+            .HasField(categoryIds)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("category_ids")
+            .HasColumnType("uuid[]");
+        list.Ignore(value => value.Exclusions);
+        list.Ignore(value => value.ExcludedCategoryIds);
+        list.Ignore(value => value.ExcludedProductIds);
+        list.Property<List<Guid>>(excludedCategoryIds)
+            .HasField(excludedCategoryIds)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("excluded_category_ids")
+            .HasColumnType("uuid[]");
+        list.Property<List<Guid>>(excludedProductIds)
+            .HasField(excludedProductIds)
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .HasColumnName("excluded_product_ids")
+            .HasColumnType("uuid[]");
+        list.Property(value => value.ShowPrices).HasColumnName("show_prices");
+        list.Property(value => value.CreatedAt).HasColumnName("created_at");
+        list.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        list.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        list.HasIndex(nameof(PriceList.TenantId), PriceListNormalizedName).IsUnique().HasDatabaseName(PriceListNameIndex);
+
+        var item = modelBuilder.Entity<PriceListOverride>();
+        item.ToTable("price_list_overrides", "catalog", table =>
+            table.HasCheckConstraint("CK_price_list_overrides_amount_positive", "amount > 0"));
+        item.HasKey(value => new { value.PriceListId, value.VariantId, value.Currency });
+        item.Property(value => value.PriceListId)
+            .HasColumnName("price_list_id")
+            .HasConversion(id => id.Value, value => new PriceListId(value));
+        item.Property(value => value.TenantId).HasColumnName("tenant_id");
+        item.Property(value => value.VariantId)
+            .HasColumnName("variant_id")
+            .HasConversion(id => id.Value, value => new VariantId(value));
+        item.Property(value => value.Currency).HasColumnName("currency").HasColumnType("character(3)");
+        item.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
+        // CASCADE en las dos: borrar la lista o la variante se lleva sus precios fijos, como el historial de precios.
+        item.HasOne<PriceList>().WithMany().HasForeignKey(value => value.PriceListId).OnDelete(DeleteBehavior.Cascade);
+        item.HasOne<ProductVariant>().WithMany().HasForeignKey(value => value.VariantId).OnDelete(DeleteBehavior.Cascade);
+        item.HasIndex(value => value.VariantId).HasDatabaseName("IX_price_list_overrides_variant_id");
+
+        var channel = modelBuilder.Entity<ChannelPriceList>();
+        channel.ToTable("channel_price_lists", "catalog");
+        channel.HasKey(value => new { value.TenantId, value.Channel });
+        channel.Property(value => value.TenantId).HasColumnName("tenant_id");
+        channel.Property(value => value.Channel).HasColumnName("channel").HasConversion<string>().HasMaxLength(16);
+        channel.Property(value => value.PriceListId)
+            .HasColumnName("price_list_id")
+            .HasConversion(id => id.Value, value => new PriceListId(value));
+        // RESTRICT: una lista asignada a un canal no se borra; el handler lo dice antes con 409 y la FK cierra la carrera.
+        channel.HasOne<PriceList>()
+            .WithMany()
+            .HasForeignKey(value => value.PriceListId)
+            .OnDelete(DeleteBehavior.Restrict)
+            .HasConstraintName(ChannelPriceListForeignKey);
+        channel.HasIndex(value => value.PriceListId).HasDatabaseName("IX_channel_price_lists_price_list_id");
     }
 
     private static void ConfigureProduct(ModelBuilder modelBuilder)

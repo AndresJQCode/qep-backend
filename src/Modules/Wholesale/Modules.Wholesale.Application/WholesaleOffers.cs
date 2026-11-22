@@ -1,4 +1,3 @@
-using BuildingBlocks.Domain.Pricing;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Wholesale.Domain;
@@ -24,7 +23,11 @@ public sealed record WholesaleTerms(
     string PriceListName,
     IReadOnlyCollection<Guid> HiddenCategoryIds,
     IReadOnlyCollection<Guid> HiddenProductIds,
-    bool ShowPrices = true);
+    bool ShowPrices = true)
+{
+    /// <summary>Spec 2026-11-22: la lista de Catalog con la que se precia; la usa <see cref="IWholesalePriceLists.PriceAsync"/>.</summary>
+    internal WholesalePriceList? List { get; init; }
+}
 
 /// <summary>Una variante con su precio de lista para el distribuidor (IVA incluido, con el redondeo del mayorista).</summary>
 public sealed record WholesaleOffer(
@@ -65,9 +68,8 @@ public sealed record WholesaleOfferPage(
 /// </summary>
 public sealed class WholesaleOffers(
     IDistributorRepository distributors,
-    IPriceListRepository priceLists,
+    IWholesalePriceLists priceLists,
     ITenantDefaultCurrency defaultCurrency,
-    ITenantPriceRounding priceRounding,
     IWholesaleCatalogReader catalog,
     ITenantDirectory tenantDirectory,
     ITenantModules tenantModules)
@@ -90,7 +92,9 @@ public sealed class WholesaleOffers(
             throw WholesaleConflicts.RelationshipInactive();
         }
 
-        // Una lista en uso no se puede borrar (wholesale.price_list.in_use); si aun así falta, no hay precio que mostrar.
+        // Spec 2026-11-22 (D-8): la lista vive en Catalog sin FK desde acá. Una en uso no se puede borrar
+        // (catalog.price_list.in_use); si aun así falta —o el distribuidor viene de antes de la unificación—, no hay precio que
+        // mostrar: el mismo 403 de siempre hasta que alguien le asigne una.
         var list = await priceLists.GetAsync(wholesalerTenantId, distributor.PriceListId, cancellationToken)
             ?? throw WholesaleConflicts.RelationshipInactive();
         var currency = await defaultCurrency.GetAsync(wholesalerTenantId, cancellationToken);
@@ -101,12 +105,15 @@ public sealed class WholesaleOffers(
             distributor.AdvisorMemberId,
             distributor.BillingCompanyId,
             currency,
-            list.DiscountPercent,
-            list.Visibility == PriceListVisibility.AllActive ? null : list.CategoryIds.ToArray(),
+            DiscountOf(list.AdjustmentPercent),
+            list.VisibleCategoryIds,
             list.Name,
-            list.ExcludedCategoryIds.ToArray(),
-            list.ExcludedProductIds.ToArray(),
-            list.ShowPrices);
+            list.HiddenCategoryIds,
+            list.HiddenProductIds,
+            list.ShowPrices)
+        {
+            List = list,
+        };
     }
 
     /// <summary>
@@ -146,16 +153,16 @@ public sealed class WholesaleOffers(
             categoryIds = [chosen];
         }
 
-        var rounding = await priceRounding.GetAsync(wholesalerTenantId, terms.Currency, cancellationToken);
         var (items, total) = await catalog.SearchSellableAsync(
             wholesalerTenantId, terms.Currency, categoryIds, terms.HiddenCategoryIds, terms.HiddenProductIds, search, page, pageSize,
             cancellationToken);
+        var prices = await PricesAsync(wholesalerTenantId, terms.List!, terms.Currency, items, cancellationToken);
 
         return new WholesaleOfferPage(
             terms.Currency,
             terms.PriceListName,
             terms.DiscountPercent,
-            items.Select(item => OfferOf(item, terms.DiscountPercent, rounding)).ToList(),
+            items.Select(item => OfferOf(item, terms.List!, prices)).ToList(),
             total,
             terms.ShowPrices);
     }
@@ -207,8 +214,8 @@ public sealed class WholesaleOffers(
         CancellationToken cancellationToken)
     {
         var terms = await ResolveTermsAsync(wholesalerTenantId, buyerTenantId, cancellationToken);
-        var rounding = await priceRounding.GetAsync(wholesalerTenantId, terms.Currency, cancellationToken);
         var found = await catalog.FindSellableAsync(wholesalerTenantId, terms.Currency, variantIds, cancellationToken);
+        var prices = await PricesAsync(wholesalerTenantId, terms.List!, terms.Currency, found.Values, cancellationToken);
         var visible = terms.VisibleCategoryIds?.ToHashSet();
         var hiddenCategories = terms.HiddenCategoryIds.ToHashSet();
         var hiddenProducts = terms.HiddenProductIds.ToHashSet();
@@ -233,7 +240,7 @@ public sealed class WholesaleOffers(
                 throw NotVisible(item.Code);
             }
 
-            offers[id] = OfferOf(item, terms.DiscountPercent, rounding);
+            offers[id] = OfferOf(item, terms.List!, prices);
         }
 
         return (terms, offers);
@@ -281,26 +288,75 @@ public sealed class WholesaleOffers(
             return new WholesaleOrderOffers(new Dictionary<Guid, WholesaleOffer>(), list.ShowPrices);
         }
 
-        var rounding = await priceRounding.GetAsync(wholesalerTenantId, currency, cancellationToken);
         var found = await catalog.FindSellableAsync(wholesalerTenantId, currency, variantIds, cancellationToken);
+        var prices = await PricesAsync(wholesalerTenantId, list, currency, found.Values, cancellationToken);
         return new WholesaleOrderOffers(
-            found.ToDictionary(pair => pair.Key, pair => OfferOf(pair.Value, list.DiscountPercent, rounding)),
+            found.ToDictionary(pair => pair.Key, pair => OfferOf(pair.Value, list, prices)),
             list.ShowPrices);
     }
 
+    /// <summary>
+    /// Spec 2026-11-22: el descuento que pinta «base y descuento» es el ajuste con el signo al revés (un recargo es un descuento
+    /// negativo). La columna de la orden de compra es <c>numeric(5,2)</c>, así que se acota a lo que cabe.
+    /// </summary>
+    internal static decimal DiscountOf(decimal adjustmentPercent) => Math.Clamp(-adjustmentPercent, MinDiscount, MaxDiscount);
+
+    private const decimal MinDiscount = -999.99m;
+
+    private const decimal MaxDiscount = 100m;
+
+    private Task<IReadOnlyDictionary<Guid, WholesaleListedPrice>> PricesAsync(
+        Guid wholesalerTenantId,
+        WholesalePriceList list,
+        string currency,
+        IEnumerable<WholesaleSellableVariant> items,
+        CancellationToken cancellationToken) =>
+        priceLists.PriceAsync(
+            wholesalerTenantId,
+            list,
+            currency,
+            items.GroupBy(item => item.VariantId).ToDictionary(group => group.Key, group => group.First().BasePrice),
+            cancellationToken);
+
+    /// <summary>
+    /// Con precio fijo, el descuento se deriva del base y el fijo (dos decimales, acotado como <see cref="DiscountOf"/>); si no
+    /// cabe, la línea se pinta sin descuento y con el fijo como base, para que «base y descuento» siempre cierre.
+    /// </summary>
     private static WholesaleOffer OfferOf(
-        WholesaleSellableVariant item, decimal discountPercent, PriceRounding rounding) =>
-        new(
+        WholesaleSellableVariant item, WholesalePriceList list, IReadOnlyDictionary<Guid, WholesaleListedPrice> prices)
+    {
+        var listed = prices.TryGetValue(item.VariantId, out var found) ? found : new WholesaleListedPrice(item.BasePrice, true);
+        var basePrice = item.BasePrice;
+        decimal discount;
+        if (!listed.IsFixed)
+        {
+            discount = DiscountOf(list.AdjustmentPercent);
+        }
+        else
+        {
+            var derived = basePrice == 0m ? 0m : Math.Round((1 - (listed.Price / basePrice)) * 100m, 2, MidpointRounding.AwayFromZero);
+            if (derived is < MinDiscount or > MaxDiscount)
+            {
+                (basePrice, discount) = (listed.Price, 0m);
+            }
+            else
+            {
+                discount = derived;
+            }
+        }
+
+        return new(
             item.VariantId,
             item.Code,
             item.Name,
-            item.BasePrice,
-            discountPercent,
-            WholesalePricing.ListPrice(item.BasePrice, discountPercent, rounding),
+            basePrice,
+            discount,
+            listed.Price,
             item.TaxRatePercent,
             item.ProductId,
             item.ProductName,
             item.ImageUrl);
+    }
 
     private static WholesaleDomainException NotVisible(string? code) => new(
         WholesaleErrorCodes.ProductNotVisible,

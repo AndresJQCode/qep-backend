@@ -93,3 +93,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   inbox: el archivo de Storage no se deshace con ella y un reintento dejaría archivos `Available` sin dueño. Una falla de la foto
   se registra y el producto queda sin imagen; no frena la confirmación ni se reintenta. **El adaptador no tiene prueba automática**
   (necesita Catalog y Storage reales): se verifica a mano aprobando una orden con un producto del mayorista que tenga foto.
+- **La lista de un distribuidor es una lista de Catalog** (spec 2026-11-22). `distributors.price_list_id` guarda el id de
+  `catalog.price_lists`, sin FK (otro esquema), y Mayorista la lee por `IWholesalePriceLists` (`WholesalePriceLists` en
+  Bootstrapper), que precia con el mismo `IPriceListPricing` de los canales. `WholesalePermissions.PriceListManage` es el literal
+  `catalog.price_list.manage` repetido porque Mayorista no ve Catalog: la definición y la política son las de Catalog, y
+  `ThePriceListPermissionIsCatalogsAndGoesToAdminOnly` los amarra. Las rutas de vista previa, categorías y productos piden además
+  `wholesale.distributor.read`, que es lo que las cierra con el módulo apagado. `wholesale.price_lists` queda sin uso hasta su
+  migración de contrato.

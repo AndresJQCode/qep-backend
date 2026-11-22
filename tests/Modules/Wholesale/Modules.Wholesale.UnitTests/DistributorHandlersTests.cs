@@ -103,7 +103,7 @@ public sealed class DistributorHandlersTests
     public async Task UpdateRepeatsTheThreeChecksAndAudits()
     {
         var distributor = _world.SeedActive();
-        var otherList = _world.PriceLists.Seed(PriceList.Create(_world.Tenant, "Detal", 5m, PriceListVisibility.AllActive, [], DistributorWorld.Now));
+        var otherList = _world.PriceLists.Seed(_world.Tenant, "Detal", -5m);
         var otherAdvisor = _world.Members.AddActive("Luis");
         var nif = _world.Companies.Add("Extranjera", "NIF");
 
@@ -230,7 +230,7 @@ public sealed class DistributorHandlersTests
     [Fact]
     public async Task OptionsBringListsAdvisorsAndActiveCompaniesByName()
     {
-        _world.PriceLists.Seed(PriceList.Create(_world.Tenant, "Alfa", 5m, PriceListVisibility.AllActive, [], DistributorWorld.Now));
+        _world.PriceLists.Seed(_world.Tenant, "Alfa", -5m);
         _world.Members.AddActive("Beto");
         _world.Companies.Add("Extranjera", "NIF");
         _world.Companies.Add("Inactiva", "NIT", isActive: false);

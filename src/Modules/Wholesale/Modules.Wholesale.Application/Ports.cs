@@ -3,35 +3,41 @@ using Modules.Wholesale.Domain;
 namespace Modules.Wholesale.Application;
 
 /// <summary>
-/// Las listas de precios del módulo. Toda lectura va acotada al tenant; <see cref="Add"/> y <see cref="Remove"/> no lo reciben
-/// porque el agregado ya lo lleva.
+/// Spec 2026-11-22 (listas de precios por canal, D-7/D-11): la lista de un distribuidor vive en Catalog y Mayorista la lee por
+/// este puerto (lo implementa Bootstrapper). <see cref="VisibleCategoryIds"/> <c>null</c> es «todo el catálogo activo»; si no,
+/// las categorías de la lista (sus descendientes también se ven).
 /// </summary>
-public interface IPriceListRepository
+public sealed record WholesalePriceList(
+    PriceListId Id,
+    string Name,
+    decimal AdjustmentPercent,
+    IReadOnlyCollection<Guid>? VisibleCategoryIds,
+    IReadOnlyCollection<Guid> HiddenCategoryIds,
+    IReadOnlyCollection<Guid> HiddenProductIds,
+    bool ShowPrices);
+
+/// <summary>El precio de una variante con la lista, y si salió de un precio fijo (D-2) o del ajuste.</summary>
+public readonly record struct WholesaleListedPrice(decimal Price, bool IsFixed);
+
+/// <summary>Las listas de precios de Catalog vistas desde Mayorista. Toda lectura va acotada al tenant.</summary>
+public interface IWholesalePriceLists
 {
-    /// <summary>La lista, o <c>null</c> si no es del tenant.</summary>
-    Task<PriceList?> GetAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken);
+    /// <summary>La lista, o <c>null</c> si no es del tenant o ya no existe.</summary>
+    Task<WholesalePriceList?> GetAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken);
 
-    /// <summary>Todas las del tenant (sin paginar, D-12); el orden lo pone el handler.</summary>
-    Task<IReadOnlyList<PriceList>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+    /// <summary>Todas las del tenant; el orden lo pone quien llama.</summary>
+    Task<IReadOnlyList<WholesalePriceList>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 
-    /// <summary>En lote: los ids que no son del tenant no vienen.</summary>
-    Task<IReadOnlyDictionary<PriceListId, PriceList>> FindManyAsync(
-        Guid tenantId, IReadOnlyCollection<PriceListId> ids, CancellationToken cancellationToken);
-
-    /// <summary>Si otra lista del tenant (distinta de <paramref name="except"/>) tiene ese nombre sin importar mayúsculas
-    /// (D-12). El índice único de la base es la red de una carrera.</summary>
-    Task<bool> NameExistsAsync(Guid tenantId, string name, PriceListId? except, CancellationToken cancellationToken);
-
-    void Add(PriceList list);
-
-    void Remove(PriceList list);
-}
-
-/// <summary>Cuántos distribuidores usan cada lista, en cualquier estado. Lo implementa el repositorio de distribuidores; una
-/// lista sin distribuidores no viene.</summary>
-public interface IDistributorUsage
-{
-    Task<IReadOnlyDictionary<PriceListId, int>> CountByPriceListAsync(Guid tenantId, CancellationToken cancellationToken);
+    /// <summary>
+    /// El precio de cada variante con la lista en <paramref name="currency"/>, a partir de su precio base (D-2: precio fijo o base
+    /// con el ajuste y la regla de redondeo del tenant para esa moneda).
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, WholesaleListedPrice>> PriceAsync(
+        Guid tenantId,
+        WholesalePriceList list,
+        string currency,
+        IReadOnlyDictionary<Guid, decimal> basePrices,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>Una categoría del catálogo del mayorista con su nombre.</summary>
@@ -161,7 +167,7 @@ public interface IWholesaleAuditPublisher
 /// Los distribuidores del mayorista. Toda lectura va acotada al tenant salvo <see cref="FindByTokenHashAsync"/>: el hash es la
 /// llave y quien abre el link no tiene tenant.
 /// </summary>
-public interface IDistributorRepository : IDistributorUsage
+public interface IDistributorRepository
 {
     Task<Distributor?> GetAsync(Guid tenantId, DistributorId id, CancellationToken cancellationToken);
 

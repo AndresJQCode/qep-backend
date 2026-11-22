@@ -65,7 +65,7 @@ public sealed class AddOrderGiftHandler(
         var previousNetTotal = order.NetTotal;
 
         var products = await QuotationProductPricingResolver.FindVariantsAsync(
-            pricingLookup, command.TenantId, [command.VariantId], cancellationToken);
+            pricingLookup, command.TenantId, [command.VariantId], cancellationToken, QuotationPriceChannels.For(order.Source));
         var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
             costLookup, command.TenantId, order, [command.VariantId], cancellationToken);
         // Un pedido mayorista no llega acá con un regalo: Order.AddGift lo rechaza.

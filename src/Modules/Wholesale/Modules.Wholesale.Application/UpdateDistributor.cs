@@ -26,7 +26,7 @@ public sealed record UpdateDistributorCommand(
 public sealed class UpdateDistributorHandler(
     IExecutionContext executionContext,
     IClock clock,
-    IPriceListRepository priceLists,
+    IWholesalePriceLists priceLists,
     IDistributorRepository distributors,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
