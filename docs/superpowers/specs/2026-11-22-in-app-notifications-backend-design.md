@@ -1,7 +1,7 @@
 # Notificaciones en la app (campana) y alertas en vivo — backend
 
 Fecha: 2026-11-22 · Repo: `qep-backend` · Rama: `feature/in-app-notifications` (worktree `qep-backend-worktrees/in-app-notifications`) ·
-Estado: **diseño, pendiente de aprobación del owner**. El spec del frontend es
+Estado: **aprobado por el owner e implementado en `feature/in-app-notifications`** (decisiones del owner registradas en D-12, D-14, §8.6 y §14). El spec del frontend es
 `qep-frontend/docs/superpowers/specs/2026-11-22-in-app-notifications-frontend-design.md` y **lee su contrato de este documento**
 (§8 y §9): este spec manda.
 
@@ -398,7 +398,7 @@ como está (no se usa; quitarlo es otro cambio).
 traduce con `IMembershipDirectory.FindActiveMembershipIdAsync(subjectId, tenantId)`; sin membresía activa, el mensaje se procesa sin
 entrada.
 
-**D-6 (decisión de diseño)** Los consumidores de la campana sólo toman eventos con `occurred_at >= now − 24 h` (`InAppMaxEventAge`).
+**D-6 (decisión de diseño)** Los consumidores de la campana sólo toman eventos con `occurred_at >= now − 24 h` (`InAppOutboxConsumer.MaxEventAge`).
 Sin esto, el primer despliegue llenaría la campana con el histórico del outbox (todos los pedidos creados). Lo más viejo nunca se
 reclama: no cuesta ni una fila de inbox.
 
@@ -460,9 +460,9 @@ public interface IBusinessHoursProvider
     /// <summary>scheduleId null o inexistente → el predeterminado; sin horarios → siempre abierto.</summary>
     Task<bool> IsOpenAsync(Guid tenantId, Guid? scheduleId, DateTimeOffset instant, CancellationToken cancellationToken);
 
-    /// <summary>Misma resolución; sin horarios, segundos corridos.</summary>
+    /// <summary>Misma resolución; sin horarios, segundos corridos. Los extremos se llaman <c>fromInstant</c>/<c>toInstant</c> porque CA1716 reserva <c>to</c> como nombre de parámetro de una interfaz.</summary>
     Task<BusinessHoursSpan> ElapsedBusinessSecondsAsync(
-        Guid tenantId, Guid? scheduleId, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken);
+        Guid tenantId, Guid? scheduleId, DateTimeOffset fromInstant, DateTimeOffset toInstant, CancellationToken cancellationToken);
 }
 ```
 
@@ -490,7 +490,7 @@ pone al **entrar** en esa situación (alta sin responsable; `Assign(null)` en un
 sin responsable, lo que incluye `ReopenIfWaiting`) y lo borra al asignarse o al pasar a `WaitingOnCustomer`, `Resolved` o `Closed`. Un
 cambio entre dos estados que cuentan no lo toca. Migración: tickets sin responsable en un estado que cuenta arrancan en la hora de la
 migración (sin avalancha); los demás quedan en `null`. El worker además **sana** tickets sin responsable, en un estado que cuenta y con
-`unassigned_since` nulo (escritos por un pod viejo durante el rollout) con un `UPDATE` que no toca `version`.
+`unassigned_since` nulo (escritos por un pod viejo durante el rollout) con un `UPDATE` que no toca `version`; y **limpia** `unassigned_since` en los tickets que SÍ tienen responsable (un pod viejo asignó sin borrarlo), para que una desasignación posterior de un pod viejo no herede un tramo ajeno (un aviso inmediato, o uno que nunca llega).
 
 **D-16 (decisión de diseño)** `support.unassigned_alerts (ticket_id, unassigned_since)` como reclamo del aviso: `INSERT … ON CONFLICT DO
 NOTHING` y el outbox en la **misma** transacción. No se toca la fila del ticket, así que el aviso nunca le da un 412 a quien lo edita.

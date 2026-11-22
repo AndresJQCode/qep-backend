@@ -207,6 +207,28 @@ public sealed class UnassignedAlertWorkerTests : IAsyncLifetime
         Assert.Equal(0, await EventCountAsync(ticket));
     }
 
+    // Rollout: a pod from before the change assigned the ticket without clearing the column. If an old pod unassigned it later, the stale
+    // value would survive, so the heal clears the marker of every assigned ticket.
+    [Fact]
+    public async Task AStaleUnassignedSinceOnAnAssignedTicketIsClearedWithoutBumpingTheVersion()
+    {
+        var (tenant, _) = await ArmedTenantAsync(hours: 4, schedule: null);
+        var ticket = await UnassignedTicketAsync(tenant, T0);
+        await UpdateTicketAsync(Factory, tenant, ticket.Id, value => value.Assign(Guid.CreateVersion7(), Guid.CreateVersion7(), T0.AddHours(1)));
+        await ExecuteAsync(
+            Factory, "UPDATE support.tickets SET unassigned_since = @since WHERE id = @id",
+            ("since", T0.UtcDateTime), ("id", ticket.Id.Value));
+        var before = await FindTicketAsync(Factory, tenant, ticket.Id);
+
+        await RunAsync(T0.AddHours(6));
+
+        var after = await FindTicketAsync(Factory, tenant, ticket.Id);
+        Assert.Null(after.UnassignedSince);
+        Assert.Equal(before.Version, after.Version);
+        Assert.Equal(before.UpdatedAt, after.UpdatedAt);
+        Assert.Equal(0, await EventCountAsync(ticket));
+    }
+
     [Fact]
     public async Task ADisabledTenantIsSkipped()
     {

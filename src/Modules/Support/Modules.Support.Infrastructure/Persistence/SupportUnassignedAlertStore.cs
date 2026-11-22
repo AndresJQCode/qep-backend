@@ -19,12 +19,15 @@ internal sealed class SupportUnassignedAlertStore(SupportDbContext dbContext)
             .ToListAsync(cancellationToken);
 
     /// <summary>
-    /// D-15: tickets without an assignee, in a status that counts and with a null <c>unassigned_since</c> (written by a pod from before this
-    /// change during the rollout) get it stamped with <paramref name="now"/>. A plain <c>UPDATE</c> that does not touch <c>version</c> nor
-    /// <c>updated_at</c>: it is bookkeeping, not an edit. Returns how many it healed.
+    /// D-15: the markers a pod from before this change left wrong during the rollout. Tickets without an assignee, in a status that counts and
+    /// with a null <c>unassigned_since</c> get it stamped with <paramref name="now"/>; tickets that ARE assigned but still carry a marker (an
+    /// old pod assigned them without clearing it) get it cleared, so a later unassignment by an old pod cannot inherit a stale stretch (an
+    /// immediate alert, or one that never comes). Plain <c>UPDATE</c>s that do not touch <c>version</c> nor <c>updated_at</c>: it is
+    /// bookkeeping, not an edit. Returns how many rows it fixed.
     /// </summary>
-    public Task<int> HealAsync(Guid tenantId, DateTimeOffset now, CancellationToken cancellationToken) =>
-        dbContext.Database.ExecuteSqlAsync(
+    public async Task<int> HealAsync(Guid tenantId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var stamped = await dbContext.Database.ExecuteSqlAsync(
             $"""
             UPDATE support.tickets
             SET unassigned_since = {now.ToUniversalTime()}
@@ -34,6 +37,17 @@ internal sealed class SupportUnassignedAlertStore(SupportDbContext dbContext)
               AND unassigned_since IS NULL
             """,
             cancellationToken);
+        var cleared = await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE support.tickets
+            SET unassigned_since = NULL
+            WHERE tenant_id = {tenantId}
+              AND assignee_member_id IS NOT NULL
+              AND unassigned_since IS NOT NULL
+            """,
+            cancellationToken);
+        return stamped + cleared;
+    }
 
     /// <summary>
     /// The oldest unassigned tickets of the tenant that have no claim for their current stretch and have been at it, on the wall clock, for
