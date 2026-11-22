@@ -195,6 +195,18 @@ Decisiones del owner posteriores a la Tarea 8:
   transacción (los ids están en `uuid[]` sin llave foránea; el filtro es en memoria). La franja que se queda sin recursos o sin servicios se
   archiva con ellos. Cada franja tocada deja `block.updated` y, si se archivó, `block.archived`. `resource.has_future_appointments` y
   `service.in_use` siguen bloqueando antes.
+- **PD-5** (2026-11-22) la auditoría de editar una franja y de reactivar una sesión lista los campos que **de verdad cambiaron**
+  (`BlockChanges.Between`; la reactivación sólo `endsAt`/`capacity`), no una lista fija.
+- **PD-6** (2026-11-22) D-11 se mantiene: una cita en **cualquier** estado, canceladas incluidas, bloquea borrar al cliente (422). Para
+  limpiar duplicados está la fusión de la Tarea 11, que mueve las citas.
+- **PD-7** (2026-11-22) el recordatorio de WhatsApp (Tarea 12) no exige consentimiento explícito: quien da su teléfono para la cita acepta el
+  recordatorio de esa cita. Se **omite** si el último consentimiento del cliente (`customers.data_consents`, última fila por
+  `(occurred_at, sequence)`) es `Revoked`, o si tiene `MarketingOptOut`; el motivo queda en el registro del envío. **No hay baja automática
+  por texto libre** (decisión P1 del owner, 2026-10-12: una palabra escrita no es consentimiento): quien responde para parar los
+  recordatorios lo atiende un asesor en la bandeja. Pendiente de verificar en la Tarea 12: cómo se trata `Revoked` + `Medium = Other`, que
+  no lleva identidad de canal.
+- **Frontend** (2026-11-22): «Agenda» va en el grupo de ventas y atención del menú, junto a Pedidos, Cotizaciones, Embudo y Soporte. Este plan
+  es sólo backend.
 
 ---
 
