@@ -78,6 +78,7 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.DefaultCurrency).HasColumnName("default_currency").HasMaxLength(3).IsRequired();
         tenant.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(10).IsRequired();
         tenant.Property(value => value.Country).HasColumnName("country").HasMaxLength(2).IsRequired();
+        tenant.Property(value => value.Language).HasColumnName("language").HasMaxLength(10).IsRequired();
         tenant.Property(value => value.PersonTypeRequirement)
             .HasColumnName("person_type_requirement")
             .HasMaxLength(20)

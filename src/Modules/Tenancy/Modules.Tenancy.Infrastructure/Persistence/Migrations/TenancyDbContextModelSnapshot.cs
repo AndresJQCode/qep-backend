@@ -218,6 +218,12 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("display_name");
 
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("language");
+
                     b.Property<Guid?>("LogoFileId")
                         .HasColumnType("uuid")
                         .HasColumnName("logo_file_id");

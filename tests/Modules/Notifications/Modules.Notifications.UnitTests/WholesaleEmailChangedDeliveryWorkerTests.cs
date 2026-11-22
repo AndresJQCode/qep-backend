@@ -121,7 +121,7 @@ public sealed class WholesaleEmailChangedDeliveryWorkerTests
         worker.DeliverEmailAsync(Record(), Context(), Ct);
 
     private DeliveryContext Context() =>
-        new(_channel, null!, _tenants, null!, new FixedClock(Now), null!);
+        new(_channel, null!, _tenants, null!, new FixedClock(Now), null!, null!);
 
     private static OutboxRecord Record(string? previous = Previous, string? token = null)
     {

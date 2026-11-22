@@ -49,3 +49,10 @@ tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false
   `ApiScopeDefinition` en DI (la constante vive en el módulo dueño) y sus rutas cuelgan del grupo de `ExternalApiEndpoints`, que fija
   el esquema `ApiKey`; una ruta externa fuera de ese grupo no recibe ese esquema. Los `code` `external.*` son contrato público con
   los integradores: no se renombran.
+- **El idioma (`es-419`/`es-ES`) se resuelve en un solo lugar: `SupportedLanguages.Effective(elegido, delTenant)`** (spec
+  2026-11-22, i18n). Lo usan `/auth/preferences`, `/auth/me` y los correos (`OutboxDeliveryWorker.ResolveLanguageAsync`); un camino
+  nuevo que arme la regla a mano puede decir en el correo otro idioma que en la pantalla, sin error. El idioma **no** es el formato
+  regional: no lo derives de `DefaultCulture` (`es-CO`) ni cambies separadores con él. La preferencia guarda `null` («el del
+  tenant»), nunca una copia del idioma del tenant. El glosario de España en los correos («presupuesto», «número de caso»;
+  `QuotationsExportKindText`, `SupportOpeningEmailTemplate`) tiene que coincidir con el diccionario `es-ES` del frontend: si cambia
+  uno, cambian los dos.
