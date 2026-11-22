@@ -65,6 +65,7 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
         Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         await dbContext.Tickets
             .Where(ticket => ticket.TenantId == tenantId
+                && !ticket.IsInternal
                 && ticket.ConversationId == conversationId
                 && ticket.Status != SupportTicketStatus.Closed)
             .OrderBy(ticket => ticket.ReceivedAt)
@@ -79,6 +80,7 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
         return await dbContext.Tickets
             .AsNoTracking()
             .Where(ticket => ticket.TenantId == tenantId
+                && !ticket.IsInternal
                 && (ticket.ConversationId == conversationId || (hasCustomer && ticket.CustomerId == customer)))
             .OrderByDescending(ticket => ticket.ReceivedAt)
             .ThenByDescending(ticket => ticket.Id)

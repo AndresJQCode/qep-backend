@@ -593,4 +593,29 @@ public sealed class SupportPublicLookupApiTests(SupportPublicHost host) : IClass
             .ToDictionary(property => property.Name, property => property.Value.ToString()));
 
     private sealed record Rig(QepApiFactory Factory, Guid TenantId, string Slug, Guid TypeId, Guid CityId, HttpClient Client);
+
+    // Spec 2026-11-22 §5.3: el número de una tarea responde como uno que no existe: mismo status y mismo cuerpo, con cualquier PIN.
+    [Fact]
+    public async Task TheConsultOfATaskNumberAnswersLikeAnUnknownNumber()
+    {
+        var rig = await RigAsync();
+        var filed = await FileNamedAsync(rig);
+        var task = await SupportTicketSeed.SaveInternalTicketAsync(rig.Factory, rig.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7());
+
+        var responses = new[]
+        {
+            await LookupAsync(rig, task.DisplayNumber, filed.Pin, NextIp()),
+            await LookupAsync(rig, "SOP-999999", filed.Pin, NextIp()),
+        };
+
+        var bodies = new List<string>();
+        foreach (var response in responses)
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal("support.public.lookup_failed", await CodeOfAsync(response));
+            bodies.Add(WithoutTraceId(await JsonAsync(response)));
+        }
+
+        Assert.Single(bodies.Distinct(StringComparer.Ordinal));
+    }
 }

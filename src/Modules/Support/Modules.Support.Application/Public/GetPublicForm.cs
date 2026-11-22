@@ -36,7 +36,7 @@ public sealed class GetPublicFormHandler(
         var legal = await SupportServedLegal.ReadAsync(
             legalDocuments, sanitizer, tenant.TenantId, tenant.Name, organization, logger, cancellationToken);
         var types = (await ticketTypes.ListAsync(tenant.TenantId, cancellationToken))
-            .Where(type => type.IsActive && type.IsPublished)
+            .Where(type => type is { IsActive: true, IsPublished: true, IsInternal: false })
             .OrderBy(type => type.Position)
             .Select(type => new SupportPublicTypeDto(type.Id.Value, type.Name, type.TermBusinessDays))
             .ToList();

@@ -129,4 +129,27 @@ public sealed class SupportReportsApiTests(ClockedSupportHost host) : IClassFixt
         Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
         return await JsonAsync(response);
     }
+
+    // Spec 2026-11-22 §5.3: una tarea resuelta en el rango no mueve ningún total ni aparece «Tarea interna» en el desglose por tipo.
+    [Fact]
+    public async Task TheReportIgnoresTasks()
+    {
+        var factory = await host.StartTestAsync();
+        var scenario = await StartAsync(factory);
+        var before = await ReportAsync(scenario.Client, scenario.Tenant, "2026-11-13", "2026-11-13");
+        var task = await SupportTicketSeed.SaveInternalTicketAsync(
+            factory, scenario.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), null, ClockedSupportHost.Reception);
+        await SupportTicketSeed.UpdateTicketAsync(
+            factory, scenario.TenantId, task.Id,
+            ticket => ticket.ChangeStatus(
+                Modules.Support.Domain.SupportTicketStatus.Resolved, Guid.CreateVersion7(), ClockedSupportHost.Reception, SupportTicketSeed.Clock));
+
+        var after = await ReportAsync(scenario.Client, scenario.Tenant, "2026-11-13", "2026-11-13");
+
+        Assert.Equal(before.GetProperty("received").GetInt32(), after.GetProperty("received").GetInt32());
+        Assert.Equal(
+            before.GetProperty("byStatus").GetRawText(), after.GetProperty("byStatus").GetRawText());
+        Assert.DoesNotContain(
+            after.GetProperty("byType").EnumerateArray(), row => row.GetProperty("typeName").GetString() == "Tarea interna");
+    }
 }
