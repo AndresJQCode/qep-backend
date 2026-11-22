@@ -40,7 +40,7 @@ Casos que el spec implica y ninguna tarea nombra aparte; cada uno tiene su prueb
 2. Cliente del pedido sin teléfono → 422 `invoice.whatsapp.no_phone` **antes** de pedir el PDF a Siigo (Task 8).
 3. Canal de Zenvia sin `invoiceTemplateId` no figura como disponible para facturas; uno de Meta sin fila `Invoice` aprobada tampoco (Tasks 4 y 6).
 4. Bucket público sin configurar y canal Zenvia → el envío **falla** y no cae a URL firmada ni a ningún otro camino (Task 7).
-5. Por Meta nunca se escribe en el almacenamiento (ni privado ni público): el PDF sólo viaja en memoria (Task 8).
+5. Por Meta Quotations no publica ninguna copia: el PDF viaja en memoria y Mensajería deja una copia privada del adjunto en el hilo (por tenant, como en cotizaciones y pedidos); no hay copia pública (Task 8).
 6. La clave pública de Zenvia no contiene el id del pedido, ni el número ni el id de la factura, ni el id del tenant (Task 7).
 7. Doble clic: dos envíos son dos mensajes; no hay deduplicación (decisión: lo pide una persona, y cada envío deja su auditoría) (Task 9).
 
@@ -222,7 +222,7 @@ Referencia viva: el commit `028aa4906` (plantilla de pedido). Cada archivo nuevo
 - [ ] **Step 2: RED** (compilación). **Step 3: implementar** lo de *Produces* (incluida la extracción de `LoadPdfAsync`; las pruebas existentes de `GetSiigoInvoicePdf` siguen verdes).
 - [ ] **Step 4: pruebas de integración que fallan** (`SiigoInvoiceWhatsAppApiTests`, con `FakeSiigoApi` y los senders grabadores): `PostSendsTheInvoicePdfByMetaAndReturns204`, `PostByZenviaPublishesOneCopyUnderInvoices`, `ARoleWithoutInvoiceIssueGets403`, `AnotherTenantsInvoiceGets403Not404`, `NoChannelReturns422InvoiceWhatsappNoChannel`, `ACustomerWithoutPhoneReturns422NoPhone`, `TheInvoiceListCarriesCanSendWhatsApp`, y en `SiigoNoLeakTests`: tras un envío exitoso y uno fallido, ni el PDF, ni la URL pública, ni el teléfono aparecen en logs, `siigo.call_failures` ni la respuesta. Correr cada una filtrada por nombre y ver el RED real (404 de ruta o fallo de aserción).
 - [ ] **Step 5: GREEN** filtrado (`SendSiigoInvoiceWhatsApp`, `SiigoInvoiceWhatsAppApiTests`, `SiigoNoLeakTests`), revisando `testhost` antes de cada corrida de integración. Después la clase completa `SiigoInvoiceApiTests` (regresión de la lista).
-- [ ] **Step 6: documentación.** README y `.claude/rules/siigo.md` (regla: el PDF de factura nunca se persiste; la copia pública de Zenvia vive en `invoices/` con lifecycle de 1 día **creado a mano** con `npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1`; el envío es por Quotations y por eso `WhatsAppChannelSelection` no se reimplementa), y corregir el spec (códigos `invoice.whatsapp.*`, fachada en Quotations).
+- [ ] **Step 6: documentación.** README y `.claude/rules/siigo.md` (regla: Siigo nunca guarda el PDF de factura; la copia pública de Zenvia vive en `invoices/` con lifecycle de 1 día **creado a mano** con `npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1`; el envío es por Quotations y por eso `WhatsAppChannelSelection` no se reimplementa), y corregir el spec (códigos `invoice.whatsapp.*`, fachada en Quotations).
 - [ ] **Step 7: commit** `feat(siigo): send the invoice PDF to the customer by WhatsApp`.
 
 **Cierre del bloque C y de la rama:**

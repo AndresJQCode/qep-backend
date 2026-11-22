@@ -54,7 +54,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   primero). Sólo lo tiene una fila con id de Siigo y `Created`, `Stamped` o `StampRejected` (`SiigoInvoice.HasPdf`, que viaja como `hasPdf`);
   una resuelta a mano no tiene id y no se puede pedir.
 
-- **El PDF de una factura nunca se persiste ni se loguea, y enviarla por WhatsApp es de Quotations** (spec 2026-11-21).
+- **Siigo nunca guarda el PDF de una factura ni lo loguea, y enviarla por WhatsApp es de Quotations** (spec 2026-11-21).
   `POST …/siigo-invoice/{invoiceId}/send-whatsapp` (`SendSiigoInvoiceWhatsAppHandler`) pide el PDF a Siigo por el mismo camino de la descarga
   (`SiigoInvoiceSupport.LoadPdfAsync`), lo entrega por el puerto `ISiigoInvoiceWhatsApp` y audita `siigo.invoice.whatsapp_sent` sólo si el
   envío salió. El canal, el teléfono y la plantilla los resuelve `IInvoiceWhatsAppDelivery` (Quotations; adaptador `SiigoInvoiceWhatsApp`, Bootstrapper):
@@ -62,7 +62,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `CanSendAsync` (dos canales sin elección guardada → `false`). Ni el PDF, ni la URL pública, ni el teléfono entran a logs, `call_failures`,
   auditoría ni respuestas (`SiigoNoLeakTests`). La copia pública de Zenvia vive en `invoices/` del bucket público con clave aleatoria y su
   lifecycle de 1 día **se crea a mano** (`npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1`):
-  sin esa regla las copias se quedan para siempre abiertas a quien tenga la URL. Mandar una factura no recuerda la elección de canal del tenant.
+  sin esa regla las copias se quedan para siempre abiertas a quien tenga la URL. Por Meta Quotations no publica copia, pero Mensajería deja una copia **privada** del adjunto en el hilo (por tenant, misma retención que cualquier adjunto saliente); sólo Zenvia necesita la copia pública. Mandar una factura no recuerda la elección de canal del tenant.
 
 - **La facturación masiva es una tanda con worker, no un bucle en el request** (`siigo.invoice_batches` e `invoice_batch_items`,
   `SiigoInvoiceBatchWorker`). Cada pedido de la tanda lo factura el mismo `IssueSiigoInvoiceHandler` de siempre, así que el candado por

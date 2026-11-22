@@ -5396,7 +5396,7 @@ pagos sin llamar a Siigo.
 **Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
 `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
 `204`) manda el PDF de **una** factura al WhatsApp del cliente del pedido. Es el mismo PDF de la descarga (se pide a Siigo en cada envío y
-viaja en memoria: nunca se guarda). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
+viaja en memoria: Siigo no la guarda; el envío por Meta deja una copia privada en el hilo de Mensajería, ver más abajo). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
 siigo.invoice.not_found` sin llamar a Siigo ni al canal; sin permiso o con el tenant de otra ruta es `403`, nunca `404`. El envío lo hace
 Quotations (`IInvoiceWhatsAppDelivery`; Siigo sólo ve el puerto `ISiigoInvoiceWhatsApp`), así que el canal se resuelve como en el pedido
 y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `no_phone` (el
@@ -5418,7 +5418,7 @@ escoger canal) recibe `canSendWhatsApp = false` hasta que elija uno; mandar una 
   `documentUrl`, y pon su id en `invoiceTemplateId` de **cada** conexión de Zenvia (Integrations). Zenvia descarga el documento por URL.
 
 **Copia pública (sólo Zenvia).** Para Zenvia el PDF se copia al bucket público bajo `invoices/{guid}.pdf`, con una clave aleatoria que no
-lleva tenant, pedido ni número de factura (la URL queda abierta a quien la tenga). Por Meta no se escribe nada en ningún bucket. Sin bucket
+lleva tenant, pedido ni número de factura (la URL queda abierta a quien la tenga). Por Meta Quotations no publica ninguna copia, pero el envío deja una copia **privada** del adjunto en el hilo de la conversación de Mensajería (por tenant y con la retención de cualquier adjunto saliente, como en cotizaciones y pedidos); no es pública. Sin bucket
 público el envío falla, sin caer a una URL firmada. La copia expira con una regla de lifecycle que se crea **a mano** en Cloudflare, y es
 parte del despliegue:
 
