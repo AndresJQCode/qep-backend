@@ -35,7 +35,10 @@ public sealed record QuotationItemDto(
     string Kind,
     string SalesUnit,
     /// <summary>Mayorista fase 3: la línea de la orden de compra de la que salió, sólo en un pedido mayorista.</summary>
-    Guid? SourcePurchaseOrderLineId = null);
+    Guid? SourcePurchaseOrderLineId = null,
+    /// <summary>Regalo (spec 2026-11-21): la línea conserva su precio de lista pero se cobra a 0. Viaja porque la pantalla la
+    /// dibuja distinta y no puede deducirlo de un descuento del 100 %, que también puede escribirse a mano.</summary>
+    bool IsGift = false);
 
 public sealed record QuotationDto(
     Guid Id,
@@ -1084,7 +1087,10 @@ public sealed record QuotationItemResponse(
     string SalesUnit = "Unit",
     /// <summary>Mayorista fase 3: en un pedido mayorista, si la línea vino de la orden de compra del distribuidor (false = la
     /// agregó el mayorista). Null en cualquier otro documento.</summary>
-    bool? FromPurchaseOrder = null);
+    bool? FromPurchaseOrder = null,
+    /// <summary>Regalo (spec 2026-11-21): la pantalla lo dibuja aparte y no puede deducirlo de un descuento del 100 %, que también
+    /// puede escribirse a mano. Sólo los pedidos lo traen en true.</summary>
+    bool IsGift = false);
 
 /// <summary>
 /// El 202 de las exportaciones por correo (spec 2026-09-12, D5), de cotizaciones y de pedidos. No

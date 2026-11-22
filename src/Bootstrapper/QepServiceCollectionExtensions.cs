@@ -1291,6 +1291,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<AddOrderItemsCommand, OrderDetailDto>,
             AddOrderItemsHandler>();
+        // Regalos del pedido (spec 2026-11-21); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            ICommandHandler<AddOrderGiftCommand, OrderDetailDto>,
+            AddOrderGiftHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveOrderGiftCommand, OrderDetailDto>,
+            RemoveOrderGiftHandler>();
         services.AddScoped<
             ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>,
             RemoveOrderPaymentProofHandler>();
