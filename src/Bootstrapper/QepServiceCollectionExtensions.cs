@@ -695,6 +695,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Scheduling.Application.CreateAppointmentCustomerCommand, Modules.Scheduling.Application.AppointmentCustomerDto>,
             Modules.Scheduling.Application.CreateAppointmentCustomerHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentComposer>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.BookAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.BookAppointmentHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetAppointmentQuery, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.GetAppointmentHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 

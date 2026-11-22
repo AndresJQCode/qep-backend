@@ -35,4 +35,7 @@ public static class SchedulingErrorCodes
     public const string BlockNotFound = "scheduling.block.not_found";
     public const string ClosureNotFound = "scheduling.closure.not_found";
     public const string SessionNotFound = "scheduling.session.not_found";
+
+    // Tarea 9: toda entidad direccionable por id tiene su 404; la cita no estaba en el contrato.
+    public const string AppointmentNotFound = "scheduling.appointment.not_found";
 }

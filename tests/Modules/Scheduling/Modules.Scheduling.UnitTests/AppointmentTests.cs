@@ -28,6 +28,18 @@ public sealed class AppointmentTests
         Assert.Equal((AppointmentAction.Created, Actor, Created), (created.Action, created.ActorMemberId, created.At));
     }
 
+    [Fact]
+    public void AnAppointmentKeepsTheClientRequestIdItWasBookedWith()
+    {
+        var appointment = Appointment.Create(
+            AppointmentId.New(), Tenant, LocationId.New(), ResourceId.New(), ServiceId.New(), Guid.CreateVersion7(), SessionId.New(),
+            blockId: null, Start, Start.AddMinutes(30), AppointmentStatus.Pending, AppointmentSource.Channel, conversationId: null,
+            note: null, actorMemberId: null, Created, clientRequestId: "  wa-123 ");
+
+        Assert.Equal("wa-123", appointment.ClientRequestId);
+        Assert.Null(NewAppointment().ClientRequestId);
+    }
+
     [Theory]
     [InlineData(AppointmentStatus.Cancelled)]
     [InlineData(AppointmentStatus.Completed)]

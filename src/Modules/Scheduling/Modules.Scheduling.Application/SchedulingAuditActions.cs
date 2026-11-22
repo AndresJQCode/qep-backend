@@ -1,8 +1,8 @@
 namespace Modules.Scheduling.Application;
 
 /// <summary>
-/// Acciones de <c>audit.entries</c> de la Agenda. Guardan <b>nombres</b> de campos (camelCase), nunca valores. Las de citas llegan con la
-/// Tarea 9 del plan: la auditoría de configuración se adelantó a la Tarea 7.
+/// Acciones de <c>audit.entries</c> de la Agenda. Guardan <b>nombres</b> de campos (camelCase), nunca valores. Las de las citas llegaron con la
+/// Tarea 9 del plan (la auditoría de configuración se había adelantado a la Tarea 7).
 /// </summary>
 public static class SchedulingAuditActions
 {
@@ -32,6 +32,13 @@ public static class SchedulingAuditActions
     public const string SessionDeactivated = "scheduling.session.deactivated";
     public const string SessionReactivated = "scheduling.session.reactivated";
 
+    public const string AppointmentCreated = "scheduling.appointment.created";
+    public const string AppointmentConfirmed = "scheduling.appointment.confirmed";
+    public const string AppointmentCancelled = "scheduling.appointment.cancelled";
+    public const string AppointmentAttended = "scheduling.appointment.attended";
+    public const string AppointmentNoShow = "scheduling.appointment.no_show";
+    public const string AppointmentRescheduled = "scheduling.appointment.rescheduled";
+
     public static class Resources
     {
         public const string Location = "location";
@@ -41,5 +48,6 @@ public static class SchedulingAuditActions
         public const string Block = "block";
         public const string Closure = "closure";
         public const string Session = "session";
+        public const string Appointment = "appointment";
     }
 }

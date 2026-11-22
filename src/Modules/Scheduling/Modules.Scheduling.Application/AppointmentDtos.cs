@@ -21,3 +21,41 @@ public sealed record AvailabilitySlotDto(
 /// vacía es «no hay espacios» (no un error): el rango puede quedar fuera del horizonte o de las franjas.
 /// </summary>
 public sealed record AvailabilityDto(string TimeZone, IReadOnlyList<AvailabilitySlotDto> Slots);
+
+/// <param name="Action">El nombre de <c>AppointmentAction</c>: <c>Created</c>, <c>Confirmed</c>, <c>Cancelled</c>, <c>Attended</c>, <c>NoShow</c>,
+/// <c>Rescheduled</c> o <c>ReminderSent</c>.</param>
+/// <param name="ActorName">Quién lo hizo, ya resuelto: la pantalla no consulta Personas. Nulo cuando lo hizo el sistema o el cliente por un canal.</param>
+/// <param name="Detail">El motivo de una cancelación, si lo hubo.</param>
+public sealed record AppointmentEventDto(string Action, DateTimeOffset At, string? ActorName, string? Detail);
+
+/// <summary>
+/// La cita tal como la pantalla de detalle la dibuja, con los nombres ya resueltos (recurso, servicio, cliente): quien la pinta no consulta
+/// tres listas para mostrar una fila. Los enums viajan con su nombre. <c>History</c> viaja completo y en orden cronológico: es lo que
+/// pinta la tarjeta «Historial». Cada transición responde con esta misma forma, ya con su nueva <c>Version</c>.
+/// </summary>
+/// <param name="Status"><c>Pending</c>, <c>Confirmed</c>, <c>Cancelled</c>, <c>Completed</c> o <c>NoShow</c>.</param>
+/// <param name="Source"><c>BackOffice</c> o <c>Channel</c>.</param>
+/// <param name="CustomerPhone">Nulo si el cliente no dio teléfono: sin él no hay recordatorio por WhatsApp.</param>
+/// <param name="CreatedAt">Cuándo se pidió: el escritorio ordena la cola de pendientes por este instante.</param>
+public sealed record AppointmentDto(
+    Guid Id,
+    string Status,
+    string Source,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    Guid LocationId,
+    Guid ResourceId,
+    string ResourceName,
+    Guid ServiceId,
+    string ServiceName,
+    Guid CustomerId,
+    string CustomerName,
+    string? CustomerPhone,
+    Guid SessionId,
+    string? Note,
+    string? CancelReason,
+    Guid? ConversationId,
+    DateTimeOffset? ReminderSentAt,
+    DateTimeOffset CreatedAt,
+    long Version,
+    IReadOnlyList<AppointmentEventDto> History);

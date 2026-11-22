@@ -5,4 +5,16 @@ namespace Modules.Scheduling.Application;
 public interface ISchedulingUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Abre una transacción explícita sobre la conexión del módulo. La reserva la necesita para que el <c>SELECT … FOR UPDATE</c> de la
+    /// fila del recurso dure hasta el commit: sin ella el candado se suelta al terminar la sentencia. Sin confirmarla, se revierte al
+    /// liberarla.
+    /// </summary>
+    Task<ISchedulingTransaction> BeginTransactionAsync(CancellationToken cancellationToken);
+}
+
+public interface ISchedulingTransaction : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
 }

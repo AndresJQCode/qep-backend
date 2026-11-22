@@ -33,6 +33,7 @@ public static class SchedulingInfrastructureExtensions
         services.AddScoped<IClosureRepository, ClosureRepository>();
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<ISchedulingSettingsRepository, SchedulingSettingsRepository>();
+        services.AddScoped<IAppointmentRepository, AppointmentRepository>();
         services.AddScoped<ISchedulingSetupReader, SchedulingSetupReader>();
 
         return services;

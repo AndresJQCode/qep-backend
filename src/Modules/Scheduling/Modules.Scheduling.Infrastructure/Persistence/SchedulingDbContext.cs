@@ -23,6 +23,10 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
     /// <summary>Un miembro atiende un solo recurso por sede. Se traduce por nombre en <see cref="SchedulingUnitOfWork"/>.</summary>
     public const string ResourceMemberUniqueIndex = "IX_resources_location_member";
 
+    /// <summary>The idempotency key of a booking, unique per tenant. A repeat is answered by the use case before it gets here; the index
+    /// only closes the race of two first requests with the same key.</summary>
+    public const string AppointmentClientRequestIndex = "IX_appointments_client_request";
+
     private static readonly ValueConverter<LocationId, Guid> LocationIdConverter = new(id => id.Value, value => new LocationId(value));
     private static readonly ValueConverter<ResourceId, Guid> ResourceIdConverter = new(id => id.Value, value => new ResourceId(value));
     private static readonly ValueConverter<ServiceId, Guid> ServiceIdConverter = new(id => id.Value, value => new ServiceId(value));
@@ -259,6 +263,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         appointment.Property(value => value.Note).HasColumnName("note").HasMaxLength(1000);
         appointment.Property(value => value.CancelReason).HasColumnName("cancel_reason").HasMaxLength(500);
         appointment.Property(value => value.ReminderSentAt).HasColumnName("reminder_sent_at");
+        appointment.Property(value => value.ClientRequestId).HasColumnName("client_request_id").HasMaxLength(100);
         appointment.HasOne<Location>().WithMany().HasForeignKey(value => value.LocationId).OnDelete(DeleteBehavior.Restrict);
         appointment.HasOne<Resource>().WithMany().HasForeignKey(value => value.ResourceId).OnDelete(DeleteBehavior.Restrict);
         appointment.HasOne<Service>().WithMany().HasForeignKey(value => value.ServiceId).OnDelete(DeleteBehavior.Restrict);
@@ -271,6 +276,10 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         appointment.HasIndex(value => new { value.TenantId, value.ResourceId, value.StartsAt }).HasDatabaseName("IX_appointments_tenant_resource_start");
         appointment.HasIndex(value => new { value.TenantId, value.CustomerId }).HasDatabaseName("IX_appointments_tenant_customer");
         appointment.HasIndex(value => value.SessionId).HasDatabaseName("IX_appointments_session");
+        appointment.HasIndex(value => new { value.TenantId, value.ClientRequestId })
+            .IsUnique()
+            .HasFilter("client_request_id IS NOT NULL")
+            .HasDatabaseName(AppointmentClientRequestIndex);
         // Lo que lee el recordatorio: las confirmadas que aún no lo tienen.
         appointment.HasIndex(value => value.StartsAt)
             .HasFilter("status = 'Confirmed' AND reminder_sent_at IS NULL")

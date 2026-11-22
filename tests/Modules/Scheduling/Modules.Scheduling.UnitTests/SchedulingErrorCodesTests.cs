@@ -26,6 +26,7 @@ public sealed class SchedulingErrorCodesTests
             [
                 "scheduling.appointment.before_start",
                 "scheduling.appointment.invalid_transition",
+                "scheduling.appointment.not_found",
                 "scheduling.appointment.outside_rules",
                 "scheduling.appointment.session_full",
                 "scheduling.appointment.slot_taken",

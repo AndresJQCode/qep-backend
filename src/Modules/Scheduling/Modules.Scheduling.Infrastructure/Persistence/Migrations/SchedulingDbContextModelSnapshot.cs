@@ -106,6 +106,11 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("cancel_reason");
 
+                    b.Property<string>("ClientRequestId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("client_request_id");
+
                     b.Property<Guid?>("ConversationId")
                         .HasColumnType("uuid")
                         .HasColumnName("conversation_id");
@@ -190,6 +195,11 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
                     b.HasIndex("StartsAt")
                         .HasDatabaseName("IX_appointments_reminder_due")
                         .HasFilter("status = 'Confirmed' AND reminder_sent_at IS NULL");
+
+                    b.HasIndex("TenantId", "ClientRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_appointments_client_request")
+                        .HasFilter("client_request_id IS NOT NULL");
 
                     b.HasIndex("TenantId", "CustomerId")
                         .HasDatabaseName("IX_appointments_tenant_customer");

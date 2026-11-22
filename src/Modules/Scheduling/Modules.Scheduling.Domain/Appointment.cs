@@ -44,6 +44,12 @@ public sealed class Appointment : VersionedEntity
 
     public DateTimeOffset? ReminderSentAt { get; private set; }
 
+    /// <summary>
+    /// The key the caller (the AI agent, a retrying client) booked with: a repeat of the same key answers with this appointment instead of
+    /// taking a second seat. Unique per tenant when present.
+    /// </summary>
+    public string? ClientRequestId { get; private set; }
+
     public IReadOnlyList<AppointmentEvent> Events => _events;
 
     public static Appointment Create(
@@ -62,7 +68,8 @@ public sealed class Appointment : VersionedEntity
         Guid? conversationId,
         string? note,
         Guid? actorMemberId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? clientRequestId = null)
     {
         if (initialStatus is not (AppointmentStatus.Pending or AppointmentStatus.Confirmed))
         {
@@ -86,6 +93,7 @@ public sealed class Appointment : VersionedEntity
             Source = source,
             ConversationId = conversationId,
             Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
+            ClientRequestId = string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim(),
         };
         appointment.Initialize(tenantId, now);
         appointment.Record(AppointmentAction.Created, actorMemberId, null, now, touch: false);

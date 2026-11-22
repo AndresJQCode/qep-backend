@@ -261,3 +261,37 @@ internal sealed class SchedulingSetupReader(SchedulingDbContext dbContext) : ISc
         return new SchedulingSetupSnapshot(hasService, activeResources > 0, hasBlock, activeLocations, activeResources);
     }
 }
+
+internal sealed class AppointmentRepository(SchedulingDbContext dbContext) : IAppointmentRepository
+{
+    public Task<Appointment?> FindAsync(Guid tenantId, AppointmentId id, CancellationToken cancellationToken) =>
+        dbContext.Appointments
+            .Include(appointment => appointment.Events)
+            .SingleOrDefaultAsync(appointment => appointment.TenantId == tenantId && appointment.Id == id, cancellationToken);
+
+    public Task<Appointment?> FindByClientRequestAsync(Guid tenantId, string clientRequestId, CancellationToken cancellationToken) =>
+        dbContext.Appointments
+            .Include(appointment => appointment.Events)
+            .SingleOrDefaultAsync(
+                appointment => appointment.TenantId == tenantId && appointment.ClientRequestId == clientRequestId, cancellationToken);
+
+    public async Task LockResourcesAsync(Guid tenantId, IReadOnlyCollection<ResourceId> resourceIds, CancellationToken cancellationToken)
+    {
+        // Sorted by id so two bookings asking for the same resources lock them in the same order and never wait on each other.
+        var ids = resourceIds.Select(id => id.Value).Distinct().Order().ToArray();
+        if (ids.Length == 0)
+        {
+            return;
+        }
+
+        // The rows are read only to be locked: the lock lasts until the transaction of the unit of work ends.
+        await dbContext.Database.SqlQuery<Guid>($"""
+            SELECT id AS "Value" FROM scheduling.resources
+            WHERE tenant_id = {tenantId} AND id = ANY({ids})
+            ORDER BY id
+            FOR UPDATE
+            """).ToListAsync(cancellationToken);
+    }
+
+    public void Add(Appointment appointment) => dbContext.Appointments.Add(appointment);
+}

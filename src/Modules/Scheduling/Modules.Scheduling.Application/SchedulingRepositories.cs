@@ -143,3 +143,21 @@ public interface ISchedulingSetupReader
 {
     Task<SchedulingSetupSnapshot> ReadAsync(Guid tenantId, CancellationToken cancellationToken);
 }
+
+public interface IAppointmentRepository
+{
+    /// <summary>La cita del tenant con su historial, con seguimiento de cambios: cada transición la edita.</summary>
+    Task<Appointment?> FindAsync(Guid tenantId, AppointmentId id, CancellationToken cancellationToken);
+
+    /// <summary>La cita que el tenant ya reservó con esa llave de idempotencia, con su historial.</summary>
+    Task<Appointment?> FindByClientRequestAsync(Guid tenantId, string clientRequestId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <c>SELECT … FOR UPDATE</c> de las filas de esos recursos, de una vez y en orden de id para que dos reservas que piden los mismos
+    /// recursos no se crucen. Debe correr dentro de una transacción de <see cref="ISchedulingUnitOfWork.BeginTransactionAsync"/>: el candado
+    /// dura hasta el commit y es lo que serializa las reservas, los cambios de hora y las cancelaciones de un mismo recurso.
+    /// </summary>
+    Task LockResourcesAsync(Guid tenantId, IReadOnlyCollection<ResourceId> resourceIds, CancellationToken cancellationToken);
+
+    void Add(Appointment appointment);
+}

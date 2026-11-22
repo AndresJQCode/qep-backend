@@ -18,9 +18,21 @@ public sealed class AvailabilityLoader(
     ISessionRepository sessions)
 {
     public async Task<LoadedAvailability> LoadAsync(
-        Guid tenantId, ResourceScope scope, DateOnly firstDay, DateOnly lastDay, CancellationToken cancellationToken)
+        Guid tenantId, ResourceScope scope, DateOnly firstDay, DateOnly lastDay, CancellationToken cancellationToken) =>
+        await LoadAsync(tenantId, scope, await tenantClock.GetAsync(tenantId, cancellationToken), firstDay, lastDay, cancellationToken);
+
+    /// <summary>Loads the tenant's calendar day that holds <paramref name="startsAt"/>: what booking and rescheduling validate a start against.</summary>
+    public async Task<LoadedAvailability> LoadForStartAsync(
+        Guid tenantId, ResourceScope scope, DateTimeOffset startsAt, CancellationToken cancellationToken)
     {
         var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var day = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(startsAt, calendar.TimeZone).DateTime);
+        return await LoadAsync(tenantId, scope, calendar, day, day, cancellationToken);
+    }
+
+    private async Task<LoadedAvailability> LoadAsync(
+        Guid tenantId, ResourceScope scope, TenantCalendar calendar, DateOnly firstDay, DateOnly lastDay, CancellationToken cancellationToken)
+    {
         var rules = await settings.FindAsync(tenantId, cancellationToken)
             ?? throw new InvalidOperationException("The scheduling rules row is missing: first access provisions it before any read.");
         var rangeStart = calendar.StartOfDayUtc(firstDay);

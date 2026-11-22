@@ -26,6 +26,7 @@ public static class SchedulingEndpoints
         MapClosures(group);
         MapAvailability(group);
         MapCustomers(group);
+        MapAppointments(group);
 
         return endpoints;
     }
@@ -158,6 +159,30 @@ public static class SchedulingEndpoints
             .Produces<AppointmentCustomerDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    // Citas: leer es `appointment.read`; reservar y toda transición es `appointment.manage` (y el handler exige también el `read`). Cada
+    // transición exige `If-Match` con la `version` que la pantalla cargó y responde la cita completa, ya con su nueva versión.
+    private static void MapAppointments(RouteGroupBuilder group)
+    {
+        group.MapPost("/appointments", async (Guid tenantId, BookAppointmentRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+            {
+                var appointment = await dispatcher.SendAsync(new BookAppointmentCommand(tenantId, request), cancellationToken);
+                return Results.Created($"/api/v1/tenants/{tenantId}/scheduling/appointments/{appointment.Id}", appointment);
+            })
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .Accepts<BookAppointmentRequest>("application/json")
+            .Produces<AppointmentDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/appointments/{id:guid}", async (Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(new GetAppointmentQuery(tenantId, id), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentRead)
+            .Produces<AppointmentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
     }
 
     private static void MapSetup(RouteGroupBuilder group) =>

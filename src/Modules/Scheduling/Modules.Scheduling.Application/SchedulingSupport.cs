@@ -68,6 +68,9 @@ internal static class SchedulingNotFound
 
     public static ResourceNotFoundException Session(Guid id) =>
         new(SchedulingErrorCodes.SessionNotFound, $"Published session '{id}' was not found.");
+
+    public static ResourceNotFoundException Appointment(Guid id) =>
+        new(SchedulingErrorCodes.AppointmentNotFound, $"Appointment '{id}' was not found.");
 }
 
 /// <summary>
