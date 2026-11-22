@@ -31,10 +31,10 @@ public sealed class ReadHandlersTests
         Assert.Equal("Messaging", zenvia.Category);
         Assert.Equal(20, zenvia.MaxConnections);
         Assert.Equal(2, zenvia.ConnectionCount);
-        Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId"], zenvia.Fields.Select(field => field.Key));
-        Assert.Equal(["Secret", "Phone", "Text", "Text"], zenvia.Fields.Select(field => field.Kind));
-        // La plantilla de pedido es la única opcional: sin ella sólo se cae el envío del pedido.
-        Assert.Equal([true, true, true, false], zenvia.Fields.Select(field => field.Required));
+        Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId", "invoiceTemplateId"], zenvia.Fields.Select(field => field.Key));
+        Assert.Equal(["Secret", "Phone", "Text", "Text", "Text"], zenvia.Fields.Select(field => field.Kind));
+        // Las plantillas de pedido y de factura son opcionales: sin ellas sólo se cae el envío de ese documento.
+        Assert.Equal([true, true, true, false, false], zenvia.Fields.Select(field => field.Required));
     }
 
     [Fact]
