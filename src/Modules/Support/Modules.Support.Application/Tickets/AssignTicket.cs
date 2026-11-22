@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Modules.Support.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Support.Application;
@@ -50,10 +51,10 @@ public sealed class AssignTicketHandler(
         // Una tarea la puede recibir quien usa tareas; un externo, sólo quien gestiona (spec 2026-11-22, D19).
         if (ticket.IsInternal)
         {
-            if (command.AssigneeMemberId is { } taskAssignee)
-            {
-                await SupportTicketRules.EnsureTaskAssigneeAsync(members, command.TenantId, taskAssignee, cancellationToken);
-            }
+            // Spec §5.2.1: the assignee of a task is mandatory, so it cannot be left without one.
+            var taskAssignee = command.AssigneeMemberId
+                ?? throw new SupportDomainException(SupportErrorCodes.AssigneeInvalid, "A task must have an assignee.");
+            await SupportTicketRules.EnsureTaskAssigneeAsync(members, command.TenantId, taskAssignee, cancellationToken);
         }
         else
         {
@@ -66,7 +67,7 @@ public sealed class AssignTicketHandler(
         var formerAssignee = ticket.AssigneeMemberId;
         ticket.Assign(command.AssigneeMemberId, actor, now);
         // El aviso a quien recibe la tarea va al outbox en la misma transacción del guardado: sólo si cambió de manos y no se la pasó
-        // a sí mismo ni la dejó sin responsable.
+        // a sí mismo.
         if (ticket.IsInternal && ticket.Version != version && command.AssigneeMemberId is { } newAssignee && newAssignee != actor)
         {
             integrationEvents.PublishTaskAssigned(ticket, actor, now);

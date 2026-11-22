@@ -157,12 +157,24 @@ public sealed class SupportTaskRulesApiTests(ClockedSupportHost host) : IClassFi
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, await OutboxCountAsync(world.Factory, task.Id));
-        // Quitarle el responsable o dejárselo a quien actúa no avisa a nadie.
+        // Dejárselo a quien actúa no avisa a nadie.
         var detail = await JsonAsync(response);
         var self = await world.Manager.ActAsync(
             task.Id, "assignee", new { assigneeMemberId = world.Manager.CallerMemberId }, SupportTicketScenario.Version(detail));
         Assert.Equal(HttpStatusCode.OK, self.StatusCode);
         Assert.Equal(1, await OutboxCountAsync(world.Factory, task.Id));
+    }
+
+    // Spec §5.2.1: a task always has an assignee, so the assignee route cannot clear it (a task is not an external ticket).
+    [Fact]
+    public async Task ATaskCannotBeLeftWithoutAnAssignee()
+    {
+        var world = await StartAsync();
+        var task = await SeedTaskAsync(world, world.AdvisorMember);
+
+        var response = await world.Manager.ActAsync(task.Id, "assignee", new { assigneeMemberId = (Guid?)null }, task.Version);
+
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "support.ticket.assignee_invalid");
     }
 
     [Fact]
