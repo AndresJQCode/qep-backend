@@ -53,9 +53,11 @@ las repiten. Patrones: `docs/superpowers/plans/2026-11-20-rrhh-fase-1-backend.md
   un concepto de otro tenant pedido con la ruta del propio responde el mismo 404 `payroll.*.not_found` que un id inventado:
   no confirma que exista en otro lado (mismo criterio que Hr).
 - **Cada escritura exige también `payroll.period.read`** (mismo criterio D-1 de RRHH), **salvo** las de configuración y
-  conceptos de la empresa, que exigen sólo `payroll.settings.manage` (decisión del owner, 2026-11-21: un rol con sólo
-  `payroll.settings.manage` usa las pantallas de configuración). Por lo mismo, `GET /payroll/companies` y `GET {c}/settings`
-  (que trae el catálogo de conceptos) aceptan **cualquiera** de `payroll.period.read` o `payroll.settings.manage`: política
+  conceptos de la empresa y las de conceptos recurrentes de cada empleado (crear, editar, activar, desactivar), que exigen
+  sólo `payroll.settings.manage` (decisión del owner, 2026-11-21: un rol con sólo `payroll.settings.manage` usa las
+  pantallas de configuración y de recurrentes, como dice la descripción del permiso). Por lo mismo, `GET /payroll/companies`,
+  `GET {c}/settings` (que trae el catálogo de conceptos) y `GET {c}/employees/{employeeId}/recurring-concepts` aceptan
+  **cualquiera** de `payroll.period.read` o `payroll.settings.manage`: política
   `PayrollPolicies.SettingsView` (calco de `SupportPolicies.SettingsView`, `AddAnyPermissionRequirement`) y en el handler
   `PayrollAuthorization.EnsureAnyAsync`. Ese rol no ve períodos, liquidaciones, rastro ni Excel (403).
 - Auditoría atómica en el handler (`IPayrollAuditPublisher`, calco de `IHrAuditPublisher`, `Source = "payroll"`):
@@ -489,10 +491,10 @@ Permisos: la política de la ruta es el permiso **en negrita**; el handler reval
 | `POST {c}/concepts` | **`payroll.settings.manage`** | `ConceptRequest` | 201 `PayrollConceptDto` | 404, 409 `payroll.concept.name_taken` (por empresa y tipo), 422 `errors` |
 | `PUT {c}/concepts/{conceptId}` | **`payroll.settings.manage`**, `If-Match` | `ConceptRequest` (`kind` igual al guardado ⇒ si no, 422 `errors.kind`) | 200 `PayrollConceptDto` | 404 `payroll.concept.not_found`, 422 `payroll.concept.system_readonly`, 409, 412/428 |
 | `POST {c}/concepts/{conceptId}/archive` · `…/unarchive` | **`payroll.settings.manage`**, **sin** `If-Match` (I-8) | — | 200 `PayrollConceptDto` | 404, 422 `payroll.concept.system_readonly`, 409 `payroll.concept.already_archived` / `payroll.concept.not_archived` |
-| `GET {c}/employees/{employeeId}/recurring-concepts` | **`payroll.period.read`** | — | 200 `[RecurringConceptDto]` (activos primero, luego por nombre) | 404 `payroll.employee.not_found` (sin contrato con la empresa) |
-| `POST {c}/employees/{employeeId}/recurring-concepts` | `payroll.period.read`, **`payroll.settings.manage`** | `RecurringConceptRequest` | 201 `[RecurringConceptDto]` (la lista entera) | 404, 422 `payroll.concept.archived`, 422 `payroll.concept.kind_mismatch` (un `Overtime`), 422 `errors` |
-| `PUT {c}/employees/{employeeId}/recurring-concepts/{id}` | `payroll.period.read`, **`payroll.settings.manage`**, `If-Match` | `RecurringConceptRequest` | 200 `[RecurringConceptDto]` | 404 `payroll.recurring.not_found`, los del POST, 412/428 |
-| `POST …/recurring-concepts/{id}/activate` · `…/deactivate` | `payroll.period.read`, **`payroll.settings.manage`**, **sin** `If-Match` (I-8) | — | 200 `[RecurringConceptDto]` | 404, 409 `payroll.recurring.already_active` / `payroll.recurring.already_inactive` |
+| `GET {c}/employees/{employeeId}/recurring-concepts` | **`payroll.period.read` o `payroll.settings.manage`** (política `SettingsView`) | — | 200 `[RecurringConceptDto]` (activos primero, luego por nombre) | 404 `payroll.employee.not_found` (sin contrato con la empresa) |
+| `POST {c}/employees/{employeeId}/recurring-concepts` | **`payroll.settings.manage`** | `RecurringConceptRequest` | 201 `[RecurringConceptDto]` (la lista entera) | 404, 422 `payroll.concept.archived`, 422 `payroll.concept.kind_mismatch` (un `Overtime`), 422 `errors` |
+| `PUT {c}/employees/{employeeId}/recurring-concepts/{id}` | **`payroll.settings.manage`**, `If-Match` | `RecurringConceptRequest` | 200 `[RecurringConceptDto]` | 404 `payroll.recurring.not_found`, los del POST, 412/428 |
+| `POST …/recurring-concepts/{id}/activate` · `…/deactivate` | **`payroll.settings.manage`**, **sin** `If-Match` (I-8) | — | 200 `[RecurringConceptDto]` | 404, 409 `payroll.recurring.already_active` / `payroll.recurring.already_inactive` |
 | `POST {c}/periods/ensure-current` | `payroll.period.read`, **`payroll.period.manage`** (I-6) | — | 200 `PayrollPeriodListDto` | 404, 422 `payroll.company.inactive` |
 | `GET {c}/periods` | **`payroll.period.read`** | — | 200 `PayrollPeriodListDto` (no crea nada; `firstPeriodStartsOn` igual que arriba) | 404 |
 | `GET {p}` | **`payroll.period.read`** | — | 200 `PayrollPeriodDetailDto` | 404 `payroll.period.not_found` |
@@ -1547,7 +1549,10 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     tarea `result` es `null`; la Tarea 11 lo llena. Un **excluido** responde 200 con `result: null`, `inputs` y `recurring`
     vacíos en `Draft`, `Liquidated` y `Reopened` (I-13); 404 `payroll.employee.not_in_period` sólo si no tiene contrato de la
     empresa en la quincena. En `Approved`/`Closed` responde lo de la foto (resultado o excluido) y 404 si no está en ella.
-  - Rutas de recurrentes y de capturas del contrato. Un empleado «tiene contrato con la empresa» si aparece en
+  - Rutas de recurrentes y de capturas del contrato. Autorización de recurrentes (decisión del owner): el `GET` con
+    `RequireAuthorization(PayrollPolicies.SettingsView)` y `PayrollAuthorization.EnsureAnyAsync(…, PeriodRead,
+    SettingsManage)`; crear, editar, activar y desactivar con `RequireAuthorization(PayrollPermissions.SettingsManage)` y
+    `EnsureAsync(…, SettingsManage)`, sin `PeriodRead`. Las capturas siguen con `PeriodRead` + `PeriodManage`. Un empleado «tiene contrato con la empresa» si aparece en
     `IPayrollHrDirectory.ListEmployeesAsync(tenantId, companyId, DateOnly.MinValue, DateOnly.MaxValue)`; si no, 404
     `payroll.employee.not_found`.
 
@@ -1565,7 +1570,13 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     `CapturingIsAudited` (`payroll.period.inputs_updated`, sin valores).
   - `RecurringConceptsApiTests`: `CreatingAnswersTheWholeList`; `AnOvertimeConceptIsKindMismatch`; `ACapBelowTheAmountIs422`;
     `DeactivatingAndActivatingNeedNoIfMatch` (I-8); `EditingNeedsIfMatch`; `AnEmployeeWithoutAContractInTheCompanyIs404`;
-    `ReadingNeedsPeriodReadAndWritingSettingsManage`; `AccumulatedStartsAtZero`.
+    `AccumulatedStartsAtZero`; y, escritas **primero** (decisión del owner): `ASettingsOnlyRoleReadsAndWritesRecurringConcepts`
+    (sólo `payroll.settings.manage` ⇒ 200 en el `GET`, 201 al crear, 200 al editar, activar y desactivar);
+    `ASettingsOnlyRoleStillCannotReadOrLiquidatePeriods` (el mismo rol ⇒ 403 `authorization.denied` en `GET {p}`,
+    `GET {p}/employees/{id}`, `PUT {p}/employees/{id}/inputs` y `POST {p}/liquidate`);
+    `AReadOnlyRoleReadsRecurringConceptsButCannotWriteThem` (sólo `payroll.period.read` ⇒ 200 en el `GET`, 403 al crear,
+    editar, activar y desactivar); `WithoutEitherPermissionRecurringConceptsAre403` (sólo `payroll.period.manage` ⇒ 403 en
+    el `GET`).
 - [ ] **Step 2: RED de compilación.** Run: `dotnet build tests/Modules/Payroll/Modules.Payroll.UnitTests`.
   Expected: `error CS0246: The type or namespace name 'RecurringConcept' could not be found`.
 - [ ] **Step 3: Implementar** y generar `AddRecurringConcepts`.
@@ -1791,9 +1802,10 @@ pruebas pasan o señalan un defecto. Por eso las de Review Focus 3 y 6 se movier
     `EachRouteRequiresItsPermissions` (una fila por ruta del contrato: sin el permiso en negrita ⇒ 403; con la lista completa ⇒
     distinto de 403; en las filas «A o B», con sólo A y con sólo B ⇒ distinto de 403); teoría
     `ASettingsOnlyRoleSeesOnlyTheSettingsScreens` (sólo `payroll.settings.manage`: 200 en `GET /payroll/companies` y
-    `GET {c}/settings`, éxito en las escrituras de configuración y conceptos, 403 en cada ruta de períodos, empleados del
-    período, capturas, importación y Excel); teoría `AReadOnlyRoleCannotWriteSettings` (sólo `payroll.period.read`: 200 en
-    los dos `GET`, 403 en `PUT {c}/settings`, `POST|PUT {c}/concepts…`, `…/archive` y `…/unarchive`);
+    `GET {c}/settings` y `GET {c}/employees/{id}/recurring-concepts`, éxito en las escrituras de configuración, conceptos y
+    recurrentes, 403 en cada ruta de períodos, empleados del período, capturas, liquidación, importación y Excel); teoría
+    `AReadOnlyRoleCannotWriteSettings` (sólo `payroll.period.read`: 200 en los tres `GET`, 403 en `PUT {c}/settings`,
+    `POST|PUT {c}/concepts…`, `…/archive`, `…/unarchive` y en crear, editar, activar y desactivar recurrentes);
     `WithThePayrollModuleOffEverythingIs403`; `WithHrOffPayrollIsOffToo` (dependencia de la Tarea 1);
     `ACompanyOfAnotherTenantIs404`.
   - `PayrollEndToEndApiTests`: `AWholeMonthFromOpeningToExport` (dos empleados, uno con comisión y horas en la primera
