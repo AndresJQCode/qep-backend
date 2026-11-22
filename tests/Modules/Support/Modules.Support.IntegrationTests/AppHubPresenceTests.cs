@@ -129,6 +129,7 @@ public sealed class AppHubPresenceTests(SupportHostWithoutWorkers host) : IClass
             Assert.Contains(SupportErrorCodes.RealtimeTopicForbidden, error.Message, StringComparison.Ordinal));
         // An unknown state is refused by the hub itself, before any authorizer: its generic code.
         Assert.Contains("realtime.topic_forbidden", unknownState.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("support.realtime", unknownState.Message, StringComparison.Ordinal);
     }
 
     /// <summary>No system role grants read without manage, so this host answers <c>Read</c> yes and <c>Manage</c> no for one member.</summary>

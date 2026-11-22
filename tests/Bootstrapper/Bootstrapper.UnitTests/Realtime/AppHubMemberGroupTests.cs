@@ -56,6 +56,19 @@ public sealed class AppHubMemberGroupTests
     }
 
     [Fact]
+    public async Task TheMemberGroupCannotBeUnsubscribed()
+    {
+        var (hub, groups) = NewHub();
+        await hub.OnConnectedAsync();
+
+        // A client that could leave its own group would stop receiving its alerts until the next reconnect.
+        await hub.Unsubscribe("@member:" + Member.ToString("D"));
+        await hub.Unsubscribe(RealtimeTopics.MemberTopic);
+
+        Assert.Empty(groups.Removed);
+    }
+
+    [Fact]
     public async Task AnUnknownTopicIsRefusedWithTheGenericCode()
     {
         var (hub, _) = NewHub();

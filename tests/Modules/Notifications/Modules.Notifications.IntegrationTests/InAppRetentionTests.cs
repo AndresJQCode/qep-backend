@@ -1,5 +1,7 @@
 using System.Text.Json;
+using BuildingBlocks.Application.Realtime;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Modules.Notifications.Infrastructure.InApp;
 using Npgsql;
@@ -13,14 +15,31 @@ public sealed class InAppRetentionTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    // The hosted worker purges once at host start, which would race the counts these tests assert (2,500 old rows → exactly 2,500
+    // deleted by PurgeAsync). The host runs without it and the test drives its own instance.
+    private static NotificationsApiFactory NewRetentionFactory(string connectionString, RecordingMemberPublisher publisher) =>
+        new(
+            connectionString,
+            configureServices: services =>
+            {
+                services.RemoveAll<IRealtimeMemberPublisher>();
+                services.AddSingleton<IRealtimeMemberPublisher>(publisher);
+                foreach (var descriptor in services
+                    .Where(item => item.ServiceType == typeof(IHostedService) && item.ImplementationType == typeof(InAppNotificationRetentionWorker))
+                    .ToList())
+                {
+                    services.Remove(descriptor);
+                }
+            });
+
     private static InAppNotificationRetentionWorker WorkerOf(NotificationsApiFactory factory) =>
-        factory.Services.GetServices<IHostedService>().OfType<InAppNotificationRetentionWorker>().Single();
+        ActivatorUtilities.CreateInstance<InAppNotificationRetentionWorker>(factory.Services);
 
     [Fact]
     public async Task PurgeDeletesOnlyWhatIsOlderThanTheRetention()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = NewFactory(database.GetConnectionString(), new RecordingMemberPublisher());
+        using var factory = NewRetentionFactory(database.GetConnectionString(), new RecordingMemberPublisher());
         var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
         var owner = await MemberIdOfAsync(database.GetConnectionString(), tenantId, ownerUserId);
         var now = DateTimeOffset.UtcNow;
@@ -37,7 +56,7 @@ public sealed class InAppRetentionTests
     public async Task PurgeDeletesInBatchesUntilDone()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = NewFactory(database.GetConnectionString(), new RecordingMemberPublisher());
+        using var factory = NewRetentionFactory(database.GetConnectionString(), new RecordingMemberPublisher());
         var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
         var owner = await MemberIdOfAsync(database.GetConnectionString(), tenantId, ownerUserId);
         await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
@@ -65,7 +84,7 @@ public sealed class InAppRetentionTests
     public async Task PurgeScrubsExpiredDownloadUrls()
     {
         await using var database = await StartDatabaseAsync();
-        using var factory = NewFactory(database.GetConnectionString(), new RecordingMemberPublisher());
+        using var factory = NewRetentionFactory(database.GetConnectionString(), new RecordingMemberPublisher());
         var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
         var owner = await MemberIdOfAsync(database.GetConnectionString(), tenantId, ownerUserId);
         var now = DateTimeOffset.UtcNow;

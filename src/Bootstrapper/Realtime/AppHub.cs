@@ -155,7 +155,11 @@ internal sealed partial class AppHub : Hub
     /// connection never had.</summary>
     public async Task Unsubscribe(string topic)
     {
-        if (string.IsNullOrEmpty(topic) || topic.Length > RealtimeTopics.MaxLength || !TryIdentity(out var tenantId, out var memberId))
+        // Like Subscribe, it leaves the «@» names alone: the member's own group is not the client's to leave, or it could cut its own alerts.
+        if (string.IsNullOrEmpty(topic)
+            || topic.StartsWith('@')
+            || topic.Length > RealtimeTopics.MaxLength
+            || !TryIdentity(out var tenantId, out var memberId))
         {
             return;
         }

@@ -32,7 +32,8 @@ internal static class InAppCursor
                 return false;
             }
 
-            value = (createdAt, id);
+            // Npgsql refuses an offset other than zero for timestamptz, and a cursor is client input: normalize it here.
+            value = (createdAt.ToUniversalTime(), id);
             return true;
         }
         catch (FormatException)
@@ -56,6 +57,28 @@ internal static partial class InAppUpTo
         value = default;
         return text is not null
             && WithZone().IsMatch(text)
-            && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out value);
+            && TryParseUtc(text, out value);
     }
+
+    // The regex accepts «+05:00», and Npgsql refuses any offset but zero for timestamptz (a 500): the instant is the same in UTC.
+    private static bool TryParseUtc(string text, out DateTimeOffset value)
+    {
+        if (DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            value = parsed.ToUniversalTime();
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+}
+
+/// <summary>
+/// Postgres keeps <c>timestamptz</c> in microseconds and .NET in 100 ns ticks. A time the handler writes and returns without reloading
+/// would differ from what the next read gives back, and the screen sends <c>createdAt</c>/<c>readAt</c> back as received (spec §8.4).
+/// </summary>
+internal static class InAppTime
+{
+    public static DateTimeOffset ToMicroseconds(DateTimeOffset value) => new(value.UtcTicks / 10 * 10, TimeSpan.Zero);
 }

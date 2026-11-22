@@ -23,7 +23,8 @@ public sealed class MarkNotificationReadHandler(
     public async Task<InAppNotificationReadDto> HandleAsync(MarkNotificationReadCommand command, CancellationToken cancellationToken)
     {
         var memberId = await InAppAuthorization.EnsureMemberAsync(executionContext, memberships, command.TenantId, cancellationToken);
-        var now = clock.UtcNow;
+        // Microseconds, as the database keeps them: the DTO is built from the tracked entity and must equal what a re-read returns.
+        var now = InAppTime.ToMicroseconds(clock.UtcNow);
         var entry = await repository.MarkReadAsync(command.TenantId, memberId, command.NotificationId, now, cancellationToken)
             ?? throw new ResourceNotFoundException(NotificationsErrorCodes.NotificationNotFound, "The notification does not exist.");
 

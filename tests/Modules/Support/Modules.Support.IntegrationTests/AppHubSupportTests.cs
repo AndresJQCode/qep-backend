@@ -76,6 +76,11 @@ public sealed class AppHubSupportTests(SupportHostWithoutWorkers host) : IClassF
         // A topic with no authorizer (unknown prefix or empty) gets the hub's generic code; Support's own refusals keep Support's.
         var expected = topic.StartsWith("support:", StringComparison.Ordinal) ? SupportErrorCodes.RealtimeTopicForbidden : "realtime.topic_forbidden";
         Assert.Contains(expected, error.Message, StringComparison.Ordinal);
+        // «support.realtime.topic_forbidden» also contains the generic code, so the generic case has to rule Support's out.
+        if (expected == "realtime.topic_forbidden")
+        {
+            Assert.DoesNotContain("support.realtime", error.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -92,6 +97,7 @@ public sealed class AppHubSupportTests(SupportHostWithoutWorkers host) : IClassF
         Assert.Contains(SupportErrorCodes.RealtimeTopicForbidden, unknown.Message, StringComparison.Ordinal);
         // Over the 200-character cap no authorizer is even looked up, so the hub's generic code answers.
         Assert.Contains("realtime.topic_forbidden", tooLong.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("support.realtime", tooLong.Message, StringComparison.Ordinal);
     }
 
     [Fact]

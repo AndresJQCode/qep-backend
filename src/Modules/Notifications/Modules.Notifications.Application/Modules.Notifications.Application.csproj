@@ -8,6 +8,9 @@
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Modules.Notifications.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="FluentValidation" />
   </ItemGroup>
 </Project>

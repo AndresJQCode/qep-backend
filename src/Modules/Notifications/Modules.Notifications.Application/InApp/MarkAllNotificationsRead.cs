@@ -37,7 +37,7 @@ public sealed class MarkAllNotificationsReadHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         DateTimeOffset? upTo = InAppUpTo.TryParse(command.UpTo, out var parsed) ? parsed : null;
-        await repository.MarkAllReadAsync(command.TenantId, memberId, upTo, clock.UtcNow, cancellationToken);
+        await repository.MarkAllReadAsync(command.TenantId, memberId, upTo, InAppTime.ToMicroseconds(clock.UtcNow), cancellationToken);
 
         // A null notificationId: not one entry but all of them changed.
         await publisher.PublishToMemberAsync(
