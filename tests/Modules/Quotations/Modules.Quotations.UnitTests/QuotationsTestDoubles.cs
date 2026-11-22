@@ -1725,10 +1725,18 @@ internal sealed class StubTenantDirectory : ITenantDirectory
     /// <summary>Cuántas veces se leyó la configuración regional del tenant.</summary>
     public int RegionalCalls { get; private set; }
 
+    /// <summary>Si se pone, la lectura regional lanza esta falla (después de contarse).</summary>
+    public Exception? RegionalFailure { get; set; }
+
     public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
         TenantId tenantId, CancellationToken cancellationToken)
     {
         RegionalCalls++;
+        if (RegionalFailure is not null)
+        {
+            throw RegionalFailure;
+        }
+
         return Task.FromResult(Regional);
     }
 

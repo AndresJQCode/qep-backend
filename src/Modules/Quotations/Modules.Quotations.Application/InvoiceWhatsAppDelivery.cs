@@ -30,7 +30,8 @@ public interface IInvoiceWhatsAppDelivery
     Task SendAsync(InvoiceWhatsAppRequest request, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Si hoy se podría mandar: hay al menos un canal disponible para facturas y el cliente del pedido tiene teléfono.
+    /// Si hoy se podría mandar: el cliente del pedido tiene teléfono y el canal se resuelve igual que en el envío (uno solo,
+    /// o varios con la elección guardada del tenant).
     /// Nunca lanza porque falte algo: responde <c>false</c>.
     /// </summary>
     Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
@@ -84,6 +85,10 @@ public sealed class InvoiceWhatsAppDelivery(
             requested: null,
             WhatsAppDocument.Invoice).Channel;
 
+        // Antes de publicar: si esta lectura falla no debe quedar una copia pública huérfana.
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(
+            new TenantId(request.TenantId), cancellationToken);
+
         // Sólo Zenvia baja el documento por URL. Meta recibe los bytes y Mensajería los sube: no se publica nada.
         string? documentUrl = null;
         byte[]? document = null;
@@ -95,9 +100,6 @@ public sealed class InvoiceWhatsAppDelivery(
         {
             document = request.Pdf.ToArray();
         }
-
-        var regional = await tenantDirectory.GetRegionalSettingsAsync(
-            new TenantId(request.TenantId), cancellationToken);
 
         // Una falla del envío sale como viene: el sender ya la tradujo a `invoice.whatsapp.send_failed`.
         await whatsAppSender.SendInvoiceAsync(
@@ -131,8 +133,22 @@ public sealed class InvoiceWhatsAppDelivery(
             return false;
         }
 
+        // Misma resolución que el envío, con la elección guardada del tenant y sin guardar nada: dos canales sin elección
+        // harían fallar el envío con `channel_required`, así que no se ofrece.
         var available = await whatsAppChannels.ListAvailableAsync(tenantId, WhatsAppDocument.Invoice, cancellationToken);
-        return available.Count > 0;
+        try
+        {
+            WhatsAppChannelSelection.Resolve(
+                available,
+                await channelChoices.FindAsync(tenantId, cancellationToken),
+                requested: null,
+                WhatsAppDocument.Invoice);
+            return true;
+        }
+        catch (QuotationsDomainException)
+        {
+            return false;
+        }
     }
 
     // Que exista en este tenant: la ficha de otro tenant cuenta como no encontrada.

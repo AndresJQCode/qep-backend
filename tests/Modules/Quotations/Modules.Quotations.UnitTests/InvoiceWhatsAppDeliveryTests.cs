@@ -199,6 +199,50 @@ public sealed class InvoiceWhatsAppDeliveryTests
             TenantId, withoutPhone.Order.Id.Value, TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task CanSendIsFalseWhenTwoChannelsHaveNoSavedChoice()
+    {
+        var harness = NewHarness(channels: [WhatsAppChannels.Any(), WhatsAppChannels.Meta()]);
+
+        Assert.False(await harness.Delivery.CanSendAsync(
+            TenantId, harness.Order.Id.Value, TestContext.Current.CancellationToken));
+        Assert.Equal(0, harness.Choices.Remembered);
+    }
+
+    [Fact]
+    public async Task CanSendIsTrueWithTwoChannelsAndASavedChoice()
+    {
+        var meta = WhatsAppChannels.Meta();
+        var harness = NewHarness(channels: [WhatsAppChannels.Any(), meta], saved: meta.ConnectionId);
+
+        Assert.True(await harness.Delivery.CanSendAsync(
+            TenantId, harness.Order.Id.Value, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task CanSendIsTrueWithASingleChannelAndNoSavedChoice()
+    {
+        var harness = NewHarness(channels: [WhatsAppChannels.Meta()]);
+
+        Assert.True(await harness.Delivery.CanSendAsync(
+            TenantId, harness.Order.Id.Value, TestContext.Current.CancellationToken));
+    }
+
+    // Si la lectura regional falla, no se debe haber publicado la copia pública de Zenvia (quedaría huérfana).
+    [Fact]
+    public async Task ARegionalLookupFailurePublishesNothing()
+    {
+        var failure = new InvalidOperationException("regional down");
+        var harness = NewHarness(channels: [WhatsAppChannels.Any()], regionalFailure: failure);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Delivery.SendAsync(harness.Request(), TestContext.Current.CancellationToken));
+
+        Assert.Same(failure, error);
+        Assert.Empty(harness.Storage.PublishedInvoices);
+        Assert.Null(harness.Sender.SentInvoice);
+    }
+
     private sealed record Harness(
         InvoiceWhatsAppDelivery Delivery,
         Order Order,
@@ -215,7 +259,8 @@ public sealed class InvoiceWhatsAppDeliveryTests
         QuotationCustomerRef? customer = null,
         WhatsAppChannel[]? channels = null,
         Guid? saved = null,
-        Exception? whatsAppFailure = null)
+        Exception? whatsAppFailure = null,
+        Exception? regionalFailure = null)
     {
         var directory = new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]);
         var choices = new InMemoryWhatsAppChannelChoiceStore(saved);
@@ -228,7 +273,7 @@ public sealed class InvoiceWhatsAppDeliveryTests
             new StubQuotationCustomerLookup(customer ?? Customer),
             directory,
             choices,
-            new StubTenantDirectory(),
+            new StubTenantDirectory { RegionalFailure = regionalFailure },
             new StubMembershipDirectory(AdvisorId.Value),
             new StubExecutionContext(SubjectId, TenantId),
             whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure),
