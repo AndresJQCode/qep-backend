@@ -153,14 +153,16 @@ public sealed class SiigoInvoiceWhatsAppApiTests
         using var world = await ArrangeAsync(database);
         var (client, doubles, invoiceId) = await ArrangeSendAsync(world, Meta);
         await ExecuteAsync(world.ConnectionString, "UPDATE customers.customers SET phone = ''");
-        var siigoCalls = world.Siigo.CallsTo($"/v1/invoices/d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f/pdf");
+        var pdfPath = "/v1/invoices/d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f/pdf";
+        var before = world.Siigo.CallsTo(pdfPath);
 
         var response = await client.PostAsync(SendRoute(world, invoiceId), null, Ct);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("invoice.whatsapp.no_phone", await CodeAsync(response));
         Assert.Empty(doubles.Sender.Invoices);
-        Assert.Equal(0, siigoCalls);
+        // El handler pide el PDF antes de entregarlo (Quotations mira el teléfono dentro del envío): una sola lectura, y nada salió.
+        Assert.Equal(1, world.Siigo.CallsTo(pdfPath) - before);
     }
 
     [Fact]

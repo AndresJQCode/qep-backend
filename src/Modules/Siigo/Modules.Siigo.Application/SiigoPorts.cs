@@ -193,6 +193,6 @@ public interface ISiigoInvoiceWhatsApp
     Task SendAsync(
         Guid tenantId, Guid orderId, string invoiceNumber, decimal? invoiceTotal, ReadOnlyMemory<byte> pdf, CancellationToken cancellationToken);
 
-    /// <summary>Si hoy se podría mandar (canal que se resuelve y cliente con teléfono). Nunca lanza por falta de algo: responde <c>false</c>.</summary>
+    /// <summary>Si hoy se podría mandar (canal que se resuelve y cliente con teléfono). Que falte algo (sin canal, sin teléfono) responde <c>false</c>; una falla de infraestructura sí lanza, y quien la llama (la lista) decide qué hacer con ella.</summary>
     Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 }

@@ -5399,8 +5399,10 @@ pagos sin llamar a Siigo.
 viaja en memoria: nunca se guarda). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
 siigo.invoice.not_found` sin llamar a Siigo ni al canal; sin permiso o con el tenant de otra ruta es `403`, nunca `404`. El envío lo hace
 Quotations (`IInvoiceWhatsAppDelivery`; Siigo sólo ve el puerto `ISiigoInvoiceWhatsApp`), así que el canal se resuelve como en el pedido
-y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `channel_unavailable`, `channel_already_set`, `no_phone` (el
-cliente del pedido no tiene teléfono; sale **antes** de pedir el PDF) y `send_failed` (todos `422`), más `order.order.client_not_found`. No
+y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `no_phone` (el
+cliente del pedido no tiene teléfono; Quotations lo mira dentro del envío, así que el PDF ya se pidió a Siigo) y `send_failed`, más
+`order.order.client_not_found` (el cliente del pedido no existe en el tenant); todos son errores de dominio `422`. `channel_unavailable` y `channel_already_set` no pueden
+salir acá: el envío nunca pide un canal concreto. No
 hay deduplicación: dos clics son dos mensajes y dos entradas de auditoría `siigo.invoice.whatsapp_sent` (sin teléfono, URL ni contenido).
 
 `GET …/siigo-invoice` suma `canSendWhatsApp` a cada fila: la fila tiene PDF **y** hoy se podría entregar (el canal se resuelve igual que en

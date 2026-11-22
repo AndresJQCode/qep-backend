@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Audit.Domain;
 using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
@@ -136,6 +137,27 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
         Assert.Equal(0, harness.Delivery.CanSendCalls);
     }
 
+    // La pregunta es una pista opcional: que falle no puede tumbar la lista, que trae las filas que la pantalla tiene que mostrar.
+    [Fact]
+    public async Task AFailingAvailabilityCheckStillListsEveryRowWithoutTheHint()
+    {
+        var harness = new Harness([CreatedRow(), PendingRow(SiigoInvoiceKind.Freight)], canSendFailure: new InvalidOperationException("db down"));
+
+        var list = await harness.List();
+
+        Assert.Equal(2, list.Count);
+        Assert.All(list, dto => Assert.False(dto.CanSendWhatsApp));
+        Assert.Equal(1, harness.Delivery.CanSendCalls);
+    }
+
+    [Fact]
+    public async Task ACancelledAvailabilityCheckStillPropagates()
+    {
+        var harness = new Harness([CreatedRow()], canSendFailure: new OperationCanceledException());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => harness.List());
+    }
+
     [Fact]
     public async Task TheListAsksDeliveryOnceForTheWholeRequest()
     {
@@ -160,10 +182,10 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
     private sealed class Harness
     {
         public Harness(
-            IEnumerable<SiigoInvoice> rows, bool hasPermission = true, Exception? deliveryFailure = null, bool canSend = true)
+            IEnumerable<SiigoInvoice> rows, bool hasPermission = true, Exception? deliveryFailure = null, bool canSend = true, Exception? canSendFailure = null)
         {
             Rows = [.. rows];
-            Delivery = new RecordingDelivery(deliveryFailure, canSend);
+            Delivery = new RecordingDelivery(deliveryFailure, canSend, canSendFailure);
             Api = ApiProxy.Create(Pdf);
             Context = new ExecutionContext(SubjectId, TenantId, hasPermission);
         }
@@ -187,7 +209,7 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
 
         public async Task<IReadOnlyList<SiigoInvoiceDto>> List() =>
             await new GetSiigoInvoicesHandler(
-                Context, new AllModules(), new StubInvoices(Rows), UnitOfWork, new FixedClock(Now), Delivery)
+                Context, new AllModules(), new StubInvoices(Rows), UnitOfWork, new FixedClock(Now), Delivery, NullLogger<GetSiigoInvoicesHandler>.Instance)
                 .HandleAsync(new GetSiigoInvoicesQuery(TenantId, OrderId), TestContext.Current.CancellationToken);
 
         public void AssertNothingCalled()
@@ -245,7 +267,7 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
 
     private sealed record SentInvoice(Guid TenantId, Guid OrderId, string InvoiceNumber, decimal? InvoiceTotal, byte[] Pdf);
 
-    private sealed class RecordingDelivery(Exception? failure, bool canSend) : ISiigoInvoiceWhatsApp
+    private sealed class RecordingDelivery(Exception? failure, bool canSend, Exception? canSendFailure = null) : ISiigoInvoiceWhatsApp
     {
         public List<SentInvoice> Sent { get; } = [];
 
@@ -266,6 +288,11 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
         public Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
         {
             CanSendCalls++;
+            if (canSendFailure is not null)
+            {
+                throw canSendFailure;
+            }
+
             return Task.FromResult(canSend);
         }
     }

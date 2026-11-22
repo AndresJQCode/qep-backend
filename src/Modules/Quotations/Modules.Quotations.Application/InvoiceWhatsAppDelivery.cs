@@ -32,7 +32,7 @@ public interface IInvoiceWhatsAppDelivery
     /// <summary>
     /// Si hoy se podría mandar: el cliente del pedido tiene teléfono y el canal se resuelve igual que en el envío (uno solo,
     /// o varios con la elección guardada del tenant).
-    /// Nunca lanza porque falte algo: responde <c>false</c>.
+    /// Que falte algo (pedido, teléfono, canal) responde <c>false</c>; una falla de infraestructura (base, directorio de canales) sí lanza.
     /// </summary>
     Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 }
