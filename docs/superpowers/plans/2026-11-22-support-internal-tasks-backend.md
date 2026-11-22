@@ -179,7 +179,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
     SupportClockContext clock)`: `Intake = Internal`, `ManualMedium = null`, `ReplyChannel = None`, sin cliente ni solicitante,
     `DueOn = dueOn` (nunca del término).
   - `void ChangeDueOn(DateOnly? dueOn, Guid actorMemberId, DateTimeOffset now, SupportClockContext clock)`: evento `DueDateChanged`
-    con `{ from, to }`.
+    con `{ fromDueOn, toDueOn }` (los nombres de `Extended`).
   - `static IReadOnlyList<SupportTicketStatus> SupportTicketStatuses.AllowedFor(SupportTicketStatus from, bool isInternal)`: la tabla
     sin `WaitingOnCustomer` cuando `isInternal`.
   - Enums, al final: `SupportTicketIntake.Internal`, `SupportReplyChannel.None`, `SupportTicketEventKind.DueDateChanged`.
@@ -204,7 +204,7 @@ En cada paso, `<Clase>` y `<Prueba>` son los que nombra la tarea. «Esperado: no
   - `ATaskTakesNoCustomer`: `LinkCustomer(Customer, …)` → `InternalNoReply`.
   - `ATaskHasNoExtension`: `MaxExtensionBusinessDays(today) == null` y `Extend` → `ExtensionNoTerm`.
   - `ChangingTheDueDateOfATaskRecordsIt`: `ChangeDueOn(2026-11-25)` → `DueOn`, `Version == 2`, último evento `DueDateChanged` con
-    `{"from":"2026-11-20","to":"2026-11-25"}`; con el mismo valor no sube la versión; `null` la quita; 2026-11-12 → `InternalDueInPast`;
+    `{"fromDueOn":"2026-11-20","toDueOn":"2026-11-25"}`; con el mismo valor no sube la versión; `null` la quita; 2026-11-12 → `InternalDueInPast`;
     `Resolved` → `NotEditable`; sobre un externo → `NotInternal`.
   - `CreatedByIsTheActorOrNobody`: manual y conversación → `Actor`; formulario público → `null`.
   - En `SupportTicketStatusesTests`: `AllowedForATaskNeverOffersWaitingOnCustomer` (todos los estados) y

@@ -140,7 +140,7 @@ Intercom. Decisión del owner, 2026-11-22: opción A (ticket interno), sobre un 
 
 - El tópico `Inbox` avisa a todos sus suscriptores de cualquier cambio, así que **un miembro que
   sólo usa tareas no puede suscribirse a él**: sabría cuándo hay actividad en tickets de clientes.
-  Se agrega el tópico **`support.tasks.<memberId>`**: sólo el propio miembro se suscribe, y recibe
+  Se agrega el tópico **`support:tasks:<memberId>`**: sólo el propio miembro se suscribe, y recibe
   los eventos de las tareas donde es creador o responsable (avisa por id, como el resto: el SPA
   invalida y relee). El tópico de un ticket concreto sigue la regla de §5.6. Quien lee o gestiona
   Soporte sigue oyendo `Inbox`, que ahora también lleva los eventos de los internos.
@@ -185,7 +185,7 @@ Quién puede qué sobre un ticket **T**, para un miembro **M**:
   conteos revelarían tareas ajenas).
 - **Tiempo real:** `SupportRealtimeAuthorizer` hoy decide sólo por permiso; para un ticket
   concreto ahora también aplica la tabla (carga el ticket, que ya hace para el tenant) y
-  `support.tasks.<memberId>` lo valida contra el propio miembro.
+  `support:tasks:<memberId>` lo valida contra el propio miembro.
 - La presencia («está escribiendo») sigue exigiendo `manage`, salvo en un interno donde M es
   participante.
 - **Sin el módulo Soporte** el permiso se quita solo (`ModuleEntitlementMask`) y todo responde
@@ -226,7 +226,7 @@ existentes. Reversible. Sin datos a convertir: ningún ticket actual es interno.
 por ningún camino (detalle, historial, notas, adjuntos, lista, resumen, tiempo real) y recibe 404;
 ve una tarea ajena como 404; ve y trabaja las suyas; `read` ve todas sin actuar; `manage` ve y
 actúa en todo; el traspaso quita el acceso al responsable anterior; el tópico `Inbox` le es
-negado y `support.tasks.<otro miembro>` también; el resumen no cuenta tareas ajenas. Prueba de
+negado y `support:tasks:<otro miembro>` también; el resumen no cuenta tareas ajenas. Prueba de
 arquitectura o de cobertura: ningún handler de ticket llama `EnsureAsync(…, Manage)` sin pasar por
 el servicio de acceso, salvo los exclusivos de externos.
 
