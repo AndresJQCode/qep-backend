@@ -103,4 +103,9 @@ internal sealed class QuotationsMetaWhatsAppSender(
                 "order.whatsapp.send_failed", $"Meta did not accept the order ({reason}).");
         }
     }
+
+    // Lo implementa la tarea siguiente (canales y envío por Meta de la factura).
+    public Task SendInvoiceAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppInvoiceMessage message, CancellationToken cancellationToken) =>
+        throw new NotImplementedException();
 }

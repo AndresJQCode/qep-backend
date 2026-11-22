@@ -1147,4 +1147,7 @@ internal sealed class NoOpWhatsAppSender : IWhatsAppSender
 
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
 }

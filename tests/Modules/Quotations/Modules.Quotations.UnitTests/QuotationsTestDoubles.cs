@@ -20,6 +20,10 @@ internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
         Task.FromException(failure);
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken) =>
+        Task.FromException(failure);
 }
 
 /// <summary>Los canales del tenant, fijos por prueba (spec 2026-10-21). Replica la única regla por documento del adaptador real
@@ -98,10 +102,19 @@ internal sealed class RecordingZenviaSender : IZenviaWhatsAppSender
         return Task.CompletedTask;
     }
 
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppInvoiceMessage Message)> Invoices { get; } = [];
+
     public Task SendOrderAsync(
         ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
         Orders.Add((channel, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendInvoiceAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Invoices.Add((channel, message));
         return Task.CompletedTask;
     }
 }
@@ -120,10 +133,19 @@ internal sealed class RecordingMetaSender : IMetaWhatsAppSender
         return Task.CompletedTask;
     }
 
+    public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppInvoiceMessage Message)> Invoices { get; } = [];
+
     public Task SendOrderAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
         Orders.Add((channel, waId, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendInvoiceAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Invoices.Add((channel, waId, message));
         return Task.CompletedTask;
     }
 }
@@ -162,6 +184,16 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
     {
         Channel = channel;
         SentOrder = message;
+        return Task.CompletedTask;
+    }
+
+    public WhatsAppInvoiceMessage? SentInvoice { get; private set; }
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Channel = channel;
+        SentInvoice = message;
         return Task.CompletedTask;
     }
 }
