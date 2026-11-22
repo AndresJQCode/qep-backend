@@ -24,6 +24,13 @@ public static class SupportErrorCodes
 
     public const string AssigneeInvalid = "support.ticket.assignee_invalid";
 
+    /// <summary>Spec 2026-11-22 §8.6: a recipient of the unassigned-ticket alert that cannot manage tickets (or is not a member). Domain
+    /// code and not a field error: the id was chosen from a list, so there is no input to mark.</summary>
+    public const string AlertRecipientInvalid = "support.settings.alert_recipient_invalid";
+
+    /// <summary>Spec 2026-11-22 §8.6: the schedule of the alert is not one of the tenant's.</summary>
+    public const string AlertScheduleInvalid = "support.settings.alert_schedule_invalid";
+
     public const string TicketTypeNotFound = "support.ticket_type.not_found";
 
     public const string TicketTypeUnavailable = "support.ticket_type.unavailable";

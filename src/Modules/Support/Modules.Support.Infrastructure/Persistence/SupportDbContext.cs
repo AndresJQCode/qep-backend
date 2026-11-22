@@ -483,6 +483,21 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         settings.Property(value => value.AutoCloseBusinessDays)
             .HasColumnName("auto_close_business_days")
             .HasDefaultValue(SupportTenantSettings.DefaultAutoCloseBusinessDays);
+        // Spec 2026-11-22 §7 and §11. All with a default in the column (the provisioner's INSERT does not name them, and the rows that
+        // exist already take them): expand-only. No foreign key on the schedule: it is data of Messaging, and one that was deleted is
+        // read as «missing» and not as an error. The recipients are a uuid[] in the order they were chosen.
+        settings.Property(value => value.UnassignedAlertEnabled).HasColumnName("unassigned_alert_enabled").HasDefaultValue(false);
+        settings.Property(value => value.UnassignedAlertHours)
+            .HasColumnName("unassigned_alert_hours")
+            .HasDefaultValue(SupportUnassignedAlertSettings.DefaultThresholdHours);
+        settings.Property(value => value.UnassignedAlertRecipientIds)
+            .HasColumnName("unassigned_alert_recipient_ids")
+            .HasColumnType("uuid[]")
+            .HasDefaultValueSql("'{}'::uuid[]");
+        settings.Property(value => value.UnassignedAlertScheduleId).HasColumnName("unassigned_alert_schedule_id");
+        settings.Property(value => value.UnassignedAlertEnabledAt).HasColumnName("unassigned_alert_enabled_at");
+        // A read of the four columns above as one value, not a column.
+        settings.Ignore(value => value.UnassignedAlert);
         settings.Property<DateTimeOffset>("CreatedAt").HasColumnName("created_at");
         settings.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         settings.Property(value => value.Version)

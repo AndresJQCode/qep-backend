@@ -565,6 +565,33 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("survey_enabled");
 
+                    b.Property<bool>("UnassignedAlertEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("unassigned_alert_enabled");
+
+                    b.Property<DateTimeOffset?>("UnassignedAlertEnabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unassigned_alert_enabled_at");
+
+                    b.Property<int>("UnassignedAlertHours")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(4)
+                        .HasColumnName("unassigned_alert_hours");
+
+                    b.PrimitiveCollection<Guid[]>("UnassignedAlertRecipientIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("unassigned_alert_recipient_ids")
+                        .HasDefaultValueSql("'{}'::uuid[]");
+
+                    b.Property<Guid?>("UnassignedAlertScheduleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("unassigned_alert_schedule_id");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
