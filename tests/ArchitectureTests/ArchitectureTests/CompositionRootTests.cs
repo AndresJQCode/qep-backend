@@ -1094,6 +1094,27 @@ public sealed class CompositionRootTests
         Assert.DoesNotContain(SupportPermissions.SettingsManage, catalog.PermissionsFor("advisor"));
     }
 
+    /// <summary>Spec 2026-11-22 (tareas internas, §5.6): <c>support.task.use</c> es de riesgo bajo, exige el módulo Soporte y lo llevan
+    /// de fábrica los cuatro roles, porque la meta es que cualquier miembro cree y trabaje tareas.</summary>
+    [Fact]
+    public void TheTaskUsePermissionIsLowNeedsSupportAndEveryFactoryRoleHasIt()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definition = RegisteredPermissionDefinitions().Single(d => d.Permission == SupportPermissions.TaskUse);
+
+        Assert.Equal("support.task.use", SupportPermissions.TaskUse);
+        Assert.Equal("Usar tareas internas", definition.DisplayName);
+        Assert.Equal("Soporte", definition.Category);
+        Assert.Equal("low", definition.RiskLevel);
+        Assert.Equal([ModuleKeys.Support], definition.RequiredModules!.ToArray());
+        Assert.Equal(new PermissionShape("support.task", "Tareas internas", "use"), definition.Shape);
+        foreach (var role in new[] { "admin", "advisor", "billing", "cashier" })
+        {
+            Assert.Contains(SupportPermissions.TaskUse, catalog.PermissionsFor(role));
+        }
+    }
+
     /// <summary>La otra mitad de los permisos de soporte, más las dos políticas de visibilidad (D5 y D15): <c>TicketView</c> acepta
     /// leer o gestionar y <c>SettingsView</c> además configurar. Sin ellas, la ruta responde 500, no 403.</summary>
     [Fact]
@@ -1119,6 +1140,17 @@ public sealed class CompositionRootTests
         Assert.Equal(
             [SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage],
             AcceptedPermissions(settingsView));
+
+        // Spec 2026-11-22 (tareas internas) §5.6 y D10: actuar sobre un ticket lo decide la puerta; la política sólo deja pasar a
+        // quien gestiona o usa tareas. Ver acepta además leer.
+        Assert.Equal("support.ticket.act", SupportPolicies.TicketAct);
+        Assert.Equal("support.ticket.scoped_view", SupportPolicies.TicketScopedView);
+        var ticketAct = await policies.GetPolicyAsync(SupportPolicies.TicketAct);
+        Assert.NotNull(ticketAct);
+        Assert.Equal([SupportPermissions.Manage, SupportPermissions.TaskUse], AcceptedPermissions(ticketAct));
+        var scopedView = await policies.GetPolicyAsync(SupportPolicies.TicketScopedView);
+        Assert.NotNull(scopedView);
+        Assert.Equal([SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.TaskUse], AcceptedPermissions(scopedView));
     }
 
     private static string[] AcceptedPermissions(AuthorizationPolicy policy) =>

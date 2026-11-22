@@ -2727,6 +2727,8 @@ public static class QepServiceCollectionExtensions
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
                 SupportPermissions.SettingsManage,
+                // Spec 2026-11-22 (tareas internas) D-4: los cuatro roles de fábrica pueden usar tareas.
+                SupportPermissions.TaskUse,
                 // Spec de la tienda en línea (owner, 2026-11-03): publicar la tienda y fijar sus cuentas de cobro es de admin y de nadie más.
                 // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
                 StorePermissions.SettingsManage,
@@ -2798,6 +2800,7 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-14 (soporte, C1): el asesor atiende los tickets; configurar los tipos y el umbral es de admin.
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
+                SupportPermissions.TaskUse,
                 // Spec 2026-11-17 (mayorista), P-3 aprobada: el asesor ve los distribuidores (es el asesor asignado); invitar,
                 // editar y bloquear, y las listas de precios, son de admin.
                 WholesalePermissions.DistributorRead
@@ -2839,7 +2842,9 @@ public static class QepServiceCollectionExtensions
                 LoansPermissions.Manage,
                 // Spec 2026-11-18 (integración Siigo) §5.7: facturación emite la factura en Siigo, como marca el pedido facturado
                 // (quotations.order.invoice). Configurar la conexión es de admin.
-                SiigoPermissions.InvoiceIssue
+                SiigoPermissions.InvoiceIssue,
+                // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
+                SupportPermissions.TaskUse
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -2856,7 +2861,9 @@ public static class QepServiceCollectionExtensions
                 PosPermissions.SaleRead,
                 PosPermissions.SaleCreate,
                 PosPermissions.SaleCustomer,
-                PosPermissions.RegisterOperate
+                PosPermissions.RegisterOperate,
+                // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
+                SupportPermissions.TaskUse
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -3949,6 +3956,18 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("support.settings", "Configuración de soporte", "manage"),
         });
+        // Spec 2026-11-22 (tareas internas, §5.6): riesgo bajo, porque no abre ningún ticket de cliente; con [support],
+        // ModuleEntitlementMask lo quita al apagar el módulo.
+        services.AddSingleton(new PermissionDefinition(
+            SupportPermissions.TaskUse,
+            "Usar tareas internas",
+            "Permite crear tareas internas y trabajar las propias, las que creaste o te asignaron. No da acceso a los tickets de clientes.",
+            "Soporte",
+            "low",
+            RequiredModules: [ModuleKeys.Support])
+        {
+            Shape = new("support.task", "Tareas internas", "use"),
+        });
         // Spec de la tienda en línea (2026-11-03): con [store], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece. La bandeja no declara permiso nuevo: usa quotations.order.manage.
         services.AddSingleton(new PermissionDefinition(
@@ -4478,6 +4497,15 @@ public static class QepServiceCollectionExtensions
                 SupportPolicies.SettingsView,
                 policy => AddAnyPermissionRequirement(
                     policy, SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage))
+            // Spec 2026-11-22 (tareas internas) §5.6 y plan D10: actuar sobre un ticket y verlo por la puerta; la decisión fina por
+            // ticket es de SupportTicketScope. No son permisos, así que no se asignan a roles.
+            .AddPolicy(
+                SupportPolicies.TicketAct,
+                policy => AddAnyPermissionRequirement(policy, SupportPermissions.Manage, SupportPermissions.TaskUse))
+            .AddPolicy(
+                SupportPolicies.TicketScopedView,
+                policy => AddAnyPermissionRequirement(
+                    policy, SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.TaskUse))
             // Spec de la tienda en línea: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 StorePermissions.SettingsManage,
