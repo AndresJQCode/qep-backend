@@ -21,8 +21,109 @@ public static class SchedulingEndpoints
         MapResources(group);
         MapServices(group);
         MapSettings(group);
+        MapBlocks(group);
+        MapSessions(group);
+        MapClosures(group);
 
         return endpoints;
+    }
+
+    // Franjas: toda ruta es `availability.manage` (y el handler exige también el `read`), dentro del alcance de recursos de quien pide.
+    private static void MapBlocks(RouteGroupBuilder group)
+    {
+        group.MapGet("/blocks", async (Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(new ListBlocksQuery(tenantId), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Produces<IReadOnlyList<BlockDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/blocks", async (Guid tenantId, BlockRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+            {
+                var block = await dispatcher.SendAsync(new CreateBlockCommand(tenantId, request), cancellationToken);
+                return Results.Created($"/api/v1/tenants/{tenantId}/scheduling/blocks/{block.Id}", block);
+            })
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Accepts<BlockRequest>("application/json")
+            .Produces<BlockDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/blocks/{id:guid}", async (
+                Guid tenantId, Guid id, BlockRequest request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.SendAsync(
+                    new UpdateBlockCommand(tenantId, id, request, IfMatchOf(httpContext)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Accepts<BlockRequest>("application/json")
+            .Produces<BlockDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/blocks/{id:guid}/archive", async (Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.SendAsync(new ArchiveBlockCommand(tenantId, id), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Produces<BlockDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+    }
+
+    // Publicar o quitar una sesión de una franja `PublishedSessions`: el contrato no lo separa de las franjas, es `availability.manage`.
+    private static void MapSessions(RouteGroupBuilder group)
+    {
+        group.MapPost("/sessions", async (Guid tenantId, PublishSessionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+            {
+                var session = await dispatcher.SendAsync(new PublishSessionCommand(tenantId, request), cancellationToken);
+                return Results.Created($"/api/v1/tenants/{tenantId}/scheduling/sessions/{session.Id}", session);
+            })
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Accepts<PublishSessionRequest>("application/json")
+            .Produces<PublishedSessionDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/sessions/{id:guid}", async (Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+            {
+                await dispatcher.SendAsync(new RemovePublishedSessionCommand(tenantId, id), cancellationToken);
+                return Results.NoContent();
+            })
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    private static void MapClosures(RouteGroupBuilder group)
+    {
+        group.MapGet("/closures", async (Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(new ListClosuresQuery(tenantId), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Produces<IReadOnlyList<ClosureDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/closures", async (Guid tenantId, ClosureRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+            {
+                var closure = await dispatcher.SendAsync(new CreateClosureCommand(tenantId, request), cancellationToken);
+                return Results.Created($"/api/v1/tenants/{tenantId}/scheduling/closures/{closure.Id}", closure);
+            })
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Accepts<ClosureRequest>("application/json")
+            .Produces<ClosureDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/closures/{id:guid}", async (Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+            {
+                await dispatcher.SendAsync(new DeleteClosureCommand(tenantId, id), cancellationToken);
+                return Results.NoContent();
+            })
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
     }
 
     private static void MapSetup(RouteGroupBuilder group) =>

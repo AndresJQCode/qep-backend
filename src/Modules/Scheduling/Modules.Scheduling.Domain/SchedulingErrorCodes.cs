@@ -21,6 +21,9 @@ public static class SchedulingErrorCodes
     public const string ServiceInUse = "scheduling.service.in_use";
     public const string MainLocationCannotBeArchived = "scheduling.location.main_cannot_be_archived";
     public const string SessionNotPublishedMode = "scheduling.session.not_published_mode";
+
+    // Tarea 8: una sesión con citas (aun canceladas) no se quita, porque su historial le apunta.
+    public const string SessionHasAppointments = "scheduling.session.has_appointments";
     public const string ReminderTemplateMissing = "scheduling.reminder.template_missing";
     public const string ReminderConnectionInvalid = "scheduling.reminder.connection_invalid";
 
@@ -28,4 +31,7 @@ public static class SchedulingErrorCodes
     public const string LocationNotFound = "scheduling.location.not_found";
     public const string ResourceNotFound = "scheduling.resource.not_found";
     public const string ServiceNotFound = "scheduling.service.not_found";
+    public const string BlockNotFound = "scheduling.block.not_found";
+    public const string ClosureNotFound = "scheduling.closure.not_found";
+    public const string SessionNotFound = "scheduling.session.not_found";
 }

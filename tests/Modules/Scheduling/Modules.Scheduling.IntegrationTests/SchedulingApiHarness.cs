@@ -206,6 +206,101 @@ internal static class SchedulingApiHarness
         await db.SaveChangesAsync(Ct);
     }
 
+    public static async Task<Guid> MainLocationIdAsync(SchedulingTenant tenant)
+    {
+        var locations = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/locations");
+        return locations.EnumerateArray().Single(location => location.GetProperty("isMain").GetBoolean()).GetProperty("id").GetGuid();
+    }
+
+    public static async Task<Guid> CreateResourceAsync(SchedulingTenant tenant, string name, Guid? memberId = null, Guid? locationId = null) =>
+        (await CreatedAsync(tenant.Admin, $"{tenant.Url}/resources", new { displayName = name, memberId, locationId })).GetProperty("id").GetGuid();
+
+    public static async Task<Guid> CreateServiceAsync(SchedulingTenant tenant, string name = "Limpieza", int durationMinutes = 30) =>
+        (await CreatedAsync(
+            tenant.Admin,
+            $"{tenant.Url}/services",
+            new { name, durationMinutes, bufferMinutes = 0, bookableByChannel = true })).GetProperty("id").GetGuid();
+
+    /// <summary>El cuerpo de una franja semanal: los lunes de 08:00 a 12:00 (minutos locales 480 a 720).</summary>
+    public static object WeeklyBlockBody(
+        IEnumerable<Guid> resourceIds,
+        IEnumerable<Guid> serviceIds,
+        string name = "Mañanas",
+        int capacity = 1,
+        string? sessionMode = null) =>
+        new
+        {
+            name,
+            kind = "Weekly",
+            weekly = new[] { new { day = 1, ranges = new[] { new { @from = 480, to = 720 } } } },
+            capacityPerResource = capacity,
+            sessionMode,
+            resourceIds,
+            serviceIds,
+        };
+
+    /// <summary>El cuerpo de una franja puntual de 09:00 a 12:00 (minutos locales 540 a 720) en una fecha.</summary>
+    public static object OneOffBlockBody(
+        DateOnly date,
+        IEnumerable<Guid> resourceIds,
+        IEnumerable<Guid> serviceIds,
+        string name = "Jornada extendida",
+        int capacity = 1,
+        string? sessionMode = null) =>
+        new
+        {
+            name,
+            kind = "OneOff",
+            oneOff = new { date, ranges = new[] { new { @from = 540, to = 720 } } },
+            capacityPerResource = capacity,
+            sessionMode,
+            resourceIds,
+            serviceIds,
+        };
+
+    /// <summary>Un cliente que es el médico de un recurso: con lectura y franjas pero sin «ver todas las agendas».</summary>
+    public static async Task<(Guid ResourceId, HttpClient Provider)> CreateProviderAsync(
+        SchedulingTenant tenant, string email, string name)
+    {
+        var (memberId, userId) = await SeedMemberAsync(tenant.Factory, tenant.IdText, email, name);
+        var resourceId = await CreateResourceAsync(tenant, $"Dr. {name}", memberId);
+        var provider = tenant.Client(userId.ToString(), SchedulingPermissions.AppointmentRead, SchedulingPermissions.AvailabilityManage);
+        return (resourceId, provider);
+    }
+
+    /// <summary>El primer lunes a más de dos semanas (los instantes de las pruebas no deben caer en el pasado).</summary>
+    public static DateOnly FutureMonday()
+    {
+        var day = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(14);
+        while (day.DayOfWeek != DayOfWeek.Monday)
+        {
+            day = day.AddDays(1);
+        }
+
+        return day;
+    }
+
+    /// <summary>Las 09:00 locales (America/Bogota, UTC-5, sin horario de verano) de un día, como instante UTC.</summary>
+    public static DateTimeOffset NineOClock(DateOnly day) =>
+        new(day.ToDateTime(new TimeOnly(14, 0), DateTimeKind.Utc), TimeSpan.Zero);
+
+    /// <summary>
+    /// Una cita vigente sobre una sesión que ya existe (publicada por la API), sembrada directo en la base: reservar es de la Tarea 9.
+    /// </summary>
+    public static async Task SeedAppointmentOnSessionAsync(QepApiFactory factory, string tenantId, Guid locationId, Guid sessionId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var session = await db.Sessions.SingleAsync(value => value.Id == new SessionId(sessionId), Ct);
+        var now = DateTimeOffset.UtcNow;
+        session.Reserve(now);
+        db.Appointments.Add(Appointment.Create(
+            AppointmentId.New(), Guid.Parse(tenantId), new LocationId(locationId), session.ResourceId, session.ServiceId,
+            Guid.CreateVersion7(), session.Id, null, session.StartsAt, session.EndsAt, AppointmentStatus.Confirmed,
+            AppointmentSource.BackOffice, null, null, null, now));
+        await db.SaveChangesAsync(Ct);
+    }
+
     public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)

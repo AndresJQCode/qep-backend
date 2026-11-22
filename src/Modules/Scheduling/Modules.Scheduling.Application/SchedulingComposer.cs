@@ -11,6 +11,51 @@ public sealed class SchedulingComposer(ISchedulingMemberDirectory members)
     public static ServiceDto Service(Service service) =>
         new(service.Id.Value, service.Name, service.DurationMinutes, service.BufferMinutes, service.BookableByChannel, service.Archived, service.Version);
 
+    public static BlockDto Block(AvailabilityBlock block) =>
+        new(
+            block.Id.Value,
+            block.LocationId.Value,
+            block.Name,
+            block.Kind.ToString(),
+            [.. block.Weekly.Select(day => new WeekdayHoursDto(day.Day, Ranges(day.Ranges)))],
+            block.OneOff is { } window ? new DateHoursDto(window.Date, Ranges(window.Ranges)) : null,
+            block.ValidFrom,
+            block.ValidTo,
+            block.ClosesOnHolidays,
+            block.CapacityPerResource,
+            block.SessionMode?.ToString(),
+            block.AllowClientChoice,
+            block.AssignmentRule.ToString(),
+            [.. block.ServiceIds.Select(id => id.Value)],
+            [.. block.ResourceIds.Select(id => id.Value)],
+            block.Archived,
+            block.Version);
+
+    public static ClosureDto Closure(Closure closure) =>
+        new(
+            closure.Id.Value,
+            closure.LocationId.Value,
+            closure.ResourceId?.Value,
+            closure.StartsAt,
+            closure.EndsAt,
+            closure.Reason,
+            closure.Version);
+
+    public static PublishedSessionDto PublishedSession(Session session) =>
+        new(
+            session.Id.Value,
+            session.ResourceId.Value,
+            session.ServiceId.Value,
+            session.StartsAt,
+            session.EndsAt,
+            session.Capacity,
+            session.BookedCount,
+            session.IsPublished,
+            session.Version);
+
+    private static IReadOnlyList<TimeRangeDto> Ranges(IReadOnlyList<TimeRange> ranges) =>
+        [.. ranges.Select(range => new TimeRangeDto(range.From, range.To))];
+
     public static SettingsDto Settings(SchedulingSettings settings) =>
         new(
             settings.ConfirmationMode.ToString(),

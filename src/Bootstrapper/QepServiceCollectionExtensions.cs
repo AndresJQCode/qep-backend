@@ -658,6 +658,33 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Scheduling.Application.UpdateSettingsCommand, Modules.Scheduling.Application.SettingsDto>,
             Modules.Scheduling.Application.UpdateSettingsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListBlocksQuery, IReadOnlyList<Modules.Scheduling.Application.BlockDto>>,
+            Modules.Scheduling.Application.ListBlocksHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.CreateBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.UpdateBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.ArchiveBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.PublishSessionCommand, Modules.Scheduling.Application.PublishedSessionDto>,
+            Modules.Scheduling.Application.PublishSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.RemovePublishedSessionCommand, Modules.Scheduling.Application.PublishedSessionRemovedResult>,
+            Modules.Scheduling.Application.RemovePublishedSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListClosuresQuery, IReadOnlyList<Modules.Scheduling.Application.ClosureDto>>,
+            Modules.Scheduling.Application.ListClosuresHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateClosureCommand, Modules.Scheduling.Application.ClosureDto>,
+            Modules.Scheduling.Application.CreateClosureHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.DeleteClosureCommand, Modules.Scheduling.Application.ClosureDeletedResult>,
+            Modules.Scheduling.Application.DeleteClosureHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 

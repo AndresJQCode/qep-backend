@@ -28,6 +28,9 @@ public static class SchedulingInfrastructureExtensions
         services.AddScoped<ILocationRepository, LocationRepository>();
         services.AddScoped<IResourceRepository, ResourceRepository>();
         services.AddScoped<IServiceRepository, ServiceRepository>();
+        services.AddScoped<IAvailabilityBlockRepository, AvailabilityBlockRepository>();
+        services.AddScoped<IClosureRepository, ClosureRepository>();
+        services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<ISchedulingSettingsRepository, SchedulingSettingsRepository>();
         services.AddScoped<ISchedulingSetupReader, SchedulingSetupReader>();
 

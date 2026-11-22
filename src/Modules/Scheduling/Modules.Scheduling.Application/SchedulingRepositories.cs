@@ -22,6 +22,10 @@ public interface IResourceRepository
 {
     Task<Resource?> FindAsync(Guid tenantId, ResourceId id, CancellationToken cancellationToken);
 
+    /// <summary>Los que existen en el tenant entre esos ids, en cualquier orden y archivados incluidos: una franja guarda ids sin llave
+    /// foránea y quien la guarda los revisa contra esto (plan, corrección 13).</summary>
+    Task<IReadOnlyList<Resource>> FindManyAsync(Guid tenantId, IReadOnlyCollection<ResourceId> ids, CancellationToken cancellationToken);
+
     /// <summary>Los recursos del alcance, archivados incluidos, por nombre y luego por id.</summary>
     Task<IReadOnlyList<Resource>> ListAsync(Guid tenantId, ResourceScope scope, CancellationToken cancellationToken);
 
@@ -42,6 +46,9 @@ public interface IServiceRepository
 {
     Task<Service?> FindAsync(Guid tenantId, ServiceId id, CancellationToken cancellationToken);
 
+    /// <summary>Los que existen en el tenant entre esos ids, en cualquier orden y archivados incluidos.</summary>
+    Task<IReadOnlyList<Service>> FindManyAsync(Guid tenantId, IReadOnlyCollection<ServiceId> ids, CancellationToken cancellationToken);
+
     /// <summary>Todos, archivados incluidos, por nombre y luego por id.</summary>
     Task<IReadOnlyList<Service>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 
@@ -49,6 +56,56 @@ public interface IServiceRepository
     Task<bool> HasFutureAppointmentsAsync(Guid tenantId, ServiceId id, DateTimeOffset now, CancellationToken cancellationToken);
 
     void Add(Service service);
+}
+
+public interface IAvailabilityBlockRepository
+{
+    Task<AvailabilityBlock?> FindAsync(Guid tenantId, AvailabilityBlockId id, CancellationToken cancellationToken);
+
+    /// <summary>Las franjas que abren al menos uno de los recursos del alcance (todas con alcance «todos»), archivadas incluidas, por
+    /// nombre y luego por id. Los ids de recursos van en una columna: el filtro es en memoria (plan, corrección 13).</summary>
+    Task<IReadOnlyList<AvailabilityBlock>> ListAsync(Guid tenantId, ResourceScope scope, CancellationToken cancellationToken);
+
+    void Add(AvailabilityBlock block);
+}
+
+public interface IClosureRepository
+{
+    Task<Closure?> FindAsync(Guid tenantId, ClosureId id, CancellationToken cancellationToken);
+
+    /// <summary>Los bloqueos que aún no terminan en <paramref name="after"/> y que el alcance puede ver: los de sus recursos y los de
+    /// toda la sede, que le cierran la agenda a todos. Por inicio y luego por id.</summary>
+    Task<IReadOnlyList<Closure>> ListAsync(Guid tenantId, ResourceScope scope, DateTimeOffset after, CancellationToken cancellationToken);
+
+    /// <summary>Alguna cita <c>Pending</c> o <c>Confirmed</c> que se solape con el rango en ese recurso o, con <paramref name="resourceId"/>
+    /// nulo, en cualquier recurso de la sede (spec D-12).</summary>
+    Task<bool> HasActiveAppointmentsAsync(
+        Guid tenantId,
+        LocationId locationId,
+        ResourceId? resourceId,
+        DateTimeOffset rangeStart,
+        DateTimeOffset rangeFinish,
+        CancellationToken cancellationToken);
+
+    void Add(Closure closure);
+
+    void Remove(Closure closure);
+}
+
+public interface ISessionRepository
+{
+    Task<Session?> FindAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken);
+
+    /// <summary>La sesión de ese recurso, servicio e inicio, activa o no: es la clave única de la tabla.</summary>
+    Task<Session?> FindByKeyAsync(
+        Guid tenantId, ResourceId resourceId, ServiceId serviceId, DateTimeOffset startsAt, CancellationToken cancellationToken);
+
+    /// <summary>Alguna cita de la sesión, en cualquier estado: la llave foránea impide borrarla mientras exista una.</summary>
+    Task<bool> HasAppointmentsAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken);
+
+    void Add(Session session);
+
+    void Remove(Session session);
 }
 
 public interface ISchedulingSettingsRepository

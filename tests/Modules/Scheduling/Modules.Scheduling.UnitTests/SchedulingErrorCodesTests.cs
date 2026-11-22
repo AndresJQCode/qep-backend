@@ -29,6 +29,8 @@ public sealed class SchedulingErrorCodesTests
                 "scheduling.appointment.outside_rules",
                 "scheduling.appointment.session_full",
                 "scheduling.appointment.slot_taken",
+                "scheduling.block.not_found",
+                "scheduling.closure.not_found",
                 "scheduling.closure.overlaps_appointments",
                 "scheduling.location.main_cannot_be_archived",
                 "scheduling.location.not_found",
@@ -38,6 +40,8 @@ public sealed class SchedulingErrorCodesTests
                 "scheduling.resource.not_found",
                 "scheduling.service.in_use",
                 "scheduling.service.not_found",
+                "scheduling.session.has_appointments",
+                "scheduling.session.not_found",
                 "scheduling.session.not_published_mode",
             ],
             Codes().Order(StringComparer.Ordinal));

@@ -59,6 +59,15 @@ internal static class SchedulingNotFound
 
     public static ResourceNotFoundException Service(Guid id) =>
         new(SchedulingErrorCodes.ServiceNotFound, $"Service '{id}' was not found.");
+
+    public static ResourceNotFoundException Block(Guid id) =>
+        new(SchedulingErrorCodes.BlockNotFound, $"Availability block '{id}' was not found.");
+
+    public static ResourceNotFoundException Closure(Guid id) =>
+        new(SchedulingErrorCodes.ClosureNotFound, $"Closure '{id}' was not found.");
+
+    public static ResourceNotFoundException Session(Guid id) =>
+        new(SchedulingErrorCodes.SessionNotFound, $"Published session '{id}' was not found.");
 }
 
 /// <summary>
