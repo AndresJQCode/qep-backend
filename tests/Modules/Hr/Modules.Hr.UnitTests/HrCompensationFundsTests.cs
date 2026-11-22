@@ -17,11 +17,12 @@ public sealed class HrCompensationFundsTests
     }
 
     [Fact]
-    public void TheThirtyFundsWithoutMeasuresComeBeforeTheTwelveIntervenedOnes()
+    public void NamesComeInAlphabeticalOrder()
     {
-        Assert.Equal("CAFAMAZ", HrCompensationFunds.Names[0]);
-        Assert.Equal("COMFENALCO Antioquia", HrCompensationFunds.Names[30]);
-        Assert.Equal("COMFAMILIAR Risaralda", HrCompensationFunds.Names[41]);
+        var sorted = HrCompensationFunds.Names.OrderBy(name => name, StringComparer.InvariantCultureIgnoreCase).ToList();
+
+        Assert.Equal(sorted, HrCompensationFunds.Names);
+        Assert.Equal("CAFABA", HrCompensationFunds.Names[0]);
     }
 
     [Theory]
