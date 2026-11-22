@@ -17,9 +17,23 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
     private static readonly ValueConverter<PayrollConceptId, Guid> ConceptIdConverter =
         new(id => id.Value, value => new PayrollConceptId(value));
 
+    private static readonly ValueConverter<PayrollPeriodId, Guid> PeriodIdConverter =
+        new(id => id.Value, value => new PayrollPeriodId(value));
+
+    private static readonly ValueConverter<PeriodEventId, Guid> PeriodEventIdConverter =
+        new(id => id.Value, value => new PeriodEventId(value));
+
     public DbSet<CompanyPayrollSettings> CompanySettings => Set<CompanyPayrollSettings>();
 
     public DbSet<PayrollConcept> Concepts => Set<PayrollConcept>();
+
+    public DbSet<PayrollPeriod> Periods => Set<PayrollPeriod>();
+
+    public DbSet<PeriodInput> PeriodInputs => Set<PeriodInput>();
+
+    public DbSet<PeriodEvent> PeriodEvents => Set<PeriodEvent>();
+
+    internal DbSet<EmployeeResultRow> EmployeeResults => Set<EmployeeResultRow>();
 
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -30,6 +44,10 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureCompanySettings(modelBuilder);
         ConfigureConcept(modelBuilder);
+        ConfigurePeriod(modelBuilder);
+        ConfigurePeriodInput(modelBuilder);
+        ConfigurePeriodEvent(modelBuilder);
+        ConfigureEmployeeResult(modelBuilder);
     }
 
     // `column IN ('A','B')` para un enum guardado como texto: la base no depende de quien escribe.
@@ -87,5 +105,119 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         concept.HasIndex(value => new { value.TenantId, value.CompanyId, value.Kind, value.NormalizedName })
             .IsUnique()
             .HasDatabaseName("IX_concepts_tenant_company_kind_normalized_name");
+    }
+
+    private static void ConfigurePeriod(ModelBuilder modelBuilder)
+    {
+        var period = modelBuilder.Entity<PayrollPeriod>();
+        period.ToTable("periods", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_periods_half", In<PayrollHalf>("half"));
+            table.HasCheckConstraint("CK_periods_status", In<PayrollPeriodStatus>("status"));
+        });
+        period.HasKey(value => value.Id);
+        period.Property(value => value.Id).HasColumnName("id").HasConversion(PeriodIdConverter).ValueGeneratedNever();
+        period.Property(value => value.TenantId).HasColumnName("tenant_id");
+        // FK real a companies.companies, agregada a mano en la migración (R-19).
+        period.Property(value => value.CompanyId).HasColumnName("company_id");
+        period.Property(value => value.StartDate).HasColumnName("start_date");
+        period.Property(value => value.EndDate).HasColumnName("end_date");
+        period.Property(value => value.Half).HasColumnName("half").HasConversion<string>().HasMaxLength(32);
+        period.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+        period.Property(value => value.Outdated).HasColumnName("outdated");
+        period.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        period.Property(value => value.LegalValuesJson).HasColumnName("legal_values").HasColumnType("jsonb");
+        period.Property(value => value.LegalValuesDate).HasColumnName("legal_values_date");
+        period.Property(value => value.EngineVersion).HasColumnName("engine_version").HasMaxLength(32);
+        period.Property(value => value.Fingerprint).HasColumnName("fingerprint").HasMaxLength(128);
+        period.Property(value => value.ExcludedJson).HasColumnName("excluded").HasColumnType("jsonb");
+        period.Property(value => value.LastLiquidatedBy).HasColumnName("last_liquidated_by");
+        period.Property(value => value.LastLiquidatedByName).HasColumnName("last_liquidated_by_name").HasMaxLength(200);
+        period.Property(value => value.LastLiquidatedAt).HasColumnName("last_liquidated_at");
+        period.Property(value => value.ApprovedBy).HasColumnName("approved_by");
+        period.Property(value => value.ApprovedByName).HasColumnName("approved_by_name").HasMaxLength(200);
+        period.Property(value => value.ApprovedAt).HasColumnName("approved_at");
+        period.Property(value => value.ClosedBy).HasColumnName("closed_by");
+        period.Property(value => value.ClosedByName).HasColumnName("closed_by_name").HasMaxLength(200);
+        period.Property(value => value.ClosedAt).HasColumnName("closed_at");
+        period.Property(value => value.CreatedAt).HasColumnName("created_at");
+        period.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        period.HasMany(value => value.Inputs).WithOne().HasForeignKey(input => input.PeriodId).OnDelete(DeleteBehavior.Cascade);
+        period.HasMany(value => value.Events).WithOne().HasForeignKey(evt => evt.PeriodId).OnDelete(DeleteBehavior.Cascade);
+        period.Navigation(value => value.Inputs).UsePropertyAccessMode(PropertyAccessMode.Field);
+        period.Navigation(value => value.Events).UsePropertyAccessMode(PropertyAccessMode.Field);
+        // Una quincena por empresa: abrir dos veces la misma es la carrera de ensure-current (R-13).
+        period.HasIndex(value => new { value.TenantId, value.CompanyId, value.StartDate })
+            .IsUnique()
+            .HasDatabaseName("IX_periods_tenant_company_start");
+    }
+
+    private static void ConfigurePeriodInput(ModelBuilder modelBuilder)
+    {
+        var input = modelBuilder.Entity<PeriodInput>();
+        input.ToTable("period_inputs", Schema, table =>
+            table.HasCheckConstraint("CK_period_inputs_kind", In<ConceptKind>("kind")));
+        input.HasKey(value => value.Id);
+        input.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        input.Property(value => value.PeriodId).HasColumnName("period_id").HasConversion(PeriodIdConverter);
+        input.Property(value => value.EmployeeId).HasColumnName("employee_id");
+        input.Property(value => value.ConceptId).HasColumnName("concept_id");
+        input.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(32);
+        input.Property(value => value.Hours).HasColumnName("hours").HasPrecision(6, 2);
+        input.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+        input.Property(value => value.SalaryConstitutive).HasColumnName("salary_constitutive");
+        input.Property(value => value.Position).HasColumnName("position");
+        input.HasIndex(value => new { value.PeriodId, value.EmployeeId }).HasDatabaseName("IX_period_inputs_period_employee");
+    }
+
+    private static void ConfigurePeriodEvent(ModelBuilder modelBuilder)
+    {
+        var evt = modelBuilder.Entity<PeriodEvent>();
+        evt.ToTable("period_events", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_period_events_action", In<PeriodAction>("action"));
+            table.HasCheckConstraint("CK_period_events_from_status", "from_status IS NULL OR " + In<PayrollPeriodStatus>("from_status"));
+            table.HasCheckConstraint("CK_period_events_to_status", "to_status IS NULL OR " + In<PayrollPeriodStatus>("to_status"));
+        });
+        evt.HasKey(value => value.Id);
+        evt.Property(value => value.Id).HasColumnName("id").HasConversion(PeriodEventIdConverter).ValueGeneratedNever();
+        evt.Property(value => value.PeriodId).HasColumnName("period_id").HasConversion(PeriodIdConverter);
+        evt.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        evt.Property(value => value.ActorSubjectId).HasColumnName("actor_subject_id");
+        evt.Property(value => value.ActorName).HasColumnName("actor_name").HasMaxLength(200);
+        evt.Property(value => value.Action).HasColumnName("action").HasConversion<string>().HasMaxLength(32);
+        evt.Property(value => value.FromStatus).HasColumnName("from_status").HasConversion<string>().HasMaxLength(32);
+        evt.Property(value => value.ToStatus).HasColumnName("to_status").HasConversion<string>().HasMaxLength(32);
+        evt.Property(value => value.Reason).HasColumnName("reason").HasMaxLength(500);
+        evt.Property(value => value.AbsencesConfirmed).HasColumnName("absences_confirmed");
+        evt.HasIndex(value => new { value.PeriodId, value.OccurredAt }).HasDatabaseName("IX_period_events_period_occurred");
+    }
+
+    private static void ConfigureEmployeeResult(ModelBuilder modelBuilder)
+    {
+        var result = modelBuilder.Entity<EmployeeResultRow>();
+        result.ToTable("employee_results", Schema);
+        result.HasKey(value => value.Id);
+        result.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        result.Property(value => value.PeriodId).HasColumnName("period_id").HasConversion(PeriodIdConverter);
+        result.Property(value => value.EmployeeId).HasColumnName("employee_id");
+        result.Property(value => value.DocumentType).HasColumnName("document_type").HasMaxLength(32);
+        result.Property(value => value.DocumentNumber).HasColumnName("document_number").HasMaxLength(30);
+        result.Property(value => value.FullName).HasColumnName("full_name").HasMaxLength(250);
+        result.Property(value => value.Position).HasColumnName("position").HasMaxLength(100);
+        result.Property(value => value.Workplace).HasColumnName("workplace").HasMaxLength(250);
+        result.Property(value => value.WorkedDays).HasColumnName("worked_days");
+        result.Property(value => value.NegativeNet).HasColumnName("negative_net");
+        result.Property(value => value.FinalSettlementPending).HasColumnName("final_settlement_pending");
+        result.Property(value => value.EngineVersion).HasColumnName("engine_version").HasMaxLength(32);
+        result.Property(value => value.Fingerprint).HasColumnName("fingerprint").HasMaxLength(128);
+        result.Property(value => value.LinesJson).HasColumnName("lines").HasColumnType("jsonb");
+        result.Property(value => value.SummaryJson).HasColumnName("summary").HasColumnType("jsonb");
+        result.Property(value => value.MonthJson).HasColumnName("month").HasColumnType("jsonb");
+        result.Property(value => value.RecurringAppliedJson).HasColumnName("recurring_applied").HasColumnType("jsonb");
+        result.HasOne<PayrollPeriod>().WithMany().HasForeignKey(value => value.PeriodId).OnDelete(DeleteBehavior.Cascade);
+        result.HasIndex(value => new { value.PeriodId, value.EmployeeId })
+            .IsUnique()
+            .HasDatabaseName("IX_employee_results_period_employee");
     }
 }

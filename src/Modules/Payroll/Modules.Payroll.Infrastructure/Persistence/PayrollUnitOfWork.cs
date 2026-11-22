@@ -9,6 +9,7 @@ internal sealed class PayrollUnitOfWork(PayrollDbContext dbContext) : IPayrollUn
 {
     private const string ConceptNameIndex = "IX_concepts_tenant_company_kind_normalized_name";
     private const string CompanySettingsIndex = "IX_company_settings_tenant_company";
+    private const string PeriodStartIndex = "IX_periods_tenant_company_start";
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -39,6 +40,12 @@ internal sealed class PayrollUnitOfWork(PayrollDbContext dbContext) : IPayrollUn
                 "concurrency.conflict",
                 "The company payroll settings were saved by someone else.",
                 exception);
+        }
+        // Dos ensure-current a la vez abren la misma quincena. Es un código interno: no sale por HTTP, lo atrapa EnsureCurrentPeriods.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, PeriodStartIndex))
+        {
+            throw new ResourceConflictException(
+                PayrollErrorCodes.PeriodAlreadyExists, "That payroll period already exists.", exception);
         }
     }
 }

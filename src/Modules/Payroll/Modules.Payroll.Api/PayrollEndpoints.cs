@@ -17,9 +17,46 @@ public static class PayrollEndpoints
             .WithTags("Payroll");
 
         MapSettings(group);
+        MapPeriods(group);
 
         return endpoints;
     }
+
+    // Períodos. `ensure-current` abre las quincenas que faltan: es de quien administra (I-6) y el handler exige también `read`;
+    // quien sólo lee usa `GET periods`, que no crea nada.
+    private static void MapPeriods(RouteGroupBuilder group)
+    {
+        group.MapPost("/companies/{companyId:guid}/periods/ensure-current", EnsureCurrentAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces<PayrollPeriodListDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/companies/{companyId:guid}/periods", ListPeriodsAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodRead)
+            .Produces<PayrollPeriodListDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapGet("/periods/{periodId:guid}", GetPeriodAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodRead)
+            .Produces<PayrollPeriodDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+    }
+
+    private static async Task<IResult> EnsureCurrentAsync(
+        Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new EnsureCurrentPeriodsCommand(tenantId, companyId), cancellationToken));
+
+    private static async Task<IResult> ListPeriodsAsync(
+        Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListPeriodsQuery(tenantId, companyId), cancellationToken));
+
+    private static async Task<IResult> GetPeriodAsync(
+        Guid tenantId, Guid periodId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetPeriodQuery(tenantId, periodId), cancellationToken));
 
     // Empresas, configuración y conceptos. Leer acepta cualquiera de `payroll.period.read` o `payroll.settings.manage`
     // (PayrollPolicies.SettingsView); toda escritura es sólo `payroll.settings.manage`. El `PUT` exige `If-Match`; archivar y

@@ -631,6 +631,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.ArchiveConceptCommand, Modules.Payroll.Application.PayrollConceptDto>,
             Modules.Payroll.Application.ArchiveConceptHandler>();
+        // Períodos: el compositor y los actores los comparten todos los casos de uso del período.
+        services.AddScoped<Modules.Payroll.Application.PeriodActors>();
+        services.AddScoped<Modules.Payroll.Application.PeriodComposer>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.EnsureCurrentPeriodsCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.EnsureCurrentPeriodsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListPeriodsQuery, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.ListPeriodsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.GetPeriodQuery, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.GetPeriodHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 

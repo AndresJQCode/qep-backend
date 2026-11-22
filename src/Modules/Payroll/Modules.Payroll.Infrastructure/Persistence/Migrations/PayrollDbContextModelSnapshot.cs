@@ -230,6 +230,378 @@ namespace Modules.Payroll.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_concepts_kind", "kind IN ('Overtime','Income','Deduction')");
                         });
                 });
+
+            modelBuilder.Entity("Modules.Payroll.Domain.PayrollPeriod", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("approved_at");
+
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approved_by");
+
+                    b.Property<string>("ApprovedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("approved_by_name");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("closed_at");
+
+                    b.Property<Guid?>("ClosedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("closed_by");
+
+                    b.Property<string>("ClosedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("closed_by_name");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("company_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly>("EndDate")
+                        .HasColumnType("date")
+                        .HasColumnName("end_date");
+
+                    b.Property<string>("EngineVersion")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("engine_version");
+
+                    b.Property<string>("ExcludedJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("excluded");
+
+                    b.Property<string>("Fingerprint")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("fingerprint");
+
+                    b.Property<string>("Half")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("half");
+
+                    b.Property<DateTimeOffset?>("LastLiquidatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_liquidated_at");
+
+                    b.Property<Guid?>("LastLiquidatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_liquidated_by");
+
+                    b.Property<string>("LastLiquidatedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("last_liquidated_by_name");
+
+                    b.Property<DateOnly?>("LegalValuesDate")
+                        .HasColumnType("date")
+                        .HasColumnName("legal_values_date");
+
+                    b.Property<string>("LegalValuesJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("legal_values");
+
+                    b.Property<bool>("Outdated")
+                        .HasColumnType("boolean")
+                        .HasColumnName("outdated");
+
+                    b.Property<DateOnly>("StartDate")
+                        .HasColumnType("date")
+                        .HasColumnName("start_date");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "CompanyId", "StartDate")
+                        .IsUnique()
+                        .HasDatabaseName("IX_periods_tenant_company_start");
+
+                    b.ToTable("periods", "payroll", t =>
+                        {
+                            t.HasCheckConstraint("CK_periods_half", "half IN ('First','Second')");
+
+                            t.HasCheckConstraint("CK_periods_status", "status IN ('Draft','Liquidated','Approved','Closed','Reopened')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Domain.PeriodEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool?>("AbsencesConfirmed")
+                        .HasColumnType("boolean")
+                        .HasColumnName("absences_confirmed");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("action");
+
+                    b.Property<string>("ActorName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("actor_name");
+
+                    b.Property<Guid>("ActorSubjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_subject_id");
+
+                    b.Property<string>("FromStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("from_status");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<Guid>("PeriodId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("period_id");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("ToStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("to_status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PeriodId", "OccurredAt")
+                        .HasDatabaseName("IX_period_events_period_occurred");
+
+                    b.ToTable("period_events", "payroll", t =>
+                        {
+                            t.HasCheckConstraint("CK_period_events_action", "action IN ('Created','InputsImported','Liquidated','Approved','Closed','Reopened','MarkedOutdated')");
+
+                            t.HasCheckConstraint("CK_period_events_from_status", "from_status IS NULL OR from_status IN ('Draft','Liquidated','Approved','Closed','Reopened')");
+
+                            t.HasCheckConstraint("CK_period_events_to_status", "to_status IS NULL OR to_status IN ('Draft','Liquidated','Approved','Closed','Reopened')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Domain.PeriodInput", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal?>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("ConceptId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("concept_id");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<decimal?>("Hours")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)")
+                        .HasColumnName("hours");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid>("PeriodId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("period_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<bool?>("SalaryConstitutive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("salary_constitutive");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PeriodId", "EmployeeId")
+                        .HasDatabaseName("IX_period_inputs_period_employee");
+
+                    b.ToTable("period_inputs", "payroll", t =>
+                        {
+                            t.HasCheckConstraint("CK_period_inputs_kind", "kind IN ('Overtime','Income','Deduction')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Infrastructure.Persistence.EmployeeResultRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("DocumentNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("document_number");
+
+                    b.Property<string>("DocumentType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("document_type");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<string>("EngineVersion")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("engine_version");
+
+                    b.Property<bool>("FinalSettlementPending")
+                        .HasColumnType("boolean")
+                        .HasColumnName("final_settlement_pending");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("fingerprint");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)")
+                        .HasColumnName("full_name");
+
+                    b.Property<string>("LinesJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("lines");
+
+                    b.Property<string>("MonthJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("month");
+
+                    b.Property<bool>("NegativeNet")
+                        .HasColumnType("boolean")
+                        .HasColumnName("negative_net");
+
+                    b.Property<Guid>("PeriodId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("period_id");
+
+                    b.Property<string>("Position")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("position");
+
+                    b.Property<string>("RecurringAppliedJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("recurring_applied");
+
+                    b.Property<string>("SummaryJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("summary");
+
+                    b.Property<int>("WorkedDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("worked_days");
+
+                    b.Property<string>("Workplace")
+                        .HasMaxLength(250)
+                        .HasColumnType("character varying(250)")
+                        .HasColumnName("workplace");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PeriodId", "EmployeeId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_employee_results_period_employee");
+
+                    b.ToTable("employee_results", "payroll");
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Domain.PeriodEvent", b =>
+                {
+                    b.HasOne("Modules.Payroll.Domain.PayrollPeriod", null)
+                        .WithMany("Events")
+                        .HasForeignKey("PeriodId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Domain.PeriodInput", b =>
+                {
+                    b.HasOne("Modules.Payroll.Domain.PayrollPeriod", null)
+                        .WithMany("Inputs")
+                        .HasForeignKey("PeriodId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Infrastructure.Persistence.EmployeeResultRow", b =>
+                {
+                    b.HasOne("Modules.Payroll.Domain.PayrollPeriod", null)
+                        .WithMany()
+                        .HasForeignKey("PeriodId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Domain.PayrollPeriod", b =>
+                {
+                    b.Navigation("Events");
+
+                    b.Navigation("Inputs");
+                });
 #pragma warning restore 612, 618
         }
     }

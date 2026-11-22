@@ -40,6 +40,9 @@ public static class PayrollErrorCodes
     public const string LiquidationNobodyToLiquidate = "payroll.liquidation.nobody_to_liquidate";
     public const string LegalParameterMissing = "payroll.legal_parameter.missing";
 
+    // Interno: el índice único de períodos lo traduce `PayrollUnitOfWork` y `EnsureCurrentPeriods` lo atrapa; nunca sale por HTTP.
+    public const string PeriodAlreadyExists = "payroll.period.already_exists";
+
     // 422 de la importación: errores de archivo (sin filas)
     public const string ImportFileRequired = "payroll.import.file_required";
     public const string ImportExtensionInvalid = "payroll.import.extension_invalid";
