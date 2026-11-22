@@ -60,9 +60,9 @@ public sealed class SupportTaskAccessApiTests(SharedSupportHost sharedHost) : IC
     private static Task<HttpResponseMessage> PostNoteAsync(HttpClient client, string url, Guid ticketId) =>
         client.PostAsJsonAsync($"{url}/tickets/{ticketId}/notes", new { clientId = Guid.CreateVersion7(), text = "Revisé el inventario." }, Ct);
 
-    private static void AssertTicketNotFound(HttpResponseMessage response, string body)
+    private static void AssertTicketNotFound(HttpResponseMessage response, string body, string? route = null)
     {
-        Assert.True(response.StatusCode == HttpStatusCode.NotFound, body);
+        Assert.True(response.StatusCode == HttpStatusCode.NotFound, route is null ? body : $"{route}: {body}");
         Assert.Equal("support.ticket.not_found", System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("code").GetString());
     }
 
@@ -88,7 +88,7 @@ public sealed class SupportTaskAccessApiTests(SharedSupportHost sharedHost) : IC
         foreach (var (route, response) in responses)
         {
             var body = await BodyAsync(response);
-            AssertTicketNotFound(response, $"{route}: {body}");
+            AssertTicketNotFound(response, body, route);
         }
     }
 
