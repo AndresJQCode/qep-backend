@@ -71,9 +71,15 @@ public sealed class Session : VersionedEntity
     }
 
     /// <summary>Aparta un cupo. Application revisa <see cref="HasRoom"/> primero para responder 409 <c>session_full</c>; este error es la
-    /// defensa del dominio. Reservar una sesión desactivada la reabre.</summary>
+    /// defensa del dominio. Reservar una sesión que una reserva abrió y se vació la reabre; una publicada que el tenant quitó
+    /// (<see cref="Deactivate"/>) no se reabre: sólo <see cref="Republish"/> la trae de vuelta.</summary>
     public void Reserve(DateTimeOffset now)
     {
+        if (!IsActive && IsPublished)
+        {
+            throw new InvalidOperationException("A published session the tenant removed cannot be booked until it is published again.");
+        }
+
         if (!HasRoom)
         {
             throw new SchedulingDomainException(SchedulingErrorCodes.SessionFull, "The session has no seats left.");
@@ -87,7 +93,8 @@ public sealed class Session : VersionedEntity
     /// <summary>
     /// The tenant stops publishing a session that has no active bookings but whose cancelled appointments still point at it (the foreign
     /// key forbids deleting the row). It stops occupying the resource (the exclusion constraint only covers <c>is_active</c> rows) and
-    /// is no longer a published one, so removing it again answers 404 like any session that is not published.
+    /// stays marked as published and inactive: that pair is what tells "the tenant removed it" apart from an ad-hoc session a booking
+    /// opened and emptied, so a booking never reopens it (only <see cref="Republish"/> does).
     /// </summary>
     public void Deactivate(DateTimeOffset now)
     {
@@ -97,7 +104,6 @@ public sealed class Session : VersionedEntity
         }
 
         IsActive = false;
-        IsPublished = false;
         Touch(now);
     }
 

@@ -106,15 +106,27 @@ public sealed class ClosureAndSessionTests
         Assert.Throws<InvalidOperationException>(() => NewSession().Release(Now));
 
     [Fact]
-    public void DeactivatingAPublishedSessionWithoutBookingsFreesItsRangeAndUnpublishesIt()
+    public void DeactivatingAPublishedSessionWithoutBookingsFreesItsRangeAndKeepsItMarkedAsPublished()
     {
         var session = NewSession(capacity: 5, published: true);
 
         session.Deactivate(Now.AddMinutes(1));
 
         Assert.False(session.IsActive);
-        Assert.False(session.IsPublished);
+        Assert.True(session.IsPublished);
         Assert.Equal(2, session.Version);
+    }
+
+    [Fact]
+    public void ABookingNeverReopensAPublishedSessionTheTenantRemoved()
+    {
+        var session = NewSession(capacity: 5, published: true);
+        session.Deactivate(Now);
+
+        Assert.Throws<InvalidOperationException>(() => session.Reserve(Now.AddMinutes(1)));
+
+        Assert.False(session.IsActive);
+        Assert.Equal(0, session.BookedCount);
     }
 
     [Fact]

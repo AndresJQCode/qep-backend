@@ -204,7 +204,7 @@ public sealed class SchedulingSessionsApiTests(SchedulingApiWorld world) : IClas
         var row = await ReadSessionAsync(world.Factory, id);
         Assert.True(row.Exists);
         Assert.False(row.IsActive);
-        Assert.False(row.IsPublished);
+        Assert.True(row.IsPublished);
         Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
     }
 

@@ -183,8 +183,11 @@ ventana**, no cada `duration + buffer` (el margen sólo ocupa; deja huecos prede
 
 Decisiones del owner posteriores a la Tarea 8:
 
-- **PD-3** quitar una sesión publicada sin citas la borra; con sólo citas canceladas la **desactiva** (`is_active = false`, además deja de ser
+- **PD-3** quitar una sesión publicada sin citas la borra; con sólo citas canceladas la **desactiva** (`is_active = false`, sigue marcada como
   publicada) porque la llave foránea del historial impide borrarla; con alguna cita no cancelada responde 422 `session.has_appointments`.
+  «Publicada e inactiva» distingue una sesión que el tenant quitó de una que una reserva abrió y se vació: **una reserva nunca reabre la
+  primera** (`Session.Reserve` lanza; la Tarea 9 debe tratarla como no reservable, 409 `slot_taken`) y sólo volver a publicarla la
+  reactiva. Quitarla de nuevo responde 404.
   Publicar de nuevo en la misma clave (recurso, servicio, inicio) **reactiva** la fila con el rango y el cupo actuales; una fila activa sigue
   dando 409 `slot_taken`. Una sesión inactiva no ocupa (la restricción `EX_sessions_resource_occupancy` ya es `WHERE (is_active)`) ni se ofrece
   (el motor ya filtra por `IsActive`). Auditoría: `scheduling.session.deactivated` y `scheduling.session.reactivated`.

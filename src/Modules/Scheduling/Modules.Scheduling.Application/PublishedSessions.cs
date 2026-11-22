@@ -167,7 +167,8 @@ public sealed class RemovePublishedSessionHandler(
 
         // Una sesión que el tenant no publicó (la abrió una reserva) no se quita por esta ruta: para ella es como si no existiera.
         var session = await sessions.FindAsync(command.TenantId, new SessionId(command.SessionId), cancellationToken);
-        if (session is null || !session.IsPublished)
+        // A removed (inactive) published session also answers 404: removing it twice is not an error the tenant can act on.
+        if (session is null || !session.IsPublished || !session.IsActive)
         {
             throw SchedulingNotFound.Session(command.SessionId);
         }
