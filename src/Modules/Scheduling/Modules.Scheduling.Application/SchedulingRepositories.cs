@@ -104,6 +104,20 @@ public interface ISessionRepository
     Task<Session?> FindByKeyAsync(
         Guid tenantId, ResourceId resourceId, ServiceId serviceId, DateTimeOffset startsAt, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Las sesiones de esos recursos que se solapan con el rango (empiezan antes de <paramref name="rangeEnd"/> y ocupan hasta después de
+    /// <paramref name="rangeStart"/>), sin seguimiento de cambios: es lo que lee el motor de disponibilidad. Con
+    /// <paramref name="onlyActive"/> falso entran también las inactivas (una publicada que el tenant quitó sigue siendo una sesión
+    /// publicada, aunque no ocupe nada).
+    /// </summary>
+    Task<IReadOnlyList<Session>> ListOverlappingAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ResourceId> resourceIds,
+        DateTimeOffset rangeStart,
+        DateTimeOffset rangeEnd,
+        bool onlyActive,
+        CancellationToken cancellationToken);
+
     /// <summary>Alguna cita de la sesión, en cualquier estado: la llave foránea impide borrarla mientras exista una.</summary>
     Task<bool> HasAppointmentsAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken);
 

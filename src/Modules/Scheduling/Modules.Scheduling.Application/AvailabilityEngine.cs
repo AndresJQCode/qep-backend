@@ -61,12 +61,13 @@ public static class AvailabilityEngine
                     if (block.SessionMode == SessionMode.PublishedSessions)
                     {
                         foreach (var session in query.Sessions.Where(session =>
-                            session is { IsPublished: true, IsActive: true }
+                            session.IsPublished
+                            && (query.IgnoreOccupancy || session.IsActive)
                             && session.ServiceId == query.Service.Id
                             && resources.Contains(session.ResourceId)
                             && session.StartsAt >= windowStart
                             && session.EndsAt <= windowEnd
-                            && session.HasRoom))
+                            && (query.IgnoreOccupancy || session.HasRoom)))
                         {
                             if (!IsClosed(query, session.ResourceId, session.StartsAt, session.OccupiesUntil))
                             {
@@ -113,6 +114,12 @@ public static class AvailabilityEngine
         if (IsClosed(query, resource, start, occupiesUntil))
         {
             return null;
+        }
+
+        // Rules only: the caller asks whether the tenant offers this start at all, whoever holds it.
+        if (query.IgnoreOccupancy)
+        {
+            return new SlotOption(resource, block.Id, block.CapacityPerResource, null, block.AllowClientChoice);
         }
 
         var active = query.Sessions.Where(session => session.ResourceId == resource && session.IsActive).ToArray();

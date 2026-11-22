@@ -393,4 +393,55 @@ public sealed class AvailabilityEngineTests
         Assert.Equal(slots.OrderBy(slot => slot.StartsAt).Select(slot => slot.StartsAt), slots.Select(slot => slot.StartsAt));
         Assert.Equal(6, slots.Count);
     }
+
+    // Booking separates "the rules allow this start" (422 outside_rules) from "someone holds it" (409): the first question is asked with
+    // IgnoreOccupancy, which keeps blocks, closures, holidays, notice and horizon and drops what the sessions hold.
+    [Fact]
+    public void IgnoringOccupancyStillOffersTheStartAFullSessionHolds()
+    {
+        var service = Cleaning();
+        var block = WeeklyBlock(service, 480, 540);
+        var full = SessionAt(Perez, service, Local(Monday, 8), capacity: 1, booked: 1);
+
+        var occupied = AvailabilityEngine.Compute(Query(service, [block], sessions: [full]));
+        var rulesOnly = AvailabilityEngine.Compute(Query(service, [block], sessions: [full]) with { IgnoreOccupancy = true });
+
+        Assert.DoesNotContain(occupied, slot => slot.StartsAt == Local(Monday, 8));
+        Assert.Contains(rulesOnly, slot => slot.StartsAt == Local(Monday, 8));
+    }
+
+    [Fact]
+    public void IgnoringOccupancyStillOffersAPublishedSessionTheTenantRemoved()
+    {
+        var service = Cleaning(duration: 60);
+        var block = WeeklyBlock(service, 1080, 1260, capacity: 6, mode: SessionMode.PublishedSessions);
+        var removed = SessionAt(Perez, service, Local(Monday, 19), capacity: 6, booked: 0, published: true);
+        removed.Deactivate(LongBefore);
+
+        var rulesOnly = AvailabilityEngine.Compute(Query(service, [block], sessions: [removed]) with { IgnoreOccupancy = true });
+
+        Assert.Equal(Local(Monday, 19), Assert.Single(rulesOnly).StartsAt);
+    }
+
+    [Fact]
+    public void IgnoringOccupancyDoesNotOfferAnUnpublishedStartOfAPublishedSessionsBlock()
+    {
+        var service = Cleaning(duration: 60);
+        var block = WeeklyBlock(service, 1080, 1260, capacity: 6, mode: SessionMode.PublishedSessions);
+
+        Assert.Empty(AvailabilityEngine.Compute(Query(service, [block]) with { IgnoreOccupancy = true }));
+    }
+
+    [Fact]
+    public void IgnoringOccupancyStillHonorsClosuresAndTheNotice()
+    {
+        var service = Cleaning();
+        var block = WeeklyBlock(service, 480, 660);
+        var closure = Closure.Create(ClosureId.New(), Tenant, Location, Perez, Local(Monday, 8), Local(Monday, 9), null, LongBefore);
+
+        var slots = AvailabilityEngine.Compute(
+            Query(service, [block], closures: [closure], rules: Rules(minNotice: 30), now: Local(Monday, 9, 10)) with { IgnoreOccupancy = true });
+
+        Assert.Equal(Local(Monday, 10), slots[0].StartsAt);
+    }
 }

@@ -201,6 +201,28 @@ internal sealed class SessionRepository(SchedulingDbContext dbContext) : ISessio
                 && session.StartsAt == startsAt,
             cancellationToken);
 
+    public async Task<IReadOnlyList<Session>> ListOverlappingAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ResourceId> resourceIds,
+        DateTimeOffset rangeStart,
+        DateTimeOffset rangeEnd,
+        bool onlyActive,
+        CancellationToken cancellationToken)
+    {
+        var wanted = resourceIds.ToArray();
+        var query = dbContext.Sessions.AsNoTracking()
+            .Where(session => session.TenantId == tenantId
+                && wanted.Contains(session.ResourceId)
+                && session.StartsAt < rangeEnd
+                && session.OccupiesUntil > rangeStart);
+        if (onlyActive)
+        {
+            query = query.Where(session => session.IsActive);
+        }
+
+        return await query.OrderBy(session => session.StartsAt).ThenBy(session => session.Id).ToListAsync(cancellationToken);
+    }
+
     public Task<bool> HasAppointmentsAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken) =>
         dbContext.Appointments.AsNoTracking().AnyAsync(
             appointment => appointment.TenantId == tenantId && appointment.SessionId == id, cancellationToken);

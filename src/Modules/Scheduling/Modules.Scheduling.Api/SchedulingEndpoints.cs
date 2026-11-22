@@ -11,7 +11,7 @@ public static class SchedulingEndpoints
     public static IEndpointRouteBuilder MapSchedulingEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como hr y loans: la política frena a quien no tiene el permiso y el handler
-        // (SchedulingAuthorization) a quien lo tiene en otro tenant. Las demás rutas llegan con las Tareas 8 a 10.
+        // (SchedulingAuthorization) a quien lo tiene en otro tenant. El calendario y el escritorio llegan con la Tarea 10.
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/scheduling")
             .WithTags("Scheduling");
@@ -24,6 +24,8 @@ public static class SchedulingEndpoints
         MapBlocks(group);
         MapSessions(group);
         MapClosures(group);
+        MapAvailability(group);
+        MapCustomers(group);
 
         return endpoints;
     }
@@ -124,6 +126,38 @@ public static class SchedulingEndpoints
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+    }
+
+    // Espacios libres de un servicio: `appointment.read`, dentro del alcance de recursos de quien pregunta.
+    private static void MapAvailability(RouteGroupBuilder group) =>
+        group.MapGet("/availability", async (
+                Guid tenantId, Guid? serviceId, DateOnly? from, DateOnly? to, Guid? resourceId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(new ListAvailabilityQuery(tenantId, serviceId, from, to, resourceId), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentRead)
+            .Produces<AvailabilityDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+    // El cliente de la cita se busca y se crea por la Agenda (plan, corrección 5): los roles de la Agenda no llevan permisos de Clientes.
+    private static void MapCustomers(RouteGroupBuilder group)
+    {
+        group.MapGet("/customers", async (Guid tenantId, string? search, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(new SearchAppointmentCustomersQuery(tenantId, search), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .Produces<IReadOnlyList<AppointmentCustomerDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/customers", async (Guid tenantId, NewCustomerRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+            {
+                var customer = await dispatcher.SendAsync(new CreateAppointmentCustomerCommand(tenantId, request), cancellationToken);
+                return Results.Created($"/api/v1/tenants/{tenantId}/scheduling/customers/{customer.Id}", customer);
+            })
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .Accepts<NewCustomerRequest>("application/json")
+            .Produces<AppointmentCustomerDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static void MapSetup(RouteGroupBuilder group) =>

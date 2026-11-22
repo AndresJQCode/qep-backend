@@ -352,6 +352,55 @@ internal static class SchedulingApiHarness
         return session is null ? (false, false, false, 0) : (true, session.IsActive, session.IsPublished, session.Capacity);
     }
 
+    /// <summary>Un cliente del tenant dado de alta por la propia Agenda (<c>POST customers</c>), que es la vía que usa la pantalla de la cita.</summary>
+    public static async Task<Guid> CreateCustomerAsync(SchedulingTenant tenant, string name = "Ana Ruiz", string? phone = "3001234567") =>
+        (await CreatedAsync(tenant.Admin, $"{tenant.Url}/customers", new { name, phone })).GetProperty("id").GetGuid();
+
+    public static object BookBody(
+        Guid serviceId,
+        DateTimeOffset startsAt,
+        Guid customerId,
+        Guid? resourceId = null,
+        string? source = null,
+        string? clientRequestId = null,
+        string? note = null) =>
+        new { serviceId, resourceId, startsAt, customerId, source, clientRequestId, note };
+
+    public static async Task<HttpResponseMessage> PostAsync(HttpClient client, string url, object? body, string? ifMatch)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body ?? new { }) };
+        if (ifMatch is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        }
+
+        return await client.SendAsync(request, Ct);
+    }
+
+    /// <summary>La <c>version</c> de una respuesta, como la espera <c>If-Match</c>.</summary>
+    public static string VersionOf(JsonElement body) => body.GetProperty("version").GetInt64().ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Las citas y las filas de historial que la base guarda para un recurso, de cualquier estado.</summary>
+    public static async Task<(int Appointments, int Events)> CountAppointmentsAsync(QepApiFactory factory, Guid resourceId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var resource = new ResourceId(resourceId);
+        var appointments = await db.Appointments.AsNoTracking().Where(value => value.ResourceId == resource).Include(value => value.Events).ToListAsync(Ct);
+        return (appointments.Count, appointments.Sum(value => value.Events.Count));
+    }
+
+    /// <summary>Las sesiones de un recurso tal como las guarda la base, con su cupo, sus reservas y si están activas.</summary>
+    public static async Task<IReadOnlyList<(DateTimeOffset StartsAt, int Capacity, int Booked, bool IsActive, bool IsPublished)>> ReadSessionsAsync(
+        QepApiFactory factory, Guid resourceId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var resource = new ResourceId(resourceId);
+        var sessions = await db.Sessions.AsNoTracking().Where(value => value.ResourceId == resource).OrderBy(value => value.StartsAt).ToListAsync(Ct);
+        return [.. sessions.Select(value => (value.StartsAt, value.Capacity, value.BookedCount, value.IsActive, value.IsPublished))];
+    }
+
     public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)

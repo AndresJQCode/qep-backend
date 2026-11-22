@@ -685,6 +685,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Scheduling.Application.DeleteClosureCommand, Modules.Scheduling.Application.ClosureDeletedResult>,
             Modules.Scheduling.Application.DeleteClosureHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AvailabilityLoader>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListAvailabilityQuery, Modules.Scheduling.Application.AvailabilityDto>,
+            Modules.Scheduling.Application.ListAvailabilityHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.SearchAppointmentCustomersQuery, IReadOnlyList<Modules.Scheduling.Application.AppointmentCustomerDto>>,
+            Modules.Scheduling.Application.SearchAppointmentCustomersHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateAppointmentCustomerCommand, Modules.Scheduling.Application.AppointmentCustomerDto>,
+            Modules.Scheduling.Application.CreateAppointmentCustomerHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -2140,6 +2150,8 @@ public static class QepServiceCollectionExtensions
         // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
         services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();
         services.AddScoped<ISchedulingTenantDirectory, SchedulingTenantDirectory>();
+        // La Agenda busca y da de alta al cliente de la cita por su propio puerto (plan 2026-11-21, corrección 5), calco de IPosCustomerLookup.
+        services.AddScoped<ISchedulingCustomerLookup, SchedulingCustomerLookup>();
 
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.
