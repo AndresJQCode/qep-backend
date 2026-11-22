@@ -50,9 +50,10 @@ envían hoy la cotización y el pedido.
 2. Pide el PDF a Siigo (misma ruta que la descarga; se extrae un servicio común, no se llama al otro handler).
 3. Entrega PDF, número de factura y pedido a un puerto de Siigo `ISiigoInvoiceWhatsAppSender`.
 
-**Adaptador en Bootstrapper** (`SiigoInvoiceWhatsAppSender`, único que ve Siigo, Quotations y Storage): resuelve el destinatario como
-`SendOrder` (cliente del pedido, teléfono, nombre), elige canal con `IWhatsAppChannelDirectory.ListAvailableAsync(…, Invoice)` y llama
-`IWhatsAppSender.SendInvoiceAsync` (nuevo, hermano de `SendOrderAsync`, con `WhatsAppInvoiceMessage`).
+**Fachada en Quotations y adaptador en Bootstrapper.** El envío lo hace `IInvoiceWhatsAppDelivery` (Quotations): sólo ahí es visible
+`WhatsAppChannelSelection` (es `internal`) y viven los tres senders. Resuelve el pedido, el cliente (teléfono), el canal (con la elección
+guardada del tenant, sin recordar una nueva) y llama a `IWhatsAppSender.SendInvoiceAsync`. El adaptador de Bootstrapper
+(`SiigoInvoiceWhatsApp`) sólo reenvía el puerto de Siigo a esa fachada.
 
 - **Meta:** `MessagingInvoiceTemplateOutbound` (hermano de `OrderTemplateOutbound`) con claves `nombre_contacto`, `numero_factura`,
   `valor_total`. El PDF va en memoria; **no se escribe en Storage**.
@@ -72,8 +73,9 @@ envían hoy la cotización y el pedido.
 petición (una consulta de canales y una de cliente), no por factura. Es una pista para el botón; el `POST` revalida todo. Frontend: botón
 en el detalle del pedido (spec aparte en `qep-frontend`).
 
-**Errores (códigos nuevos, 422 salvo indicación).** `siigo.invoice.whatsapp_no_channel`, `siigo.invoice.whatsapp_no_phone`,
-`siigo.invoice.whatsapp_send_failed` (con el motivo de Meta/Zenvia), `siigo.invoice.not_found` (404, existente).
+**Errores (422 salvo indicación).** Los del envío salen de Quotations con el prefijo `invoice.whatsapp.*`, como `order.whatsapp.*`:
+`no_channel`, `channel_required`, `channel_unavailable`, `channel_already_set`, `no_phone` y `send_failed` (con el motivo de Meta o Zenvia).
+`siigo.invoice.not_found` (404, existente) para la factura inexistente, ajena o sin PDF.
 
 **Auditoría.** Evento de auditoría en el handler (quién, pedido, factura, canal); **sin** teléfono ni contenido del PDF. La entrada del
 hilo de Mensajería la deja el envío por Meta como en cotizaciones.
