@@ -23,4 +23,9 @@ public static class SchedulingErrorCodes
     public const string SessionNotPublishedMode = "scheduling.session.not_published_mode";
     public const string ReminderTemplateMissing = "scheduling.reminder.template_missing";
     public const string ReminderConnectionInvalid = "scheduling.reminder.connection_invalid";
+
+    // 404: lo que se pide por id dentro del tenant del llamador y no está entre sus datos. Uno de otro tenant no llega acá: lo frena el 403.
+    public const string LocationNotFound = "scheduling.location.not_found";
+    public const string ResourceNotFound = "scheduling.resource.not_found";
+    public const string ServiceNotFound = "scheduling.service.not_found";
 }

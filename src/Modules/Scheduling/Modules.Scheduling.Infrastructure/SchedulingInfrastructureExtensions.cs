@@ -25,6 +25,11 @@ public static class SchedulingInfrastructureExtensions
 
         services.AddScoped<ISchedulingUnitOfWork, SchedulingUnitOfWork>();
         services.AddScoped<ISchedulingProvisioner, SchedulingProvisioner>();
+        services.AddScoped<ILocationRepository, LocationRepository>();
+        services.AddScoped<IResourceRepository, ResourceRepository>();
+        services.AddScoped<IServiceRepository, ServiceRepository>();
+        services.AddScoped<ISchedulingSettingsRepository, SchedulingSettingsRepository>();
+        services.AddScoped<ISchedulingSetupReader, SchedulingSetupReader>();
 
         return services;
     }

@@ -31,10 +31,13 @@ public sealed class SchedulingErrorCodesTests
                 "scheduling.appointment.slot_taken",
                 "scheduling.closure.overlaps_appointments",
                 "scheduling.location.main_cannot_be_archived",
+                "scheduling.location.not_found",
                 "scheduling.reminder.connection_invalid",
                 "scheduling.reminder.template_missing",
                 "scheduling.resource.has_future_appointments",
+                "scheduling.resource.not_found",
                 "scheduling.service.in_use",
+                "scheduling.service.not_found",
                 "scheduling.session.not_published_mode",
             ],
             Codes().Order(StringComparer.Ordinal));

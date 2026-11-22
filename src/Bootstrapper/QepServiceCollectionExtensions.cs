@@ -609,6 +609,55 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.ImportEmployeesCommand, Modules.Hr.Application.EmployeeImportResultDto>,
             Modules.Hr.Application.ImportEmployeesHandler>();
+        // Scheduling, spec 2026-11-21. A mano y con ruta completa, como Hr: un handler olvidado responde 500.
+        services.AddScoped<Modules.Scheduling.Application.SchedulingFirstAccess>();
+        services.AddScoped<Modules.Scheduling.Application.ResourceScopeResolver>();
+        services.AddScoped<Modules.Scheduling.Application.SchedulingComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetSetupQuery, Modules.Scheduling.Application.SetupDto>,
+            Modules.Scheduling.Application.GetSetupHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListLocationsQuery, IReadOnlyList<Modules.Scheduling.Application.LocationDto>>,
+            Modules.Scheduling.Application.ListLocationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListResourcesQuery, IReadOnlyList<Modules.Scheduling.Application.ResourceDto>>,
+            Modules.Scheduling.Application.ListResourcesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListServicesQuery, IReadOnlyList<Modules.Scheduling.Application.ServiceDto>>,
+            Modules.Scheduling.Application.ListServicesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetSettingsQuery, Modules.Scheduling.Application.SettingsDto>,
+            Modules.Scheduling.Application.GetSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.CreateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.UpdateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.ArchiveLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.CreateResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.UpdateResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.ArchiveResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.CreateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.UpdateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.ArchiveServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateSettingsCommand, Modules.Scheduling.Application.SettingsDto>,
+            Modules.Scheduling.Application.UpdateSettingsHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -2061,6 +2110,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
+        services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();
+        services.AddScoped<ISchedulingTenantDirectory, SchedulingTenantDirectory>();
 
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.
