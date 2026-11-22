@@ -25,6 +25,8 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
 
     public DbSet<LegalParameterValue> LegalParameters => Set<LegalParameterValue>();
 
+    public DbSet<LegalParameterBracket> LegalParameterBrackets => Set<LegalParameterBracket>();
+
     public DbSet<Site> Sites => Set<Site>();
 
     public DbSet<Workplace> Workplaces => Set<Workplace>();
@@ -75,14 +77,28 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
     {
         var parameter = modelBuilder.Entity<LegalParameterValue>();
         parameter.ToTable("legal_parameters", Schema, table =>
-            table.HasCheckConstraint("CK_legal_parameters_key", "key IN ('Smmlv','IntegralSalaryFloor')"));
+            table.HasCheckConstraint("CK_legal_parameters_key", In<LegalParameterKey>("key")));
         parameter.HasKey(value => new { value.Key, value.EffectiveFrom });
         parameter.Property(value => value.Key)
             .HasColumnName("key")
             .HasConversion<string>()
             .HasMaxLength(32);
         parameter.Property(value => value.EffectiveFrom).HasColumnName("effective_from");
-        parameter.Property(value => value.Value).HasColumnName("value").HasPrecision(18, 2);
+        // Seis decimales: las tasas (0.00522) y las fracciones caben sin redondeo (R-1 de nómina).
+        parameter.Property(value => value.Value).HasColumnName("value").HasPrecision(18, 6);
+
+        var bracket = modelBuilder.Entity<LegalParameterBracket>();
+        bracket.ToTable("legal_parameter_brackets", Schema, table =>
+            table.HasCheckConstraint("CK_legal_parameter_brackets_key", In<LegalBracketKey>("key")));
+        bracket.HasKey(value => new { value.Key, value.EffectiveFrom, value.LowerBound });
+        bracket.Property(value => value.Key)
+            .HasColumnName("key")
+            .HasConversion<string>()
+            .HasMaxLength(32);
+        bracket.Property(value => value.EffectiveFrom).HasColumnName("effective_from");
+        bracket.Property(value => value.LowerBound).HasColumnName("lower_bound").HasPrecision(9, 4);
+        bracket.Property(value => value.UpperBound).HasColumnName("upper_bound").HasPrecision(9, 4);
+        bracket.Property(value => value.Rate).HasColumnName("rate").HasPrecision(18, 6);
     }
 
     // Lo común de las cuatro configuraciones: nombre con su forma normalizada, archivado y la versión de `If-Match`.

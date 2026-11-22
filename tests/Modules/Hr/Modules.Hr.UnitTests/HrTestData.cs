@@ -16,7 +16,26 @@ internal static class HrTestData
         new(LegalParameterKey.IntegralSalaryFloor, new DateOnly(2025, 1, 1), 18_505_500m),
         new(LegalParameterKey.Smmlv, new DateOnly(2026, 1, 1), 1_750_905m),
         new(LegalParameterKey.IntegralSalaryFloor, new DateOnly(2026, 1, 1), 22_761_765m),
+        new(LegalParameterKey.WeeklyHours, new DateOnly(2024, 7, 15), 46m),
+        new(LegalParameterKey.WeeklyHours, new DateOnly(2025, 7, 15), 44m),
+        new(LegalParameterKey.WeeklyHours, new DateOnly(2026, 7, 15), 42m),
     ];
+
+    public static IReadOnlyList<LegalParameterBracket> BracketTable { get; } =
+    [
+        .. SolidarityYear(new DateOnly(2025, 1, 1)),
+        .. SolidarityYear(new DateOnly(2026, 1, 1)),
+    ];
+
+    private static IEnumerable<LegalParameterBracket> SolidarityYear(DateOnly from)
+    {
+        yield return new(LegalBracketKey.SolidarityFund, from, 4m, 16m, 0.01m);
+        yield return new(LegalBracketKey.SolidarityFund, from, 16m, 17m, 0.012m);
+        yield return new(LegalBracketKey.SolidarityFund, from, 17m, 18m, 0.014m);
+        yield return new(LegalBracketKey.SolidarityFund, from, 18m, 19m, 0.016m);
+        yield return new(LegalBracketKey.SolidarityFund, from, 19m, 20m, 0.018m);
+        yield return new(LegalBracketKey.SolidarityFund, from, 20m, 25m, 0.02m);
+    }
 
     public static SalaryFloor Floor2026 { get; } = new(new DateOnly(2026, 11, 20), 1_750_905m, 22_761_765m);
 

@@ -1901,6 +1901,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         // Hr: la empresa empleadora y la sede entran por su propio puerto (HrLayerTests.NoHrLayerReferencesCompanies).
         services.AddScoped<Modules.Hr.Application.IHrCompanyLookup, HrCompanyLookup>();
+        // Payroll lee los valores legales de Hr por su propio puerto (PayrollLayerTests.NoPayrollLayerReferencesHr).
+        services.AddScoped<Modules.Payroll.Application.IPayrollLegalValues, PayrollLegalValues>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
         services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();
 
