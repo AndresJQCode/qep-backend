@@ -284,6 +284,26 @@ public sealed class PayrollPeriodTests
     }
 
     [Fact]
+    public void ReopeningClearsTheApprovedAndClosedMarksButKeepsTheLastLiquidator()
+    {
+        var period = Liquidated(Ana);
+        period.Approve(Context(Beto, dualControl: true), T0.AddMinutes(2));
+        period.Close(Beto, T0.AddMinutes(3));
+        Assert.NotNull(period.ApprovedBy);
+        Assert.NotNull(period.ClosedBy);
+
+        period.Reopen(Ana, "reason", T0.AddMinutes(4));
+
+        Assert.Null(period.ApprovedBy);
+        Assert.Null(period.ApprovedByName);
+        Assert.Null(period.ApprovedAt);
+        Assert.Null(period.ClosedBy);
+        Assert.Null(period.ClosedByName);
+        Assert.Null(period.ClosedAt);
+        // Dual control keeps working after a reopen: the last liquidator survives.
+        Assert.Equal(Ana.SubjectId, period.LastLiquidatedBy);
+    }
+    [Fact]
     public void ClosingAnOutdatedApprovedIsRejected()
     {
         var period = Liquidated();
