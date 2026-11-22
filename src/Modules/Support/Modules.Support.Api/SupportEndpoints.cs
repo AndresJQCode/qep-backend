@@ -298,7 +298,7 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/tickets", ListTicketsAsync)
-            .RequireAuthorization(SupportPolicies.TicketView)
+            .RequireAuthorization(SupportPolicies.TicketScopedView)
             .Produces<SupportTicketPageDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -572,12 +572,15 @@ public static class SupportEndpoints
         string? search,
         string? priority,
         string? sort,
+        string? kind,
+        string? createdBy,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
         int page = 1,
         int pageSize = ListTicketsQuery.DefaultPageSize) =>
         Results.Ok(await dispatcher.QueryAsync(
-            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize), cancellationToken));
+            new ListTicketsQuery(tenantId, status, typeId, assignee, due, search, priority, sort, page, pageSize, kind, createdBy),
+            cancellationToken));
 
     // Las fechas llegan como texto: una mal escrita es 422 en su campo (el validador), no un 400 del binder.
     private static async Task<IResult> GetReportAsync(

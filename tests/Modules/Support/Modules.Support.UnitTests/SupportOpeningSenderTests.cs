@@ -370,7 +370,8 @@ public sealed class SupportOpeningSenderTests
             throw new NotSupportedException();
 
         public Task<SupportInboxTotals> TotalsAsync(
-            Guid tenantId, DateOnly today, DateOnly? dueSoonLimit, CancellationToken cancellationToken) =>
+            Guid tenantId, SupportTicketKind kind, Guid? participantMemberId, DateOnly today, DateOnly? dueSoonLimit,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<SupportTicket>> ListOpenByConversationAsync(

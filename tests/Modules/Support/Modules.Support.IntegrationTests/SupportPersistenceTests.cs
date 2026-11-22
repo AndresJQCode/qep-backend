@@ -497,8 +497,8 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         await using var read = factory.Services.CreateAsyncScope();
         var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
         var today = new DateOnly(2026, 11, 17);
-        var totals = await tickets.TotalsAsync(tenant, today, new DateOnly(2026, 11, 24), Ct);
-        var off = await tickets.TotalsAsync(tenant, today, null, Ct);
+        var totals = await tickets.TotalsAsync(tenant, SupportTicketKind.External, null, today, new DateOnly(2026, 11, 24), Ct);
+        var off = await tickets.TotalsAsync(tenant, SupportTicketKind.External, null, today, null, Ct);
 
         Assert.Equal(SupportTicketStatuses.Ordered, totals.ByStatus.Keys.Order());
         Assert.Equal(

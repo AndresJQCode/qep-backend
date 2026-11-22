@@ -18,7 +18,7 @@ public sealed class SupportEndpointPoliciesTests(SharedSupportHost sharedHost) :
     private static readonly IReadOnlyDictionary<string, string> Expected = new Dictionary<string, string>
     {
         // Lectura que ve quien lee o gestiona.
-        ["GET /tickets"] = SupportPolicies.TicketView,
+        ["GET /tickets"] = SupportPolicies.TicketScopedView,
         ["GET /tickets/{ticketId:guid}/legal-acceptances/{kind}"] = SupportPolicies.TicketView,
         ["GET /tickets/{ticketId:guid}/replies/{replyId:guid}/document"] = SupportPolicies.TicketView,
         ["GET /tickets/{ticketId:guid}/attachments/{attachmentId:guid}/download"] = SupportPolicies.TicketView,
