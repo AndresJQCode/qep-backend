@@ -14,9 +14,7 @@ public sealed record TakeTicketCommand(Guid TenantId, Guid TicketId, long Expect
 /// </summary>
 public sealed class TakeTicketHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -28,11 +26,7 @@ public sealed class TakeTicketHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(TakeTicketCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
-
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
         await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, actor, cancellationToken);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;

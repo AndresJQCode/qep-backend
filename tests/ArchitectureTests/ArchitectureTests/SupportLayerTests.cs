@@ -1,4 +1,5 @@
 using System.Reflection;
+using BuildingBlocks.Application;
 using Modules.Support.Api;
 using Modules.Support.Application;
 using Modules.Support.Domain;
@@ -96,6 +97,108 @@ public sealed class SupportLayerTests
             Assert.DoesNotContain(ReferenceNamesOf(assembly), name =>
                 name is not null && name.StartsWith("Modules.Companies", StringComparison.Ordinal));
         }
+    }
+
+    // Spec 2026-11-22 §5.6 (plan Task 6): una sola puerta para todo ticket que toca un miembro. Un miembro que sólo usa tareas no puede
+    // llegar a un ticket de cliente por ningún camino, así que cada handler de ticket tiene que pasar por SupportTicketScope en vez de
+    // autorizar y cargar por su cuenta. Un handler nuevo con TicketId que se salte la puerta pone esto en rojo.
+    private static readonly string[] ScopeGates =
+        [nameof(SupportTicketScope.ViewAsync), nameof(SupportTicketScope.ActAsync), nameof(SupportTicketScope.ManageAsync), nameof(SupportTicketScope.FindManagedAsync)];
+
+    [Fact]
+    public void EveryTicketHandlerGoesThroughTheScope()
+    {
+        var application = typeof(SupportPermissions).Assembly;
+        var handlers = TicketHandlers(application);
+        Assert.NotEmpty(handlers);
+
+        var skipping = handlers
+            .Where(handler => !MethodsOfWithNested(application, handler)
+                .SelectMany(IlScanner.CalleesOf)
+                .Any(callee => callee.DeclaringType == typeof(SupportTicketScope) && ScopeGates.Contains(callee.Name)))
+            .Select(handler => handler.Name)
+            .Order()
+            .ToList();
+
+        Assert.True(skipping.Count == 0, $"Ticket handlers that skip SupportTicketScope: {string.Join(", ", skipping)}");
+    }
+
+    [Fact]
+    public void NoTicketHandlerAuthorizesOnItsOwn()
+    {
+        var application = typeof(SupportPermissions).Assembly;
+        var authorization = application.GetType("Modules.Support.Application.SupportAuthorization")
+            ?? throw new InvalidOperationException("SupportAuthorization was not found.");
+        string[] forbidden = ["EnsureAsync", "EnsureCanViewAsync"];
+
+        var offenders = TicketHandlers(application)
+            .Where(handler => MethodsOfWithNested(application, handler)
+                .SelectMany(IlScanner.CalleesOf)
+                .Any(callee => callee.DeclaringType == authorization && forbidden.Contains(callee.Name)))
+            .Select(handler => handler.Name)
+            .Order()
+            .ToList();
+
+        Assert.True(offenders.Count == 0, $"Ticket handlers that authorize on their own: {string.Join(", ", offenders)}");
+    }
+
+    // Quién más puede cargar un ticket por id sin la puerta: los caminos del sistema y del portal, que no tienen miembro, y las dos
+    // relecturas de SendTicketReplyHandler después de la puerta. Los listados por conversación no cargan un ticket por id y los internos
+    // no tienen conversación ni cliente (la exclusión explícita va en la Tarea 14).
+    private static readonly (string Type, string Why)[] SystemPathsThatLoadATicket =
+    [
+        ("SupportAutoCloser", "system worker: closes resolved tickets, no member involved"),
+        ("PublicSurveys", "portal survey answered with a signed token, no member"),
+        ("SupportSurveyAnswers", "portal survey answers, no member"),
+        ("SupportSurveySender", "system worker: sends the survey, no member"),
+        ("SendTicketReplyHandler", "re-reads after the gate already admitted the member (SendTicketReply.cs:248 and :551)"),
+    ];
+
+    [Fact]
+    public void OnlyTheScopeAndTheListedSystemPathsLoadATicket()
+    {
+        var application = typeof(SupportPermissions).Assembly;
+        var allowed = SystemPathsThatLoadATicket.Select(entry => entry.Type).ToHashSet(StringComparer.Ordinal);
+
+        var callers = IlScanner.CallersOf(
+            application,
+            callee => callee.DeclaringType == typeof(ISupportTicketRepository) && callee.Name == nameof(ISupportTicketRepository.FindAsync));
+
+        var offenders = callers
+            .Where(method => !IlScanner.IsWithin(method, typeof(SupportTicketScope)))
+            .Select(method => OutermostType(method).Name)
+            .Where(name => !allowed.Contains(name))
+            .Distinct()
+            .Order()
+            .ToList();
+
+        Assert.True(offenders.Count == 0, $"Types that load a ticket without the scope and are not listed: {string.Join(", ", offenders)}");
+    }
+
+    // Los handlers (comandos y consultas) de Application cuyo pedido lleva un TicketId.
+    private static List<Type> TicketHandlers(Assembly application) => application
+        .GetTypes()
+        .Where(type => type is { IsClass: true, IsAbstract: false })
+        .Where(type => type.GetInterfaces().Any(contract =>
+            contract.IsGenericType
+            && (contract.GetGenericTypeDefinition() == typeof(ICommandHandler<,>) || contract.GetGenericTypeDefinition() == typeof(IQueryHandler<,>))
+            && contract.GetGenericArguments()[0].GetProperty("TicketId") is not null))
+        .ToList();
+
+    // El handler y sus tipos anidados: la máquina de estados del async y las clausuras viven ahí y es donde están las llamadas.
+    private static IEnumerable<MethodBase> MethodsOfWithNested(Assembly application, Type handler) =>
+        IlScanner.MethodsOf(application.GetTypes().Where(type => OutermostType(type) == handler));
+
+    private static Type OutermostType(MethodBase method) => OutermostType(method.DeclaringType!);
+
+    private static Type OutermostType(Type type)
+    {
+        while (type.DeclaringType is { } outer)
+        {
+            type = outer;
+        }
+
+        return type;
     }
 
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly

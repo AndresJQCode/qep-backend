@@ -29,9 +29,7 @@ public sealed class AssignTicketValidator : AbstractValidator<AssignTicketComman
 /// <c>support.ticket.manage</c>. «Asignármelo» es <see cref="TakeTicketHandler"/>.</summary>
 public sealed class AssignTicketHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -44,12 +42,10 @@ public sealed class AssignTicketHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(AssignTicketCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
         await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, command.AssigneeMemberId, cancellationToken);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;

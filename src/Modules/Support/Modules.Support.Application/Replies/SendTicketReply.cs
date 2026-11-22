@@ -121,7 +121,7 @@ public sealed class SendTicketReplyHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ITenantDirectory tenantDirectory,
-    IMembershipDirectory membershipDirectory,
+    SupportTicketScope scope,
     ISupportTicketRepository tickets,
     ISupportReplyRepository replies,
     ISupportTicketMessageRepository links,
@@ -153,18 +153,17 @@ public sealed class SendTicketReplyHandler(
 
     public async Task<SupportReplyResultDto> HandleAsync(SendTicketReplyCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
-        var actor = await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
-            ?? throw SupportAuthorization.Denied();
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         if (!SupportTicketRules.TryParseExact<SupportReplyChannel>(command.Channel, out var channel))
         {
             throw new InvalidOperationException($"Channel '{command.Channel}' passed validation but is not a reply channel.");
         }
 
-        var ticket = await tickets.FindAsync(command.TenantId, new SupportTicketId(command.TicketId), cancellationToken)
-            ?? throw SupportNotFound.Ticket(command.TicketId);
+        var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
+        // Spec 2026-11-22 (tareas internas): una tarea no tiene a quién responder. Antes del clientId, para que ni un reintento
+        // cuente con una fila de respuesta en un interno.
+        SupportTicketScope.EnsureExternal(ticket);
 
         // Ruling del controlador (fix round 1): el clientId se mira antes que la versión. El reintento de una respuesta cuya respuesta
         // HTTP se perdió trae el If-Match de antes, ya viejo porque la respuesta subió la versión: tiene que recibir su fila, no un 412.

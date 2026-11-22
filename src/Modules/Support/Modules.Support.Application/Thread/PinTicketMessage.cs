@@ -17,9 +17,7 @@ public sealed record PinTicketMessageCommand(Guid TenantId, Guid TicketId, Guid 
 /// </summary>
 public sealed class PinTicketMessageHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketMessageRepository links,
     ISupportUnclassifiedRepository unclassified,
     ISupportConversationDirectory conversations,
@@ -33,10 +31,10 @@ public sealed class PinTicketMessageHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(PinTicketMessageCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
+        var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
+        SupportTicketScope.EnsureExternal(ticket);
+        SupportTicketScope.EnsureVersion(ticket, command.ExpectedVersion);
 
         // Block E (E-2): antes que cualquier otra regla y que el no-op de abajo; un cerrado es 422 aunque el mensaje ya esté fijado.
         ticket.EnsureMessagesCanChange();

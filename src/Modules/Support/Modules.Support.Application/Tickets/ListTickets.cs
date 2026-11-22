@@ -78,7 +78,7 @@ public sealed class ListTicketsValidator : AbstractValidator<ListTicketsQuery>
 /// </summary>
 public sealed class ListTicketsHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
+    SupportTicketScope scope,
     IMembershipDirectory membershipDirectory,
     ISupportProvisioner provisioner,
     ISupportTicketRepository tickets,
@@ -120,7 +120,14 @@ public sealed class ListTicketsHandler(
 
     public async Task<SupportTicketPageDto> HandleAsync(ListTicketsQuery query, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
+        // Hasta la Tarea 12 la lista sigue siendo de quien lee o gestiona: la puerta deja entrar a quien sólo usa tareas, que no ve
+        // ningún ticket externo. Con ListScopeAsync (Tarea 12) esto pasa a ser el filtro por participante.
+        var access = await scope.EnsureAccessAsync(query.TenantId, cancellationToken);
+        if (!access.Grants.Read && !access.Grants.Manage)
+        {
+            throw SupportAuthorization.Denied();
+        }
+
         await validator.ValidateAndThrowAsync(query, cancellationToken);
         if (!TryParseStatuses(query.Status, out var statuses))
         {

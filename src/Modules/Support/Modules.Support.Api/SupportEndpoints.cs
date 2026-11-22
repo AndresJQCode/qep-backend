@@ -31,14 +31,14 @@ public static class SupportEndpoints
     private static void MapNotes(RouteGroupBuilder group)
     {
         group.MapGet("/tickets/{ticketId:guid}/notes", ListNotesAsync)
-            .RequireAuthorization(SupportPolicies.TicketView)
+            .RequireAuthorization(SupportPolicies.TicketScopedView)
             .Produces<SupportTicketNotesDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/tickets/{ticketId:guid}/notes", AddNoteAsync)
-            .RequireAuthorization(SupportPermissions.Manage)
+            .RequireAuthorization(SupportPolicies.TicketAct)
             .Accepts<AddTicketNoteRequest>("application/json")
             .Produces<SupportTicketNoteDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -49,7 +49,7 @@ public static class SupportEndpoints
         // Plan N18 and N19: Storage's member-less upload with the owner of (ticket, caller). The file does not pass through here: the
         // browser uploads it straight to the bucket with the signed URL.
         group.MapPost("/tickets/{ticketId:guid}/notes/attachments", OpenNoteAttachmentAsync)
-            .RequireAuthorization(SupportPermissions.Manage)
+            .RequireAuthorization(SupportPolicies.TicketAct)
             .Accepts<SupportNoteAttachmentRequest>("application/json")
             .Produces<SupportNoteAttachmentSessionDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -57,7 +57,7 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPost("/tickets/{ticketId:guid}/notes/attachments/{fileId:guid}/complete", CompleteNoteAttachmentAsync)
-            .RequireAuthorization(SupportPermissions.Manage)
+            .RequireAuthorization(SupportPolicies.TicketAct)
             .Produces<SupportNoteAttachmentStatusDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -66,7 +66,7 @@ public static class SupportEndpoints
 
         // Plan N21: with seeing the ticket it is enough, like a public form attachment; it does not ask for storage.file.read.
         group.MapGet("/tickets/{ticketId:guid}/notes/{noteId:guid}/files/{fileId:guid}/download", DownloadNoteFileAsync)
-            .RequireAuthorization(SupportPolicies.TicketView)
+            .RequireAuthorization(SupportPolicies.TicketScopedView)
             .Produces<SupportAttachmentDownloadDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -183,9 +183,12 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
-    private static RouteHandlerBuilder MapTicketPost(RouteGroupBuilder group, string action, Delegate handler) =>
+    // La política por defecto es manage: lo que sólo tiene sentido para un externo. Las acciones que una tarea también admite pasan
+    // TicketAct y el servicio de acceso decide por ticket (spec 2026-11-22 §5.6).
+    private static RouteHandlerBuilder MapTicketPost(
+        RouteGroupBuilder group, string action, Delegate handler, string policy = SupportPermissions.Manage) =>
         group.MapPost($"/tickets/{{ticketId:guid}}/{action}", handler)
-            .RequireAuthorization(SupportPermissions.Manage)
+            .RequireAuthorization(policy)
             .Produces<SupportTicketDetailDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -307,7 +310,7 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/tickets/{ticketId:guid}", GetTicketAsync)
-            .RequireAuthorization(SupportPolicies.TicketView)
+            .RequireAuthorization(SupportPolicies.TicketScopedView)
             .Produces<SupportTicketDetailDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -333,17 +336,17 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        MapTicketAction<ChangeTicketStatusRequest>(group, "status", ChangeStatusAsync);
-        MapTicketAction<AssignTicketRequest>(group, "assignee", AssignAsync);
+        MapTicketAction<ChangeTicketStatusRequest>(group, "status", ChangeStatusAsync, SupportPolicies.TicketAct);
+        MapTicketAction<AssignTicketRequest>(group, "assignee", AssignAsync, SupportPolicies.TicketAct);
         // Fase 4a (plan G7): «Asignármelo», sin cuerpo; el responsable sale de la sesión.
-        MapTicketPost(group, "take", TakeAsync);
+        MapTicketPost(group, "take", TakeAsync, SupportPolicies.TicketAct);
         // Fase 4a (plan G9): la prórroga única del plazo.
         MapTicketPost(group, "extension", ExtendAsync).Accepts<ExtendTicketRequest>("application/json");
         // Spec 2026-11-16: «Generar PIN nuevo» de un anónimo, sin cuerpo. El 200 trae issuedPin y consultUrl una sola vez.
         MapTicketPost(group, "pin", ReissuePinAsync);
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
-        MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync);
+        MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync, SupportPolicies.TicketAct);
 
         group.MapGet("/assignees", ListAssigneesAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -351,10 +354,11 @@ public static class SupportEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden);
     }
 
-    private static void MapTicketAction<TRequest>(RouteGroupBuilder group, string action, Delegate handler)
+    private static void MapTicketAction<TRequest>(
+        RouteGroupBuilder group, string action, Delegate handler, string policy = SupportPermissions.Manage)
         where TRequest : notnull =>
         group.MapPut($"/tickets/{{ticketId:guid}}/{action}", handler)
-            .RequireAuthorization(SupportPermissions.Manage)
+            .RequireAuthorization(policy)
             .Accepts<TRequest>("application/json")
             .Produces<SupportTicketDetailDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
