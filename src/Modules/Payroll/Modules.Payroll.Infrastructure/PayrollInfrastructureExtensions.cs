@@ -33,6 +33,7 @@ public static class PayrollInfrastructureExtensions
         services.AddScoped<IRecurringConceptRepository, RecurringConceptRepository>();
         services.AddScoped<IExcelInputsImporter, ClosedXmlInputsImporter>();
         services.AddScoped<IInputsImportTemplateBuilder, ClosedXmlInputsImportTemplateBuilder>();
+        services.AddScoped<IPayrollWorkbookBuilder, ClosedXmlPayrollWorkbookBuilder>();
 
         return services;
     }

@@ -688,6 +688,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.ImportInputsCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
             Modules.Payroll.Application.ImportInputsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ExportPeriodQuery, Modules.Payroll.Application.PayrollExportFile>,
+            Modules.Payroll.Application.ExportPeriodHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 

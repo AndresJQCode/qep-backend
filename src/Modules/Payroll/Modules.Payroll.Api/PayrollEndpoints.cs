@@ -48,6 +48,13 @@ public static class PayrollEndpoints
 
         // Importación de novedades: las tres rutas van antes de `{p}/employees/{employeeId:guid}`. Antiforgery apagado como en Hr: el
         // CSRF lo frena X-Qep-Client, no el token de formulario.
+        group.MapGet("/periods/{periodId:guid}/export", ExportPeriodAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodRead)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/periods/{periodId:guid}/inputs/template", GetInputsTemplateAsync)
             .RequireAuthorization(PayrollPermissions.PeriodManage)
             .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
@@ -147,6 +154,14 @@ public static class PayrollEndpoints
             new ReopenPeriodCommand(tenantId, periodId, request ?? new ReopenRequest(null), IfMatchOf(httpContext)), cancellationToken));
 
     private const string ExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    private static async Task<IResult> ExportPeriodAsync(
+        Guid tenantId, Guid periodId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var file = await dispatcher.QueryAsync(new ExportPeriodQuery(tenantId, periodId), cancellationToken);
+
+        return Results.File(file.Content, ExcelContentType, file.FileName);
+    }
 
     private static async Task<IResult> GetInputsTemplateAsync(
         Guid tenantId, Guid periodId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
