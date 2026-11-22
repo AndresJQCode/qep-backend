@@ -18,7 +18,7 @@ Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. *
 | 5 Motor de disponibilidad | Hecha | `df7bff1` |
 | 6 Persistencia, migración, aprovisionador | Hecha | `4fc9cbc` |
 | 7 Configuración (sedes, recursos, servicios, reglas, `setup`) | Hecha | `9c7b5de92` |
-| 8 Franjas, sesiones publicadas, bloqueos | Por hacer | |
+| 8 Franjas, sesiones publicadas, bloqueos | Hecha | `42a3d4d0f` |
 | 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Por hacer | |
 | 10 Calendario y escritorio (lecturas BFF) | Por hacer | |
 | 11 Clientes: fusión y borrado | Por hacer | |
