@@ -127,8 +127,16 @@ internal sealed class RecordingInvoiceStorage : IQuotationPdfStorage
         }
     }
 
+    /// <summary>Si se pone, publicar la copia lanza esta falla (bucket público sin configurar).</summary>
+    public Exception? PublishFailure { get; set; }
+
     public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken)
     {
+        if (PublishFailure is not null)
+        {
+            throw PublishFailure;
+        }
+
         var url = $"{PublicBase}invoices/{Guid.NewGuid():N}.pdf";
         lock (_gate)
         {

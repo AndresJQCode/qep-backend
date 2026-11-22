@@ -166,6 +166,21 @@ public sealed class SiigoInvoiceWhatsAppApiTests
     }
 
     [Fact]
+    public async Task AZenviaSendWithoutAPublicBucketReturns422SendFailedNotA500()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var (client, doubles, invoiceId) = await ArrangeSendAsync(world, Zenvia);
+        doubles.Storage.PublishFailure = new InvalidOperationException("Public bucket is not configured.");
+
+        var response = await client.PostAsync(SendRoute(world, invoiceId), null, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("invoice.whatsapp.send_failed", await CodeAsync(response));
+        Assert.Empty(doubles.Sender.Invoices);
+    }
+
+    [Fact]
     public async Task TheInvoiceListCarriesCanSendWhatsApp()
     {
         await using var database = await StartDatabaseAsync();
