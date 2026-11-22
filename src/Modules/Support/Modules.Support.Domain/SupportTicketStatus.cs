@@ -43,4 +43,10 @@ public static class SupportTicketStatuses
     /// detiene: esperar a otra área de la empresa no es culpa del solicitante.</summary>
     public static bool StopsTheClock(SupportTicketStatus status) =>
         status is SupportTicketStatus.WaitingOnCustomer or SupportTicketStatus.Resolved or SupportTicketStatus.Closed;
+
+    /// <summary>Spec 2026-11-22 §7 and D-15: the statuses in which somebody has to act, so a ticket without an assignee in one of them
+    /// is «sin asignar» for the alert: <see cref="SupportTicketStatus.New"/>, <see cref="SupportTicketStatus.Open"/> and
+    /// <see cref="SupportTicketStatus.WaitingInternal"/>. Waiting on the customer, resolved and closed do not count.</summary>
+    public static bool CountsAsUnassigned(SupportTicketStatus status) =>
+        status is SupportTicketStatus.New or SupportTicketStatus.Open or SupportTicketStatus.WaitingInternal;
 }

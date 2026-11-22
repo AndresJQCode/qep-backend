@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Notifications.Application;
 using Modules.Notifications.Infrastructure.Channels;
+using Modules.Notifications.Infrastructure.InApp;
 using Modules.Notifications.Infrastructure.Messaging;
 using Modules.Notifications.Infrastructure.Persistence;
 
@@ -68,7 +69,15 @@ public static class NotificationsInfrastructureExtensions
         // La exportación asíncrona de Quotations (spec 2026-09-12, D12): una definición por evento.
         services.AddSingleton<OutboxDeliveryWorker, QuotationsExportReadyDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, QuotationsExportFailedDeliveryWorker>();
+        // Spec 2026-11-22 §12: the bell's consumers, drained by the same loop. One definition per source.
+        services.AddSingleton<InAppOutboxConsumer, ExportsInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, ConversationsInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, WholesaleInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, BillingInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, SupportInAppConsumer>();
+        services.AddScoped<IInAppNotificationRepository, InAppNotificationRepository>();
         services.AddHostedService<NotificationsDeliveryWorker>();
+        services.AddHostedService<InAppNotificationRetentionWorker>();
 
         return services;
     }

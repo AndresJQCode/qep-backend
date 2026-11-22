@@ -2,5 +2,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Modules.Notifications.Domain\Modules.Notifications.Domain.csproj" />
+    <!-- La campana (spec 2026-11-22) revalida tenant y membresía en cada handler, como Support: IMembershipDirectory e IExecutionContext
+         son de Tenancy.Application. NotificationsLayerTests sólo prohíbe que Application vea Infrastructure o Api. -->
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Modules.Notifications.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
   </ItemGroup>
 </Project>

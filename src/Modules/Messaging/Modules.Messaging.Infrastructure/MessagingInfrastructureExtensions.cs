@@ -56,6 +56,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IAutomationInbox, AutomationInbox>();
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();
+        // Spec 2026-11-22 §8.5: the contact name of a conversation, for the bell entries that point at it.
+        services.AddScoped<IMessagingConversationLabels, MessagingConversationLabels>();
         services.AddScoped<IMessageQueries, MessageQueries>();
         services.AddScoped<IExternalMessageQueries, ExternalMessageQueries>();
         services.AddScoped<ConversationSummaryBuilder>();
@@ -127,6 +129,9 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingReportSource, MessagingReportSource>();
         // El cast es a propósito: las dos interfaces tienen que compartir la instancia scoped (un solo repositorio por solicitud).
         services.AddScoped<IBusinessHours>(provider => (BusinessHoursRepository)provider.GetRequiredService<IBusinessHoursRepository>());
+        // Spec 2026-11-22 D-14: the schedules as a capability shared with other modules (the contract lives in BuildingBlocks, like
+        // IUserReferenceProbe); Support counts its unassigned-ticket hours through it without referencing Messaging.
+        services.AddScoped<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider, BusinessHoursProvider>();
         // Spec 2026-10-14 §4.3: el espejo de plantillas.
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.

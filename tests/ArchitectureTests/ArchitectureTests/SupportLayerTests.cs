@@ -67,6 +67,10 @@ public sealed class SupportLayerTests
     /// afuera es `Modules.Tenancy.*` (<c>IExecutionContext</c>, <c>ITenantModules</c>). Clientes, miembros y el calendario
     /// de la bandeja entran por los puertos <c>ISupport*</c> declarados acá, cuyos adaptadores viven en `Bootstrapper`:
     /// Soporte nunca referencia Mensajería. Sin esta aserción esa decisión es un comentario.
+    /// <para>Una excepción deliberada (spec 2026-11-22, D-14): el horario de atención entra por <c>IBusinessHoursProvider</c>, un contrato
+    /// compartido de <c>BuildingBlocks.Application</c> que implementa Mensajería, y no por un puerto <c>ISupport*</c> con adaptador. Es una
+    /// capacidad que varios módulos van a usar, y un contrato compartido evita un adaptador por consumidor. La aserción no cambia: BuildingBlocks
+    /// no es un módulo de negocio.</para>
     /// </summary>
     [Fact]
     public void ApplicationOnlyReferencesTenancyAmongTheBusinessModules()

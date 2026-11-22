@@ -825,6 +825,7 @@
           "Modules.Loans.Infrastructure": "[1.0.0, )",
           "Modules.Messaging.Api": "[1.0.0, )",
           "Modules.Messaging.Infrastructure": "[1.0.0, )",
+          "Modules.Notifications.Api": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
           "Modules.Payroll.Api": "[1.0.0, )",
           "Modules.Payroll.Infrastructure": "[1.0.0, )",
@@ -1479,10 +1480,21 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "modules.notifications.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Notifications.Application": "[1.0.0, )",
+          "Modules.Notifications.Domain": "[1.0.0, )"
+        }
+      },
       "modules.notifications.application": {
         "type": "Project",
         "dependencies": {
-          "Modules.Notifications.Domain": "[1.0.0, )"
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Notifications.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
         }
       },
       "modules.notifications.domain": {

@@ -13,6 +13,10 @@ public static class MessagingErrorCodes
     public const string MessageNotFound = "messaging.message.not_found";
     public const string WebhookSignatureInvalid = "messaging.webhook.signature_invalid";
 
+    /// <summary>Spec 2026-11-22 §9.3: the app hub refused a subscription to the <c>messaging</c> topic (module off, no
+    /// <c>messaging.conversation.read</c>, or a topic that is not the exact one). The generic code of the hub is <c>realtime.topic_forbidden</c>.</summary>
+    public const string RealtimeTopicForbidden = "messaging.realtime.topic_forbidden";
+
     /// <summary>Spec 2026-10-30 §4.4: el mismo <c>clientId</c> de una clave de API ya salió en otra conversación del tenant (409).</summary>
     public const string ExternalIdempotencyKeyReused = "external.idempotency_key_reused";
 

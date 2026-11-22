@@ -113,6 +113,7 @@
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Application\Modules.Identity.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Domain\Modules.Identity.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Api\Modules.Notifications.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Notifications\Modules.Notifications.Application\Modules.Notifications.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Quotations\Modules.Quotations.Api\Modules.Quotations.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Quotations\Modules.Quotations.Application\Modules.Quotations.Application.csproj" />

@@ -109,6 +109,22 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-22 D-14: el horario de atención es un contrato de BuildingBlocks que implementa Mensajería. Si su registro faltara o
+    /// se armara mal, el aviso de «sin asignar» de Soporte fallaría en el primer tick del worker, no al compilar.
+    /// </summary>
+    [Fact]
+    public void TheContainerResolvesTheBusinessHoursProvider()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var hours = scope.ServiceProvider.GetRequiredService<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider>();
+
+        // The class is internal to Messaging.Infrastructure: it is told by name.
+        Assert.Equal("BusinessHoursProvider", hours.GetType().Name);
+    }
+
+    /// <summary>
     /// La vista por tenant NO puede ser singleton: fusiona los roles que el tenant definio, y
     /// esos cambian con un PUT, no con un deploy. Registrada como singleton, el primer
     /// tenant en preguntar dejaria su catalogo cacheado para todo el proceso — y para todos
@@ -1329,6 +1345,26 @@ public sealed class CompositionRootTests
         }
 
         Assert.True(mapsOutbox, "Ningún DbContext mapea platform.outbox_messages: la prueba no estaría mirando los productores.");
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 §9.1: el grupo personal de un miembro se llama <c>{tenant}:@member:{id}</c> y el hub lo une desde las claims. Si algún
+    /// autorizador declarara un prefijo que empieza por <c>@</c>, un cliente podría suscribirse a ese grupo y leer avisos ajenos.
+    /// </summary>
+    [Fact]
+    public void NoAuthorizerPrefixStartsWithAt()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var authorizers = scope.ServiceProvider.GetServices<BuildingBlocks.Application.Realtime.IRealtimeTopicAuthorizer>().ToList();
+
+        Assert.NotEmpty(authorizers);
+        Assert.All(authorizers, authorizer => Assert.False(
+            authorizer.Prefix.StartsWith('@'),
+            $"{authorizer.GetType().Name} declara el prefijo '{authorizer.Prefix}': los tópicos '@…' son grupos personales."));
     }
 
     /// <summary>

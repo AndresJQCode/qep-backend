@@ -78,6 +78,9 @@ internal sealed partial class AppHub : Hub
         Context.Items[TenantItem] = tenantId;
         Context.Items[MemberItem] = memberId.Value;
         _connections.Register(Context.ConnectionId, tenantId, memberId.Value);
+        // Spec 2026-11-22 D-3: the member's own group is joined from the claims and never through Subscribe, so a reconnect rejoins it
+        // by itself and no client can ask for somebody else's.
+        await Groups.AddToGroupAsync(Context.ConnectionId, RealtimeTopics.MemberGroupOf(tenantId, memberId.Value), Context.ConnectionAborted);
         await base.OnConnectedAsync();
     }
 
@@ -152,7 +155,11 @@ internal sealed partial class AppHub : Hub
     /// connection never had.</summary>
     public async Task Unsubscribe(string topic)
     {
-        if (string.IsNullOrEmpty(topic) || topic.Length > RealtimeTopics.MaxLength || !TryIdentity(out var tenantId, out var memberId))
+        // Like Subscribe, it leaves the «@» names alone: the member's own group is not the client's to leave, or it could cut its own alerts.
+        if (string.IsNullOrEmpty(topic)
+            || topic.StartsWith('@')
+            || topic.Length > RealtimeTopics.MaxLength
+            || !TryIdentity(out var tenantId, out var memberId))
         {
             return;
         }
