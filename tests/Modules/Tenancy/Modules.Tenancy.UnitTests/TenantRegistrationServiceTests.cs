@@ -145,6 +145,97 @@ public sealed class TenantRegistrationServiceTests
         Assert.DoesNotContain("commit", invited.Steps);
     }
 
+    // Spec 2026-11-22: el país viaja en el Data y el tenant invitado nace con él; el signup, sin país, sigue en CO.
+    [Fact]
+    public async Task RegisterInvitedTenantBornWithTheCountryOfTheData()
+    {
+        var invited = new InvitedFixture();
+
+        await invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(), Guid.CreateVersion7(), Data with { Country = "mx" }, InvitedModules, "trace",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("MX", Assert.Single(invited.Tenants.Added).Country);
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantWithoutCountryStaysInColombia()
+    {
+        var invited = new InvitedFixture();
+
+        await invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(), Guid.CreateVersion7(), Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Equal("CO", Assert.Single(invited.Tenants.Added).Country);
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantWithAnInvalidCountryWritesNothing()
+    {
+        var invited = new InvitedFixture();
+
+        var error = await Assert.ThrowsAsync<TenantDomainException>(() => invited.Service.RegisterInvitedTenantAsync(
+            TenantId.New(), Guid.CreateVersion7(), Data with { Country = "MEX" }, InvitedModules, "trace",
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.settings.country.invalid", error.Code);
+        Assert.Empty(invited.Tenants.Added);
+        Assert.Empty(invited.Modules.Added);
+        Assert.Empty(invited.Memberships.All);
+        Assert.DoesNotContain("commit", invited.Steps);
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantRetryWithAnotherCountryReturnsFalseAndKeepsTheCountry()
+    {
+        var invited = new InvitedFixture();
+        var reserved = TenantId.New();
+        var owner = Guid.CreateVersion7();
+        await invited.Service.RegisterInvitedTenantAsync(
+            reserved, owner, Data with { Country = "MX" }, InvitedModules, "trace", TestContext.Current.CancellationToken);
+        invited.Steps.Clear();
+
+        var created = await invited.Service.RegisterInvitedTenantAsync(
+            reserved, owner, Data with { Country = "ES" }, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.False(created);
+        Assert.Equal("MX", Assert.Single(invited.Tenants.Added).Country);
+        Assert.DoesNotContain("commit", invited.Steps);
+    }
+
+    [Fact]
+    public async Task EnsureRegistrableWithAnInvalidCountryFailsBeforeAskingForTheSlug()
+    {
+        var (service, availability) = NewSlugService();
+
+        var error = await Assert.ThrowsAsync<TenantDomainException>(
+            () => service.EnsureRegistrableAsync(Data with { Country = "MEX" }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.settings.country.invalid", error.Code);
+        Assert.Empty(availability.Asked);
+    }
+
+    [Fact]
+    public async Task SignupBornInColombia()
+    {
+        var steps = new List<string>();
+        var tenants = new StoringTenantRepository(steps);
+        var service = new TenantRegistrationService(
+            tenants,
+            new InMemoryMembershipRepository(),
+            new RecordingTenantModuleRepository(steps),
+            new FixedDefaults([]),
+            new StepsUnitOfWork(steps),
+            new RecordingAuditRecorder(),
+            new RecordingOutboxWriter(),
+            new FixedClock(Now),
+            new RecordingSlugAvailability());
+
+        await service.RegisterOwnerTenantAsync(Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Equal("CO", Assert.Single(tenants.Added).Country);
+    }
+
     [Fact]
     public async Task RegisterInvitedTenantOwnedByAnotherUserThrows()
     {
