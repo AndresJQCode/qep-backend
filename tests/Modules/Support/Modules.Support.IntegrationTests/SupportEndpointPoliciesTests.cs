@@ -39,6 +39,9 @@ public sealed class SupportEndpointPoliciesTests(SharedSupportHost sharedHost) :
         ["PUT /tickets/{ticketId:guid}/assignee"] = SupportPolicies.TicketAct,
         ["POST /tickets/{ticketId:guid}/take"] = SupportPolicies.TicketAct,
 
+        // Task 11: la fecha límite de una tarea; sobre un externo el dominio responde not_internal.
+        ["PUT /tickets/{ticketId:guid}/due-date"] = SupportPolicies.TicketAct,
+
         // Las rutas de las tareas internas (Task 9): crear y ver quién puede recibirlas piden gestionar o usar tareas.
         ["POST /tasks"] = SupportPolicies.TicketAct,
         ["GET /tasks/assignees"] = SupportPolicies.TicketAct,

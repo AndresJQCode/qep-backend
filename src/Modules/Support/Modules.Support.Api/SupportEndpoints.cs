@@ -348,6 +348,8 @@ public static class SupportEndpoints
         MapTicketAction<ChangeTicketTypeRequest>(group, "type", ChangeTypeAsync);
         MapTicketAction<LinkTicketCustomerRequest>(group, "customer", LinkCustomerAsync);
         MapTicketAction<ChangeTicketPriorityRequest>(group, "priority", ChangePriorityAsync, SupportPolicies.TicketAct);
+        // Spec 2026-11-22: la fecha límite libre de una tarea. La puerta decide quién; sobre un externo es 422 not_internal.
+        MapTicketAction<ChangeTicketDueDateRequest>(group, "due-date", ChangeDueDateAsync, SupportPolicies.TicketAct);
 
         group.MapGet("/assignees", ListAssigneesAsync)
             .RequireAuthorization(SupportPolicies.TicketView)
@@ -693,6 +695,16 @@ public static class SupportEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             ChangeTicketPriorityCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
+
+    private static async Task<IResult> ChangeDueDateAsync(
+        Guid tenantId,
+        Guid ticketId,
+        ChangeTicketDueDateRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            ChangeTicketDueDateCommand.From(tenantId, ticketId, request, RequireVersion(httpContext, "ticket")), cancellationToken));
 
     private static async Task<IResult> ListAssigneesAsync(
         Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

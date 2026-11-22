@@ -888,6 +888,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.ChangeTicketPriorityCommand, Modules.Support.Application.SupportTicketDetailDto>,
             Modules.Support.Application.ChangeTicketPriorityHandler>();
+        // Spec 2026-11-22: la fecha límite de una tarea. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.ChangeTicketDueDateCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.ChangeTicketDueDateHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Support.Application.ListTicketsQuery, Modules.Support.Application.SupportTicketPageDto>,
             Modules.Support.Application.ListTicketsHandler>();
