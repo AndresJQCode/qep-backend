@@ -179,4 +179,32 @@ public sealed class PayrollLegalValuesTests
         Assert.Equal(0.02m, copy.SolidarityRate(25m));
         Assert.Null(copy.SolidarityRate(25.01m));
     }
-}
+
+    [Fact]
+    public async Task AYearWithoutItsOwnRowsIsLegalParameterMissing()
+    {
+        var exception = await Assert.ThrowsAsync<PayrollDomainException>(() =>
+            Adapter().ResolveAsync(new DateOnly(2027, 1, 14), Ct));
+
+        Assert.Equal("payroll.legal_parameter.missing", exception.Code);
+        Assert.Contains("Smmlv", exception.Message);
+        Assert.Contains("TransportAllowance", exception.Message);
+    }
+
+    [Fact]
+    public async Task TheMidYearKeysStillResolveAcrossYears()
+    {
+        // 2027-01-14: yearly keys have their 2027 row; the mid-year keys and connectivity do not.
+        var values = SeededValues();
+        foreach (var row in values.Where(value => value.EffectiveFrom == Y2026 && value.Key is not LegalParameterKey.IntegralSalaryFloor).ToList())
+        {
+            values.Add(new(row.Key, new DateOnly(2027, 1, 1), row.Value));
+        }
+
+        var set = await Adapter(values).ResolveAsync(new DateOnly(2027, 1, 14), Ct);
+
+        Assert.Equal(0.90m, set.SundaySurchargeRate.Value);
+        Assert.Equal(42m, set.WeeklyHours.Value);
+        Assert.Equal(new DateOnly(2025, 6, 25), set.ConnectivityAllowanceSince);
+        Assert.Equal(new DateOnly(2027, 1, 1), set.Smmlv.EffectiveFrom);
+    }}

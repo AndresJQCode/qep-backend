@@ -10,6 +10,10 @@ namespace Bootstrapper;
 /// clave se resuelve con la fila vigente a la fecha, y los tramos con los de la mayor vigencia.</summary>
 internal sealed class PayrollLegalValues(ILegalParameterSource source) : IPayrollLegalValues
 {
+    // Mid-year keys (or keys with their own start date) keep resolving to the row in force from any earlier year.
+    private static bool IsYearly(LegalParameterKey key) =>
+        key is not (LegalParameterKey.SundaySurchargeRate or LegalParameterKey.WeeklyHours or LegalParameterKey.ConnectivityAllowanceSince);
+
     public async Task<LegalValueSet> ResolveAsync(DateOnly asOf, CancellationToken cancellationToken)
     {
         var values = await source.ListAsync(cancellationToken);
@@ -19,7 +23,10 @@ internal sealed class PayrollLegalValues(ILegalParameterSource source) : IPayrol
         LegalValue Get(LegalParameterKey key)
         {
             var entry = LegalParameters.ResolveEntry(values, key, asOf);
-            if (entry is null)
+
+            // Hr no caduca la tabla (D-8), pero la nomina si: una clave sembrada cada 1 de enero que resuelve a una fila de un anio
+            // anterior es un anio sin cargar, y la foto congelada del periodo ya no se podria corregir.
+            if (entry is null || (IsYearly(key) && entry.EffectiveFrom.Year < asOf.Year))
             {
                 missing.Add(key.ToString());
                 return new LegalValue(key.ToString(), 0m, asOf);
