@@ -90,6 +90,8 @@ internal sealed class SigningObjectStorage : IObjectStorage
 /// <summary>El bucket público: sólo arma URLs.</summary>
 internal sealed class FixedPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets-qep.example.co";
 
     public bool IsConfigured => true;
@@ -152,6 +154,8 @@ internal sealed class FixedClock(DateTimeOffset now) : IClock
 /// qué tocó un handler (spec 2026-09-16, D15).</summary>
 internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets-qep.example.co";
 
     public Dictionary<string, string> Copies { get; } = new(StringComparer.Ordinal);
@@ -187,6 +191,8 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
 /// (fix round 1, Task 2: el chequeo se restauró al inicio del handler).</summary>
 internal sealed class UnconfiguredPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public bool IsConfigured => false;
 
     public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken) =>

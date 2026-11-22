@@ -63,6 +63,14 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-21: la plantilla de factura, calcada de la de pedido (cuerpo opcional, sin gate de módulo).
+        group.MapPost("/invoice", ProvisionInvoiceAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<ProvisionInvoiceTemplateRequest>(isOptional: true, "application/json")
+            .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Soporte fase 2: la plantilla «Aviso de respuesta», calcada de la de pedido (cuerpo opcional, sin encabezado ni gate de módulo).
         group.MapPost("/support-reply", ProvisionSupportReplyAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
@@ -111,6 +119,12 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/order/draft", GetOrderDraftAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<SystemTemplateDraftDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/invoice/draft", GetInvoiceDraftAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
             .Produces<SystemTemplateDraftDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -210,6 +224,12 @@ internal static class TemplateManagementEndpoints
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
             await dispatcher.SendAsync(new ProvisionOrderTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
 
+    private static async Task<IResult> ProvisionInvoiceAsync(
+        Guid tenantId, Guid connectionId, ProvisionInvoiceTemplateRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created(
+            $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
+            await dispatcher.SendAsync(new ProvisionInvoiceTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
+
     private static async Task<IResult> ProvisionSupportReplyAsync(
         Guid tenantId, Guid connectionId, ProvisionSupportReplyTemplateRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Created(
@@ -248,6 +268,9 @@ internal static class TemplateManagementEndpoints
 
     private static async Task<IResult> GetOrderDraftAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetOrderTemplateDraftQuery(tenantId, connectionId), cancellationToken));
+
+    private static async Task<IResult> GetInvoiceDraftAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetInvoiceTemplateDraftQuery(tenantId, connectionId), cancellationToken));
 
     private static async Task<IResult> GetSupportReplyDraftAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetSupportReplyTemplateDraftQuery(tenantId, connectionId), cancellationToken));
@@ -299,6 +322,9 @@ public sealed record ProvisionQuotationTemplateRequest(string? Body);
 
 /// <summary>Spec 2026-11-09 D3: el cuerpo editado de la plantilla de pedido, o nada para el texto base.</summary>
 public sealed record ProvisionOrderTemplateRequest(string? Body);
+
+/// <summary>Spec 2026-11-21: el cuerpo editado de la plantilla de factura, o nada para el texto base.</summary>
+public sealed record ProvisionInvoiceTemplateRequest(string? Body);
 
 /// <summary>Soporte fase 2: el cuerpo editado de la plantilla «Aviso de respuesta», o nada para el texto base.</summary>
 public sealed record ProvisionSupportReplyTemplateRequest(string? Body);

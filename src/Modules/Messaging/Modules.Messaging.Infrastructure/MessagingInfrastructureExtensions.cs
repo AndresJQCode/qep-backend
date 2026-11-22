@@ -32,6 +32,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
+        // Spec 2026-11-21: la factura de Siigo, por el mismo núcleo que el pedido.
+        services.AddScoped<IInvoiceTemplateOutbound, InvoiceTemplateOutbound>();
         // Mayorista: el aviso por WhatsApp de una invitación de distribuidor, por el mismo núcleo que la plantilla de cobro.
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
         // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
@@ -132,6 +134,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
         // Spec 2026-11-09 D5: la del pedido, para el directorio de canales y el sender de Meta en Bootstrapper.
         services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
+        // Spec 2026-11-21: la de la factura, para el directorio de canales y el sender de Meta.
+        services.AddScoped<IInvoiceTemplateReadiness, InvoiceTemplateReadiness>();
         // Soporte fase 2: la de «Aviso de respuesta», para las opciones de respuesta de un ticket y su envío por plantilla.
         services.AddScoped<ISupportReplyTemplateReadiness, SupportReplyTemplateReadiness>();
         // Soporte fase 4b: la de «Respuesta formal», para las opciones de respuesta formal y su envío por plantilla con el PDF.

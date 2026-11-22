@@ -205,6 +205,8 @@ internal sealed class StoreSettingsFixture : IAsyncDisposable
 /// <summary>El bucket público en memoria: sólo responde que está configurado y arma URLs, porque no se sube nada de verdad.</summary>
 internal sealed class InMemoryPublicStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets.qep.test";
 
     public bool IsConfigured => true;

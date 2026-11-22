@@ -30,4 +30,7 @@ public static class WhatsAppTemplateValues
 
     /// <summary>El del pedido (spec 2026-11-09 D9): <c>"Pedido-PED-000123.pdf"</c>, como lo nombra el PDF del pedido.</summary>
     public static string OrderDocumentFileName(string orderNumber) => $"Pedido-{orderNumber}.pdf";
+
+    /// <summary>El de la factura: <c>"Factura-FV-1-123.pdf"</c>.</summary>
+    public static string InvoiceDocumentFileName(string invoiceNumber) => $"Factura-{invoiceNumber}.pdf";
 }

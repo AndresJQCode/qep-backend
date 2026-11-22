@@ -44,4 +44,21 @@ public sealed class WhatsAppSenderRouter(IZenviaWhatsAppSender zenvia, IMetaWhat
             _ => throw new InvalidOperationException($"Unknown WhatsApp channel provider '{channel.Provider}'."),
         };
     }
+
+    /// <summary>La factura sale por los dos proveedores, como el pedido. El teléfono se normaliza antes de bifurcar.</summary>
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        var waId = WhatsAppPhone.Normalize(message.ToPhone)
+            ?? throw new QuotationsDomainException(
+                "invoice.whatsapp.recipient_missing",
+                "The recipient has no phone number to send the invoice to.");
+
+        return channel switch
+        {
+            ZenviaWhatsAppChannel zenviaChannel => zenvia.SendInvoiceAsync(zenviaChannel, message, cancellationToken),
+            MetaWhatsAppChannel metaChannel => meta.SendInvoiceAsync(metaChannel, waId, message, cancellationToken),
+            _ => throw new InvalidOperationException($"Unknown WhatsApp channel provider '{channel.Provider}'."),
+        };
+    }
 }
