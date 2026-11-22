@@ -9,4 +9,7 @@ public enum SupportReplyChannel
     WhatsAppTemplate,
     Email,
     Portal,
+
+    /// <summary>Spec 2026-11-22: una tarea interna no tiene a quién responderle. Ningún camino de respuesta lo acepta.</summary>
+    None,
 }

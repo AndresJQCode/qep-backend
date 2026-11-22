@@ -264,4 +264,13 @@ public static class SupportErrorCodes
 
     /// <summary>The internal ticket type cannot be edited or deleted, and no ticket takes it nor leaves it by a type change.</summary>
     public const string InternalTypeLocked = "support.ticket.internal_type_locked";
+
+    /// <summary>An internal task has no requester to reply to: no customer, conversation, follow-thread nor reply.</summary>
+    public const string InternalNoReply = "support.ticket.internal_no_reply";
+
+    /// <summary>The due date of a task is today (tenant zone) or later.</summary>
+    public const string InternalDueInPast = "support.ticket.internal_due_in_past";
+
+    /// <summary>[owner] D11: the free due date only exists on an internal task.</summary>
+    public const string NotInternal = "support.ticket.not_internal";
 }

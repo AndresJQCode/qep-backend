@@ -39,6 +39,13 @@ public static class SupportTicketStatuses
 
     public static IReadOnlyList<SupportTicketStatus> AllowedFrom(SupportTicketStatus from) => Transitions[from];
 
+    /// <summary>La tabla de <see cref="AllowedFrom"/>; una tarea interna no tiene cliente al que esperar, así que no ofrece
+    /// <see cref="SupportTicketStatus.WaitingOnCustomer"/>.</summary>
+    public static IReadOnlyList<SupportTicketStatus> AllowedFor(SupportTicketStatus from, bool isInternal) =>
+        isInternal
+            ? Transitions[from].Where(status => status is not SupportTicketStatus.WaitingOnCustomer).ToArray()
+            : Transitions[from];
+
     /// <summary>El reloj se detiene esperando al cliente y al terminar. <see cref="SupportTicketStatus.WaitingInternal"/> no lo
     /// detiene: esperar a otra área de la empresa no es culpa del solicitante.</summary>
     public static bool StopsTheClock(SupportTicketStatus status) =>
