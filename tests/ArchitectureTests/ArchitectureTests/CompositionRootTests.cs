@@ -109,6 +109,22 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-22 D-14: el horario de atención es un contrato de BuildingBlocks que implementa Mensajería. Si su registro faltara o
+    /// se armara mal, el aviso de «sin asignar» de Soporte fallaría en el primer tick del worker, no al compilar.
+    /// </summary>
+    [Fact]
+    public void TheContainerResolvesTheBusinessHoursProvider()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var hours = scope.ServiceProvider.GetRequiredService<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider>();
+
+        // The class is internal to Messaging.Infrastructure: it is told by name.
+        Assert.Equal("BusinessHoursProvider", hours.GetType().Name);
+    }
+
+    /// <summary>
     /// La vista por tenant NO puede ser singleton: fusiona los roles que el tenant definio, y
     /// esos cambian con un PUT, no con un deploy. Registrada como singleton, el primer
     /// tenant en preguntar dejaria su catalogo cacheado para todo el proceso — y para todos

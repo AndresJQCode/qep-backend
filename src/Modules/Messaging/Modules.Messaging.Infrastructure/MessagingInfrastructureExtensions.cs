@@ -129,6 +129,9 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingReportSource, MessagingReportSource>();
         // El cast es a propósito: las dos interfaces tienen que compartir la instancia scoped (un solo repositorio por solicitud).
         services.AddScoped<IBusinessHours>(provider => (BusinessHoursRepository)provider.GetRequiredService<IBusinessHoursRepository>());
+        // Spec 2026-11-22 D-14: the schedules as a capability shared with other modules (the contract lives in BuildingBlocks, like
+        // IUserReferenceProbe); Support counts its unassigned-ticket hours through it without referencing Messaging.
+        services.AddScoped<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider, BusinessHoursProvider>();
         // Spec 2026-10-14 §4.3: el espejo de plantillas.
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
