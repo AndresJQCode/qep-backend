@@ -5393,9 +5393,42 @@ pagos sin llamar a Siigo.
 - Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
   Un pedido facturado en Siigo no se revierte con QEP (`422 order.order.invoiced_externally`): revertir es una nota crédito.
 
+**Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
+`POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
+`204`) manda el PDF de **una** factura al WhatsApp del cliente del pedido. Es el mismo PDF de la descarga (se pide a Siigo en cada envío y
+viaja en memoria: nunca se guarda). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
+siigo.invoice.not_found` sin llamar a Siigo ni al canal; sin permiso o con el tenant de otra ruta es `403`, nunca `404`. El envío lo hace
+Quotations (`IInvoiceWhatsAppDelivery`; Siigo sólo ve el puerto `ISiigoInvoiceWhatsApp`), así que el canal se resuelve como en el pedido
+y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `channel_unavailable`, `channel_already_set`, `no_phone` (el
+cliente del pedido no tiene teléfono; sale **antes** de pedir el PDF) y `send_failed` (todos `422`), más `order.order.client_not_found`. No
+hay deduplicación: dos clics son dos mensajes y dos entradas de auditoría `siigo.invoice.whatsapp_sent` (sin teléfono, URL ni contenido).
+
+`GET …/siigo-invoice` suma `canSendWhatsApp` a cada fila: la fila tiene PDF **y** hoy se podría entregar (el canal se resuelve igual que en
+el envío y el cliente tiene teléfono). Se calcula una vez por petición, y si ninguna fila tiene PDF no se consulta. **Limitación conocida:**
+un tenant con dos o más canales aptos para facturas y sin elección guardada (la elección se guarda al mandar una cotización o un pedido y
+escoger canal) recibe `canSendWhatsApp = false` hasta que elija uno; mandar una factura nunca guarda la elección.
+
+**Plantilla `Invoice`.** Cada canal necesita su plantilla de factura; sin ella no cuenta como canal para una factura.
+
+- **Meta:** se crea desde QEP con `POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/invoice`
+  (permiso `messaging.template.manage`) y espera la aprobación de Meta. El PDF viaja como encabezado de la plantilla.
+- **Zenvia:** crea la plantilla en Zenvia con las variables **exactamente** `fullname`, `invoice_number` y `total` y el encabezado
+  `documentUrl`, y pon su id en `invoiceTemplateId` de **cada** conexión de Zenvia (Integrations). Zenvia descarga el documento por URL.
+
+**Copia pública (sólo Zenvia).** Para Zenvia el PDF se copia al bucket público bajo `invoices/{guid}.pdf`, con una clave aleatoria que no
+lleva tenant, pedido ni número de factura (la URL queda abierta a quien la tenga). Por Meta no se escribe nada en ningún bucket. Sin bucket
+público el envío falla, sin caer a una URL firmada. La copia expira con una regla de lifecycle que se crea **a mano** en Cloudflare, y es
+parte del despliegue:
+
+```powershell
+npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1
+npx wrangler r2 bucket lifecycle list <bucket-publico>   # para verificarla
+```
+
 **Seguridad.** La clave de acceso y el token de Siigo no salen a logs, auditoría ni respuestas; `request_json` (con el documento y
 la dirección del cliente) no lo devuelve ningún `GET`, y `error_detail` guarda los códigos de Siigo, no sus mensajes (salvo el
-total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
+total esperado). El PDF, la URL pública y el teléfono del envío por WhatsApp tampoco salen a logs, `siigo.call_failures`, auditoría ni
+respuestas. Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
 
 **Despliegue.**
 
@@ -5406,6 +5439,14 @@ total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
    Integrations borra las conexiones `siigo` con sus secretos, y `siigo.invoices` es el registro de un documento legal.
 3. Prende el módulo al tenant desde la consola de operador, crea la conexión, recorre el asistente y deja «Enviar a la DIAN»
    apagado en las primeras facturas.
+
+**Despliegue del envío por WhatsApp**, en este orden:
+
+1. Migración de Messaging (el tipo de plantilla `Invoice`).
+2. Crea y aprueba la plantilla `Invoice` en Meta (`template-management/invoice`) y en Zenvia, y pon `invoiceTemplateId` en cada conexión
+   de Zenvia.
+3. Regla de lifecycle de `invoices/` en el bucket público (comando de arriba).
+4. Backend y después frontend (spec aparte en `qep-frontend`).
 
 **Lo que se mira en las primeras facturas reales** (no hay empresa de pruebas: se resuelve con ellas, y con el interruptor
 apagado ninguna puede salir mal sin que se vea):
