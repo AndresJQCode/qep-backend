@@ -26,6 +26,8 @@ public sealed class GetReplyOptionsHandler(
     {
         await scope.EnsureAccessAsync(query.TenantId, cancellationToken);
         var ticket = await scope.ViewAsync(query.TenantId, query.TicketId, cancellationToken);
+        // Spec 2026-11-22 (plan D11): una tarea no tiene a quién responder.
+        SupportTicketScope.EnsureExternal(ticket);
         // Plan F12: un anónimo sólo se responde por la página de consulta; ningún otro canal llega a él.
         if (ticket.IsAnonymous)
         {

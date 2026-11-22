@@ -148,8 +148,9 @@ public sealed class SupportLayerTests
     private static readonly (string Type, string Why)[] SystemPathsThatLoadATicket =
     [
         ("SupportAutoCloser", "system worker: closes resolved tickets, no member involved"),
-        ("PublicSurveys", "portal survey answered with a signed token, no member"),
-        ("SupportSurveyAnswers", "portal survey answers, no member"),
+        ("SupportPublicSurveys", "portal survey lookup by signed token (PublicSurveys.cs:55), no member"),
+        ("SupportSurveyAnswering", "portal survey answer by signed token (PublicSurveys.cs:133), no member"),
+        ("SupportSurveyAnswers", "survey answers service, no member"),
         ("SupportSurveySender", "system worker: sends the survey, no member"),
         ("SendTicketReplyHandler", "re-reads after the gate already admitted the member (SendTicketReply.cs:248 and :551)"),
     ];

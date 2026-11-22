@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Support.Application;
 using Modules.Support.Domain;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 
@@ -105,8 +106,14 @@ public sealed class SupportTaskAccessApiTests(SharedSupportHost sharedHost) : IC
             var response = await world.TaskOnly.GetAsync($"{world.Url}/tickets/{id}", Ct);
             var body = await BodyAsync(response);
             AssertTicketNotFound(response, body);
-            // Sólo el id del mensaje cambia: nada más distingue el caso.
-            bodies.Add(body.Replace(id.ToString(), "<id>", StringComparison.OrdinalIgnoreCase));
+            // Sólo el id del mensaje cambia; el traceId (distinto en cada request) y el instance (la ruta que mandó quien llama) no cuentan.
+            using var document = JsonDocument.Parse(body);
+            bodies.Add(string.Join(
+                "|",
+                document.RootElement.EnumerateObject()
+                    .Where(property => property.Name is not ("traceId" or "instance"))
+                    .OrderBy(property => property.Name, StringComparer.Ordinal)
+                    .Select(property => $"{property.Name}={property.Value.ToString().Replace(id.ToString(), "<id>", StringComparison.OrdinalIgnoreCase)}")));
         }
 
         Assert.Single(bodies.Distinct());
@@ -183,6 +190,46 @@ public sealed class SupportTaskAccessApiTests(SharedSupportHost sharedHost) : IC
         Assert.True(detail.StatusCode == HttpStatusCode.OK, await BodyAsync(detail));
         Assert.Equal(HttpStatusCode.Forbidden, priority.StatusCode);
         Assert.Equal("authorization.denied", await CodeOfAsync(priority));
+    }
+
+    // Review Focus 4: quien pierde task.use pierde la tarea aunque siga siendo creador y responsable y conserve la membresía.
+    [Fact]
+    public async Task ACreatorWhoLostTaskUseGets404OnHerTask()
+    {
+        var world = await StartAsync();
+        var task = await SeedTaskAsync(world, world.TaskOnlyMember, world.TaskOnlyMember);
+        // Mismo usuario y membresía, pero el rol ya no concede support.task.use y el cliente sólo trae lo que le queda.
+        await using (var scope = world.Factory.Services.CreateAsyncScope())
+        {
+            var tenancy = scope.ServiceProvider.GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+            var tenant = await tenancy.Tenants.FindAsync([new TenantId(world.TenantId)], Ct);
+            var membership = await tenancy.Memberships.FindAsync([new MembershipId(world.TaskOnlyMember)], Ct);
+            membership!.ChangeRoles(tenant!, ["no-such-role"], DateTimeOffset.UtcNow);
+            await tenancy.SaveChangesAsync(Ct);
+        }
+
+        using var client = CreateClient(world.Factory, world.TaskOnlySubject, world.Manager.Tenant, SupportPermissions.Read);
+        var detail = await client.GetAsync($"{world.Url}/tickets/{task}", Ct);
+        // Con sólo el claim de lectura la ve (nivel View) y no actúa: 403 con código, no 404.
+        Assert.True(detail.StatusCode == HttpStatusCode.OK, await BodyAsync(detail));
+        var note = await PostNoteAsync(client, world.Url, task);
+        Assert.Equal(HttpStatusCode.Forbidden, note.StatusCode);
+
+        // Sin ningún permiso de Soporte en el claim, la política corta antes del handler.
+        using var none = CreateClient(world.Factory, world.TaskOnlySubject, world.Manager.Tenant, "tenancy.settings.read");
+        Assert.Equal(HttpStatusCode.Forbidden, (await none.GetAsync($"{world.Url}/tickets/{task}", Ct)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ReplyOptionsOnATaskIs422InternalNoReply()
+    {
+        var world = await StartAsync();
+        var task = await SeedTaskAsync(world, world.Manager.CallerMemberId, world.AdvisorMember);
+
+        var response = await world.Manager.Client.GetAsync($"{world.Url}/tickets/{task}/reply-options", Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("support.ticket.internal_no_reply", await CodeOfAsync(response));
     }
 
     [Fact]

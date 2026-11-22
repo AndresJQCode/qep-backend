@@ -133,9 +133,9 @@ public sealed class AppHubTaskTopicsTests(SupportHostWithoutWorkers host) : ICla
         await connection.InvokeAsync("Subscribe", topic, Ct);
         await connection.InvokeAsync("Unsubscribe", topic, Ct);
 
-        // She is still creator and assignee in the data, but the membership is gone: the permissions are read from the database on
-        // every Subscribe, never remembered from the handshake.
-        await RemoveMembershipAsync(host.Factory, tenant, member);
+        // She is still creator, assignee and an active member, but her role no longer grants support.task.use: the permissions are
+        // read from the database on every Subscribe, never remembered from the handshake.
+        await ChangeRoleAsync(host.Factory, tenant, member, "no-such-role");
         var onTask = await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("Subscribe", topic, Ct));
         var onTasks = await Assert.ThrowsAsync<HubException>(
             () => connection.InvokeAsync("Subscribe", SupportRealtimeTopics.Tasks(member), Ct));
@@ -172,7 +172,7 @@ public sealed class AppHubTaskTopicsTests(SupportHostWithoutWorkers host) : ICla
         AssertForbidden(error);
     }
 
-    private static async Task RemoveMembershipAsync(QepApiFactory factory, string tenantId, Guid memberId)
+    private static async Task ChangeRoleAsync(QepApiFactory factory, string tenantId, Guid memberId, string role)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
@@ -180,7 +180,7 @@ public sealed class AppHubTaskTopicsTests(SupportHostWithoutWorkers host) : ICla
             ?? throw new InvalidOperationException("The tenant was not found.");
         var membership = await tenancy.Memberships.FindAsync([new MembershipId(memberId)], Ct)
             ?? throw new InvalidOperationException("The membership was not found.");
-        membership.Remove(tenant, DateTimeOffset.UtcNow);
+        membership.ChangeRoles(tenant, [role], DateTimeOffset.UtcNow);
         await tenancy.SaveChangesAsync(Ct);
     }
 

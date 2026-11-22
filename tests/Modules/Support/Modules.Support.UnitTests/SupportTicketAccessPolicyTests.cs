@@ -92,4 +92,13 @@ public sealed class SupportTicketAccessPolicyTests
 
         Assert.Equal(SupportTicketAccessLevel.None, SupportTicketAccessPolicy.For(taskOnly, Task(), memberId: null));
     }
+
+    [Fact]
+    public void EnsureExternalRefusesATaskWithInternalNoReplyAndLetsAnExternalPass()
+    {
+        var error = Assert.Throws<SupportDomainException>(() => SupportTicketScope.EnsureExternal(Task()));
+
+        Assert.Equal(SupportErrorCodes.InternalNoReply, error.Code);
+        SupportTicketScope.EnsureExternal(External());
+    }
 }
