@@ -69,7 +69,7 @@ public sealed class GeographyApiTests
         Assert.NotNull(countries);
         Assert.Equal(41, countries.Length);
         Assert.Equal("Antigua y Barbuda", countries[0].Name);
-        Assert.Contains(countries, country => country == new CountryResponse("CO", "Colombia"));
+        Assert.Contains(countries, country => country == new CountryResponse("CO", "Colombia", "Department"));
         var names = countries.Select(country => country.Name).ToArray();
         Assert.Equal(names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase), names);
     }

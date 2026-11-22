@@ -1158,6 +1158,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
+        // Spec 2026-11-20: regiones y ciudades por país (Colombia por DIVIPOLA, el resto por Region/RegionCity).
+        services.AddScoped<
+            IQueryHandler<ListRegionsQuery, IReadOnlyList<RegionOptionDto>>,
+            ListRegionsHandler>();
+        services.AddScoped<
+            IQueryHandler<ListRegionCitiesQuery, IReadOnlyList<RegionCityOptionDto>>,
+            ListRegionCitiesHandler>();
         // Spec 2026-10-26 §6: las lecturas de la consola de ciudades del operador. La política exige el permiso y el handler
         // revalida con OperatorAuthorization; el validador entra con AddValidatorsFromAssemblyContaining de abajo.
         services.AddScoped<IQueryHandler<GetCitySummaryQuery, CitySummaryDto>, GetCitySummaryHandler>();
