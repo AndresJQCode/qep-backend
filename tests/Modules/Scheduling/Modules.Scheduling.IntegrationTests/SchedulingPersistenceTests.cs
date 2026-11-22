@@ -259,4 +259,21 @@ public sealed class SchedulingPersistenceTests
             .ToListAsync(TestContext.Current.CancellationToken);
         Assert.Equal(["btree_gist"], extensions);
     }
-}
+
+    // Carrera real sobre (sede, miembro): la verificación previa del caso de uso no la ve y la base sí. Se prueba la traducción directo
+    // contra el índice (una concurrencia real sería inestable): sin ella, el índice único respondería 500.
+    [Fact]
+    public async Task TheMemberLinkUniqueIndexIsTranslatedToItsDomainCode()
+    {
+        await using var database = await SchedulingDatabase.StartAsync();
+        var seed = await SeedAsync(database);
+        var member = seed.Resource.MemberId;
+
+        await using var context = database.CreateContext();
+        context.Resources.Add(Resource.Create(ResourceId.New(), Tenant, seed.Location.Id, "Dra. Pérez 2", member, Now));
+
+        var exception = await Assert.ThrowsAsync<SchedulingDomainException>(
+            () => new SchedulingUnitOfWork(context).SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(SchedulingErrorCodes.ResourceMemberAlreadyLinked, exception.Code);
+    }}

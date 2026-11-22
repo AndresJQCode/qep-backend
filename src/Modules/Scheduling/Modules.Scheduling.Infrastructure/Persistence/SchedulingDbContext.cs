@@ -116,7 +116,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         resource.HasIndex(value => new { value.LocationId, value.MemberId })
             .IsUnique()
             .HasFilter("member_id IS NOT NULL")
-            .HasDatabaseName("IX_resources_location_member");
+            .HasDatabaseName(ResourceMemberUniqueIndex);
     }
 
     private static void ConfigureService(ModelBuilder modelBuilder)

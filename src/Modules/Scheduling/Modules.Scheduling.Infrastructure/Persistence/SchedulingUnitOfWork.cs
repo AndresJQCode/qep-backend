@@ -21,6 +21,15 @@ internal sealed class SchedulingUnitOfWork(SchedulingDbContext dbContext) : ISch
                 "The scheduling record changed while the update was being committed.",
                 exception);
         }
+        // El mismo miembro vinculado a dos recursos de una sede por dos peticiones a la vez: la verificación previa del caso de uso no ve
+        // la carrera, el índice único sí. Por nombre de índice, no sólo por 23505: hay varios índices únicos y devolver el código equivocado
+        // manda a corregir el campo equivocado. Sin esto la carrera sería un 500.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SchedulingDbContext.ResourceMemberUniqueIndex))
+        {
+            throw new SchedulingDomainException(
+                SchedulingErrorCodes.ResourceMemberAlreadyLinked, "Ese miembro ya atiende otro recurso de esta sede.");
+        }
+
         // Dos reservas por el mismo tiempo de un recurso: la restricción de exclusión deja pasar a una y rechaza a la otra (D-8). Por nombre
         // de índice, no sólo por 23P01 o 23505.
         catch (DbUpdateException exception) when (

@@ -37,6 +37,7 @@ public sealed class SchedulingErrorCodesTests
                 "scheduling.reminder.connection_invalid",
                 "scheduling.reminder.template_missing",
                 "scheduling.resource.has_future_appointments",
+                "scheduling.resource.member_already_linked",
                 "scheduling.resource.not_found",
                 "scheduling.service.in_use",
                 "scheduling.service.not_found",
