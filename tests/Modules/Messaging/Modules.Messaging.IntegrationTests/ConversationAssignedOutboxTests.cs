@@ -74,6 +74,43 @@ public sealed class ConversationAssignedOutboxTests
                 ("name", AssignedEvent)));
     }
 
+    // A forced failure of the save itself: a trigger rejects the Transferred history row, so the whole transaction must roll back and
+    // leave neither the new assignee nor the event (the 412 race above cannot tell a failed If-Match from a failed save).
+    [Fact]
+    public async Task AFailedSaveLeavesNoAssignedEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var conversationId = await IngestFirstConversationAsync(f, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60);
+        var (beatriz, _) = await SeedMemberAsync(f.ConnectionString, f.Tenant.TenantId, "Beatriz", "advisor");
+        using var owner = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        var version = await VersionAsync(f);
+        var assigneeBefore = await ScalarAsync<string>(f.ConnectionString, "SELECT coalesce(assigned_member_id::text, '') FROM messaging.conversations");
+        await ExecuteAsync(
+            f.ConnectionString,
+            """
+            CREATE FUNCTION messaging.reject_transferred() RETURNS trigger AS $$
+            BEGIN
+                IF NEW.details->>'type' = 'Transferred' THEN
+                    RAISE EXCEPTION 'forced failure';
+                END IF;
+                RETURN NEW;
+            END $$ LANGUAGE plpgsql;
+            CREATE TRIGGER reject_transferred BEFORE INSERT ON messaging.messages
+                FOR EACH ROW EXECUTE FUNCTION messaging.reject_transferred();
+            """);
+
+        var response = await TransferAsync(f, owner, conversationId, beatriz, version);
+
+        Assert.False(response.IsSuccessStatusCode);
+        Assert.Equal(0L, await AssignedEventsAsync(f));
+        Assert.Equal(version, await VersionAsync(f));
+        Assert.Equal(
+            assigneeBefore,
+            await ScalarAsync<string>(f.ConnectionString, "SELECT coalesce(assigned_member_id::text, '') FROM messaging.conversations"));
+    }
+
     [Fact]
     public async Task ATransferToOneselfWritesNoEvent()
     {

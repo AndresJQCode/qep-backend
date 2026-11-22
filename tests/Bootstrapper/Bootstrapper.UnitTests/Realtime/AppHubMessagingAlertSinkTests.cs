@@ -1,4 +1,5 @@
 using Bootstrapper.Realtime;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using Modules.Tenancy.Application;
@@ -23,7 +24,7 @@ public sealed class AppHubMessagingAlertSinkTests
             .AddSingleton<ITenantModules>(new FakeModules(tenantExists ? modules ?? TenantModuleSet.FromStored(TenantModuleKeys.All) : null))
             .AddSingleton<IMessagingMemberPermissions>(new FakePermissions(canRead))
             .BuildServiceProvider();
-        return (new AppHubMessagingAlertSink(hub, provider.GetRequiredService<IServiceScopeFactory>()), hub);
+        return (new AppHubMessagingAlertSink(hub, provider.GetRequiredService<IServiceScopeFactory>(), new MemoryCache(new MemoryCacheOptions())), hub);
     }
 
     private static MessagingEvent Inbound(Guid? assigned) =>
@@ -107,6 +108,38 @@ public sealed class AppHubMessagingAlertSinkTests
         Assert.Equal(["conversationId", "messageId"], payload.EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal(Conversation, payload.GetProperty("conversationId").GetGuid());
         Assert.Equal(Message, payload.GetProperty("messageId").GetGuid());
+    }
+
+    // Every inbound message of an assigned conversation asks the same question on every pod: the second one is answered from the cache.
+    [Fact]
+    public async Task TheDecisionForAMemberIsCachedBetweenMessages()
+    {
+        var hub = new RecordingHubContext();
+        var permissions = new CountingPermissions();
+        var provider = new ServiceCollection()
+            .AddSingleton<ITenantModules>(new FakeModules(TenantModuleSet.FromStored(TenantModuleKeys.All)))
+            .AddSingleton<IMessagingMemberPermissions>(permissions)
+            .BuildServiceProvider();
+        var sink = new AppHubMessagingAlertSink(
+            hub, provider.GetRequiredService<IServiceScopeFactory>(), new MemoryCache(new MemoryCacheOptions()));
+
+        await sink.DispatchAsync(Inbound(Member), TestContext.Current.CancellationToken);
+        await sink.DispatchAsync(Inbound(Member), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, hub.Sent.Count);
+        Assert.Equal(1, permissions.Calls);
+    }
+
+    private sealed class CountingPermissions : IMessagingMemberPermissions
+    {
+        public int Calls { get; private set; }
+
+        public Task<bool> HasAnyAsync(
+            Guid tenantId, Guid memberId, IReadOnlyCollection<string> permissions, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(true);
+        }
     }
 
     private sealed class FakeModules(TenantModuleSet? set) : ITenantModules

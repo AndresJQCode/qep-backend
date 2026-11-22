@@ -101,8 +101,8 @@ public sealed class OverdueDigestEventTests : IAsyncLifetime
     [Fact]
     public async Task AMemberWithoutEmailStillGetsTheEvent()
     {
-        // An empty email is a member the digest cannot be mailed to (no_email), but the bell does not need an address.
-        var assignee = await SeedMemberAsync(factory, string.Empty, "Owner", "billing");
+        // A member without a user row has no email (no_email), but the bell does not need an address.
+        var assignee = await SeedMemberAsync(factory, string.Empty, "Owner", "billing", withUser: false);
         var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
         await SeedProfileAsync(customer, assignee);
         await SeedPendingChargeAsync(customer, Today.AddDays(-4), "Overdue");

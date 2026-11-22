@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
 using Modules.Tenancy.Application;
@@ -15,7 +16,7 @@ namespace Bootstrapper.Realtime;
 /// <c>messaging</c> topic, which its authorizer already restricted when each connection subscribed. Ids only: the text never travels.
 /// <c>MessagingHubEventSink</c> keeps sending <c>notify</c> to the old hub (D-9).
 /// </summary>
-internal sealed class AppHubMessagingAlertSink(IHubContext<AppHub> hub, IServiceScopeFactory scopes) : IMessagingEventSink
+internal sealed class AppHubMessagingAlertSink(IHubContext<AppHub> hub, IServiceScopeFactory scopes, IMemoryCache cache) : IMessagingEventSink
 {
     public async Task DispatchAsync(MessagingEvent notification, CancellationToken cancellationToken)
     {
@@ -43,9 +44,23 @@ internal sealed class AppHubMessagingAlertSink(IHubContext<AppHub> hub, IService
             .SendAsync(MessagingRealtimeEvents.InboundMessageAlert, payload, cancellationToken);
     }
 
-    private async Task<bool> MemberMayBeAlertedAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken)
+    // Every pod decides for every inbound message of an assigned conversation, so the decision (module on + conversation read) is kept
+    // for a short time per tenant and member, as WebhookRouting and AutomationsModuleStatus do. The alert carries ids only, so a
+    // permission change taking up to this long to reach the bell exposes nothing.
+    public static readonly TimeSpan DecisionTtl = TimeSpan.FromSeconds(30);
+
+    internal static string DecisionCacheKey(Guid tenantId, Guid memberId) => $"app-hub:messaging-alert:{tenantId}:{memberId}";
+
+    private Task<bool> MemberMayBeAlertedAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) =>
+        cache.GetOrCreateAsync(DecisionCacheKey(tenantId, memberId), entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = DecisionTtl;
+            return DecideAsync(tenantId, memberId, cancellationToken);
+        });
+
+    private async Task<bool> DecideAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken)
     {
-        // A scope per event: the sink is a singleton and what it reads is scoped. The same rule as TenantModuleGuard: a tenant without a
+        // A scope per decision: the sink is a singleton and what it reads is scoped. The same rule as TenantModuleGuard: a tenant without a
         // row (development stub) cannot be denied by module.
         await using var scope = scopes.CreateAsyncScope();
         var modules = await scope.ServiceProvider.GetRequiredService<ITenantModules>().FindAsync(tenantId, cancellationToken);
