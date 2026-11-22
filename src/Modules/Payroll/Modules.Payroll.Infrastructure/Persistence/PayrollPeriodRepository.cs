@@ -28,6 +28,22 @@ internal sealed class PayrollPeriodRepository(PayrollDbContext dbContext) : IPay
                 period => period.TenantId == tenantId && period.CompanyId == companyId && period.StartDate == start,
                 cancellationToken);
 
+    public Task<PayrollPeriod?> FindTrackedByStartAsync(
+        Guid tenantId, Guid companyId, DateOnly start, CancellationToken cancellationToken) =>
+        dbContext.Periods
+            .Include(period => period.Events)
+            .SingleOrDefaultAsync(
+                period => period.TenantId == tenantId && period.CompanyId == companyId && period.StartDate == start,
+                cancellationToken);
+
+    public async Task<IReadOnlyList<PeriodInput>> ListInputsAsync(
+        Guid tenantId, PayrollPeriodId periodId, CancellationToken cancellationToken) =>
+        await dbContext.PeriodInputs
+            .AsNoTracking()
+            .Where(input => input.PeriodId == periodId
+                && dbContext.Periods.Any(period => period.Id == periodId && period.TenantId == tenantId))
+            .ToListAsync(cancellationToken);
+
     public void Add(PayrollPeriod period) => dbContext.Periods.Add(period);
 
     public async Task<IReadOnlyList<Guid>> ListCompanyIdsAsync(Guid tenantId, CancellationToken cancellationToken) =>

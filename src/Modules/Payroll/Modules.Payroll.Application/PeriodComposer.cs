@@ -12,11 +12,10 @@ public sealed class PeriodComposer(
     IPayrollHrDirectory hr,
     IPayrollLegalValues legalValues,
     IPayrollResultStore results,
-    IPayrollPeriodRepository periods,
-    ICompanyPayrollSettingsRepository settings,
     PayrollCompanies companies,
     ConceptCatalog catalog,
-    RecurringConceptComposer recurring)
+    RecurringConceptComposer recurring,
+    PeriodApprovals approvals)
 {
     private sealed record View(
         IReadOnlyList<PayrollEmployeeRowDto> Rows,
@@ -177,29 +176,15 @@ public sealed class PeriodComposer(
         CancellationToken cancellationToken)
     {
         var company = await companies.RequireAsync(period.TenantId, period.CompanyId, cancellationToken);
-        var dualControl = (await settings.FindAsync(period.TenantId, period.CompanyId, cancellationToken))?.DualControl
-            ?? CompanyPayrollSettings.DefaultDualControl;
-
-        // R-14: la segunda quincena depende de la primera del mismo mes.
-        var firstHalf = period.Half == PayrollHalf.Second
-            ? await periods.FindByStartAsync(
-                period.TenantId, period.CompanyId, new DateOnly(period.StartDate.Year, period.StartDate.Month, 1), cancellationToken)
-            : null;
-        var firstHalfApproved = period.Half == PayrollHalf.First
-            || firstHalf is { Status: PayrollPeriodStatus.Approved or PayrollPeriodStatus.Closed };
-        var firstHalfLiquidated = period.Half == PayrollHalf.First
-            || firstHalf is { Outdated: false, Status: PayrollPeriodStatus.Liquidated or PayrollPeriodStatus.Approved or PayrollPeriodStatus.Closed };
-
-        // En esta tarea «Hr o la configuración cambiaron» todavía no se calcula (la Tarea 11 trae la huella).
-        const bool sourceChanged = false;
-        var blockers = period.ApproveBlockers(new ApprovalContext(
-            caller, dualControl, sourceChanged, view.Results.Any(result => result.Liquidation.NegativeNet), firstHalfApproved));
+        var state = await approvals.StateAsync(period, withSource: true, cancellationToken);
+        var sourceChanged = state.SourceChanged;
+        var blockers = period.ApproveBlockers(state.ContextFor(caller, view.Results.Any(result => result.Liquidation.NegativeNet)));
 
         var manage = permissions.Contains(PayrollPermissions.PeriodManage);
         var editable = period.Status is PayrollPeriodStatus.Draft or PayrollPeriodStatus.Liquidated or PayrollPeriodStatus.Reopened;
         var can = new PayrollPeriodCanDto(
             Capture: editable && manage,
-            Liquidate: editable && manage && firstHalfLiquidated,
+            Liquidate: editable && manage && state.FirstHalfLiquidated,
             Approve: blockers.Count == 0 && permissions.Contains(PayrollPermissions.PeriodApprove),
             Close: period.Status == PayrollPeriodStatus.Approved && !period.Outdated && manage,
             Reopen: period.Status is PayrollPeriodStatus.Approved or PayrollPeriodStatus.Closed && manage,

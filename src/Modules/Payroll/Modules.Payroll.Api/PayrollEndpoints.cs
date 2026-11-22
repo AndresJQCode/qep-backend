@@ -61,7 +61,63 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/periods/{periodId:guid}/liquidate", LiquidateAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<LiquidateRequest>("application/json")
+            .Produces<PayrollPeriodDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/periods/{periodId:guid}/approve", ApproveAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodApprove)
+            .Produces<PayrollPeriodDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/periods/{periodId:guid}/close", CloseAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces<PayrollPeriodDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost("/periods/{periodId:guid}/reopen", ReopenAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<ReopenRequest>("application/json")
+            .Produces<PayrollPeriodDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
+
+    private static async Task<IResult> LiquidateAsync(
+        Guid tenantId, Guid periodId, LiquidateRequest? request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new LiquidatePeriodCommand(tenantId, periodId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ApproveAsync(
+        Guid tenantId, Guid periodId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ApprovePeriodCommand(tenantId, periodId, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> CloseAsync(
+        Guid tenantId, Guid periodId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ClosePeriodCommand(tenantId, periodId, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ReopenAsync(
+        Guid tenantId, Guid periodId, ReopenRequest? request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ReopenPeriodCommand(tenantId, periodId, request ?? new ReopenRequest(null), IfMatchOf(httpContext)), cancellationToken));
 
     private static async Task<IResult> GetPeriodEmployeeAsync(
         Guid tenantId, Guid periodId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

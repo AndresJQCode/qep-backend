@@ -77,6 +77,9 @@ public sealed class RecurringConceptsApiTests : IClassFixture<PayrollApiFixture>
         Assert.Equal(
             HttpStatusCode.Forbidden,
             (await PutInputsAsync(scene, InputsBody(), $"\"{version}\"", settings)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await PostAsync(settings, $"{scene.Tenant.Url}/periods/{scene.PeriodId}/liquidate", $"\"{version}\"", new { confirmNoAbsences = true })).StatusCode);
         scene.Tenant.Dispose();
     }
 

@@ -664,6 +664,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.ToggleRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
             Modules.Payroll.Application.ToggleRecurringConceptHandler>();
+        services.AddScoped<Modules.Payroll.Application.LiquidationPlanner>();
+        services.AddScoped<Modules.Payroll.Application.PeriodApprovals>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.LiquidatePeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.LiquidatePeriodHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ApprovePeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.ApprovePeriodHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ClosePeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.ClosePeriodHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ReopenPeriodCommand, Modules.Payroll.Application.PayrollPeriodDetailDto>,
+            Modules.Payroll.Application.ReopenPeriodHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
