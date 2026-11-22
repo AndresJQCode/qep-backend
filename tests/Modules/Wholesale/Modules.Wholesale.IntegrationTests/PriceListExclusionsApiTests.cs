@@ -4,8 +4,8 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Wholesale.Application;
-using PriceListExclusionInput = Modules.Catalog.Application.PriceListExclusionInput;
 using Modules.Wholesale.Domain;
+using PriceListExclusionInput = Modules.Catalog.Application.PriceListExclusionInput;
 
 namespace Modules.Wholesale.IntegrationTests;
 
@@ -283,7 +283,11 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
                 {
                     Content = JsonContent.Create(new
                     {
-                        name = "Plata", adjustmentPercent = -5m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), exclusions,
+                        name = "Plata",
+                        adjustmentPercent = -5m,
+                        visibility = "AllActive",
+                        categoryIds = Array.Empty<Guid>(),
+                        exclusions,
                     }),
                 },
                 list.Version),
