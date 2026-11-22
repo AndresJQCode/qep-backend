@@ -93,8 +93,8 @@ las repiten. Patrones: `docs/superpowers/plans/2026-11-20-rrhh-fase-1-backend.md
    `minimum-wage-first-half` y `minimum-wage-second-half`.
 3. **Un valor legal nuevo no cambia un período aprobado ni uno reabierto y vuelto a liquidar**: insertar en
    `hr.legal_parameters` un `TransportAllowance` con `effective_from` 2026-11-01 después de cerrar ⇒ el detalle, el Excel y la
-   reliquidación tras reabrir dan los mismos montos y la misma foto `legalValues`. Prueba: Tarea 14,
-   `ANewLegalValueChangesNeitherAClosedNorAReliquidatedPeriod`.
+   reliquidación tras reabrir dan los mismos montos y la misma foto `legalValues`. Prueba: Tarea 13 (la que habilita el
+   Excel, M-15), `ANewLegalValueChangesNeitherAClosedNorAReliquidatedPeriod`.
 4. **Doble control**: con `dualControl: true`, quien liquidó por última vez no aprueba aunque haya reabierto otro; con
    `false`, sí. Prueba: Tarea 11, `WithDualControlTheLastLiquidatorCannotApprove`.
 5. **Dos escrituras sobre el mismo período**: dos capturas con el mismo `If-Match` ⇒ la segunda 412 y sus líneas no
@@ -102,7 +102,8 @@ las repiten. Patrones: `docs/superpowers/plans/2026-11-20-rrhh-fase-1-backend.md
    `AStaleIfMatchIs412AndWritesNothing`; Tarea 11, `ALiquidationWithAStaleIfMatchIs412`.
 6. **Otro tenant**: con la sesión del tenant A, la ruta del tenant B ⇒ 403 `authorization.denied` en el detalle, el rastro,
    el Excel, las capturas y cada transición; y la ruta de A con el `periodId` de B ⇒ 404 `payroll.period.not_found`, igual que
-   un id inventado. Nunca datos de B. Prueba: Tarea 14, `AnotherTenantsPeriodIsForbiddenEverywhere`.
+   un id inventado. Nunca datos de B. Prueba: Tarea 13 (cuando ya existen todas las rutas `{p}…`, M-15),
+   `AnotherTenantsPeriodIsForbiddenEverywhere`.
 7. **Un empleado que el motor no sabe calcular no se liquida**: integral, aprendiz, pensionado, exento de pensión, salario bajo
    el SMMLV y dos contratos de la empresa en la quincena aparecen en `excluded` con su motivo y sin líneas, y la liquidación
    del resto sigue. Prueba: Tarea 11, `UnsupportedEmployeesAreExcludedWithTheirReason`.
@@ -138,9 +139,11 @@ el caso real)** las revisa la Tarea 15.
   La tabla vive una sola vez en `OvertimeFactors` (Domain, `Engine/`) y el rastro de cada línea lista las claves que sumó.
 - **R-3. Pensión de alto riesgo.** La tabla dice «Pensión alto riesgo (total) 26 %». El empleado sigue con su 4 %; el
   empleador paga `HighRiskPensionTotalRate − PensionEmployeeRate` (22 %). Confirmado en el spec corregido (O-2 resuelta).
-- **R-4. Bases de los aportes del empleador.** Salud, pensión y ARL van sobre el **IBC** del mes (con la regla del 40 %, piso y
-  tope). Caja, ICBF y SENA (parafiscales) van sobre el **devengo salarial del mes** (`SalDev_m`: salario + horas extras y
-  recargos + ingresos salariales), sin auxilio, sin no salariales y sin la regla del 40 %. **(a confirmar con el caso real)**
+- **R-4. Bases de los aportes del empleador** (pre-flight I-7). Salud y pensión van sobre el **IBC** del mes (con la regla del
+  40 %, piso y tope). ARL, caja, ICBF y SENA van sobre el **devengo salarial del mes** (`SalDev_m`: salario + horas extras y
+  recargos + ingresos salariales), sin auxilio, sin no salariales y sin la regla del 40 %, como dice el spec («ARL … no
+  incluye auxilio ni no salariales»). **(a confirmar con la quincena real)**: la ley puede pedir el IBC con el exceso del 40 %
+  para la ARL; si es así, la ARL difiere en los meses con no salariales por encima del 40 %.
 - **R-5. Todo lo de seguridad social se acumula en el mes** (spec, «Deducciones del empleado», lo extiende a los aportes del
   empleador y a los parafiscales): cada aporte o deducción de la segunda quincena es `ceil100(acumulado del mes) − lo de la
   primera`. Salario, auxilio y conectividad de la segunda también son `round(acumulado del mes) − lo de la primera`, para que
@@ -149,7 +152,8 @@ el caso real)** las revisa la Tarea 15.
 - **R-6. Redondeo.** `IBC`: hacia arriba al peso. Cada aporte o deducción de seguridad social (salud, pensión, FSP del
   empleado; salud, pensión, ARL, caja, ICBF, SENA del empleador): hacia arriba al múltiplo de 100, **sobre el acumulado del
   mes**. Todo lo demás (salario, auxilio, horas, ingresos, recurrentes, provisiones): al peso, mitad hacia arriba
-  (`MidpointRounding.AwayFromZero`). Los montos capturados ya vienen con ≤ 2 decimales y se pagan redondeados al peso.
+  (`MidpointRounding.AwayFromZero`). Los montos capturados ya vienen con ≤ 2 decimales y se pagan redondeados al peso. Los
+  valores intermedios (valor hora, `SalaryRaw`, bases) **no** se redondean: sólo la línea (pre-flight M-5).
 - **R-7. Días** (Llamada 1). Un contrato cubre el día `d` si `StartDate ≤ d` y (`EndedOn` nulo o `d ≤ EndedOn`). Si cubre
   todos los días de la quincena, son **15**. Si no, son los días reales cubiertos, máximo 15. Con un cambio de salario
   dentro de la quincena, cada tramo cuenta sus días reales y **el último tramo absorbe la diferencia** para que la suma sea la
@@ -157,8 +161,8 @@ el caso real)** las revisa la Tarea 15.
 - **R-8. «Salario vigente»** para el ingreso del mes, el auxilio y el valor hora es el del **último día cubierto** de la
   quincena (el último del período, o el de retiro si el contrato termina adentro).
 - **R-9. FSP.** Los tramos son de límite inferior **inclusivo** (un IBC de exactamente 4 SMMLV paga 1 %); el último incluye
-  su tope. Primera quincena: tramo por `salario vigente ÷ SMMLV`, aplicado al IBC de la quincena; si el salario no llega a 4
-  SMMLV, cero. Segunda: tramo por `IBC_m ÷ SMMLV`, `ceil100(IBC_m × tasa) − FSP de la primera` (puede ser negativo: es una
+  su tope. Primera quincena: tramo por `min(S, L.IbcCapSmmlv × L.Smmlv) ÷ L.Smmlv` (pre-flight B-1: un salario de 50 000 000
+  cae en el tramo superior, no fuera de tabla), aplicado al IBC de la quincena; si el salario no llega a 4 SMMLV, cero. Segunda: tramo por `IBC_m ÷ SMMLV`, `ceil100(IBC_m × tasa) − FSP de la primera` (puede ser negativo: es una
   devolución y se muestra como deducción negativa). Confirmado en el spec corregido: desde IBC ≥ 4 SMMLV (O-3 resuelta).
 - **R-10. Dos o más contratos de la empresa en la quincena** (texto del spec corregido; O-4 resuelta): si cubren algún día
   de la quincena ⇒ no liquidable con motivo `MultipleContractsInPeriod`. Hr no permite contratos superpuestos, así que en la
@@ -171,8 +175,9 @@ el caso real)** las revisa la Tarea 15.
   cada período anterior (por `startDate`) de la empresa que no esté en `Draft`. El concepto aplica `min(valor, tope −
   accumulated)` y queda `Exhausted` (estado calculado, no guardado) cuando `accumulated ≥ tope`. Reabrir y reliquidar un
   período viejo recalcula solo; no hay contador que desincronizar.
-- **R-13. Creación del período** (spec, «Período»). `POST …/periods/ensure-current` es idempotente, exige sólo
-  `payroll.period.read` (es contabilidad, no una decisión) y crea **todas** las quincenas que falten desde la última hasta la
+- **R-13. Creación del período** (spec, «Período»). `POST …/periods/ensure-current` es idempotente, exige
+  `payroll.period.read` y `payroll.period.manage` (pre-flight I-6: abrir es de `manage`, spec «Módulo y permisos»; quien
+  sólo lee usa `GET …/periods`, que no crea nada) y crea **todas** las quincenas que falten desde la última hasta la
   actual del día del tenant, sin huecos. Sin ninguna, la primera es la actual **sólo si es una primera quincena**; si hoy es
   segunda quincena no crea nada y responde `firstPeriodStartsOn` = día 1 del mes siguiente. Una empresa inactiva no abre
   períodos (422 `payroll.company.inactive`).
@@ -183,7 +188,9 @@ el caso real)** las revisa la Tarea 15.
 - **R-15. Bloqueos.** Un empleado liquidable con datos faltantes **bloquea la liquidación** del período (422
   `payroll.liquidation.blocked`; la lista está en el detalle). Un neto negativo **no** bloquea la liquidación: bloquea la
   aprobación (422 `payroll.period.negative_net`). Una quincena sin nadie liquidable no se liquida (422
-  `payroll.liquidation.nobody_to_liquidate`).
+  `payroll.liquidation.nobody_to_liquidate`). Las exclusiones (tipo, subtipo, exento, `SalaryBelowMinimum`, varios contratos)
+  se evalúan **antes** que los bloqueos: un excluido nunca bloquea (pre-flight I-3). Los bloqueados **sí** están en
+  `employees` (se les captura desde su fila); `blocked` repite sólo `employeeId` y `reasons` (I-9).
 - **R-16. Cambios en Hr después de liquidar.** Hr no publica eventos. Cada resultado guarda la **huella** (`SHA-256` del JSON
   canónico de su `EngineInput` sin la foto legal) y el período la huella del conjunto. Al leer un período `Liquidated`, el
   backend recalcula la huella con lo que hay hoy en Hr, las capturas y la configuración; si difiere, `sourceChanged: true` y la
@@ -191,7 +198,12 @@ el caso real)** las revisa la Tarea 15.
   foto.
 - **R-17. Versiones.** Una versión por período; **todas** las escrituras sobre un período exigen `If-Match` (capturas,
   importación, liquidar, aprobar, cerrar, reabrir). La configuración de la empresa tiene su versión; mientras nunca se guardó,
-  `GET` responde los valores por defecto con `version: 0` y el primer `PUT` va con `If-Match: "0"`.
+  `GET` responde los valores por defecto con `version: 0` y el primer `PUT` va con `If-Match: "0"`. Crear y editar conceptos y
+  recurrentes llevan `If-Match` en la edición; archivar, desarchivar, activar y desactivar van **sin** `If-Match` (cambios
+  de estado idempotentes, pre-flight I-8).
+- **R-16b. Huella sin datos futuros** (pre-flight I-10). `EngineInputFactory` sólo pasa los registros de salario con
+  `EffectiveDate ≤ period.End` y `ContractEndedOn` sólo si cae dentro del período: un salario programado o una terminación
+  futura en Hr no levantan un `sourceChanged` falso.
 - **R-18. Respuestas de las escrituras.** Las transiciones (liquidar, aprobar, cerrar, reabrir) responden el
   `PayrollPeriodDetailDto` entero. Las capturas de un empleado responden `PayrollEmployeeDetailDto`, que trae el encabezado
   del período (`period`, con su nueva `version` y `outdated`). La importación confirmada responde el detalle entero.
@@ -385,8 +397,8 @@ Códigos de línea (`PayrollLineDto.code`), estables para el frontend y el Excel
 // ExcludedEmployeeDto
 { "employeeId": "uuid", "documentType": "CC", "documentNumber": "…", "fullName": "…", "reason": "SalaryTypeNotSupported" }
 
-// BlockedEmployeeDto
-{ "employeeId": "uuid", "documentType": "CC", "documentNumber": "…", "fullName": "…", "reasons": ["MissingWorkplace"] }
+// BlockedEmployeeDto — el empleado ya está en employees (I-9); acá sólo el motivo
+{ "employeeId": "uuid", "reasons": ["MissingWorkplace"] }
 
 // PeriodEventDto — historial, occurredAt desc
 { "id": "uuid", "occurredAt": "…", "actor": ActorDto, "action": "Reopened",
@@ -396,7 +408,7 @@ Códigos de línea (`PayrollLineDto.code`), estables para el frontend y el Excel
 
 // PayrollPeriodDetailDto
 { "period": PayrollPeriodDto,
-  "employees": [PayrollEmployeeRowDto],                 // por fullName; en Approved y Closed, los de la foto
+  "employees": [PayrollEmployeeRowDto],                 // liquidables Y bloqueados (I-9), por fullName; en Approved y Closed, los de la foto
   "excluded": [ExcludedEmployeeDto],                    // por fullName; en Approved y Closed, los de la foto
   "blocked": [BlockedEmployeeDto],                      // [] en Approved y Closed
   "history": [PeriodEventDto] }
@@ -471,20 +483,20 @@ Permisos: la política de la ruta es el permiso **en negrita**; el handler reval
 
 | Método y ruta | Permiso | Cuerpo | Respuesta | Errores |
 | --- | --- | --- | --- | --- |
-| `GET /payroll/companies` | **`payroll.period.read` o `payroll.settings.manage`** (política `SettingsView`) | — | 200 `[PayrollCompanyDto]`: activas más las inactivas con algún período, por nombre | — |
+| `GET /payroll/companies` | **`payroll.period.read` o `payroll.settings.manage`** (política `SettingsView`) | — | 200 `[PayrollCompanyDto]`: activas más las inactivas con algún período **o** con configuración guardada (M-1), por nombre | — |
 | `GET {c}/settings` | **`payroll.period.read` o `payroll.settings.manage`** (política `SettingsView`) | — | 200 `PayrollSettingsDto` (con el catálogo de conceptos) | 404 `payroll.company.not_found` |
 | `PUT {c}/settings` | **`payroll.settings.manage`**, `If-Match` | `PayrollSettingsRequest` | 200 `PayrollSettingsDto` | 404, 422 `errors`, 412/428 |
 | `POST {c}/concepts` | **`payroll.settings.manage`** | `ConceptRequest` | 201 `PayrollConceptDto` | 404, 409 `payroll.concept.name_taken` (por empresa y tipo), 422 `errors` |
-| `PUT {c}/concepts/{conceptId}` | ídem, `If-Match` | `ConceptRequest` (`kind` igual al guardado ⇒ si no, 422 `errors.kind`) | 200 `PayrollConceptDto` | 404 `payroll.concept.not_found`, 422 `payroll.concept.system_readonly`, 409, 412/428 |
-| `POST {c}/concepts/{conceptId}/archive` · `…/unarchive` | ídem | — | 200 `PayrollConceptDto` | 404, 422 `payroll.concept.system_readonly`, 409 `payroll.concept.already_archived` / `payroll.concept.not_archived` |
+| `PUT {c}/concepts/{conceptId}` | **`payroll.settings.manage`**, `If-Match` | `ConceptRequest` (`kind` igual al guardado ⇒ si no, 422 `errors.kind`) | 200 `PayrollConceptDto` | 404 `payroll.concept.not_found`, 422 `payroll.concept.system_readonly`, 409, 412/428 |
+| `POST {c}/concepts/{conceptId}/archive` · `…/unarchive` | **`payroll.settings.manage`**, **sin** `If-Match` (I-8) | — | 200 `PayrollConceptDto` | 404, 422 `payroll.concept.system_readonly`, 409 `payroll.concept.already_archived` / `payroll.concept.not_archived` |
 | `GET {c}/employees/{employeeId}/recurring-concepts` | **`payroll.period.read`** | — | 200 `[RecurringConceptDto]` (activos primero, luego por nombre) | 404 `payroll.employee.not_found` (sin contrato con la empresa) |
 | `POST {c}/employees/{employeeId}/recurring-concepts` | `payroll.period.read`, **`payroll.settings.manage`** | `RecurringConceptRequest` | 201 `[RecurringConceptDto]` (la lista entera) | 404, 422 `payroll.concept.archived`, 422 `payroll.concept.kind_mismatch` (un `Overtime`), 422 `errors` |
-| `PUT {c}/employees/{employeeId}/recurring-concepts/{id}` | ídem, `If-Match` | `RecurringConceptRequest` | 200 `[RecurringConceptDto]` | 404 `payroll.recurring.not_found`, los del POST, 412/428 |
-| `POST …/recurring-concepts/{id}/activate` · `…/deactivate` | ídem | — | 200 `[RecurringConceptDto]` | 404, 409 `payroll.recurring.already_active` / `payroll.recurring.already_inactive` |
-| `POST {c}/periods/ensure-current` | **`payroll.period.read`** | — | 200 `PayrollPeriodListDto` | 404, 422 `payroll.company.inactive` |
+| `PUT {c}/employees/{employeeId}/recurring-concepts/{id}` | `payroll.period.read`, **`payroll.settings.manage`**, `If-Match` | `RecurringConceptRequest` | 200 `[RecurringConceptDto]` | 404 `payroll.recurring.not_found`, los del POST, 412/428 |
+| `POST …/recurring-concepts/{id}/activate` · `…/deactivate` | `payroll.period.read`, **`payroll.settings.manage`**, **sin** `If-Match` (I-8) | — | 200 `[RecurringConceptDto]` | 404, 409 `payroll.recurring.already_active` / `payroll.recurring.already_inactive` |
+| `POST {c}/periods/ensure-current` | `payroll.period.read`, **`payroll.period.manage`** (I-6) | — | 200 `PayrollPeriodListDto` | 404, 422 `payroll.company.inactive` |
 | `GET {c}/periods` | **`payroll.period.read`** | — | 200 `PayrollPeriodListDto` (no crea nada; `firstPeriodStartsOn` igual que arriba) | 404 |
 | `GET {p}` | **`payroll.period.read`** | — | 200 `PayrollPeriodDetailDto` | 404 `payroll.period.not_found` |
-| `GET {p}/employees/{employeeId}` | **`payroll.period.read`** | — | 200 `PayrollEmployeeDetailDto` | 404 `payroll.employee.not_in_period` |
+| `GET {p}/employees/{employeeId}` | **`payroll.period.read`** | — | 200 `PayrollEmployeeDetailDto`; un **excluido** responde 200 con `result: null` y las listas vacías en `Draft`, `Liquidated` y `Reopened` (I-13); en `Approved` y `Closed`, 200 si está en la foto (resultado o excluido) | 404 `payroll.employee.not_in_period` sólo si no tiene contrato de la empresa en la quincena (o, en `Approved`/`Closed`, no está en la foto) |
 | `PUT {p}/employees/{employeeId}/inputs` | `payroll.period.read`, **`payroll.period.manage`**, `If-Match` | `EmployeeInputsRequest` | 200 `PayrollEmployeeDetailDto` | 404 `payroll.employee.not_in_period`, 422 `payroll.employee.not_liquidable`, 422 `payroll.period.not_editable`, 422 `errors` (`overtime[i].conceptId` desconocido, archivado o de otro tipo; `overtime[i].conceptId` repetido), 412/428 |
 | `POST {p}/liquidate` | ídem, `If-Match` | `{ "confirmNoAbsences": true }` | 200 `PayrollPeriodDetailDto` | 422 `payroll.liquidation.absences_unconfirmed`, 422 `payroll.period.invalid_transition`, 422 `payroll.period.first_half_not_liquidated`, 422 `payroll.liquidation.blocked`, 422 `payroll.liquidation.nobody_to_liquidate`, 422 `payroll.legal_parameter.missing`, 412/428 |
 | `POST {p}/approve` | `payroll.period.read`, **`payroll.period.approve`**, `If-Match` | — | 200 `PayrollPeriodDetailDto` | 422 `payroll.period.invalid_transition`, 422 `payroll.period.outdated` (también con `sourceChanged`), 422 `payroll.period.negative_net`, 422 `payroll.period.first_half_not_approved`, 422 `payroll.period.same_person_cannot_approve`, 412/428 |
@@ -547,7 +559,9 @@ Capturar o importar sólo en `Draft`, `Liquidated` y `Reopened`; en `Liquidated`
   `concept_not_found` (concept), `hours_required` (hours), `hours_invalid` (hours), `hours_not_allowed` (hours),
   `amount_required` (amount), `amount_invalid` (amount), `amount_not_allowed` (amount), `yes_no_invalid`
   (salaryConstitutive), `salary_constitutive_required` (salaryConstitutive), `salary_constitutive_not_allowed`
-  (salaryConstitutive), `overtime_duplicated_in_file` (concept).
+  (salaryConstitutive), `overtime_duplicated_in_file` (concept), `too_many_lines` (concept: las filas de un empleado que
+  pasan de 20 horas, 50 ingresos o 50 deducciones, los mismos topes de `EmployeeInputsRequest`; se marcan todas las filas
+  sobrantes, pre-flight M-13).
 - Confirmar con alguna fila con error ⇒ 422 `payroll.import.rows_invalid` y no escribe nada. Si no, reemplaza las capturas de
   cada empleado del archivo (R-24) en una transacción, sube la versión una vez y deja un evento `InputsImported`.
 
@@ -622,7 +636,7 @@ montos de las líneas salvo `SalaryRaw` y `TransportRaw`.
    NSI`. `monthSalaryIncome = S + SI_m + OT_m` (exoneración). `transportCapIncome` = `S` (`SalaryOnly` y `SalaryAndPaidAbsences`,
    R-22) o `S + SI_m` (`SalaryAndSalaryIncome`).
 5. **Horas** (`OvertimeRule`). `base = S` (`SalaryOnly`) o `S + SI_m` (`SalaryAndMonthSalaryIncome`); `hourValue = base ÷ 30 ÷
-   (L.WeeklyHours ÷ 6)`; cada captura ⇒ `overtime:<conceptId>` = `round(hours × hourValue × factor)`, con
+   (L.WeeklyHours ÷ 6)` **sin redondear** (M-5); cada captura ⇒ `overtime:<conceptId>` = `round(hours × hourValue × factor)`, con
    `factor = OvertimeFactors.For(input, L)` (R-2): el motor lo deriva de `L` (los compuestos dominicales suman
    `L.SundaySurchargeRate` vigente a `ps`); un concepto propio trae su `multiplier`.
    `OT` = suma. (Se calcula antes del paso 4, que usa `OT`; `SI_m` no depende de `OT`.)
@@ -637,22 +651,26 @@ montos de las líneas salvo `SalaryRaw` y `TransportRaw`.
    `IBC_m = ceilPeso(min(max(raw, L.Smmlv ÷ 30 × days_m), L.IbcCapSmmlv × L.Smmlv))`. Línea `ibc` (Info) = `IBC_m`.
 8. **Deducciones de seguridad social** (`EmployeeDeductionsRule`). `health_m = ceil100(IBC_m × L.HealthEmployeeRate)`; línea =
    `health_m − prior.HealthEmployee`. Igual pensión con `PensionEmployeeRate`.
-9. **FSP** (`SolidarityFundRule`, R-9). Primera: `rate = tramo(S ÷ L.Smmlv)` (0 bajo 4); línea `ceil100(IBC_m × rate)`.
+9. **FSP** (`SolidarityFundRule`, R-9). Primera: `rate = tramo(min(S, L.IbcCapSmmlv × L.Smmlv) ÷ L.Smmlv)` (0 bajo 4;
+   B-1); línea `ceil100(IBC_m × rate)`.
    Segunda: `rate = tramo(IBC_m ÷ L.Smmlv)`; línea `ceil100(IBC_m × rate) − prior.SolidarityFund` (negativa = devolución, nota
    «Devolución de lo retenido en la primera quincena»). Sin tramo y sin retención previa no hay línea.
 10. **Otras deducciones**. Cada capturada ⇒ `deduction:<conceptId>:<n>` = `round(amount)`; recurrentes de deducción como en 3.
 11. **Aportes del empleador** (`EmployerContributionsRule`, R-3, R-4, R-5, R-20). `exempt = settings.Exonerated &&
     monthSalaryIncome < L.ExonerationThresholdSmmlv × L.Smmlv`. Sobre `IBC_m`: `health_employer` (0 si `exempt`),
     `pension_employer` (tasa `L.HighRiskPensionTotalRate − L.PensionEmployeeRate` si el centro es de alto riesgo, si no
-    `L.PensionEmployerRate`), `arl` (tasa de la clase del centro). Sobre `SalDev_m`: `compensation_fund`, `icbf` (0 si
-    `exempt`), `sena` (0 si `exempt`). Cada una `ceil100(base × tasa) − prior.<la misma>`.
+    `L.PensionEmployerRate`). Sobre `SalDev_m` (R-4, I-7): `arl` (tasa de la clase del centro), `compensation_fund`, `icbf`
+    (0 si `exempt`), `sena` (0 si `exempt`). Cada una `ceil100(base × tasa) − prior.<la misma>`.
 12. **Provisiones** (`ProvisionsRule`, R-21). `base = salary + auxilio + OT + SI` del período; `severance = round(base ×
     L.SeveranceProvisionRate)`, `premium = round(base × L.PremiumProvisionRate)`, `severance_interest = round(base ×
     L.SeveranceInterestProvisionRate)`, `vacation = round((salary + SI) × L.VacationProvisionRate)`.
 13. **Resultado** (`PayrollEngine.Liquidate`). `totalEarned = salary + auxilio + OT + SI + NSI`; `totalDeductions` = salud +
     pensión + FSP + otras (capturadas y recurrentes); `net = totalEarned − totalDeductions`; `negativeNet = net < 0`;
     `employerCost = totalEarned + Σ aportes del empleador + Σ provisiones`. `MonthAccumulators` de salida = `prior +` lo del
-    período, con `SalaryRaw` y `TransportRaw` sin redondear.
+    período, con `SalaryRaw` y `TransportRaw` sin redondear (no guarda el IBC: la segunda lo recalcula del mes, M-7).
+    Orden de las líneas, fijo (I-11): `Earning`, `Info`, `Deduction`, `EmployerContribution`, `Provision`; dentro de cada grupo,
+    el de la tabla de códigos del contrato (capturas y recurrentes en su orden de captura). Los casos de oro comparan en ese
+    orden.
 
 Rastro: cada línea lleva `formula` (texto fijo por regla, en español, con los símbolos `×`, `÷`, `techo100`, `techo al
 peso`), `inputs` (los nombres y valores que usó, en el orden de la fórmula), los `legalValues` que leyó (clave, label, valor,
@@ -665,7 +683,7 @@ Anclas calculadas a mano (2026; quincena completa; centro clase I; empresa exone
 | `minimum-wage-first-half` | 2026-11-01..15, salario 1 750 905, `Biweekly` | salary 875 453 · transport_allowance 124 548 · ibc 875 453 · health_employee 35 100 · pension_employee 35 100 · health_employer 0 · pension_employer 105 100 · arl 4 600 · compensation_fund 35 100 · icbf 0 · sena 0 · severance 83 300 · premium 83 300 · severance_interest 10 000 · vacation 36 506 · net 929 801 · employerCost 1 357 907 |
 | `minimum-wage-second-half` | 2026-11-16..30, mismo empleado, `prior` del caso anterior | salary 875 452 · transport_allowance 124 547 · ibc 1 750 905 · health_employee 35 000 · pension_employee 35 000 · pension_employer 105 100 · arl 4 600 · compensation_fund 35 000 · severance 83 300 · premium 83 300 · severance_interest 10 000 · vacation 36 506 |
 | `overtime-after-42-hours` | 2026-08-01..15, salario 2 100 000, 10 h `ExtraDay`, 8 h `SundaySurcharge` | valor hora 10 000 · overtime ExtraDay 125 000 · overtime SundaySurcharge 72 000 |
-| `non-salary-over-forty-percent` | 2026-11-01..15, salario 2 000 000, `OtherIncome` 1 000 000 no constitutivo | salary 1 000 000 · ibc 1 200 000 · health_employee 48 000 · pension_employee 48 000 |
+| `non-salary-over-forty-percent` | 2026-11-01..15, salario 2 000 000, `OtherIncome` 1 000 000 no constitutivo | salary 1 000 000 · ibc 1 200 000 · health_employee 48 000 · pension_employee 48 000 · arl 5 300 (sobre 1 000 000, I-7) · compensation_fund 40 000 |
 | `solidarity-fund-refund` | 2026-11, salario 7 500 000; primera completa; contrato termina 2026-11-20 | primera: ibc 3 750 000 · solidarity_fund 37 500. Segunda: workedDays 5 · salary 1 250 000 · ibc 5 000 000 · solidarity_fund −37 500 · health_employee 50 000 · transport_allowance 0 · `finalSettlementPending` |
 | `ibc-cap-and-top-bracket` | 2026-11, salario 50 000 000 | primera: ibc 25 000 000 · solidarity_fund 500 000 · health_employee 1 000 000. Segunda: ibc 43 772 625 · health_employee 751 000 · pension_employee 751 000 · solidarity_fund 375 500 · health_employer 1 595 700 |
 | `month-income-keeps-transport` | 2026-11-01..15, salario 3 000 000, `Commissions` 500 000 constitutivo, `transportCapBase: SalaryAndSalaryIncome` | transport_allowance 124 548 (3 500 000 ≤ 3 501 810) |
@@ -726,8 +744,8 @@ crudo entre módulos.
 | A — Fundación | 1 clave `payroll` · 2 esqueleto y permisos · 3 valores legales | módulo vacío cableado, tabla legal ampliada y su puerto | build, ArchitectureTests, unitarias de Hr y Payroll, `HrLegalParametersApiTests` |
 | B — Motor | 4 reglas de devengo · 5 seguridad social, provisiones y orquestador · 6 casos de oro sintéticos | motor puro probado con anclas | `Modules.Payroll.UnitTests` completo (sin contenedores) |
 | C — Hr, configuración y período | 7 puerto a Hr y validador previo · 8 persistencia, configuración, conceptos y recurrentes · 9 período y transiciones | quincenas abiertas, aprobadas, cerradas y reabiertas sin cálculo | unitarias + clases de integración del bloque |
-| D — Capturas, liquidación y Excel | 10 capturas · 11 liquidación y foto · 12 importación de novedades · 13 Excel | la nómina completa de punta a punta | unitarias + clases de integración del bloque |
-| E — Cierre | 14 aislamiento, permisos y camino feliz · 16 verificación final | la rama lista para revisión fuerte | suite de los proyectos tocados |
+| D — Capturas, liquidación y Excel | 10 capturas · 11 liquidación y foto · 12 importación de novedades · 13 Excel, aislamiento entre tenants y valores legales congelados (Review Focus 3 y 6, M-15) | la nómina completa de punta a punta | unitarias + clases de integración del bloque |
+| E — Cierre | 14 matriz de permisos y camino feliz · 16 verificación final | la rama lista para revisión fuerte | suite de los proyectos tocados |
 | F — Diferido | 15 caso de oro real de Siigo | el criterio de aceptación del spec | cuando el owner entregue la quincena |
 
 Tareas encadenadas sobre los mismos archivos van en el mismo bloque (4–6 comparten `Engine/`; 9–11 comparten
@@ -875,7 +893,8 @@ Amplía la tabla de la fase 1 (R-1). Los valores son los de «Valores legales: c
   `Modules.Hr.Infrastructure/Persistence/LegalParameterSource.cs`, `Persistence/HrDbContext.cs` (`value` con
   `HasPrecision(18, 6)`, CHECK con todas las claves, `LegalParameterBrackets`)
 - Create: `src/Modules/Hr/Modules.Hr.Infrastructure/Persistence/Migrations/<timestamp>_AddPayrollLegalParameters.cs` (+ Designer, snapshot)
-- Create Payroll Domain `Engine/`: `LegalValue.cs`, `SolidarityBracket.cs`, `LegalValueSet.cs`, `LegalBasis.cs`
+- Create Payroll Domain `Engine/`: `LegalValue.cs`, `SolidarityBracket.cs`, `LegalValueSet.cs`, `LegalBasis.cs`; Domain
+  `ArlClass.cs` (`I`…`V`; pre-flight I-1, ya implementado: la Tarea 4 lo reusa)
 - Create Payroll Application: `IPayrollLegalValues.cs`
 - Create: `src/Bootstrapper/PayrollLegalValues.cs`; registrarlo junto a los adaptadores de Hr (`QepServiceCollectionExtensions.cs:1898`)
 - Test: `tests/Modules/Hr/Modules.Hr.UnitTests/LegalParametersTests.cs` (sumar), `tests/Modules/Hr/Modules.Hr.IntegrationTests/HrLegalParametersApiTests.cs`
@@ -948,8 +967,9 @@ Amplía la tabla de la fase 1 (R-1). Los valores son los de «Valores legales: c
 ## Bloque B — Motor (Tareas 4–6)
 
 Código puro: sólo unitarias, ningún contenedor. Todo vive en `src/Modules/Payroll/Modules.Payroll.Domain/Engine/` y se prueba
-en `tests/Modules/Payroll/Modules.Payroll.UnitTests/Engine/`. `EngineTestData` arma el `LegalValueSet` de 2026-11-01 y el de
-2026-08-01 con los valores de la siembra y un `EngineInput` base (salario 1 750 905, empresa con los valores por defecto,
+en `tests/Modules/Payroll/Modules.Payroll.UnitTests/Engine/`. `EngineTestData.ForDate(DateOnly date) : LegalValueSet` arma
+el conjunto legal vigente a **cualquier** fecha desde las filas de la siembra (pre-flight I-5; las pruebas usan 2026-06-01,
+2026-07-01, 2026-07-16, 2026-08-01 y 2026-11-01), y `EngineTestData` da un `EngineInput` base (salario 1 750 905, empresa con los valores por defecto,
 centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, sin capturas).
 
 ### Task 4: Entradas del motor, redondeo y reglas de devengo
@@ -959,7 +979,8 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
   `PayrollLine.cs`, `LineTrace.cs`, `WorkedDaysRule.cs`, `SalaryRule.cs`, `IncomeRule.cs`, `RecurringConceptRule.cs`,
   `OvertimeFactors.cs`, `OvertimeRule.cs`, `MonthIncomeRule.cs`, `TransportAllowanceRule.cs`
 - Create en Domain: los enums `PayrollHalf`, `TransportFrequency`, `TransportCapBase`, `OvertimeBase`, `ConceptKind`,
-  `RecurringMode`, `PayrollLineGroup`, `ArlClass`, `SystemConceptKey`; `SystemConcepts.cs`, `QuincenaCalendar.cs`
+  `RecurringMode`, `PayrollLineGroup`, `SystemConceptKey`; `SystemConcepts.cs`, `QuincenaCalendar.cs` (`ArlClass` ya existe:
+  lo creó la Tarea 3, I-1)
 - Test: `Engine/EngineTestData.cs`, `PayrollRoundingTests.cs`, `QuincenaCalendarTests.cs`, `SystemConceptsTests.cs`,
   `WorkedDaysRuleTests.cs`, `SalaryRuleTests.cs`, `IncomeAndRecurringRuleTests.cs`, `OvertimeFactorsTests.cs`, `OvertimeRuleTests.cs`,
   `TransportAllowanceRuleTests.cs`
@@ -994,12 +1015,13 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
       IReadOnlyList<OvertimeInput> Overtime, IReadOnlyList<IncomeInput> Incomes, IReadOnlyList<DeductionInput> Deductions,
       IReadOnlyList<RecurringInput> Recurring, MonthAccumulators Prior)`.
   - `sealed record MonthAccumulators(int WorkedDays, decimal SalaryRaw, decimal Salary, decimal TransportRaw, decimal Transport,
-    decimal Overtime, decimal SalaryIncome, decimal NonSalaryIncome, decimal Ibc, decimal HealthEmployee, decimal PensionEmployee,
+    decimal Overtime, decimal SalaryIncome, decimal NonSalaryIncome, decimal HealthEmployee, decimal PensionEmployee,
     decimal SolidarityFund, decimal HealthEmployer, decimal PensionEmployer, decimal Arl, decimal CompensationFund, decimal Icbf,
-    decimal Sena)` con `static MonthAccumulators Empty`.
+    decimal Sena)` con `static MonthAccumulators Empty` (17 campos; sin IBC, M-7).
   - `sealed record TraceInput(string Name, object Value)`; `sealed record LineTrace(string Formula, IReadOnlyList<TraceInput>
     Inputs, IReadOnlyList<LegalValue> LegalValues, string? Note)`; `sealed record PayrollLine(string Code, PayrollLineGroup Group,
-    string Label, decimal Amount, LineTrace Trace)`.
+    string Label, decimal Amount, bool? SalaryConstitutive, LineTrace Trace)` (pre-flight I-2: `SalaryConstitutive` sólo en
+    ingresos capturados y recurrentes, `null` en las demás; el resumen sale de las líneas).
   - Reglas (`public static`, puras), con los pasos 1–6 de «Motor: definiciones exactas»:
     - `WorkedDaysRule.Compute(PeriodInfo, DateOnly contractStart, DateOnly? endedOn) : WorkedDays` con
       `sealed record WorkedDays(DateOnly CoveredStart, DateOnly CoveredEnd, int Days, bool FinalSettlementPending)`.
@@ -1038,7 +1060,8 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
     `TheJulySecondHalfAlreadyUsesNinety` (legal 2026-07-16 ⇒ `ExtraSundayDay` 2.15); `CompositesListTheKeysTheyAdded`
     (`ExtraSundayNight` ⇒ `Used` con `ExtraNightRate` y `SundaySurchargeRate`); `ACustomConceptUsesItsMultiplier` (1.4,
     `Used` vacío).
-  - `OvertimeRuleTests` (legal 2026-08-01): `HourValueUsesTheWeeklyHoursOfThePeriodStart` (2 100 000 ⇒ 10 000);
+  - `OvertimeRuleTests` (legal 2026-08-01): `TheHourValueIsNotRounded` (M-5: 1 750 905 ⇒ valor hora 8 337,642857…; 10 h
+    `ExtraDay` ⇒ `round(104 220,54)` = 104 221, no 104 225); `HourValueUsesTheWeeklyHoursOfThePeriodStart` (2 100 000 ⇒ 10 000);
     `ExtraDayPaysOnePointTwentyFive` (10 h ⇒ 125 000); `TheSundaySurchargeIsOnlyTheSurcharge` (8 h ⇒ 72 000);
     `TheJulyFirstHalfStillUsesFortyFourHours` (legal 2026-07-01: `HourValue` = 2 100 000 ÷ 30 ÷ (44 ÷ 6));
     `TheMonthSalaryIncomeBaseAddsSalaryIncomes` (`SalaryAndMonthSalaryIncome`, comisión 300 000 ⇒ base 2 400 000);
@@ -1087,25 +1110,31 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
     IReadOnlyList<PayrollLine> Lines, PayrollSummary Summary, MonthAccumulators Month, string EngineVersion)`.
   - `PayrollEngine`: `public const string Version = "2026.11.1"`;
     `static EmployeeLiquidation Liquidate(EngineInput input)` — llama las reglas en el orden de «Motor: definiciones exactas»
-    y ordena las líneas por grupo y por la tabla de códigos del contrato.
+    y ordena las líneas en el orden fijo de I-11 (`Earning`, `Info`, `Deduction`, `EmployerContribution`, `Provision`; dentro
+    de cada grupo, el de la tabla de códigos del contrato).
+  - `SolidarityFundRule` consulta el tramo de la primera quincena con `min(salaryInForce, L.IbcCapSmmlv × L.Smmlv) ÷ L.Smmlv`
+    (B-1), así `SolidarityRate` de la Tarea 3 no cambia.
 
 - [ ] **Step 1: Pruebas que fallan.**
   - `IbcRuleTests`: `WithoutNonSalaryTheIbcIsTheSalaryEarnings`; `NonSalaryOverFortyPercentAddsTheExcess` (ancla
     `non-salary-over-forty-percent` ⇒ 1 200 000); `ExactlyFortyPercentAddsNothing` (salario 1 200 000 de quincena y no salarial
-    800 000 ⇒ IBC 1 200 000); `TheFloorIsTheMinimumByDaysOfTheMonth` (6 días con salario de 1 750 905 ⇒ IBC ≥ 350 181);
+    800 000 ⇒ IBC 1 200 000); `TheFloorLiftsAnIbcBelowTheMinimumByDays` (M-6; entrada armada a mano con salario 1 200 000, que
+    la elegibilidad excluiría: el piso es defensivo; primera completa ⇒ salary 600 000, IBC 875 453 = techo de
+    1 750 905 ÷ 30 × 15);
     `TheCapIsTwentyFiveMinimums` (segunda de 50 000 000 ⇒ 43 772 625); `TheIbcRoundsUpToThePeso`;
     `TransportIsOutsideTheIbc`.
   - `EmployeeDeductionsRuleTests`: `TheFirstHalfWithholdsOnItsOwnIbc` (35 100); `TheSecondHalfSettlesTheMonth` (35 000);
     `TheSettlementRoundsTheMonthNotTheHalf` (IBC del mes 1 750 905 ⇒ 70 100 en el mes).
   - `SolidarityFundRuleTests`: `BelowFourMinimumsThereIsNone`; `TheFirstHalfDecidesBySalaryAlone` (salario 7 500 000 ⇒ 1 %);
     `TheSecondHalfRefundsWhenTheMonthFallsBelow` (ancla `solidarity-fund-refund` ⇒ −37 500 con nota);
+    `TheFirstHalfOfATopEarnerUsesTheTopBracket` (B-1: salario 50 000 000 = 28,56 SMMLV ⇒ tramo de 25 ⇒ 2 % ⇒ 500 000);
     `TheTopBracketAppliesToTheCappedIbc` (ancla `ibc-cap-and-top-bracket` ⇒ 375 500); `ExactlyFourMinimumsPaysOnePercent`
     (R-9).
   - `EmployerContributionsRuleTests`: `AnExoneratedCompanyBelowTenMinimumsPaysNoHealthIcbfOrSena` (las tres en 0 con nota
     «Exonerado (ET art. 114-1)»; caja 35 100); `TenMinimumsOrMoreAreNotExonerated` (salario 17 509 050 ⇒ salud empleador > 0);
     `ANonExoneratedCompanyAlwaysPays`; `HighRiskPensionIsTheTotalMinusTheEmployeeShare` (tasa 0.22 en el rastro);
-    `ArlFollowsTheWorkplaceClass` (clase V ⇒ 0.0696); `ParafiscalsIgnoreTheFortyPercentRule` (ancla de 40 %: caja sobre
-    1 000 000 = 40 000, salud empleador exonerada); `TheSecondHalfSettlesEachContribution`.
+    `ArlFollowsTheWorkplaceClass` (clase V ⇒ 0.0696); `ArlAndParafiscalsIgnoreTheFortyPercentRule` (I-7, ancla de 40 %: ARL y
+    caja sobre 1 000 000, no sobre el IBC de 1 200 000 ⇒ arl 5 300, caja 40 000; salud empleador exonerada); `TheSecondHalfSettlesEachContribution`.
   - `ProvisionsRuleTests`: `SeveranceAndPremiumIncludeTransport` (83 300); `InterestIsOnePercentOfTheSeveranceBase` (10 000);
     `VacationExcludesTransportAndOvertime` (36 506 con y sin horas extras).
   - `PayrollEngineTests`: `TheMinimumWageFirstHalfMatchesTheAnchor` (todas las líneas del ancla `minimum-wage-first-half`,
@@ -1127,8 +1156,8 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 
 **Files:**
 - Create: `tests/Modules/Payroll/Modules.Payroll.UnitTests/Golden/GoldenCase.cs` (modelo), `GoldenCaseLoader.cs`,
-  `GoldenCaseTests.cs`, `Golden/legal/2026-11-01.json`, `Golden/legal/2026-08-01.json`, `Golden/legal/2026-07-01.json`,
-  `Golden/synthetic/*.json`
+  `GoldenCaseTests.cs`, `Golden/legal/2026-06-01.json` (I-5), `Golden/legal/2026-07-01.json`, `Golden/legal/2026-08-01.json`,
+  `Golden/legal/2026-11-01.json`, `Golden/synthetic/*.json`
 
 **Interfaces:**
 - Consumes: `PayrollEngine.Liquidate`, `EngineInput`, `LegalValueSet` (Tareas 3–5).
@@ -1150,13 +1179,15 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
   }
   ```
   `GoldenCaseTests.EveryCaseMatches` es una teoría sobre `GoldenCaseLoader.All()` (todos los `*.json` bajo `Golden/synthetic`
-  y `Golden/siigo`, por nombre): compara `workedDays`, banderas, la lista de `(code, amount)` completa y en orden, `net` y
+  y `Golden/siigo`, por nombre): compara `workedDays`, banderas, la lista de `(code, amount)` completa y en el orden fijo de
+  I-11, `net` y
   `employerCost`; un fallo imprime las diferencias línea por línea. `GoldenCaseTests.EveryRuleHasACase` falla si alguna de las
   reglas de **Files** de las Tareas 4–5 no aparece en el campo `"covers": ["SalaryRule", …]` de algún caso.
 
-- [ ] **Step 1: Casos (la prueba es el archivo).** Las diez anclas de «Motor: definiciones exactas» (incluidas
-  `sunday-overtime-before-july-2026` y `sunday-overtime-after-july-2026`, que prueban la derivación de R-2 a cada lado de
-  2026-07-01) más: `hire-mid-first-half` (inicio 2026-11-10), `raise-mid-second-half-february` (R-7),
+- [ ] **Step 1: Casos (la prueba es el archivo).** Las diez anclas de «Motor: definiciones exactas» en **12 archivos** (M-3:
+  un archivo es una quincena, así que `solidarity-fund-refund` e `ibc-cap-and-top-bracket` van en dos cada una, `-first` y
+  `-second`, con el `prior` de la primera escrito a mano en la segunda; incluidas `sunday-overtime-before-july-2026` y
+  `sunday-overtime-after-july-2026`, que prueban la derivación de R-2 a cada lado de 2026-07-01) más 14: `hire-mid-first-half` (inicio 2026-11-10), `raise-mid-second-half-february` (R-7),
   `overtime-all-seven-types` (2026-08, las siete horas, factores derivados con 0,90), `overtime-month-income-base`, `exonerated-off` (`exonerated: false`), `ten-minimums-not-exonerated`,
   `high-risk-pension`, `arl-class-v`, `teleworker-connectivity`, `monthly-transport-first-half`, `monthly-transport-second-half`,
   `recurring-with-cap`, `negative-net`, `custom-overtime-multiplier`. Cada uno con su `covers`.
@@ -1165,7 +1196,7 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 - [ ] **Step 3: Implementar el cargador y la comparación.** Si un caso falla con el cargador ya en verde, se revisa primero la
   aritmética de `notes`; si el caso está bien, se corrige la regla (y su prueba de la Tarea 4–5), nunca el esperado.
 - [ ] **Step 4: GREEN.** Run: `dotnet test tests/Modules/Payroll/Modules.Payroll.UnitTests --filter "FullyQualifiedName~GoldenCaseTests" -- xUnit.MaxParallelThreads=4`.
-  Expected: `Passed!` con 24 casos.
+  Expected: `Passed!` con 26 casos.
 - [ ] **Step 5: Commit** — `test(payroll): synthetic golden cases for every engine rule`
 
 > **Cierre del Bloque B:** `dotnet test tests/Modules/Payroll/Modules.Payroll.UnitTests -- xUnit.MaxParallelThreads=4` completo.
@@ -1223,13 +1254,15 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     `EligibilityResult Evaluate(HrEmployeeSource employee, DateOnly periodStart, DateOnly periodEnd, decimal smmlv)` con
     `sealed record EligibilityResult(EligibilityStatus Status, ExclusionReason? Exclusion, IReadOnlyList<BlockerReason>
     Blockers, HrContractSource? Contract, HrSalarySource? SalaryAtEnd, HrAssignmentSource? AssignmentAtEnd, DateOnly?
-    LastCoveredDay)` y `enum EligibilityStatus { Liquidable, Excluded, Blocked }`. Orden (gana la primera):
+    LastCoveredDay)` y `enum EligibilityStatus { Liquidable, Excluded, Blocked }`. Orden (gana la primera); **todas las
+    exclusiones van antes que los bloqueos: un excluido nunca bloquea** (pre-flight I-3, spec «A quién se liquida»):
     1. más de un contrato ⇒ `MultipleContractsInPeriod` (R-10);
     2. `ContractType != "Employee"` ⇒ `ContractTypeNotSupported`; `SalaryType != "Monthly"` ⇒ `SalaryTypeNotSupported`;
        `ContributorSubtype != "Standard"` ⇒ `ContributorSubtypeNotSupported`; `ForeignPensionExempt` ⇒ `ForeignPensionExempt`;
-    3. bloqueos (se juntan todos): sin salario que cubra el último día cubierto ⇒ `MissingSalary`; sin cargo y lugar que lo
-       cubra ⇒ `MissingWorkplace`; centro sin `RiskClass` ⇒ `MissingRiskClass`; con alguno ⇒ `Blocked`;
-    4. algún salario que rija dentro de lo cubierto con monto `< smmlv` ⇒ `SalaryBelowMinimum`;
+    3. algún salario que rija dentro de lo cubierto con monto `< smmlv` ⇒ `SalaryBelowMinimum`;
+    4. bloqueos (se juntan todos): sin salario que cubra el último día cubierto ⇒ `MissingSalary`; sin cargo y lugar que lo
+       cubra ⇒ `MissingWorkplace`; centro sin `RiskClass` ⇒ `MissingRiskClass` (defensivo: Hr exige la clase al crear el
+       centro, I-12); con alguno ⇒ `Blocked`;
     5. si no, `Liquidable`.
 
 - [ ] **Step 1: Pruebas que fallan.**
@@ -1239,8 +1272,10 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
   - `PayrollEligibilityTests`: teoría `UnsupportedEmployeesAreExcludedWithTheirReason` (`Contractor`, `Integral`,
     `HalfTime`, `Pensioner`, exento ⇒ su motivo); `ASalaryBelowTheMinimumIsExcluded` (1 500 000 con SMMLV 1 750 905);
     `TwoContractsInThePeriodAreExcluded` (terminado el 2026-11-05 y reincorporado el 2026-11-10);
-    `ATypeExclusionWinsOverBlockers`; `AMissingWorkplaceBlocks` (sin cargos);
-    `AWorkplaceWithoutRiskClassBlocks`; `BlockersAccumulate`; `AStandardMonthlyEmployeeIsLiquidable` (y trae
+    `ATypeExclusionWinsOverBlockers`; `ABelowMinimumExclusionWinsOverBlockers` (I-3: salario 1 500 000 y sin cargos ⇒
+    `Excluded`, sin bloqueos); `AMissingWorkplaceBlocks` (sin cargos);
+    `AWorkplaceWithoutRiskClassBlocks` (I-12: sigue siendo unitaria, con un `HrAssignmentSource` armado a mano con
+    `RiskClass: null`; por la API de Hr no se puede producir); `BlockersAccumulate`; `AStandardMonthlyEmployeeIsLiquidable` (y trae
     `SalaryAtEnd`, `AssignmentAtEnd`); `TheLastCoveredDayIsTheEndDateWhenTheContractEndsInside`.
   - `PayrollHrDirectoryTests` (integración; resuelve `IPayrollHrDirectory` de un scope del factory):
     `MapsAnEmployeeHiredThroughHr` (alta por `POST /hr/employees` ⇒ nombres, `"CC"`, `"Employee"`, `"Monthly"`,
@@ -1259,7 +1294,9 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 ### Task 8: Persistencia, configuración por empresa y conceptos
 
 **Files:**
-- Create Domain: `PayrollText.cs` (`Fold`, igual que `HrText.Fold`), `CompanyPayrollSettings.cs`, `PayrollConcept.cs`,
+- Create Domain: los enums `PayrollPeriodStatus`, `PeriodAction` y `RecurringStatus` (pre-flight I-4: nacen acá porque los
+  necesita `PayrollLabelsTests`; las Tareas 9 y 10 los reusan), `PayrollText.cs` (`Fold`, igual que `HrText.Fold`),
+  `CompanyPayrollSettings.cs`, `PayrollConcept.cs`,
   `PayrollConceptId.cs`
 - Create Application: `ICompanyPayrollSettingsRepository.cs`, `IPayrollConceptRepository.cs`, `ConceptCatalog.cs`,
   `PayrollLabels.cs`, `PayrollDtos.cs` (los DTO de compañía, configuración y conceptos), `PayrollRequests.cs`,
@@ -1318,6 +1355,9 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     `WithoutIfMatchIs428`; `ACustomOvertimeConceptIsListedAfterTheSystemOnes`;
     `ACustomNameEqualToASystemOneIsTaken` (`"hora extra diurna "` ⇒ 409 `payroll.concept.name_taken`);
     `SystemConceptsCannotBeEditedOrArchived` (422 `payroll.concept.system_readonly`); `ArchivingTwiceIs409`;
+    `ArchivingNeedsNoIfMatch` (I-8: archivar y desarchivar sin encabezado ⇒ 200; editar sin `If-Match` ⇒ 428);
+    `AnInactiveCompanyWithSavedSettingsIsListed` (M-1: guardar configuración y desactivar la empresa ⇒ sigue en
+    `GET /payroll/companies` con `isActive: false`);
     `ChangingTheKindIs422`; `AnUnknownCompanyIs404`; `CompaniesListsActiveOnesByName`; `WritesAreAudited`
     (decisión del owner 2026-11-21, se escriben **primero**, antes que las demás de la clase):
     `ASettingsOnlyRoleReadsCompaniesAndSettings` (sólo `payroll.settings.manage` ⇒ 200 en `GET /payroll/companies` y en
@@ -1341,11 +1381,15 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 ### Task 9: Período quincenal, estados y detalle sin cálculo
 
 **Files:**
-- Create Domain: `PayrollPeriodId.cs`, `PeriodEventId.cs`, `PayrollPeriodStatus.cs`, `PeriodAction.cs`, `PayrollActor.cs`,
+- Create Domain (`PayrollPeriodStatus` y `PeriodAction` ya existen desde la Tarea 8, I-4): `PayrollPeriodId.cs`,
+  `PeriodEventId.cs`, `PayrollActor.cs`,
   `PeriodInput.cs`, `PeriodEvent.cs`, `PayrollPeriod.cs`
 - Create Application: `IPayrollPeriodRepository.cs`, `IPayrollResultStore.cs` (+ `EmployeeResult`), `PeriodComposer.cs`,
   `PeriodActors.cs` (resuelve `PayrollActor` con `IPayrollMemberDirectory`; «Sin nombre» si no hay),
-  `EnsureCurrentPeriods.cs`, `ListPeriods.cs`, `GetPeriod.cs`; DTOs del período en `PayrollDtos.cs`
+  `EnsureCurrentPeriods.cs`, `ListPeriods.cs`, `GetPeriod.cs`; en `PayrollDtos.cs`, los DTO del período (M-14):
+  `ActorDto`, `PayrollTotalsDto`, `PayrollEmployeeSummaryDto`, `PayrollPeriodCanDto`, `PayrollPeriodDto`,
+  `PayrollEmployeeRowDto`, `ExcludedEmployeeDto`, `BlockedEmployeeDto`, `PeriodEventDto`, `PayrollPeriodDetailDto`,
+  `PayrollPeriodListDto`
 - Create Infrastructure: `Persistence/PayrollPeriodRepository.cs`, `Persistence/PayrollResultStore.cs`,
   `Persistence/Migrations/<timestamp>_AddPayrollPeriods.cs` (+ Designer, snapshot); modificar `PayrollDbContext.cs`,
   `PayrollUnitOfWork.cs`
@@ -1410,11 +1454,12 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     Liquidation, string Fingerprint, IReadOnlyDictionary<Guid, decimal> RecurringApplied)`. Se llenan en la Tarea 11.
   - `EnsureCurrentPeriodsCommand(Guid TenantId, Guid CompanyId) : ICommand<PayrollPeriodListDto>` — R-13 con
     `QuincenaCalendar` y el día del tenant; atrapa la violación del índice único, relee y responde la lista (idempotente).
-    Auditoría `payroll.period.created` por cada período nuevo.
+    Autoriza `PeriodRead` **y** `PeriodManage` (I-6). Auditoría `payroll.period.created` por cada período nuevo.
   - `ListPeriodsQuery`, `GetPeriodQuery` y `PeriodComposer.ComposeAsync(PayrollPeriod, PayrollActor caller,
     IReadOnlySet<string> callerPermissions, CancellationToken) : Task<PayrollPeriodDetailDto>`: en `Draft`, `Liquidated` y
     `Reopened` arma `employees`, `excluded` y `blocked` con `IPayrollHrDirectory.ListEmployeesAsync` +
-    `PayrollEligibility` (SMMLV de `IPayrollLegalValues` a `StartDate`) y suma los resultados guardados por `employeeId`; en
+    `PayrollEligibility` (SMMLV de `IPayrollLegalValues` a `StartDate`) y suma los resultados guardados por `employeeId`
+    (`employees` lleva liquidables **y** bloqueados; `blocked` sólo `employeeId` y `reasons`, I-9); en
     `Approved` y `Closed` usa sólo los resultados y `ExcludedJson`. `can` y `approveBlockedBy` según el contrato. En esta
     tarea `sourceChanged` es siempre `false` (lo calcula la Tarea 11).
 
@@ -1437,7 +1482,11 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     `CanFollowsTheCallerPermissions` (sólo `payroll.period.read` ⇒ los seis de `can` en `false`, porque en `Draft` tampoco
     se exporta; con `manage` ⇒ `capture` y `liquidate` en `true`); `AnUnknownPeriodIs404`; `EnsuringIsAudited`;
     `ASettingsOnlyRoleCannotReadPeriods` (sólo `payroll.settings.manage` ⇒ 403 `authorization.denied` en `ensure-current`,
-    la lista y el detalle; decisión del owner 2026-11-21).
+    la lista y el detalle; decisión del owner 2026-11-21); `EnsuringNeedsPeriodManage` (I-6: sólo `payroll.period.read` ⇒
+    403 en `ensure-current` y 200 en `GET {c}/periods`, que no crea nada); `ABlockedEmployeeIsAlsoAnEmployeeRow` (I-9:
+    decorador de `IPayrollHrDirectory` que quita los cargos de uno ⇒ está en `employees` y `blocked[0]` sólo trae
+    `employeeId` y `reasons == ["MissingWorkplace"]`). Las pruebas que abren períodos usan un cliente con
+    `payroll.period.manage`.
   - `PayrollPersistenceTests`: `APeriodWithInputsAndEventsRoundTrips`; `TwoPeriodsCannotShareAStart`;
     `AStaleVersionIsAConcurrencyConflict`; `APeriodOfAnUnknownCompanyViolatesTheForeignKey`
     (`FK_periods_companies_company_id`).
@@ -1462,10 +1511,12 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 ### Task 10: Capturas por empleado y conceptos recurrentes
 
 **Files:**
-- Create Domain: `RecurringConceptId.cs`, `RecurringStatus.cs`, `RecurringConcept.cs`
+- Create Domain (`RecurringStatus` ya existe desde la Tarea 8, I-4): `RecurringConceptId.cs`, `RecurringConcept.cs`
 - Create Application: `IRecurringConceptRepository.cs`, `RecurringAccumulation.cs`, `UpdateEmployeeInputs.cs`,
   `GetPeriodEmployee.cs`, `ListRecurringConcepts.cs`, `SaveRecurringConcept.cs` (crear y editar), `ToggleRecurringConcept.cs`;
-  sumar `EmployeeInputsRequest`, `RecurringConceptRequest` y sus validadores
+  sumar `EmployeeInputsRequest`, `RecurringConceptRequest` y sus validadores; en `PayrollDtos.cs`, los DTO de capturas,
+  recurrentes y rastro (M-14): `InputLineDto`, `RecurringConceptDto`, `TraceInputDto`, `LegalValueUseDto`, `PayrollLineDto`,
+  `PayrollEmployeeDetailDto` (con `result` anulable; la Tarea 11 lo llena)
 - Create Infrastructure: `Persistence/RecurringConceptRepository.cs`, `Persistence/Migrations/<timestamp>_AddRecurringConcepts.cs`
 - Modify: `PayrollDbContext.cs`, `PayrollEndpoints.cs`, `QepServiceCollectionExtensions.cs`
 - Test: `tests/Modules/Payroll/Modules.Payroll.UnitTests/RecurringConceptTests.cs`, `EmployeeInputsRequestValidatorTests.cs`;
@@ -1479,6 +1530,11 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     (`payroll.recurring.already_active`), `Deactivate` (`already_inactive`); `RecurringStatus StatusFor(decimal accumulated)`
     (`Inactive` si no está activo; `Exhausted` si `Cap` y `accumulated ≥ Cap`; si no `Active`). Tabla
     `payroll.recurring_concepts` (índice `(tenant_id, company_id, employee_id)`).
+  - `IRecurringConceptRepository` (M-14): `Task<RecurringConcept?> FindAsync(Guid tenantId, RecurringConceptId id,
+    CancellationToken)` (rastreado); `Task<IReadOnlyList<RecurringConcept>> ListByEmployeeAsync(Guid tenantId, Guid companyId,
+    Guid employeeId, CancellationToken)`; `Task<IReadOnlyList<RecurringConcept>> ListByCompanyAsync(Guid tenantId, Guid
+    companyId, CancellationToken)` (lectura masiva, `AsNoTracking`, para el planificador de la Tarea 11); `void
+    Add(RecurringConcept)`.
   - `RecurringAccumulation` (scoped): `Task<IReadOnlyDictionary<Guid, decimal>> AccumulatedAsync(Guid tenantId, Guid companyId,
     Guid employeeId, DateOnly? before, CancellationToken)` sobre `IPayrollResultStore.SumRecurringAppliedAsync` (R-12).
   - `UpdateEmployeeInputsCommand(Guid TenantId, Guid PeriodId, Guid EmployeeId, EmployeeInputsRequest Request, string? IfMatch)
@@ -1488,7 +1544,9 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     existe, archivado o de otro kind ⇒ 422 `errors.<lista>[i].conceptId`); `ReplaceInputs`; auditoría
     `payroll.period.inputs_updated`.
   - `GetPeriodEmployeeQuery(Guid TenantId, Guid PeriodId, Guid EmployeeId) : IQuery<PayrollEmployeeDetailDto>` — en esta
-    tarea `result` es `null`; la Tarea 11 lo llena. En `Approved`/`Closed` un empleado sin resultado ⇒ 404.
+    tarea `result` es `null`; la Tarea 11 lo llena. Un **excluido** responde 200 con `result: null`, `inputs` y `recurring`
+    vacíos en `Draft`, `Liquidated` y `Reopened` (I-13); 404 `payroll.employee.not_in_period` sólo si no tiene contrato de la
+    empresa en la quincena. En `Approved`/`Closed` responde lo de la foto (resultado o excluido) y 404 si no está en ella.
   - Rutas de recurrentes y de capturas del contrato. Un empleado «tiene contrato con la empresa» si aparece en
     `IPayrollHrDirectory.ListEmployeesAsync(tenantId, companyId, DateOnly.MinValue, DateOnly.MaxValue)`; si no, 404
     `payroll.employee.not_found`.
@@ -1501,11 +1559,12 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
   - `PayrollInputsApiTests`: `CapturingReplacesTheThreeLists` (dos PUT; el segundo con una sola deducción ⇒ el detalle trae
     sólo esa; `employee.hasInputs`); `TheAnswerCarriesTheNewVersion` (`period.version` sube);
     **`AStaleIfMatchIs412AndWritesNothing`** (Review Focus 5); `AnExcludedEmployeeIs422NotLiquidable`;
-    `AnEmployeeOutsideThePeriodIs404`; `AConceptOfAnotherKindIs422OnTheField` (`errors["overtime[0].conceptId"]`);
+    `AnEmployeeOutsideThePeriodIs404`; `AnExcludedEmployeeDetailIsEmptyNot404` (I-13: integral ⇒ `GET {p}/employees/{id}`
+    200, `result == null`, listas vacías); `AConceptOfAnotherKindIs422OnTheField` (`errors["overtime[0].conceptId"]`);
     `AnArchivedConceptIs422`; `ACustomConceptOfAnotherCompanyIs422`; `CapturesNeedPeriodManage` (403);
     `CapturingIsAudited` (`payroll.period.inputs_updated`, sin valores).
   - `RecurringConceptsApiTests`: `CreatingAnswersTheWholeList`; `AnOvertimeConceptIsKindMismatch`; `ACapBelowTheAmountIs422`;
-    `DeactivatingAndActivating`; `EditingNeedsIfMatch`; `AnEmployeeWithoutAContractInTheCompanyIs404`;
+    `DeactivatingAndActivatingNeedNoIfMatch` (I-8); `EditingNeedsIfMatch`; `AnEmployeeWithoutAContractInTheCompanyIs404`;
     `ReadingNeedsPeriodReadAndWritingSettingsManage`; `AccumulatedStartsAtZero`.
 - [ ] **Step 2: RED de compilación.** Run: `dotnet build tests/Modules/Payroll/Modules.Payroll.UnitTests`.
   Expected: `error CS0246: The type or namespace name 'RecurringConcept' could not be found`.
@@ -1533,7 +1592,8 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     IReadOnlyList<RecurringConcept> recurring, IReadOnlyDictionary<Guid, decimal> appliedBefore, MonthAccumulators prior) :
     EngineInput` (`public static`, puro). Sólo recurrentes `Active` y no agotados; `RemainingCap = Cap − appliedBefore`. Cada
     hora capturada pasa con `SystemKey` (concepto del sistema) o `CustomMultiplier` (propio); el factor lo deriva el motor
-    (`OvertimeFactors`, Tarea 4), nunca la aplicación.
+    (`OvertimeFactors`, Tarea 4), nunca la aplicación. Sólo pasa los salarios con `EffectiveDate ≤ period.End` y
+    `ContractEndedOn` sólo si cae dentro del período (R-16b, I-10): lo programado en Hr para después no cambia la huella.
   - `InputFingerprint`: `static string Of(EngineInput input)` (SHA-256 en hexadecimal minúscula del JSON de `input` con
     `Legal` fuera) y `static string OfPeriod(IEnumerable<(Guid EmployeeId, string Fingerprint)> liquidable,
     IEnumerable<(Guid EmployeeId, string Reason)> excludedOrBlocked)` (ordenados por id).
@@ -1559,14 +1619,15 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 
 - [ ] **Step 1: Pruebas que fallan.**
   - `EngineInputFactoryTests`: `CapturesBecomeEngineLinesInOrder`; `SystemOvertimeCarriesItsKeyAndCustomItsMultiplier`; `ExhaustedAndInactiveRecurringAreLeftOut`;
-    `TheRemainingCapSubtractsWhatWasApplied`; `HrNamesBecomeTheWorkplaceInfo`.
+    `TheRemainingCapSubtractsWhatWasApplied`; `HrNamesBecomeTheWorkplaceInfo`; `FutureSalariesAndEndsAreLeftOut` (I-10:
+    salario con fecha posterior al fin del período y terminación futura ⇒ no entran y la huella no cambia).
   - `InputFingerprintTests`: `TheSameInputHasTheSameFingerprint`; `TheLegalSnapshotDoesNotChangeIt`; `ASalaryChangeChangesIt`;
     `ThePeriodFingerprintIgnoresOrder`.
   - `PayrollLiquidationApiTests` (empresa exonerada, centro clase I; empleado contratado por Hr con 1 750 905 desde
     2025-01-01; reloj 2026-11-10 y luego 2026-11-25):
     `LiquidatingTheFirstHalfMatchesTheAnchor` (detalle `Liquidated`, `totals.net == 929801`, `totals.employerCost ==
     1357907`; el empleado trae las líneas de `minimum-wage-first-half` y `trace.legalValues` de `health_employee` con `basis`
-    «Ley 100/1993 art. 204»; `legalValuesDate == "2026-11-01"`; `engineVersion == "2026.11.1"`);
+    «Ley 100/1993 art. 204»; `legalValuesDate == "2026-11-01"`; `engineVersion == PayrollEngine.Version`, nunca el literal, M-12);
     `TheSecondHalfSettlesTheMonth` (ancla `minimum-wage-second-half`);
     **`UnsupportedEmployeesAreExcludedWithTheirReason`** (Review Focus 7: uno estándar y uno integral ⇒ se liquida uno; el otro
     en `excluded` sin resultado); `LiquidatingNeedsTheAbsenceConfirmation`;
@@ -1622,7 +1683,9 @@ Calco de la importación de empleados de Hr (`HrImportColumns`, `IExcelEmployeeI
     los errores de la fila) con `sealed record ParsedInputRow(int RowNumber, Guid EmployeeId, PeriodInputDraft Draft, string
     FullName, string ConceptName)`.
   - `InputsImportAnalyzer.AnalyzeAsync(PayrollPeriod period, string? fileName, long size, Stream content, CancellationToken)`
-    : archivo ⇒ lector ⇒ contexto ⇒ filas ⇒ `overtime_duplicated_in_file` ⇒ errores por `RowNumber` y `Field`.
+    : archivo ⇒ lector ⇒ contexto ⇒ filas ⇒ `overtime_duplicated_in_file` ⇒ topes por empleado (M-13: más de 20 horas, 50
+    ingresos o 50 deducciones de un mismo empleado ⇒ `too_many_lines` en cada fila sobrante, en orden de fila) ⇒ errores por
+    `RowNumber` y `Field`.
   - `ImportInputsCommand(…, string? IfMatch) : ICommand<PayrollPeriodDetailDto>` — algún error ⇒
     `PayrollDomainException(ImportRowsInvalid)` sin escribir; si no, `ReplaceInputsBulk` agrupado por empleado en el orden de
     las filas; auditoría `payroll.inputs.imported`; un `SaveChangesAsync`.
@@ -1636,7 +1699,8 @@ Calco de la importación de empleados de Hr (`HrImportColumns`, `IExcelEmployeeI
     liquidables, `Valores válidos` con los doce del sistema y los propios no archivados, `Content-Disposition` con
     `plantilla-novedades.xlsx`); `PreviewWritesNothing`; `ImportReplacesOnlyTheEmployeesInTheFile` (A y B con capturas; archivo
     sólo con A ⇒ A reemplazado, B intacto); `ImportingOnALiquidatedPeriodOutdatesIt`; `ConfirmingWithErrorsIs422AndWritesNothing`;
-    `ARepeatedOvertimeMarksBothRows`; `ImportNeedsIfMatch`; teoría `FileErrors` (los siete códigos de archivo);
+    `ARepeatedOvertimeMarksBothRows`; `TheImportAppliesTheCaptureLimits` (M-13: 51 filas de ingreso de un empleado ⇒ la 51
+    con `payroll.import.row.too_many_lines` y nada se escribe al confirmar); `ImportNeedsIfMatch`; teoría `FileErrors` (los siete códigos de archivo);
     `ApprovedPeriodsDoNotImport` (422 `payroll.period.not_editable`); `ImportIsAuditedAndLeavesAnEvent` (`InputsImported`).
 - [ ] **Step 2: RED de compilación.** Run: `dotnet build tests/Modules/Payroll/Modules.Payroll.UnitTests`.
   Expected: `error CS0246: The type or namespace name 'InputsImportRowParser' could not be found`.
@@ -1657,7 +1721,9 @@ El generador no calcula: recibe filas ya liquidadas y un diseño (spec, «Excel�
 - Create Infrastructure: `Excel/ClosedXmlPayrollWorkbookBuilder.cs`
 - Modify: `PayrollEndpoints.cs` (`Results.File` con el content type de `HrEndpoints.cs:465`), `QepServiceCollectionExtensions.cs`
 - Test: `tests/Modules/Payroll/Modules.Payroll.UnitTests/PayrollColumnLayoutTests.cs`;
-  `tests/Modules/Payroll/Modules.Payroll.IntegrationTests/PayrollExportApiTests.cs`
+  `tests/Modules/Payroll/Modules.Payroll.IntegrationTests/PayrollExportApiTests.cs`, `PayrollIsolationApiTests.cs` (M-15:
+  las pruebas de Review Focus 3 y 6 viven en la tarea que las habilita —la última ruta `{p}…` es el Excel— para que tengan
+  RED)
 
 **Interfaces:**
 - Consumes: `IPayrollResultStore`, `PayrollSummary`, `PayrollLabels`, `ITenantClock`.
@@ -1684,33 +1750,44 @@ El generador no calcula: recibe filas ya liquidadas y un diseño (spec, «Excel�
     `TheFileHasTheHeaderTheRowsAndTheTotals` (`Empresa` con nombre y NIT, `Estado` «Liquidado», fila del empleado con
     `Neto` 929 801, fila `Totales` igual a `totals` del detalle); `TheExcludedGoToTheirSheet` (motivo «El tipo de salario no se
     liquida todavía»); `TheFileNameCarriesTheDates` (`resumen-nomina-2026-11-01-a-2026-11-15.xlsx`);
-    `AnApprovedPeriodSaysSo` («Aprobado»); `ExportNeedsPeriodRead`.
+    `AnApprovedPeriodSaysSo` («Aprobado»); `ExportNeedsPeriodRead`;
+    **`ANewLegalValueChangesNeitherAClosedNorAReliquidatedPeriod`** (Review Focus 3, movida desde la Tarea 14 por M-15: tras
+    cerrar la primera, `INSERT INTO hr.legal_parameters (key, effective_from, value) VALUES ('TransportAllowance',
+    '2026-11-01', 300000)` ⇒ detalle, Excel y `legalValues` iguales; reabrir y reliquidar ⇒ `transport_allowance` sigue en
+    124 548).
+  - `PayrollIsolationApiTests`: **`AnotherTenantsPeriodIsForbiddenEverywhere`** (Review Focus 6, movida desde la Tarea 14 por
+    M-15: con dos tenants y un período liquidado en B, la sesión de A contra cada ruta `{p}…` de la tabla —detalle, empleado,
+    capturas, liquidar, aprobar, cerrar, reabrir, Excel, plantilla, vista previa e importación— con la ruta de B ⇒ 403
+    `authorization.denied`; con la ruta de A y el id de B ⇒ 404 `payroll.period.not_found`; nunca un cuerpo con datos de B).
 - [ ] **Step 2: RED de compilación.** Run: `dotnet build tests/Modules/Payroll/Modules.Payroll.UnitTests`.
-  Expected: `error CS0246: The type or namespace name 'PayrollColumnLayouts' could not be found`.
+  Expected: `error CS0246: The type or namespace name 'PayrollColumnLayouts' could not be found`. Las dos pruebas de
+  integración nuevas fallan contra la ruta `{p}/export` todavía inexistente (404 de ruta, no `authorization.denied`): se
+  corren por nombre y se copia la salida como RED antes de implementar.
 - [ ] **Step 3: Implementar** según **Interfaces** (lectura en pruebas con `XLWorkbook`, como `EmployeeImportApiTests`).
 - [ ] **Step 4: GREEN.** Run: `dotnet test tests/Modules/Payroll/Modules.Payroll.UnitTests -- xUnit.MaxParallelThreads=4` y
-  `dotnet test tests/Modules/Payroll/Modules.Payroll.IntegrationTests --filter "FullyQualifiedName~PayrollExportApiTests" -- xUnit.MaxParallelThreads=4`.
+  `dotnet test tests/Modules/Payroll/Modules.Payroll.IntegrationTests --filter "FullyQualifiedName~PayrollExportApiTests|FullyQualifiedName~PayrollIsolationApiTests" -- xUnit.MaxParallelThreads=4`.
   Expected: `Passed!`.
 - [ ] **Step 5: Commit** — `feat(payroll): export the payroll summary to excel through a column layout`
 
 > **Cierre del Bloque D:** `dotnet test tests/Modules/Payroll/Modules.Payroll.UnitTests -- xUnit.MaxParallelThreads=4`; las
-> clases `PayrollInputsApiTests`, `RecurringConceptsApiTests`, `PayrollLiquidationApiTests`, `PayrollInputsImportApiTests` y
-> `PayrollExportApiTests` completas, una por vez. Una revisión del bloque.
+> clases `PayrollInputsApiTests`, `RecurringConceptsApiTests`, `PayrollLiquidationApiTests`, `PayrollInputsImportApiTests`,
+> `PayrollExportApiTests` y `PayrollIsolationApiTests` completas, una por vez. Una revisión del bloque.
 
 ---
 
 ## Bloque E — Cierre (Tareas 14 y 16)
 
-### Task 14: Aislamiento entre tenants, permisos y camino feliz de punta a punta
+### Task 14: Matriz de permisos y camino feliz de punta a punta
+
+**Excepción a RED antes que GREEN (M-15, anotada):** esta tarea es de regresión sobre código ya hecho en las Tareas 8–13; sus
+pruebas pasan o señalan un defecto. Por eso las de Review Focus 3 y 6 se movieron a la Tarea 13, donde sí tienen RED.
 
 **Files:**
 - Create: `tests/Modules/Payroll/Modules.Payroll.IntegrationTests/PayrollAccessApiTests.cs`, `PayrollEndToEndApiTests.cs`
 - Modify: sólo lo que estas pruebas obliguen a corregir.
 
 - [ ] **Step 1: Pruebas.**
-  - `PayrollAccessApiTests`: **`AnotherTenantsPeriodIsForbiddenEverywhere`** (Review Focus 6: con dos tenants y un período
-    liquidado en B, la sesión de A contra cada ruta `{p}…` de la tabla con la ruta de B ⇒ 403 `authorization.denied`; con la
-    ruta de A y el id de B ⇒ 404 `payroll.period.not_found`; nunca un cuerpo con datos de B); teoría
+  - `PayrollAccessApiTests`: teoría
     `EachRouteRequiresItsPermissions` (una fila por ruta del contrato: sin el permiso en negrita ⇒ 403; con la lista completa ⇒
     distinto de 403; en las filas «A o B», con sólo A y con sólo B ⇒ distinto de 403); teoría
     `ASettingsOnlyRoleSeesOnlyTheSettingsScreens` (sólo `payroll.settings.manage`: 200 en `GET /payroll/companies` y
@@ -1721,14 +1798,12 @@ El generador no calcula: recibe filas ya liquidadas y un diseño (spec, «Excel�
     `ACompanyOfAnotherTenantIs404`.
   - `PayrollEndToEndApiTests`: `AWholeMonthFromOpeningToExport` (dos empleados, uno con comisión y horas en la primera
     quincena: ensure ⇒ capturas ⇒ liquidar ⇒ aprobar ⇒ cerrar; segunda: ensure ⇒ liquidar ⇒ aprobar ⇒ cerrar ⇒ exportar;
-    el mes de cada empleado suma su salario al peso y `health_employee` de las dos quincenas suma `ceil100(IBC_m × 4 %)`);
-    **`ANewLegalValueChangesNeitherAClosedNorAReliquidatedPeriod`** (Review Focus 3: tras cerrar la primera, `INSERT INTO
-    hr.legal_parameters (key, effective_from, value) VALUES ('TransportAllowance', '2026-11-01', 300000)` ⇒ detalle, Excel y
-    `legalValues` iguales; reabrir y reliquidar ⇒ `transport_allowance` sigue en 124 548).
+    el mes de cada empleado suma su salario al peso y `health_employee` de las dos quincenas suma `ceil100(IBC_m × 4 %)`).
+    El cliente que abre las quincenas tiene `payroll.period.manage` (I-6).
 - [ ] **Step 2: Correr.** Run: `dotnet test tests/Modules/Payroll/Modules.Payroll.IntegrationTests --filter "FullyQualifiedName~PayrollAccessApiTests|FullyQualifiedName~PayrollEndToEndApiTests" -- xUnit.MaxParallelThreads=4`.
   Expected: `Passed!`. Si alguna falla, es un defecto de las Tareas 8–13: se reproduce con la prueba que falla (ya es el RED,
   con su salida literal), se corrige en el archivo dueño y se vuelve a correr.
-- [ ] **Step 3: Commit** — `test(payroll): tenant isolation, permissions and a whole month end to end` (más `fix(payroll): …`
+- [ ] **Step 3: Commit** — `test(payroll): permission matrix and a whole month end to end` (más `fix(payroll): …`
   aparte por cada corrección).
 
 ### Task 16: Verificación final
@@ -1744,7 +1819,10 @@ El generador no calcula: recibe filas ya liquidadas y un diseño (spec, «Excel�
   `tests/Modules/Hr/Modules.Hr.UnitTests`, `tests/Modules/Hr/Modules.Hr.IntegrationTests`, `tests/ArchitectureTests/ArchitectureTests`,
   `tests/Bootstrapper/Bootstrapper.UnitTests`, `tests/Modules/Tenancy/Modules.Tenancy.UnitTests`,
   `tests/Modules/Tenancy/Modules.Tenancy.IntegrationTests`. Expected: `Passed!` en todos; si algo falla, se reporta con su
-  salida literal. **Esta corrida es la de antes de mergear a `develop`**: no se repite en `develop`.
+  salida literal. **Esta corrida es la de antes de mergear a `develop`**: no se repite en `develop`. **Decisión del owner
+  (M-16):** aunque el cambio toca Bootstrapper, `Program.cs` y migraciones de tres módulos (lo que el `CLAUDE.md` del
+  workspace llama transversal), la suite de integración de **toda** la solución sólo corre si el owner la pide; por defecto
+  es esta lista de proyectos tocados.
 - [ ] **Step 3: Contrato contra código.** Recorrer la tabla «Rutas» y comprobar en `PayrollEndpoints.cs` método, ruta,
   política y status; que cada código de «Mensajes de dominio» y de la importación exista en `PayrollErrorCodes`; que
   `PayrollLabels` coincida letra por letra con la tabla de enums; y que `SystemConcepts` tenga los ids de la tabla. Una
