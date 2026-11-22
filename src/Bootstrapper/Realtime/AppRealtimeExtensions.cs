@@ -23,6 +23,8 @@ public static class AppRealtimeExtensions
         services.AddSingleton<IRealtimePublisher>(provider => provider.GetRequiredService<PgRealtimePublisher>());
         services.AddSingleton<IRealtimeMemberPublisher>(provider => provider.GetRequiredService<PgRealtimePublisher>());
         services.AddHostedService<RealtimeEventsListener>();
+        // Spec 2026-11-22 D-9: the inbound-message alert is delivered by each pod to its own connections, next to Messaging's own sink.
+        services.AddSingleton<Modules.Messaging.Application.IMessagingEventSink, AppHubMessagingAlertSink>();
         // Presence (spec §5.3): the registry itself is registered by AddQepValkey with the Presence area (local or Valkey); the names
         // follow the rule MessagingMemberNames owns (plan N12).
         services.AddScoped<IRealtimeMemberNames, MessagingMemberNames>();
