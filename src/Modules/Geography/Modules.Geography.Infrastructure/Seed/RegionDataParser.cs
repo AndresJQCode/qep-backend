@@ -71,6 +71,23 @@ internal static class RegionDataParser
         return records;
     }
 
+    /// <summary>
+    /// Lo que el seeder comprueba antes de tocar la base: toda ciudad cae en una región del mismo archivo. Un archivo
+    /// regenerado a medias tumba el arranque con un mensaje claro y no deja datos a medias.
+    /// </summary>
+    public static void Validate(IReadOnlyList<RegionRecord> regions, IReadOnlyList<RegionCityRecord> cities)
+    {
+        var regionCodes = regions.Select(region => region.Code).ToHashSet(StringComparer.Ordinal);
+        foreach (var city in cities)
+        {
+            if (!regionCodes.Contains(city.RegionCode))
+            {
+                throw new InvalidOperationException(
+                    $"City '{city.Code}' references region code '{city.RegionCode}', which is not in the regions file.");
+            }
+        }
+    }
+
     private static string Require(string? value, string what) =>
         string.IsNullOrWhiteSpace(value)
             ? throw new InvalidOperationException($"The {what} is required in the source file.")

@@ -63,5 +63,44 @@ public sealed class RegionDataParserTests
         Assert.Equal(8132, cities.Count);
     }
 
+    [Fact]
+    public void ValidateRejectsACityWhoseRegionWasNotSeeded()
+    {
+        var regions = RegionDataParser.ParseRegions(ToStream("""[{ "code": "28", "name": "Madrid" }]"""));
+        var cities = RegionDataParser.ParseCities(ToStream(
+            """[{ "code": "99001", "name": "Fantasma", "regionCode": "99" }]"""));
+
+        Assert.Throws<InvalidOperationException>(() => RegionDataParser.Validate(regions, cities));
+    }
+
+    [Fact]
+    public void ValidateAcceptsConsistentData()
+    {
+        var regions = RegionDataParser.ParseRegions(ToStream("""[{ "code": "28", "name": "Madrid" }]"""));
+        var cities = RegionDataParser.ParseCities(ToStream(
+            """[{ "code": "28079", "name": "Madrid", "regionCode": "28" }]"""));
+
+        RegionDataParser.Validate(regions, cities);
+    }
+
+    // El INE escribe el artículo al final ("Rozas de Madrid, Las"); el selector y lo que se guarda como texto
+    // llevan el nombre como se conoce ("Las Rozas de Madrid").
+    [Fact]
+    public void TheEmbeddedSpainNamesDoNotKeepTheInvertedArticle()
+    {
+        var regions = RegionDataParser.ParseRegions(GeographySeeder.OpenResource("Seed.Data.es-regions.json"));
+        var cities = RegionDataParser.ParseCities(GeographySeeder.OpenResource("Seed.Data.es-cities.json"));
+        var inverted = new System.Text.RegularExpressions.Regex(
+            @", (la|las|el|los|a|o|les|l'|els|es|as|sa|ses|os|illes)(/|$)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        Assert.DoesNotContain(regions, region => inverted.IsMatch(region.Name));
+        Assert.DoesNotContain(cities, city => inverted.IsMatch(city.Name));
+        Assert.Contains(regions, region => region.Name == "A Coruña");
+        Assert.Contains(regions, region => region.Name == "Las Palmas");
+        Assert.Contains(cities, city => city.Name == "Las Rozas de Madrid");
+        Assert.Contains(cities, city => city.Name == "L'Hospitalet de Llobregat");
+    }
+
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
 }

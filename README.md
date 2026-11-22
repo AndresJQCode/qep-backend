@@ -568,11 +568,17 @@ guarda el nombre de la ciudad como texto (`CityName`).
 
 - **Colombia** sale de DIVIPOLA (`departments`, `cities`): los `id` son los mismos que sirven `/api/v1/departments`
   y `/api/v1/cities`, que no cambian.
-- **Los demás países** salen de `geography.regions` y `geography.region_cities`, que `RegionSeeder` siembra en cada
-  arranque desde `Seed/Data/<país>-regions.json` y `<país>-cities.json`. Hoy sólo España: 52 provincias y 8.132
-  municipios de la «Relación de municipios y sus códigos por provincias» del INE (1 de enero de 2025,
+- **Los demás países** salen de `geography.regions` y `geography.region_cities`, que `RegionSeeder` siembra desde
+  `Seed/Data/<país>-regions.json` y `<país>-cities.json`. Un arranque normal no lee esas tablas: compara el SHA-256
+  de los dos archivos con el de `geography.seed_state` y, si coincide, termina. Sólo si cambió (primer arranque, o un
+  archivo nuevo) parsea, valida y aplica el país en una transacción con `INSERT … ON CONFLICT` sobre `unnest`, sin
+  cargar filas ni usar el change tracker. Si cambias la **lógica** del importador y no los archivos, sube
+  `RegionSeedHash.SeederVersion`, o las bases que ya coinciden no se enterarán. Hoy sólo España: 52 provincias y 8.132
+  municipios de la «Relación de municipios y sus códigos por provincias» del INE (1 de enero de 2025; el artículo
+  invertido del INE, «Rozas de Madrid, Las», se guarda como se conoce: «Las Rozas de Madrid»,
   `https://www.ine.es/daco/daco42/codmun/diccionario25.xlsx`). El código del municipio es `CPRO` + `CMUN`.
-- **Un país nuevo** son sus dos JSON, una entrada en `RegionSeeder.Countries` y otra en `CountryCatalogs.All`.
+- **Un país nuevo** son sus dos JSON, una entrada en `RegionSeeder.EmbeddedSources` y otra en `CountryCatalogs.All`
+  (una prueba unitaria falla si una de las dos listas se queda atrás).
   Esto no toca `Customer`, Coordinadora, Siigo ni los sinónimos: ninguna ciudad de afuera entra a `geography.cities`.
 
 ## Nombres de ciudad de Coordinadora

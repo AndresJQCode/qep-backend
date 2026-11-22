@@ -48,6 +48,8 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
 
     public DbSet<UnresolvedCityOccurrence> UnresolvedCityOccurrences => Set<UnresolvedCityOccurrence>();
 
+    internal DbSet<SeedState> SeedStates => Set<SeedState>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<GeographyOutboxMessage> OutboxMessages => Set<GeographyOutboxMessage>();
@@ -61,6 +63,7 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
         ConfigureCity(modelBuilder);
         ConfigureRegion(modelBuilder);
         ConfigureRegionCity(modelBuilder);
+        ConfigureSeedState(modelBuilder);
         ConfigureCitySynonym(modelBuilder);
         ConfigureUnresolvedCity(modelBuilder);
         ConfigureUnresolvedCityOccurrence(modelBuilder);
@@ -173,6 +176,23 @@ public sealed class GeographyDbContext(DbContextOptions<GeographyDbContext> opti
             .WithMany()
             .HasForeignKey(value => value.RegionId)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    // La huella del último archivo aplicado por cada importador de datos de referencia (RegionSeeder): con ella el
+    // arranque se salta un país que ya está al día sin leer sus tablas.
+    private static void ConfigureSeedState(ModelBuilder modelBuilder)
+    {
+        var state = modelBuilder.Entity<SeedState>();
+        state.ToTable("seed_state", "geography");
+        state.HasKey(value => value.Key);
+        state.Property(value => value.Key)
+            .HasColumnName("key")
+            .HasMaxLength(64)
+            .ValueGeneratedNever();
+        state.Property(value => value.ContentHash)
+            .HasColumnName("content_hash")
+            .HasMaxLength(64)
+            .IsRequired();
     }
 
     private static void ConfigureCitySynonym(ModelBuilder modelBuilder)

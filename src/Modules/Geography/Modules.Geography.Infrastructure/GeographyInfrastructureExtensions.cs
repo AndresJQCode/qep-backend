@@ -36,7 +36,8 @@ public static class GeographyInfrastructureExtensions
         // Spec 2026-10-26 D-C6: los eventos de sinónimos, en el outbox de plataforma dentro de la transacción de Geography.
         services.AddScoped<IGeographyEventPublisher, GeographyEventPublisher>();
         services.AddScoped<GeographySeeder>();
-        services.AddScoped<RegionSeeder>();
+        services.AddScoped(provider => new RegionSeeder(
+            provider.GetRequiredService<GeographyDbContext>(), RegionSeeder.EmbeddedSources));
 
         return services;
     }

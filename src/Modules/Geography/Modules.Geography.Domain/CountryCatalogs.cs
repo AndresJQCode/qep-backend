@@ -27,7 +27,7 @@ public static class CountryCatalogs
     ];
 
     /// <summary>El país se recorta y se pasa a mayúsculas, como en <c>DocumentTypesByCountry</c>.</summary>
-    public static string Normalize(string country) => country.Trim().ToUpperInvariant();
+    private static string Normalize(string country) => country.Trim().ToUpperInvariant();
 
     /// <summary>El catálogo del país, o null si no tiene.</summary>
     public static CountryCatalog? Find(string? country) =>

@@ -102,6 +102,8 @@ public sealed class CountryGeographyApiTests
 
         Assert.Contains(cities, city => city.Code == "28079" && city.Name == "Madrid");
         Assert.All(cities, city => Assert.StartsWith("28", city.Code, StringComparison.Ordinal));
+        // El nombre como se conoce, no el del INE ("Rozas de Madrid, Las").
+        Assert.Contains(cities, city => city.Code == "28127" && city.Name == "Las Rozas de Madrid");
     }
 
     [Fact]

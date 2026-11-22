@@ -473,6 +473,24 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Geography.Infrastructure.Persistence.SeedState", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("key");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("content_hash");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("seed_state", "geography");
+                });
+
             modelBuilder.Entity("Modules.Geography.Domain.City", b =>
                 {
                     b.HasOne("Modules.Geography.Domain.Department", null)

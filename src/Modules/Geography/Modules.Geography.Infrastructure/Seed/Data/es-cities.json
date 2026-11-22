@@ -321,7 +321,7 @@
   },
   {
     "code": "02014",
-    "name": "Ballestero, El",
+    "name": "El Ballestero",
     "regionCode": "02"
   },
   {
@@ -346,7 +346,7 @@
   },
   {
     "code": "02019",
-    "name": "Bonillo, El",
+    "name": "El Bonillo",
     "regionCode": "02"
   },
   {
@@ -426,7 +426,7 @@
   },
   {
     "code": "02035",
-    "name": "Gineta, La",
+    "name": "La Gineta",
     "regionCode": "02"
   },
   {
@@ -441,7 +441,7 @@
   },
   {
     "code": "02038",
-    "name": "Herrera, La",
+    "name": "La Herrera",
     "regionCode": "02"
   },
   {
@@ -581,7 +581,7 @@
   },
   {
     "code": "02066",
-    "name": "Recueja, La",
+    "name": "La Recueja",
     "regionCode": "02"
   },
   {
@@ -596,7 +596,7 @@
   },
   {
     "code": "02069",
-    "name": "Roda, La",
+    "name": "La Roda",
     "regionCode": "02"
   },
   {
@@ -691,7 +691,7 @@
   },
   {
     "code": "03001",
-    "name": "Atzúbia, l'",
+    "name": "L'Atzúbia",
     "regionCode": "03"
   },
   {
@@ -741,7 +741,7 @@
   },
   {
     "code": "03011",
-    "name": "Alfàs del Pi, l'",
+    "name": "L'Alfàs del Pi",
     "regionCode": "03"
   },
   {
@@ -771,7 +771,7 @@
   },
   {
     "code": "03017",
-    "name": "Alqueria d'Asnar, l'",
+    "name": "L'Alqueria d'Asnar",
     "regionCode": "03"
   },
   {
@@ -896,7 +896,7 @@
   },
   {
     "code": "03042",
-    "name": "Poble Nou de Benitatxell, el/Benitachell",
+    "name": "El Poble Nou de Benitatxell/Benitachell",
     "regionCode": "03"
   },
   {
@@ -936,12 +936,12 @@
   },
   {
     "code": "03050",
-    "name": "Campello, el",
+    "name": "El Campello",
     "regionCode": "03"
   },
   {
     "code": "03051",
-    "name": "Camp de Mirra, el/Campo de Mirra",
+    "name": "El Camp de Mirra/Campo de Mirra",
     "regionCode": "03"
   },
   {
@@ -1061,7 +1061,7 @@
   },
   {
     "code": "03075",
-    "name": "Castell de Guadalest, el",
+    "name": "El Castell de Guadalest",
     "regionCode": "03"
   },
   {
@@ -1071,7 +1071,7 @@
   },
   {
     "code": "03077",
-    "name": "Fondó de les Neus, el/Hondón de las Nieves",
+    "name": "El Fondó de les Neus/Hondón de las Nieves",
     "regionCode": "03"
   },
   {
@@ -1106,7 +1106,7 @@
   },
   {
     "code": "03084",
-    "name": "Orxa, l'/Lorcha",
+    "name": "L'Orxa/Lorcha",
     "regionCode": "03"
   },
   {
@@ -1151,7 +1151,7 @@
   },
   {
     "code": "03094",
-    "name": "Nucia, la",
+    "name": "La Nucia",
     "regionCode": "03"
   },
   {
@@ -1206,7 +1206,7 @@
   },
   {
     "code": "03105",
-    "name": "Pinós, el/Pinoso",
+    "name": "El Pinós/Pinoso",
     "regionCode": "03"
   },
   {
@@ -1226,7 +1226,7 @@
   },
   {
     "code": "03110",
-    "name": "Ràfol d'Almúnia, el",
+    "name": "El Ràfol d'Almúnia",
     "regionCode": "03"
   },
   {
@@ -1246,7 +1246,7 @@
   },
   {
     "code": "03114",
-    "name": "Romana, la",
+    "name": "La Romana",
     "regionCode": "03"
   },
   {
@@ -1331,7 +1331,7 @@
   },
   {
     "code": "03132",
-    "name": "Torre de les Maçanes, la/Torremanzanas",
+    "name": "La Torre de les Maçanes/Torremanzanas",
     "regionCode": "03"
   },
   {
@@ -1341,32 +1341,32 @@
   },
   {
     "code": "03134",
-    "name": "Vall d'Alcalà, la",
+    "name": "La Vall d'Alcalà",
     "regionCode": "03"
   },
   {
     "code": "03135",
-    "name": "Vall d'Ebo, la",
+    "name": "La Vall d'Ebo",
     "regionCode": "03"
   },
   {
     "code": "03136",
-    "name": "Vall de Gallinera, la",
+    "name": "La Vall de Gallinera",
     "regionCode": "03"
   },
   {
     "code": "03137",
-    "name": "Vall de Laguar, la",
+    "name": "La Vall de Laguar",
     "regionCode": "03"
   },
   {
     "code": "03138",
-    "name": "Verger, el",
+    "name": "El Verger",
     "regionCode": "03"
   },
   {
     "code": "03139",
-    "name": "Vila Joiosa, la/Villajoyosa",
+    "name": "La Vila Joiosa/Villajoyosa",
     "regionCode": "03"
   },
   {
@@ -1376,7 +1376,7 @@
   },
   {
     "code": "03901",
-    "name": "Poblets, els",
+    "name": "Els Poblets",
     "regionCode": "03"
   },
   {
@@ -1386,7 +1386,7 @@
   },
   {
     "code": "03903",
-    "name": "Montesinos, Los",
+    "name": "Los Montesinos",
     "regionCode": "03"
   },
   {
@@ -1611,7 +1611,7 @@
   },
   {
     "code": "04048",
-    "name": "Gallardos, Los",
+    "name": "Los Gallardos",
     "regionCode": "04"
   },
   {
@@ -1891,17 +1891,17 @@
   },
   {
     "code": "04901",
-    "name": "Tres Villas, Las",
+    "name": "Las Tres Villas",
     "regionCode": "04"
   },
   {
     "code": "04902",
-    "name": "Ejido, El",
+    "name": "El Ejido",
     "regionCode": "04"
   },
   {
     "code": "04903",
-    "name": "Mojonera, La",
+    "name": "La Mojonera",
     "regionCode": "04"
   },
   {
@@ -1916,7 +1916,7 @@
   },
   {
     "code": "05002",
-    "name": "Adrada, La",
+    "name": "La Adrada",
     "regionCode": "05"
   },
   {
@@ -1936,7 +1936,7 @@
   },
   {
     "code": "05010",
-    "name": "Aldehuela, La",
+    "name": "La Aldehuela",
     "regionCode": "05"
   },
   {
@@ -1946,7 +1946,7 @@
   },
   {
     "code": "05013",
-    "name": "Arenal, El",
+    "name": "El Arenal",
     "regionCode": "05"
   },
   {
@@ -1981,12 +1981,12 @@
   },
   {
     "code": "05021",
-    "name": "Barco de Ávila, El",
+    "name": "El Barco de Ávila",
     "regionCode": "05"
   },
   {
     "code": "05022",
-    "name": "Barraco, El",
+    "name": "El Barraco",
     "regionCode": "05"
   },
   {
@@ -2011,7 +2011,7 @@
   },
   {
     "code": "05027",
-    "name": "Berlanas, Las",
+    "name": "Las Berlanas",
     "regionCode": "05"
   },
   {
@@ -2041,7 +2041,7 @@
   },
   {
     "code": "05036",
-    "name": "Bohodón, El",
+    "name": "El Bohodón",
     "regionCode": "05"
   },
   {
@@ -2111,7 +2111,7 @@
   },
   {
     "code": "05051",
-    "name": "Carrera, La",
+    "name": "La Carrera",
     "regionCode": "05"
   },
   {
@@ -2161,7 +2161,7 @@
   },
   {
     "code": "05061",
-    "name": "Colilla, La",
+    "name": "La Colilla",
     "regionCode": "05"
   },
   {
@@ -2226,7 +2226,7 @@
   },
   {
     "code": "05076",
-    "name": "Fresno, El",
+    "name": "El Fresno",
     "regionCode": "05"
   },
   {
@@ -2321,12 +2321,12 @@
   },
   {
     "code": "05096",
-    "name": "Hija de Dios, La",
+    "name": "La Hija de Dios",
     "regionCode": "05"
   },
   {
     "code": "05097",
-    "name": "Horcajada, La",
+    "name": "La Horcajada",
     "regionCode": "05"
   },
   {
@@ -2336,7 +2336,7 @@
   },
   {
     "code": "05100",
-    "name": "Hornillo, El",
+    "name": "El Hornillo",
     "regionCode": "05"
   },
   {
@@ -2346,7 +2346,7 @@
   },
   {
     "code": "05102",
-    "name": "Hoyo de Pinares, El",
+    "name": "El Hoyo de Pinares",
     "regionCode": "05"
   },
   {
@@ -2391,12 +2391,12 @@
   },
   {
     "code": "05112",
-    "name": "Losar del Barco, El",
+    "name": "El Losar del Barco",
     "regionCode": "05"
   },
   {
     "code": "05113",
-    "name": "Llanos de Tormes, Los",
+    "name": "Los Llanos de Tormes",
     "regionCode": "05"
   },
   {
@@ -2476,7 +2476,7 @@
   },
   {
     "code": "05129",
-    "name": "Mirón, El",
+    "name": "El Mirón",
     "regionCode": "05"
   },
   {
@@ -2656,7 +2656,7 @@
   },
   {
     "code": "05168",
-    "name": "Navas del Marqués, Las",
+    "name": "Las Navas del Marqués",
     "regionCode": "05"
   },
   {
@@ -2691,7 +2691,7 @@
   },
   {
     "code": "05175",
-    "name": "Oso, El",
+    "name": "El Oso",
     "regionCode": "05"
   },
   {
@@ -2716,7 +2716,7 @@
   },
   {
     "code": "05180",
-    "name": "Parral, El",
+    "name": "El Parral",
     "regionCode": "05"
   },
   {
@@ -2961,7 +2961,7 @@
   },
   {
     "code": "05232",
-    "name": "Serrada, La",
+    "name": "La Serrada",
     "regionCode": "05"
   },
   {
@@ -3006,7 +3006,7 @@
   },
   {
     "code": "05241",
-    "name": "Tiemblo, El",
+    "name": "El Tiemblo",
     "regionCode": "05"
   },
   {
@@ -3036,7 +3036,7 @@
   },
   {
     "code": "05247",
-    "name": "Torre, La",
+    "name": "La Torre",
     "regionCode": "05"
   },
   {
@@ -3171,7 +3171,7 @@
   },
   {
     "code": "06005",
-    "name": "Albuera, La",
+    "name": "La Albuera",
     "regionCode": "06"
   },
   {
@@ -3306,7 +3306,7 @@
   },
   {
     "code": "06032",
-    "name": "Carrascalejo, El",
+    "name": "El Carrascalejo",
     "regionCode": "06"
   },
   {
@@ -3331,7 +3331,7 @@
   },
   {
     "code": "06037",
-    "name": "Codosera, La",
+    "name": "La Codosera",
     "regionCode": "06"
   },
   {
@@ -3341,7 +3341,7 @@
   },
   {
     "code": "06039",
-    "name": "Coronada, La",
+    "name": "La Coronada",
     "regionCode": "06"
   },
   {
@@ -3436,7 +3436,7 @@
   },
   {
     "code": "06058",
-    "name": "Garrovilla, La",
+    "name": "La Garrovilla",
     "regionCode": "06"
   },
   {
@@ -3451,7 +3451,7 @@
   },
   {
     "code": "06061",
-    "name": "Haba, La",
+    "name": "La Haba",
     "regionCode": "06"
   },
   {
@@ -3501,7 +3501,7 @@
   },
   {
     "code": "06071",
-    "name": "Lapa, La",
+    "name": "La Lapa",
     "regionCode": "06"
   },
   {
@@ -3591,12 +3591,12 @@
   },
   {
     "code": "06089",
-    "name": "Morera, La",
+    "name": "La Morera",
     "regionCode": "06"
   },
   {
     "code": "06090",
-    "name": "Nava de Santiago, La",
+    "name": "La Nava de Santiago",
     "regionCode": "06"
   },
   {
@@ -3641,7 +3641,7 @@
   },
   {
     "code": "06099",
-    "name": "Parra, La",
+    "name": "La Parra",
     "regionCode": "06"
   },
   {
@@ -3721,7 +3721,7 @@
   },
   {
     "code": "06115",
-    "name": "Roca de la Sierra, La",
+    "name": "La Roca de la Sierra",
     "regionCode": "06"
   },
   {
@@ -3756,7 +3756,7 @@
   },
   {
     "code": "06122",
-    "name": "Santos de Maimona, Los",
+    "name": "Los Santos de Maimona",
     "regionCode": "06"
   },
   {
@@ -3956,7 +3956,7 @@
   },
   {
     "code": "06162",
-    "name": "Zarza, La",
+    "name": "La Zarza",
     "regionCode": "06"
   },
   {
@@ -4156,7 +4156,7 @@
   },
   {
     "code": "07037",
-    "name": "Mercadal, Es",
+    "name": "Es Mercadal",
     "regionCode": "07"
   },
   {
@@ -4191,7 +4191,7 @@
   },
   {
     "code": "07044",
-    "name": "Pobla, Sa",
+    "name": "Sa Pobla",
     "regionCode": "07"
   },
   {
@@ -4266,7 +4266,7 @@
   },
   {
     "code": "07059",
-    "name": "Salines, Ses",
+    "name": "Ses Salines",
     "regionCode": "07"
   },
   {
@@ -4291,7 +4291,7 @@
   },
   {
     "code": "07064",
-    "name": "Castell, Es",
+    "name": "Es Castell",
     "regionCode": "07"
   },
   {
@@ -4306,7 +4306,7 @@
   },
   {
     "code": "07902",
-    "name": "Migjorn Gran, Es",
+    "name": "Es Migjorn Gran",
     "regionCode": "07"
   },
   {
@@ -4331,7 +4331,7 @@
   },
   {
     "code": "08005",
-    "name": "Ametlla del Vallès, L'",
+    "name": "L'Ametlla del Vallès",
     "regionCode": "08"
   },
   {
@@ -4431,17 +4431,17 @@
   },
   {
     "code": "08025",
-    "name": "Bruc, El",
+    "name": "El Bruc",
     "regionCode": "08"
   },
   {
     "code": "08026",
-    "name": "Brull, El",
+    "name": "El Brull",
     "regionCode": "08"
   },
   {
     "code": "08027",
-    "name": "Cabanyes, Les",
+    "name": "Les Cabanyes",
     "regionCode": "08"
   },
   {
@@ -4696,12 +4696,12 @@
   },
   {
     "code": "08078",
-    "name": "Espunyola, L'",
+    "name": "L'Espunyola",
     "regionCode": "08"
   },
   {
     "code": "08079",
-    "name": "Estany, L'",
+    "name": "L'Estany",
     "regionCode": "08"
   },
   {
@@ -4736,7 +4736,7 @@
   },
   {
     "code": "08086",
-    "name": "Franqueses del Vallès, Les",
+    "name": "Les Franqueses del Vallès",
     "regionCode": "08"
   },
   {
@@ -4746,7 +4746,7 @@
   },
   {
     "code": "08088",
-    "name": "Garriga, La",
+    "name": "La Garriga",
     "regionCode": "08"
   },
   {
@@ -4776,7 +4776,7 @@
   },
   {
     "code": "08094",
-    "name": "Granada, La",
+    "name": "La Granada",
     "regionCode": "08"
   },
   {
@@ -4811,7 +4811,7 @@
   },
   {
     "code": "08101",
-    "name": "Hospitalet de Llobregat, L'",
+    "name": "L'Hospitalet de Llobregat",
     "regionCode": "08"
   },
   {
@@ -4826,12 +4826,12 @@
   },
   {
     "code": "08104",
-    "name": "Llacuna, La",
+    "name": "La Llacuna",
     "regionCode": "08"
   },
   {
     "code": "08105",
-    "name": "Llagosta, La",
+    "name": "La Llagosta",
     "regionCode": "08"
   },
   {
@@ -4886,17 +4886,17 @@
   },
   {
     "code": "08116",
-    "name": "Masies de Roda, Les",
+    "name": "Les Masies de Roda",
     "regionCode": "08"
   },
   {
     "code": "08117",
-    "name": "Masies de Voltregà, Les",
+    "name": "Les Masies de Voltregà",
     "regionCode": "08"
   },
   {
     "code": "08118",
-    "name": "Masnou, El",
+    "name": "El Masnou",
     "regionCode": "08"
   },
   {
@@ -5016,7 +5016,7 @@
   },
   {
     "code": "08142",
-    "name": "Nou de Berguedà, La",
+    "name": "La Nou de Berguedà",
     "regionCode": "08"
   },
   {
@@ -5096,7 +5096,7 @@
   },
   {
     "code": "08158",
-    "name": "Papiol, El",
+    "name": "El Papiol",
     "regionCode": "08"
   },
   {
@@ -5116,7 +5116,7 @@
   },
   {
     "code": "08162",
-    "name": "Hostalets de Pierola, Els",
+    "name": "Els Hostalets de Pierola",
     "regionCode": "08"
   },
   {
@@ -5126,17 +5126,17 @@
   },
   {
     "code": "08164",
-    "name": "Pla del Penedès, El",
+    "name": "El Pla del Penedès",
     "regionCode": "08"
   },
   {
     "code": "08165",
-    "name": "Pobla de Claramunt, La",
+    "name": "La Pobla de Claramunt",
     "regionCode": "08"
   },
   {
     "code": "08166",
-    "name": "Pobla de Lillet, La",
+    "name": "La Pobla de Lillet",
     "regionCode": "08"
   },
   {
@@ -5151,12 +5151,12 @@
   },
   {
     "code": "08169",
-    "name": "Prat de Llobregat, El",
+    "name": "El Prat de Llobregat",
     "regionCode": "08"
   },
   {
     "code": "08170",
-    "name": "Prats de Rei, Els",
+    "name": "Els Prats de Rei",
     "regionCode": "08"
   },
   {
@@ -5186,7 +5186,7 @@
   },
   {
     "code": "08177",
-    "name": "Quar, La",
+    "name": "La Quar",
     "regionCode": "08"
   },
   {
@@ -5206,12 +5206,12 @@
   },
   {
     "code": "08181",
-    "name": "Roca del Vallès, La",
+    "name": "La Roca del Vallès",
     "regionCode": "08"
   },
   {
     "code": "08182",
-    "name": "Pont de Vilomara i Rocafort, El",
+    "name": "El Pont de Vilomara i Rocafort",
     "regionCode": "08"
   },
   {
@@ -5566,7 +5566,7 @@
   },
   {
     "code": "08254",
-    "name": "Esquirol, L'",
+    "name": "L'Esquirol",
     "regionCode": "08"
   },
   {
@@ -5726,7 +5726,7 @@
   },
   {
     "code": "08286",
-    "name": "Torre de Claramunt, La",
+    "name": "La Torre de Claramunt",
     "regionCode": "08"
   },
   {
@@ -5861,7 +5861,7 @@
   },
   {
     "code": "08905",
-    "name": "Palma de Cervelló, La",
+    "name": "La Palma de Cervelló",
     "regionCode": "08"
   },
   {
@@ -5911,7 +5911,7 @@
   },
   {
     "code": "09014",
-    "name": "Altos, Los",
+    "name": "Los Altos",
     "regionCode": "09"
   },
   {
@@ -5981,7 +5981,7 @@
   },
   {
     "code": "09030",
-    "name": "Ausines, Los",
+    "name": "Los Ausines",
     "regionCode": "09"
   },
   {
@@ -5996,7 +5996,7 @@
   },
   {
     "code": "09034",
-    "name": "Balbases, Los",
+    "name": "Los Balbases",
     "regionCode": "09"
   },
   {
@@ -6031,7 +6031,7 @@
   },
   {
     "code": "09043",
-    "name": "Barrios de Bureba, Los",
+    "name": "Los Barrios de Bureba",
     "regionCode": "09"
   },
   {
@@ -6326,7 +6326,7 @@
   },
   {
     "code": "09117",
-    "name": "Cueva de Roa, La",
+    "name": "La Cueva de Roa",
     "regionCode": "09"
   },
   {
@@ -6441,7 +6441,7 @@
   },
   {
     "code": "09144",
-    "name": "Gallega, La",
+    "name": "La Gallega",
     "regionCode": "09"
   },
   {
@@ -6501,7 +6501,7 @@
   },
   {
     "code": "09166",
-    "name": "Hormazas, Las",
+    "name": "Las Hormazas",
     "regionCode": "09"
   },
   {
@@ -6511,7 +6511,7 @@
   },
   {
     "code": "09168",
-    "name": "Horra, La",
+    "name": "La Horra",
     "regionCode": "09"
   },
   {
@@ -6931,7 +6931,7 @@
   },
   {
     "code": "09276",
-    "name": "Puebla de Arganzón, La",
+    "name": "La Puebla de Arganzón",
     "regionCode": "09"
   },
   {
@@ -6991,7 +6991,7 @@
   },
   {
     "code": "09297",
-    "name": "Quintanillas, Las",
+    "name": "Las Quintanillas",
     "regionCode": "09"
   },
   {
@@ -7051,7 +7051,7 @@
   },
   {
     "code": "09312",
-    "name": "Revilla y Ahedo, La",
+    "name": "La Revilla y Ahedo",
     "regionCode": "09"
   },
   {
@@ -7241,7 +7241,7 @@
   },
   {
     "code": "09365",
-    "name": "Sequera de Haza, La",
+    "name": "La Sequera de Haza",
     "regionCode": "09"
   },
   {
@@ -7451,12 +7451,12 @@
   },
   {
     "code": "09421",
-    "name": "Vid y Barrios, La",
+    "name": "La Vid y Barrios",
     "regionCode": "09"
   },
   {
     "code": "09422",
-    "name": "Vid de Bureba, La",
+    "name": "La Vid de Bureba",
     "regionCode": "09"
   },
   {
@@ -7781,7 +7781,7 @@
   },
   {
     "code": "10013",
-    "name": "Aldea del Obispo, La",
+    "name": "La Aldea del Obispo",
     "regionCode": "10"
   },
   {
@@ -8061,7 +8061,7 @@
   },
   {
     "code": "10069",
-    "name": "Cumbre, La",
+    "name": "La Cumbre",
     "regionCode": "10"
   },
   {
@@ -8101,7 +8101,7 @@
   },
   {
     "code": "10078",
-    "name": "Garganta, La",
+    "name": "La Garganta",
     "regionCode": "10"
   },
   {
@@ -8136,12 +8136,12 @@
   },
   {
     "code": "10085",
-    "name": "Gordo, El",
+    "name": "El Gordo",
     "regionCode": "10"
   },
   {
     "code": "10086",
-    "name": "Granja, La",
+    "name": "La Granja",
     "regionCode": "10"
   },
   {
@@ -8431,7 +8431,7 @@
   },
   {
     "code": "10144",
-    "name": "Pesga, La",
+    "name": "La Pesga",
     "regionCode": "10"
   },
   {
@@ -8631,7 +8631,7 @@
   },
   {
     "code": "10184",
-    "name": "Torno, El",
+    "name": "El Torno",
     "regionCode": "10"
   },
   {
@@ -8871,7 +8871,7 @@
   },
   {
     "code": "11008",
-    "name": "Barrios, Los",
+    "name": "Los Barrios",
     "regionCode": "11"
   },
   {
@@ -8886,7 +8886,7 @@
   },
   {
     "code": "11011",
-    "name": "Bosque, El",
+    "name": "El Bosque",
     "regionCode": "11"
   },
   {
@@ -8921,7 +8921,7 @@
   },
   {
     "code": "11018",
-    "name": "Gastor, El",
+    "name": "El Gastor",
     "regionCode": "11"
   },
   {
@@ -8941,7 +8941,7 @@
   },
   {
     "code": "11022",
-    "name": "Línea de la Concepción, La",
+    "name": "La Línea de la Concepción",
     "regionCode": "11"
   },
   {
@@ -8966,7 +8966,7 @@
   },
   {
     "code": "11027",
-    "name": "Puerto de Santa María, El",
+    "name": "El Puerto de Santa María",
     "regionCode": "11"
   },
   {
@@ -9081,7 +9081,7 @@
   },
   {
     "code": "12005",
-    "name": "Alcora, l'",
+    "name": "L'Alcora",
     "regionCode": "12"
   },
   {
@@ -9281,7 +9281,7 @@
   },
   {
     "code": "12050",
-    "name": "Coves de Vinromà, les",
+    "name": "Les Coves de Vinromà",
     "regionCode": "12"
   },
   {
@@ -9366,7 +9366,7 @@
   },
   {
     "code": "12070",
-    "name": "Jana, la",
+    "name": "La Jana",
     "regionCode": "12"
   },
   {
@@ -9386,12 +9386,12 @@
   },
   {
     "code": "12074",
-    "name": "Llosa, la",
+    "name": "La Llosa",
     "regionCode": "12"
   },
   {
     "code": "12075",
-    "name": "Mata de Morella, la",
+    "name": "La Mata de Morella",
     "regionCode": "12"
   },
   {
@@ -9476,12 +9476,12 @@
   },
   {
     "code": "12093",
-    "name": "Pobla de Benifassà, la",
+    "name": "La Pobla de Benifassà",
     "regionCode": "12"
   },
   {
     "code": "12094",
-    "name": "Pobla Tornesa, la",
+    "name": "La Pobla Tornesa",
     "regionCode": "12"
   },
   {
@@ -9501,7 +9501,7 @@
   },
   {
     "code": "12098",
-    "name": "Salzadella, la",
+    "name": "La Salzadella",
     "regionCode": "12"
   },
   {
@@ -9526,7 +9526,7 @@
   },
   {
     "code": "12103",
-    "name": "Serratella, la",
+    "name": "La Serratella",
     "regionCode": "12"
   },
   {
@@ -9586,7 +9586,7 @@
   },
   {
     "code": "12115",
-    "name": "Toro, El",
+    "name": "El Toro",
     "regionCode": "12"
   },
   {
@@ -9606,12 +9606,12 @@
   },
   {
     "code": "12119",
-    "name": "Torre d'en Besora, la",
+    "name": "La Torre d'en Besora",
     "regionCode": "12"
   },
   {
     "code": "12120",
-    "name": "Torre d'en Doménec, la",
+    "name": "La Torre d'en Doménec",
     "regionCode": "12"
   },
   {
@@ -9621,7 +9621,7 @@
   },
   {
     "code": "12122",
-    "name": "Useres, les/Useras",
+    "name": "Les Useres/Useras",
     "regionCode": "12"
   },
   {
@@ -9641,7 +9641,7 @@
   },
   {
     "code": "12126",
-    "name": "Vall d'Uixó, la",
+    "name": "La Vall d'Uixó",
     "regionCode": "12"
   },
   {
@@ -9691,7 +9691,7 @@
   },
   {
     "code": "12136",
-    "name": "Vilavella, la",
+    "name": "La Vilavella",
     "regionCode": "12"
   },
   {
@@ -9726,7 +9726,7 @@
   },
   {
     "code": "12901",
-    "name": "Alqueries, les/Alquerías del Niño Perdido",
+    "name": "Les Alqueries/Alquerías del Niño Perdido",
     "regionCode": "12"
   },
   {
@@ -9911,7 +9911,7 @@
   },
   {
     "code": "13036",
-    "name": "Cortijos, Los",
+    "name": "Los Cortijos",
     "regionCode": "13"
   },
   {
@@ -9981,7 +9981,7 @@
   },
   {
     "code": "13050",
-    "name": "Labores, Las",
+    "name": "Las Labores",
     "regionCode": "13"
   },
   {
@@ -10066,7 +10066,7 @@
   },
   {
     "code": "13067",
-    "name": "Pozuelos de Calatrava, Los",
+    "name": "Los Pozuelos de Calatrava",
     "regionCode": "13"
   },
   {
@@ -10126,7 +10126,7 @@
   },
   {
     "code": "13079",
-    "name": "Solana, La",
+    "name": "La Solana",
     "regionCode": "13"
   },
   {
@@ -10226,7 +10226,7 @@
   },
   {
     "code": "13901",
-    "name": "Robledo, El",
+    "name": "El Robledo",
     "regionCode": "13"
   },
   {
@@ -10296,7 +10296,7 @@
   },
   {
     "code": "14011",
-    "name": "Blázquez, Los",
+    "name": "Los Blázquez",
     "regionCode": "14"
   },
   {
@@ -10326,12 +10326,12 @@
   },
   {
     "code": "14017",
-    "name": "Carlota, La",
+    "name": "La Carlota",
     "regionCode": "14"
   },
   {
     "code": "14018",
-    "name": "Carpio, El",
+    "name": "El Carpio",
     "regionCode": "14"
   },
   {
@@ -10401,7 +10401,7 @@
   },
   {
     "code": "14032",
-    "name": "Granjuela, La",
+    "name": "La Granjuela",
     "regionCode": "14"
   },
   {
@@ -10411,7 +10411,7 @@
   },
   {
     "code": "14034",
-    "name": "Guijo, El",
+    "name": "El Guijo",
     "regionCode": "14"
   },
   {
@@ -10526,7 +10526,7 @@
   },
   {
     "code": "14057",
-    "name": "Rambla, La",
+    "name": "La Rambla",
     "regionCode": "14"
   },
   {
@@ -10566,7 +10566,7 @@
   },
   {
     "code": "14065",
-    "name": "Victoria, La",
+    "name": "La Victoria",
     "regionCode": "14"
   },
   {
@@ -10611,7 +10611,7 @@
   },
   {
     "code": "14074",
-    "name": "Viso, El",
+    "name": "El Viso",
     "regionCode": "14"
   },
   {
@@ -10626,7 +10626,7 @@
   },
   {
     "code": "14902",
-    "name": "Guijarrosa, La",
+    "name": "La Guijarrosa",
     "regionCode": "14"
   },
   {
@@ -10661,7 +10661,7 @@
   },
   {
     "code": "15007",
-    "name": "Baña, A",
+    "name": "A Baña",
     "regionCode": "15"
   },
   {
@@ -10716,7 +10716,7 @@
   },
   {
     "code": "15018",
-    "name": "Capela, A",
+    "name": "A Capela",
     "regionCode": "15"
   },
   {
@@ -10771,7 +10771,7 @@
   },
   {
     "code": "15030",
-    "name": "Coruña, A",
+    "name": "A Coruña",
     "regionCode": "15"
   },
   {
@@ -10826,7 +10826,7 @@
   },
   {
     "code": "15041",
-    "name": "Laracha, A",
+    "name": "A Laracha",
     "regionCode": "15"
   },
   {
@@ -10946,12 +10946,12 @@
   },
   {
     "code": "15066",
-    "name": "Pino, O",
+    "name": "O Pino",
     "regionCode": "15"
   },
   {
     "code": "15067",
-    "name": "Pobra do Caramiñal, A",
+    "name": "A Pobra do Caramiñal",
     "regionCode": "15"
   },
   {
@@ -10966,7 +10966,7 @@
   },
   {
     "code": "15070",
-    "name": "Pontes de García Rodríguez, As",
+    "name": "As Pontes de García Rodríguez",
     "regionCode": "15"
   },
   {
@@ -11021,7 +11021,7 @@
   },
   {
     "code": "15081",
-    "name": "Somozas, As",
+    "name": "As Somozas",
     "regionCode": "15"
   },
   {
@@ -11101,7 +11101,7 @@
   },
   {
     "code": "16002",
-    "name": "Acebrón, El",
+    "name": "El Acebrón",
     "regionCode": "16"
   },
   {
@@ -11126,7 +11126,7 @@
   },
   {
     "code": "16007",
-    "name": "Alberca de Záncara, La",
+    "name": "La Alberca de Záncara",
     "regionCode": "16"
   },
   {
@@ -11166,7 +11166,7 @@
   },
   {
     "code": "16015",
-    "name": "Almarcha, La",
+    "name": "La Almarcha",
     "regionCode": "16"
   },
   {
@@ -11321,7 +11321,7 @@
   },
   {
     "code": "16049",
-    "name": "Cañavate, El",
+    "name": "El Cañavate",
     "regionCode": "16"
   },
   {
@@ -11431,7 +11431,7 @@
   },
   {
     "code": "16074",
-    "name": "Cierva, La",
+    "name": "La Cierva",
     "regionCode": "16"
   },
   {
@@ -11466,7 +11466,7 @@
   },
   {
     "code": "16085",
-    "name": "Frontera, La",
+    "name": "La Frontera",
     "regionCode": "16"
   },
   {
@@ -11526,22 +11526,22 @@
   },
   {
     "code": "16098",
-    "name": "Herrumblar, El",
+    "name": "El Herrumblar",
     "regionCode": "16"
   },
   {
     "code": "16099",
-    "name": "Hinojosa, La",
+    "name": "La Hinojosa",
     "regionCode": "16"
   },
   {
     "code": "16100",
-    "name": "Hinojosos, Los",
+    "name": "Los Hinojosos",
     "regionCode": "16"
   },
   {
     "code": "16101",
-    "name": "Hito, El",
+    "name": "El Hito",
     "regionCode": "16"
   },
   {
@@ -11626,7 +11626,7 @@
   },
   {
     "code": "16121",
-    "name": "Majadas, Las",
+    "name": "Las Majadas",
     "regionCode": "16"
   },
   {
@@ -11641,7 +11641,7 @@
   },
   {
     "code": "16124",
-    "name": "Mesas, Las",
+    "name": "Las Mesas",
     "regionCode": "16"
   },
   {
@@ -11761,37 +11761,37 @@
   },
   {
     "code": "16152",
-    "name": "Parra de las Vegas, La",
+    "name": "La Parra de las Vegas",
     "regionCode": "16"
   },
   {
     "code": "16153",
-    "name": "Pedernoso, El",
+    "name": "El Pedernoso",
     "regionCode": "16"
   },
   {
     "code": "16154",
-    "name": "Pedroñeras, Las",
+    "name": "Las Pedroñeras",
     "regionCode": "16"
   },
   {
     "code": "16155",
-    "name": "Peral, El",
+    "name": "El Peral",
     "regionCode": "16"
   },
   {
     "code": "16156",
-    "name": "Peraleja, La",
+    "name": "La Peraleja",
     "regionCode": "16"
   },
   {
     "code": "16157",
-    "name": "Pesquera, La",
+    "name": "La Pesquera",
     "regionCode": "16"
   },
   {
     "code": "16158",
-    "name": "Picazo, El",
+    "name": "El Picazo",
     "regionCode": "16"
   },
   {
@@ -11836,7 +11836,7 @@
   },
   {
     "code": "16169",
-    "name": "Pozuelo, El",
+    "name": "El Pozuelo",
     "regionCode": "16"
   },
   {
@@ -11846,7 +11846,7 @@
   },
   {
     "code": "16171",
-    "name": "Provencio, El",
+    "name": "El Provencio",
     "regionCode": "16"
   },
   {
@@ -11856,7 +11856,7 @@
   },
   {
     "code": "16173",
-    "name": "Valle de Altomira, El",
+    "name": "El Valle de Altomira",
     "regionCode": "16"
   },
   {
@@ -12251,7 +12251,7 @@
   },
   {
     "code": "16903",
-    "name": "Valeras, Las",
+    "name": "Las Valeras",
     "regionCode": "16"
   },
   {
@@ -12266,7 +12266,7 @@
   },
   {
     "code": "16906",
-    "name": "Valdecolmenas, Los",
+    "name": "Los Valdecolmenas",
     "regionCode": "16"
   },
   {
@@ -12306,7 +12306,7 @@
   },
   {
     "code": "17005",
-    "name": "Far d'Empordà, El",
+    "name": "El Far d'Empordà",
     "regionCode": "17"
   },
   {
@@ -12336,7 +12336,7 @@
   },
   {
     "code": "17011",
-    "name": "Armentera, L'",
+    "name": "L'Armentera",
     "regionCode": "17"
   },
   {
@@ -12351,7 +12351,7 @@
   },
   {
     "code": "17014",
-    "name": "Vajol, La",
+    "name": "La Vajol",
     "regionCode": "17"
   },
   {
@@ -12386,7 +12386,7 @@
   },
   {
     "code": "17022",
-    "name": "Bisbal d'Empordà, La",
+    "name": "La Bisbal d'Empordà",
     "regionCode": "17"
   },
   {
@@ -12571,7 +12571,7 @@
   },
   {
     "code": "17062",
-    "name": "Escala, L'",
+    "name": "L'Escala",
     "regionCode": "17"
   },
   {
@@ -12686,7 +12686,7 @@
   },
   {
     "code": "17086",
-    "name": "Jonquera, La",
+    "name": "La Jonquera",
     "regionCode": "17"
   },
   {
@@ -12736,7 +12736,7 @@
   },
   {
     "code": "17096",
-    "name": "Llosses, Les",
+    "name": "Les Llosses",
     "regionCode": "17"
   },
   {
@@ -12881,7 +12881,7 @@
   },
   {
     "code": "17130",
-    "name": "Pera, La",
+    "name": "La Pera",
     "regionCode": "17"
   },
   {
@@ -12891,7 +12891,7 @@
   },
   {
     "code": "17133",
-    "name": "Planes d'Hostoles, Les",
+    "name": "Les Planes d'Hostoles",
     "regionCode": "17"
   },
   {
@@ -12921,12 +12921,12 @@
   },
   {
     "code": "17139",
-    "name": "Preses, Les",
+    "name": "Les Preses",
     "regionCode": "17"
   },
   {
     "code": "17140",
-    "name": "Port de la Selva, El",
+    "name": "El Port de la Selva",
     "regionCode": "17"
   },
   {
@@ -13156,12 +13156,12 @@
   },
   {
     "code": "17188",
-    "name": "Selva de Mar, La",
+    "name": "La Selva de Mar",
     "regionCode": "17"
   },
   {
     "code": "17189",
-    "name": "Cellera de Ter, La",
+    "name": "La Cellera de Ter",
     "regionCode": "17"
   },
   {
@@ -13191,7 +13191,7 @@
   },
   {
     "code": "17195",
-    "name": "Tallada d'Empordà, La",
+    "name": "La Tallada d'Empordà",
     "regionCode": "17"
   },
   {
@@ -13251,12 +13251,12 @@
   },
   {
     "code": "17207",
-    "name": "Vall d'en Bas, La",
+    "name": "La Vall d'en Bas",
     "regionCode": "17"
   },
   {
     "code": "17208",
-    "name": "Vall de Bianya, La",
+    "name": "La Vall de Bianya",
     "regionCode": "17"
   },
   {
@@ -13856,7 +13856,7 @@
   },
   {
     "code": "18114",
-    "name": "Calahorra, La",
+    "name": "La Calahorra",
     "regionCode": "18"
   },
   {
@@ -13906,7 +13906,7 @@
   },
   {
     "code": "18126",
-    "name": "Malahá, La",
+    "name": "La Malahá",
     "regionCode": "18"
   },
   {
@@ -14021,7 +14021,7 @@
   },
   {
     "code": "18154",
-    "name": "Peza, La",
+    "name": "La Peza",
     "regionCode": "18"
   },
   {
@@ -14171,7 +14171,7 @@
   },
   {
     "code": "18193",
-    "name": "Zubia, La",
+    "name": "La Zubia",
     "regionCode": "18"
   },
   {
@@ -14181,12 +14181,12 @@
   },
   {
     "code": "18901",
-    "name": "Taha, La",
+    "name": "La Taha",
     "regionCode": "18"
   },
   {
     "code": "18902",
-    "name": "Valle, El",
+    "name": "El Valle",
     "regionCode": "18"
   },
   {
@@ -14201,12 +14201,12 @@
   },
   {
     "code": "18905",
-    "name": "Gabias, Las",
+    "name": "Las Gabias",
     "regionCode": "18"
   },
   {
     "code": "18906",
-    "name": "Guájares, Los",
+    "name": "Los Guájares",
     "regionCode": "18"
   },
   {
@@ -14226,7 +14226,7 @@
   },
   {
     "code": "18910",
-    "name": "Pinar, El",
+    "name": "El Pinar",
     "regionCode": "18"
   },
   {
@@ -14476,7 +14476,7 @@
   },
   {
     "code": "19052",
-    "name": "Bodera, La",
+    "name": "La Bodera",
     "regionCode": "19"
   },
   {
@@ -14536,7 +14536,7 @@
   },
   {
     "code": "19067",
-    "name": "Cardoso de la Sierra, El",
+    "name": "El Cardoso de la Sierra",
     "regionCode": "19"
   },
   {
@@ -14546,7 +14546,7 @@
   },
   {
     "code": "19071",
-    "name": "Casar, El",
+    "name": "El Casar",
     "regionCode": "19"
   },
   {
@@ -14656,7 +14656,7 @@
   },
   {
     "code": "19102",
-    "name": "Cubillo de Uceda, El",
+    "name": "El Cubillo de Uceda",
     "regionCode": "19"
   },
   {
@@ -14846,7 +14846,7 @@
   },
   {
     "code": "19146",
-    "name": "Huerce, La",
+    "name": "La Huerce",
     "regionCode": "19"
   },
   {
@@ -14881,7 +14881,7 @@
   },
   {
     "code": "19154",
-    "name": "Inviernas, Las",
+    "name": "Las Inviernas",
     "regionCode": "19"
   },
   {
@@ -15006,7 +15006,7 @@
   },
   {
     "code": "19182",
-    "name": "Mierla, La",
+    "name": "La Mierla",
     "regionCode": "19"
   },
   {
@@ -15021,7 +15021,7 @@
   },
   {
     "code": "19185",
-    "name": "Miñosa, La",
+    "name": "La Miñosa",
     "regionCode": "19"
   },
   {
@@ -15081,7 +15081,7 @@
   },
   {
     "code": "19197",
-    "name": "Navas de Jadraque, Las",
+    "name": "Las Navas de Jadraque",
     "regionCode": "19"
   },
   {
@@ -15096,7 +15096,7 @@
   },
   {
     "code": "19200",
-    "name": "Olivar, El",
+    "name": "El Olivar",
     "regionCode": "19"
   },
   {
@@ -15106,12 +15106,12 @@
   },
   {
     "code": "19202",
-    "name": "Olmeda de Jadraque, La",
+    "name": "La Olmeda de Jadraque",
     "regionCode": "19"
   },
   {
     "code": "19203",
-    "name": "Ordial, El",
+    "name": "El Ordial",
     "regionCode": "19"
   },
   {
@@ -15146,7 +15146,7 @@
   },
   {
     "code": "19213",
-    "name": "Pedregal, El",
+    "name": "El Pedregal",
     "regionCode": "19"
   },
   {
@@ -15191,7 +15191,7 @@
   },
   {
     "code": "19222",
-    "name": "Pobo de Dueñas, El",
+    "name": "El Pobo de Dueñas",
     "regionCode": "19"
   },
   {
@@ -15241,7 +15241,7 @@
   },
   {
     "code": "19232",
-    "name": "Recuenco, El",
+    "name": "El Recuenco",
     "regionCode": "19"
   },
   {
@@ -15371,7 +15371,7 @@
   },
   {
     "code": "19260",
-    "name": "Sotillo, El",
+    "name": "El Sotillo",
     "regionCode": "19"
   },
   {
@@ -15416,7 +15416,7 @@
   },
   {
     "code": "19269",
-    "name": "Toba, La",
+    "name": "La Toba",
     "regionCode": "19"
   },
   {
@@ -15676,7 +15676,7 @@
   },
   {
     "code": "19332",
-    "name": "Yunta, La",
+    "name": "La Yunta",
     "regionCode": "19"
   },
   {
@@ -16151,7 +16151,7 @@
   },
   {
     "code": "21003",
-    "name": "Almendro, El",
+    "name": "El Almendro",
     "regionCode": "21"
   },
   {
@@ -16226,7 +16226,7 @@
   },
   {
     "code": "21018",
-    "name": "Campillo, El",
+    "name": "El Campillo",
     "regionCode": "21"
   },
   {
@@ -16251,7 +16251,7 @@
   },
   {
     "code": "21023",
-    "name": "Cerro de Andévalo, El",
+    "name": "El Cerro de Andévalo",
     "regionCode": "21"
   },
   {
@@ -16316,12 +16316,12 @@
   },
   {
     "code": "21036",
-    "name": "Granada de Río-Tinto, La",
+    "name": "La Granada de Río-Tinto",
     "regionCode": "21"
   },
   {
     "code": "21037",
-    "name": "Granado, El",
+    "name": "El Granado",
     "regionCode": "21"
   },
   {
@@ -16376,7 +16376,7 @@
   },
   {
     "code": "21048",
-    "name": "Marines, Los",
+    "name": "Los Marines",
     "regionCode": "21"
   },
   {
@@ -16391,7 +16391,7 @@
   },
   {
     "code": "21051",
-    "name": "Nava, La",
+    "name": "La Nava",
     "regionCode": "21"
   },
   {
@@ -16406,7 +16406,7 @@
   },
   {
     "code": "21054",
-    "name": "Palma del Condado, La",
+    "name": "La Palma del Condado",
     "regionCode": "21"
   },
   {
@@ -16536,7 +16536,7 @@
   },
   {
     "code": "21902",
-    "name": "Zarza-Perrunal, La",
+    "name": "La Zarza-Perrunal",
     "regionCode": "21"
   },
   {
@@ -16991,7 +16991,7 @@
   },
   {
     "code": "22113",
-    "name": "Fueva, La",
+    "name": "La Fueva",
     "regionCode": "22"
   },
   {
@@ -17001,7 +17001,7 @@
   },
   {
     "code": "22115",
-    "name": "Grado, El",
+    "name": "El Grado",
     "regionCode": "22"
   },
   {
@@ -17191,7 +17191,7 @@
   },
   {
     "code": "22173",
-    "name": "Peñas de Riglos, Las",
+    "name": "Las Peñas de Riglos",
     "regionCode": "22"
   },
   {
@@ -17241,7 +17241,7 @@
   },
   {
     "code": "22187",
-    "name": "Puebla de Castro, La",
+    "name": "La Puebla de Castro",
     "regionCode": "22"
   },
   {
@@ -17256,7 +17256,7 @@
   },
   {
     "code": "22190",
-    "name": "Pueyo de Araguás, El",
+    "name": "El Pueyo de Araguás",
     "regionCode": "22"
   },
   {
@@ -17521,7 +17521,7 @@
   },
   {
     "code": "22904",
-    "name": "Sotonera, La",
+    "name": "La Sotonera",
     "regionCode": "22"
   },
   {
@@ -17651,7 +17651,7 @@
   },
   {
     "code": "23024",
-    "name": "Carolina, La",
+    "name": "La Carolina",
     "regionCode": "23"
   },
   {
@@ -17716,7 +17716,7 @@
   },
   {
     "code": "23038",
-    "name": "Guardia de Jaén, La",
+    "name": "La Guardia de Jaén",
     "regionCode": "23"
   },
   {
@@ -17761,7 +17761,7 @@
   },
   {
     "code": "23047",
-    "name": "Iruela, La",
+    "name": "La Iruela",
     "regionCode": "23"
   },
   {
@@ -17881,7 +17881,7 @@
   },
   {
     "code": "23072",
-    "name": "Puerta de Segura, La",
+    "name": "La Puerta de Segura",
     "regionCode": "23"
   },
   {
@@ -18001,7 +18001,7 @@
   },
   {
     "code": "23099",
-    "name": "Villares, Los",
+    "name": "Los Villares",
     "regionCode": "23"
   },
   {
@@ -18056,7 +18056,7 @@
   },
   {
     "code": "24005",
-    "name": "Antigua, La",
+    "name": "La Antigua",
     "regionCode": "24"
   },
   {
@@ -18081,7 +18081,7 @@
   },
   {
     "code": "24010",
-    "name": "Bañeza, La",
+    "name": "La Bañeza",
     "regionCode": "24"
   },
   {
@@ -18091,7 +18091,7 @@
   },
   {
     "code": "24012",
-    "name": "Barrios de Luna, Los",
+    "name": "Los Barrios de Luna",
     "regionCode": "24"
   },
   {
@@ -18146,7 +18146,7 @@
   },
   {
     "code": "24024",
-    "name": "Burgo Ranero, El",
+    "name": "El Burgo Ranero",
     "regionCode": "24"
   },
   {
@@ -18351,7 +18351,7 @@
   },
   {
     "code": "24068",
-    "name": "Ercina, La",
+    "name": "La Ercina",
     "regionCode": "24"
   },
   {
@@ -18516,7 +18516,7 @@
   },
   {
     "code": "24104",
-    "name": "Omañas, Las",
+    "name": "Las Omañas",
     "regionCode": "24"
   },
   {
@@ -18561,7 +18561,7 @@
   },
   {
     "code": "24114",
-    "name": "Pola de Gordón, La",
+    "name": "La Pola de Gordón",
     "regionCode": "24"
   },
   {
@@ -18651,7 +18651,7 @@
   },
   {
     "code": "24134",
-    "name": "Robla, La",
+    "name": "La Robla",
     "regionCode": "24"
   },
   {
@@ -18916,7 +18916,7 @@
   },
   {
     "code": "24193",
-    "name": "Vecilla, La",
+    "name": "La Vecilla",
     "regionCode": "24"
   },
   {
@@ -19106,7 +19106,7 @@
   },
   {
     "code": "25004",
-    "name": "Alamús, Els",
+    "name": "Els Alamús",
     "regionCode": "25"
   },
   {
@@ -19116,7 +19116,7 @@
   },
   {
     "code": "25006",
-    "name": "Albagés, L'",
+    "name": "L'Albagés",
     "regionCode": "25"
   },
   {
@@ -19131,7 +19131,7 @@
   },
   {
     "code": "25009",
-    "name": "Albi, L'",
+    "name": "L'Albi",
     "regionCode": "25"
   },
   {
@@ -19221,7 +19221,7 @@
   },
   {
     "code": "25030",
-    "name": "Pont de Bar, El",
+    "name": "El Pont de Bar",
     "regionCode": "25"
   },
   {
@@ -19246,7 +19246,7 @@
   },
   {
     "code": "25035",
-    "name": "Sentiu de Sió, La",
+    "name": "La Sentiu de Sió",
     "regionCode": "25"
   },
   {
@@ -19256,7 +19256,7 @@
   },
   {
     "code": "25037",
-    "name": "Avellanes i Santa Linya, Les",
+    "name": "Les Avellanes i Santa Linya",
     "regionCode": "25"
   },
   {
@@ -19281,12 +19281,12 @@
   },
   {
     "code": "25042",
-    "name": "Baronia de Rialb, La",
+    "name": "La Baronia de Rialb",
     "regionCode": "25"
   },
   {
     "code": "25043",
-    "name": "Vall de Boí, La",
+    "name": "La Vall de Boí",
     "regionCode": "25"
   },
   {
@@ -19351,12 +19351,12 @@
   },
   {
     "code": "25057",
-    "name": "Bòrdes, Es",
+    "name": "Es Bòrdes",
     "regionCode": "25"
   },
   {
     "code": "25058",
-    "name": "Borges Blanques, Les",
+    "name": "Les Borges Blanques",
     "regionCode": "25"
   },
   {
@@ -19436,7 +19436,7 @@
   },
   {
     "code": "25076",
-    "name": "Cogul, El",
+    "name": "El Cogul",
     "regionCode": "25"
   },
   {
@@ -19456,7 +19456,7 @@
   },
   {
     "code": "25081",
-    "name": "Espluga Calba, L'",
+    "name": "L'Espluga Calba",
     "regionCode": "25"
   },
   {
@@ -19491,7 +19491,7 @@
   },
   {
     "code": "25092",
-    "name": "Floresta, La",
+    "name": "La Floresta",
     "regionCode": "25"
   },
   {
@@ -19506,7 +19506,7 @@
   },
   {
     "code": "25096",
-    "name": "Fuliola, La",
+    "name": "La Fuliola",
     "regionCode": "25"
   },
   {
@@ -19531,12 +19531,12 @@
   },
   {
     "code": "25101",
-    "name": "Granadella, La",
+    "name": "La Granadella",
     "regionCode": "25"
   },
   {
     "code": "25102",
-    "name": "Granja d'Escarp, La",
+    "name": "La Granja d'Escarp",
     "regionCode": "25"
   },
   {
@@ -19681,7 +19681,7 @@
   },
   {
     "code": "25136",
-    "name": "Molsosa, La",
+    "name": "La Molsosa",
     "regionCode": "25"
   },
   {
@@ -19751,17 +19751,17 @@
   },
   {
     "code": "25152",
-    "name": "Oluges, Les",
+    "name": "Les Oluges",
     "regionCode": "25"
   },
   {
     "code": "25153",
-    "name": "Omellons, Els",
+    "name": "Els Omellons",
     "regionCode": "25"
   },
   {
     "code": "25154",
-    "name": "Omells de na Gaia, Els",
+    "name": "Els Omells de na Gaia",
     "regionCode": "25"
   },
   {
@@ -19781,7 +19781,7 @@
   },
   {
     "code": "25158",
-    "name": "Palau d'Anglesola, El",
+    "name": "El Palau d'Anglesola",
     "regionCode": "25"
   },
   {
@@ -19791,7 +19791,7 @@
   },
   {
     "code": "25163",
-    "name": "Coma i la Pedra, La",
+    "name": "La Coma i la Pedra",
     "regionCode": "25"
   },
   {
@@ -19816,12 +19816,12 @@
   },
   {
     "code": "25168",
-    "name": "Poal, El",
+    "name": "El Poal",
     "regionCode": "25"
   },
   {
     "code": "25169",
-    "name": "Pobla de Cérvoles, La",
+    "name": "La Pobla de Cérvoles",
     "regionCode": "25"
   },
   {
@@ -19831,7 +19831,7 @@
   },
   {
     "code": "25171",
-    "name": "Pobla de Segur, La",
+    "name": "La Pobla de Segur",
     "regionCode": "25"
   },
   {
@@ -19841,12 +19841,12 @@
   },
   {
     "code": "25173",
-    "name": "Pont de Suert, El",
+    "name": "El Pont de Suert",
     "regionCode": "25"
   },
   {
     "code": "25174",
-    "name": "Portella, La",
+    "name": "La Portella",
     "regionCode": "25"
   },
   {
@@ -19956,7 +19956,7 @@
   },
   {
     "code": "25203",
-    "name": "Seu d'Urgell, La",
+    "name": "La Seu d'Urgell",
     "regionCode": "25"
   },
   {
@@ -19971,7 +19971,7 @@
   },
   {
     "code": "25206",
-    "name": "Soleràs, El",
+    "name": "El Soleràs",
     "regionCode": "25"
   },
   {
@@ -20051,7 +20051,7 @@
   },
   {
     "code": "25224",
-    "name": "Torms, Els",
+    "name": "Els Torms",
     "regionCode": "25"
   },
   {
@@ -20066,7 +20066,7 @@
   },
   {
     "code": "25227",
-    "name": "Torre de Cabdella, La",
+    "name": "La Torre de Cabdella",
     "regionCode": "25"
   },
   {
@@ -20106,7 +20106,7 @@
   },
   {
     "code": "25239",
-    "name": "Valls de Valira, Les",
+    "name": "Les Valls de Valira",
     "regionCode": "25"
   },
   {
@@ -20166,7 +20166,7 @@
   },
   {
     "code": "25253",
-    "name": "Vilosell, El",
+    "name": "El Vilosell",
     "regionCode": "25"
   },
   {
@@ -20191,7 +20191,7 @@
   },
   {
     "code": "25903",
-    "name": "Guingueta d'Àneu, La",
+    "name": "La Guingueta d'Àneu",
     "regionCode": "25"
   },
   {
@@ -20206,7 +20206,7 @@
   },
   {
     "code": "25906",
-    "name": "Valls d'Aguilar, Les",
+    "name": "Les Valls d'Aguilar",
     "regionCode": "25"
   },
   {
@@ -20221,7 +20221,7 @@
   },
   {
     "code": "25909",
-    "name": "Vansa i Fórnols, La",
+    "name": "La Vansa i Fórnols",
     "regionCode": "25"
   },
   {
@@ -20231,7 +20231,7 @@
   },
   {
     "code": "25911",
-    "name": "Plans de Sió, Els",
+    "name": "Els Plans de Sió",
     "regionCode": "25"
   },
   {
@@ -20831,12 +20831,12 @@
   },
   {
     "code": "26122",
-    "name": "Rasillo de Cameros, El",
+    "name": "El Rasillo de Cameros",
     "regionCode": "26"
   },
   {
     "code": "26123",
-    "name": "Redal, El",
+    "name": "El Redal",
     "regionCode": "26"
   },
   {
@@ -21051,7 +21051,7 @@
   },
   {
     "code": "26170",
-    "name": "Villar de Arnedo, El",
+    "name": "El Villar de Arnedo",
     "regionCode": "26"
   },
   {
@@ -21181,7 +21181,7 @@
   },
   {
     "code": "27014",
-    "name": "Corgo, O",
+    "name": "O Corgo",
     "regionCode": "27"
   },
   {
@@ -21201,7 +21201,7 @@
   },
   {
     "code": "27018",
-    "name": "Fonsagrada, A",
+    "name": "A Fonsagrada",
     "regionCode": "27"
   },
   {
@@ -21231,7 +21231,7 @@
   },
   {
     "code": "27024",
-    "name": "Incio, O",
+    "name": "O Incio",
     "regionCode": "27"
   },
   {
@@ -21291,7 +21291,7 @@
   },
   {
     "code": "27037",
-    "name": "Nogais, As",
+    "name": "As Nogais",
     "regionCode": "27"
   },
   {
@@ -21321,12 +21321,12 @@
   },
   {
     "code": "27043",
-    "name": "Páramo, O",
+    "name": "O Páramo",
     "regionCode": "27"
   },
   {
     "code": "27044",
-    "name": "Pastoriza, A",
+    "name": "A Pastoriza",
     "regionCode": "27"
   },
   {
@@ -21341,12 +21341,12 @@
   },
   {
     "code": "27047",
-    "name": "Pobra do Brollón, A",
+    "name": "A Pobra do Brollón",
     "regionCode": "27"
   },
   {
     "code": "27048",
-    "name": "Pontenova, A",
+    "name": "A Pontenova",
     "regionCode": "27"
   },
   {
@@ -21396,7 +21396,7 @@
   },
   {
     "code": "27058",
-    "name": "Saviñao, O",
+    "name": "O Saviñao",
     "regionCode": "27"
   },
   {
@@ -21421,12 +21421,12 @@
   },
   {
     "code": "27063",
-    "name": "Valadouro, O",
+    "name": "O Valadouro",
     "regionCode": "27"
   },
   {
     "code": "27064",
-    "name": "Vicedo, O",
+    "name": "O Vicedo",
     "regionCode": "27"
   },
   {
@@ -21451,7 +21451,7 @@
   },
   {
     "code": "28001",
-    "name": "Acebeda, La",
+    "name": "La Acebeda",
     "regionCode": "28"
   },
   {
@@ -21466,7 +21466,7 @@
   },
   {
     "code": "28004",
-    "name": "Álamo, El",
+    "name": "El Álamo",
     "regionCode": "28"
   },
   {
@@ -21526,7 +21526,7 @@
   },
   {
     "code": "28016",
-    "name": "Atazar, El",
+    "name": "El Atazar",
     "regionCode": "28"
   },
   {
@@ -21551,7 +21551,7 @@
   },
   {
     "code": "28021",
-    "name": "Berrueco, El",
+    "name": "El Berrueco",
     "regionCode": "28"
   },
   {
@@ -21561,7 +21561,7 @@
   },
   {
     "code": "28023",
-    "name": "Boalo, El",
+    "name": "El Boalo",
     "regionCode": "28"
   },
   {
@@ -21596,7 +21596,7 @@
   },
   {
     "code": "28030",
-    "name": "Cabrera, La",
+    "name": "La Cabrera",
     "regionCode": "28"
   },
   {
@@ -21716,7 +21716,7 @@
   },
   {
     "code": "28054",
-    "name": "Escorial, El",
+    "name": "El Escorial",
     "regionCode": "28"
   },
   {
@@ -21791,7 +21791,7 @@
   },
   {
     "code": "28069",
-    "name": "Hiruela, La",
+    "name": "La Hiruela",
     "regionCode": "28"
   },
   {
@@ -21866,12 +21866,12 @@
   },
   {
     "code": "28086",
-    "name": "Molar, El",
+    "name": "El Molar",
     "regionCode": "28"
   },
   {
     "code": "28087",
-    "name": "Molinos, Los",
+    "name": "Los Molinos",
     "regionCode": "28"
   },
   {
@@ -22056,7 +22056,7 @@
   },
   {
     "code": "28127",
-    "name": "Rozas de Madrid, Las",
+    "name": "Las Rozas de Madrid",
     "regionCode": "28"
   },
   {
@@ -22106,12 +22106,12 @@
   },
   {
     "code": "28137",
-    "name": "Santos de la Humosa, Los",
+    "name": "Los Santos de la Humosa",
     "regionCode": "28"
   },
   {
     "code": "28138",
-    "name": "Serna del Monte, La",
+    "name": "La Serna del Monte",
     "regionCode": "28"
   },
   {
@@ -22251,7 +22251,7 @@
   },
   {
     "code": "28168",
-    "name": "Vellón, El",
+    "name": "El Vellón",
     "regionCode": "28"
   },
   {
@@ -22491,12 +22491,12 @@
   },
   {
     "code": "29030",
-    "name": "Borge, El",
+    "name": "El Borge",
     "regionCode": "29"
   },
   {
     "code": "29031",
-    "name": "Burgo, El",
+    "name": "El Burgo",
     "regionCode": "29"
   },
   {
@@ -23046,7 +23046,7 @@
   },
   {
     "code": "30038",
-    "name": "Torres de Cotillas, Las",
+    "name": "Las Torres de Cotillas",
     "regionCode": "30"
   },
   {
@@ -23061,7 +23061,7 @@
   },
   {
     "code": "30041",
-    "name": "Unión, La",
+    "name": "La Unión",
     "regionCode": "30"
   },
   {
@@ -23081,7 +23081,7 @@
   },
   {
     "code": "30902",
-    "name": "Alcázares, Los",
+    "name": "Los Alcázares",
     "regionCode": "30"
   },
   {
@@ -23226,7 +23226,7 @@
   },
   {
     "code": "31029",
-    "name": "Arcos, Los",
+    "name": "Los Arcos",
     "regionCode": "31"
   },
   {
@@ -23386,7 +23386,7 @@
   },
   {
     "code": "31061",
-    "name": "Busto, El",
+    "name": "El Busto",
     "regionCode": "31"
   },
   {
@@ -24456,7 +24456,7 @@
   },
   {
     "code": "32003",
-    "name": "Arnoia, A",
+    "name": "A Arnoia",
     "regionCode": "32"
   },
   {
@@ -24486,7 +24486,7 @@
   },
   {
     "code": "32009",
-    "name": "Barco de Valdeorras, O",
+    "name": "O Barco de Valdeorras",
     "regionCode": "32"
   },
   {
@@ -24501,7 +24501,7 @@
   },
   {
     "code": "32012",
-    "name": "Blancos, Os",
+    "name": "Os Blancos",
     "regionCode": "32"
   },
   {
@@ -24511,12 +24511,12 @@
   },
   {
     "code": "32014",
-    "name": "Bola, A",
+    "name": "A Bola",
     "regionCode": "32"
   },
   {
     "code": "32015",
-    "name": "Bolo, O",
+    "name": "O Bolo",
     "regionCode": "32"
   },
   {
@@ -24536,7 +24536,7 @@
   },
   {
     "code": "32019",
-    "name": "Carballiño, O",
+    "name": "O Carballiño",
     "regionCode": "32"
   },
   {
@@ -24611,12 +24611,12 @@
   },
   {
     "code": "32034",
-    "name": "Gudiña, A",
+    "name": "A Gudiña",
     "regionCode": "32"
   },
   {
     "code": "32035",
-    "name": "Irixo, O",
+    "name": "O Irixo",
     "regionCode": "32"
   },
   {
@@ -24676,12 +24676,12 @@
   },
   {
     "code": "32047",
-    "name": "Merca, A",
+    "name": "A Merca",
     "regionCode": "32"
   },
   {
     "code": "32048",
-    "name": "Mezquita, A",
+    "name": "A Mezquita",
     "regionCode": "32"
   },
   {
@@ -24731,12 +24731,12 @@
   },
   {
     "code": "32058",
-    "name": "Pereiro de Aguiar, O",
+    "name": "O Pereiro de Aguiar",
     "regionCode": "32"
   },
   {
     "code": "32059",
-    "name": "Peroxa, A",
+    "name": "A Peroxa",
     "regionCode": "32"
   },
   {
@@ -24756,7 +24756,7 @@
   },
   {
     "code": "32063",
-    "name": "Pobra de Trives, A",
+    "name": "A Pobra de Trives",
     "regionCode": "32"
   },
   {
@@ -24801,7 +24801,7 @@
   },
   {
     "code": "32072",
-    "name": "Rúa, A",
+    "name": "A Rúa",
     "regionCode": "32"
   },
   {
@@ -24841,7 +24841,7 @@
   },
   {
     "code": "32080",
-    "name": "Teixeira, A",
+    "name": "A Teixeira",
     "regionCode": "32"
   },
   {
@@ -24856,7 +24856,7 @@
   },
   {
     "code": "32083",
-    "name": "Veiga, A",
+    "name": "A Veiga",
     "regionCode": "32"
   },
   {
@@ -25016,7 +25016,7 @@
   },
   {
     "code": "33023",
-    "name": "Franco, El",
+    "name": "El Franco",
     "regionCode": "33"
   },
   {
@@ -25171,7 +25171,7 @@
   },
   {
     "code": "33054",
-    "name": "Regueras, Las",
+    "name": "Las Regueras",
     "regionCode": "33"
   },
   {
@@ -25661,7 +25661,7 @@
   },
   {
     "code": "34093",
-    "name": "Vid de Ojeda, La",
+    "name": "La Vid de Ojeda",
     "regionCode": "34"
   },
   {
@@ -25846,7 +25846,7 @@
   },
   {
     "code": "34140",
-    "name": "Puebla de Valdavia, La",
+    "name": "La Puebla de Valdavia",
     "regionCode": "34"
   },
   {
@@ -25966,7 +25966,7 @@
   },
   {
     "code": "34175",
-    "name": "Serna, La",
+    "name": "La Serna",
     "regionCode": "34"
   },
   {
@@ -26246,7 +26246,7 @@
   },
   {
     "code": "34904",
-    "name": "Pernía, La",
+    "name": "La Pernía",
     "regionCode": "34"
   },
   {
@@ -26316,7 +26316,7 @@
   },
   {
     "code": "35014",
-    "name": "Oliva, La",
+    "name": "La Oliva",
     "regionCode": "35"
   },
   {
@@ -26326,7 +26326,7 @@
   },
   {
     "code": "35016",
-    "name": "Palmas de Gran Canaria, Las",
+    "name": "Las Palmas de Gran Canaria",
     "regionCode": "35"
   },
   {
@@ -26346,7 +26346,7 @@
   },
   {
     "code": "35020",
-    "name": "Aldea de San Nicolás, La",
+    "name": "La Aldea de San Nicolás",
     "regionCode": "35"
   },
   {
@@ -26461,7 +26461,7 @@
   },
   {
     "code": "36009",
-    "name": "Cañiza, A",
+    "name": "A Cañiza",
     "regionCode": "36"
   },
   {
@@ -26491,7 +26491,7 @@
   },
   {
     "code": "36017",
-    "name": "Estrada, A",
+    "name": "A Estrada",
     "regionCode": "36"
   },
   {
@@ -26516,12 +26516,12 @@
   },
   {
     "code": "36022",
-    "name": "Grove, O",
+    "name": "O Grove",
     "regionCode": "36"
   },
   {
     "code": "36023",
-    "name": "Guarda, A",
+    "name": "A Guarda",
     "regionCode": "36"
   },
   {
@@ -26531,7 +26531,7 @@
   },
   {
     "code": "36025",
-    "name": "Lama, A",
+    "name": "A Lama",
     "regionCode": "36"
   },
   {
@@ -26576,7 +26576,7 @@
   },
   {
     "code": "36034",
-    "name": "Neves, As",
+    "name": "As Neves",
     "regionCode": "36"
   },
   {
@@ -26601,7 +26601,7 @@
   },
   {
     "code": "36039",
-    "name": "Porriño, O",
+    "name": "O Porriño",
     "regionCode": "36"
   },
   {
@@ -26646,7 +26646,7 @@
   },
   {
     "code": "36048",
-    "name": "Rosal, O",
+    "name": "O Rosal",
     "regionCode": "36"
   },
   {
@@ -26716,7 +26716,7 @@
   },
   {
     "code": "36901",
-    "name": "Illa de Arousa, A",
+    "name": "A Illa de Arousa",
     "regionCode": "36"
   },
   {
@@ -26746,12 +26746,12 @@
   },
   {
     "code": "37005",
-    "name": "Alameda de Gardón, La",
+    "name": "La Alameda de Gardón",
     "regionCode": "37"
   },
   {
     "code": "37006",
-    "name": "Alamedilla, La",
+    "name": "La Alamedilla",
     "regionCode": "37"
   },
   {
@@ -26771,12 +26771,12 @@
   },
   {
     "code": "37010",
-    "name": "Alberca, La",
+    "name": "La Alberca",
     "regionCode": "37"
   },
   {
     "code": "37011",
-    "name": "Alberguería de Argañán, La",
+    "name": "La Alberguería de Argañán",
     "regionCode": "37"
   },
   {
@@ -26891,7 +26891,7 @@
   },
   {
     "code": "37034",
-    "name": "Arco, El",
+    "name": "El Arco",
     "regionCode": "37"
   },
   {
@@ -26906,7 +26906,7 @@
   },
   {
     "code": "37037",
-    "name": "Atalaya, La",
+    "name": "La Atalaya",
     "regionCode": "37"
   },
   {
@@ -26941,7 +26941,7 @@
   },
   {
     "code": "37045",
-    "name": "Bastida, La",
+    "name": "La Bastida",
     "regionCode": "37"
   },
   {
@@ -26976,7 +26976,7 @@
   },
   {
     "code": "37054",
-    "name": "Bodón, El",
+    "name": "El Bodón",
     "regionCode": "37"
   },
   {
@@ -26986,7 +26986,7 @@
   },
   {
     "code": "37056",
-    "name": "Bouza, La",
+    "name": "La Bouza",
     "regionCode": "37"
   },
   {
@@ -27011,7 +27011,7 @@
   },
   {
     "code": "37061",
-    "name": "Cabaco, El",
+    "name": "El Cabaco",
     "regionCode": "37"
   },
   {
@@ -27021,7 +27021,7 @@
   },
   {
     "code": "37063",
-    "name": "Cabeza de Béjar, La",
+    "name": "La Cabeza de Béjar",
     "regionCode": "37"
   },
   {
@@ -27051,7 +27051,7 @@
   },
   {
     "code": "37071",
-    "name": "Calzada de Béjar, La",
+    "name": "La Calzada de Béjar",
     "regionCode": "37"
   },
   {
@@ -27071,7 +27071,7 @@
   },
   {
     "code": "37077",
-    "name": "Campo de Peñaranda, El",
+    "name": "El Campo de Peñaranda",
     "regionCode": "37"
   },
   {
@@ -27131,7 +27131,7 @@
   },
   {
     "code": "37090",
-    "name": "Casas del Conde, Las",
+    "name": "Las Casas del Conde",
     "regionCode": "37"
   },
   {
@@ -27176,7 +27176,7 @@
   },
   {
     "code": "37102",
-    "name": "Cerro, El",
+    "name": "El Cerro",
     "regionCode": "37"
   },
   {
@@ -27221,7 +27221,7 @@
   },
   {
     "code": "37113",
-    "name": "Cubo de Don Sancho, El",
+    "name": "El Cubo de Don Sancho",
     "regionCode": "37"
   },
   {
@@ -27251,7 +27251,7 @@
   },
   {
     "code": "37119",
-    "name": "Encina, La",
+    "name": "La Encina",
     "regionCode": "37"
   },
   {
@@ -27316,7 +27316,7 @@
   },
   {
     "code": "37132",
-    "name": "Fregeneda, La",
+    "name": "La Fregeneda",
     "regionCode": "37"
   },
   {
@@ -27331,7 +27331,7 @@
   },
   {
     "code": "37135",
-    "name": "Fuente de San Esteban, La",
+    "name": "La Fuente de San Esteban",
     "regionCode": "37"
   },
   {
@@ -27466,7 +27466,7 @@
   },
   {
     "code": "37163",
-    "name": "Hoya, La",
+    "name": "La Hoya",
     "regionCode": "37"
   },
   {
@@ -27536,7 +27536,7 @@
   },
   {
     "code": "37177",
-    "name": "Maíllo, El",
+    "name": "El Maíllo",
     "regionCode": "37"
   },
   {
@@ -27551,7 +27551,7 @@
   },
   {
     "code": "37180",
-    "name": "Manzano, El",
+    "name": "El Manzano",
     "regionCode": "37"
   },
   {
@@ -27581,7 +27581,7 @@
   },
   {
     "code": "37186",
-    "name": "Mata de Ledesma, La",
+    "name": "La Mata de Ledesma",
     "regionCode": "37"
   },
   {
@@ -27591,7 +27591,7 @@
   },
   {
     "code": "37188",
-    "name": "Maya, La",
+    "name": "La Maya",
     "regionCode": "37"
   },
   {
@@ -27606,7 +27606,7 @@
   },
   {
     "code": "37191",
-    "name": "Milano, El",
+    "name": "El Milano",
     "regionCode": "37"
   },
   {
@@ -27761,7 +27761,7 @@
   },
   {
     "code": "37224",
-    "name": "Orbada, La",
+    "name": "La Orbada",
     "regionCode": "37"
   },
   {
@@ -27806,7 +27806,7 @@
   },
   {
     "code": "37234",
-    "name": "Payo, El",
+    "name": "El Payo",
     "regionCode": "37"
   },
   {
@@ -27831,7 +27831,7 @@
   },
   {
     "code": "37239",
-    "name": "Pedroso de la Armuña, El",
+    "name": "El Pedroso de la Armuña",
     "regionCode": "37"
   },
   {
@@ -27851,7 +27851,7 @@
   },
   {
     "code": "37243",
-    "name": "Peña, La",
+    "name": "La Peña",
     "regionCode": "37"
   },
   {
@@ -27901,7 +27901,7 @@
   },
   {
     "code": "37253",
-    "name": "Pino de Tormes, El",
+    "name": "El Pino de Tormes",
     "regionCode": "37"
   },
   {
@@ -27966,7 +27966,7 @@
   },
   {
     "code": "37266",
-    "name": "Redonda, La",
+    "name": "La Redonda",
     "regionCode": "37"
   },
   {
@@ -27976,7 +27976,7 @@
   },
   {
     "code": "37268",
-    "name": "Rinconada de la Sierra, La",
+    "name": "La Rinconada de la Sierra",
     "regionCode": "37"
   },
   {
@@ -28001,7 +28001,7 @@
   },
   {
     "code": "37273",
-    "name": "Sagrada, La",
+    "name": "La Sagrada",
     "regionCode": "37"
   },
   {
@@ -28131,7 +28131,7 @@
   },
   {
     "code": "37300",
-    "name": "Santos, Los",
+    "name": "Los Santos",
     "regionCode": "37"
   },
   {
@@ -28146,7 +28146,7 @@
   },
   {
     "code": "37303",
-    "name": "Sahugo, El",
+    "name": "El Sahugo",
     "regionCode": "37"
   },
   {
@@ -28171,7 +28171,7 @@
   },
   {
     "code": "37309",
-    "name": "Sierpe, La",
+    "name": "La Sierpe",
     "regionCode": "37"
   },
   {
@@ -28201,7 +28201,7 @@
   },
   {
     "code": "37315",
-    "name": "Tala, La",
+    "name": "La Tala",
     "regionCode": "37"
   },
   {
@@ -28221,7 +28221,7 @@
   },
   {
     "code": "37319",
-    "name": "Tejado, El",
+    "name": "El Tejado",
     "regionCode": "37"
   },
   {
@@ -28251,7 +28251,7 @@
   },
   {
     "code": "37325",
-    "name": "Tornadizo, El",
+    "name": "El Tornadizo",
     "regionCode": "37"
   },
   {
@@ -28351,12 +28351,12 @@
   },
   {
     "code": "37346",
-    "name": "Veguillas, Las",
+    "name": "Las Veguillas",
     "regionCode": "37"
   },
   {
     "code": "37347",
-    "name": "Vellés, La",
+    "name": "La Vellés",
     "regionCode": "37"
   },
   {
@@ -28366,7 +28366,7 @@
   },
   {
     "code": "37349",
-    "name": "Vídola, La",
+    "name": "La Vídola",
     "regionCode": "37"
   },
   {
@@ -28526,7 +28526,7 @@
   },
   {
     "code": "37381",
-    "name": "Zarza de Pumareda, La",
+    "name": "La Zarza de Pumareda",
     "regionCode": "37"
   },
   {
@@ -28621,7 +28621,7 @@
   },
   {
     "code": "38018",
-    "name": "Guancha, La",
+    "name": "La Guancha",
     "regionCode": "38"
   },
   {
@@ -28651,22 +28651,22 @@
   },
   {
     "code": "38024",
-    "name": "Llanos de Aridane, Los",
+    "name": "Los Llanos de Aridane",
     "regionCode": "38"
   },
   {
     "code": "38025",
-    "name": "Matanza de Acentejo, La",
+    "name": "La Matanza de Acentejo",
     "regionCode": "38"
   },
   {
     "code": "38026",
-    "name": "Orotava, La",
+    "name": "La Orotava",
     "regionCode": "38"
   },
   {
     "code": "38027",
-    "name": "Paso, El",
+    "name": "El Paso",
     "regionCode": "38"
   },
   {
@@ -28686,12 +28686,12 @@
   },
   {
     "code": "38031",
-    "name": "Realejos, Los",
+    "name": "Los Realejos",
     "regionCode": "38"
   },
   {
     "code": "38032",
-    "name": "Rosario, El",
+    "name": "El Rosario",
     "regionCode": "38"
   },
   {
@@ -28736,12 +28736,12 @@
   },
   {
     "code": "38041",
-    "name": "Sauzal, El",
+    "name": "El Sauzal",
     "regionCode": "38"
   },
   {
     "code": "38042",
-    "name": "Silos, Los",
+    "name": "Los Silos",
     "regionCode": "38"
   },
   {
@@ -28751,7 +28751,7 @@
   },
   {
     "code": "38044",
-    "name": "Tanque, El",
+    "name": "El Tanque",
     "regionCode": "38"
   },
   {
@@ -28786,7 +28786,7 @@
   },
   {
     "code": "38051",
-    "name": "Victoria de Acentejo, La",
+    "name": "La Victoria de Acentejo",
     "regionCode": "38"
   },
   {
@@ -28801,7 +28801,7 @@
   },
   {
     "code": "38901",
-    "name": "Pinar de El Hierro, El",
+    "name": "El Pinar de El Hierro",
     "regionCode": "38"
   },
   {
@@ -28841,7 +28841,7 @@
   },
   {
     "code": "39008",
-    "name": "Astillero, El",
+    "name": "El Astillero",
     "regionCode": "39"
   },
   {
@@ -28926,7 +28926,7 @@
   },
   {
     "code": "39025",
-    "name": "Corrales de Buelna, Los",
+    "name": "Los Corrales de Buelna",
     "regionCode": "39"
   },
   {
@@ -29126,7 +29126,7 @@
   },
   {
     "code": "39065",
-    "name": "Rozas de Valdearroyo, Las",
+    "name": "Las Rozas de Valdearroyo",
     "regionCode": "39"
   },
   {
@@ -29231,7 +29231,7 @@
   },
   {
     "code": "39086",
-    "name": "Tojos, Los",
+    "name": "Los Tojos",
     "regionCode": "39"
   },
   {
@@ -29646,7 +29646,7 @@
   },
   {
     "code": "40076",
-    "name": "Espinar, El",
+    "name": "El Espinar",
     "regionCode": "40"
   },
   {
@@ -29756,7 +29756,7 @@
   },
   {
     "code": "40103",
-    "name": "Huertos, Los",
+    "name": "Los Huertos",
     "regionCode": "40"
   },
   {
@@ -29801,12 +29801,12 @@
   },
   {
     "code": "40112",
-    "name": "Lastrilla, La",
+    "name": "La Lastrilla",
     "regionCode": "40"
   },
   {
     "code": "40113",
-    "name": "Losa, La",
+    "name": "La Losa",
     "regionCode": "40"
   },
   {
@@ -29851,7 +29851,7 @@
   },
   {
     "code": "40125",
-    "name": "Matilla, La",
+    "name": "La Matilla",
     "regionCode": "40"
   },
   {
@@ -30391,7 +30391,7 @@
   },
   {
     "code": "41007",
-    "name": "Algaba, La",
+    "name": "La Algaba",
     "regionCode": "41"
   },
   {
@@ -30456,7 +30456,7 @@
   },
   {
     "code": "41020",
-    "name": "Cabezas de San Juan, Las",
+    "name": "Las Cabezas de San Juan",
     "regionCode": "41"
   },
   {
@@ -30466,7 +30466,7 @@
   },
   {
     "code": "41022",
-    "name": "Campana, La",
+    "name": "La Campana",
     "regionCode": "41"
   },
   {
@@ -30511,7 +30511,7 @@
   },
   {
     "code": "41031",
-    "name": "Castillo de las Guardas, El",
+    "name": "El Castillo de las Guardas",
     "regionCode": "41"
   },
   {
@@ -30536,12 +30536,12 @@
   },
   {
     "code": "41036",
-    "name": "Coronil, El",
+    "name": "El Coronil",
     "regionCode": "41"
   },
   {
     "code": "41037",
-    "name": "Corrales, Los",
+    "name": "Los Corrales",
     "regionCode": "41"
   },
   {
@@ -30571,7 +30571,7 @@
   },
   {
     "code": "41043",
-    "name": "Garrobo, El",
+    "name": "El Garrobo",
     "regionCode": "41"
   },
   {
@@ -30636,12 +30636,12 @@
   },
   {
     "code": "41056",
-    "name": "Luisiana, La",
+    "name": "La Luisiana",
     "regionCode": "41"
   },
   {
     "code": "41057",
-    "name": "Madroño, El",
+    "name": "El Madroño",
     "regionCode": "41"
   },
   {
@@ -30671,7 +30671,7 @@
   },
   {
     "code": "41063",
-    "name": "Molares, Los",
+    "name": "Los Molares",
     "regionCode": "41"
   },
   {
@@ -30686,7 +30686,7 @@
   },
   {
     "code": "41066",
-    "name": "Navas de la Concepción, Las",
+    "name": "Las Navas de la Concepción",
     "regionCode": "41"
   },
   {
@@ -30701,7 +30701,7 @@
   },
   {
     "code": "41069",
-    "name": "Palacios y Villafranca, Los",
+    "name": "Los Palacios y Villafranca",
     "regionCode": "41"
   },
   {
@@ -30721,7 +30721,7 @@
   },
   {
     "code": "41073",
-    "name": "Pedroso, El",
+    "name": "El Pedroso",
     "regionCode": "41"
   },
   {
@@ -30741,42 +30741,42 @@
   },
   {
     "code": "41077",
-    "name": "Puebla de Cazalla, La",
+    "name": "La Puebla de Cazalla",
     "regionCode": "41"
   },
   {
     "code": "41078",
-    "name": "Puebla de los Infantes, La",
+    "name": "La Puebla de los Infantes",
     "regionCode": "41"
   },
   {
     "code": "41079",
-    "name": "Puebla del Río, La",
+    "name": "La Puebla del Río",
     "regionCode": "41"
   },
   {
     "code": "41080",
-    "name": "Real de la Jara, El",
+    "name": "El Real de la Jara",
     "regionCode": "41"
   },
   {
     "code": "41081",
-    "name": "Rinconada, La",
+    "name": "La Rinconada",
     "regionCode": "41"
   },
   {
     "code": "41082",
-    "name": "Roda de Andalucía, La",
+    "name": "La Roda de Andalucía",
     "regionCode": "41"
   },
   {
     "code": "41083",
-    "name": "Ronquillo, El",
+    "name": "El Ronquillo",
     "regionCode": "41"
   },
   {
     "code": "41084",
-    "name": "Rubio, El",
+    "name": "El Rubio",
     "regionCode": "41"
   },
   {
@@ -30806,7 +30806,7 @@
   },
   {
     "code": "41090",
-    "name": "Saucejo, El",
+    "name": "El Saucejo",
     "regionCode": "41"
   },
   {
@@ -30866,7 +30866,7 @@
   },
   {
     "code": "41102",
-    "name": "Viso del Alcor, El",
+    "name": "El Viso del Alcor",
     "regionCode": "41"
   },
   {
@@ -30881,12 +30881,12 @@
   },
   {
     "code": "41903",
-    "name": "Cuervo de Sevilla, El",
+    "name": "El Cuervo de Sevilla",
     "regionCode": "41"
   },
   {
     "code": "41904",
-    "name": "Palmar de Troya, El",
+    "name": "El Palmar de Troya",
     "regionCode": "41"
   },
   {
@@ -30946,7 +30946,7 @@
   },
   {
     "code": "42014",
-    "name": "Aldehuelas, Las",
+    "name": "Las Aldehuelas",
     "regionCode": "42"
   },
   {
@@ -31346,7 +31346,7 @@
   },
   {
     "code": "42106",
-    "name": "Losilla, La",
+    "name": "La Losilla",
     "regionCode": "42"
   },
   {
@@ -31476,7 +31476,7 @@
   },
   {
     "code": "42141",
-    "name": "Póveda de Soria, La",
+    "name": "La Póveda de Soria",
     "regionCode": "42"
   },
   {
@@ -31501,7 +31501,7 @@
   },
   {
     "code": "42149",
-    "name": "Rábanos, Los",
+    "name": "Los Rábanos",
     "regionCode": "42"
   },
   {
@@ -31536,7 +31536,7 @@
   },
   {
     "code": "42157",
-    "name": "Riba de Escalote, La",
+    "name": "La Riba de Escalote",
     "regionCode": "42"
   },
   {
@@ -31551,7 +31551,7 @@
   },
   {
     "code": "42160",
-    "name": "Royo, El",
+    "name": "El Royo",
     "regionCode": "42"
   },
   {
@@ -31766,7 +31766,7 @@
   },
   {
     "code": "42211",
-    "name": "Villares de Soria, Los",
+    "name": "Los Villares de Soria",
     "regionCode": "42"
   },
   {
@@ -31816,7 +31816,7 @@
   },
   {
     "code": "43003",
-    "name": "Albiol, L'",
+    "name": "L'Albiol",
     "regionCode": "43"
   },
   {
@@ -31836,7 +31836,7 @@
   },
   {
     "code": "43007",
-    "name": "Aleixar, L'",
+    "name": "L'Aleixar",
     "regionCode": "43"
   },
   {
@@ -31866,7 +31866,7 @@
   },
   {
     "code": "43013",
-    "name": "Ametlla de Mar, L'",
+    "name": "L'Ametlla de Mar",
     "regionCode": "43"
   },
   {
@@ -31881,12 +31881,12 @@
   },
   {
     "code": "43016",
-    "name": "Arboç, L'",
+    "name": "L'Arboç",
     "regionCode": "43"
   },
   {
     "code": "43017",
-    "name": "Argentera, L'",
+    "name": "L'Argentera",
     "regionCode": "43"
   },
   {
@@ -31936,12 +31936,12 @@
   },
   {
     "code": "43027",
-    "name": "Bisbal de Montsant, La",
+    "name": "La Bisbal de Montsant",
     "regionCode": "43"
   },
   {
     "code": "43028",
-    "name": "Bisbal del Penedès, La",
+    "name": "La Bisbal del Penedès",
     "regionCode": "43"
   },
   {
@@ -31956,7 +31956,7 @@
   },
   {
     "code": "43031",
-    "name": "Borges del Camp, Les",
+    "name": "Les Borges del Camp",
     "regionCode": "43"
   },
   {
@@ -32016,12 +32016,12 @@
   },
   {
     "code": "43043",
-    "name": "Catllar, El",
+    "name": "El Catllar",
     "regionCode": "43"
   },
   {
     "code": "43044",
-    "name": "Sénia, La",
+    "name": "La Sénia",
     "regionCode": "43"
   },
   {
@@ -32071,7 +32071,7 @@
   },
   {
     "code": "43054",
-    "name": "Espluga de Francolí, L'",
+    "name": "L'Espluga de Francolí",
     "regionCode": "43"
   },
   {
@@ -32081,17 +32081,17 @@
   },
   {
     "code": "43056",
-    "name": "Fatarella, La",
+    "name": "La Fatarella",
     "regionCode": "43"
   },
   {
     "code": "43057",
-    "name": "Febró, La",
+    "name": "La Febró",
     "regionCode": "43"
   },
   {
     "code": "43058",
-    "name": "Figuera, La",
+    "name": "La Figuera",
     "regionCode": "43"
   },
   {
@@ -32116,7 +32116,7 @@
   },
   {
     "code": "43063",
-    "name": "Galera, La",
+    "name": "La Galera",
     "regionCode": "43"
   },
   {
@@ -32131,7 +32131,7 @@
   },
   {
     "code": "43066",
-    "name": "Garidells, Els",
+    "name": "Els Garidells",
     "regionCode": "43"
   },
   {
@@ -32151,7 +32151,7 @@
   },
   {
     "code": "43070",
-    "name": "Guiamets, Els",
+    "name": "Els Guiamets",
     "regionCode": "43"
   },
   {
@@ -32161,7 +32161,7 @@
   },
   {
     "code": "43072",
-    "name": "Lloar, El",
+    "name": "El Lloar",
     "regionCode": "43"
   },
   {
@@ -32201,7 +32201,7 @@
   },
   {
     "code": "43080",
-    "name": "Masó, La",
+    "name": "La Masó",
     "regionCode": "43"
   },
   {
@@ -32211,12 +32211,12 @@
   },
   {
     "code": "43082",
-    "name": "Masroig, El",
+    "name": "El Masroig",
     "regionCode": "43"
   },
   {
     "code": "43083",
-    "name": "Milà, El",
+    "name": "El Milà",
     "regionCode": "43"
   },
   {
@@ -32226,7 +32226,7 @@
   },
   {
     "code": "43085",
-    "name": "Molar, El",
+    "name": "El Molar",
     "regionCode": "43"
   },
   {
@@ -32246,7 +32246,7 @@
   },
   {
     "code": "43090",
-    "name": "Montmell, El",
+    "name": "El Montmell",
     "regionCode": "43"
   },
   {
@@ -32271,17 +32271,17 @@
   },
   {
     "code": "43095",
-    "name": "Morell, El",
+    "name": "El Morell",
     "regionCode": "43"
   },
   {
     "code": "43096",
-    "name": "Morera de Montsant, La",
+    "name": "La Morera de Montsant",
     "regionCode": "43"
   },
   {
     "code": "43097",
-    "name": "Nou de Gaià, La",
+    "name": "La Nou de Gaià",
     "regionCode": "43"
   },
   {
@@ -32291,12 +32291,12 @@
   },
   {
     "code": "43099",
-    "name": "Palma d'Ebre, La",
+    "name": "La Palma d'Ebre",
     "regionCode": "43"
   },
   {
     "code": "43100",
-    "name": "Pallaresos, Els",
+    "name": "Els Pallaresos",
     "regionCode": "43"
   },
   {
@@ -32316,17 +32316,17 @@
   },
   {
     "code": "43104",
-    "name": "Perelló, El",
+    "name": "El Perelló",
     "regionCode": "43"
   },
   {
     "code": "43105",
-    "name": "Piles, Les",
+    "name": "Les Piles",
     "regionCode": "43"
   },
   {
     "code": "43106",
-    "name": "Pinell de Brai, El",
+    "name": "El Pinell de Brai",
     "regionCode": "43"
   },
   {
@@ -32336,22 +32336,22 @@
   },
   {
     "code": "43108",
-    "name": "Pla de Santa Maria, El",
+    "name": "El Pla de Santa Maria",
     "regionCode": "43"
   },
   {
     "code": "43109",
-    "name": "Pobla de Mafumet, La",
+    "name": "La Pobla de Mafumet",
     "regionCode": "43"
   },
   {
     "code": "43110",
-    "name": "Pobla de Massaluca, La",
+    "name": "La Pobla de Massaluca",
     "regionCode": "43"
   },
   {
     "code": "43111",
-    "name": "Pobla de Montornès, La",
+    "name": "La Pobla de Montornès",
     "regionCode": "43"
   },
   {
@@ -32361,7 +32361,7 @@
   },
   {
     "code": "43113",
-    "name": "Pont d'Armentera, El",
+    "name": "El Pont d'Armentera",
     "regionCode": "43"
   },
   {
@@ -32416,7 +32416,7 @@
   },
   {
     "code": "43124",
-    "name": "Riba, La",
+    "name": "La Riba",
     "regionCode": "43"
   },
   {
@@ -32426,7 +32426,7 @@
   },
   {
     "code": "43126",
-    "name": "Riera de Gaià, La",
+    "name": "La Riera de Gaià",
     "regionCode": "43"
   },
   {
@@ -32466,7 +32466,7 @@
   },
   {
     "code": "43134",
-    "name": "Rourell, El",
+    "name": "El Rourell",
     "regionCode": "43"
   },
   {
@@ -32476,7 +32476,7 @@
   },
   {
     "code": "43136",
-    "name": "Ràpita, La",
+    "name": "La Ràpita",
     "regionCode": "43"
   },
   {
@@ -32516,12 +32516,12 @@
   },
   {
     "code": "43144",
-    "name": "Secuita, La",
+    "name": "La Secuita",
     "regionCode": "43"
   },
   {
     "code": "43145",
-    "name": "Selva del Camp, La",
+    "name": "La Selva del Camp",
     "regionCode": "43"
   },
   {
@@ -32551,12 +32551,12 @@
   },
   {
     "code": "43151",
-    "name": "Torre de Fontaubella, La",
+    "name": "La Torre de Fontaubella",
     "regionCode": "43"
   },
   {
     "code": "43152",
-    "name": "Torre de l'Espanyol, La",
+    "name": "La Torre de l'Espanyol",
     "regionCode": "43"
   },
   {
@@ -32611,7 +32611,7 @@
   },
   {
     "code": "43163",
-    "name": "Vendrell, El",
+    "name": "El Vendrell",
     "regionCode": "43"
   },
   {
@@ -32661,12 +32661,12 @@
   },
   {
     "code": "43173",
-    "name": "Vilella Alta, La",
+    "name": "La Vilella Alta",
     "regionCode": "43"
   },
   {
     "code": "43174",
-    "name": "Vilella Baixa, La",
+    "name": "La Vilella Baixa",
     "regionCode": "43"
   },
   {
@@ -32706,7 +32706,7 @@
   },
   {
     "code": "43904",
-    "name": "Aldea, L'",
+    "name": "L'Aldea",
     "regionCode": "43"
   },
   {
@@ -32716,12 +32716,12 @@
   },
   {
     "code": "43906",
-    "name": "Ampolla, L'",
+    "name": "L'Ampolla",
     "regionCode": "43"
   },
   {
     "code": "43907",
-    "name": "Canonja, La",
+    "name": "La Canonja",
     "regionCode": "43"
   },
   {
@@ -33006,7 +33006,7 @@
   },
   {
     "code": "44061",
-    "name": "Cañada de Verich, La",
+    "name": "La Cañada de Verich",
     "regionCode": "44"
   },
   {
@@ -33046,7 +33046,7 @@
   },
   {
     "code": "44070",
-    "name": "Castellar, El",
+    "name": "El Castellar",
     "regionCode": "44"
   },
   {
@@ -33071,12 +33071,12 @@
   },
   {
     "code": "44077",
-    "name": "Cerollera, La",
+    "name": "La Cerollera",
     "regionCode": "44"
   },
   {
     "code": "44080",
-    "name": "Codoñera, La",
+    "name": "La Codoñera",
     "regionCode": "44"
   },
   {
@@ -33106,7 +33106,7 @@
   },
   {
     "code": "44088",
-    "name": "Cuba, La",
+    "name": "La Cuba",
     "regionCode": "44"
   },
   {
@@ -33121,7 +33121,7 @@
   },
   {
     "code": "44092",
-    "name": "Cuervo, El",
+    "name": "El Cuervo",
     "regionCode": "44"
   },
   {
@@ -33186,7 +33186,7 @@
   },
   {
     "code": "44108",
-    "name": "Fresneda, La",
+    "name": "La Fresneda",
     "regionCode": "44"
   },
   {
@@ -33236,7 +33236,7 @@
   },
   {
     "code": "44118",
-    "name": "Ginebrosa, La",
+    "name": "La Ginebrosa",
     "regionCode": "44"
   },
   {
@@ -33266,7 +33266,7 @@
   },
   {
     "code": "44124",
-    "name": "Hoz de la Vieja, La",
+    "name": "La Hoz de la Vieja",
     "regionCode": "44"
   },
   {
@@ -33276,7 +33276,7 @@
   },
   {
     "code": "44126",
-    "name": "Iglesuela del Cid, La",
+    "name": "La Iglesuela del Cid",
     "regionCode": "44"
   },
   {
@@ -33361,7 +33361,7 @@
   },
   {
     "code": "44146",
-    "name": "Mata de los Olmos, La",
+    "name": "La Mata de los Olmos",
     "regionCode": "44"
   },
   {
@@ -33481,7 +33481,7 @@
   },
   {
     "code": "44173",
-    "name": "Olmos, Los",
+    "name": "Los Olmos",
     "regionCode": "44"
   },
   {
@@ -33506,7 +33506,7 @@
   },
   {
     "code": "44178",
-    "name": "Parras de Castellote, Las",
+    "name": "Las Parras de Castellote",
     "regionCode": "44"
   },
   {
@@ -33541,12 +33541,12 @@
   },
   {
     "code": "44185",
-    "name": "Pobo, El",
+    "name": "El Pobo",
     "regionCode": "44"
   },
   {
     "code": "44187",
-    "name": "Portellada, La",
+    "name": "La Portellada",
     "regionCode": "44"
   },
   {
@@ -33561,12 +33561,12 @@
   },
   {
     "code": "44191",
-    "name": "Puebla de Híjar, La",
+    "name": "La Puebla de Híjar",
     "regionCode": "44"
   },
   {
     "code": "44192",
-    "name": "Puebla de Valverde, La",
+    "name": "La Puebla de Valverde",
     "regionCode": "44"
   },
   {
@@ -33826,7 +33826,7 @@
   },
   {
     "code": "44249",
-    "name": "Vallecillo, El",
+    "name": "El Vallecillo",
     "regionCode": "44"
   },
   {
@@ -33901,7 +33901,7 @@
   },
   {
     "code": "44268",
-    "name": "Zoma, La",
+    "name": "La Zoma",
     "regionCode": "44"
   },
   {
@@ -34066,7 +34066,7 @@
   },
   {
     "code": "45033",
-    "name": "Campillo de la Jara, El",
+    "name": "El Campillo de la Jara",
     "regionCode": "45"
   },
   {
@@ -34086,7 +34086,7 @@
   },
   {
     "code": "45037",
-    "name": "Carpio de Tajo, El",
+    "name": "El Carpio de Tajo",
     "regionCode": "45"
   },
   {
@@ -34101,7 +34101,7 @@
   },
   {
     "code": "45040",
-    "name": "Casar de Escalona, El",
+    "name": "El Casar de Escalona",
     "regionCode": "45"
   },
   {
@@ -34136,7 +34136,7 @@
   },
   {
     "code": "45048",
-    "name": "Cerralbos, Los",
+    "name": "Los Cerralbos",
     "regionCode": "45"
   },
   {
@@ -34221,7 +34221,7 @@
   },
   {
     "code": "45065",
-    "name": "Estrella, La",
+    "name": "La Estrella",
     "regionCode": "45"
   },
   {
@@ -34251,12 +34251,12 @@
   },
   {
     "code": "45071",
-    "name": "Guardia, La",
+    "name": "La Guardia",
     "regionCode": "45"
   },
   {
     "code": "45072",
-    "name": "Herencias, Las",
+    "name": "Las Herencias",
     "regionCode": "45"
   },
   {
@@ -34291,7 +34291,7 @@
   },
   {
     "code": "45079",
-    "name": "Iglesuela del Tiétar, La",
+    "name": "La Iglesuela del Tiétar",
     "regionCode": "45"
   },
   {
@@ -34371,7 +34371,7 @@
   },
   {
     "code": "45095",
-    "name": "Mata, La",
+    "name": "La Mata",
     "regionCode": "45"
   },
   {
@@ -34436,7 +34436,7 @@
   },
   {
     "code": "45108",
-    "name": "Nava de Ricomalillo, La",
+    "name": "La Nava de Ricomalillo",
     "regionCode": "45"
   },
   {
@@ -34456,12 +34456,12 @@
   },
   {
     "code": "45112",
-    "name": "Navalmorales, Los",
+    "name": "Los Navalmorales",
     "regionCode": "45"
   },
   {
     "code": "45113",
-    "name": "Navalucillos, Los",
+    "name": "Los Navalucillos",
     "regionCode": "45"
   },
   {
@@ -34571,22 +34571,22 @@
   },
   {
     "code": "45135",
-    "name": "Puebla de Almoradiel, La",
+    "name": "La Puebla de Almoradiel",
     "regionCode": "45"
   },
   {
     "code": "45136",
-    "name": "Puebla de Montalbán, La",
+    "name": "La Puebla de Montalbán",
     "regionCode": "45"
   },
   {
     "code": "45137",
-    "name": "Pueblanueva, La",
+    "name": "La Pueblanueva",
     "regionCode": "45"
   },
   {
     "code": "45138",
-    "name": "Puente del Arzobispo, El",
+    "name": "El Puente del Arzobispo",
     "regionCode": "45"
   },
   {
@@ -34616,7 +34616,7 @@
   },
   {
     "code": "45144",
-    "name": "Real de San Vicente, El",
+    "name": "El Real de San Vicente",
     "regionCode": "45"
   },
   {
@@ -34641,7 +34641,7 @@
   },
   {
     "code": "45149",
-    "name": "Romeral, El",
+    "name": "El Romeral",
     "regionCode": "45"
   },
   {
@@ -34731,7 +34731,7 @@
   },
   {
     "code": "45167",
-    "name": "Toboso, El",
+    "name": "El Toboso",
     "regionCode": "45"
   },
   {
@@ -34751,7 +34751,7 @@
   },
   {
     "code": "45171",
-    "name": "Torre de Esteban Hambrán, La",
+    "name": "La Torre de Esteban Hambrán",
     "regionCode": "45"
   },
   {
@@ -34801,17 +34801,17 @@
   },
   {
     "code": "45182",
-    "name": "Ventas con Peña Aguilera, Las",
+    "name": "Las Ventas con Peña Aguilera",
     "regionCode": "45"
   },
   {
     "code": "45183",
-    "name": "Ventas de Retamosa, Las",
+    "name": "Las Ventas de Retamosa",
     "regionCode": "45"
   },
   {
     "code": "45184",
-    "name": "Ventas de San Julián, Las",
+    "name": "Las Ventas de San Julián",
     "regionCode": "45"
   },
   {
@@ -34821,7 +34821,7 @@
   },
   {
     "code": "45186",
-    "name": "Villa de Don Fadrique, La",
+    "name": "La Villa de Don Fadrique",
     "regionCode": "45"
   },
   {
@@ -34886,12 +34886,12 @@
   },
   {
     "code": "45199",
-    "name": "Viso de San Juan, El",
+    "name": "El Viso de San Juan",
     "regionCode": "45"
   },
   {
     "code": "45200",
-    "name": "Yébenes, Los",
+    "name": "Los Yébenes",
     "regionCode": "45"
   },
   {
@@ -35016,12 +35016,12 @@
   },
   {
     "code": "46019",
-    "name": "Alcúdia, l'",
+    "name": "L'Alcúdia",
     "regionCode": "46"
   },
   {
     "code": "46020",
-    "name": "Alcúdia de Crespins, l'",
+    "name": "L'Alcúdia de Crespins",
     "regionCode": "46"
   },
   {
@@ -35106,7 +35106,7 @@
   },
   {
     "code": "46037",
-    "name": "Alqueria de la Comtessa, l'",
+    "name": "L'Alqueria de la Comtessa",
     "regionCode": "46"
   },
   {
@@ -35501,7 +35501,7 @@
   },
   {
     "code": "46116",
-    "name": "Eliana, l'",
+    "name": "L'Eliana",
     "regionCode": "46"
   },
   {
@@ -35516,7 +35516,7 @@
   },
   {
     "code": "46119",
-    "name": "Énova, l'",
+    "name": "L'Énova",
     "regionCode": "46"
   },
   {
@@ -35556,12 +35556,12 @@
   },
   {
     "code": "46127",
-    "name": "Font d'en Carròs, la",
+    "name": "La Font d'en Carròs",
     "regionCode": "46"
   },
   {
     "code": "46128",
-    "name": "Font de la Figuera, la",
+    "name": "La Font de la Figuera",
     "regionCode": "46"
   },
   {
@@ -35581,7 +35581,7 @@
   },
   {
     "code": "46132",
-    "name": "Genovés, el",
+    "name": "El Genovés",
     "regionCode": "46"
   },
   {
@@ -35606,7 +35606,7 @@
   },
   {
     "code": "46137",
-    "name": "Granja de la Costera, la",
+    "name": "La Granja de la Costera",
     "regionCode": "46"
   },
   {
@@ -35706,7 +35706,7 @@
   },
   {
     "code": "46157",
-    "name": "Llosa de Ranes, la",
+    "name": "La Llosa de Ranes",
     "regionCode": "46"
   },
   {
@@ -35836,7 +35836,7 @@
   },
   {
     "code": "46183",
-    "name": "Olleria, l'",
+    "name": "L'Olleria",
     "regionCode": "46"
   },
   {
@@ -35866,7 +35866,7 @@
   },
   {
     "code": "46189",
-    "name": "Palomar, el",
+    "name": "El Palomar",
     "regionCode": "46"
   },
   {
@@ -35916,12 +35916,12 @@
   },
   {
     "code": "46199",
-    "name": "Pobla de Farnals, la",
+    "name": "La Pobla de Farnals",
     "regionCode": "46"
   },
   {
     "code": "46200",
-    "name": "Pobla del Duc, la",
+    "name": "La Pobla del Duc",
     "regionCode": "46"
   },
   {
@@ -35931,17 +35931,17 @@
   },
   {
     "code": "46202",
-    "name": "Pobla de Vallbona, la",
+    "name": "La Pobla de Vallbona",
     "regionCode": "46"
   },
   {
     "code": "46203",
-    "name": "Pobla Llarga, la",
+    "name": "La Pobla Llarga",
     "regionCode": "46"
   },
   {
     "code": "46204",
-    "name": "Puig de Santa Maria, el",
+    "name": "El Puig de Santa Maria",
     "regionCode": "46"
   },
   {
@@ -35976,7 +35976,7 @@
   },
   {
     "code": "46211",
-    "name": "Real de Gandia, el",
+    "name": "El Real de Gandia",
     "regionCode": "46"
   },
   {
@@ -36231,7 +36231,7 @@
   },
   {
     "code": "46262",
-    "name": "Yesa, La",
+    "name": "La Yesa",
     "regionCode": "46"
   },
   {
@@ -36406,7 +36406,7 @@
   },
   {
     "code": "47031",
-    "name": "Campillo, El",
+    "name": "El Campillo",
     "regionCode": "47"
   },
   {
@@ -36741,7 +36741,7 @@
   },
   {
     "code": "47099",
-    "name": "Mudarra, La",
+    "name": "La Mudarra",
     "regionCode": "47"
   },
   {
@@ -36786,12 +36786,12 @@
   },
   {
     "code": "47110",
-    "name": "Parrilla, La",
+    "name": "La Parrilla",
     "regionCode": "47"
   },
   {
     "code": "47111",
-    "name": "Pedraja de Portillo, La",
+    "name": "La Pedraja de Portillo",
     "regionCode": "47"
   },
   {
@@ -37016,7 +37016,7 @@
   },
   {
     "code": "47158",
-    "name": "Seca, La",
+    "name": "La Seca",
     "regionCode": "47"
   },
   {
@@ -37106,7 +37106,7 @@
   },
   {
     "code": "47176",
-    "name": "Unión de Campos, La",
+    "name": "La Unión de Campos",
     "regionCode": "47"
   },
   {
@@ -37376,7 +37376,7 @@
   },
   {
     "code": "47232",
-    "name": "Zarza, La",
+    "name": "La Zarza",
     "regionCode": "47"
   },
   {
@@ -38056,7 +38056,7 @@
   },
   {
     "code": "49024",
-    "name": "Bóveda de Toro, La",
+    "name": "La Bóveda de Toro",
     "regionCode": "49"
   },
   {
@@ -38211,7 +38211,7 @@
   },
   {
     "code": "49058",
-    "name": "Cubo de Tierra del Vino, El",
+    "name": "El Cubo de Tierra del Vino",
     "regionCode": "49"
   },
   {
@@ -38366,7 +38366,7 @@
   },
   {
     "code": "49095",
-    "name": "Hiniesta, La",
+    "name": "La Hiniesta",
     "regionCode": "49"
   },
   {
@@ -38401,7 +38401,7 @@
   },
   {
     "code": "49102",
-    "name": "Maderal, El",
+    "name": "El Maderal",
     "regionCode": "49"
   },
   {
@@ -38606,7 +38606,7 @@
   },
   {
     "code": "49146",
-    "name": "Pego, El",
+    "name": "El Pego",
     "regionCode": "49"
   },
   {
@@ -38631,7 +38631,7 @@
   },
   {
     "code": "49151",
-    "name": "Perdigón, El",
+    "name": "El Perdigón",
     "regionCode": "49"
   },
   {
@@ -38666,7 +38666,7 @@
   },
   {
     "code": "49158",
-    "name": "Piñero, El",
+    "name": "El Piñero",
     "regionCode": "49"
   },
   {
@@ -38921,7 +38921,7 @@
   },
   {
     "code": "49220",
-    "name": "Torre del Valle, La",
+    "name": "La Torre del Valle",
     "regionCode": "49"
   },
   {
@@ -39291,7 +39291,7 @@
   },
   {
     "code": "50022",
-    "name": "Almolda, La",
+    "name": "La Almolda",
     "regionCode": "50"
   },
   {
@@ -39306,7 +39306,7 @@
   },
   {
     "code": "50025",
-    "name": "Almunia de Doña Godina, La",
+    "name": "La Almunia de Doña Godina",
     "regionCode": "50"
   },
   {
@@ -39486,12 +39486,12 @@
   },
   {
     "code": "50062",
-    "name": "Burgo de Ebro, El",
+    "name": "El Burgo de Ebro",
     "regionCode": "50"
   },
   {
     "code": "50063",
-    "name": "Buste, El",
+    "name": "El Buste",
     "regionCode": "50"
   },
   {
@@ -39631,7 +39631,7 @@
   },
   {
     "code": "50091",
-    "name": "Cuerlas, Las",
+    "name": "Las Cuerlas",
     "regionCode": "50"
   },
   {
@@ -39696,7 +39696,7 @@
   },
   {
     "code": "50106",
-    "name": "Fayos, Los",
+    "name": "Los Fayos",
     "regionCode": "50"
   },
   {
@@ -39711,12 +39711,12 @@
   },
   {
     "code": "50109",
-    "name": "Frago, El",
+    "name": "El Frago",
     "regionCode": "50"
   },
   {
     "code": "50110",
-    "name": "Frasno, El",
+    "name": "El Frasno",
     "regionCode": "50"
   },
   {
@@ -39816,7 +39816,7 @@
   },
   {
     "code": "50132",
-    "name": "Joyosa, La",
+    "name": "La Joyosa",
     "regionCode": "50"
   },
   {
@@ -40056,7 +40056,7 @@
   },
   {
     "code": "50182",
-    "name": "Muela, La",
+    "name": "La Muela",
     "regionCode": "50"
   },
   {
@@ -40171,7 +40171,7 @@
   },
   {
     "code": "50205",
-    "name": "Pedrosas, Las",
+    "name": "Las Pedrosas",
     "regionCode": "50"
   },
   {
@@ -40196,7 +40196,7 @@
   },
   {
     "code": "50210",
-    "name": "Pintanos, Los",
+    "name": "Los Pintanos",
     "regionCode": "50"
   },
   {
@@ -40241,7 +40241,7 @@
   },
   {
     "code": "50219",
-    "name": "Puebla de Alfindén, La",
+    "name": "La Puebla de Alfindén",
     "regionCode": "50"
   },
   {
@@ -40551,7 +40551,7 @@
   },
   {
     "code": "50282",
-    "name": "Vilueña, La",
+    "name": "La Vilueña",
     "regionCode": "50"
   },
   {
@@ -40621,7 +40621,7 @@
   },
   {
     "code": "50296",
-    "name": "Zaida, La",
+    "name": "La Zaida",
     "regionCode": "50"
   },
   {

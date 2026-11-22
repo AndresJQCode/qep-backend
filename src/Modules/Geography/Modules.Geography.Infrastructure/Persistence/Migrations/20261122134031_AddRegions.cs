@@ -27,6 +27,19 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "seed_state",
+                schema: "geography",
+                columns: table => new
+                {
+                    key = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
+                    content_hash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_seed_state", x => x.key);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "region_cities",
                 schema: "geography",
                 columns: table => new
@@ -68,6 +81,10 @@ namespace Modules.Geography.Infrastructure.Persistence.Migrations
         {
             migrationBuilder.DropTable(
                 name: "region_cities",
+                schema: "geography");
+
+            migrationBuilder.DropTable(
+                name: "seed_state",
                 schema: "geography");
 
             migrationBuilder.DropTable(
