@@ -9,7 +9,9 @@ namespace Modules.Siigo.Application.Invoicing;
 /// la pantalla muestre el total de Siigo junto al de QEP) y <c>orderChanged</c> dice que el pedido ya no estaba en la versión armada.
 /// <c>orderMarkFailed</c> avisa que la factura existe pero el pedido no se pudo marcar (se anuló o alguien lo marcó a mano): la pantalla
 /// lo muestra y el siguiente «Generar» reintenta sólo la marca. <c>hasPdf</c> dice si la pantalla ofrece «Descargar PDF»: la factura existe en
-/// Siigo con su id (la pantalla no puede deducirlo del estado: una resuelta a mano no tiene id). <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
+/// Siigo con su id (la pantalla no puede deducirlo del estado: una resuelta a mano no tiene id). <c>canSendWhatsApp</c> dice si la pantalla ofrece «Enviar por WhatsApp»: la fila tiene PDF <b>y</b> el pedido se puede entregar hoy
+/// (canal que se resuelve y cliente con teléfono). La pantalla no puede deducirlo: no ve los canales del tenant ni la elección guardada, y
+/// sólo lo calcula la lista (<c>GET …/siigo-invoice</c>); las respuestas de generar, sellar y resolver lo traen en <c>false</c>. <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
 /// </summary>
 public sealed record SiigoInvoiceDto(
     Guid Id,
@@ -26,9 +28,10 @@ public sealed record SiigoInvoiceDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     bool OrderMarkFailed = false,
-    bool HasPdf = false)
+    bool HasPdf = false,
+    bool CanSendWhatsApp = false)
 {
-    public static SiigoInvoiceDto From(SiigoInvoice invoice, bool orderMarkFailed = false) =>
+    public static SiigoInvoiceDto From(SiigoInvoice invoice, bool orderMarkFailed = false, bool canSendWhatsApp = false) =>
         new(
             invoice.Id,
             invoice.Kind.ToString(),
@@ -44,7 +47,8 @@ public sealed record SiigoInvoiceDto(
             invoice.CreatedAt,
             invoice.UpdatedAt,
             orderMarkFailed,
-            invoice.HasPdf);
+            invoice.HasPdf,
+            canSendWhatsApp && invoice.HasPdf);
 }
 
 /// <summary>Un pago de la factura armada. <paramref name="ProofId"/> dice de qué comprobante sale; <c>null</c> es el saldo.</summary>

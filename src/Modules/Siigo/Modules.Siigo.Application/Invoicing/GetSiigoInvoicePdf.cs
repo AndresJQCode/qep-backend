@@ -29,12 +29,8 @@ public sealed class GetSiigoInvoicePdfHandler(
         ArgumentNullException.ThrowIfNull(query);
         await SiigoInvoiceSupport.AuthorizeAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
 
-        var row = (await invoices.ListByOrderAsync(query.TenantId, query.OrderId, cancellationToken))
-            .FirstOrDefault(value => value.Id == query.InvoiceId && value.HasPdf)
-            ?? throw new ResourceNotFoundException(SiigoErrorCodes.InvoiceNotFound, "The order has no Siigo invoice with a PDF under that id.");
-
-        var credentials = await SiigoInvoiceSupport.CredentialsAsync(connections, query.TenantId, row.ConnectionId, cancellationToken);
-        var content = await api.GetInvoicePdfAsync(credentials, row.SiigoInvoiceId!, cancellationToken);
+        var row = await SiigoInvoiceSupport.FindWithPdfAsync(invoices, query.TenantId, query.OrderId, query.InvoiceId, cancellationToken);
+        var content = await SiigoInvoiceSupport.LoadPdfAsync(connections, api, row, cancellationToken);
         return new SiigoInvoicePdfDto(content, FileNameOf(row));
     }
 

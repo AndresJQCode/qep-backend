@@ -883,8 +883,16 @@ internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfSto
     /// <summary>Los bytes de cada copia de factura publicada, en orden.</summary>
     public List<byte[]> PublishedInvoices { get; } = [];
 
+    /// <summary>Si se pone, publicar la copia de la factura lanza esta falla (bucket público sin configurar, error de R2).</summary>
+    public Exception? InvoicePublishFailure { get; set; }
+
     public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken)
     {
+        if (InvoicePublishFailure is not null)
+        {
+            throw InvoicePublishFailure;
+        }
+
         PublishedInvoices.Add(content.ToArray());
         return Task.FromResult(InvoicePublicUrl);
     }
