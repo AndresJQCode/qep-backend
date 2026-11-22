@@ -64,8 +64,8 @@ Se liquida a un empleado cuando, en el período, su empresa empleadora es la del
 un día del período y es: tipo **Empleado**, salario **Mensual**, subtipo de cotizante **estándar**, no exento de pensión. La
 duración (indefinida, fija, obra o labor) no cambia el cálculo.
 
-Tampoco se liquida (y se dice por qué) a quien tiene un **salario menor al SMMLV** o **dos contratos que se cruzan en el
-período**: el piso del IBC y el reparto de tramos de otro contrato son reglas de otro proyecto.
+Tampoco se liquida (y se dice por qué) a quien tiene un **salario menor al SMMLV** o **dos o más contratos de la empresa en el
+período** (uno termina y otro empieza dentro de la quincena): el piso del IBC y el reparto de tramos de otro contrato son reglas de otro proyecto.
 
 Los demás **no se liquidan** y aparecen con el motivo en el validador previo; no bloquean el período. Un empleado liquidable
 al que le falta algo que el cálculo necesita (centro de trabajo, clase de riesgo, salario vigente) **sí bloquea** hasta
@@ -108,7 +108,9 @@ no haya períodos históricos). Cada año lleva un conjunto completo, aunque el 
 | Umbral de exoneración | menos de 10 SMMLV | igual | ET art. 114-1 |
 | Recargo dominical y festivo | 80 % desde 2025-07-01 | 90 % desde 2026-07-01 (100 % desde 2027-07-01, ya cargado) | Ley 2466/2025 |
 | Jornada semanal | 44 h desde 2025-07-15 | 42 h desde 2026-07-15 (47 h y 46 h de 2023 y 2024, ya cargadas) | Ley 2101/2021 art. 3 |
-| Extra diurna 25 %, extra nocturna 75 %, recargo nocturno 35 %, extra dominical diurna 2,15×, extra dominical nocturna 2,65×, recargo nocturno dominical 1,25× | igual | igual | CST, Ley 2466/2025 |
+| Extra diurna 25 %, extra nocturna 75 %, recargo nocturno 35 % | igual | igual | CST |
+
+Los tres tipos **dominicales se derivan, no se cargan como constantes**: extra dominical diurna = 1 + 25 % + recargo dominical vigente; extra dominical nocturna = 1 + 75 % + recargo dominical vigente; recargo nocturno dominical = 35 % + recargo dominical vigente. Con el 90 % vigente desde el 1 de julio de 2026 dan 2,15×, 2,65× y 1,25×; con el 80 % de antes darían 2,05×, 2,55× y 1,15×.
 
 El SMMLV y su fecha ya están (fase 1). Los valores se resuelven **a la fecha del período**, nunca «el actual», y el conjunto
 usado se guarda en la liquidación. Un valor publicado no se edita: se agrega una fila nueva con otra vigencia.
@@ -206,12 +208,12 @@ SMMLV ÷ 30 × días cotizados del mes** y **tope de 25 SMMLV** (Ley 797/2003, a
 
 **Deducciones del empleado.** Salud 4 % y pensión 4 %, **acumuladas del mes menos lo ya retenido** en la quincena anterior
 del mes: la primera quincena retiene sobre su propio IBC y la segunda ajusta la diferencia. **Fondo de Solidaridad
-Pensional** cuando el IBC del mes supera 4 SMMLV, por tramos, a cargo del empleado: la primera quincena retiene sólo si el
+Pensional** cuando el IBC del mes llega a 4 SMMLV o más (el límite inferior de cada tramo se incluye), por tramos, a cargo del empleado: la primera quincena retiene sólo si el
 salario base solo supera 4 SMMLV; la **segunda calcula el IBC del mes y retiene la diferencia**, incluida una devolución si
 sobró. Las deducciones recurrentes y puntuales se restan; **no puede quedar un neto negativo** (se avisa y se bloquea la
 aprobación).
 
-**Aportes del empleador.** Salud 8,5 %, pensión 12 % (26 % en un centro de alto riesgo), caja 4 %, ICBF 3 %, SENA 2 %, y ARL
+**Aportes del empleador.** Salud 8,5 %, pensión 12 % (22 % en un centro de alto riesgo: el 26 % total menos el 4 % del empleado), caja 4 %, ICBF 3 %, SENA 2 %, y ARL
 por la clase del **centro de trabajo** del empleado (no incluye auxilio ni no salariales). **Exoneración:** si la empresa es
 exonerada y el devengo salarial del empleado es menor de 10 SMMLV, no se pagan salud del empleador, ICBF ni SENA; la caja
 siempre se paga.
