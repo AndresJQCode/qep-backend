@@ -183,7 +183,51 @@ public static class SchedulingEndpoints
             .Produces<AppointmentDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/appointments/{id:guid}/confirm", async (
+                Guid tenantId, Guid id, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.SendAsync(new ConfirmAppointmentCommand(tenantId, id, IfMatchOf(httpContext)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .ProducesTransition();
+
+        group.MapPost("/appointments/{id:guid}/cancel", async (
+                Guid tenantId, Guid id, CancelAppointmentRequest? request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.SendAsync(new CancelAppointmentCommand(tenantId, id, request, IfMatchOf(httpContext)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .Accepts<CancelAppointmentRequest>("application/json")
+            .ProducesTransition();
+
+        group.MapPost("/appointments/{id:guid}/attend", async (
+                Guid tenantId, Guid id, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.SendAsync(new MarkAttendedCommand(tenantId, id, IfMatchOf(httpContext)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .ProducesTransition();
+
+        group.MapPost("/appointments/{id:guid}/no-show", async (
+                Guid tenantId, Guid id, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.SendAsync(new MarkNoShowCommand(tenantId, id, IfMatchOf(httpContext)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .ProducesTransition();
+
+        group.MapPut("/appointments/{id:guid}/reschedule", async (
+                Guid tenantId, Guid id, RescheduleAppointmentRequest request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.SendAsync(new RescheduleAppointmentCommand(tenantId, id, request, IfMatchOf(httpContext)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentManage)
+            .Accepts<RescheduleAppointmentRequest>("application/json")
+            .ProducesTransition();
     }
+
+    // Every transition answers the whole appointment and shares the same problems: 403 outside the scope, 404, 409 when a seat is taken
+    // (reschedule), 412/428 for If-Match and 422 for a closed appointment, a start before it begins or one the rules do not offer.
+    private static RouteHandlerBuilder ProducesTransition(this RouteHandlerBuilder builder) =>
+        builder
+            .Produces<AppointmentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
     private static void MapSetup(RouteGroupBuilder group) =>
         group.MapGet("/setup", async (Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

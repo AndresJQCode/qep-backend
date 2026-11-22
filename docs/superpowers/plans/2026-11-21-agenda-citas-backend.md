@@ -7,7 +7,7 @@
 
 ## Estado y traspaso (2026-11-21)
 
-Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A y B (Tareas 1 a 6) y la Tarea 7.** Faltan las Tareas 8 a 10 del Bloque C y el Bloque D.
+Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A y B (Tareas 1 a 6) y las Tareas 7 a 9.** Faltan la Tarea 10 del Bloque C y el Bloque D.
 
 | Tarea | Estado | Commit |
 | --- | --- | --- |
@@ -19,7 +19,7 @@ Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. *
 | 6 Persistencia, migración, aprovisionador | Hecha | `4fc9cbc` |
 | 7 Configuración (sedes, recursos, servicios, reglas, `setup`) | Hecha | `9c7b5de92` |
 | 8 Franjas, sesiones publicadas, bloqueos | Hecha | `42a3d4d0f` |
-| 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Por hacer | |
+| 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Hecha (sin correr `dotnet test`: orden del owner) | HASHES9 |
 | 10 Calendario y escritorio (lecturas BFF) | Por hacer | |
 | 11 Clientes: fusión y borrado | Por hacer | |
 | 12 Recordatorio por WhatsApp (dos commits) | Por hacer | |
@@ -124,6 +124,39 @@ La spec se corrige en el mismo commit que este plan.
     de la Tarea 6 se corrieron contra un Postgres 16 nativo con una copia local de `SchedulingDatabase` (no commiteada): 16 de 16 en verde. Para
     comprobar que la prueba vigila lo que dice, se desactivó la restricción de exclusión en la migración y fallaron exactamente las dos de
     solapamiento. Las de arriba de la API (Tareas 7 en adelante) sí necesitan el harness de siempre.
+
+Tarea 9 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suites al final):
+
+15. **Código nuevo `scheduling.appointment.not_found` (404).** Toda entidad direccionable por id tiene el suyo y la cita no estaba en la tabla del
+    contrato. Se agregó a `SchedulingErrorCodes` y a `TheContractCodesAreTheOnesTheFrontendWillMap`. Una cita del tenant fuera del alcance de quien
+    la pide responde 403 (se revisa sobre lo que la base devolvió), una que no existe en el tenant, 404.
+16. **El plazo de cancelación del cliente no tiene código propio:** cancelar por canal dentro de `clientCancelCutoffHours` responde 422
+    `scheduling.appointment.invalid_transition` con un mensaje que dice cuántas horas. Si el frontend necesita distinguirlo, es un código nuevo
+    que decide el owner. La regla vive en `AppointmentCancellationRules.ClientMayCancel` (`startsAt - now >= cutoff`; con plazo 0 el cliente cancela
+    hasta la hora de inicio, no después).
+17. **`source` en el cuerpo de reservar y de cancelar.** El contrato no decía cómo distingue el servidor «back office» de «canal» en la misma
+    ruta. `BookAppointmentRequest.Source` y `CancelAppointmentRequest.Source` admiten `BackOffice` (por defecto) o `Channel`; el agente de IA
+    de la Agenda llamará al mismo caso de uso con `Channel`, y mientras tanto la secretaria puede registrar una cita que pidieron por WhatsApp.
+    Con `Channel`: el servicio debe tener `bookableByChannel` (si no, 422 `outside_rules`), la cita nace según `confirmationMode` y sin actor,
+    y la cancelación aplica el plazo. `allowClientChoice` de la franja **no** se aplica todavía (el cliente por canal puede nombrar recurso).
+18. **`AvailabilityQuery.IgnoreOccupancy`.** Para separar 422 `outside_rules` («las reglas no ofrecen ese inicio») de 409 («alguien lo tiene»)
+    el motor responde, con esa bandera, sólo lo que dicen franjas, cierres, festivos, anticipación y horizonte (una sesión llena, o una publicada
+    que el tenant quitó, cuenta como ofrecida). Una vez con el candado, el motor corre sin la bandera y con las sesiones recién leídas.
+19. **Candado y orden.** `LockResourcesAsync` hace `SELECT id FROM scheduling.resources … ORDER BY id FOR UPDATE` de **todos** los recursos candidatos de
+    una vez (en orden de id, así dos reservas con los mismos candidatos no se cruzan), dentro de `ISchedulingUnitOfWork.BeginTransactionAsync`
+    (nuevo, calco de `ICatalogUnitOfWork`). Cancelar y reprogramar toman el mismo candado, para serializarse con las reservas del recurso.
+    **409 `session_full` sólo si la sesión llena es compartida (cupo > 1); una de cupo 1 llena es `slot_taken`**, que es lo que las dos pruebas de
+    concurrencia del plan esperan. Reprogramar libera el cupo viejo y guarda **antes** de tomar el nuevo (la exclusión se evalúa sentencia a
+    sentencia: el rango que la cita deja estorbaría al que ocupa, con un margen o al pasar al inicio siguiente); todo va en una transacción.
+20. **Migración `AddAppointmentClientRequestId`.** La idempotencia por `clientRequestId` necesita columna: `appointments.client_request_id`
+    (`varchar(100)`, nula) con índice único `(tenant_id, client_request_id) WHERE client_request_id IS NOT NULL`. Una repetición se contesta antes de
+    llegar al índice (dos veces: antes y después del candado); si dos primeras peticiones con la misma llave caen en recursos distintos a la vez,
+    el índice rechaza a la segunda con 409 `slot_taken` y su reintento encuentra la cita de la primera. `dotnet-ef` de esta máquina es la
+    10.0.11 (la librería es la 10.0.13): la migración y el snapshot salieron con aviso de versión; conviene regenerarlos con la 10.0.13 si el diff difiere.
+21. **`GET availability` acota el rango a 62 días** (`AvailabilityRequestValidator.MaxDays`, 422 en `to`) para acotar el trabajo del motor.
+22. **Límites conocidos, no resueltos:** (a) una sesión abierta por una reserva que se vació y se reabre conserva el rango y el cupo con que nació, aunque
+    el servicio o la franja hayan cambiado después; (b) `Appointment.BlockId` no cambia al reprogramar; (c) reprogramar sólo ofrece recursos de la sede de la
+    cita.
 
 ## Global Constraints
 
@@ -261,7 +294,7 @@ resourceName,start,source,requestedAgo}], unmarked[{…}], upcoming[{…}] }`. �
 | `scheduling.closure.overlaps_appointments`, `scheduling.resource.has_future_appointments`, `scheduling.service.in_use` | 422 |
 | `scheduling.resource.member_already_linked` (carrera sobre el índice único sede+miembro, traducida en Infrastructure por nombre de índice) | 422 |
 | `scheduling.session.has_appointments` (una sesión con alguna cita **no cancelada** no se quita; con sólo canceladas se desactiva, ver PD-3) | 422 |
-| `scheduling.location.not_found`, `scheduling.resource.not_found`, `scheduling.service.not_found`, `scheduling.block.not_found`, `scheduling.closure.not_found`, `scheduling.session.not_found` | 404 |
+| `scheduling.location.not_found`, `scheduling.resource.not_found`, `scheduling.service.not_found`, `scheduling.block.not_found`, `scheduling.closure.not_found`, `scheduling.session.not_found`, `scheduling.appointment.not_found` | 404 |
 | `scheduling.location.main_cannot_be_archived`, `scheduling.session.not_published_mode` | 422 |
 | `scheduling.reminder.template_missing`, `…connection_invalid` | 422 |
 | recurso fuera de alcance, sin permiso | 403 `authorization.denied` |

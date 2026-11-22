@@ -702,6 +702,22 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Scheduling.Application.GetAppointmentQuery, Modules.Scheduling.Application.AppointmentDto>,
             Modules.Scheduling.Application.GetAppointmentHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentTransitions>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ConfirmAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.ConfirmAppointmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CancelAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.CancelAppointmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.MarkAttendedCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.MarkAttendedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.MarkNoShowCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.MarkNoShowHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.RescheduleAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.RescheduleAppointmentHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
