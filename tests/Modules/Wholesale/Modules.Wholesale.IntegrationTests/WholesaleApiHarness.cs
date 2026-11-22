@@ -166,14 +166,17 @@ internal static class WholesaleApiHarness
         QepApiFactory factory,
         string email = "ana@distri.co",
         string identificationNumber = "900123456",
-        string businessName = DefaultBusinessName)
+        string businessName = DefaultBusinessName,
+        string country = "CO",
+        string identificationType = "NIT")
     {
         var wholesaler = await NewTenantAsync(factory);
         using var manager = CreateManager(factory, wholesaler);
         var list = await CreatePriceListAsync(manager, wholesaler.TenantId, "Oro", 10m);
         var company = await CreateCompanyAsync(manager, wholesaler.TenantId, "Mayorista Central SAS");
         var (distributor, token) = await InviteAsync(
-            factory, manager, wholesaler, list.Id, company, email, identificationNumber, businessName);
+            factory, manager, wholesaler, list.Id, company, email, identificationNumber, businessName, country,
+            identificationType);
         return (wholesaler, distributor, token);
     }
 
@@ -367,7 +370,9 @@ internal static class WholesaleApiHarness
         Guid billingCompanyId,
         string email = "ana@distri.co",
         string identificationNumber = "900123456",
-        string businessName = DefaultBusinessName)
+        string businessName = DefaultBusinessName,
+        string country = "CO",
+        string identificationType = "NIT")
     {
         var response = await client.PostAsJsonAsync(
             DistributorsUrl(tenant.TenantId),
@@ -375,8 +380,8 @@ internal static class WholesaleApiHarness
             {
                 email,
                 businessName,
-                country = "CO",
-                identificationType = "NIT",
+                country,
+                identificationType,
                 identificationNumber,
                 contactName = "Ana Pérez",
                 priceListId,
