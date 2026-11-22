@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ClosedXML.Excel;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Payroll.Application;
 using static Modules.Payroll.IntegrationTests.PayrollApiHarness;
 using static Modules.Payroll.IntegrationTests.PayrollApiSeeds;
@@ -360,6 +361,26 @@ public sealed class PayrollInputsImportApiTests : IClassFixture<PayrollApiFixtur
         scene.Tenant.Dispose();
     }
 
+    // The 5 MB check in the analyzer runs after the form is buffered, so the routes carry a body limit of their own (Kestrel turns the
+    // metadata into the real limit; the in-memory test server does not enforce it, so the metadata is what is asserted).
+    [Fact]
+    public void TheImportRoutesCarryARequestSizeLimit()
+    {
+        var limits = _fixture.Factory.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints
+            .OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText?.Contains("/inputs/import", StringComparison.Ordinal) == true
+                && endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.HttpMethodMetadata>()?.HttpMethods.Contains("POST") == true)
+            .Select(endpoint => endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Http.Metadata.IRequestSizeLimitMetadata>())
+            .ToList();
+
+        Assert.Equal(2, limits.Count);
+        Assert.All(limits, limit =>
+        {
+            Assert.NotNull(limit);
+            Assert.True(limit.MaxRequestBodySize > InputsImportColumns.MaxSizeInBytes);
+            Assert.True(limit.MaxRequestBodySize <= 2 * InputsImportColumns.MaxSizeInBytes);
+        });
+    }
     [Fact]
     public async Task ApprovedPeriodsDoNotImport()
     {
