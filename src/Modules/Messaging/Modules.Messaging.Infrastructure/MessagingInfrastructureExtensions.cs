@@ -32,6 +32,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
+        // Spec 2026-11-21: la factura de Siigo, por el mismo núcleo que el pedido.
+        services.AddScoped<IInvoiceTemplateOutbound, InvoiceTemplateOutbound>();
         // Mayorista: el aviso por WhatsApp de una invitación de distribuidor, por el mismo núcleo que la plantilla de cobro.
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
         // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
