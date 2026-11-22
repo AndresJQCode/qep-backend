@@ -794,6 +794,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(80)")
                         .HasColumnName("type_name");
 
+                    b.Property<DateTimeOffset?>("UnassignedSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unassigned_since");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -807,6 +811,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("AssigneeMemberId")
                         .HasDatabaseName("IX_tickets_assignee");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_tickets_unassigned")
+                        .HasFilter("assignee_member_id IS NULL");
 
                     b.HasIndex("TypeId");
 
@@ -1596,6 +1604,34 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         {
                             t.ExcludeFromMigrations();
                         });
+                });
+
+            modelBuilder.Entity("Modules.Support.Infrastructure.Persistence.SupportUnassignedAlertClaim", b =>
+                {
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<DateTimeOffset>("UnassignedSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unassigned_since");
+
+                    b.Property<DateTimeOffset>("AlertedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("alerted_at");
+
+                    b.Property<int>("RecipientCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("recipient_count");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("TicketId", "UnassignedSince")
+                        .HasName("PK_unassigned_alerts");
+
+                    b.ToTable("unassigned_alerts", "support");
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportReplyDocument", b =>

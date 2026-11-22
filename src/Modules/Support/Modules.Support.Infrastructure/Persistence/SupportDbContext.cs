@@ -128,6 +128,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportTicketNote> TicketNotes => Set<SupportTicketNote>();
 
+    // Spec 2026-11-22 D-16: the claim of each unassigned alert. The worker writes it with SQL; the DbSet exists so the model owns the table.
+    internal DbSet<SupportUnassignedAlertClaim> UnassignedAlerts => Set<SupportUnassignedAlertClaim>();
+
     public DbSet<SupportTicketNoteFile> TicketNoteFiles => Set<SupportTicketNoteFile>();
 
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
@@ -157,6 +160,20 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureLegalAcceptance(modelBuilder);
         ConfigureTicketAttachment(modelBuilder);
         ConfigureTicketNote(modelBuilder);
+        ConfigureUnassignedAlert(modelBuilder);
+    }
+
+    // Spec 2026-11-22 D-16. No foreign key to the ticket: the claim is bookkeeping about a stretch, and nothing deletes tickets today.
+    private static void ConfigureUnassignedAlert(ModelBuilder modelBuilder)
+    {
+        var claim = modelBuilder.Entity<SupportUnassignedAlertClaim>();
+        claim.ToTable("unassigned_alerts", Schema);
+        claim.HasKey(value => new { value.TicketId, value.UnassignedSince }).HasName("PK_unassigned_alerts");
+        claim.Property(value => value.TicketId).HasColumnName("ticket_id").ValueGeneratedNever();
+        claim.Property(value => value.UnassignedSince).HasColumnName("unassigned_since").ValueGeneratedNever();
+        claim.Property(value => value.TenantId).HasColumnName("tenant_id");
+        claim.Property(value => value.RecipientCount).HasColumnName("recipient_count");
+        claim.Property(value => value.AlertedAt).HasColumnName("alerted_at");
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
@@ -601,6 +618,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.Property(value => value.Priority).HasColumnName("priority").HasConversion<string>().HasMaxLength(24);
         // Responsable y cliente son referencias blandas: viven en otros esquemas.
         ticket.Property(value => value.AssigneeMemberId).HasColumnName("assignee_member_id");
+        // Spec 2026-11-22 D-15: since when it has been without an assignee in a status that counts. Nullable, no default: the migration
+        // stamps the rows that are in that situation when it runs, and the domain keeps it afterwards.
+        ticket.Property(value => value.UnassignedSince).HasColumnName("unassigned_since");
         ticket.Property(value => value.CustomerId).HasColumnName("customer_id");
         ticket.OwnsOne(value => value.Requester, requester =>
         {
@@ -694,6 +714,8 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.HasIndex(value => new { value.TenantId, value.CustomerId }).HasDatabaseName("IX_tickets_tenant_customer");
         // Para SupportUserReferenceProbe, que busca por membresía sola, sin tenant: un usuario se borra en todos sus tenants.
         ticket.HasIndex(value => value.AssigneeMemberId).HasDatabaseName("IX_tickets_assignee");
+        // Spec 2026-11-22 D-15: the alert worker looks only at tickets without an assignee, by tenant.
+        ticket.HasIndex(value => value.TenantId).HasFilter("assignee_member_id IS NULL").HasDatabaseName("IX_tickets_unassigned");
         // Los tickets de una conversación: los candidatos de cada entrante y la pestaña de Soporte de la ficha.
         ticket.HasIndex(value => new { value.TenantId, value.ConversationId })
             .HasFilter("conversation_id IS NOT NULL")

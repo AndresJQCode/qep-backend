@@ -1,0 +1,88 @@
+using Microsoft.EntityFrameworkCore;
+using Modules.Support.Domain;
+
+namespace Modules.Support.Infrastructure.Persistence;
+
+/// <summary>
+/// Spec 2026-11-22 §7 and D-15/D-16: what the unassigned-alert worker reads and writes. Raw SQL on purpose: the heal and the claim must not
+/// touch the ticket's <c>version</c> (nobody editing a ticket should ever get a 412 because of an alert), and the claim is an
+/// <c>INSERT … ON CONFLICT DO NOTHING</c> that EF does not model. Every query filters by tenant.
+/// </summary>
+internal sealed class SupportUnassignedAlertStore(SupportDbContext dbContext)
+{
+    /// <summary>The tenants that have the alert on, with what the worker needs to count (the threshold, the schedule, the floor of the
+    /// clock and the recipients).</summary>
+    public async Task<IReadOnlyList<SupportTenantSettings>> ListEnabledAsync(CancellationToken cancellationToken) =>
+        await dbContext.TenantSettings.AsNoTracking()
+            .Where(settings => settings.UnassignedAlertEnabled)
+            .OrderBy(settings => settings.TenantId)
+            .ToListAsync(cancellationToken);
+
+    /// <summary>
+    /// D-15: tickets without an assignee, in a status that counts and with a null <c>unassigned_since</c> (written by a pod from before this
+    /// change during the rollout) get it stamped with <paramref name="now"/>. A plain <c>UPDATE</c> that does not touch <c>version</c> nor
+    /// <c>updated_at</c>: it is bookkeeping, not an edit. Returns how many it healed.
+    /// </summary>
+    public Task<int> HealAsync(Guid tenantId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE support.tickets
+            SET unassigned_since = {now.ToUniversalTime()}
+            WHERE tenant_id = {tenantId}
+              AND assignee_member_id IS NULL
+              AND status IN ('New', 'Open', 'WaitingInternal')
+              AND unassigned_since IS NULL
+            """,
+            cancellationToken);
+
+    /// <summary>
+    /// The oldest unassigned tickets of the tenant that have no claim for their current stretch and have been at it, on the wall clock, for
+    /// at least <paramref name="notBefore"/> (business hours never exceed wall-clock hours, so the rest cannot have reached the
+    /// threshold). Ordered by <c>unassigned_since</c>, oldest first: if one of them has not reached the threshold in business hours,
+    /// no later one has either, which lets the worker stop at the first miss.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> ListCandidateIdsAsync(
+        Guid tenantId, DateTimeOffset notBefore, int take, CancellationToken cancellationToken) =>
+        await dbContext.Database
+            .SqlQuery<Guid>(
+                $"""
+                SELECT t.id AS "Value"
+                FROM support.tickets t
+                WHERE t.tenant_id = {tenantId}
+                  AND t.assignee_member_id IS NULL
+                  AND t.status IN ('New', 'Open', 'WaitingInternal')
+                  AND t.unassigned_since IS NOT NULL
+                  AND t.unassigned_since <= {notBefore.ToUniversalTime()}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM support.unassigned_alerts a
+                      WHERE a.ticket_id = t.id AND a.unassigned_since = t.unassigned_since)
+                ORDER BY t.unassigned_since, t.id
+                LIMIT {take}
+                """)
+            .ToListAsync(cancellationToken);
+
+    /// <summary>The ticket, read without tracking: the worker only needs its ids and number to write the event.</summary>
+    public Task<SupportTicket?> FindTicketAsync(Guid tenantId, Guid ticketId, CancellationToken cancellationToken) =>
+        dbContext.Tickets.AsNoTracking()
+            .SingleOrDefaultAsync(ticket => ticket.TenantId == tenantId && ticket.Id == new SupportTicketId(ticketId), cancellationToken);
+
+    /// <summary>
+    /// The claim of the alert of this stretch: <c>true</c> if this call inserted it, <c>false</c> if another replica (or an earlier tick) had.
+    /// It must run in the transaction that also saves the event, so a claim never exists without its event (or without the note that there
+    /// was nobody to tell).
+    /// </summary>
+    public async Task<bool> TryClaimAsync(
+        Guid tenantId,
+        Guid ticketId,
+        DateTimeOffset unassignedSince,
+        int recipientCount,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO support.unassigned_alerts (ticket_id, unassigned_since, tenant_id, recipient_count, alerted_at)
+            VALUES ({ticketId}, {unassignedSince.ToUniversalTime()}, {tenantId}, {recipientCount}, {now.ToUniversalTime()})
+            ON CONFLICT (ticket_id, unassigned_since) DO NOTHING
+            """,
+            cancellationToken) == 1;
+}

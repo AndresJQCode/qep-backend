@@ -80,12 +80,15 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<SupportSurveySender>();
         services.AddScoped<SupportSurveyAnswers>();
         services.AddScoped<SupportAutoCloser>();
+        // Spec 2026-11-22 §7 and D-16: the unassigned-ticket alert reads and claims through this store.
+        services.AddScoped<SupportUnassignedAlertStore>();
         services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
         if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
         {
             services.AddHostedService<SupportThreadFollowWorker>();
             services.AddHostedService<SupportSurveyWorker>();
             services.AddHostedService<SupportAutoCloseWorker>();
+            services.AddHostedService<SupportUnassignedAlertWorker>();
         }
 
         return services;

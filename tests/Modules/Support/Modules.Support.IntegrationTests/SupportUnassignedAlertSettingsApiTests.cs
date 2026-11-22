@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Support.Application;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
@@ -139,7 +138,7 @@ public sealed class SupportUnassignedAlertSettingsApiTests(SharedSupportHost sha
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
         var ana = await SeedManagerAsync(factory, tenant, "Ana");
         var (_, _, otherTenant) = await NewTenantAsync();
-        var foreign = await CreateScheduleAsync(factory, otherTenant, "Ajeno");
+        var foreign = await CreateOfficeScheduleAsync(factory, otherTenant, "Ajeno");
 
         var response = await PutAsync(
             client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, unassignedAlert = Alert(true, 4, foreign, ana) }, version: 1);
@@ -195,7 +194,7 @@ public sealed class SupportUnassignedAlertSettingsApiTests(SharedSupportHost sha
     {
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
         var ana = await SeedManagerAsync(factory, tenant, "Ana");
-        var chosen = await CreateScheduleAsync(factory, tenant, "Oficina");
+        var chosen = await CreateOfficeScheduleAsync(factory, tenant, "Oficina");
         var saved = await PutAsync(
             client, SettingsUrl(tenant), new { dueSoonBusinessDays = 3, unassignedAlert = Alert(true, 4, chosen, ana) }, version: 1);
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
@@ -218,7 +217,7 @@ public sealed class SupportUnassignedAlertSettingsApiTests(SharedSupportHost sha
     {
         // The member has support.settings.manage and no messaging.conversation.read: the names still arrive, under Support's permission.
         var (factory, client, tenant) = await NewTenantAsync(SupportPermissions.SettingsManage);
-        var office = await CreateScheduleAsync(factory, tenant, "Oficina");
+        var office = await CreateOfficeScheduleAsync(factory, tenant, "Oficina");
 
         var alert = AlertOf(await JsonAsync(await client.GetAsync(SettingsUrl(tenant), Ct)));
 
@@ -228,21 +227,6 @@ public sealed class SupportUnassignedAlertSettingsApiTests(SharedSupportHost sha
 
     private static Task<Guid> SeedManagerAsync(QepApiFactory factory, string tenant, string name) =>
         SeedMemberAsync(factory, $"{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com", name, "admin", tenantId: tenant);
-
-    private static async Task<Guid> CreateScheduleAsync(QepApiFactory factory, string tenant, string name)
-    {
-        using var client = CreateClient(
-            factory, SubjectId, tenant, "messaging.conversation.read", "messaging.business_hours.manage");
-        var weekly = Enumerable.Range(1, 7)
-            .Select(day => new { day, ranges = day <= 5 ? new[] { new { from = 480, to = 1080 } } : [] })
-            .ToArray();
-        var response = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenant}/messaging/business-hours",
-            new { name, weekly, exceptions = Array.Empty<object>(), holidayCountry = (string?)null, connectionIds = Array.Empty<Guid>() },
-            Ct);
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        return (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetGuid();
-    }
 
     private static async Task DeleteScheduleAsync(QepApiFactory factory, string tenant, Guid scheduleId)
     {
