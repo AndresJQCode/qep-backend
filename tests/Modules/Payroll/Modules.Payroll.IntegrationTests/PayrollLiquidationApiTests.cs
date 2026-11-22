@@ -597,4 +597,33 @@ public sealed class PayrollLiquidationApiTests : IClassFixture<PayrollApiFixture
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         scene.Tenant.Dispose();
     }
+
+    // Review M-2: approve, close and reopen need the version the screen loaded.
+    [Fact]
+    public async Task ApproveCloseAndReopenNeedAFreshIfMatch()
+    {
+        var scene = await NewSceneAsync();
+        await LiquidatedAsync(scene);
+        var reason = new { reason = "Corregir" };
+
+        Assert.Equal((HttpStatusCode)428, (await PostAsync(scene.Tenant.Payroll, $"{scene.PeriodUrl()}/approve", null)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.PreconditionFailed,
+            (await PostWithVersionAsync(scene.Tenant.Payroll, scene, "approve", ifMatch: "\"999\"")).StatusCode);
+        await ApprovedAsync(scene);
+
+        Assert.Equal((HttpStatusCode)428, (await PostAsync(scene.Tenant.Payroll, $"{scene.PeriodUrl()}/close", null)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.PreconditionFailed,
+            (await PostWithVersionAsync(scene.Tenant.Payroll, scene, "close", ifMatch: "\"999\"")).StatusCode);
+
+        Assert.Equal((HttpStatusCode)428, (await PostAsync(scene.Tenant.Payroll, $"{scene.PeriodUrl()}/reopen", null, reason)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.PreconditionFailed,
+            (await PostWithVersionAsync(scene.Tenant.Payroll, scene, "reopen", body: reason, ifMatch: "\"999\"")).StatusCode);
+
+        // None of the refused writes changed the period.
+        Assert.Equal("Approved", (await DetailAsync(scene.Tenant.Payroll, scene)).GetProperty("period").GetProperty("status").GetString());
+        scene.Tenant.Dispose();
+    }
 }

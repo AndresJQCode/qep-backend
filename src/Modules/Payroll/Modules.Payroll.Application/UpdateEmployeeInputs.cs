@@ -43,7 +43,7 @@ public sealed class UpdateEmployeeInputsHandler(
         PayrollSupport.EnsureVersion(period.Version, expectedVersion);
         period.EnsureEditable();
 
-        var smmlv = (await legalValues.ResolveAsync(period.StartDate, cancellationToken)).Smmlv.Value;
+        var smmlv = (await PayrollResultMapper.LegalOfAsync(period, legalValues, cancellationToken)).Smmlv.Value;
         var employees = await hr.ListEmployeesAsync(
             command.TenantId, period.CompanyId, period.StartDate, period.EndDate, cancellationToken);
         var employee = employees.FirstOrDefault(candidate => candidate.EmployeeId == command.EmployeeId)

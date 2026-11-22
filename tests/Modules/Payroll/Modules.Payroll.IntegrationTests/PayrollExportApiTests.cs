@@ -272,4 +272,35 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
         Assert.Equal(detailBefore.GetProperty("period").GetProperty("totals").GetRawText(), detailAfter.GetProperty("period").GetProperty("totals").GetRawText());
         Assert.Equal(employeeBefore.GetProperty("result").GetRawText(), employeeAfter.GetProperty("result").GetRawText());
     }
+
+    // Review M-1: text that starts like a formula is stored and shown as text, never evaluated.
+    [Fact]
+    public async Task TextStartingLikeAFormulaIsStoredAsText()
+    {
+        var tenant = await NewTenantAsync(_fixture);
+        var company = await SeedCompanyAsync(tenant, "=Empresa Peligrosa", "Principal", "+Bodega", riskClass: "I");
+        var area = await CreatedAsync(tenant.Payroll, $"{tenant.HrBase}/areas", new { name = "Operaciones" });
+        var position = await CreatedAsync(tenant.Payroll, $"{tenant.HrBase}/positions", new { name = "@Analista" });
+        var setup = new SeededSetup(
+            company.Company, company.SiteId, company.WorkplaceId, area.GetProperty("id").GetGuid(), position.GetProperty("id").GetGuid());
+        await HireAsync(tenant, HireBody(setup, startDate: "2025-01-01", amount: 1_750_905m, firstName: "=SUMA(1;1)", lastName: "-Ruiz"));
+        var ensured = await tenant.Payroll.PostAsync($"{tenant.Url}/companies/{setup.Company.Id}/periods/ensure-current", null, Ct);
+        var periodId = (await JsonOfAsync(ensured)).GetProperty("items")[0].GetProperty("id").GetGuid();
+        var scene = new Scene(tenant, setup, Guid.Empty, Guid.Empty, periodId);
+        await LiquidateAsync(scene);
+
+        using var workbook = await WorkbookOfAsync(await ExportAsync(scene));
+
+        var sheet = workbook.Worksheet("Resumen");
+        var name = sheet.Cell(TitleRow + 1, 3);
+        Assert.False(name.HasFormula);
+        Assert.Equal("=SUMA(1;1) -Ruiz", name.GetString());
+        Assert.False(sheet.Cell(1, 2).HasFormula);
+        Assert.Equal("=Empresa Peligrosa", sheet.Cell(1, 2).GetString());
+        Assert.False(sheet.Cell(TitleRow + 1, 4).HasFormula);
+        Assert.Equal("@Analista", sheet.Cell(TitleRow + 1, 4).GetString());
+        Assert.False(sheet.Cell(TitleRow + 1, 5).HasFormula);
+        Assert.Equal("+Bodega - Principal", sheet.Cell(TitleRow + 1, 5).GetString());
+        tenant.Dispose();
+    }
 }

@@ -47,6 +47,14 @@ public static class PayrollResultMapper
     public static LegalValueSet? ParseLegal(string? json) =>
         string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<LegalValueSet>(json, PayrollJson.Options);
 
+    /// <summary>
+    /// The legal values a period reads: its own photo once it was liquidated, and only before that the ones in force on its start
+    /// date. A corrective row inserted later must not change what a liquidated period shows or accepts.
+    /// </summary>
+    public static async Task<LegalValueSet> LegalOfAsync(
+        PayrollPeriod period, IPayrollLegalValues legalValues, CancellationToken cancellationToken) =>
+        ParseLegal(period.LegalValuesJson) ?? await legalValues.ResolveAsync(period.StartDate, cancellationToken);
+
     public static string ToJson(LegalValueSet legal) => JsonSerializer.Serialize(legal, PayrollJson.Options);
 
     public static PayrollLineDto ToDto(PayrollLine line) => new(

@@ -119,7 +119,7 @@ public sealed class PeriodComposer(
                 stored);
         }
 
-        var smmlv = (await legalValues.ResolveAsync(period.StartDate, cancellationToken)).Smmlv.Value;
+        var smmlv = (await PayrollResultMapper.LegalOfAsync(period, legalValues, cancellationToken)).Smmlv.Value;
         var employees = await hr.ListEmployeesAsync(
             period.TenantId, period.CompanyId, period.StartDate, period.EndDate, cancellationToken);
         var storedByEmployee = stored.ToDictionary(result => result.EmployeeId);
