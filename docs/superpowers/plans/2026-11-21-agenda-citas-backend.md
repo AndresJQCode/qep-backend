@@ -93,6 +93,7 @@ La spec se corrige en el mismo commit que este plan.
    restricción) **no se implementa**; sólo se documenta como remedio si una base concreta lo negara.
 4. **Auditoría.** La spec decía `IAuditRecorder` y outbox; Hr y Loans usan un `I<Modulo>AuditPublisher` propio sin eventos de outbox.
    Scheduling copia `IHrAuditPublisher` y **no publica eventos**. La tarea 9 verifica en `HrAuditPublisher` cuál de los dos caminos usa.
+   **Adelantada (decisión del owner, 2026-11-22):** la auditoría de la configuración (sedes, recursos, servicios, reglas, franjas, bloqueos y sesiones publicadas) se hizo antes de la Tarea 9, con `ISchedulingAuditPublisher`, `SchedulingAuditActions` y la proyección de `audit.entries` (migración `AddSchedulingAuditProjection`, vacía). La Tarea 9 sólo añade la auditoría de las citas, con el mismo puerto.
 
 ## Correcciones durante la implementación
 
@@ -231,6 +232,9 @@ resourceName,start,source,requestedAgo}], unmarked[{…}], upcoming[{…}] }`. �
 | `scheduling.appointment.slot_taken`, `…session_full` | 409 |
 | `scheduling.appointment.invalid_transition`, `…outside_rules`, `…before_start` | 422 |
 | `scheduling.closure.overlaps_appointments`, `scheduling.resource.has_future_appointments`, `scheduling.service.in_use` | 422 |
+| `scheduling.resource.member_already_linked` (carrera sobre el índice único sede+miembro, traducida en Infrastructure por nombre de índice) | 422 |
+| `scheduling.session.has_appointments` (una sesión con citas, aun canceladas, no se quita) | 422 |
+| `scheduling.location.not_found`, `scheduling.resource.not_found`, `scheduling.service.not_found`, `scheduling.block.not_found`, `scheduling.closure.not_found`, `scheduling.session.not_found` | 404 |
 | `scheduling.location.main_cannot_be_archived`, `scheduling.session.not_published_mode` | 422 |
 | `scheduling.reminder.template_missing`, `…connection_invalid` | 422 |
 | recurso fuera de alcance, sin permiso | 403 `authorization.denied` |
