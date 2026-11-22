@@ -27,7 +27,8 @@ internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
 }
 
 /// <summary>Los canales del tenant, fijos por prueba (spec 2026-10-21). Replica la única regla por documento del adaptador real
-/// (spec 2026-11-09 D6) que un handler puede notar: para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible.
+/// (spec 2026-11-09 D6) que un handler puede notar: para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible, y
+/// para una factura, una sin <c>InvoiceTemplateId</c>.
 /// <see cref="Documents"/> guarda qué documento pidió cada llamada.</summary>
 internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] channels) : IWhatsAppChannelDirectory
 {
@@ -37,9 +38,12 @@ internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] chan
     {
         Documents.Add(document);
         return Task.FromResult<IReadOnlyList<WhatsAppChannel>>(
-            document == WhatsAppDocument.Order
-                ? [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })]
-                : channels);
+            document switch
+            {
+                WhatsAppDocument.Order => [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })],
+                WhatsAppDocument.Invoice => [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { InvoiceTemplateId: null or "" })],
+                _ => channels,
+            });
     }
 }
 
@@ -80,9 +84,12 @@ internal static class WhatsAppChannels
 {
     public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-    public static ZenviaWhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
+    public const string InvoiceTemplateId = "5f6e7d8c-9b0a-4c1d-8e2f-3a4b5c6d7e8f";
+
+    public static ZenviaWhatsAppChannel Any(
+        Guid? connectionId = null, string? orderTemplateId = OrderTemplateId, string? invoiceTemplateId = InvoiceTemplateId) =>
         new(connectionId ?? Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000",
-            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
+            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId, invoiceTemplateId);
 
     public static MetaWhatsAppChannel Meta(Guid? connectionId = null) =>
         new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233");

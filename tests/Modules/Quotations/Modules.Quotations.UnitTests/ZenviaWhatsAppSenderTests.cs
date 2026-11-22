@@ -362,6 +362,20 @@ public sealed class ZenviaWhatsAppSenderTests
                 fields.GetProperty("total").GetString()));
     }
 
+    // Mismo contrato que el del pedido: el log lleva el id del mensaje y el número, nunca el teléfono ni la URL
+    // pública (un log se copia a soporte, y la URL de la factura queda abierta a quien la tenga).
+    [Fact]
+    public async Task SendInvoiceLogsTheZenviaMessageIdButNotThePhoneOrTheUrl()
+    {
+        var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-fac-1"}""");
+
+        await sender.SendInvoiceAsync(Channel(), InvoiceMessage, TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Messages, message => message.Contains("zid-fac-1") && message.Contains("FV-1-123"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("factura.pdf"));
+    }
+
     [Fact]
     public async Task AnInvoiceWithoutTemplateIdFailsWithInvoiceSendFailed()
     {
