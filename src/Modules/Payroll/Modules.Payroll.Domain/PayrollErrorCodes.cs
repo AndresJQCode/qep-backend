@@ -69,6 +69,7 @@ public static class PayrollErrorCodes
     public const string ImportRowSalaryConstitutiveRequired = "payroll.import.row.salary_constitutive_required";
     public const string ImportRowSalaryConstitutiveNotAllowed = "payroll.import.row.salary_constitutive_not_allowed";
     public const string ImportRowOvertimeDuplicatedInFile = "payroll.import.row.overtime_duplicated_in_file";
+    public const string ImportRowTooManyLines = "payroll.import.row.too_many_lines";
 
     /// <summary>Los códigos que se responden 409: el caso de uso los convierte, y el resto de <see cref="PayrollDomainException"/> sigue 422.</summary>
     public static readonly IReadOnlySet<string> Conflicts = new HashSet<string>(StringComparer.Ordinal)

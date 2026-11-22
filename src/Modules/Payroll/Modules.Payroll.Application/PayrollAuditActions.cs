@@ -13,6 +13,7 @@ public static class PayrollAuditActions
     public const string ConceptArchived = "payroll.concept.archived";
     public const string ConceptUnarchived = "payroll.concept.unarchived";
     public const string InputsUpdated = "payroll.period.inputs_updated";
+    public const string InputsImported = "payroll.inputs.imported";
     public const string PeriodLiquidated = "payroll.period.liquidated";
     public const string PeriodApproved = "payroll.period.approved";
     public const string PeriodClosed = "payroll.period.closed";

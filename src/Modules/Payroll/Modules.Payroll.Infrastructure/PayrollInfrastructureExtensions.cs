@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Payroll.Application;
+using Modules.Payroll.Infrastructure.Excel;
 using Modules.Payroll.Infrastructure.Persistence;
 
 namespace Modules.Payroll.Infrastructure;
@@ -30,6 +31,8 @@ public static class PayrollInfrastructureExtensions
         services.AddScoped<IPayrollPeriodRepository, PayrollPeriodRepository>();
         services.AddScoped<IPayrollResultStore, PayrollResultStore>();
         services.AddScoped<IRecurringConceptRepository, RecurringConceptRepository>();
+        services.AddScoped<IExcelInputsImporter, ClosedXmlInputsImporter>();
+        services.AddScoped<IInputsImportTemplateBuilder, ClosedXmlInputsImportTemplateBuilder>();
 
         return services;
     }

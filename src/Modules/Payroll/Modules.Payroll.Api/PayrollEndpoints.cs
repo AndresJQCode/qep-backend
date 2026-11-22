@@ -46,6 +46,33 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Importación de novedades: las tres rutas van antes de `{p}/employees/{employeeId:guid}`. Antiforgery apagado como en Hr: el
+        // CSRF lo frena X-Qep-Client, no el token de formulario.
+        group.MapGet("/periods/{periodId:guid}/inputs/template", GetInputsTemplateAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/periods/{periodId:guid}/inputs/import/preview", PreviewInputsImportAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces<InputsImportPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
+        group.MapPost("/periods/{periodId:guid}/inputs/import", ImportInputsAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces<PayrollPeriodDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .DisableAntiforgery();
+
         group.MapGet("/periods/{periodId:guid}/employees/{employeeId:guid}", GetPeriodEmployeeAsync)
             .RequireAuthorization(PayrollPermissions.PeriodRead)
             .Produces<PayrollEmployeeDetailDto>()
@@ -118,6 +145,43 @@ public static class PayrollEndpoints
         Guid tenantId, Guid periodId, ReopenRequest? request, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new ReopenPeriodCommand(tenantId, periodId, request ?? new ReopenRequest(null), IfMatchOf(httpContext)), cancellationToken));
+
+    private const string ExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    private static async Task<IResult> GetInputsTemplateAsync(
+        Guid tenantId, Guid periodId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var file = await dispatcher.QueryAsync(new GetInputsImportTemplateQuery(tenantId, periodId), cancellationToken);
+
+        return Results.File(file.Content, ExcelContentType, file.FileName);
+    }
+
+    private static async Task<IResult> PreviewInputsImportAsync(
+        Guid tenantId, Guid periodId, IFormFile? file, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var preview = await dispatcher.SendAsync(
+            new PreviewInputsImportCommand(tenantId, periodId, file?.FileName ?? string.Empty, file?.Length ?? 0, content), cancellationToken);
+
+        return Results.Ok(preview);
+    }
+
+    private static async Task<IResult> ImportInputsAsync(
+        Guid tenantId,
+        Guid periodId,
+        IFormFile? file,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var detail = await dispatcher.SendAsync(
+            new ImportInputsCommand(
+                tenantId, periodId, file?.FileName ?? string.Empty, file?.Length ?? 0, content, IfMatchOf(httpContext)),
+            cancellationToken);
+
+        return Results.Ok(detail);
+    }
 
     private static async Task<IResult> GetPeriodEmployeeAsync(
         Guid tenantId, Guid periodId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

@@ -17,6 +17,7 @@ public sealed record ResolvedConcept(
 public sealed class ConceptCatalogSnapshot
 {
     private readonly IReadOnlyDictionary<Guid, ResolvedConcept> _byId;
+    private readonly IReadOnlyDictionary<string, ResolvedConcept> _activeByFoldedName;
     private readonly IReadOnlyList<PayrollConceptDto> _dtos;
 
     internal ConceptCatalogSnapshot(IReadOnlyList<PayrollConcept> own)
@@ -46,12 +47,25 @@ public sealed class ConceptCatalogSnapshot
             dtos.Add(ToDto(concept));
         }
 
+        // The importation matches a name without case or accents among the active concepts; on a clash between kinds the system one
+        // (inserted first) wins.
+        var byName = new Dictionary<string, ResolvedConcept>(StringComparer.Ordinal);
+        foreach (var resolved in byId.Values.Where(item => !item.Archived))
+        {
+            byName.TryAdd(PayrollText.Fold(resolved.Name)!, resolved);
+        }
+
         _byId = byId;
+        _activeByFoldedName = byName;
         _dtos = dtos;
     }
 
     /// <summary>Del sistema o propio de esa empresa; nulo si no existe (un concepto de otra empresa tampoco).</summary>
     public ResolvedConcept? Find(Guid conceptId) => _byId.GetValueOrDefault(conceptId);
+
+    /// <summary>El concepto no archivado con ese nombre, sin mayúsculas, tildes ni espacios de más; nulo si no hay.</summary>
+    public ResolvedConcept? FindActiveByName(string? name) =>
+        PayrollText.Fold(name) is { } folded ? _activeByFoldedName.GetValueOrDefault(folded) : null;
 
     public IReadOnlyList<PayrollConceptDto> ToDtos() => _dtos;
 
