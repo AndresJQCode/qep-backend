@@ -50,6 +50,12 @@ internal abstract partial class InAppOutboxConsumer(IServiceScopeFactory scopeFa
     protected abstract Task<IReadOnlyList<InAppNotification>> BuildAsync(
         OutboxRecord record, InAppContext context, CancellationToken cancellationToken);
 
+    /// <summary>The entries this message closes instead of opening (a wholesale order that was approved or cancelled, D-13). They are written
+    /// in the same transaction as the new entries and the processed mark. Most consumers close nothing.</summary>
+    protected virtual Task<IReadOnlyList<InAppResolution>> ResolutionsAsync(
+        OutboxRecord record, InAppContext context, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<InAppResolution>>([]);
+
     // Called by the loop of NotificationsDeliveryWorker and, directly, by the tests (InternalsVisibleTo). Virtual so the loop tests can
     // count drains without a database. Returns true when the batch came full: there may be more.
     internal virtual async Task<bool> DrainAsync(CancellationToken cancellationToken)
@@ -118,6 +124,7 @@ internal abstract partial class InAppOutboxConsumer(IServiceScopeFactory scopeFa
         }
 
         IReadOnlyList<InAppNotification> entries = [];
+        IReadOnlyList<InAppResolution> resolutions = [];
         if (attempts > MaxAttempts)
         {
             // What fails may be the payload itself, so it is not read again.
@@ -126,12 +133,18 @@ internal abstract partial class InAppOutboxConsumer(IServiceScopeFactory scopeFa
         else
         {
             entries = await BuildAsync(record, context, cancellationToken);
+            resolutions = await ResolutionsAsync(record, context, cancellationToken);
         }
 
-        var inserted = await InAppNotificationWriter.SaveAsync(dbContext, Consumer, record.Id, entries, now, publisher, cancellationToken);
+        var inserted = await InAppNotificationWriter.SaveAsync(
+            dbContext, Consumer, record.Id, entries, resolutions, now, publisher, cancellationToken);
         LogEntriesCreated(logger, record.Id, inserted, Consumer);
     }
 }
+
+/// <summary>Spec D-13: the entries of <paramref name="Kind"/> about <paramref name="ResourceId"/> that are still unresolved become resolved
+/// (and read) with <paramref name="Resolution"/>. An entry that already had a resolution keeps it.</summary>
+internal sealed record InAppResolution(Guid TenantId, InAppNotificationKind Kind, Guid ResourceId, string Resolution);
 
 /// <summary>What a consumer needs to build its entries, resolved in the scope of the tick. <paramref name="Database"/> is the context of
 /// the claim and the write: only to read before building (the wholesale consumer looks for the entries it resolves).</summary>

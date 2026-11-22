@@ -72,6 +72,7 @@ public static class NotificationsInfrastructureExtensions
         // Spec 2026-11-22 §12: the bell's consumers, drained by the same loop. One definition per source.
         services.AddSingleton<InAppOutboxConsumer, ExportsInAppConsumer>();
         services.AddSingleton<InAppOutboxConsumer, ConversationsInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, WholesaleInAppConsumer>();
         services.AddScoped<IInAppNotificationRepository, InAppNotificationRepository>();
         services.AddHostedService<NotificationsDeliveryWorker>();
         services.AddHostedService<InAppNotificationRetentionWorker>();
