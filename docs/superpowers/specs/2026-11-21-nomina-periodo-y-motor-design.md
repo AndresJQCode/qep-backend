@@ -209,7 +209,7 @@ SMMLV ÷ 30 × días cotizados del mes** y **tope de 25 SMMLV** (Ley 797/2003, a
 **Deducciones del empleado.** Salud 4 % y pensión 4 %, **acumuladas del mes menos lo ya retenido** en la quincena anterior
 del mes: la primera quincena retiene sobre su propio IBC y la segunda ajusta la diferencia. **Fondo de Solidaridad
 Pensional** cuando el IBC del mes llega a 4 SMMLV o más (el límite inferior de cada tramo se incluye), por tramos, a cargo del empleado: la primera quincena retiene sólo si el
-salario base solo supera 4 SMMLV; la **segunda calcula el IBC del mes y retiene la diferencia**, incluida una devolución si
+salario base solo llega a 4 SMMLV o más; la **segunda calcula el IBC del mes y retiene la diferencia**, incluida una devolución si
 sobró. Las deducciones recurrentes y puntuales se restan; **no puede quedar un neto negativo** (se avisa y se bloquea la
 aprobación).
 

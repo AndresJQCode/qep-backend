@@ -67,11 +67,11 @@ public sealed class GoldenCaseTests
     }
 
     [Fact]
-    public void ThereAreTwentySixSyntheticCasesWithUniqueNames()
+    public void ThereAreTwentyEightSyntheticFilesWithUniqueNames()
     {
         var cases = GoldenCaseLoader.All();
 
-        Assert.Equal(26, cases.Count(golden => golden.Source == "synthetic"));
+        Assert.Equal(28, cases.Count(golden => golden.Source == "synthetic"));
         Assert.Equal(cases.Count, cases.Select(golden => golden.Name).Distinct().Count());
     }
 }

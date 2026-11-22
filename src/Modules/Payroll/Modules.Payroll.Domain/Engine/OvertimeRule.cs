@@ -22,7 +22,7 @@ public static class OvertimeRule
         foreach (var capture in input.Overtime)
         {
             var (factor, used) = OvertimeFactors.For(capture, input.Legal);
-            var amount = PayrollRounding.ToPeso(capture.Hours * hourValue * factor);
+            var amount = PayrollRounding.ToPeso(capture.Hours * factor * baseValue * 6m / (30m * weeklyHours.Value));
             total += amount;
             lines.Add(new PayrollLine(
                 $"overtime:{capture.ConceptId}",

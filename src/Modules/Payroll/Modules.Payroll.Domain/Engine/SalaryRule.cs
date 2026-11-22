@@ -59,7 +59,7 @@ public static class SalaryRule
         }
 
         // Multiply first: one division keeps exact halves exact (a repeating 2 000 000 ÷ 30 would tip a .5 the wrong way).
-        var raw = segments.Sum(segment => segment.MonthlyAmount * segment.Days / 30m);
+        var raw = segments.Sum(segment => segment.MonthlyAmount * segment.Days) / 30m;
         var amount = PayrollRounding.ToPeso(input.Prior.SalaryRaw + raw) - input.Prior.Salary;
 
         var last = pieces[^1].Source;

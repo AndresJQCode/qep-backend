@@ -31,7 +31,7 @@ public static class TransportAllowanceRule
 
         if (month.TransportCapIncome > cap)
         {
-            return new TransportOutcome(Line(0m, "El ingreso del mes supera 2 SMMLV"), 0m);
+            return new TransportOutcome(Line(0m, $"El ingreso del mes supera {legal.TransportAllowanceCapSmmlv.Value:0.##} SMMLV"), 0m);
         }
 
         var allowance = legal.TransportAllowance.Value;

@@ -67,6 +67,29 @@ public sealed class TransportAllowanceRuleTests
     }
 
     [Fact]
+    public void PaidAbsencesBaseCountsOnlyTheSalaryUntilAbsencesExist()
+    {
+        // 3 400 000 + 200 000 of commissions: with salary-only (R-22) the cap income is 3 400 000 <= 3 501 810, so it is kept.
+        var input = WithCommissions(WithCapBase(EngineTestData.Input(FirstHalf, 3_400_000m), TransportCapBase.SalaryAndPaidAbsences), 200_000m);
+        var keeps = EngineTestData.Earnings(input);
+
+        Assert.Equal(3_400_000m, keeps.Month.TransportCapIncome);
+        Assert.Equal(124_548m, keeps.Transport.Line.Amount);
+
+        // The same capture under salary-plus-income reaches 3 600 000 and loses it.
+        var loses = EngineTestData.Earnings(WithCapBase(input, TransportCapBase.SalaryAndSalaryIncome));
+        Assert.Equal(0m, loses.Transport.Line.Amount);
+    }
+
+    [Fact]
+    public void TheCapNoteNamesTheLegalMultiple()
+    {
+        var input = WithCommissions(WithCapBase(EngineTestData.Input(FirstHalf, 3_000_000m), TransportCapBase.SalaryAndSalaryIncome), 501_811m);
+
+        Assert.Equal("El ingreso del mes supera 2 SMMLV", EngineTestData.Earnings(input).Transport.Line.Trace.Note);
+    }
+
+    [Fact]
     public void MonthlyPaysNothingInTheFirstHalf()
     {
         var input = EngineTestData.Input(FirstHalf);
