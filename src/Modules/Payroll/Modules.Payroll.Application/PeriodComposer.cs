@@ -14,7 +14,9 @@ public sealed class PeriodComposer(
     IPayrollResultStore results,
     IPayrollPeriodRepository periods,
     ICompanyPayrollSettingsRepository settings,
-    PayrollCompanies companies)
+    PayrollCompanies companies,
+    ConceptCatalog catalog,
+    RecurringConceptComposer recurring)
 {
     private sealed record View(
         IReadOnlyList<PayrollEmployeeRowDto> Rows,
@@ -32,11 +34,65 @@ public sealed class PeriodComposer(
         var header = await HeaderAsync(period, view, caller, callerPermissions, cancellationToken);
         var history = period.Events
             .OrderByDescending(evt => evt.OccurredAt)
-            .ThenByDescending(evt => evt.Id.ToString(), StringComparer.Ordinal)
+            .ThenByDescending(evt => evt.Sequence)
             .Select(ToDto)
             .ToList();
 
         return new PayrollPeriodDetailDto(header, view.Rows, view.Excluded, view.Blocked, history);
+    }
+
+    /// <summary>
+    /// El empleado en la quincena: su fila, lo capturado, sus recurrentes y el resultado guardado. Un excluido responde su fila sin
+    /// capturas ni resultado (I-13); sólo quien no tiene contrato de la empresa en la quincena (o, en Aprobado y Cerrado, no está en la
+    /// foto) es 404.
+    /// </summary>
+    public async Task<PayrollEmployeeDetailDto> ComposeEmployeeAsync(
+        PayrollPeriod period,
+        Guid employeeId,
+        PayrollActor caller,
+        IReadOnlySet<string> callerPermissions,
+        CancellationToken cancellationToken)
+    {
+        var view = await BuildViewAsync(period, cancellationToken);
+        var header = await HeaderAsync(period, view, caller, callerPermissions, cancellationToken);
+
+        var row = view.Rows.FirstOrDefault(candidate => candidate.EmployeeId == employeeId);
+        if (row is null)
+        {
+            var excluded = view.Excluded.FirstOrDefault(candidate => candidate.EmployeeId == employeeId)
+                ?? throw PayrollNotFound.EmployeeNotInPeriod(employeeId);
+            return new PayrollEmployeeDetailDto(
+                header,
+                new PayrollEmployeeRowDto(
+                    excluded.EmployeeId, excluded.DocumentType, excluded.DocumentNumber, excluded.FullName,
+                    null, null, null, false, false, false, null),
+                EmployeeInputsDto.Empty,
+                [],
+                null);
+        }
+
+        var concepts = await catalog.LoadAsync(period.TenantId, period.CompanyId, cancellationToken);
+        var mine = period.Inputs.Where(input => input.EmployeeId == employeeId).ToList();
+
+        IReadOnlyList<InputLineDto> Lines(ConceptKind kind) => mine
+            .Where(input => input.Kind == kind)
+            .OrderBy(input => input.Position)
+            .Select(input => new InputLineDto(
+                input.ConceptId,
+                concepts.Find(input.ConceptId)?.Name ?? string.Empty,
+                input.Kind.ToString(),
+                input.Hours,
+                input.Amount,
+                input.SalaryConstitutive))
+            .ToList();
+
+        var saved = view.Results.FirstOrDefault(result => result.EmployeeId == employeeId);
+        return new PayrollEmployeeDetailDto(
+            header,
+            row,
+            new EmployeeInputsDto(Lines(ConceptKind.Overtime), Lines(ConceptKind.Income), Lines(ConceptKind.Deduction)),
+            await recurring.ListAsync(period.TenantId, period.CompanyId, employeeId, cancellationToken),
+            saved is null ? null : PayrollResultMapper.ToDto(saved, PayrollResultMapper.ParseLegal(period.LegalValuesJson)));
     }
 
     /// <summary>Sólo el encabezado: los de la lista y el de cada respuesta de capturas.</summary>
@@ -103,7 +159,7 @@ public sealed class PeriodComposer(
                 withInputs.Contains(employee.EmployeeId),
                 saved?.Liquidation.FinalSettlementPending ?? pending,
                 saved?.Liquidation.NegativeNet ?? false,
-                saved is null ? null : PayrollEmployeeSummaryDto.From(saved.Liquidation.Summary)));
+                saved is null ? null : PayrollTotalsDto.From(saved.Liquidation.Summary)));
         }
 
         return new View(
@@ -186,7 +242,7 @@ public sealed class PeriodComposer(
         hasInputs,
         result.Liquidation.FinalSettlementPending,
         result.Liquidation.NegativeNet,
-        PayrollEmployeeSummaryDto.From(result.Liquidation.Summary));
+        PayrollTotalsDto.From(result.Liquidation.Summary));
 
     private static List<PayrollEmployeeRowDto> SortedRows(List<PayrollEmployeeRowDto> rows) => rows
         .OrderBy(row => row.FullName, StringComparer.CurrentCultureIgnoreCase)

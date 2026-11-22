@@ -23,6 +23,9 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
     private static readonly ValueConverter<PeriodEventId, Guid> PeriodEventIdConverter =
         new(id => id.Value, value => new PeriodEventId(value));
 
+    private static readonly ValueConverter<RecurringConceptId, Guid> RecurringIdConverter =
+        new(id => id.Value, value => new RecurringConceptId(value));
+
     public DbSet<CompanyPayrollSettings> CompanySettings => Set<CompanyPayrollSettings>();
 
     public DbSet<PayrollConcept> Concepts => Set<PayrollConcept>();
@@ -32,6 +35,8 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
     public DbSet<PeriodInput> PeriodInputs => Set<PeriodInput>();
 
     public DbSet<PeriodEvent> PeriodEvents => Set<PeriodEvent>();
+
+    public DbSet<RecurringConcept> RecurringConcepts => Set<RecurringConcept>();
 
     internal DbSet<EmployeeResultRow> EmployeeResults => Set<EmployeeResultRow>();
 
@@ -48,6 +53,7 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         ConfigurePeriodInput(modelBuilder);
         ConfigurePeriodEvent(modelBuilder);
         ConfigureEmployeeResult(modelBuilder);
+        ConfigureRecurringConcept(modelBuilder);
     }
 
     // `column IN ('A','B')` para un enum guardado como texto: la base no depende de quien escribe.
@@ -182,6 +188,7 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         evt.HasKey(value => value.Id);
         evt.Property(value => value.Id).HasColumnName("id").HasConversion(PeriodEventIdConverter).ValueGeneratedNever();
         evt.Property(value => value.PeriodId).HasColumnName("period_id").HasConversion(PeriodIdConverter);
+        evt.Property(value => value.Sequence).HasColumnName("sequence");
         evt.Property(value => value.OccurredAt).HasColumnName("occurred_at");
         evt.Property(value => value.ActorSubjectId).HasColumnName("actor_subject_id");
         evt.Property(value => value.ActorName).HasColumnName("actor_name").HasMaxLength(200);
@@ -190,7 +197,7 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         evt.Property(value => value.ToStatus).HasColumnName("to_status").HasConversion<string>().HasMaxLength(32);
         evt.Property(value => value.Reason).HasColumnName("reason").HasMaxLength(500);
         evt.Property(value => value.AbsencesConfirmed).HasColumnName("absences_confirmed");
-        evt.HasIndex(value => new { value.PeriodId, value.OccurredAt }).HasDatabaseName("IX_period_events_period_occurred");
+        evt.HasIndex(value => new { value.PeriodId, value.OccurredAt, value.Sequence }).HasDatabaseName("IX_period_events_period_occurred");
     }
 
     private static void ConfigureEmployeeResult(ModelBuilder modelBuilder)
@@ -219,5 +226,28 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         result.HasIndex(value => new { value.PeriodId, value.EmployeeId })
             .IsUnique()
             .HasDatabaseName("IX_employee_results_period_employee");
+    }
+
+    private static void ConfigureRecurringConcept(ModelBuilder modelBuilder)
+    {
+        var recurring = modelBuilder.Entity<RecurringConcept>();
+        recurring.ToTable("recurring_concepts", Schema, table =>
+            table.HasCheckConstraint("CK_recurring_concepts_mode", In<RecurringMode>("mode")));
+        recurring.HasKey(value => value.Id);
+        recurring.Property(value => value.Id).HasColumnName("id").HasConversion(RecurringIdConverter).ValueGeneratedNever();
+        recurring.Property(value => value.TenantId).HasColumnName("tenant_id");
+        recurring.Property(value => value.CompanyId).HasColumnName("company_id");
+        recurring.Property(value => value.EmployeeId).HasColumnName("employee_id");
+        recurring.Property(value => value.ConceptId).HasColumnName("concept_id");
+        recurring.Property(value => value.Mode).HasColumnName("mode").HasConversion<string>().HasMaxLength(32);
+        recurring.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+        recurring.Property(value => value.SalaryConstitutive).HasColumnName("salary_constitutive");
+        recurring.Property(value => value.Cap).HasColumnName("cap").HasPrecision(18, 2);
+        recurring.Property(value => value.Active).HasColumnName("active");
+        recurring.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        recurring.Property(value => value.CreatedAt).HasColumnName("created_at");
+        recurring.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        recurring.HasIndex(value => new { value.TenantId, value.CompanyId, value.EmployeeId })
+            .HasDatabaseName("IX_recurring_concepts_tenant_company_employee");
     }
 }

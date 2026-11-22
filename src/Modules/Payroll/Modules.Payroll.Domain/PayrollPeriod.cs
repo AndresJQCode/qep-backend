@@ -293,7 +293,8 @@ public sealed class PayrollPeriod
         Touch(now);
     }
 
-    private void EnsureEditable()
+    /// <summary>Sólo un período Borrador, Liquidado o Reabierto recibe capturas; Aprobado y Cerrado se reabren primero.</summary>
+    public void EnsureEditable()
     {
         if (Status is PayrollPeriodStatus.Approved or PayrollPeriodStatus.Closed)
         {
@@ -337,7 +338,8 @@ public sealed class PayrollPeriod
         string? reason,
         bool? absencesConfirmed,
         DateTimeOffset now) =>
-        _events.Add(new PeriodEvent(Id, now, actor, action, from, to, reason, absencesConfirmed));
+        _events.Add(new PeriodEvent(
+            Id, (_events.Count == 0 ? 0 : _events.Max(evt => evt.Sequence)) + 1, now, actor, action, from, to, reason, absencesConfirmed));
 
     private void Touch(DateTimeOffset now)
     {

@@ -38,7 +38,7 @@ public sealed record PayrollSettingsDto(
 /// <summary>Quien escribió: el nombre de su membresía al momento de escribir ("Sin nombre" si no tenía).</summary>
 public sealed record ActorDto(Guid SubjectId, string DisplayName);
 
-/// <summary>Los totales de las filas liquidadas: los calcula el backend, nunca el navegador.</summary>
+/// <summary>Los totales de las filas liquidadas, o los de una sola fila (<c>PayrollEmployeeSummaryDto</c> del contrato tiene esta misma forma): los calcula el backend, nunca el navegador.</summary>
 public sealed record PayrollTotalsDto(
     decimal Salary,
     decimal TransportAllowance,
@@ -65,40 +65,6 @@ public sealed record PayrollTotalsDto(
     decimal EmployerCost)
 {
     public static PayrollTotalsDto From(Modules.Payroll.Domain.Engine.PayrollSummary summary) => new(
-        summary.Salary, summary.TransportAllowance, summary.Overtime, summary.OtherSalaryIncome, summary.NonSalaryIncome,
-        summary.TotalEarned, summary.HealthEmployee, summary.PensionEmployee, summary.SolidarityFund, summary.OtherDeductions,
-        summary.TotalDeductions, summary.Net, summary.HealthEmployer, summary.PensionEmployer, summary.Arl,
-        summary.CompensationFund, summary.Icbf, summary.Sena, summary.Severance, summary.SeveranceInterest, summary.Premium,
-        summary.Vacation, summary.EmployerCost);
-}
-
-/// <summary>Misma forma que <see cref="PayrollTotalsDto"/>, para una fila.</summary>
-public sealed record PayrollEmployeeSummaryDto(
-    decimal Salary,
-    decimal TransportAllowance,
-    decimal Overtime,
-    decimal OtherSalaryIncome,
-    decimal NonSalaryIncome,
-    decimal TotalEarned,
-    decimal HealthEmployee,
-    decimal PensionEmployee,
-    decimal SolidarityFund,
-    decimal OtherDeductions,
-    decimal TotalDeductions,
-    decimal Net,
-    decimal HealthEmployer,
-    decimal PensionEmployer,
-    decimal Arl,
-    decimal CompensationFund,
-    decimal Icbf,
-    decimal Sena,
-    decimal Severance,
-    decimal SeveranceInterest,
-    decimal Premium,
-    decimal Vacation,
-    decimal EmployerCost)
-{
-    public static PayrollEmployeeSummaryDto From(Modules.Payroll.Domain.Engine.PayrollSummary summary) => new(
         summary.Salary, summary.TransportAllowance, summary.Overtime, summary.OtherSalaryIncome, summary.NonSalaryIncome,
         summary.TotalEarned, summary.HealthEmployee, summary.PensionEmployee, summary.SolidarityFund, summary.OtherDeductions,
         summary.TotalDeductions, summary.Net, summary.HealthEmployer, summary.PensionEmployer, summary.Arl,
@@ -152,7 +118,7 @@ public sealed record PayrollEmployeeRowDto(
     bool HasInputs,
     bool FinalSettlementPending,
     bool NegativeNet,
-    PayrollEmployeeSummaryDto? Summary);
+    PayrollTotalsDto? Summary);
 
 public sealed record ExcludedEmployeeDto(Guid EmployeeId, string DocumentType, string DocumentNumber, string FullName, string Reason);
 
@@ -181,3 +147,61 @@ public sealed record PayrollPeriodListDto(
     PayrollCompanyDto Company,
     IReadOnlyList<PayrollPeriodDto> Items,
     DateOnly? FirstPeriodStartsOn);
+
+// --- Capturas, recurrentes y rastro (Tarea 10, pre-flight M-14) ---
+
+/// <param name="Hours">Sólo <c>Overtime</c>.</param>
+/// <param name="Amount">Sólo <c>Income</c> y <c>Deduction</c>.</param>
+/// <param name="SalaryConstitutive">Sólo <c>Income</c>.</param>
+public sealed record InputLineDto(
+    Guid ConceptId, string ConceptName, string Kind, decimal? Hours, decimal? Amount, bool? SalaryConstitutive);
+
+public sealed record EmployeeInputsDto(
+    IReadOnlyList<InputLineDto> Overtime, IReadOnlyList<InputLineDto> Incomes, IReadOnlyList<InputLineDto> Deductions)
+{
+    public static EmployeeInputsDto Empty { get; } = new([], [], []);
+}
+
+public sealed record RecurringConceptRefDto(Guid Id, string Name, string Kind);
+
+/// <param name="SalaryConstitutive">Nulo en una deducción.</param>
+/// <param name="Accumulated">Lo aplicado en las últimas fotos de los períodos anteriores que no son Borrador (R-12).</param>
+/// <param name="Remaining">Lo que queda del tope; nulo sin tope.</param>
+public sealed record RecurringConceptDto(
+    Guid Id,
+    Guid EmployeeId,
+    RecurringConceptRefDto Concept,
+    string Mode,
+    decimal Amount,
+    bool? SalaryConstitutive,
+    decimal? Cap,
+    decimal Accumulated,
+    decimal? Remaining,
+    string Status,
+    long Version);
+
+/// <param name="Value">Un número o un texto, tal como lo leyó la regla.</param>
+public sealed record TraceInputDto(string Name, object Value);
+
+public sealed record LegalValueUseDto(string Key, string Label, decimal Value, DateOnly EffectiveFrom, string Basis);
+
+public sealed record PayrollLineTraceDto(
+    string Formula, IReadOnlyList<TraceInputDto> Inputs, IReadOnlyList<LegalValueUseDto> LegalValues, string? Note);
+
+public sealed record PayrollLineDto(string Code, string Group, string Label, decimal Amount, PayrollLineTraceDto Trace);
+
+/// <summary>El resultado guardado de la última liquidación: líneas con su rastro, resumen y la foto legal completa del período.</summary>
+public sealed record EmployeeResultDto(
+    int WorkedDays,
+    string EngineVersion,
+    IReadOnlyList<PayrollLineDto> Lines,
+    PayrollTotalsDto Summary,
+    IReadOnlyList<LegalValueUseDto> LegalValues);
+
+/// <param name="Result">Nulo hasta liquidar y para un excluido.</param>
+public sealed record PayrollEmployeeDetailDto(
+    PayrollPeriodDto Period,
+    PayrollEmployeeRowDto Employee,
+    EmployeeInputsDto Inputs,
+    IReadOnlyList<RecurringConceptDto> Recurring,
+    EmployeeResultDto? Result);

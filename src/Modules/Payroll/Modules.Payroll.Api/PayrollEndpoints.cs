@@ -18,6 +18,7 @@ public static class PayrollEndpoints
 
         MapSettings(group);
         MapPeriods(group);
+        MapRecurring(group);
 
         return endpoints;
     }
@@ -44,7 +45,127 @@ public static class PayrollEndpoints
             .Produces<PayrollPeriodDetailDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapGet("/periods/{periodId:guid}/employees/{employeeId:guid}", GetPeriodEmployeeAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodRead)
+            .Produces<PayrollEmployeeDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPut("/periods/{periodId:guid}/employees/{employeeId:guid}/inputs", UpdateInputsAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<EmployeeInputsRequest>("application/json")
+            .Produces<PayrollEmployeeDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
+
+    private static async Task<IResult> GetPeriodEmployeeAsync(
+        Guid tenantId, Guid periodId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetPeriodEmployeeQuery(tenantId, periodId, employeeId), cancellationToken));
+
+    private static async Task<IResult> UpdateInputsAsync(
+        Guid tenantId,
+        Guid periodId,
+        Guid employeeId,
+        EmployeeInputsRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateEmployeeInputsCommand(tenantId, periodId, employeeId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    // Recurrentes de la ficha de un empleado. Leer acepta `period.read` o `settings.manage` (SettingsView); toda escritura es sólo
+    // `settings.manage` (decisión del owner). El `PUT` exige `If-Match`; activar y desactivar, no (I-8).
+    private static void MapRecurring(RouteGroupBuilder group)
+    {
+        const string route = "/companies/{companyId:guid}/employees/{employeeId:guid}/recurring-concepts";
+
+        group.MapGet(route, ListRecurringAsync)
+            .RequireAuthorization(PayrollPolicies.SettingsView)
+            .Produces<IReadOnlyList<RecurringConceptDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost(route, CreateRecurringAsync)
+            .RequireAuthorization(PayrollPermissions.SettingsManage)
+            .Accepts<RecurringConceptRequest>("application/json")
+            .Produces<IReadOnlyList<RecurringConceptDto>>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut(route + "/{recurringId:guid}", UpdateRecurringAsync)
+            .RequireAuthorization(PayrollPermissions.SettingsManage)
+            .Accepts<RecurringConceptRequest>("application/json")
+            .Produces<IReadOnlyList<RecurringConceptDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapPost(route + "/{recurringId:guid}/activate", (Guid tenantId, Guid companyId, Guid employeeId, Guid recurringId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                ToggleRecurringAsync(tenantId, companyId, employeeId, recurringId, activate: true, dispatcher, cancellationToken))
+            .RequireAuthorization(PayrollPermissions.SettingsManage)
+            .Produces<IReadOnlyList<RecurringConceptDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        group.MapPost(route + "/{recurringId:guid}/deactivate", (Guid tenantId, Guid companyId, Guid employeeId, Guid recurringId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                ToggleRecurringAsync(tenantId, companyId, employeeId, recurringId, activate: false, dispatcher, cancellationToken))
+            .RequireAuthorization(PayrollPermissions.SettingsManage)
+            .Produces<IReadOnlyList<RecurringConceptDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+    }
+
+    private static async Task<IResult> ListRecurringAsync(
+        Guid tenantId, Guid companyId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListRecurringConceptsQuery(tenantId, companyId, employeeId), cancellationToken));
+
+    private static async Task<IResult> CreateRecurringAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        RecurringConceptRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var list = await dispatcher.SendAsync(
+            new CreateRecurringConceptCommand(tenantId, companyId, employeeId, request), cancellationToken);
+
+        return Results.Created($"/api/v1/tenants/{tenantId}/payroll/companies/{companyId}/employees/{employeeId}/recurring-concepts", list);
+    }
+
+    private static async Task<IResult> UpdateRecurringAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        Guid recurringId,
+        RecurringConceptRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateRecurringConceptCommand(tenantId, companyId, employeeId, recurringId, request, IfMatchOf(httpContext)),
+            cancellationToken));
+
+    private static async Task<IResult> ToggleRecurringAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        Guid recurringId,
+        bool activate,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new ToggleRecurringConceptCommand(tenantId, companyId, employeeId, recurringId, activate), cancellationToken));
 
     private static async Task<IResult> EnsureCurrentAsync(
         Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

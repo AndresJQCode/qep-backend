@@ -401,6 +401,10 @@ namespace Modules.Payroll.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("reason");
 
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer")
+                        .HasColumnName("sequence");
+
                     b.Property<string>("ToStatus")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
@@ -408,7 +412,7 @@ namespace Modules.Payroll.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PeriodId", "OccurredAt")
+                    b.HasIndex("PeriodId", "OccurredAt", "Sequence")
                         .HasDatabaseName("IX_period_events_period_occurred");
 
                     b.ToTable("period_events", "payroll", t =>
@@ -471,6 +475,76 @@ namespace Modules.Payroll.Infrastructure.Persistence.Migrations
                     b.ToTable("period_inputs", "payroll", t =>
                         {
                             t.HasCheckConstraint("CK_period_inputs_kind", "kind IN ('Overtime','Income','Deduction')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Payroll.Domain.RecurringConcept", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean")
+                        .HasColumnName("active");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<decimal?>("Cap")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("cap");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("company_id");
+
+                    b.Property<Guid>("ConceptId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("concept_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("mode");
+
+                    b.Property<bool?>("SalaryConstitutive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("salary_constitutive");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "CompanyId", "EmployeeId")
+                        .HasDatabaseName("IX_recurring_concepts_tenant_company_employee");
+
+                    b.ToTable("recurring_concepts", "payroll", t =>
+                        {
+                            t.HasCheckConstraint("CK_recurring_concepts_mode", "mode IN ('Fixed','Proportional')");
                         });
                 });
 

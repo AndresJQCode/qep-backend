@@ -1,6 +1,6 @@
 namespace Modules.Payroll.Application;
 
-internal static class PayrollEnums
+internal static class EnumNames
 {
     /// <summary>
     /// Sólo el nombre exacto del miembro (<c>ignoreCase: false</c>): un número no es un enum, y <c>Enum.TryParse</c> lo aceptaría

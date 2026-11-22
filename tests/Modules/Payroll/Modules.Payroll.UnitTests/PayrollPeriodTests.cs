@@ -350,4 +350,20 @@ public sealed class PayrollPeriodTests
         Assert.Equal([0, 1], period.Inputs.Where(input => input.EmployeeId == Employee).Select(input => input.Position).Order());
         Assert.Equal(PeriodAction.InputsImported, period.Events[^1].Action);
     }
+
+    // Review M-3: two events written in one operation share OccurredAt and Guid v7 is not monotonic inside a millisecond, so the
+    // history order needs its own sequence.
+    [Fact]
+    public void EventsCarryAStrictlyIncreasingSequenceEvenWithTheSameInstant()
+    {
+        var period = Liquidated();
+        period.ReplaceInputsBulk(
+            new Dictionary<Guid, IReadOnlyList<PeriodInputDraft>> { [Employee] = [Income()] }, Ana, T0.AddMinutes(5));
+
+        Assert.Equal(
+            [PeriodAction.Created, PeriodAction.Liquidated, PeriodAction.InputsImported, PeriodAction.MarkedOutdated],
+            period.Events.Select(evt => evt.Action));
+        Assert.Equal([1, 2, 3, 4], period.Events.Select(evt => evt.Sequence));
+        Assert.Equal(period.Events[2].OccurredAt, period.Events[3].OccurredAt);
+    }
 }

@@ -643,6 +643,27 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.GetPeriodQuery, Modules.Payroll.Application.PayrollPeriodDetailDto>,
             Modules.Payroll.Application.GetPeriodHandler>();
+        services.AddScoped<Modules.Payroll.Application.PayrollEmployees>();
+        services.AddScoped<Modules.Payroll.Application.RecurringAccumulation>();
+        services.AddScoped<Modules.Payroll.Application.RecurringConceptComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.GetPeriodEmployeeQuery, Modules.Payroll.Application.PayrollEmployeeDetailDto>,
+            Modules.Payroll.Application.GetPeriodEmployeeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateEmployeeInputsCommand, Modules.Payroll.Application.PayrollEmployeeDetailDto>,
+            Modules.Payroll.Application.UpdateEmployeeInputsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListRecurringConceptsQuery, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.ListRecurringConceptsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.CreateRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.CreateRecurringConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.UpdateRecurringConceptHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.ToggleRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
+            Modules.Payroll.Application.ToggleRecurringConceptHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 

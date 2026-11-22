@@ -29,6 +29,7 @@ public static class PayrollInfrastructureExtensions
         services.AddScoped<IPayrollConceptRepository, PayrollConceptRepository>();
         services.AddScoped<IPayrollPeriodRepository, PayrollPeriodRepository>();
         services.AddScoped<IPayrollResultStore, PayrollResultStore>();
+        services.AddScoped<IRecurringConceptRepository, RecurringConceptRepository>();
 
         return services;
     }

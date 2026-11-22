@@ -10,13 +10,13 @@ public sealed class PayrollSettingsRequestValidator : PayrollValidator<PayrollSe
     public PayrollSettingsRequestValidator()
     {
         RuleFor(request => request.TransportFrequency)
-            .Must(value => PayrollEnums.TryParse<TransportFrequency>(value, out _))
+            .Must(value => EnumNames.TryParse<TransportFrequency>(value, out _))
             .WithMessage("Elige una frecuencia válida (Biweekly o Monthly).");
         RuleFor(request => request.TransportCapBase)
-            .Must(value => PayrollEnums.TryParse<TransportCapBase>(value, out _))
+            .Must(value => EnumNames.TryParse<TransportCapBase>(value, out _))
             .WithMessage("Elige una base válida para el tope del auxilio de transporte.");
         RuleFor(request => request.OvertimeBase)
-            .Must(value => PayrollEnums.TryParse<OvertimeBase>(value, out _))
+            .Must(value => EnumNames.TryParse<OvertimeBase>(value, out _))
             .WithMessage("Elige una base válida para las horas extras.");
         RuleFor(request => request.Exonerated).NotNull().WithMessage("Indica si la empresa está exonerada.");
         RuleFor(request => request.DualControl).NotNull().WithMessage("Indica si usa doble control.");
@@ -34,7 +34,7 @@ public sealed class ConceptRequestValidator : PayrollValidator<ConceptRequest>
     public ConceptRequestValidator()
     {
         RuleFor(request => request.Kind)
-            .Must(value => PayrollEnums.TryParse<ConceptKind>(value, out _))
+            .Must(value => EnumNames.TryParse<ConceptKind>(value, out _))
             .WithMessage("Elige un tipo válido (Overtime, Income o Deduction).");
         RuleFor(request => request.Name)
             .Must(name => !string.IsNullOrWhiteSpace(name)).WithMessage("Escribe un nombre.")
@@ -56,10 +56,10 @@ public sealed class ConceptRequestValidator : PayrollValidator<ConceptRequest>
             .When(request => IsKnownKind(request) && !IsKind(request, ConceptKind.Income));
     }
 
-    private static bool IsKnownKind(ConceptRequest request) => PayrollEnums.TryParse<ConceptKind>(request.Kind, out _);
+    private static bool IsKnownKind(ConceptRequest request) => EnumNames.TryParse<ConceptKind>(request.Kind, out _);
 
     private static bool IsKind(ConceptRequest request, ConceptKind kind) =>
-        PayrollEnums.TryParse<ConceptKind>(request.Kind, out var parsed) && parsed == kind;
+        EnumNames.TryParse<ConceptKind>(request.Kind, out var parsed) && parsed == kind;
 
     private static bool HasAtMostFourDecimals(decimal value) => decimal.Round(value, MultiplierDecimals) == value;
 }

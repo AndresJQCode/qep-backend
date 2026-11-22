@@ -12,11 +12,17 @@ public static class PayrollAuditActions
     public const string ConceptUpdated = "payroll.concept.updated";
     public const string ConceptArchived = "payroll.concept.archived";
     public const string ConceptUnarchived = "payroll.concept.unarchived";
+    public const string InputsUpdated = "payroll.period.inputs_updated";
+    public const string RecurringCreated = "payroll.recurring.created";
+    public const string RecurringUpdated = "payroll.recurring.updated";
+    public const string RecurringActivated = "payroll.recurring.activated";
+    public const string RecurringDeactivated = "payroll.recurring.deactivated";
 
     public static class Resources
     {
         public const string Period = "period";
         public const string Settings = "settings";
         public const string Concept = "concept";
+        public const string Recurring = "recurring";
     }
 }
