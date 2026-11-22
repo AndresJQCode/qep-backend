@@ -6,8 +6,8 @@ namespace Modules.Support.Infrastructure;
 
 /// <summary>
 /// Spec 2026-11-15 §5.2: <c>supportTicketChanged { ticketId }</c> on the ticket's topic and on the inbox. The payload is the id only: the
-/// screen rereads over HTTP with its own authorization. It swallows every failure, including one from a publisher that breaks its own
-/// contract, because the write that announced already committed; the log carries ids only, never the payload.
+/// screen rereads over HTTP with its own authorization. It swallows every failure (each publish on its own, so one failing topic does not stop the rest), including one from a publisher that
+/// breaks its own contract, because the write that announced already committed; the log carries ids only, never the payload.
 /// </summary>
 internal sealed partial class SupportRealtimeNotifier(IRealtimePublisher publisher, ILogger<SupportRealtimeNotifier> logger) : ISupportRealtime
 {
@@ -23,22 +23,26 @@ internal sealed partial class SupportRealtimeNotifier(IRealtimePublisher publish
         return PublishAsync(tenantId, ticketId, memberIds, cancellationToken);
     }
 
-    // The ticket's topic, the inbox and one topic per distinct member; one failure stops the rest, as it always did: the write that
-    // announced already committed and the screens reread on reconnect.
+    // One topic per distinct member first, then the ticket's topic and the inbox. A task-only member listens to nothing else, so the
+    // topics that reach her go out before the ones she cannot hear. Each publish is its own try: one failure never stops the rest,
+    // because the write that announced already committed and the screens reread on reconnect.
     private async Task PublishAsync(Guid tenantId, Guid ticketId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)
     {
         var payload = new { ticketId };
+        foreach (var memberId in memberIds.Distinct())
+        {
+            await TryPublishAsync(tenantId, ticketId, SupportRealtimeTopics.Tasks(memberId), payload, cancellationToken);
+        }
+
+        await TryPublishAsync(tenantId, ticketId, SupportRealtimeTopics.Ticket(ticketId), payload, cancellationToken);
+        await TryPublishAsync(tenantId, ticketId, SupportRealtimeTopics.Inbox, payload, cancellationToken);
+    }
+
+    private async Task TryPublishAsync(Guid tenantId, Guid ticketId, string topic, object payload, CancellationToken cancellationToken)
+    {
         try
         {
-            await publisher.PublishAsync(
-                tenantId, SupportRealtimeTopics.Ticket(ticketId), SupportRealtimeEvents.TicketChanged, payload, cancellationToken);
-            await publisher.PublishAsync(
-                tenantId, SupportRealtimeTopics.Inbox, SupportRealtimeEvents.TicketChanged, payload, cancellationToken);
-            foreach (var memberId in memberIds.Distinct())
-            {
-                await publisher.PublishAsync(
-                    tenantId, SupportRealtimeTopics.Tasks(memberId), SupportRealtimeEvents.TicketChanged, payload, cancellationToken);
-            }
+            await publisher.PublishAsync(tenantId, topic, SupportRealtimeEvents.TicketChanged, payload, cancellationToken);
         }
         catch (Exception exception)
         {
