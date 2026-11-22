@@ -192,25 +192,17 @@ public sealed class SupportTaskAccessApiTests(SharedSupportHost sharedHost) : IC
         Assert.Equal("authorization.denied", await CodeOfAsync(priority));
     }
 
-    // Review Focus 4: quien pierde task.use pierde la tarea aunque siga siendo creador y responsable y conserve la membresía.
+    // Review Focus 4: quien pierde task.use conserva la tarea sólo en lectura. Por HTTP el acceso lo deciden los claims del cliente, no la
+    // base: por eso el cliente trae únicamente support.ticket.read.
     [Fact]
-    public async Task ACreatorWhoLostTaskUseGets404OnHerTask()
+    public async Task ACreatorWhoLostTaskUseCanOnlyReadHerTask()
     {
         var world = await StartAsync();
         var task = await SeedTaskAsync(world, world.TaskOnlyMember, world.TaskOnlyMember);
-        // Mismo usuario y membresía, pero el rol ya no concede support.task.use y el cliente sólo trae lo que le queda.
-        await using (var scope = world.Factory.Services.CreateAsyncScope())
-        {
-            var tenancy = scope.ServiceProvider.GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
-            var tenant = await tenancy.Tenants.FindAsync([new TenantId(world.TenantId)], Ct);
-            var membership = await tenancy.Memberships.FindAsync([new MembershipId(world.TaskOnlyMember)], Ct);
-            membership!.ChangeRoles(tenant!, ["no-such-role"], DateTimeOffset.UtcNow);
-            await tenancy.SaveChangesAsync(Ct);
-        }
 
         using var client = CreateClient(world.Factory, world.TaskOnlySubject, world.Manager.Tenant, SupportPermissions.Read);
         var detail = await client.GetAsync($"{world.Url}/tickets/{task}", Ct);
-        // Con sólo el claim de lectura la ve (nivel View) y no actúa: 403 con código, no 404.
+        // Con sólo el claim de lectura la ve (nivel View) y no actúa: el 403 lo da la política de ruta TicketAct, antes del handler.
         Assert.True(detail.StatusCode == HttpStatusCode.OK, await BodyAsync(detail));
         var note = await PostNoteAsync(client, world.Url, task);
         Assert.Equal(HttpStatusCode.Forbidden, note.StatusCode);

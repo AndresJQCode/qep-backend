@@ -194,4 +194,16 @@ public sealed class SupportTaskDueDateApiTests(ClockedSupportHost host) : IClass
 
         await AssertCodeAsync(response, HttpStatusCode.NotFound, "support.ticket.not_found");
     }
+
+    // No oracle: a stale version on someone else's task is still 404, never 412.
+    [Fact]
+    public async Task SomeoneElsesTaskWithAStaleVersionIs404NotAPreconditionFailure()
+    {
+        var world = await StartAsync();
+        var foreign = await SeedTaskAsync(world, world.Manager.CallerMemberId, world.AdvisorMember);
+
+        var response = await PutDueDateAsync(world.TaskOnly, world.Url, foreign.Id.Value, "2026-11-20", foreign.Version + 5);
+
+        await AssertCodeAsync(response, HttpStatusCode.NotFound, "support.ticket.not_found");
+    }
 }

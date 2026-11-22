@@ -29,6 +29,10 @@ public sealed class SupportTicketAccessPolicyTests
             SupportTicketId.New(), TenantId, 2, SupportTicketTypeDefaults.Internal(TenantId, 9, Received), "Cuadrar el inventario",
             "Revisar las diferencias de octubre.", SupportTicketPriority.Medium, Assignee, dueOn: null, Creator, Received, Clock);
 
+    private const SupportTicketAccessLevel N = SupportTicketAccessLevel.None;
+    private const SupportTicketAccessLevel V = SupportTicketAccessLevel.View;
+    private const SupportTicketAccessLevel A = SupportTicketAccessLevel.Act;
+
     public static TheoryData<bool, bool, bool> EveryGrant()
     {
         var data = new TheoryData<bool, bool, bool>();
@@ -50,20 +54,23 @@ public sealed class SupportTicketAccessPolicyTests
         var external = External();
         var task = Task();
 
-        // Gestionar: ve y actúa sobre todo, sea o no parte.
-        // Leer sin gestionar: ve todo; actúa sólo donde task.use la hace parte de una tarea (Review Focus 3).
-        // Sólo task.use: lo externo no existe; la tarea, sólo si es creador o responsable.
-        SupportTicketAccessLevel Expected(bool isTask, bool participant) =>
-            manage ? SupportTicketAccessLevel.Act
-            : taskUse && isTask && participant ? SupportTicketAccessLevel.Act
-            : read ? SupportTicketAccessLevel.View
-            : SupportTicketAccessLevel.None;
+        // Literal §5.6 expectations, one row per case; they do not repeat the formula of SupportTicketAccessPolicy.For.
+        // Gestionar: ve y actúa sobre todo, sea o no parte. Leer sin gestionar: ve todo; actúa sólo donde task.use la hace parte de
+        // una tarea. Sólo task.use: lo externo no existe; la tarea, sólo si es creador o responsable.
+        var (onExternal, onTaskAsParticipant, onTaskAsStranger) = (read, manage, taskUse) switch
+        {
+            (_, true, _) => (A, A, A),
+            (true, false, true) => (V, A, V),
+            (true, false, false) => (V, V, V),
+            (false, false, true) => (N, A, N),
+            (false, false, false) => (N, N, N),
+        };
 
-        Assert.Equal(Expected(false, false), SupportTicketAccessPolicy.For(grants, external, Creator));
-        Assert.Equal(Expected(false, false), SupportTicketAccessPolicy.For(grants, external, Assignee));
-        Assert.Equal(Expected(true, true), SupportTicketAccessPolicy.For(grants, task, Creator));
-        Assert.Equal(Expected(true, true), SupportTicketAccessPolicy.For(grants, task, Assignee));
-        Assert.Equal(Expected(true, false), SupportTicketAccessPolicy.For(grants, task, Stranger));
+        Assert.Equal(onExternal, SupportTicketAccessPolicy.For(grants, external, Creator));
+        Assert.Equal(onExternal, SupportTicketAccessPolicy.For(grants, external, Assignee));
+        Assert.Equal(onTaskAsParticipant, SupportTicketAccessPolicy.For(grants, task, Creator));
+        Assert.Equal(onTaskAsParticipant, SupportTicketAccessPolicy.For(grants, task, Assignee));
+        Assert.Equal(onTaskAsStranger, SupportTicketAccessPolicy.For(grants, task, Stranger));
     }
 
     [Fact]

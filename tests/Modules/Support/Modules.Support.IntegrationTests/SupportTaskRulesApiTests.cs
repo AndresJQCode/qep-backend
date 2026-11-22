@@ -39,9 +39,9 @@ public sealed class SupportTaskRulesApiTests(ClockedSupportHost host) : IClassFi
     }
 
     // La tarea del manager, asignada a quien se pase, sembrada por el dominio.
-    private static async Task<(Guid Id, long Version)> SeedTaskAsync(World world, Guid assignee)
+    private static async Task<(Guid Id, long Version)> SeedTaskAsync(World world, Guid assignee, Guid? creator = null)
     {
-        var task = await SupportTicketSeed.SaveInternalTicketAsync(world.Factory, world.TenantId, world.Manager.CallerMemberId, assignee);
+        var task = await SupportTicketSeed.SaveInternalTicketAsync(world.Factory, world.TenantId, creator ?? world.Manager.CallerMemberId, assignee);
         return (task.Id.Value, task.Version);
     }
 
@@ -169,7 +169,7 @@ public sealed class SupportTaskRulesApiTests(ClockedSupportHost host) : IClassFi
     public async Task TakingATaskWritesNoEvent()
     {
         var world = await StartAsync();
-        var task = await SeedTaskAsync(world, world.AdvisorMember);
+        var task = await SeedTaskAsync(world, world.AdvisorMember, creator: world.TaskOnlyMember);
 
         var taken = await SendTakeAsync(world.TaskOnly, world.Url, task.Id, task.Version);
         Assert.Equal(HttpStatusCode.OK, taken.StatusCode);
@@ -227,6 +227,34 @@ public sealed class SupportTaskRulesApiTests(ClockedSupportHost host) : IClassFi
 
         await AssertCodeAsync(update, HttpStatusCode.UnprocessableEntity, "support.ticket.internal_type_locked");
         await AssertCodeAsync(delete, HttpStatusCode.UnprocessableEntity, "support.ticket.internal_type_locked");
+    }
+
+    // Domain rule: the internal type's own exact values are a no-op (the frontend may PUT it unchanged); only a difference is locked.
+    [Fact]
+    public async Task ThePutOfTheInternalTypeWithItsOwnValuesIsANoOp()
+    {
+        var world = await StartAsync();
+        var types = (await JsonAsync(await world.Manager.Client.GetAsync($"{world.Url}/ticket-types", Ct))).EnumerateArray();
+        var internalType = types.Single(type => type.GetProperty("isInternal").GetBoolean());
+        var version = internalType.GetProperty("version").GetInt64();
+
+        var response = await PutAsync(
+            world.Manager.Client,
+            $"{world.Url}/settings/ticket-types/{internalType.GetProperty("id").GetGuid()}",
+            new
+            {
+                name = internalType.GetProperty("name").GetString(),
+                termBusinessDays = (int?)null,
+                termIsLegal = internalType.GetProperty("termIsLegal").GetBoolean(),
+                requiresFormalResponse = internalType.GetProperty("requiresFormalResponse").GetBoolean(),
+                isPublished = internalType.GetProperty("isPublished").GetBoolean(),
+                isActive = internalType.GetProperty("isActive").GetBoolean(),
+            },
+            version);
+
+        var body = await BodyAsync(response);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        Assert.Equal(version, JsonDocument.Parse(body).RootElement.GetProperty("version").GetInt64());
     }
 
     [Fact]
