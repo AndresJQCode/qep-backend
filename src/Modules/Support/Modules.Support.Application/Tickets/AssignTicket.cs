@@ -63,6 +63,7 @@ public sealed class AssignTicketHandler(
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         var version = ticket.Version;
+        var formerAssignee = ticket.AssigneeMemberId;
         ticket.Assign(command.AssigneeMemberId, actor, now);
         // El aviso a quien recibe la tarea va al outbox en la misma transacción del guardado: sólo si cambió de manos y no se la pasó
         // a sí mismo ni la dejó sin responsable.
@@ -76,7 +77,7 @@ public sealed class AssignTicketHandler(
             cancellationToken);
         if (ticket.Version != version)
         {
-            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+            await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssignee, CancellationToken.None);
         }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);

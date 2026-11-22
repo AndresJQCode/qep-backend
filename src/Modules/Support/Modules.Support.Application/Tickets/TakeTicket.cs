@@ -41,13 +41,14 @@ public sealed class TakeTicketHandler(
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         var version = ticket.Version;
+        var formerAssignee = ticket.AssigneeMemberId;
         ticket.Assign(actor, actor, now);
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketAssigned, ChangedFields, now,
             cancellationToken);
         if (ticket.Version != version)
         {
-            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+            await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssignee, CancellationToken.None);
         }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);

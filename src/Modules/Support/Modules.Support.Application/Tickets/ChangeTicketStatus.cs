@@ -63,7 +63,7 @@ public sealed class ChangeTicketStatusHandler(
                 cancellationToken);
             if (ticket.Version != version)
             {
-                await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+                await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
             }
 
             return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
@@ -82,7 +82,7 @@ public sealed class ChangeTicketStatusHandler(
         await conversationEvents.NotifyChangedAsync(command.TenantId, conversationId, cancellationToken);
         if (ticket.Version != version)
         {
-            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+            await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
         }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);

@@ -14,7 +14,18 @@ internal sealed partial class SupportRealtimeNotifier(IRealtimePublisher publish
     [LoggerMessage(Level = LogLevel.Warning, Message = "The realtime notice of ticket {TicketId} of tenant {TenantId} could not be published.")]
     private static partial void LogNoticeFailed(ILogger logger, Guid ticketId, Guid tenantId, Exception exception);
 
-    public async Task TicketChangedAsync(Guid tenantId, Guid ticketId, CancellationToken cancellationToken)
+    public Task TicketChangedAsync(Guid tenantId, Guid ticketId, CancellationToken cancellationToken) =>
+        PublishAsync(tenantId, ticketId, [], cancellationToken);
+
+    public Task TaskChangedAsync(Guid tenantId, Guid ticketId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(memberIds);
+        return PublishAsync(tenantId, ticketId, memberIds, cancellationToken);
+    }
+
+    // The ticket's topic, the inbox and one topic per distinct member; one failure stops the rest, as it always did: the write that
+    // announced already committed and the screens reread on reconnect.
+    private async Task PublishAsync(Guid tenantId, Guid ticketId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken)
     {
         var payload = new { ticketId };
         try
@@ -23,6 +34,11 @@ internal sealed partial class SupportRealtimeNotifier(IRealtimePublisher publish
                 tenantId, SupportRealtimeTopics.Ticket(ticketId), SupportRealtimeEvents.TicketChanged, payload, cancellationToken);
             await publisher.PublishAsync(
                 tenantId, SupportRealtimeTopics.Inbox, SupportRealtimeEvents.TicketChanged, payload, cancellationToken);
+            foreach (var memberId in memberIds.Distinct())
+            {
+                await publisher.PublishAsync(
+                    tenantId, SupportRealtimeTopics.Tasks(memberId), SupportRealtimeEvents.TicketChanged, payload, cancellationToken);
+            }
         }
         catch (Exception exception)
         {

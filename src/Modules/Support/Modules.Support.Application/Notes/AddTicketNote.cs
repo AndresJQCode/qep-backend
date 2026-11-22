@@ -93,7 +93,7 @@ public sealed class AddTicketNoteHandler(
             note.CreatedAt);
         // A race with the same clientId loses on PK_ticket_notes and answers 409 (SupportUnitOfWork, plan N15).
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
         return await SupportNoteDtos.ComposeAsync(members, viewer, command.TenantId, note, cancellationToken);
     }
 
