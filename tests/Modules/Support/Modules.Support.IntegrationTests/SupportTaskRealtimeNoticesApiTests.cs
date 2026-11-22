@@ -40,7 +40,7 @@ public sealed class SupportTaskRealtimeNoticesApiTests(ClockedSupportHost host) 
     // Una tarea creada por el gestor y trabajada por el asesor, sembrada por el dominio (sin avisos).
     private static async Task<Guid> SeedTaskAsync(World world) =>
         (await SupportTicketSeed.SaveInternalTicketAsync(
-            world.Manager.Factory, world.TenantId, world.ManagerMember, world.AdvisorMember, new DateOnly(2030, 1, 1))).Id.Value;
+            world.Manager.Factory, world.TenantId, world.ManagerMember, world.AdvisorMember, new DateOnly(2030, 1, 1), ClockedSupportHost.Reception)).Id.Value;
 
     private IReadOnlyList<RecordingRealtimePublisher.Notice> NoticesAfter(World world, int already) =>
         [.. Publisher.Of(world.TenantId).Skip(already)];

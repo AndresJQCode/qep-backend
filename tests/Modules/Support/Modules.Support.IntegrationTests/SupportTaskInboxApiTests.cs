@@ -41,9 +41,9 @@ public sealed class SupportTaskInboxApiTests(ClockedSupportHost host) : IClassFi
         var client = CreateClient(factory, subject, manager.Tenant, SupportPermissions.TaskUse);
         var external = SupportTicketScenario.Id(await manager.CreateAsync());
         var cashierTask = (await SupportTicketSeed.SaveInternalTicketAsync(
-            factory, manager.TenantId, manager.CallerMemberId, cashier, TaskDue)).Id.Value;
+            factory, manager.TenantId, manager.CallerMemberId, cashier, TaskDue, ClockedSupportHost.Reception)).Id.Value;
         var foreignTask = (await SupportTicketSeed.SaveInternalTicketAsync(
-            factory, manager.TenantId, manager.CallerMemberId, advisor, TaskDue)).Id.Value;
+            factory, manager.TenantId, manager.CallerMemberId, advisor, TaskDue, ClockedSupportHost.Reception)).Id.Value;
         return new World(manager, client, cashier, advisor, external, cashierTask, foreignTask);
     }
 
@@ -130,7 +130,7 @@ public sealed class SupportTaskInboxApiTests(ClockedSupportHost host) : IClassFi
     {
         var world = await StartAsync();
         var mine = (await SupportTicketSeed.SaveInternalTicketAsync(
-            world.Manager.Factory, world.Manager.TenantId, world.CashierMember, world.AdvisorMember, TaskDue)).Id.Value;
+            world.Manager.Factory, world.Manager.TenantId, world.CashierMember, world.AdvisorMember, TaskDue, ClockedSupportHost.Reception)).Id.Value;
 
         var cashier = await ListAsync(world.TaskOnly, world.Url, "?createdBy=me");
         var manager = await ListAsync(world.Manager.Client, world.Url, "?kind=internal&createdBy=me");

@@ -41,7 +41,7 @@ public sealed class SupportTaskDueDateApiTests(ClockedSupportHost host) : IClass
     }
 
     private static async Task<SupportTicket> SeedTaskAsync(World world, Guid creator, Guid assignee, DateOnly? dueOn = null) =>
-        await SupportTicketSeed.SaveInternalTicketAsync(world.Factory, world.TenantId, creator, assignee, dueOn);
+        await SupportTicketSeed.SaveInternalTicketAsync(world.Factory, world.TenantId, creator, assignee, dueOn, ClockedSupportHost.Reception);
 
     private static Task<HttpResponseMessage> PutDueDateAsync(HttpClient client, string url, Guid ticketId, string? dueOn, long? version) =>
         PutAsync(client, $"{url}/tickets/{ticketId}/due-date", new { dueOn }, version);
