@@ -10,16 +10,18 @@ namespace Modules.Messaging.Infrastructure.Webhook;
 /// causa; nunca toca la conversación.</summary>
 internal static class ConversationEventRows
 {
-    public static Task InsertAsync(
+    public static async Task InsertAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, Guid conversationId,
         ConversationEvent value, DateTimeOffset occurredAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var details = ConversationEventJson.Serialize(value);
-        return dbContext.Database.ExecuteSqlAsync(
+        await dbContext.Database.ExecuteSqlAsync(
             $"""
             INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, details, created_at)
             VALUES ({Guid.CreateVersion7()}, {conversationId}, {tenantId}, {connectionId}, {occurredAt.ToUniversalTime()}, 3, 13, 2, {details}::jsonb, {now})
             """,
             cancellationToken);
+        // Spec 2026-11-22 D-10: the assignment notice of the bell, on the same connection and transaction as the row.
+        await ConversationAssignmentOutbox.InsertAsync(dbContext, tenantId, conversationId, value, occurredAt, now, cancellationToken);
     }
 }

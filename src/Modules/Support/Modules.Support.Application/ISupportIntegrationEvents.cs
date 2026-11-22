@@ -2,23 +2,37 @@ using Modules.Support.Domain;
 
 namespace Modules.Support.Application;
 
-/// <summary>Los eventos de integración de Soporte (spec 2026-11-22 §6 D-3). El nombre y el payload son un contrato con quien los lea
-/// (el spec hermano de avisos): nunca se cambian sin versionarlos.</summary>
-public static class SupportIntegrationEventNames
-{
-    /// <summary>Una tarea quedó a cargo de alguien que no es quien la asignó. Payload camelCase: <c>ticketId</c>, <c>tenantId</c>,
-    /// <c>ticketNumber</c>, <c>assigneeMemberId</c>, <c>assignedByMemberId</c>.</summary>
-    public const string TaskAssigned = "support.ticket.task-assigned.v1";
-}
-
 /// <summary>
-/// Escribe los eventos de integración de Soporte en el outbox de plataforma, en la misma transacción del handler: el evento se confirma
-/// o se revierte con el cambio que lo causó. Sólo acumula en el contexto del módulo; quien llama lo guarda con su
-/// <c>SaveChanges</c>. Hasta que exista un consumidor, el evento queda escrito y el procesador lo marca sin efecto (plan D14).
+/// Eventos que Soporte le publica a otros módulos por el outbox de la plataforma (spec 2026-11-22 §12). El adaptador los acumula en el
+/// contexto de Soporte, así que commitean o revierten con el cambio que los causa, en la misma unidad de trabajo; nada de esto llama a
+/// <c>Notifications</c> directo (ArchitectureTests lo prohíbe entre módulos de negocio). El nombre y el payload de cada evento son un
+/// contrato con quien los lea: nunca se cambian sin versionarlos.
 /// </summary>
 public interface ISupportIntegrationEvents
 {
-    /// <summary>Una tarea pasó a <paramref name="ticket"/>.AssigneeMemberId, asignada por <paramref name="assignedByMemberId"/>. El
-    /// llamante decide si aplica (nunca cuando se la asigna a sí mismo).</summary>
+    /// <summary>
+    /// <c>support.ticket.customer-replied.v1</c>: el cliente contestó y el ticket que esperaba volvió a <see cref="SupportTicketStatus.Open"/>.
+    /// El destinatario es el responsable del ticket; quien llama ya decidió que hay uno y que no es quien causó el cambio.
+    /// </summary>
+    void PublishCustomerReplied(SupportTicket ticket, DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// <c>support.ticket.unassigned-alert.v1</c>: el ticket lleva <paramref name="thresholdHours"/> horas hábiles sin responsable. Lo
+    /// produce el worker del aviso (Tarea 12 del plan); <paramref name="unassignedSince"/> identifica el tramo, y con él el consumidor
+    /// desduplica un reintento.
+    /// </summary>
+    void PublishUnassignedAlert(
+        SupportTicket ticket,
+        IReadOnlyList<Guid> recipientMemberIds,
+        int thresholdHours,
+        DateTimeOffset unassignedSince,
+        DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// <c>support.ticket.task-assigned.v1</c> (spec de tareas internas 2026-11-22 §6 D-3): una tarea pasó a
+    /// <paramref name="ticket"/>.AssigneeMemberId, asignada por <paramref name="assignedByMemberId"/>. Payload camelCase: <c>ticketId</c>,
+    /// <c>tenantId</c>, <c>ticketNumber</c>, <c>assigneeMemberId</c>, <c>assignedByMemberId</c>. El llamante decide si aplica (nunca
+    /// cuando se la asigna a sí mismo).
+    /// </summary>
     void PublishTaskAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt);
 }

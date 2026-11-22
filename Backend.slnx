@@ -74,6 +74,7 @@
     <Project Path="src/Modules/Messaging/Modules.Messaging.Infrastructure/Modules.Messaging.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Notifications/">
+    <Project Path="src/Modules/Notifications/Modules.Notifications.Api/Modules.Notifications.Api.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Application/Modules.Notifications.Application.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Infrastructure/Modules.Notifications.Infrastructure.csproj" />

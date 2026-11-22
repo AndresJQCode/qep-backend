@@ -38,6 +38,9 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<ISupportUnclassifiedRepository, SupportUnclassifiedRepository>();
         services.AddScoped<ISupportReplyRepository, SupportReplyRepository>();
         services.AddScoped<ISupportAuditPublisher, SupportAuditPublisher>();
+        // Spec 2026-11-22 §12 (and the internal-tasks spec §6 D-3): the integration events go to the platform outbox in the same unit of
+        // work as the ticket change.
+        services.AddScoped<ISupportIntegrationEvents, SupportIntegrationEvents>();
 
         // Fase 3, formulario público (plan F7, F8, F14, F16, F17).
         services.AddScoped<ISupportTicketAccessRepository, SupportTicketAccessRepository>();
@@ -54,8 +57,6 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<IFileReferenceProbe, SupportAttachmentReferenceProbe>();
         // Spec 2026-11-15 §5.2: the ticket notices of the app hub, after each commit.
         services.AddScoped<ISupportRealtime, SupportRealtimeNotifier>();
-        // Spec 2026-11-22 §6 D-3: los eventos de integración van al outbox de plataforma, en la transacción del handler.
-        services.AddScoped<ISupportIntegrationEvents, SupportIntegrationEvents>();
 
         // Fase 4b (H12): el PDF de la respuesta formal, con sección y clave propias de qcode-pdf. Sin la clave en Production el pod no
         // arranca (ValidateOnStart). Singleton por fábrica con un HttpClient propio y su timeout, como QCodePdfRenderer: sin estado.
@@ -80,12 +81,15 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<SupportSurveySender>();
         services.AddScoped<SupportSurveyAnswers>();
         services.AddScoped<SupportAutoCloser>();
+        // Spec 2026-11-22 §7 and D-16: the unassigned-ticket alert reads and claims through this store.
+        services.AddScoped<SupportUnassignedAlertStore>();
         services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
         if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
         {
             services.AddHostedService<SupportThreadFollowWorker>();
             services.AddHostedService<SupportSurveyWorker>();
             services.AddHostedService<SupportAutoCloseWorker>();
+            services.AddHostedService<SupportUnassignedAlertWorker>();
         }
 
         return services;

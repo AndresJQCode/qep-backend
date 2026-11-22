@@ -54,6 +54,23 @@ public sealed class SupportTicketInternalTests
         Assert.Equal(Actor, created.ActorMemberId);
     }
 
+    // Merge with the unassigned alert (spec 2026-11-22 D-15): a task is never «sin asignar». The handler refuses to unassign it, and the
+    // domain does not start the alert's clock even if a caller skipped that rule.
+    [Fact]
+    public void ATaskNeverStartsTheUnassignedClock()
+    {
+        var ticket = NewTask();
+        Assert.Null(ticket.UnassignedSince);
+
+        ticket.Assign(null, Actor, At(11, 13, 16));
+        Assert.Null(ticket.UnassignedSince);
+
+        ticket.ChangeStatus(SupportTicketStatus.Open, Actor, At(11, 13, 17), Clock);
+        ticket.ChangeStatus(SupportTicketStatus.Resolved, Actor, At(11, 13, 18), Clock);
+        ticket.ChangeStatus(SupportTicketStatus.Open, Actor, At(11, 13, 19), Clock);
+        Assert.Null(ticket.UnassignedSince);
+    }
+
     [Fact]
     public void ATaskKeepsTheChosenDueDate() =>
         Assert.Equal(new DateOnly(2026, 11, 20), NewTask(new DateOnly(2026, 11, 20)).DueOn);

@@ -58,9 +58,6 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportTicketType> TicketTypes => Set<SupportTicketType>();
 
-    // Proyección de escritura de platform.outbox_messages (ExcludeFromMigrations): BuildingBlocks es dueño de la tabla.
-    internal DbSet<SupportOutboxMessage> OutboxMessages => Set<SupportOutboxMessage>();
-
     public DbSet<SupportTenantSettings> TenantSettings => Set<SupportTenantSettings>();
 
     public DbSet<SupportTicketMessage> TicketMessages => Set<SupportTicketMessage>();
@@ -139,14 +136,21 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
 
     public DbSet<SupportTicketNote> TicketNotes => Set<SupportTicketNote>();
 
+    // Spec 2026-11-22 D-16: the claim of each unassigned alert. The worker writes it with SQL; the DbSet exists so the model owns the table.
+    internal DbSet<SupportUnassignedAlertClaim> UnassignedAlerts => Set<SupportUnassignedAlertClaim>();
+
     public DbSet<SupportTicketNoteFile> TicketNoteFiles => Set<SupportTicketNoteFile>();
 
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    // Proyección de escritura de platform.outbox_messages (ExcludeFromMigrations): Tenancy es dueña de la tabla. Spec 2026-11-22 §12.
+    internal DbSet<SupportOutboxMessage> Outbox => Set<SupportOutboxMessage>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+        ConfigureOutboxProjection(modelBuilder);
         ConfigureSettings(modelBuilder);
         ConfigureTicketType(modelBuilder);
         ConfigureTicket(modelBuilder);
@@ -164,10 +168,22 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ConfigureLegalAcceptance(modelBuilder);
         ConfigureTicketAttachment(modelBuilder);
         ConfigureTicketNote(modelBuilder);
-        ConfigureOutboxProjection(modelBuilder);
+        ConfigureUnassignedAlert(modelBuilder);
     }
 
-    // Copia de la proyección de Geography: platform.outbox_messages la crea BuildingBlocks; acá sólo se escribe.
+    // Spec 2026-11-22 D-16. No foreign key to the ticket: the claim is bookkeeping about a stretch, and nothing deletes tickets today.
+    private static void ConfigureUnassignedAlert(ModelBuilder modelBuilder)
+    {
+        var claim = modelBuilder.Entity<SupportUnassignedAlertClaim>();
+        claim.ToTable("unassigned_alerts", Schema);
+        claim.HasKey(value => new { value.TicketId, value.UnassignedSince }).HasName("PK_unassigned_alerts");
+        claim.Property(value => value.TicketId).HasColumnName("ticket_id").ValueGeneratedNever();
+        claim.Property(value => value.UnassignedSince).HasColumnName("unassigned_since").ValueGeneratedNever();
+        claim.Property(value => value.TenantId).HasColumnName("tenant_id");
+        claim.Property(value => value.RecipientCount).HasColumnName("recipient_count");
+        claim.Property(value => value.AlertedAt).HasColumnName("alerted_at");
+    }
+
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
     {
         var outbox = modelBuilder.Entity<SupportOutboxMessage>();
@@ -492,6 +508,21 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         settings.Property(value => value.AutoCloseBusinessDays)
             .HasColumnName("auto_close_business_days")
             .HasDefaultValue(SupportTenantSettings.DefaultAutoCloseBusinessDays);
+        // Spec 2026-11-22 §7 and §11. All with a default in the column (the provisioner's INSERT does not name them, and the rows that
+        // exist already take them): expand-only. No foreign key on the schedule: it is data of Messaging, and one that was deleted is
+        // read as «missing» and not as an error. The recipients are a uuid[] in the order they were chosen.
+        settings.Property(value => value.UnassignedAlertEnabled).HasColumnName("unassigned_alert_enabled").HasDefaultValue(false);
+        settings.Property(value => value.UnassignedAlertHours)
+            .HasColumnName("unassigned_alert_hours")
+            .HasDefaultValue(SupportUnassignedAlertSettings.DefaultThresholdHours);
+        settings.Property(value => value.UnassignedAlertRecipientIds)
+            .HasColumnName("unassigned_alert_recipient_ids")
+            .HasColumnType("uuid[]")
+            .HasDefaultValueSql("'{}'::uuid[]");
+        settings.Property(value => value.UnassignedAlertScheduleId).HasColumnName("unassigned_alert_schedule_id");
+        settings.Property(value => value.UnassignedAlertEnabledAt).HasColumnName("unassigned_alert_enabled_at");
+        // A read of the four columns above as one value, not a column.
+        settings.Ignore(value => value.UnassignedAlert);
         settings.Property<DateTimeOffset>("CreatedAt").HasColumnName("created_at");
         settings.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         settings.Property(value => value.Version)
@@ -606,6 +637,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.Property(value => value.Priority).HasColumnName("priority").HasConversion<string>().HasMaxLength(24);
         // Responsable y cliente son referencias blandas: viven en otros esquemas.
         ticket.Property(value => value.AssigneeMemberId).HasColumnName("assignee_member_id");
+        // Spec 2026-11-22 D-15: since when it has been without an assignee in a status that counts. Nullable, no default: the migration
+        // stamps the rows that are in that situation when it runs, and the domain keeps it afterwards.
+        ticket.Property(value => value.UnassignedSince).HasColumnName("unassigned_since");
         ticket.Property(value => value.CustomerId).HasColumnName("customer_id");
         // Spec 2026-11-22: quien radicó (el actor del alta; null en el formulario público) y si es una tarea interna.
         ticket.Property(value => value.IsInternal).HasColumnName("is_internal").HasDefaultValue(false);
@@ -704,6 +738,8 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
         ticket.HasIndex(value => value.AssigneeMemberId).HasDatabaseName("IX_tickets_assignee");
         // Spec 2026-11-22: la sonda también busca por quien radicó, y «mis tareas creadas» filtra por tenant y creador.
         ticket.HasIndex(value => new { value.TenantId, value.CreatedByMemberId }).HasDatabaseName("IX_tickets_created_by");
+        // Spec 2026-11-22 D-15: the alert worker looks only at tickets without an assignee, by tenant.
+        ticket.HasIndex(value => value.TenantId).HasFilter("assignee_member_id IS NULL").HasDatabaseName("IX_tickets_unassigned");
         // Los tickets de una conversación: los candidatos de cada entrante y la pestaña de Soporte de la ficha.
         ticket.HasIndex(value => new { value.TenantId, value.ConversationId })
             .HasFilter("conversation_id IS NOT NULL")

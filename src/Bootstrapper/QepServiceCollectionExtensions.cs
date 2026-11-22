@@ -959,6 +959,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Spec 2026-11-22 (tareas internas) §5.6: la puerta única de todo ticket; una instancia por request memoiza el acceso.
         services.AddScoped<Modules.Support.Application.SupportTicketScope>();
+        // Spec 2026-11-22 §8.6: the settings DTO with the unassigned-alert block (names, options and the schedule that rules).
+        services.AddScoped<Modules.Support.Application.SupportSettingsComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -2027,6 +2029,21 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
         services.AddSingleton<IDialablePhoneNumbers, DialablePhoneNumbers>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Spec 2026-11-22: la campana de avisos. Los nombres se resuelven al leer, con la regla de Mensajería.
+        services.AddScoped<Modules.Notifications.Application.IInAppNotificationNames, InAppNotificationNames>();
+        services.AddScoped<
+            IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
+            Modules.Notifications.Application.ListInAppNotificationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Notifications.Application.GetUnreadCountQuery, Modules.Notifications.Application.UnreadCountDto>,
+            Modules.Notifications.Application.GetUnreadCountHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Notifications.Application.MarkNotificationReadCommand, Modules.Notifications.Application.InAppNotificationReadDto>,
+            Modules.Notifications.Application.MarkNotificationReadHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Notifications.Application.MarkAllNotificationsReadCommand, Modules.Notifications.Application.MarkAllReadResultDto>,
+            Modules.Notifications.Application.MarkAllNotificationsReadHandler>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Notifications.Application.ListInAppNotificationsValidator>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
         // Soporte fase 2: el número de los tickets que nombran los eventos del hilo, leído de Soporte.
@@ -2247,6 +2264,9 @@ public static class QepServiceCollectionExtensions
         // App hub (spec 2026-11-15, plan N4 and N24): Support's topics are authorized against the member's current roles.
         services.AddScoped<Modules.Support.Application.ISupportMemberPermissions, SupportMemberPermissions>();
         Modules.Support.Api.SupportRealtimeExtensions.AddSupportRealtimeAuthorizer(services);
+        // Spec 2026-11-22 §9.2: the same for Messaging's topic; its authorizer is registered by AddMessagingRealtime (Bootstrapper does not
+        // reference Messaging.Api).
+        services.AddScoped<Modules.Messaging.Application.IMessagingMemberPermissions, MessagingMemberPermissions>();
         services.AddAppRealtime();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y

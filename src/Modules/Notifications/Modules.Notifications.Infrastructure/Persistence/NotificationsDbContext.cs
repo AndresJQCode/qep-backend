@@ -8,6 +8,8 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
 {
     public DbSet<Notification> Notifications => Set<Notification>();
 
+    public DbSet<InAppNotification> InAppNotifications => Set<InAppNotification>();
+
     internal DbSet<NotificationInboxMessage> Inbox => Set<NotificationInboxMessage>();
 
     internal DbSet<OutboxRecord> Outbox => Set<OutboxRecord>();
@@ -15,6 +17,7 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureNotification(modelBuilder);
+        ConfigureInApp(modelBuilder);
         ConfigureInbox(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -50,6 +53,37 @@ public sealed class NotificationsDbContext(DbContextOptions<NotificationsDbConte
             .HasColumnName("failure_reason")
             .HasMaxLength(500);
         notification.HasIndex(value => new { value.TenantId, value.RecipientId });
+    }
+
+    // Column and index names are written by hand: the writer inserts with raw SQL (ON CONFLICT on the dedupe index, spec D-7).
+    private static void ConfigureInApp(ModelBuilder modelBuilder)
+    {
+        var entry = modelBuilder.Entity<InAppNotification>();
+        entry.ToTable("in_app_notifications", "notifications");
+        entry.HasKey(value => value.Id);
+        entry.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        entry.Property(value => value.TenantId).HasColumnName("tenant_id");
+        entry.Property(value => value.MemberId).HasColumnName("member_id");
+        entry.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(64);
+        entry.Property(value => value.ResourceId).HasColumnName("resource_id");
+        entry.Property(value => value.DataJson).HasColumnName("data").HasColumnType("jsonb");
+        entry.Property(value => value.DedupeKey).HasColumnName("dedupe_key").HasMaxLength(InAppNotification.DedupeKeyMaxLength);
+        entry.Property(value => value.SourceMessageId).HasColumnName("source_message_id");
+        entry.Property(value => value.CreatedAt).HasColumnName("created_at");
+        entry.Property(value => value.ReadAt).HasColumnName("read_at");
+        entry.Property(value => value.ResolvedAt).HasColumnName("resolved_at");
+        entry.HasIndex(value => new { value.TenantId, value.MemberId, value.DedupeKey })
+            .IsUnique()
+            .HasDatabaseName("IX_in_app_notifications_member_dedupe");
+        entry.HasIndex(value => new { value.TenantId, value.MemberId, value.CreatedAt, value.Id })
+            .IsDescending(false, false, true, true)
+            .HasDatabaseName("IX_in_app_notifications_member_created");
+        entry.HasIndex(value => new { value.TenantId, value.MemberId })
+            .HasFilter("read_at IS NULL")
+            .HasDatabaseName("IX_in_app_notifications_member_unread");
+        entry.HasIndex(value => new { value.TenantId, value.Kind, value.ResourceId })
+            .HasDatabaseName("IX_in_app_notifications_resource");
+        entry.HasIndex(value => value.CreatedAt).HasDatabaseName("IX_in_app_notifications_created");
     }
 
     private static void ConfigureInbox(ModelBuilder modelBuilder)
