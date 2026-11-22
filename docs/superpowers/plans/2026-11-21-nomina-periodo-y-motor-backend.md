@@ -116,22 +116,23 @@ el caso real)** las revisa la Tarea 15.
   2025-06-25: se lee su `EffectiveFrom`, no su valor.
 - **R-2. Factor de cada tipo de hora** (spec, «Horas extras»: «cada tipo multiplica el valor hora por su porcentaje de la
   tabla»). Una hora **extra** es una hora adicional y se paga `1 + recargo`; un **recargo** cae sobre una hora ya pagada en el
-  salario y se paga sólo el recargo; los tres compuestos de la tabla ya son multiplicadores completos y se usan tal cual:
+  salario y se paga sólo el recargo; los tres compuestos **se derivan en el motor** del recargo dominical vigente a la fecha
+  del período (spec corregido, commit `67dfce91d`) y no tienen clave propia:
 
-  | Concepto (`SystemConceptKey`) | Factor | Claves |
-  | --- | --- | --- |
-  | `ExtraDay` Hora extra diurna | `1 + ExtraDayRate` (1,25) | `ExtraDayRate` 0.25 |
-  | `ExtraNight` Hora extra nocturna | `1 + ExtraNightRate` (1,75) | `ExtraNightRate` 0.75 |
-  | `NightSurcharge` Recargo nocturno | `NightSurchargeRate` (0,35) | `NightSurchargeRate` 0.35 |
-  | `SundaySurcharge` Recargo dominical y festivo | `SundaySurchargeRate` (0,80 / 0,90) | `SundaySurchargeRate` |
-  | `ExtraSundayDay` Hora extra dominical diurna | `ExtraSundayDayMultiplier` (2,15) | idem |
-  | `ExtraSundayNight` Hora extra dominical nocturna | `ExtraSundayNightMultiplier` (2,65) | idem |
-  | `NightSundaySurcharge` Recargo nocturno dominical | `NightSundaySurchargeMultiplier` (1,25) | idem |
-  | Concepto propio de la empresa | su `multiplier` | — |
+  | Concepto (`SystemConceptKey`) | Factor | Con 80 % (desde 2025-07-01) | Con 90 % (desde 2026-07-01) |
+  | --- | --- | --- | --- |
+  | `ExtraDay` Hora extra diurna | `1 + ExtraDayRate` | 1,25 | 1,25 |
+  | `ExtraNight` Hora extra nocturna | `1 + ExtraNightRate` | 1,75 | 1,75 |
+  | `NightSurcharge` Recargo nocturno | `NightSurchargeRate` | 0,35 | 0,35 |
+  | `SundaySurcharge` Recargo dominical y festivo | `SundaySurchargeRate` | 0,80 | 0,90 |
+  | `ExtraSundayDay` Hora extra dominical diurna | `1 + ExtraDayRate + SundaySurchargeRate` | 2,05 | 2,15 |
+  | `ExtraSundayNight` Hora extra dominical nocturna | `1 + ExtraNightRate + SundaySurchargeRate` | 2,55 | 2,65 |
+  | `NightSundaySurcharge` Recargo nocturno dominical | `NightSurchargeRate + SundaySurchargeRate` | 1,15 | 1,25 |
+  | Concepto propio de la empresa | su `multiplier` | — | — |
 
-  Los tres compuestos se siembran **literal** como dice el spec (2,15 / 2,65 / 1,25 en 2025 y 2026). Ver **O-1**.
+  La tabla vive una sola vez en `OvertimeFactors` (Domain, `Engine/`) y el rastro de cada línea lista las claves que sumó.
 - **R-3. Pensión de alto riesgo.** La tabla dice «Pensión alto riesgo (total) 26 %». El empleado sigue con su 4 %; el
-  empleador paga `HighRiskPensionTotalRate − PensionEmployeeRate` (22 %). Ver **O-2**. **(a confirmar con el caso real)**
+  empleador paga `HighRiskPensionTotalRate − PensionEmployeeRate` (22 %). Confirmado en el spec corregido (O-2 resuelta).
 - **R-4. Bases de los aportes del empleador.** Salud, pensión y ARL van sobre el **IBC** del mes (con la regla del 40 %, piso y
   tope). Caja, ICBF y SENA (parafiscales) van sobre el **devengo salarial del mes** (`SalDev_m`: salario + horas extras y
   recargos + ingresos salariales), sin auxilio, sin no salariales y sin la regla del 40 %. **(a confirmar con el caso real)**
@@ -153,10 +154,10 @@ el caso real)** las revisa la Tarea 15.
 - **R-9. FSP.** Los tramos son de límite inferior **inclusivo** (un IBC de exactamente 4 SMMLV paga 1 %); el último incluye
   su tope. Primera quincena: tramo por `salario vigente ÷ SMMLV`, aplicado al IBC de la quincena; si el salario no llega a 4
   SMMLV, cero. Segunda: tramo por `IBC_m ÷ SMMLV`, `ceil100(IBC_m × tasa) − FSP de la primera` (puede ser negativo: es una
-  devolución y se muestra como deducción negativa). Ver **O-3**.
-- **R-10. «Dos contratos que se cruzan en el período».** Hr no permite contratos superpuestos (la reincorporación exige empezar
-  después del retiro y la conversión cierra el anterior el día antes), así que la regla se lee como **dos o más contratos de la
-  empresa que cubren algún día de la quincena** ⇒ no liquidable con motivo `MultipleContractsInPeriod`. Ver **O-4**.
+  devolución y se muestra como deducción negativa). Confirmado en el spec corregido: desde IBC ≥ 4 SMMLV (O-3 resuelta).
+- **R-10. Dos o más contratos de la empresa en la quincena** (texto del spec corregido; O-4 resuelta): si cubren algún día
+  de la quincena ⇒ no liquidable con motivo `MultipleContractsInPeriod`. Hr no permite contratos superpuestos, así que en la
+  práctica son una terminación y una reincorporación, o una conversión de tipo, dentro de la misma quincena.
 - **R-11. Conceptos.** Los conceptos del sistema (las siete horas, cuatro ingresos y una deducción, tabla en el contrato) no son
   filas: tienen **UUID fijos** en `SystemConcepts` (Domain), iguales en todos los tenants. Los propios de la empresa son filas
   de `payroll.concepts` (`Overtime` con `multiplier`; `Income` con `defaultSalaryConstitutive`; `Deduction`). Una línea
@@ -213,14 +214,11 @@ el caso real)** las revisa la Tarea 15.
 
 El plan sigue con la opción marcada; cambiarla es una migración de datos o una regla aislada, más su caso de oro.
 
-- **O-1. Multiplicadores dominicales.** La tabla da extra dominical diurna 2,15×, nocturna 2,65× y nocturno dominical 1,25×
-  «igual» en 2025 y 2026, pero esos valores sólo cuadran con un recargo dominical de 90 % (1,25 + 0,90; 1,75 + 0,90;
-  0,35 + 0,90), que rige desde 2026-07-01. Con el 80 % de 2025-07-01 serían 2,05 / 2,55 / 1,15. **(interina)** se siembran
-  literales como el spec; si el owner confirma que se suman, una migración agrega filas con vigencia 2025-07-01 y 2026-07-01.
-- **O-2. Alto riesgo.** «26 % (total)» en la tabla y «pensión 12 % (26 % en un centro de alto riesgo)» en aportes del empleador
-  se contradicen. **(interina)** R-3: 22 % del empleador.
-- **O-3. FSP desde 4 SMMLV.** El texto dice «supera 4 SMMLV» y la tabla «4–16: 1 %». **(interina)** R-9: desde 4 inclusive.
-- **O-4. Dos contratos.** Ver R-10.
+- **O-1. Multiplicadores dominicales — resuelta** (spec corregido, `67dfce91d`): los tres compuestos se derivan del recargo
+  dominical vigente (R-2); no hay claves para ellos. Con 80 % dan 2,05 / 2,55 / 1,15; con 90 %, 2,15 / 2,65 / 1,25.
+- **O-2. Alto riesgo — resuelta:** 22 % del empleador (R-3).
+- **O-3. FSP desde 4 SMMLV — resuelta:** desde IBC ≥ 4 SMMLV, límite inferior incluido (R-9).
+- **O-4. Dos contratos — resuelta:** «dos o más contratos de la empresa en la quincena» (R-10).
 - **O-5. Recargo dominical antes de 2025-07-01.** El spec no da el valor (75 %); no se siembra. Una quincena anterior responde
   422 `payroll.legal_parameter.missing`, que no puede pasar porque no hay períodos históricos.
 - **O-6. Caja de compensación.** El código de Hr guarda caja en la sede (`Site.CompensationFund`) y todavía en el empleado
@@ -590,7 +588,6 @@ con el mismo valor salvo lo indicado («cada año lleva un conjunto completo»).
 | `SundaySurchargeRate` | — | 0.80 desde 2025-07-01 · 0.90 desde 2026-07-01 · 1.00 desde 2027-07-01 | Recargo dominical y festivo · Ley 2466/2025 |
 | `WeeklyHours` | — | 47 desde 2023-07-15 · 46 desde 2024-07-15 · 44 desde 2025-07-15 · 42 desde 2026-07-15 | Jornada máxima semanal · Ley 2101/2021 art. 3 |
 | `ExtraDayRate` / `ExtraNightRate` / `NightSurchargeRate` | 0.25 / 0.75 / 0.35 | — | Hora extra diurna / nocturna / Recargo nocturno · CST, Ley 2466/2025 |
-| `ExtraSundayDayMultiplier` / `ExtraSundayNightMultiplier` / `NightSundaySurchargeMultiplier` | 2.15 / 2.65 / 1.25 | — (O-1) | Hora extra dominical diurna / nocturna / Recargo nocturno dominical · CST, Ley 2466/2025 |
 
 `Smmlv` ya existe (fase 1; label «Salario mínimo mensual legal vigente», basis «Decreto anual del salario mínimo»).
 Tramos del FSP (`hr.legal_parameter_brackets`, clave `SolidarityFund`, vigencias 2025-01-01 y 2026-01-01, `basis` «Ley 100/1993
@@ -619,7 +616,9 @@ montos de las líneas salvo `SalaryRaw` y `TransportRaw`.
    NSI`. `monthSalaryIncome = S + SI_m + OT_m` (exoneración). `transportCapIncome` = `S` (`SalaryOnly` y `SalaryAndPaidAbsences`,
    R-22) o `S + SI_m` (`SalaryAndSalaryIncome`).
 5. **Horas** (`OvertimeRule`). `base = S` (`SalaryOnly`) o `S + SI_m` (`SalaryAndMonthSalaryIncome`); `hourValue = base ÷ 30 ÷
-   (L.WeeklyHours ÷ 6)`; cada captura ⇒ `overtime:<conceptId>` = `round(hours × hourValue × factor)` con el factor de R-2.
+   (L.WeeklyHours ÷ 6)`; cada captura ⇒ `overtime:<conceptId>` = `round(hours × hourValue × factor)`, con
+   `factor = OvertimeFactors.For(input, L)` (R-2): el motor lo deriva de `L` (los compuestos dominicales suman
+   `L.SundaySurchargeRate` vigente a `ps`); un concepto propio trae su `multiplier`.
    `OT` = suma. (Se calcula antes del paso 4, que usa `OT`; `SI_m` no depende de `OT`.)
 6. **Auxilio** (`TransportAllowanceRule`). `eligible = transportCapIncome ≤ L.TransportAllowanceCapSmmlv × L.Smmlv`. Código
    `connectivity_allowance` si `teleworker` y `L.ConnectivityAllowanceSince ≠ null` y `salaryRecordDate ≥
@@ -665,6 +664,8 @@ Anclas calculadas a mano (2026; quincena completa; centro clase I; empresa exone
 | `ibc-cap-and-top-bracket` | 2026-11, salario 50 000 000 | primera: ibc 25 000 000 · solidarity_fund 500 000 · health_employee 1 000 000. Segunda: ibc 43 772 625 · health_employee 751 000 · pension_employee 751 000 · solidarity_fund 375 500 · health_employer 1 595 700 |
 | `month-income-keeps-transport` | 2026-11-01..15, salario 3 000 000, `Commissions` 500 000 constitutivo, `transportCapBase: SalaryAndSalaryIncome` | transport_allowance 124 548 (3 500 000 ≤ 3 501 810) |
 | `month-income-loses-transport` | igual con `Commissions` 501 811 | transport_allowance 0 con nota |
+| `sunday-overtime-before-july-2026` | 2026-06-01..15 (recargo dominical 0,80; jornada 44), salario 2 200 000, 10 h de cada uno: `SundaySurcharge`, `ExtraSundayDay`, `ExtraSundayNight`, `NightSundaySurcharge` | valor hora 10 000 (2 200 000 ÷ 30 ÷ (44 ÷ 6)) · factores 0,80 / 2,05 / 2,55 / 1,15 ⇒ 80 000 · 205 000 · 255 000 · 115 000 |
+| `sunday-overtime-after-july-2026` | 2026-08-01..15 (recargo dominical 0,90; jornada 42), salario 2 100 000, las mismas 10 h | valor hora 10 000 · factores 0,90 / 2,15 / 2,65 / 1,25 ⇒ 90 000 · 215 000 · 265 000 · 125 000 |
 
 ## Mapa de archivos
 
@@ -881,7 +882,7 @@ Amplía la tabla de la fase 1 (R-1). Los valores son los de «Valores legales: c
     IReadOnlyList<LegalParameterBracket>` (todos los de la mayor `EffectiveFrom ≤ date`, por `LowerBound`).
     `ILegalParameterSource.ListBracketsAsync(CancellationToken)`.
   - Migración `AddPayrollLegalParameters`: `AlterColumn` de `value` a `numeric(18,6)`, drop/add de `CK_legal_parameters_key`
-    con las 33 claves (las 2 de la fase 1 y las 31 nuevas), `CreateTable` de los tramos e `InsertData` de todas las filas de la tabla de siembra; `Down` las borra,
+    con las 30 claves (las 2 de la fase 1 y las 28 nuevas; los compuestos dominicales no tienen clave, R-2), `CreateTable` de los tramos e `InsertData` de todas las filas de la tabla de siembra; `Down` las borra,
     repone el CHECK de dos claves y la precisión `(18,2)`.
   - Payroll Domain: `sealed record LegalValue(string Key, decimal Value, DateOnly EffectiveFrom)`;
     `sealed record SolidarityBracket(decimal LowerSmmlv, decimal? UpperSmmlv, decimal Rate, DateOnly EffectiveFrom)`;
@@ -944,11 +945,11 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
 **Files:**
 - Create en `Engine/`: `PayrollRounding.cs`, `EngineInput.cs` (los registros de **Interfaces**), `MonthAccumulators.cs`,
   `PayrollLine.cs`, `LineTrace.cs`, `WorkedDaysRule.cs`, `SalaryRule.cs`, `IncomeRule.cs`, `RecurringConceptRule.cs`,
-  `OvertimeRule.cs`, `MonthIncomeRule.cs`, `TransportAllowanceRule.cs`
+  `OvertimeFactors.cs`, `OvertimeRule.cs`, `MonthIncomeRule.cs`, `TransportAllowanceRule.cs`
 - Create en Domain: los enums `PayrollHalf`, `TransportFrequency`, `TransportCapBase`, `OvertimeBase`, `ConceptKind`,
   `RecurringMode`, `PayrollLineGroup`, `ArlClass`, `SystemConceptKey`; `SystemConcepts.cs`, `QuincenaCalendar.cs`
 - Test: `Engine/EngineTestData.cs`, `PayrollRoundingTests.cs`, `QuincenaCalendarTests.cs`, `SystemConceptsTests.cs`,
-  `WorkedDaysRuleTests.cs`, `SalaryRuleTests.cs`, `IncomeAndRecurringRuleTests.cs`, `OvertimeRuleTests.cs`,
+  `WorkedDaysRuleTests.cs`, `SalaryRuleTests.cs`, `IncomeAndRecurringRuleTests.cs`, `OvertimeFactorsTests.cs`, `OvertimeRuleTests.cs`,
   `TransportAllowanceRuleTests.cs`
 
 **Interfaces:**
@@ -967,8 +968,12 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
     - `sealed record SalarySegmentSource(DateOnly EffectiveDate, decimal MonthlyAmount, bool Teleworker)` (todos los registros
       del contrato, en orden).
     - `sealed record WorkplaceInfo(string Name, ArlClass RiskClass, bool HighRiskPension)`.
-    - `sealed record OvertimeInput(Guid ConceptId, string ConceptName, decimal Hours, decimal Factor)` — el factor ya resuelto
-      por `EngineInputFactory` (Tarea 7) con R-2.
+    - `sealed record OvertimeInput(Guid ConceptId, string ConceptName, decimal Hours, SystemConceptKey? SystemKey,
+      decimal? CustomMultiplier)` — exactamente uno de los dos viene; el factor **no** viaja en la entrada: lo deriva el motor.
+  - `OvertimeFactors` (`public static`, Engine): `(decimal Factor, IReadOnlyList<LegalValue> Used) For(OvertimeInput input,
+    LegalValueSet legal)` con la tabla de R-2 (`ExtraSundayDay` = `1 + ExtraDayRate + SundaySurchargeRate`, `ExtraSundayNight`
+    = `1 + ExtraNightRate + SundaySurchargeRate`, `NightSundaySurcharge` = `NightSurchargeRate + SundaySurchargeRate`); un
+    concepto propio devuelve su `CustomMultiplier` y `Used` vacío.
     - `sealed record IncomeInput(Guid ConceptId, string ConceptName, decimal Amount, bool SalaryConstitutive)`;
       `sealed record DeductionInput(Guid ConceptId, string ConceptName, decimal Amount)`.
     - `sealed record RecurringInput(Guid RecurringId, string ConceptName, ConceptKind Kind, RecurringMode Mode, decimal Amount, bool SalaryConstitutive, decimal? RemainingCap)`.
@@ -1016,11 +1021,17 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
   - `IncomeAndRecurringRuleTests`: `SalaryAndNonSalaryIncomesAreSeparated`; `AProportionalRecurringFollowsTheDays` (100 000
     proporcional con 6 días ⇒ 40 000); `ACapLimitsTheLastInstallment` (300 000 fijo, `RemainingCap` 120 000 ⇒ 120 000);
     `AnExhaustedRecurringHasNoLine` (`RemainingCap` 0 ⇒ sin línea).
+  - `OvertimeFactorsTests`: teoría `SystemFactorsWithNinetyPercent` (legal 2026-08-01 ⇒ 1.25, 1.75, 0.35, 0.90, 2.15, 2.65,
+    1.25); teoría `SystemFactorsWithEightyPercent` (legal 2026-06-01 ⇒ 1.25, 1.75, 0.35, 0.80, 2.05, 2.55, 1.15);
+    `TheJulySecondHalfAlreadyUsesNinety` (legal 2026-07-16 ⇒ `ExtraSundayDay` 2.15); `CompositesListTheKeysTheyAdded`
+    (`ExtraSundayNight` ⇒ `Used` con `ExtraNightRate` y `SundaySurchargeRate`); `ACustomConceptUsesItsMultiplier` (1.4,
+    `Used` vacío).
   - `OvertimeRuleTests` (legal 2026-08-01): `HourValueUsesTheWeeklyHoursOfThePeriodStart` (2 100 000 ⇒ 10 000);
     `ExtraDayPaysOnePointTwentyFive` (10 h ⇒ 125 000); `TheSundaySurchargeIsOnlyTheSurcharge` (8 h ⇒ 72 000);
     `TheJulyFirstHalfStillUsesFortyFourHours` (legal 2026-07-01: `HourValue` = 2 100 000 ÷ 30 ÷ (44 ÷ 6));
     `TheMonthSalaryIncomeBaseAddsSalaryIncomes` (`SalaryAndMonthSalaryIncome`, comisión 300 000 ⇒ base 2 400 000);
-    `ACustomConceptUsesItsMultiplier` (factor 1.4).
+    `ACustomConceptUsesItsMultiplier` (`CustomMultiplier` 1.4); `ExtraSundayDayFollowsTheRamp` (10 h con valor hora
+    10 000 ⇒ 205 000 con legal 2026-06-01 y 215 000 con legal 2026-08-01).
   - `TransportAllowanceRuleTests`: `BiweeklyPaysTheDays` (124 548); `TheSecondHalfCompletesTheMonth` (124 547);
     `UpToTwiceTheMinimumKeepsIt` (`SalaryAndSalaryIncome`, 3 000 000 + 500 000 ⇒ 124 548);
     `OverTwiceTheMinimumLosesIt` (3 000 000 + 501 811 ⇒ 0 con nota); `ByDefaultOnlyTheSalaryCounts` (`SalaryOnly`, 3 000 000 +
@@ -1077,7 +1088,7 @@ centro clase I sin alto riesgo, contrato `Employee`/`Monthly` desde 2025-01-01, 
   - `SolidarityFundRuleTests`: `BelowFourMinimumsThereIsNone`; `TheFirstHalfDecidesBySalaryAlone` (salario 7 500 000 ⇒ 1 %);
     `TheSecondHalfRefundsWhenTheMonthFallsBelow` (ancla `solidarity-fund-refund` ⇒ −37 500 con nota);
     `TheTopBracketAppliesToTheCappedIbc` (ancla `ibc-cap-and-top-bracket` ⇒ 375 500); `ExactlyFourMinimumsPaysOnePercent`
-    (O-3).
+    (R-9).
   - `EmployerContributionsRuleTests`: `AnExoneratedCompanyBelowTenMinimumsPaysNoHealthIcbfOrSena` (las tres en 0 con nota
     «Exonerado (ET art. 114-1)»; caja 35 100); `TenMinimumsOrMoreAreNotExonerated` (salario 17 509 050 ⇒ salud empleador > 0);
     `ANonExoneratedCompanyAlwaysPays`; `HighRiskPensionIsTheTotalMinusTheEmployeeShare` (tasa 0.22 en el rastro);
@@ -1131,9 +1142,10 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
   `employerCost`; un fallo imprime las diferencias línea por línea. `GoldenCaseTests.EveryRuleHasACase` falla si alguna de las
   reglas de **Files** de las Tareas 4–5 no aparece en el campo `"covers": ["SalaryRule", …]` de algún caso.
 
-- [ ] **Step 1: Casos (la prueba es el archivo).** Las ocho anclas de «Motor: definiciones exactas» más:
-  `hire-mid-first-half` (inicio 2026-11-10), `raise-mid-second-half-february` (R-7), `overtime-all-seven-types` (2026-08,
-  las siete horas), `overtime-month-income-base`, `exonerated-off` (`exonerated: false`), `ten-minimums-not-exonerated`,
+- [ ] **Step 1: Casos (la prueba es el archivo).** Las diez anclas de «Motor: definiciones exactas» (incluidas
+  `sunday-overtime-before-july-2026` y `sunday-overtime-after-july-2026`, que prueban la derivación de R-2 a cada lado de
+  2026-07-01) más: `hire-mid-first-half` (inicio 2026-11-10), `raise-mid-second-half-february` (R-7),
+  `overtime-all-seven-types` (2026-08, las siete horas, factores derivados con 0,90), `overtime-month-income-base`, `exonerated-off` (`exonerated: false`), `ten-minimums-not-exonerated`,
   `high-risk-pension`, `arl-class-v`, `teleworker-connectivity`, `monthly-transport-first-half`, `monthly-transport-second-half`,
   `recurring-with-cap`, `negative-net`, `custom-overtime-multiplier`. Cada uno con su `covers`.
 - [ ] **Step 2: RED.** Antes de `GoldenCaseLoader` la prueba no compila. Run: `dotnet build tests/Modules/Payroll/Modules.Payroll.UnitTests`.
@@ -1141,7 +1153,7 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 - [ ] **Step 3: Implementar el cargador y la comparación.** Si un caso falla con el cargador ya en verde, se revisa primero la
   aritmética de `notes`; si el caso está bien, se corrige la regla (y su prueba de la Tarea 4–5), nunca el esperado.
 - [ ] **Step 4: GREEN.** Run: `dotnet test tests/Modules/Payroll/Modules.Payroll.UnitTests --filter "FullyQualifiedName~GoldenCaseTests" -- xUnit.MaxParallelThreads=4`.
-  Expected: `Passed!` con 22 casos.
+  Expected: `Passed!` con 24 casos.
 - [ ] **Step 5: Commit** — `test(payroll): synthetic golden cases for every engine rule`
 
 > **Cierre del Bloque B:** `dotnet test tests/Modules/Payroll/Modules.Payroll.UnitTests -- xUnit.MaxParallelThreads=4` completo.
@@ -1484,22 +1496,22 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
 ### Task 11: Liquidación, foto fija, transiciones y rastro
 
 **Files:**
-- Create Application: `OvertimeFactor.cs`, `EngineInputFactory.cs`, `InputFingerprint.cs`, `LiquidationPlanner.cs`,
+- Create Application: `EngineInputFactory.cs`, `InputFingerprint.cs`, `LiquidationPlanner.cs`,
   `LiquidatePeriod.cs`, `ApprovePeriod.cs`, `ClosePeriod.cs`, `ReopenPeriod.cs`; modificar `PeriodComposer.cs`
   (`sourceChanged`, resultados, totales) y `GetPeriodEmployee.cs` (`result`)
 - Modify: `PayrollEndpoints.cs`, `QepServiceCollectionExtensions.cs`
-- Test: `tests/Modules/Payroll/Modules.Payroll.UnitTests/OvertimeFactorTests.cs`, `EngineInputFactoryTests.cs`,
+- Test: `tests/Modules/Payroll/Modules.Payroll.UnitTests/EngineInputFactoryTests.cs`,
   `InputFingerprintTests.cs`; `tests/Modules/Payroll/Modules.Payroll.IntegrationTests/PayrollLiquidationApiTests.cs`
 
 **Interfaces:**
 - Consumes: Tareas 3–10.
 - Produces:
-  - `OvertimeFactor.For(ResolvedConcept concept, LegalValueSet legal) : (decimal Factor, IReadOnlyList<LegalValue> Used)` —
-    la tabla de R-2; un concepto propio usa su `Multiplier`.
   - `EngineInputFactory.Build(HrEmployeeSource employee, EligibilityResult eligibility, PeriodInfo period, EngineSettings
     settings, LegalValueSet legal, ConceptCatalogSnapshot concepts, IReadOnlyList<PeriodInput> inputs,
     IReadOnlyList<RecurringConcept> recurring, IReadOnlyDictionary<Guid, decimal> appliedBefore, MonthAccumulators prior) :
-    EngineInput` (`public static`, puro). Sólo recurrentes `Active` y no agotados; `RemainingCap = Cap − appliedBefore`.
+    EngineInput` (`public static`, puro). Sólo recurrentes `Active` y no agotados; `RemainingCap = Cap − appliedBefore`. Cada
+    hora capturada pasa con `SystemKey` (concepto del sistema) o `CustomMultiplier` (propio); el factor lo deriva el motor
+    (`OvertimeFactors`, Tarea 4), nunca la aplicación.
   - `InputFingerprint`: `static string Of(EngineInput input)` (SHA-256 en hexadecimal minúscula del JSON de `input` con
     `Legal` fuera) y `static string OfPeriod(IEnumerable<(Guid EmployeeId, string Fingerprint)> liquidable,
     IEnumerable<(Guid EmployeeId, string Reason)> excludedOrBlocked)` (ordenados por id).
@@ -1524,9 +1536,7 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     legal completa como `LegalValueUseDto` (label y basis de `LegalBasis`).
 
 - [ ] **Step 1: Pruebas que fallan.**
-  - `OvertimeFactorTests`: teoría con los siete del sistema y sus factores con la legal de 2026-08-01 (1.25, 1.75, 0.35, 0.90,
-    2.15, 2.65, 1.25); `ACustomConceptUsesItsMultiplier`.
-  - `EngineInputFactoryTests`: `CapturesBecomeEngineLinesInOrder`; `ExhaustedAndInactiveRecurringAreLeftOut`;
+  - `EngineInputFactoryTests`: `CapturesBecomeEngineLinesInOrder`; `SystemOvertimeCarriesItsKeyAndCustomItsMultiplier`; `ExhaustedAndInactiveRecurringAreLeftOut`;
     `TheRemainingCapSubtractsWhatWasApplied`; `HrNamesBecomeTheWorkplaceInfo`.
   - `InputFingerprintTests`: `TheSameInputHasTheSameFingerprint`; `TheLegalSnapshotDoesNotChangeIt`; `ASalaryChangeChangesIt`;
     `ThePeriodFingerprintIgnoresOrder`.
