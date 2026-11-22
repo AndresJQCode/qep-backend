@@ -21,7 +21,7 @@ public sealed class CountryGeographyApiTests
     }
 
     [Fact]
-    public async Task CountriesListsColombiaAndSpain()
+    public async Task OnlyColombiaAndSpainCarryARegionKind()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -31,7 +31,10 @@ public sealed class CountryGeographyApiTests
 
         Assert.Equal(
             [("CO", "Department"), ("ES", "Province")],
-            countries.Select(country => (country.Code, country.RegionKind)));
+            countries
+                .Where(country => country.RegionKind is not null)
+                .Select(country => (country.Code, country.RegionKind))
+                .Order());
     }
 
     [Fact]

@@ -64,4 +64,34 @@ public static class SiigoErrorCodes
 
     /// <summary>404: el pedido no tiene factura de Siigo de ese tipo.</summary>
     public const string InvoiceNotFound = "siigo.invoice.not_found";
+
+    // El motivo por el que una factura sigue Pending (spec 2026-11-21 siigo-motivo-pendiente): no son respuestas HTTP, viajan en la fila
+    // (`error_code`) y la pantalla las traduce.
+
+    /// <summary>Siigo no contestó a tiempo.</summary>
+    public const string InvoiceTimeout = "siigo.invoice.timeout";
+
+    /// <summary>No hubo conexión con Siigo.</summary>
+    public const string InvoiceNetwork = "siigo.invoice.network";
+
+    /// <summary>Siigo contestó 429: pidió esperar.</summary>
+    public const string InvoiceRateLimited = "siigo.invoice.rate_limited";
+
+    /// <summary>Siigo falló (5xx) o no se pudo llamar por algo que el tenant no puede corregir (configuración del servidor).</summary>
+    public const string InvoiceUnavailable = "siigo.invoice.unavailable";
+
+    /// <summary>404: la falla de llamada a Siigo que se pide no existe en el tenant (o ya expiró a los 7 días).</summary>
+    public const string CallFailureNotFound = "siigo.call_failure.not_found";
+
+    /// <summary>422: una tanda de facturación lleva entre 1 y 50 pedidos.</summary>
+    public const string InvoiceBatchSize = "siigo.invoice_batch.size";
+
+    /// <summary>422: los pedidos de una tanda son obligatorios y no se repiten.</summary>
+    public const string InvoiceBatchOrders = "siigo.invoice_batch.orders";
+
+    /// <summary>404: la tanda no existe en el tenant.</summary>
+    public const string InvoiceBatchNotFound = "siigo.invoice_batch.not_found";
+
+    /// <summary>El pedido de una tanda no se facturó porque quien la pidió ya no tiene permiso o membresía al procesarlo.</summary>
+    public const string InvoiceBatchForbidden = "siigo.invoice_batch.forbidden";
 }

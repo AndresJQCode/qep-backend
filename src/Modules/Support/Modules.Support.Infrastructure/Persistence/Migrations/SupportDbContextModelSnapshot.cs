@@ -565,6 +565,33 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("survey_enabled");
 
+                    b.Property<bool>("UnassignedAlertEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("unassigned_alert_enabled");
+
+                    b.Property<DateTimeOffset?>("UnassignedAlertEnabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unassigned_alert_enabled_at");
+
+                    b.Property<int>("UnassignedAlertHours")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(4)
+                        .HasColumnName("unassigned_alert_hours");
+
+                    b.PrimitiveCollection<Guid[]>("UnassignedAlertRecipientIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("unassigned_alert_recipient_ids")
+                        .HasDefaultValueSql("'{}'::uuid[]");
+
+                    b.Property<Guid?>("UnassignedAlertScheduleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("unassigned_alert_schedule_id");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -767,6 +794,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(80)")
                         .HasColumnName("type_name");
 
+                    b.Property<DateTimeOffset?>("UnassignedSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unassigned_since");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -780,6 +811,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("AssigneeMemberId")
                         .HasDatabaseName("IX_tickets_assignee");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_tickets_unassigned")
+                        .HasFilter("assignee_member_id IS NULL");
 
                     b.HasIndex("TypeId");
 
@@ -1521,6 +1556,82 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_unclassified_messages_resolution", "resolution IN ('Assigned','Dismissed','Reassigned')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Support.Infrastructure.Persistence.SupportOutboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("event_name");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("outbox_messages", "platform", t =>
+                        {
+                            t.ExcludeFromMigrations();
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Support.Infrastructure.Persistence.SupportUnassignedAlertClaim", b =>
+                {
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.Property<DateTimeOffset>("UnassignedSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unassigned_since");
+
+                    b.Property<DateTimeOffset>("AlertedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("alerted_at");
+
+                    b.Property<int>("RecipientCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("recipient_count");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("TicketId", "UnassignedSince")
+                        .HasName("PK_unassigned_alerts");
+
+                    b.ToTable("unassigned_alerts", "support");
                 });
 
             modelBuilder.Entity("Modules.Support.Domain.SupportReplyDocument", b =>

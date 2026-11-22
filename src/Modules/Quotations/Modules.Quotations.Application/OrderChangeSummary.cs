@@ -48,6 +48,12 @@ public static class OrderChangeSummary
 
     public static string ItemRemoved(string productName) => QuotationChangeSummary.ItemRemoved(productName);
 
+    /// <summary>Spec 2026-11-21: el regalo entra y sale por su propio camino, y el historial lo dice con esa palabra.</summary>
+    public static string GiftAdded(string productName, decimal quantity, HistoryFormat format) =>
+        Trim($"Agregó de regalo {productName} x{format.Number(quantity)}.");
+
+    public static string GiftRemoved(string productName) => Trim($"Quitó el regalo {productName}.");
+
     public static string RetailChanged(bool isRetail) => isRetail
         ? "Marcó el pedido como detal: ninguna línea recibe descuento."
         : "Quitó el detal: las líneas vuelven a su descuento por escala.";

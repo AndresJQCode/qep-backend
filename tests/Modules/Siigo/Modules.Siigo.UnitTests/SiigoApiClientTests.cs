@@ -5,6 +5,7 @@ using BuildingBlocks.Application;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Modules.Siigo.Application;
+using Modules.Siigo.Domain;
 using Modules.Siigo.Infrastructure.Api;
 
 namespace Modules.Siigo.UnitTests;
@@ -44,7 +45,165 @@ public sealed class SiigoApiClientTests : IDisposable
             new HttpClient(handler, disposeHandler: false),
             Options.Create(new SiigoOptions { BaseUrl = "https://siigo.test", PartnerId = PartnerId }),
             _tokens,
-            _cache);
+            _cache,
+            _failures);
+
+    private readonly RecordingFailureLog _failures = new();
+
+    private sealed class RecordingFailureLog : ISiigoCallFailureLog
+    {
+        public List<SiigoCallFailureReport> Recorded { get; } = [];
+
+        public Task RecordAsync(SiigoCallFailureReport failure, CancellationToken cancellationToken)
+        {
+            Recorded.Add(failure);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task ARejectedInvoiceLeavesItsReport()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.BadRequest, """{"Errors":[{"Code":"invalid_total_payments","Message":"Cliente Fulano"}]}""");
+
+        await _client.CreateInvoiceAsync(
+            Credentials, new SiigoInvoiceRequest("""{"date":"2026-11-18"}"""), "abc123", TestContext.Current.CancellationToken);
+
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(SiigoCallOperation.InvoiceCreate, report.Operation);
+        Assert.Equal(ConnectionId, report.ConnectionId);
+        Assert.Equal(("POST", "v1/invoices", 400, "http_400", "abc123"), (report.Method, report.Path, report.Status, report.Reason, report.IdempotencyKey));
+        Assert.Contains("curl.exe -X POST \"https://siigo.test/v1/invoices\"", report.RequestCurl, StringComparison.Ordinal);
+        Assert.Contains("Partner-Id: qepTest", report.RequestCurl, StringComparison.Ordinal);
+        Assert.Contains("Idempotency-Key: abc123", report.RequestCurl, StringComparison.Ordinal);
+        Assert.Contains("""{"date":"2026-11-18"}""", report.RequestCurl, StringComparison.Ordinal);
+        Assert.Contains("Bearer <TOKEN>", report.RequestCurl, StringComparison.Ordinal);
+        Assert.DoesNotContain("token-one-SENTINEL", report.RequestCurl, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccessKey, report.RequestCurl, StringComparison.Ordinal);
+        Assert.Contains("invalid_total_payments", report.ResponseBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATransientFailureKeepsTheResponseTheReplyDiscards()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.BadGateway, "<html>bad gateway</html>");
+
+        var outcome = await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(("http_502", 502), (report.Reason, report.Status));
+        Assert.Contains("bad gateway", report.ResponseBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACreatedInvoiceLeavesNothingBecauseItsAuthReplyCarriesTheToken()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.Created, Fixture.Read("invoice-created.json"));
+
+        await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.Empty(_failures.Recorded);
+    }
+
+    [Fact]
+    public async Task A401ThatRenewsTheTokenAndSucceedsLeavesNothing()
+    {
+        _api.OnSequence("/auth", (HttpStatusCode.OK, Fixture.Read("auth.json")), (HttpStatusCode.OK, Fixture.Read("auth-renewed.json")));
+        _api.OnSequence(
+            "/v1/invoices",
+            (HttpStatusCode.Unauthorized, """{"Errors":[{"Code":"unauthorized","Message":"expired"}]}"""),
+            (HttpStatusCode.Created, Fixture.Read("invoice-created.json")));
+
+        await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.Empty(_failures.Recorded);
+    }
+
+    [Fact]
+    public async Task ASecond401LeavesCredentialsRejected()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.Unauthorized, """{"Errors":[{"Code":"unauthorized","Message":"no"}]}""");
+
+        await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(("credentials_rejected", SiigoCallOperation.InvoiceCreate, 401), (report.Reason, report.Operation, report.Status));
+    }
+
+    [Fact]
+    public async Task AFailedAuthIsReportedAsAuthAndHidesTheAccessKey()
+    {
+        _api.On("/auth", HttpStatusCode.Unauthorized, """{"Errors":[{"Code":"unauthorized","Message":"bad key"}]}""");
+
+        await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(SiigoCallOperation.Auth, report.Operation);
+        Assert.Equal("auth", report.Path);
+        Assert.Contains("<ACCESS_KEY>", report.RequestCurl, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccessKey, report.RequestCurl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AThrownReadFailureIsReportedOnceAndTheExceptionCarriesNoCurl()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/customers", HttpStatusCode.UnprocessableEntity, """{"Errors":[{"Code":"invalid_field","Message":"x"}]}""");
+
+        var exception = await Assert.ThrowsAsync<UpstreamServiceException>(
+            () => _client.FindCustomerAsync(Credentials, "900123456", TestContext.Current.CancellationToken));
+
+        Assert.Empty(exception.Data);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(SiigoCallOperation.CustomerFind, report.Operation);
+        Assert.Contains("/v1/customers?identification=900123456", report.RequestCurl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnInvoiceAnsweredWithoutIdLeavesAnInvalidResponseReport()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices", HttpStatusCode.Created, """{"name":"FV-sin-id"}""");
+
+        var outcome = await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal(("invalid_response", SiigoCallOperation.InvoiceCreate, 201, "abc123"), (report.Reason, report.Operation, report.Status, report.IdempotencyKey));
+        Assert.Contains("FV-sin-id", report.ResponseBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAuthAnsweredWithoutTokenIsReportedWithoutItsBody()
+    {
+        _api.On("/auth", HttpStatusCode.OK, """{"expires_in":86400,"note":"SENTINEL-BODY"}""");
+
+        var outcome = await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
+
+        Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome);
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal((SiigoCallOperation.Auth, "auth_without_token"), (report.Operation, report.Reason));
+        Assert.Null(report.ResponseBody);
+        Assert.Contains("<ACCESS_KEY>", report.RequestCurl, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccessKey, report.RequestCurl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AStampFailureCarriesTheSiigoInvoiceId()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/inv-77/stamp", HttpStatusCode.BadRequest, """{"Errors":[{"Code":"dian_rejected","Message":"x"}]}""");
+
+        await _client.StampInvoiceAsync(Credentials, "inv-77", TestContext.Current.CancellationToken);
+
+        var report = Assert.Single(_failures.Recorded);
+        Assert.Equal((SiigoCallOperation.InvoiceStamp, "inv-77"), (report.Operation, report.SiigoInvoiceId));
+    }
 
     [Fact]
     public async Task EveryCallCarriesPartnerIdAndBearerToken()
@@ -570,6 +729,29 @@ public sealed class SiigoApiClientTests : IDisposable
 
         Assert.Equal("cufe-SENTINEL-9", Assert.IsType<SiigoStampOutcome.Stamped>(stamped).Cufe);
         Assert.Equal(new SiigoError("stamp_rejected", "El NIT del adquiriente no es valido"), Assert.Single(errors));
+    }
+
+    [Fact]
+    public async Task TheInvoicePdfIsReadFromItsBase64Field()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/inv-1/pdf", HttpStatusCode.OK, """{"base64":"JVBERi0xLjQ="}""");
+
+        var pdf = await _client.GetInvoicePdfAsync(Credentials, "inv-1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("%PDF-1.4"u8.ToArray(), pdf);
+    }
+
+    [Fact]
+    public async Task AnInvoicePdfAnswerWithoutContentRaisesServiceUnavailable()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/inv-1/pdf", HttpStatusCode.OK, "{}");
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(
+            () => _client.GetInvoicePdfAsync(Credentials, "inv-1", TestContext.Current.CancellationToken));
+
+        Assert.Equal("siigo.unavailable", error.Code);
     }
 
     [Fact]

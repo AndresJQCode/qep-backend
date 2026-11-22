@@ -42,6 +42,16 @@ public interface IQuotationPdfStorage
     Task<string> PublishAsync(string storageKey, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Sube el PDF de una factura al bucket público bajo `invoices/{guid}.pdf` y devuelve su URL.
+    /// Para Zenvia, que descarga el documento por URL. La clave es aleatoria y no lleva tenant,
+    /// pedido ni número de factura: la URL queda abierta a quien la tenga, y que no se pueda
+    /// derivar de nada es lo único que la protege. La limpia una regla de lifecycle del prefijo
+    /// `invoices/`. Sin bucket público lanza <see cref="InvalidOperationException"/>, como
+    /// <see cref="PublishAsync"/>: sin fallback.
+    /// </summary>
+    Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Una URL firmada de vida corta contra el bucket privado. La descarga va directo de R2 al
     /// navegador, sin pasar por la API: firmar es lo único que hace el backend.
     /// </summary>

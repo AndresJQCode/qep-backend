@@ -36,7 +36,8 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
             order.Today,
             order.CashOnDelivery,
             [.. order.Lines.Select(line => new SiigoInvoiceLineInput(
-                line.VariantId, line.Name, line.Quantity, line.Subtotal, line.DiscountPercentage, line.TaxPercentage, line.TaxAmount))],
+                line.VariantId, line.Name, line.Quantity, line.Subtotal, line.DiscountPercentage, line.TaxPercentage, line.TaxAmount,
+                line.IsGift, line.ListUnitPrice))],
             order.FreightSubtotal,
             order.FreightTaxAmount,
             order.FreightTaxPercentage,
@@ -62,7 +63,9 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
             order.CompanyId,
             order.Version,
             order.AdvisorMembershipId,
-            order.AdvisorLabel);
+            order.AdvisorLabel,
+            order.ShippingAddress,
+            order.ShippingCity);
     }
 
     public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>

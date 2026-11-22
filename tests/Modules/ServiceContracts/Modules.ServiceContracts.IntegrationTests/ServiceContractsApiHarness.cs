@@ -143,7 +143,8 @@ internal static class ServiceContractsApiHarness
         string? displayName,
         string role,
         bool removed = false,
-        string tenantId = TenantId)
+        string tenantId = TenantId,
+        bool withUser = true)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
@@ -152,10 +153,15 @@ internal static class ServiceContractsApiHarness
         var tenant = await tenancy.Tenants.FindAsync([new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId))], ct);
         var now = DateTimeOffset.UtcNow;
 
-        var user = User.CreateInvited(UserId.New(), email, now);
-        identity.Users.Add(user);
+        // withUser: false is a membership whose user row does not exist, so IUserDirectory.GetEmailAsync answers null (no email).
+        var userId = UserId.New();
+        if (withUser)
+        {
+            identity.Users.Add(User.CreateInvited(userId, email, now));
+        }
+
         var membership = Membership.CreateActive(
-            MembershipId.New(), user.Id.Value, tenant!.Id, [role], "test", now);
+            MembershipId.New(), userId.Value, tenant!.Id, [role], "test", now);
         if (displayName is not null)
         {
             membership.UpdateProfile(displayName, null, now);

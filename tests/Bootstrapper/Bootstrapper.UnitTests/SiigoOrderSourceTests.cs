@@ -58,6 +58,20 @@ public sealed class SiigoOrderSourceTests
     }
 
     [Fact]
+    public async Task AGiftLineTravelsWithItsFlagAndListPrice()
+    {
+        var gift = new ExternalInvoicingLine(Guid.CreateVersion7(), "Obsequio", 1m, 0m, 100m, 19, 0m, IsGift: true, ListUnitPrice: 1_000m);
+        var order = Order() with { Lines = [.. Order().Lines, gift] };
+        var source = new SiigoOrderSource(new FakeInvoicing(order), new FakeGeography());
+
+        var input = await source.GetAsync(TenantId, OrderId, TestContext.Current.CancellationToken);
+
+        var line = Assert.Single(input!.Lines, candidate => candidate.IsGift);
+        Assert.Equal(1_000m, line.ListUnitPrice);
+        Assert.False(input.Lines[0].IsGift);
+    }
+
+    [Fact]
     public async Task TheAdvisorTravels()
     {
         var source = new SiigoOrderSource(new FakeInvoicing(Order()), new FakeGeography());

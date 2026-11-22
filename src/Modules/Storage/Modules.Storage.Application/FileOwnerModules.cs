@@ -30,6 +30,7 @@ public static class FileOwnerModules
             [FileOwnerType.SupportTicket] = TenantModuleKeys.Support,
             [FileOwnerType.MessageTemplate] = TenantModuleKeys.Messaging,
             [FileOwnerType.ChatbotMedia] = TenantModuleKeys.Automations,
+            [FileOwnerType.HrDocument] = TenantModuleKeys.Hr,
         }.ToFrozenDictionary();
 
     public static TenantModuleKey? ModuleOf(FileOwnerType ownerType) => ByOwnerType[ownerType];

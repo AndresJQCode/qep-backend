@@ -54,7 +54,12 @@ public enum FileOwnerType
     // Spec 2026-11-18: el archivo (imagen, video, audio o documento) de un bloque «Mensaje» de chatbot. OwnerId es el tenantId. Sube
     // sólo por la sesión del editor de chatbots (IChatbotMediaStore, con automations.chatbot.manage), nunca por POST /files: por eso
     // es dueño de sistema. Se persiste por nombre en character varying(20), así que no hay migración.
-    ChatbotMedia = 10
+    ChatbotMedia = 10,
+
+    // Spec 2026-11-20 (RRHH): el PDF de un contrato, un salario, un cargo y lugar o una prórroga. OwnerId es el tenantId. Sube sólo por la
+    // sesión de Hr (IHrDocumentStore, con hr.contract.manage), nunca por POST /files: por eso es dueño de sistema. Se persiste por nombre
+    // en character varying(20), así que no hay migración.
+    HrDocument = 11
 }
 
 /// <summary>
@@ -67,7 +72,7 @@ public enum FileOwnerType
 public static class SystemOwnedFiles
 {
     public static IReadOnlySet<FileOwnerType> OwnerTypes { get; } =
-        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia });
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia, FileOwnerType.HrDocument });
 
     public static bool Includes(FileOwnerType ownerType) => OwnerTypes.Contains(ownerType);
 }

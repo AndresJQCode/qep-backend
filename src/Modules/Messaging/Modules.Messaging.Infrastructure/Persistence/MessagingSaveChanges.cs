@@ -110,6 +110,15 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateOrderExists, "This connection already has its order template.", exception);
         }
+        // Spec 2026-11-21: lo mismo para la plantilla de factura.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateInvoiceIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateInvoiceExists, "This connection already has its invoice template.", exception);
+        }
         // Soporte fase 2: lo mismo para la plantilla «Aviso de respuesta».
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

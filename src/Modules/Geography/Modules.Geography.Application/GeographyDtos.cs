@@ -4,8 +4,13 @@ public sealed record DepartmentDto(Guid Id, string DivipolaCode, string Name);
 
 public sealed record CityDto(Guid Id, string DivipolaCode, string Name, Guid DepartmentId);
 
-/// <summary>Un país con catálogo. <c>RegionKind</c> viaja con su nombre de enum (<c>Department</c>, <c>Province</c>): el diccionario para pintar "Departamento" o "Provincia" lo tiene el frontend.</summary>
-public sealed record CountryCatalogDto(string Code, string RegionKind);
+/// <summary>
+/// Un país del catálogo mundial. <c>RegionKind</c> es null si el país no tiene catálogo de regiones y ciudades; si lo tiene,
+/// viaja con su nombre de enum (<c>Department</c>, <c>Province</c>): el diccionario para pintar "Departamento" o
+/// "Provincia" lo tiene el frontend, y con el null la pantalla decide con una sola regla si ofrece los selectores en
+/// cascada o cae al texto libre.
+/// </summary>
+public sealed record CountryDto(string Code, string Name, string? RegionKind);
 
 /// <summary>
 /// Una región elegible de un país, con la misma forma para cualquiera. Un país sin catálogo devuelve

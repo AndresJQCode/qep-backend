@@ -30,6 +30,10 @@ public enum MessageTemplateKind
 
     /// <summary>Mayorista: el aviso por WhatsApp de una invitación de distribuidor, sólo cuerpo (se guarda por nombre: va al final).</summary>
     WholesaleInvitationNotice,
+
+    /// <summary>Spec 2026-11-21: la plantilla de la factura de Siigo, hermana de <see cref="Order"/> con el PDF como encabezado de documento
+    /// (se guarda por nombre: va al final).</summary>
+    Invoice,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -127,6 +131,11 @@ public static partial class MessageTemplateName
 
     public const string WholesaleInvitationNoticePrefix = "qep_mayorista_invitacion_";
 
+    /// <summary>Spec 2026-11-21: <c>qep_factura</c> y sus versiones (<c>qep_factura_v2</c>…).</summary>
+    public const string InvoiceName = "qep_factura";
+
+    public const string InvoicePrefix = "qep_factura_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
@@ -141,7 +150,9 @@ public static partial class MessageTemplateName
             || string.Equals(name, SupportSurveyName, StringComparison.Ordinal)
             || name.StartsWith(SupportSurveyPrefix, StringComparison.Ordinal)
             || string.Equals(name, WholesaleInvitationNoticeName, StringComparison.Ordinal)
-            || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal));
+            || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal)
+            || string.Equals(name, InvoiceName, StringComparison.Ordinal)
+            || name.StartsWith(InvoicePrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -365,6 +376,18 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.Order;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Spec 2026-11-21: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_factura</c> creada en la consola de Meta.</summary>
+    public void AdoptAsInvoice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateInvoiceConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.Invoice;
         UpdatedAt = now;
     }
 

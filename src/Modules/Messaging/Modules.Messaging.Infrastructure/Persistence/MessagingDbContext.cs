@@ -154,6 +154,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-11-09 D1: una fila <c>Order</c> por conexión.</summary>
     public const string MessageTemplateOrderIndex = "UX_message_templates_order";
 
+    /// <summary>Spec 2026-11-21: una fila <c>Invoice</c> por conexión.</summary>
+    public const string MessageTemplateInvoiceIndex = "UX_message_templates_invoice";
+
     /// <summary>Soporte fase 2: una fila <c>SupportReply</c> por conexión.</summary>
     public const string MessageTemplateSupportReplyIndex = "UX_message_templates_support_reply";
 
@@ -818,7 +821,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.ToTable("message_templates", Schema, table =>
             table.HasCheckConstraint(
                 "CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply',"
-                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice')"));
+                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -846,6 +849,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
         // Spec 2026-11-09 D1: la del pedido, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateOrderIndex).IsUnique().HasFilter("kind = 'Order'");
+        // Spec 2026-11-21: la de la factura, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateInvoiceIndex).IsUnique().HasFilter("kind = 'Invoice'");
         // Soporte fase 2: la de «Aviso de respuesta», con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateSupportReplyIndex).IsUnique()
             .HasFilter("kind = 'SupportReply'");

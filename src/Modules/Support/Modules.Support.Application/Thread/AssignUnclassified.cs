@@ -42,6 +42,7 @@ public sealed class AssignUnclassifiedHandler(
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportIntegrationEvents integrationEvents,
     ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<AssignUnclassifiedCommand> validator)
@@ -87,7 +88,7 @@ public sealed class AssignUnclassifiedHandler(
         }
 
         ticket.RecordMessageEvent(SupportTicketEventKind.MessageClassified, row.MessageId, actor, now);
-        SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher);
+        SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher, integrationEvents, actor);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

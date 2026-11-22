@@ -92,6 +92,11 @@ public sealed class SiigoInvoice
     /// <summary>Se puede mandar a la DIAN: existe en Siigo (con su id) y no está ya estampada.</summary>
     public bool CanStamp => Status is SiigoInvoiceStatus.Created or SiigoInvoiceStatus.StampRejected && SiigoInvoiceId is not null;
 
+    /// <summary>Tiene PDF en Siigo: existe allá con su id (una <c>Created</c>, <c>Stamped</c> o <c>StampRejected</c>). Una resuelta a mano
+    /// no tiene id, así que no se puede pedir.</summary>
+    public bool HasPdf =>
+        SiigoInvoiceId is not null && Status is (SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected);
+
     public static SiigoInvoice PendingFor(
         Guid id,
         Guid tenantId,
@@ -133,8 +138,16 @@ public sealed class SiigoInvoice
 
     /// <summary>Timeout, 5xx, 429 o red: no se sabe si Siigo la creó. Sigue <c>Pending</c> y se suelta el reclamo para que el reintento
     /// pueda mandar los mismos bytes con la misma clave.</summary>
-    public void MarkTransient(DateTimeOffset now)
+    /// <param name="errorCode">Por qué falló este intento (<c>siigo.invoice.*</c>), para que el pedido se lo diga a quien factura. Nulo
+    /// conserva el que ya había: es la factura de flete que espera a la del pedido, que no falló por sí misma.</param>
+    public void MarkTransient(string? errorCode, DateTimeOffset now)
     {
+        if (errorCode is not null)
+        {
+            ErrorCode = Cap(errorCode, ErrorCodeMaxLength);
+            ErrorDetail = null;
+        }
+
         SendingSince = null;
         UpdatedAt = now;
     }

@@ -33,6 +33,7 @@ internal sealed partial class ServiceContractsReminderProcessor(
     TenantRunStore runs,
     CustomerMessageStore messages,
     DailyDigestStore digests,
+    OverdueDigestEventPublisher digestEvents,
     IOptions<ServiceContractsOptions> options,
     ILogger<ServiceContractsReminderProcessor> logger) : IServiceContractsReminderProcessor
 {
@@ -452,14 +453,23 @@ internal sealed partial class ServiceContractsReminderProcessor(
             return;
         }
 
+        var ordered = rows.Distinct().OrderBy(charge => charge.DueDate).ThenBy(charge => charge.Id).ToArray();
+        var overdue = ordered.Where(charge => charge.DueDate < run.Today).ToArray();
+
+        // Spec 2026-11-22 D-17: the bell hears about the overdue charges as soon as the digest is claimed and before the email is looked at,
+        // so a member without an email still sees it. A claim retaken after its lease expired publishes again; the consumer's daily
+        // dedupe key absorbs the repeat.
+        if (overdue.Length > 0)
+        {
+            await digestEvents.PublishAsync(run.TenantId, member.MemberId, run.Today, overdue.Length, run.Now, cancellationToken);
+        }
+
         if (member.Email is not { Length: > 0 } email)
         {
             await digests.MarkFailedAsync(run.TenantId, member.MemberId, run.Today, "no_email", cancellationToken);
             return;
         }
 
-        var ordered = rows.Distinct().OrderBy(charge => charge.DueDate).ThenBy(charge => charge.Id).ToArray();
-        var overdue = ordered.Where(charge => charge.DueDate < run.Today).ToArray();
         var horizon = run.Today.AddDays(ChargeGenerator.WindowDays);
         var digest = new ServiceContractsDigestEmail(
             email,

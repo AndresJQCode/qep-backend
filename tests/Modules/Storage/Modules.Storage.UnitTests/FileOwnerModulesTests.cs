@@ -69,6 +69,20 @@ public sealed class FileOwnerModulesTests
         Assert.True(SystemOwnedFiles.Includes(FileOwnerType.ChatbotMedia));
     }
 
+    // Spec 2026-11-20 (RRHH): el PDF de un contrato o de un registro es de Recursos humanos.
+    [Fact]
+    public void AnHrDocumentBelongsToHr()
+    {
+        Assert.Equal(TenantModuleKeys.Hr, FileOwnerModules.ModuleOf(FileOwnerType.HrDocument));
+    }
+
+    // Sólo llega por la sesión de Hr (hr.contract.manage): la consola de Storage no lo ve ni lo crea.
+    [Fact]
+    public void AnHrDocumentIsSystemOwned()
+    {
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.HrDocument));
+    }
+
     // owner_type es character varying(20) y se persiste por nombre: un nombre más largo no cabe.
     [Fact]
     public void TheOwnerTypeNameFitsItsColumn()
@@ -87,7 +101,7 @@ public sealed class FileOwnerModulesTests
         // support no tiene dependencias: sólo sale con su propio módulo apagado.
         Assert.Equal(
             [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket,
-                FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia],
+                FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia, FileOwnerType.HrDocument],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }

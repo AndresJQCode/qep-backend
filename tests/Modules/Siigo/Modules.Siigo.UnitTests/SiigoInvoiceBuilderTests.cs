@@ -385,10 +385,54 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal([(9001, 6000m), (9001, 5900m)], freightPayments.EnumerateArray().Select(payment => (payment.GetProperty("id").GetInt32(), payment.GetProperty("value").GetDecimal())));
     }
 
+    // Números reales de un pedido: 102 × 137.600 con 35 % de descuento. QEP saca el IVA como bruto − neto (1.456.594,29); Siigo lo redondea
+    // desde la base ya redondeada (1.456.594,28), así que su total es un centavo menor y los pagos tienen que sumar ESE total.
+    private static SiigoInvoiceInput VatCentOrder(params SiigoPaymentProofInput[] proofs) =>
+        Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 102m, 7666285.71m, 35m, 19, 1456594.29m)],
+            ProductsTotal = 9122880.00m, Total = 9122880.00m, NetTotal = 9122880.00m,
+            PaymentProofs = proofs,
+        };
+
+    private static (int Id, decimal Value)[] PaymentsOf(System.Text.Json.JsonDocument json) =>
+        [.. json.RootElement.GetProperty("payments").EnumerateArray()
+            .Select(payment => (payment.GetProperty("id").GetInt32(), payment.GetProperty("value").GetDecimal()))];
+
+    [Fact]
+    public void ThePaymentsAddUpToTheTotalSiigoComputesWhenTheVatRoundsDifferently()
+    {
+        // El comprobante es el neto de QEP completo (9.122.880,00): pasa por un centavo del total de Siigo y se recorta a él.
+        using var json = Json(Ready(Build(VatCentOrder(new SiigoPaymentProofInput(ProofA, 9122880.00m)))));
+
+        Assert.Equal([(9001, 9122879.99m)], PaymentsOf(json));
+    }
+
+    [Fact]
+    public void ACentOfRoundingIsFoldedIntoTheProofInsteadOfASecondBalancePayment()
+    {
+        // El comprobante quedó en pesos enteros: lo que falta (0,99) es redondeo, no un saldo. Va dentro del comprobante, en un solo pago.
+        using var json = Json(Ready(Build(VatCentOrder(new SiigoPaymentProofInput(ProofA, 9122879.00m)))));
+
+        var payments = json.RootElement.GetProperty("payments");
+        Assert.Equal(1, payments.GetArrayLength());
+        Assert.Equal(9122879.99m, payments[0].GetProperty("value").GetDecimal());
+        Assert.False(payments[0].TryGetProperty("due_date", out _));
+    }
+
+    [Fact]
+    public void AnOrderWithoutProofsStillGetsItsBalanceAsTheSiigoComputedTotal()
+    {
+        using var json = Json(Ready(Build(VatCentOrder())));
+
+        Assert.Equal([(9001, 9122879.99m)], PaymentsOf(json));
+        Assert.Equal("2026-11-18", json.RootElement.GetProperty("payments")[0].GetProperty("due_date").GetString());
+    }
+
     [Fact]
     public void ProofsAboveTheNetAreRejected()
     {
-        var input = Order() with { PaymentProofs = [new SiigoPaymentProofInput(ProofA, 209000.01m)] };
+        var input = Order() with { PaymentProofs = [new SiigoPaymentProofInput(ProofA, 209001.01m)] };
 
         var exception = Assert.Throws<SiigoDomainException>(() => Build(input));
 
@@ -462,7 +506,7 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
-    public void TheHeaderCarriesTheDocumentSellerDateAndPurchaseOrder()
+    public void TheHeaderCarriesTheDocumentSellerAndDateButNoPurchaseOrder()
     {
         var input = Order() with { BuyerNotes = "Entregar en portería" };
 
@@ -474,9 +518,34 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal(10, root.GetProperty("cost_center").GetInt32());
         Assert.Equal("2026-11-18", root.GetProperty("date").GetString());
         Assert.Equal("Pedido P-1042. Entregar en portería", root.GetProperty("observations").GetString());
-        Assert.Equal("P1042", root.GetProperty("additional_fields").GetProperty("purchase_order").GetProperty("number").GetString());
+        // Siigo rechaza `additional_fields.purchase_order` con `document_settings` si el comprobante no lo tiene configurado (prueba real, 2026-11-20).
+        Assert.False(root.TryGetProperty("additional_fields", out _));
         Assert.Equal("900123456", root.GetProperty("customer").GetProperty("identification").GetString());
         Assert.Equal(0, root.GetProperty("customer").GetProperty("branch_office").GetInt32());
+    }
+
+    [Fact]
+    public void TheObservationsCarryTheShippingAddressWhenTheOrderHasOne()
+    {
+        var input = Order() with { BuyerNotes = "Entregar en portería", ShippingAddress = "Calle 1 # 2-3", ShippingCity = "Bogotá" };
+
+        using var json = Json(Ready(Build(input)));
+
+        Assert.Equal(
+            "Pedido P-1042, Importante!! Dirección de despacho: Calle 1 # 2-3, Bogotá",
+            json.RootElement.GetProperty("observations").GetString());
+    }
+
+    [Fact]
+    public void TheObservationsDropTheCityWhenTheShippingPartyHasNone()
+    {
+        var input = Order() with { ShippingAddress = "Calle 1 # 2-3", ShippingCity = null };
+
+        using var json = Json(Ready(Build(input)));
+
+        Assert.Equal(
+            "Pedido P-1042, Importante!! Dirección de despacho: Calle 1 # 2-3",
+            json.RootElement.GetProperty("observations").GetString());
     }
 
     [Fact]
@@ -508,6 +577,112 @@ public sealed class SiigoInvoiceBuilderTests
     public void TheRequestNeverPrintsItsBody()
     {
         Assert.DoesNotContain("900123456", Ready(Build()).ToString(), StringComparison.Ordinal);
+    }
+
+    // ---- Regalos (spec 2026-11-21): un obsequio va con price 0, tax_base sin IVA y taxpayer "Company". ------------------------------
+
+    private static SiigoInvoiceLineInput Gift(Guid variantId, int taxPercentage = 19, decimal listUnitPrice = 1_000m) =>
+        new(variantId, "Regalo", 1m, 0m, 100m, taxPercentage, 0m, IsGift: true, ListUnitPrice: listUnitPrice);
+
+    // 10 u. pagas a 1.000 con IVA 19 incluido: base 8.403,36 + IVA 1.596,64 = 10.000.
+    private static SiigoInvoiceInput PaidTenPlus(SiigoInvoiceLineInput gift) =>
+        Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 10m, 8_403.36m, 0m, 19, 1_596.64m), gift],
+            ProductsTotal = 10_000m,
+            Total = 10_000m,
+            NetTotal = 10_000m,
+        };
+
+    [Fact]
+    public void AGiftItemIsSentWithZeroPriceTaxBaseAndCompanyTaxpayer()
+    {
+        using var json = Json(Ready(Build(PaidTenPlus(Gift(Line1Variant)))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.Equal("SKU-1", item.GetProperty("code").GetString());
+        Assert.Equal("Regalo", item.GetProperty("description").GetString());
+        Assert.Equal(1m, item.GetProperty("quantity").GetDecimal());
+        Assert.Equal(0m, item.GetProperty("price").GetDecimal());
+        Assert.Equal(0m, item.GetProperty("discount").GetDecimal());
+        Assert.Equal(840.336134m, item.GetProperty("tax_base").GetDecimal());
+        Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
+        var taxes = item.GetProperty("taxes");
+        Assert.Equal(1, taxes.GetArrayLength());
+        Assert.Equal(7001, taxes[0].GetProperty("id").GetInt32());
+    }
+
+    [Fact]
+    public void AGiftDoesNotChangeTheOrderTotal()
+    {
+        var result = Build(PaidTenPlus(Gift(Line1Variant)));
+        using var json = Json(Ready(result));
+
+        Assert.Equal(10_000m, PaymentsSum(json));
+        Assert.IsNotType<SiigoBuildResult.TotalsMismatch>(result);
+    }
+
+    [Fact]
+    public void AGiftWithoutVatHasNoTaxesAndTaxBaseEqualsTheListPrice()
+    {
+        using var json = Json(Ready(Build(PaidTenPlus(Gift(Line2Variant, taxPercentage: 0)))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.False(item.TryGetProperty("taxes", out _));
+        Assert.Equal(1_000m, item.GetProperty("tax_base").GetDecimal());
+        Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
+    }
+
+    [Fact]
+    public void AGiftGetsNoWithholdings()
+    {
+        var input = PaidTenPlus(Gift(Line1Variant)) with { Withholdings = [ReteFuente()] };
+
+        using var json = Json(Ready(Build(input)));
+        var items = json.RootElement.GetProperty("items");
+
+        Assert.Equal([7001, 8001], items[0].GetProperty("taxes").EnumerateArray().Select(tax => tax.GetProperty("id").GetInt32()));
+        Assert.Equal([7001], items[1].GetProperty("taxes").EnumerateArray().Select(tax => tax.GetProperty("id").GetInt32()));
+    }
+
+    [Fact]
+    public void AGiftOfAnUnlinkedVariantIsMissing()
+    {
+        var unlinked = Guid.NewGuid();
+
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(PaidTenPlus(Gift(unlinked)))).Missing);
+
+        Assert.Equal(new SiigoMissing("variant_unlinked", unlinked.ToString(), "Regalo"), missing);
+    }
+
+    [Fact]
+    public void AGiftWithAnUnlinkedTaxIsMissing()
+    {
+        var input = Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line2Variant, "Producto dos", 3m, 90000m, 10m, 0, 0m), Gift(Line1Variant)],
+            ProductsTotal = 90000m,
+            Total = 90000m,
+            NetTotal = 90000m,
+        };
+        var settings = Settings();
+        settings.ReplaceTaxLinks([]);
+
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(input, settings)).Missing);
+
+        Assert.Equal("tax_unlinked", missing.Code);
+        Assert.Equal("19", missing.Reference);
+    }
+
+    [Fact]
+    public void PaidItemsAreSerializedExactlyAsBefore()
+    {
+        var json = Ready(Build()).Request.Json;
+
+        // Literal capturado con el armador de antes de los regalos: una línea pagada no cambia ni un byte.
+        const string Expected =
+            """{"document":{"id":24446},"date":"2026-11-18","customer":{"identification":"900123456","branch_office":0},"cost_center":10,"seller":629,"stamp":{"send":false},"mail":{"send":false},"observations":"Pedido P-1042","items":[{"code":"SKU-1","description":"Producto uno","quantity":2,"price":50000,"discount":0,"warehouse":1,"taxes":[{"id":7001}]},{"code":"SKU-2","description":"Producto dos","quantity":3,"price":33333.333333,"discount":10,"warehouse":1}],"payments":[{"id":9001,"value":209000.00,"due_date":"2026-11-18"}]}""";
+        Assert.Equal(Expected, json);
     }
 
     private static decimal PaymentsSum(System.Text.Json.JsonDocument json) =>

@@ -26,4 +26,17 @@ public sealed class NotificationsOptions
     public string AppBaseUrl { get; init; } = "http://localhost:3002";
 
     public InfobipOptions Infobip { get; init; } = new();
+
+    // Spec 2026-11-22: la campana de avisos.
+    public InAppOptions InApp { get; init; } = new();
+}
+
+public sealed class InAppOptions
+{
+    public const int MinRetentionDays = 1;
+
+    public const int MaxRetentionDays = 365;
+
+    // Días que se conserva un aviso de la campana (spec D-11); pasados, el worker de retención lo borra.
+    public int RetentionDays { get; init; } = 90;
 }

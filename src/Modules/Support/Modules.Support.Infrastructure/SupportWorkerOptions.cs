@@ -35,4 +35,7 @@ public sealed class SupportWorkerOptions
 
     /// <summary>Fase 4b (H22): cada cuánto corre el cierre automático de los tickets resueltos.</summary>
     public int AutoCloseIntervalMinutes { get; set; } = 15;
+
+    /// <summary>Spec 2026-11-22 §7: cada cuánto busca tickets sin asignar que pasaron el umbral del aviso.</summary>
+    public int UnassignedAlertIntervalMinutes { get; set; } = 5;
 }

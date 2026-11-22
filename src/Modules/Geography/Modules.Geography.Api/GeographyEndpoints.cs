@@ -22,15 +22,16 @@ public static class GeographyEndpoints
             .WithTags("Geography")
             .Produces<IReadOnlyList<DepartmentResponse>>();
 
-        endpoints.MapGet("/api/v1/cities", ListCitiesAsync)
-            .RequireAuthorization()
-            .WithTags("Geography")
-            .Produces<IReadOnlyList<CityResponse>>();
-
+        // Spec 2026-11-20 (RRHH fase 1, D-10): el catálogo de países (ISO 3166-1 alfa-2), global como los departamentos.
         endpoints.MapGet("/api/v1/countries", ListCountriesAsync)
             .RequireAuthorization()
             .WithTags("Geography")
             .Produces<IReadOnlyList<CountryResponse>>();
+
+        endpoints.MapGet("/api/v1/cities", ListCitiesAsync)
+            .RequireAuthorization()
+            .WithTags("Geography")
+            .Produces<IReadOnlyList<CityResponse>>();
 
         endpoints.MapGet("/api/v1/countries/{country}/regions", ListRegionsAsync)
             .RequireAuthorization()
@@ -43,15 +44,6 @@ public static class GeographyEndpoints
             .Produces<IReadOnlyList<RegionCityResponse>>();
 
         return endpoints;
-    }
-
-    private static async Task<IResult> ListCountriesAsync(
-        IRequestDispatcher dispatcher, CancellationToken cancellationToken)
-    {
-        var countries = await dispatcher.QueryAsync(new ListCountriesQuery(), cancellationToken);
-        return Results.Ok(countries
-            .Select(country => new CountryResponse(country.Code, country.RegionKind))
-            .ToArray());
     }
 
     private static async Task<IResult> ListRegionsAsync(
@@ -83,6 +75,15 @@ public static class GeographyEndpoints
             .ToArray());
     }
 
+    private static async Task<IResult> ListCountriesAsync(
+        IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var countries = await dispatcher.QueryAsync(new ListCountriesQuery(), cancellationToken);
+        return Results.Ok(countries
+            .Select(country => new CountryResponse(country.Code, country.Name, country.RegionKind))
+            .ToArray());
+    }
+
     private static async Task<IResult> ListCitiesAsync(
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
@@ -106,11 +107,12 @@ public static class GeographyEndpoints
     }
 }
 
+/// <summary><c>RegionKind</c> es null si el país no tiene catálogo de regiones: la pantalla cae al texto libre.</summary>
+public sealed record CountryResponse(string Code, string Name, string? RegionKind);
+
 public sealed record DepartmentResponse(Guid Id, string DivipolaCode, string Name);
 
 public sealed record CityResponse(Guid Id, string DivipolaCode, string Name, Guid DepartmentId);
-
-public sealed record CountryResponse(string Code, string RegionKind);
 
 public sealed record RegionResponse(Guid Id, string Code, string Name);
 

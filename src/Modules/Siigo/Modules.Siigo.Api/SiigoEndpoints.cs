@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.CallFailures;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Application.Products;
 using Modules.Siigo.Application.Settings;
@@ -134,6 +135,14 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // El PDF vive en Siigo: se pide al descargar. Mismo permiso que generar la factura (admin y billing de fábrica).
+        invoice.MapGet("/{invoiceId:guid}/pdf", GetInvoicePdfAsync)
+            .Produces(StatusCodes.Status200OK, contentType: "application/pdf")
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         invoice.MapPost("/", IssueInvoiceAsync)
             .Produces<IReadOnlyList<SiigoInvoiceDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -156,8 +165,69 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-21: las llamadas a Siigo que fallaron, con su curl y la respuesta. Lectura sola; expiran a los 7 días.
+        var failures = endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/siigo/call-failures")
+            .WithTags("Siigo")
+            .RequireAuthorization(SiigoPermissions.CallsRead);
+
+        failures.MapGet("/", ListCallFailuresAsync)
+            .Produces<SiigoCallFailurePageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        failures.MapGet("/{id:guid}", GetCallFailureAsync)
+            .Produces<SiigoCallFailureDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        // Spec 2026-11-21: la tanda de facturación. Cuelga del tenant (junta pedidos) y usa el mismo permiso que facturar uno solo. El POST sólo
+        // la crea (202): un worker factura cada pedido y la pantalla consulta el avance con el GET.
+        var batches = endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/siigo/invoice-batches")
+            .WithTags("Siigo")
+            .RequireAuthorization(SiigoPermissions.InvoiceIssue);
+
+        batches.MapPost("/", CreateInvoiceBatchAsync)
+            .Produces<SiigoInvoiceBatchDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        batches.MapGet("/{batchId:guid}", GetInvoiceBatchAsync)
+            .Produces<SiigoInvoiceBatchDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return endpoints;
     }
+
+    private static async Task<IResult> ListCallFailuresAsync(
+        Guid tenantId,
+        string? page,
+        string? pageSize,
+        string? operation,
+        string? status,
+        string? from,
+        string? to,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        // Todo como texto: un valor ilegible es 422 con su campo (ListSiigoCallFailuresValidator), no un 400 de enlace sin errors.
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListSiigoCallFailuresQuery(tenantId, operation, status, from, to, page, pageSize), cancellationToken));
+
+    private static async Task<IResult> GetCallFailureAsync(
+        Guid tenantId, Guid id, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetSiigoCallFailureQuery(tenantId, id), cancellationToken));
+
+    private static async Task<IResult> CreateInvoiceBatchAsync(
+        Guid tenantId, SiigoInvoiceBatchRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Json(
+            await dispatcher.SendAsync(new CreateSiigoInvoiceBatchCommand(tenantId, request?.OrderIds), cancellationToken),
+            statusCode: StatusCodes.Status202Accepted);
+
+    private static async Task<IResult> GetInvoiceBatchAsync(
+        Guid tenantId, Guid batchId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetSiigoInvoiceBatchQuery(tenantId, batchId), cancellationToken));
 
     private static async Task<IResult> InvoiceAvailabilityAsync(
         Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -170,6 +240,13 @@ public static class SiigoEndpoints
     private static async Task<IResult> GetInvoicesAsync(
         Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetSiigoInvoicesQuery(tenantId, orderId), cancellationToken));
+
+    private static async Task<IResult> GetInvoicePdfAsync(
+        Guid tenantId, Guid orderId, Guid invoiceId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var pdf = await dispatcher.QueryAsync(new GetSiigoInvoicePdfQuery(tenantId, orderId, invoiceId), cancellationToken);
+        return Results.File(pdf.Content, "application/pdf", pdf.FileName);
+    }
 
     // El cuerpo es opcional: sin él se usa la propuesta de pagos de la cuenta de cobro.
     private static async Task<IResult> IssueInvoiceAsync(
@@ -416,6 +493,10 @@ public sealed record SiigoPaymentChoiceRequest(string? Kind, Guid? ProofId, stri
 
 /// <summary>El cuerpo opcional de <c>POST …/siigo-invoice</c>.</summary>
 public sealed record SiigoIssueInvoiceRequest(IReadOnlyList<SiigoPaymentChoiceRequest>? Payments);
+
+/// <summary>El cuerpo de <c>POST …/siigo/invoice-batches</c>: los pedidos de la tanda (de 1 a 50, sin repetir). Opcional en el binding: lo que falta
+/// es un 422 con <c>errors.orderIds</c>.</summary>
+public sealed record SiigoInvoiceBatchRequest(IReadOnlyList<Guid>? OrderIds);
 
 /// <summary>El cuerpo de <c>POST …/siigo-invoice/resolve</c>: <c>exists</c> (con el número) o <c>missing</c>.</summary>
 public sealed record SiigoResolveInvoiceRequest(string? Kind, string? Outcome, string? Number);

@@ -67,6 +67,16 @@ public sealed class SupportTicket
 
     public Guid? AssigneeMemberId { get; private set; }
 
+    /// <summary>
+    /// Spec 2026-11-22 D-15: since when the ticket has been, without interruption, <b>without an assignee and in a status that counts</b>
+    /// (<see cref="SupportTicketStatuses.CountsAsUnassigned"/>); null otherwise. It is set when the ticket <b>enters</b> that situation
+    /// (created without an assignee, unassigned while in a status that counts, moved into a status that counts without an assignee, which
+    /// includes the thread follower reopening it) and cleared when it is assigned or leaves it. Moving between two statuses that count does
+    /// not touch it. The alert measures business hours from here, so a ticket that waited days on the customer and comes back to
+    /// <c>Open</c> starts again from zero.
+    /// </summary>
+    public DateTimeOffset? UnassignedSince { get; private set; }
+
     /// <summary>FK blanda a Customers: Guid y no un id tipado, como en el resto de módulos.</summary>
     public Guid? CustomerId { get; private set; }
 
@@ -322,6 +332,8 @@ public sealed class SupportTicket
             ReplyChannel = replyChannel,
             Status = SupportTicketStatus.New,
             AssigneeMemberId = assigneeMemberId,
+            // A new ticket is in New, which counts: it starts the clock if nobody has it.
+            UnassignedSince = assigneeMemberId is null ? now : null,
             CustomerId = customerId,
             Requester = requester,
             ConversationId = conversation?.Id,
@@ -366,6 +378,7 @@ public sealed class SupportTicket
         }
 
         Status = target;
+        TrackUnassignedSince(from, target, now);
         if (target is SupportTicketStatus.Resolved)
         {
             ResolutionCount++;
@@ -390,6 +403,22 @@ public sealed class SupportTicket
         AddEvent(SupportTicketEventKind.StatusChanged, actorMemberId, now, new { from = from.ToString(), to = target.ToString() });
     }
 
+    // D-15: the clock runs while the ticket is unassigned and in a status that counts. It restarts on entering that situation, stops on
+    // leaving it, and a move between two statuses that count (Open → WaitingInternal) leaves it alone.
+    private void TrackUnassignedSince(SupportTicketStatus from, SupportTicketStatus target, DateTimeOffset now)
+    {
+        var wasRunning = AssigneeMemberId is null && SupportTicketStatuses.CountsAsUnassigned(from);
+        var isRunning = AssigneeMemberId is null && SupportTicketStatuses.CountsAsUnassigned(target);
+        if (!isRunning)
+        {
+            UnassignedSince = null;
+        }
+        else if (!wasRunning)
+        {
+            UnassignedSince = now;
+        }
+    }
+
     /// <summary>No cambia el estado. Resuelto o cerrado se rechaza (R9).</summary>
     public void Assign(Guid? assigneeMemberId, Guid actorMemberId, DateTimeOffset now)
     {
@@ -401,6 +430,8 @@ public sealed class SupportTicket
 
         var from = AssigneeMemberId;
         AssigneeMemberId = assigneeMemberId;
+        // Assigned: the clock stops. Unassigned while in a status that counts: it starts now (the early return above means it was assigned).
+        UnassignedSince = assigneeMemberId is null && SupportTicketStatuses.CountsAsUnassigned(Status) ? now : null;
         AddEvent(SupportTicketEventKind.AssigneeChanged, actorMemberId, now, new { from, to = assigneeMemberId });
     }
 

@@ -2,7 +2,9 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>Una línea del pedido para facturar. <paramref name="Subtotal"/> es el de la línea con el descuento aplicado y sin IVA.</summary>
+/// <summary>Una línea del pedido para facturar. <paramref name="Subtotal"/> es el de la línea con el descuento aplicado y sin IVA.
+/// <paramref name="IsGift"/> marca un regalo (subtotal e IVA en 0); <paramref name="ListUnitPrice"/> es el precio de lista con IVA
+/// incluido (<c>OrderItem.UnitPrice</c>), con el que el facturador arma la base del obsequio.</summary>
 public sealed record ExternalInvoicingLine(
     Guid VariantId,
     string Name,
@@ -10,7 +12,9 @@ public sealed record ExternalInvoicingLine(
     decimal Subtotal,
     decimal DiscountPercentage,
     int TaxPercentage,
-    decimal TaxAmount);
+    decimal TaxAmount,
+    bool IsGift = false,
+    decimal ListUnitPrice = 0m);
 
 /// <summary>Una retención <b>aplicada</b> del pedido (las que no aplicaron no viajan).</summary>
 public sealed record ExternalInvoicingWithholding(Guid TaxRateId, string Name, string Type, decimal Amount);
@@ -70,7 +74,9 @@ public sealed record ExternalInvoicingOrder(
     ExternalInvoicingParty BilledParty,
     long Version,
     Guid AdvisorMembershipId,
-    string? AdvisorLabel);
+    string? AdvisorLabel,
+    string? ShippingAddress = null,
+    string? ShippingCity = null);
 
 /// <summary>
 /// El puerto que un facturador externo (Siigo) usa sobre los pedidos (spec 2026-11-18 §5.5). El adaptador vive en Bootstrapper; este

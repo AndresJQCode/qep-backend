@@ -12,10 +12,16 @@ public static class SiigoAuditActions
 
     public const string InvoiceResolved = "siigo.invoice.resolved";
 
+    /// <summary>Se pidió una tanda de facturación; lleva cuántos pedidos, nunca cuáles facturas salieron (esas llevan la suya).</summary>
+    public const string InvoiceBatchRequested = "siigo.invoice_batch.requested";
+
     /// <summary>El recurso de las entradas de configuración: la conexión de Integrations (con el mismo nombre que le dan Shopify y
     /// Messaging).</summary>
     public const string ConnectionResourceType = "integration_connection";
 
     /// <summary>El recurso de las entradas de factura: la fila de <c>siigo.invoices</c>.</summary>
     public const string InvoiceResourceType = "siigo_invoice";
+
+    /// <summary>El recurso de las entradas de tanda: la fila de <c>siigo.invoice_batches</c>.</summary>
+    public const string InvoiceBatchResourceType = "siigo_invoice_batch";
 }

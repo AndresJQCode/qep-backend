@@ -41,6 +41,40 @@ public sealed class GeographyApiTests
     }
 
     [Fact]
+    public async Task ListCountriesWithoutAuthHeadersIsUnauthorized()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(
+            "/api/v1/countries", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListCountriesReturnsTheFortyOneByName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateAuthenticatedClient(factory);
+
+        var response = await client.GetAsync(
+            "/api/v1/countries", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var countries = await response.Content.ReadFromJsonAsync<CountryResponse[]>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(countries);
+        Assert.Equal(41, countries.Length);
+        Assert.Equal("Antigua y Barbuda", countries[0].Name);
+        Assert.Contains(countries, country => country == new CountryResponse("CO", "Colombia", "Department"));
+        var names = countries.Select(country => country.Name).ToArray();
+        Assert.Equal(names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase), names);
+    }
+
+    [Fact]
     public async Task ListCitiesWithoutDepartmentIdIsBadRequest()
     {
         await using var database = await StartDatabaseAsync();

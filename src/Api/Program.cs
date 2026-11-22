@@ -15,6 +15,7 @@ using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
 using Modules.Ai.Api;
 using Modules.Ai.Infrastructure;
+using Modules.Notifications.Api;
 using Modules.ApiAccess.Api;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
@@ -22,6 +23,8 @@ using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Api;
 using Modules.Automations.Infrastructure;
+using Modules.Buyers.Api;
+using Modules.Buyers.Infrastructure;
 using Modules.Catalog.Api;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Api;
@@ -30,44 +33,46 @@ using Modules.Customers.Api;
 using Modules.Customers.Infrastructure;
 using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
+using Modules.Hr.Api;
+using Modules.Hr.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
+using Modules.Loans.Api;
+using Modules.Loans.Infrastructure;
 using Modules.Messaging.Api;
 using Modules.Messaging.Api.Realtime;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Payroll.Api;
+using Modules.Payroll.Infrastructure;
 using Modules.Pipeline.Api;
 using Modules.Pipeline.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
 using Modules.Pos.Api;
 using Modules.Pos.Infrastructure;
+using Modules.Purchases.Api;
+using Modules.Purchases.Infrastructure;
 using Modules.Quotations.Api;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
+using Modules.ServiceContracts.Api;
+using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
 using Modules.Siigo.Api;
 using Modules.Siigo.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
-using Modules.Loans.Api;
-using Modules.Loans.Infrastructure;
-using Modules.Purchases.Api;
-using Modules.Purchases.Infrastructure;
-using Modules.Support.Api;
-using Modules.Support.Infrastructure;
-using Modules.ServiceContracts.Api;
-using Modules.ServiceContracts.Infrastructure;
-using Modules.Suppliers.Api;
 using Modules.Store.Api;
 using Modules.Store.Application;
 using Modules.Store.Infrastructure;
-using Modules.Buyers.Api;
-using Modules.Buyers.Infrastructure;
+using Modules.Suppliers.Api;
 using Modules.Suppliers.Infrastructure;
+using Modules.Support.Api;
+using Modules.Support.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
 using Modules.Wholesale.Api;
@@ -413,8 +418,13 @@ app.MapWholesaleInvitationEndpoints();
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
+// Spec 2026-11-20: recursos humanos (empleados, contratos y su configuración).
+app.MapHrEndpoints();
+app.MapPayrollEndpoints();
 // Spec 2026-11-14: soporte (tickets y PQRSF).
 app.MapSupportEndpoints();
+// Spec 2026-11-22: la campana de avisos de cada miembro.
+app.MapNotificationEndpoints();
 // Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
 app.MapStoreEndpoints();
 // Tienda pública: sin sesión ni CSRF, con la clave del storefront y limitadores por IP del visitante.
@@ -526,6 +536,16 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Loans (spec 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
     // referencias blandas.
     await services.InitializeLoansDatabaseAsync(
+        cancellationToken);
+
+    // Hr (spec 2026-11-20): after Audit (writes audit.entries) and after Companies (hr.sites and hr.employment_contracts have FKs to
+    // companies.companies). Memberships, cities, countries and files are soft references.
+    await services.InitializeHrDatabaseAsync(
+        cancellationToken);
+
+    // Payroll (spec 2026-11-21): after Audit (writes audit.entries) and after Companies (payroll.periods and payroll.company_settings
+    // have FKs to companies.companies). Hr is read through ports only.
+    await services.InitializePayrollDatabaseAsync(
         cancellationToken);
 
     // Support (spec 2026-11-14): después de Audit (escribe en audit.entries) y de Companies: support.form_versions lleva una FK real a

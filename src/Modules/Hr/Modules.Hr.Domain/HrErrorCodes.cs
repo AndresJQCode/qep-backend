@@ -1,0 +1,133 @@
+namespace Modules.Hr.Domain;
+
+/// <summary>
+/// Los códigos de dominio de Hr (plan 2026-11-20, «Mensajes de dominio»). Sólo existen los que el contrato HTTP nombra: un
+/// código nuevo se agrega a la tabla del plan primero. Todos llevan el prefijo <c>hr.</c>.
+/// </summary>
+public static class HrErrorCodes
+{
+    // 404
+    public const string EmployeeNotFound = "hr.employee.not_found";
+    public const string ContractNotFound = "hr.contract.not_found";
+    public const string SalaryNotFound = "hr.salary.not_found";
+    public const string AssignmentNotFound = "hr.assignment.not_found";
+    public const string RenewalNotFound = "hr.renewal.not_found";
+    public const string SiteNotFound = "hr.site.not_found";
+    public const string WorkplaceNotFound = "hr.workplace.not_found";
+    public const string AreaNotFound = "hr.area.not_found";
+    public const string PositionNotFound = "hr.position.not_found";
+    public const string FileNotFound = "hr.file.not_found";
+
+    // 409
+    public const string DocumentTaken = "hr.employee.document_taken";
+    public const string MemberTaken = "hr.employee.member_taken";
+    public const string SettingsNameTaken = "hr.settings.name_taken";
+    public const string SettingsInUse = "hr.settings.in_use";
+    public const string SettingsAlreadyArchived = "hr.settings.already_archived";
+    public const string SettingsNotArchived = "hr.settings.not_archived";
+
+    // 422
+    public const string MemberInvalid = "hr.employee.member_invalid";
+    public const string EmployeeNotActive = "hr.employee.not_active";
+    public const string EmployeeAlreadyActive = "hr.employee.already_active";
+    public const string EmployeeNotDeletable = "hr.employee.not_deletable";
+    public const string ContractNotActive = "hr.contract.not_active";
+    public const string ContractNotFixedTerm = "hr.contract.not_fixed_term";
+    public const string FixedTermCapExceeded = "hr.contract.fixed_term_cap_exceeded";
+    public const string RenewalMinimumOneYear = "hr.contract.renewal_minimum_one_year";
+    public const string RecordsAfterEnd = "hr.contract.records_after_end";
+    public const string StartNotAfterPrevious = "hr.contract.start_not_after_previous";
+    public const string CompanyChangeNotAllowed = "hr.contract.company_change_not_allowed";
+    public const string SalaryEffectiveDateNotAfterLast = "hr.salary.effective_date_not_after_last";
+    public const string BelowIntegralFloor = "hr.salary.below_integral_floor";
+    public const string BelowMinimumUnacknowledged = "hr.salary.below_minimum_unacknowledged";
+    public const string SalaryRewriteUnconfirmed = "hr.salary.rewrite_unconfirmed";
+    public const string AssignmentEffectiveDateNotAfterLast = "hr.assignment.effective_date_not_after_last";
+    public const string SiteChangeNotFirstOfMonth = "hr.assignment.site_change_not_first_of_month";
+    public const string AssignmentUnchanged = "hr.assignment.unchanged";
+    public const string WorkplaceOtherCompany = "hr.assignment.workplace_other_company";
+    public const string SetupIncomplete = "hr.settings.setup_incomplete";
+    public const string SiteArchived = "hr.settings.site_archived";
+    public const string SiteHasActiveWorkplaces = "hr.settings.site_has_active_workplaces";
+    public const string LegalParameterMissing = "hr.legal_parameter.missing";
+    public const string FileInvalid = "hr.file.invalid";
+    public const string FileRejected = "hr.file.rejected";
+
+    // 422, importación por Excel (Tarea 10): errores de archivo y confirmación.
+    public const string ImportFileRequired = "hr.import.file_required";
+    public const string ImportExtensionInvalid = "hr.import.extension_invalid";
+    public const string ImportTooLarge = "hr.import.too_large";
+    public const string ImportUnreadable = "hr.import.unreadable";
+    public const string ImportHeaderMismatch = "hr.import.header_mismatch";
+    public const string ImportEmpty = "hr.import.empty";
+    public const string ImportTooManyRows = "hr.import.too_many_rows";
+    public const string ImportRowsInvalid = "hr.import.rows_invalid";
+
+    /// <summary>
+    /// Los códigos de fila de la importación (<c>hr.import.row.*</c>): errores por fila y el aviso <c>below_minimum</c>. Viajan en
+    /// <c>EmployeeImportRowIssueDto</c>, nunca como excepción.
+    /// </summary>
+    public static class ImportRow
+    {
+        public const string FirstNameRequired = "hr.import.row.first_name_required";
+        public const string LastNameRequired = "hr.import.row.last_name_required";
+        public const string DocumentTypeInvalid = "hr.import.row.document_type_invalid";
+        public const string DocumentNumberRequired = "hr.import.row.document_number_required";
+        public const string DocumentDuplicatedInFile = "hr.import.row.document_duplicated_in_file";
+        public const string DocumentTaken = "hr.import.row.document_taken";
+        public const string CountryInvalid = "hr.import.row.country_invalid";
+        public const string CountryDocumentMismatch = "hr.import.row.country_document_mismatch";
+        public const string BirthDateInvalid = "hr.import.row.birth_date_invalid";
+        public const string PhoneInvalid = "hr.import.row.phone_invalid";
+        public const string PersonalEmailInvalid = "hr.import.row.personal_email_invalid";
+        public const string WorkEmailInvalid = "hr.import.row.work_email_invalid";
+        public const string CityNotFound = "hr.import.row.city_not_found";
+        public const string CityAmbiguous = "hr.import.row.city_ambiguous";
+        public const string ContributorSubtypeInvalid = "hr.import.row.contributor_subtype_invalid";
+        public const string YesNoInvalid = "hr.import.row.yes_no_invalid";
+        public const string ForeignPensionExemptNotAllowed = "hr.import.row.foreign_pension_exempt_not_allowed";
+        public const string RestDaysInvalid = "hr.import.row.rest_days_invalid";
+        public const string PaymentMethodInvalid = "hr.import.row.payment_method_invalid";
+        public const string BankIncomplete = "hr.import.row.bank_incomplete";
+        public const string BankNotAllowed = "hr.import.row.bank_not_allowed";
+        public const string BankAccountTypeInvalid = "hr.import.row.bank_account_type_invalid";
+        public const string BankAccountNumberInvalid = "hr.import.row.bank_account_number_invalid";
+        public const string CompanyRequired = "hr.import.row.company_required";
+        public const string CompanyNotFound = "hr.import.row.company_not_found";
+        public const string ContractTypeInvalid = "hr.import.row.contract_type_invalid";
+        public const string DurationInvalid = "hr.import.row.duration_invalid";
+        public const string SalaryTypeInvalid = "hr.import.row.salary_type_invalid";
+        public const string IntegralNotAllowed = "hr.import.row.integral_not_allowed";
+        public const string StartDateInvalid = "hr.import.row.start_date_invalid";
+        public const string EndDateInvalid = "hr.import.row.end_date_invalid";
+        public const string EndDateRequired = "hr.import.row.end_date_required";
+        public const string EndDateForbidden = "hr.import.row.end_date_forbidden";
+        public const string EndDateBeforeStart = "hr.import.row.end_date_before_start";
+        public const string FixedTermCapExceeded = "hr.import.row.fixed_term_cap_exceeded";
+        public const string SalaryInvalid = "hr.import.row.salary_invalid";
+        public const string BelowIntegralFloor = "hr.import.row.below_integral_floor";
+        public const string LegalParameterMissing = "hr.import.row.legal_parameter_missing";
+        public const string PositionNotFound = "hr.import.row.position_not_found";
+        public const string AreaNotFound = "hr.import.row.area_not_found";
+        public const string WorkplaceNotFound = "hr.import.row.workplace_not_found";
+        public const string WorkplaceOtherCompany = "hr.import.row.workplace_other_company";
+        public const string RetirementDateInvalid = "hr.import.row.retirement_date_invalid";
+        public const string RetirementDateInFuture = "hr.import.row.retirement_date_in_future";
+        public const string RetirementBeforeStart = "hr.import.row.retirement_before_start";
+        public const string RetirementReasonRequired = "hr.import.row.retirement_reason_required";
+        public const string RetirementReasonInvalid = "hr.import.row.retirement_reason_invalid";
+        public const string TextTooLong = "hr.import.row.text_too_long";
+        public const string BelowMinimum = "hr.import.row.below_minimum";
+    }
+
+    /// <summary>Los seis que se responden 409 (<c>ResourceConflictException</c>): el resto de los de dominio es 422.</summary>
+    public static readonly IReadOnlySet<string> Conflicts = new HashSet<string>(StringComparer.Ordinal)
+    {
+        DocumentTaken,
+        MemberTaken,
+        SettingsNameTaken,
+        SettingsInUse,
+        SettingsAlreadyArchived,
+        SettingsNotArchived,
+    };
+}

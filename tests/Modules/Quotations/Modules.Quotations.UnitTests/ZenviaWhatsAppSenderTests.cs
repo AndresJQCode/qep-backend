@@ -23,6 +23,15 @@ public sealed class ZenviaWhatsAppSenderTests
     private const string TemplateId = "plantilla-de-prueba";
     private const string FromNumber = "570000000000";
     private const string OrderTemplateId = "plantilla-de-pedido-de-prueba";
+    private const string InvoiceTemplateId = "tpl-invoice";
+
+    private static readonly WhatsAppInvoiceMessage InvoiceMessage = new(
+        ToPhone: "3001234567",
+        FullName: "Juan Pérez",
+        InvoiceNumber: "FV-1-123",
+        Total: 2450000m,
+        Currency: "COP",
+        DocumentUrl: "https://assets.example.co/invoices/factura.pdf");
 
     private static readonly WhatsAppOrderMessage OrderMessage = new(
         ToPhone: "3001234567",
@@ -330,6 +339,66 @@ public sealed class ZenviaWhatsAppSenderTests
         Assert.DoesNotContain(logger.Messages, message => message.Contains("pedido.pdf"));
     }
 
+    // ---- La factura ----
+
+    [Fact]
+    public async Task AnInvoiceGoesWithItsOwnTemplateAndTheDocumentUrl()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await sender.SendInvoiceAsync(Channel(), InvoiceMessage, TestContext.Current.CancellationToken);
+
+        var body = capture.Body();
+        Assert.Equal("tpl-invoice", body.GetProperty("contents")[0].GetProperty("templateId").GetString());
+        Assert.Equal("573001234567", body.GetProperty("to").GetString());
+        var fields = capture.Fields();
+        Assert.Equal("https://assets.example.co/invoices/factura.pdf", fields.GetProperty("documentUrl").GetString());
+        Assert.Equal(
+            ["documentUrl", "fullname", "invoice_number", "total"],
+            fields.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(
+            ("Juan Pérez", "FV-1-123", "$ 2.450.000"),
+            (fields.GetProperty("fullname").GetString(), fields.GetProperty("invoice_number").GetString(),
+                fields.GetProperty("total").GetString()));
+    }
+
+    // Mismo contrato que el del pedido: el log lleva el id del mensaje y el número, nunca el teléfono ni la URL
+    // pública (un log se copia a soporte, y la URL de la factura queda abierta a quien la tenga).
+    [Fact]
+    public async Task SendInvoiceLogsTheZenviaMessageIdButNotThePhoneOrTheUrl()
+    {
+        var (sender, _, logger) = NewSender(responseBody: """{"id":"zid-fac-1"}""");
+
+        await sender.SendInvoiceAsync(Channel(), InvoiceMessage, TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Messages, message => message.Contains("zid-fac-1") && message.Contains("FV-1-123"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("3001234567"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("factura.pdf"));
+    }
+
+    [Fact]
+    public async Task AnInvoiceWithoutTemplateIdFailsWithInvoiceSendFailed()
+    {
+        var (sender, capture, _) = NewSender();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            sender.SendInvoiceAsync(Channel(invoiceTemplateId: null), InvoiceMessage, TestContext.Current.CancellationToken));
+
+        Assert.Equal("invoice.whatsapp.send_failed", error.Code);
+        Assert.Equal("{}", capture.Json);
+    }
+
+    [Fact]
+    public async Task AnInvoiceWithoutDocumentUrlFails()
+    {
+        var (sender, capture, _) = NewSender();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sender.SendInvoiceAsync(Channel(), InvoiceMessage with { DocumentUrl = null }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("{}", capture.Json);
+    }
+
     private static (IZenviaWhatsAppSender Sender, RequestCapture Capture, RecordingLogger Logger)
         NewSender(
             HttpStatusCode status = HttpStatusCode.OK,
@@ -352,8 +421,9 @@ public sealed class ZenviaWhatsAppSenderTests
             logger);
     }
 
-    private static ZenviaWhatsAppChannel Channel(string? orderTemplateId = OrderTemplateId) =>
-        new(Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", FromNumber, TemplateId, orderTemplateId);
+    private static ZenviaWhatsAppChannel Channel(
+        string? orderTemplateId = OrderTemplateId, string? invoiceTemplateId = InvoiceTemplateId) =>
+        new(Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", FromNumber, TemplateId, orderTemplateId, invoiceTemplateId);
 
     private sealed class RequestCapture
     {

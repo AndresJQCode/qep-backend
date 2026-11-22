@@ -25,7 +25,8 @@ public enum SiigoIdentificationKind
 }
 
 /// <summary>Una línea del pedido. <paramref name="Subtotal"/> es el de la línea <b>con el descuento aplicado y sin IVA</b>
-/// (<c>OrderItem.Subtotal</c>); el precio unitario que va a Siigo se deriva de él.</summary>
+/// (<c>OrderItem.Subtotal</c>); el precio unitario que va a Siigo se deriva de él. Un regalo (<paramref name="IsGift"/>) trae subtotal
+/// e IVA en 0 y su precio de lista con IVA incluido en <paramref name="ListUnitPrice"/>: de ahí sale la base del obsequio.</summary>
 public sealed record SiigoInvoiceLineInput(
     Guid VariantId,
     string Name,
@@ -33,7 +34,9 @@ public sealed record SiigoInvoiceLineInput(
     decimal Subtotal,
     decimal DiscountPercentage,
     int TaxPercentage,
-    decimal TaxAmount);
+    decimal TaxAmount,
+    bool IsGift = false,
+    decimal ListUnitPrice = 0m);
 
 /// <summary>Una retención <b>aplicada</b> del pedido (<paramref name="Type"/> es <c>Retefuente</c> o <c>ReteICA</c>; otro tipo es un
 /// faltante). Sólo viaja el vínculo: el monto lo calcula Siigo.</summary>
@@ -85,4 +88,6 @@ public sealed record SiigoInvoiceInput(
     Guid? CompanyId,
     long OrderVersion,
     Guid AdvisorMembershipId,
-    string? AdvisorLabel);
+    string? AdvisorLabel,
+    string? ShippingAddress = null,
+    string? ShippingCity = null);

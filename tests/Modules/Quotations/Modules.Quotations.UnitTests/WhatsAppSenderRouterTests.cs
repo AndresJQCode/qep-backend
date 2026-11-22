@@ -23,6 +23,14 @@ public sealed class WhatsAppSenderRouterTests
         Currency: "COP",
         DocumentUrl: "https://assets.example.co/pedido.pdf");
 
+    private static readonly WhatsAppInvoiceMessage InvoiceMessage = new(
+        ToPhone: "300 123 4567",
+        FullName: "Juan Pérez",
+        InvoiceNumber: "FV-1-123",
+        Total: 2450000m,
+        Currency: "COP",
+        DocumentUrl: "https://assets.example.co/factura.pdf");
+
     [Fact]
     public async Task AZenviaChannelGoesToZenvia()
     {
@@ -109,6 +117,38 @@ public sealed class WhatsAppSenderRouterTests
         Assert.Equal("order.whatsapp.recipient_missing", error.Code);
         Assert.Empty(zenvia.Orders);
         Assert.Empty(meta.Orders);
+    }
+
+    [Fact]
+    public async Task AnInvoiceGoesToZenviaOrMetaByChannel()
+    {
+        var (router, zenvia, meta) = NewRouter();
+        var zenviaChannel = WhatsAppChannels.Any();
+        var metaChannel = WhatsAppChannels.Meta();
+
+        await router.SendInvoiceAsync(zenviaChannel, InvoiceMessage, TestContext.Current.CancellationToken);
+        await router.SendInvoiceAsync(metaChannel, InvoiceMessage, TestContext.Current.CancellationToken);
+
+        Assert.Same(zenviaChannel, Assert.Single(zenvia.Invoices).Channel);
+        var sent = Assert.Single(meta.Invoices);
+        Assert.Same(metaChannel, sent.Channel);
+        Assert.Equal("573001234567", sent.WaId);
+    }
+
+    [Theory]
+    [InlineData("zenvia")]
+    [InlineData("meta")]
+    public async Task AnInvoiceWithoutPhoneIsRecipientMissingOnEitherProvider(string provider)
+    {
+        var (router, zenvia, meta) = NewRouter();
+        WhatsAppChannel channel = provider == "zenvia" ? WhatsAppChannels.Any() : WhatsAppChannels.Meta();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            router.SendInvoiceAsync(channel, InvoiceMessage with { ToPhone = " " }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("invoice.whatsapp.recipient_missing", error.Code);
+        Assert.Empty(zenvia.Invoices);
+        Assert.Empty(meta.Invoices);
     }
 
     private static (WhatsAppSenderRouter Router, RecordingZenviaSender Zenvia, RecordingMetaSender Meta) NewRouter()

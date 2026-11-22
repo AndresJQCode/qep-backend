@@ -74,6 +74,7 @@
     <Project Path="src/Modules/Messaging/Modules.Messaging.Infrastructure/Modules.Messaging.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Notifications/">
+    <Project Path="src/Modules/Notifications/Modules.Notifications.Api/Modules.Notifications.Api.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Application/Modules.Notifications.Application.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Infrastructure/Modules.Notifications.Infrastructure.csproj" />
@@ -173,6 +174,26 @@
   <Folder Name="/tests/Modules/Loans/">
     <Project Path="tests/Modules/Loans/Modules.Loans.UnitTests/Modules.Loans.UnitTests.csproj" />
     <Project Path="tests/Modules/Loans/Modules.Loans.IntegrationTests/Modules.Loans.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Hr/">
+    <Project Path="src/Modules/Hr/Modules.Hr.Api/Modules.Hr.Api.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Application/Modules.Hr.Application.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Domain/Modules.Hr.Domain.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Infrastructure/Modules.Hr.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Hr/">
+    <Project Path="tests/Modules/Hr/Modules.Hr.UnitTests/Modules.Hr.UnitTests.csproj" />
+    <Project Path="tests/Modules/Hr/Modules.Hr.IntegrationTests/Modules.Hr.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Payroll/">
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Api/Modules.Payroll.Api.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Application/Modules.Payroll.Application.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Domain/Modules.Payroll.Domain.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Infrastructure/Modules.Payroll.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Payroll/">
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.UnitTests/Modules.Payroll.UnitTests.csproj" />
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.IntegrationTests/Modules.Payroll.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Purchases/">
     <Project Path="src/Modules/Purchases/Modules.Purchases.Api/Modules.Purchases.Api.csproj" />

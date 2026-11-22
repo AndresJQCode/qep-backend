@@ -159,6 +159,31 @@ public sealed class NotificationsOptionsValidatorTests
         Assert.Contains("Notifications:AppBaseUrl must be an absolute URL.", result.Failures!);
     }
 
+    // Spec 2026-11-22 D-11: the retention of the bell is 1 to 365 days.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(366)]
+    public void RetentionDaysOutOfRangeIsInvalid(int days)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { InApp = new InAppOptions { RetentionDays = days } });
+
+        Assert.Contains(result.Failures!, failure => failure.Contains("Notifications:InApp:RetentionDays", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(90)]
+    [InlineData(365)]
+    public void RetentionDaysInRangeIsValid(int days)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { InApp = new InAppOptions { RetentionDays = days } });
+
+        Assert.True(result.Succeeded);
+    }
+
     private static NotificationsOptionsValidator ValidatorFor(string environmentName) =>
         new(new StubHostEnvironment(environmentName));
 

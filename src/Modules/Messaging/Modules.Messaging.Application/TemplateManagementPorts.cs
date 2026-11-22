@@ -25,6 +25,9 @@ public interface IMessageTemplateRepository
     /// <summary>Spec 2026-11-09 D1: la única fila <c>Order</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindOrderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-21: la única fila <c>Invoice</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindInvoiceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Soporte fase 2: la única fila <c>SupportReply</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindSupportReplyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -80,6 +83,13 @@ public interface IQuotationTemplateReadiness
 /// fila <c>Order</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la lee el directorio de canales (D6) y el sender al
 /// enviar (D9).</summary>
 public interface IOrderTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-21: la señal para el envío de la factura por Meta, hermana de <see cref="IOrderTemplateReadiness"/>. Devuelve la
+/// fila <c>Invoice</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>.</summary>
+public interface IInvoiceTemplateReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

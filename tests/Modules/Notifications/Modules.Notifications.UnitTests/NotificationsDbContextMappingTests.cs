@@ -47,6 +47,36 @@ public sealed class NotificationsDbContextMappingTests
         Assert.Equal(1, attempts.GetDefaultValue());
     }
 
+    // Spec 2026-11-22 §11: the raw INSERT of the writer names these columns and indexes by hand, and the unique one is what absorbs a
+    // repeated event (D-7), so a convention-made name would break it without the compiler noticing.
+    [Fact]
+    public void InAppNotificationsMapToTheirTableAndIndexes()
+    {
+        using var context = new NotificationsDbContextFactory().CreateDbContext([]);
+        var entry = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(InAppNotification))!;
+
+        Assert.Equal("in_app_notifications", entry.GetTableName());
+        Assert.Equal("notifications", entry.GetSchema());
+        Assert.Equal("jsonb", entry.FindProperty(nameof(InAppNotification.DataJson))!.GetColumnType());
+        Assert.Equal("data", entry.FindProperty(nameof(InAppNotification.DataJson))!.GetColumnName());
+        Assert.Equal(64, entry.FindProperty(nameof(InAppNotification.Kind))!.GetMaxLength());
+        Assert.Equal(InAppNotification.DedupeKeyMaxLength, entry.FindProperty(nameof(InAppNotification.DedupeKey))!.GetMaxLength());
+
+        var dedupe = entry.GetIndexes().Single(index => index.GetDatabaseName() == "IX_in_app_notifications_member_dedupe");
+        Assert.True(dedupe.IsUnique);
+        Assert.Equal(["tenant_id", "member_id", "dedupe_key"], dedupe.Properties.Select(property => property.GetColumnName()));
+
+        var unread = entry.GetIndexes().Single(index => index.GetDatabaseName() == "IX_in_app_notifications_member_unread");
+        Assert.Equal("read_at IS NULL", unread.GetFilter());
+        Assert.Equal(["tenant_id", "member_id"], unread.Properties.Select(property => property.GetColumnName()));
+
+        var list = entry.GetIndexes().Single(index => index.GetDatabaseName() == "IX_in_app_notifications_member_created");
+        Assert.Equal([false, false, true, true], list.IsDescending);
+
+        Assert.Contains(entry.GetIndexes(), index => index.GetDatabaseName() == "IX_in_app_notifications_resource");
+        Assert.Contains(entry.GetIndexes(), index => index.GetDatabaseName() == "IX_in_app_notifications_created");
+    }
+
     [Fact]
     public void TheNotificationTenantIsOptional()
     {
