@@ -187,6 +187,13 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-11-09 D3: existe una <c>qep_pedido</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
     public const string TemplateOrderConflict = "messaging.template.order_conflict";
 
+    /// <summary>Spec 2026-11-21: la conexión ya tiene su plantilla de factura viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_invoice</c>.</summary>
+    public const string TemplateInvoiceExists = "messaging.template.invoice_exists";
+
+    /// <summary>Spec 2026-11-21: existe una <c>qep_factura</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateInvoiceConflict = "messaging.template.invoice_conflict";
+
     /// <summary>Soporte fase 2: la conexión ya tiene su plantilla «Aviso de respuesta» viva, o dos aprovisionamientos a la vez chocaron en
     /// <c>UX_message_templates_support_reply</c>.</summary>
     public const string TemplateSupportReplyExists = "messaging.template.support_reply_exists";

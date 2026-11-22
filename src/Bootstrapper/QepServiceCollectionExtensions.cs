@@ -1473,6 +1473,8 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-11-09 D3): la plantilla de pedido, calcada de la de cotización; el validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<ICommandHandler<ProvisionOrderTemplateCommand, ManagedTemplateDto>, ProvisionOrderTemplateHandler>();
         services.AddScoped<IQueryHandler<GetOrderTemplateDraftQuery, SystemTemplateDraftDto>, GetOrderTemplateDraftHandler>();
+        services.AddScoped<ICommandHandler<ProvisionInvoiceTemplateCommand, ManagedTemplateDto>, ProvisionInvoiceTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetInvoiceTemplateDraftQuery, SystemTemplateDraftDto>, GetInvoiceTemplateDraftHandler>();
         // Soporte fase 2: la plantilla «Aviso de respuesta», calcada de la de pedido sin encabezado.
         services.AddScoped<ICommandHandler<ProvisionSupportReplyTemplateCommand, ManagedTemplateDto>, ProvisionSupportReplyTemplateHandler>();
         services.AddScoped<IQueryHandler<GetSupportReplyTemplateDraftQuery, SystemTemplateDraftDto>, GetSupportReplyTemplateDraftHandler>();

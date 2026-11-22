@@ -379,6 +379,18 @@ public sealed class MessageTemplate
         UpdatedAt = now;
     }
 
+    /// <summary>Spec 2026-11-21: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_factura</c> creada en la consola de Meta.</summary>
+    public void AdoptAsInvoice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateInvoiceConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.Invoice;
+        UpdatedAt = now;
+    }
+
     /// <summary>Soporte fase 2: lo mismo que <see cref="AdoptAsOrder"/> para una <c>qep_soporte_respuesta</c> creada en la consola de Meta.</summary>
     public void AdoptAsSupportReply(DateTimeOffset now)
     {
