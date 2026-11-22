@@ -945,6 +945,8 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Support.Application.GetNoteFileDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
             Modules.Support.Application.GetNoteFileDownloadHandler>();
         services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
+        // Spec 2026-11-22 (tareas internas) §5.6: la puerta única de todo ticket; una instancia por request memoiza el acceso.
+        services.AddScoped<Modules.Support.Application.SupportTicketScope>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
