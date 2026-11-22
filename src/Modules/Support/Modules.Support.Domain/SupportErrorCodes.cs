@@ -259,4 +259,9 @@ public static class SupportErrorCodes
 
     /// <summary>A closed ticket takes no new note nor a new note upload; replaying a note created before closing still answers it.</summary>
     public const string NoteTicketClosed = "support.note.ticket_closed";
+
+    // Spec 2026-11-22: tareas internas entre miembros.
+
+    /// <summary>The internal ticket type cannot be edited or deleted, and no ticket takes it nor leaves it by a type change.</summary>
+    public const string InternalTypeLocked = "support.ticket.internal_type_locked";
 }
