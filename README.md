@@ -554,6 +554,33 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Regiones y ciudades por país
+
+El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. La región (departamento,
+provincia) **sólo sirve para filtrar ciudades: no se guarda**. Colombia guarda `CityId`; el resto de países
+guarda el nombre de la ciudad como texto (`CityName`).
+
+| Ruta | Respuesta |
+| --- | --- |
+| `GET /api/v1/countries` | `[{ code, name, regionKind }]`: el catálogo de países por nombre. `regionKind` es `Department` (`CO`), `Province` (`ES`) o `null` si el país no tiene catálogo de regiones: ahí la pantalla cae al texto libre. |
+| `GET /api/v1/countries/{country}/regions` | `[{ id, code, name }]` por nombre. País sin catálogo: `200 []`. |
+| `GET /api/v1/countries/{country}/regions/{regionId}/cities` | `[{ id, code, name }]` por nombre. Región que no es de ese país: `404 geography.region.not_found`. |
+
+- **Colombia** sale de DIVIPOLA (`departments`, `cities`): los `id` son los mismos que sirven `/api/v1/departments`
+  y `/api/v1/cities`, que no cambian.
+- **Los demás países** salen de `geography.regions` y `geography.region_cities`, que `RegionSeeder` siembra desde
+  `Seed/Data/<país>-regions.json` y `<país>-cities.json`. Un arranque normal no lee esas tablas: compara el SHA-256
+  de los dos archivos con el de `geography.seed_state` y, si coincide, termina. Sólo si cambió (primer arranque, o un
+  archivo nuevo) parsea, valida y aplica el país en una transacción con `INSERT … ON CONFLICT` sobre `unnest`, sin
+  cargar filas ni usar el change tracker. Si cambias la **lógica** del importador y no los archivos, sube
+  `RegionSeedHash.SeederVersion`, o las bases que ya coinciden no se enterarán. Hoy sólo España: 52 provincias y 8.132
+  municipios de la «Relación de municipios y sus códigos por provincias» del INE (1 de enero de 2025; el artículo
+  invertido del INE, «Rozas de Madrid, Las», se guarda como se conoce: «Las Rozas de Madrid»,
+  `https://www.ine.es/daco/daco42/codmun/diccionario25.xlsx`). El código del municipio es `CPRO` + `CMUN`.
+- **Un país nuevo** son sus dos JSON, una entrada en `RegionSeeder.EmbeddedSources` y otra en `CountryCatalogs.All`
+  (una prueba unitaria falla si una de las dos listas se queda atrás).
+  Esto no toca `Customer`, Coordinadora, Siigo ni los sinónimos: ninguna ciudad de afuera entra a `geography.cities`.
+
 ## Nombres de ciudad de Coordinadora
 
 Las ciudades de `geography` son los municipios del DANE (`localities.json`), y se importan en cada
