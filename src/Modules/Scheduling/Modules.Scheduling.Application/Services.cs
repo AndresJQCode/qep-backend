@@ -121,12 +121,16 @@ public sealed class UpdateServiceHandler(
     }
 }
 
-/// <summary>Se rechaza mientras tenga citas futuras vigentes (<c>scheduling.service.in_use</c>, 422): su historial sigue apuntándole.</summary>
+/// <summary>
+/// Se rechaza mientras tenga citas futuras vigentes (<c>scheduling.service.in_use</c>, 422): su historial sigue apuntándole. Al archivar,
+/// el servicio sale de todas las franjas del tenant y la que se quede sin servicios se archiva.
+/// </summary>
 public sealed class ArchiveServiceHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     IServiceRepository services,
+    IAvailabilityBlockRepository blocks,
     ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork)
     : ICommandHandler<ArchiveServiceCommand, ServiceDto>
@@ -152,6 +156,8 @@ public sealed class ArchiveServiceHandler(
         SchedulingAudit.Publish(
             auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ServiceArchived,
             SchedulingAuditActions.Resources.Service, service.Id.Value, ["archived"], now);
+        await BlockDetachment.DetachServiceAsync(
+            blocks, auditPublisher, executionContext, command.TenantId, service.Id, now, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return SchedulingComposer.Service(service);

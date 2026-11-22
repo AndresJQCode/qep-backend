@@ -60,6 +60,53 @@ public sealed class AvailabilityBlock : ArchivableEntity
         Touch(now);
     }
 
+    /// <summary>
+    /// Archiving a resource takes it out of the block. The ids live in a column without a foreign key, so the block must forget them.
+    /// A block left without resources is archived with it: an empty one is rejected on create. Returns whether anything changed.
+    /// </summary>
+    public bool DetachResource(ResourceId resource, DateTimeOffset now)
+    {
+        if (!ResourceIds.Contains(resource))
+        {
+            return false;
+        }
+
+        ResourceIds = [.. ResourceIds.Where(id => id != resource)];
+        if (ResourceIds.Count == 0)
+        {
+            // Archive bumps the version itself.
+            Archive(now);
+        }
+        else
+        {
+            Touch(now);
+        }
+
+        return true;
+    }
+
+    /// <summary>The same as <see cref="DetachResource"/> for an archived service.</summary>
+    public bool DetachService(ServiceId service, DateTimeOffset now)
+    {
+        if (!ServiceIds.Contains(service))
+        {
+            return false;
+        }
+
+        ServiceIds = [.. ServiceIds.Where(id => id != service)];
+        if (ServiceIds.Count == 0)
+        {
+            // Archive bumps the version itself.
+            Archive(now);
+        }
+        else
+        {
+            Touch(now);
+        }
+
+        return true;
+    }
+
     /// <summary>Los rangos que la franja abre ese día del calendario del tenant, sin descontar festivos, cierres ni citas (eso es del motor).</summary>
     public IReadOnlyList<TimeRange> RangesOn(DateOnly date)
     {

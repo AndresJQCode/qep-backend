@@ -114,6 +114,63 @@ internal static class BlockInput
     }
 }
 
+/// <summary>
+/// Archiving a resource or a service takes its id out of every block of the tenant, in the same transaction (the ids have no foreign
+/// key, so nothing else would clean them). A block left without resources or services is archived. Every block touched leaves its own
+/// audit entry; the caller saves.
+/// </summary>
+internal static class BlockDetachment
+{
+    public static Task DetachResourceAsync(
+        IAvailabilityBlockRepository blocks,
+        ISchedulingAuditPublisher auditPublisher,
+        IExecutionContext executionContext,
+        Guid tenantId,
+        ResourceId resource,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        DetachAsync(blocks, auditPublisher, executionContext, tenantId, block => block.DetachResource(resource, now), "resourceIds", now, cancellationToken);
+
+    public static Task DetachServiceAsync(
+        IAvailabilityBlockRepository blocks,
+        ISchedulingAuditPublisher auditPublisher,
+        IExecutionContext executionContext,
+        Guid tenantId,
+        ServiceId service,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        DetachAsync(blocks, auditPublisher, executionContext, tenantId, block => block.DetachService(service, now), "serviceIds", now, cancellationToken);
+
+    private static async Task DetachAsync(
+        IAvailabilityBlockRepository blocks,
+        ISchedulingAuditPublisher auditPublisher,
+        IExecutionContext executionContext,
+        Guid tenantId,
+        Func<AvailabilityBlock, bool> detach,
+        string field,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        foreach (var block in await blocks.ListActiveForUpdateAsync(tenantId, cancellationToken))
+        {
+            if (!detach(block))
+            {
+                continue;
+            }
+
+            SchedulingAudit.Publish(
+                auditPublisher, executionContext, tenantId, SchedulingAuditActions.BlockUpdated,
+                SchedulingAuditActions.Resources.Block, block.Id.Value, [field], now);
+            if (block.Archived)
+            {
+                SchedulingAudit.Publish(
+                    auditPublisher, executionContext, tenantId, SchedulingAuditActions.BlockArchived,
+                    SchedulingAuditActions.Resources.Block, block.Id.Value, ["archived"], now);
+            }
+        }
+    }
+}
+
 public sealed class ListBlocksHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,

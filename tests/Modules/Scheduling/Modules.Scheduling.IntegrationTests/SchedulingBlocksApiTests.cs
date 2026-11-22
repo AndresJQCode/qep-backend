@@ -108,6 +108,81 @@ public sealed class SchedulingBlocksApiTests(SchedulingApiWorld world) : IClassF
         Assert.True(HasError(await JsonOfAsync(response), "serviceIds"));
     }
 
+    private static JsonElement BlockById(JsonElement blocks, Guid id) =>
+        blocks.EnumerateArray().Single(block => block.GetProperty("id").GetGuid() == id);
+
+    [Fact]
+    public async Task ArchivingAResourceTakesItOutOfEveryBlockOfTheTenantInTheSameRequest()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var torres = await CreateResourceAsync(tenant, "Dra. Torres");
+        var rojas = await CreateResourceAsync(tenant, "Dr. Rojas");
+        var service = await CreateServiceAsync(tenant);
+        var shared = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([torres, rojas], [service])))
+            .GetProperty("id").GetGuid();
+        var alone = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([torres], [service])))
+            .GetProperty("id").GetGuid();
+        var unrelated = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([rojas], [service])))
+            .GetProperty("id").GetGuid();
+
+        var archived = await tenant.Admin.PostAsync($"{tenant.Url}/resources/{torres}/archive", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
+        var blocks = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/blocks");
+        Assert.Equal([rojas], ResourceIdsOf(BlockById(blocks, shared)));
+        Assert.False(BlockById(blocks, shared).GetProperty("archived").GetBoolean());
+        Assert.Empty(ResourceIdsOf(BlockById(blocks, alone)));
+        Assert.True(BlockById(blocks, alone).GetProperty("archived").GetBoolean());
+        Assert.Equal([rojas], ResourceIdsOf(BlockById(blocks, unrelated)));
+        Assert.False(BlockById(blocks, unrelated).GetProperty("archived").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ArchivingAServiceTakesItOutOfEveryBlockAndArchivesTheOnesLeftWithoutServices()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var resource = await CreateResourceAsync(tenant, "Dra. Torres");
+        var cleaning = await CreateServiceAsync(tenant, "Limpieza");
+        var checkup = await CreateServiceAsync(tenant, "Revisión");
+        var both = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([resource], [cleaning, checkup])))
+            .GetProperty("id").GetGuid();
+        var alone = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([resource], [cleaning])))
+            .GetProperty("id").GetGuid();
+
+        var archived = await tenant.Admin.PostAsync($"{tenant.Url}/services/{cleaning}/archive", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
+        var blocks = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/blocks");
+        Assert.Equal(
+            [checkup],
+            BlockById(blocks, both).GetProperty("serviceIds").EnumerateArray().Select(id => id.GetGuid()));
+        Assert.False(BlockById(blocks, both).GetProperty("archived").GetBoolean());
+        Assert.Empty(BlockById(blocks, alone).GetProperty("serviceIds").EnumerateArray());
+        Assert.True(BlockById(blocks, alone).GetProperty("archived").GetBoolean());
+    }
+
+    [Fact]
+    public async Task AResourceWithFutureAppointmentsStaysInItsBlocksBecauseArchivingIsRejected()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var resource = await CreateResourceAsync(tenant, "Dra. Torres");
+        var service = await CreateServiceAsync(tenant);
+        var block = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([resource], [service])))
+            .GetProperty("id").GetGuid();
+        await SeedFutureAppointmentAsync(world.Factory, tenant.IdText, await MainLocationIdAsync(tenant), resource, service);
+
+        var rejectedResource = await tenant.Admin.PostAsync($"{tenant.Url}/resources/{resource}/archive", null, Ct);
+        var rejectedService = await tenant.Admin.PostAsync($"{tenant.Url}/services/{service}/archive", null, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejectedResource.StatusCode);
+        Assert.Equal("scheduling.resource.has_future_appointments", CodeOf(await JsonOfAsync(rejectedResource)));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejectedService.StatusCode);
+        Assert.Equal("scheduling.service.in_use", CodeOf(await JsonOfAsync(rejectedService)));
+        var blocks = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/blocks");
+        Assert.Equal([resource], ResourceIdsOf(BlockById(blocks, block)));
+        Assert.False(BlockById(blocks, block).GetProperty("archived").GetBoolean());
+    }
+
     [Fact]
     public async Task ABlockCannotUseAResourceOrServiceThatIsNotOfTheTenantOrIsArchived()
     {

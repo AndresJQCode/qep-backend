@@ -154,6 +154,50 @@ public sealed class SchedulingAuditApiTests(SchedulingApiWorld world) : IClassFi
     }
 
     [Fact]
+    public async Task ADeactivatedAndReactivatedSessionLeavesItsTrail()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var resource = await CreateResourceAsync(tenant, "Sala 1");
+        var service = await CreateServiceAsync(tenant, "Yoga", 60);
+        var day = FutureMonday();
+        var block = await CreatedAsync(
+            tenant.Admin, $"{tenant.Url}/blocks", OneOffBlockBody(day, [resource], [service], "Clases", 5, "PublishedSessions"));
+        var body = new { blockId = block.GetProperty("id").GetGuid(), resourceId = resource, serviceId = service, startsAt = NineOClock(day) };
+        var id = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", body)).GetProperty("id").GetGuid();
+        await SeedCancelledAppointmentOnSessionAsync(world.Factory, tenant.IdText, await MainLocationIdAsync(tenant), id);
+
+        (await tenant.Admin.DeleteAsync($"{tenant.Url}/sessions/{id}", Ct)).EnsureSuccessStatusCode();
+        (await tenant.Admin.PostAsJsonAsync($"{tenant.Url}/sessions", body, Ct)).EnsureSuccessStatusCode();
+
+        Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.SessionDeactivated, SchedulingAuditActions.Resources.Session, id));
+        Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.SessionReactivated, SchedulingAuditActions.Resources.Session, id));
+        Assert.Equal(0, await CountAsync(tenant, SchedulingAuditActions.SessionRemoved, SchedulingAuditActions.Resources.Session, id));
+    }
+
+    [Fact]
+    public async Task ArchivingAResourceOrServiceLeavesATrailOnEveryBlockItChanges()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var first = await CreateResourceAsync(tenant, "Dra. Torres");
+        var second = await CreateResourceAsync(tenant, "Dr. Rojas");
+        var cleaning = await CreateServiceAsync(tenant, "Limpieza");
+        var checkup = await CreateServiceAsync(tenant, "Revisión");
+        var shared = (await CreatedAsync(
+            tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([first, second], [cleaning, checkup]))).GetProperty("id").GetGuid();
+        var onlyFirst = (await CreatedAsync(
+            tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([first], [cleaning]))).GetProperty("id").GetGuid();
+
+        (await tenant.Admin.PostAsync($"{tenant.Url}/resources/{first}/archive", null, Ct)).EnsureSuccessStatusCode();
+        (await tenant.Admin.PostAsync($"{tenant.Url}/services/{cleaning}/archive", null, Ct)).EnsureSuccessStatusCode();
+
+        // shared: loses the resource, then the service. onlyFirst: emptied by the resource, so it is archived and the service no longer reaches it.
+        Assert.Equal(2, await CountAsync(tenant, SchedulingAuditActions.BlockUpdated, SchedulingAuditActions.Resources.Block, shared));
+        Assert.Equal(0, await CountAsync(tenant, SchedulingAuditActions.BlockArchived, SchedulingAuditActions.Resources.Block, shared));
+        Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.BlockUpdated, SchedulingAuditActions.Resources.Block, onlyFirst));
+        Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.BlockArchived, SchedulingAuditActions.Resources.Block, onlyFirst));
+    }
+
+    [Fact]
     public async Task ARejectedChangeLeavesNoTrail()
     {
         using var tenant = await NewTenantAsync(world.Factory);

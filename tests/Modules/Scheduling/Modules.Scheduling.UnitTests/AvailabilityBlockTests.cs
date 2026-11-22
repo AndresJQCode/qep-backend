@@ -47,6 +47,47 @@ public sealed class AvailabilityBlockTests
     }
 
     [Fact]
+    public void DetachingAResourceRemovesItFromTheBlockAndKeepsTheBlockWhileAnotherRemains()
+    {
+        var block = Create(Weekly(resources: [Perez, Mora]));
+
+        Assert.True(block.DetachResource(Perez, Now.AddMinutes(1)));
+
+        Assert.Equal([Mora], block.ResourceIds);
+        Assert.False(block.Archived);
+        Assert.Equal(2, block.Version);
+        Assert.False(block.DetachResource(Perez, Now.AddMinutes(2)));
+        Assert.Equal(2, block.Version);
+    }
+
+    [Fact]
+    public void ABlockLeftWithoutResourcesIsArchived()
+    {
+        var block = Create(Weekly(resources: [Perez]));
+
+        Assert.True(block.DetachResource(Perez, Now.AddMinutes(1)));
+
+        Assert.Empty(block.ResourceIds);
+        Assert.True(block.Archived);
+    }
+
+    [Fact]
+    public void DetachingAServiceRemovesItAndAnEmptiedBlockIsArchived()
+    {
+        var other = ServiceId.New();
+        var block = Create(Weekly(services: [Cleaning, other]));
+
+        Assert.True(block.DetachService(Cleaning, Now));
+        Assert.Equal([other], block.ServiceIds);
+        Assert.False(block.Archived);
+
+        Assert.True(block.DetachService(other, Now));
+        Assert.Empty(block.ServiceIds);
+        Assert.True(block.Archived);
+        Assert.False(block.DetachService(ServiceId.New(), Now));
+    }
+
+    [Fact]
     public void ACapacityOfOneDropsTheSessionModeAndABiggerOneDefaultsToFirstBookingOpens()
     {
         Assert.Null(Create(Weekly(capacity: 1, mode: SessionMode.PublishedSessions)).SessionMode);

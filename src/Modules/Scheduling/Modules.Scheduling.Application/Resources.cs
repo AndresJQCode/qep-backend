@@ -192,12 +192,16 @@ public sealed class UpdateResourceHandler(
     }
 }
 
-/// <summary>Archivar no borra su historial; se rechaza mientras tenga citas futuras vigentes (<c>Pending</c> o <c>Confirmed</c>).</summary>
+/// <summary>
+/// Archivar no borra su historial; se rechaza mientras tenga citas futuras vigentes (<c>Pending</c> o <c>Confirmed</c>). Al archivar, el
+/// recurso sale de todas las franjas del tenant y la que se quede sin recursos se archiva.
+/// </summary>
 public sealed class ArchiveResourceHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     IResourceRepository resources,
+    IAvailabilityBlockRepository blocks,
     ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     SchedulingComposer composer)
@@ -224,6 +228,8 @@ public sealed class ArchiveResourceHandler(
         SchedulingAudit.Publish(
             auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ResourceArchived,
             SchedulingAuditActions.Resources.Resource, resource.Id.Value, ["archived"], now);
+        await BlockDetachment.DetachResourceAsync(
+            blocks, auditPublisher, executionContext, command.TenantId, resource.Id, now, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await composer.ResourceAsync(command.TenantId, resource, cancellationToken);

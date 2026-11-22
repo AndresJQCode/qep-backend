@@ -288,6 +288,30 @@ public sealed class AvailabilityEngineTests
     }
 
     [Fact]
+    public void ADeactivatedPublishedSessionIsNotOffered()
+    {
+        var service = Cleaning(duration: 60);
+        var block = WeeklyBlock(service, 1080, 1260, capacity: 6, mode: SessionMode.PublishedSessions);
+        var removed = SessionAt(Perez, service, Local(Monday, 19), capacity: 6, booked: 0, published: true);
+        removed.Deactivate(LongBefore);
+
+        Assert.Empty(AvailabilityEngine.Compute(Query(service, [block], sessions: [removed])));
+    }
+
+    [Fact]
+    public void AnInactiveSessionDoesNotOccupyItsResource()
+    {
+        var service = Cleaning(duration: 60);
+        var block = WeeklyBlock(service, 1080, 1260, capacity: 1);
+        var removed = SessionAt(Perez, service, Local(Monday, 18), capacity: 1, booked: 0, published: true);
+        removed.Deactivate(LongBefore);
+
+        var slots = AvailabilityEngine.Compute(Query(service, [block], sessions: [removed], onlyResource: Perez));
+
+        Assert.Equal(Local(Monday, 18), slots[0].StartsAt);
+    }
+
+    [Fact]
     public void APublishedSessionOutsideTheWindowOfTheBlockIsNotOffered()
     {
         var service = Cleaning(duration: 60);
