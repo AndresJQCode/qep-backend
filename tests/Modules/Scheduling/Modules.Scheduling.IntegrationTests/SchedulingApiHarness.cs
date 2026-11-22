@@ -322,6 +322,36 @@ internal static class SchedulingApiHarness
         await db.SaveChangesAsync(Ct);
     }
 
+    /// <summary>
+    /// A cancelled appointment on a session, as the booking flow leaves it: the appointment was cancelled and its seat released, so the
+    /// session has history (the foreign key forbids deleting it) but no active booking.
+    /// </summary>
+    public static async Task SeedCancelledAppointmentOnSessionAsync(QepApiFactory factory, string tenantId, Guid locationId, Guid sessionId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var session = await db.Sessions.SingleAsync(value => value.Id == new SessionId(sessionId), Ct);
+        var now = DateTimeOffset.UtcNow;
+        session.Reserve(now);
+        var appointment = Appointment.Create(
+            AppointmentId.New(), Guid.Parse(tenantId), new LocationId(locationId), session.ResourceId, session.ServiceId,
+            Guid.CreateVersion7(), session.Id, null, session.StartsAt, session.EndsAt, AppointmentStatus.Confirmed,
+            AppointmentSource.BackOffice, null, null, null, now);
+        appointment.Cancel(null, null, now);
+        session.Release(now);
+        db.Appointments.Add(appointment);
+        await db.SaveChangesAsync(Ct);
+    }
+
+    /// <summary>The session row as the database holds it, deactivated or not (the API only returns the ones it created or republished).</summary>
+    public static async Task<(bool Exists, bool IsActive, bool IsPublished, int Capacity)> ReadSessionAsync(QepApiFactory factory, Guid sessionId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var session = await db.Sessions.AsNoTracking().SingleOrDefaultAsync(value => value.Id == new SessionId(sessionId), Ct);
+        return session is null ? (false, false, false, 0) : (true, session.IsActive, session.IsPublished, session.Capacity);
+    }
+
     public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)

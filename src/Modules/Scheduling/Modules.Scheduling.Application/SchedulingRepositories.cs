@@ -66,6 +66,10 @@ public interface IAvailabilityBlockRepository
     /// nombre y luego por id. Los ids de recursos van en una columna: el filtro es en memoria (plan, corrección 13).</summary>
     Task<IReadOnlyList<AvailabilityBlock>> ListAsync(Guid tenantId, ResourceScope scope, CancellationToken cancellationToken);
 
+    /// <summary>Las franjas no archivadas del tenant, con seguimiento de cambios: archivar un recurso o un servicio las edita al sacar
+    /// su id. El filtro por id es en memoria, como en <see cref="ListAsync"/>.</summary>
+    Task<IReadOnlyList<AvailabilityBlock>> ListActiveForUpdateAsync(Guid tenantId, CancellationToken cancellationToken);
+
     void Add(AvailabilityBlock block);
 }
 
@@ -102,6 +106,9 @@ public interface ISessionRepository
 
     /// <summary>Alguna cita de la sesión, en cualquier estado: la llave foránea impide borrarla mientras exista una.</summary>
     Task<bool> HasAppointmentsAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken);
+
+    /// <summary>Alguna cita de la sesión que no esté cancelada: la que aún cuenta para quien la tiene.</summary>
+    Task<bool> HasLiveAppointmentsAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken);
 
     void Add(Session session);
 

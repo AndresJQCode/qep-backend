@@ -106,6 +106,51 @@ public sealed class ClosureAndSessionTests
         Assert.Throws<InvalidOperationException>(() => NewSession().Release(Now));
 
     [Fact]
+    public void DeactivatingAPublishedSessionWithoutBookingsFreesItsRangeAndUnpublishesIt()
+    {
+        var session = NewSession(capacity: 5, published: true);
+
+        session.Deactivate(Now.AddMinutes(1));
+
+        Assert.False(session.IsActive);
+        Assert.False(session.IsPublished);
+        Assert.Equal(2, session.Version);
+    }
+
+    [Fact]
+    public void ASessionWithBookingsCannotBeDeactivated()
+    {
+        var session = NewSession(capacity: 5, published: true);
+        session.Reserve(Now);
+
+        Assert.Throws<InvalidOperationException>(() => session.Deactivate(Now));
+    }
+
+    [Fact]
+    public void RepublishingAnInactiveSessionReactivatesItWithTheCurrentRangeAndCapacity()
+    {
+        var session = NewSession(capacity: 5, published: true);
+        session.Deactivate(Now);
+
+        session.Republish(Start.AddMinutes(45), bufferMinutes: 15, capacity: 8, Now.AddMinutes(1));
+
+        Assert.True(session.IsActive);
+        Assert.True(session.IsPublished);
+        Assert.Equal(8, session.Capacity);
+        Assert.Equal(Start.AddMinutes(45), session.EndsAt);
+        Assert.Equal(Start.AddMinutes(60), session.OccupiesUntil);
+        Assert.Equal(0, session.BookedCount);
+    }
+
+    [Fact]
+    public void AnActiveSessionCannotBeRepublished()
+    {
+        var session = NewSession(capacity: 5, published: true);
+
+        Assert.Throws<InvalidOperationException>(() => session.Republish(Start.AddMinutes(30), 0, 5, Now));
+    }
+
+    [Fact]
     public void ACapacityBelowOneAndARangeThatEndsBeforeItStartsAreRejected()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => NewSession(capacity: 0));

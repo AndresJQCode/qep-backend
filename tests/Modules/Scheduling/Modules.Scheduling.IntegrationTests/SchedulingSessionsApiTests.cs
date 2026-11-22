@@ -189,6 +189,81 @@ public sealed class SchedulingSessionsApiTests(SchedulingApiWorld world) : IClas
     }
 
     [Fact]
+    public async Task ASessionWithOnlyCancelledAppointmentsIsDeactivatedNotDeleted()
+    {
+        var (tenant, resource, service, block, day) = await PublishedBlockAsync();
+        using var _ = tenant;
+        var created = await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, resource, service, NineOClock(day)));
+        var id = created.GetProperty("id").GetGuid();
+        await SeedCancelledAppointmentOnSessionAsync(world.Factory, tenant.IdText, await MainLocationIdAsync(tenant), id);
+
+        var removed = await tenant.Admin.DeleteAsync($"{tenant.Url}/sessions/{id}", Ct);
+        var again = await tenant.Admin.DeleteAsync($"{tenant.Url}/sessions/{id}", Ct);
+
+        Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
+        var row = await ReadSessionAsync(world.Factory, id);
+        Assert.True(row.Exists);
+        Assert.False(row.IsActive);
+        Assert.False(row.IsPublished);
+        Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+    }
+
+    [Fact]
+    public async Task ADeactivatedSessionDoesNotOccupyItsResourceAndPublishingAgainReactivatesTheSameRow()
+    {
+        var (tenant, resource, service, block, day) = await PublishedBlockAsync();
+        using var _ = tenant;
+        var start = NineOClock(day);
+        var created = await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, resource, service, start));
+        var id = created.GetProperty("id").GetGuid();
+        await SeedCancelledAppointmentOnSessionAsync(world.Factory, tenant.IdText, await MainLocationIdAsync(tenant), id);
+        (await tenant.Admin.DeleteAsync($"{tenant.Url}/sessions/{id}", Ct)).EnsureSuccessStatusCode();
+
+        // 09:30 falls inside [09:00, 10:00): it would be a conflict if the inactive row still occupied the resource.
+        var overlapping = await tenant.Admin.PostAsJsonAsync(
+            $"{tenant.Url}/sessions", Publish(block, resource, service, start.AddMinutes(30)), Ct);
+        Assert.Equal(HttpStatusCode.Created, overlapping.StatusCode);
+        var overlappingId = (await JsonOfAsync(overlapping)).GetProperty("id").GetGuid();
+        (await tenant.Admin.DeleteAsync($"{tenant.Url}/sessions/{overlappingId}", Ct)).EnsureSuccessStatusCode();
+
+        var republished = await tenant.Admin.PostAsJsonAsync($"{tenant.Url}/sessions", Publish(block, resource, service, start), Ct);
+        var duplicate = await tenant.Admin.PostAsJsonAsync($"{tenant.Url}/sessions", Publish(block, resource, service, start), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, republished.StatusCode);
+        var body = await JsonOfAsync(republished);
+        Assert.Equal(id, body.GetProperty("id").GetGuid());
+        Assert.Equal(5, body.GetProperty("capacity").GetInt32());
+        Assert.True(body.GetProperty("isPublished").GetBoolean());
+        var row = await ReadSessionAsync(world.Factory, id);
+        Assert.True(row.IsActive);
+        Assert.True(row.IsPublished);
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        Assert.Equal("scheduling.appointment.slot_taken", CodeOf(await JsonOfAsync(duplicate)));
+    }
+
+    [Fact]
+    public async Task ADeactivatedSessionIsReactivatedWithTheCapacityOfTheCurrentBlock()
+    {
+        var (tenant, resource, service, block, day) = await PublishedBlockAsync(capacity: 5);
+        using var _ = tenant;
+        var start = NineOClock(day);
+        var created = await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, resource, service, start));
+        var id = created.GetProperty("id").GetGuid();
+        await SeedCancelledAppointmentOnSessionAsync(world.Factory, tenant.IdText, await MainLocationIdAsync(tenant), id);
+        (await tenant.Admin.DeleteAsync($"{tenant.Url}/sessions/{id}", Ct)).EnsureSuccessStatusCode();
+        var current = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/blocks");
+        var version = current.EnumerateArray().Single(item => item.GetProperty("id").GetGuid() == block).GetProperty("version").GetInt64();
+        var update = await PutAsync(
+            tenant.Admin, $"{tenant.Url}/blocks/{block}", OneOffBlockBody(day, [resource], [service], "Clases", 8, "PublishedSessions"), version.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        update.EnsureSuccessStatusCode();
+
+        var republished = await tenant.Admin.PostAsJsonAsync($"{tenant.Url}/sessions", Publish(block, resource, service, start), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, republished.StatusCode);
+        Assert.Equal(8, (await JsonOfAsync(republished)).GetProperty("capacity").GetInt32());
+    }
+
+    [Fact]
     public async Task AProviderCannotRemoveTheSessionOfAnotherResource()
     {
         var tenant = await NewTenantAsync(world.Factory);

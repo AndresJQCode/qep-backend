@@ -29,6 +29,8 @@ public static class SchedulingAuditActions
 
     public const string SessionPublished = "scheduling.session.published";
     public const string SessionRemoved = "scheduling.session.removed";
+    public const string SessionDeactivated = "scheduling.session.deactivated";
+    public const string SessionReactivated = "scheduling.session.reactivated";
 
     public static class Resources
     {

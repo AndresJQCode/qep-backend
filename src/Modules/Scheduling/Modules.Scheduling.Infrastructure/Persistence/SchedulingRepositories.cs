@@ -134,6 +134,11 @@ internal sealed class AvailabilityBlockRepository(SchedulingDbContext dbContext)
             .ThenBy(block => block.Id.Value)];
     }
 
+    public async Task<IReadOnlyList<AvailabilityBlock>> ListActiveForUpdateAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await dbContext.Blocks
+            .Where(block => block.TenantId == tenantId && block.ArchivedAt == null)
+            .ToListAsync(cancellationToken);
+
     public void Add(AvailabilityBlock block) => dbContext.Blocks.Add(block);
 }
 
@@ -199,6 +204,13 @@ internal sealed class SessionRepository(SchedulingDbContext dbContext) : ISessio
     public Task<bool> HasAppointmentsAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken) =>
         dbContext.Appointments.AsNoTracking().AnyAsync(
             appointment => appointment.TenantId == tenantId && appointment.SessionId == id, cancellationToken);
+
+    public Task<bool> HasLiveAppointmentsAsync(Guid tenantId, SessionId id, CancellationToken cancellationToken) =>
+        dbContext.Appointments.AsNoTracking().AnyAsync(
+            appointment => appointment.TenantId == tenantId
+                && appointment.SessionId == id
+                && appointment.Status != AppointmentStatus.Cancelled,
+            cancellationToken);
 
     public void Add(Session session) => dbContext.Sessions.Add(session);
 

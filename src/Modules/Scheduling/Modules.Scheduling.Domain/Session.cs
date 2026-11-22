@@ -84,6 +84,49 @@ public sealed class Session : VersionedEntity
         Touch(now);
     }
 
+    /// <summary>
+    /// The tenant stops publishing a session that has no active bookings but whose cancelled appointments still point at it (the foreign
+    /// key forbids deleting the row). It stops occupying the resource (the exclusion constraint only covers <c>is_active</c> rows) and
+    /// is no longer a published one, so removing it again answers 404 like any session that is not published.
+    /// </summary>
+    public void Deactivate(DateTimeOffset now)
+    {
+        if (BookedCount > 0)
+        {
+            throw new InvalidOperationException("A session with bookings cannot be deactivated.");
+        }
+
+        IsActive = false;
+        IsPublished = false;
+        Touch(now);
+    }
+
+    /// <summary>
+    /// Publishing again on the same key (resource, service, start) brings the inactive row back instead of inserting a second one. The
+    /// range and the seats are taken from the current service and block: both may have changed since the session was removed.
+    /// </summary>
+    public void Republish(DateTimeOffset endsAt, int bufferMinutes, int capacity, DateTimeOffset now)
+    {
+        if (IsActive || BookedCount > 0)
+        {
+            throw new InvalidOperationException("Only an inactive session without bookings can be published again.");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(bufferMinutes);
+        if (endsAt <= StartsAt)
+        {
+            throw new ArgumentException("A session must end after it starts.", nameof(endsAt));
+        }
+
+        EndsAt = endsAt;
+        OccupiesUntil = endsAt.AddMinutes(bufferMinutes);
+        Capacity = capacity;
+        IsPublished = true;
+        IsActive = true;
+        Touch(now);
+    }
+
     public void Release(DateTimeOffset now)
     {
         if (BookedCount == 0)

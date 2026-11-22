@@ -93,17 +93,30 @@ public sealed class PublishSessionHandler(
             SchedulingFieldErrors.Throw("startsAt", "La sesión debe caber entera en un horario abierto de la franja.");
         }
 
-        if (await sessions.FindByKeyAsync(command.TenantId, resourceId, serviceId, startsAt, cancellationToken) is not null)
+        // The table key is (resource, service, start): an inactive row (a removed session that kept its cancelled history) is brought back
+        // instead of inserting a second one; an active row is a real conflict.
+        var session = await sessions.FindByKeyAsync(command.TenantId, resourceId, serviceId, startsAt, cancellationToken);
+        string action;
+        if (session is null)
+        {
+            session = Session.Create(
+                SessionId.New(), command.TenantId, resourceId, serviceId, startsAt, endsAt, service.BufferMinutes,
+                block.CapacityPerResource, isPublished: true, calendar.UtcNow);
+            sessions.Add(session);
+            action = SchedulingAuditActions.SessionPublished;
+        }
+        else if (session.IsActive)
         {
             throw new ResourceConflictException(SchedulingErrorCodes.SlotTaken, "Ese espacio ya no está disponible. Elige otro.");
         }
+        else
+        {
+            session.Republish(endsAt, service.BufferMinutes, block.CapacityPerResource, calendar.UtcNow);
+            action = SchedulingAuditActions.SessionReactivated;
+        }
 
-        var session = Session.Create(
-            SessionId.New(), command.TenantId, resourceId, serviceId, startsAt, endsAt, service.BufferMinutes,
-            block.CapacityPerResource, isPublished: true, calendar.UtcNow);
-        sessions.Add(session);
         SchedulingAudit.Publish(
-            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SessionPublished,
+            auditPublisher, executionContext, command.TenantId, action,
             SchedulingAuditActions.Resources.Session, session.Id.Value, ["blockId", "resourceId", "serviceId", "startsAt"], calendar.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -132,8 +145,9 @@ public sealed class PublishSessionHandler(
 }
 
 /// <summary>
-/// Quita una sesión publicada. Una sesión con citas, aun canceladas, no se quita: su historial le apunta (llave foránea) y el cupo
-/// reservado es de alguien.
+/// Quita una sesión publicada. Una sesión con alguna cita que no esté cancelada no se quita (422 <c>has_appointments</c>): el cupo
+/// reservado es de alguien. Sin citas se borra la fila; con sólo citas canceladas se desactiva (<c>is_active = false</c>), porque la
+/// llave foránea del historial impide borrarla, y deja de ocupar al recurso. Publicarla de nuevo la reactiva.
 /// </summary>
 public sealed class RemovePublishedSessionHandler(
     IExecutionContext executionContext,
@@ -163,7 +177,7 @@ public sealed class RemovePublishedSessionHandler(
             throw SchedulingAuthorization.Denied();
         }
 
-        if (session.BookedCount > 0 || await sessions.HasAppointmentsAsync(command.TenantId, session.Id, cancellationToken))
+        if (session.BookedCount > 0 || await sessions.HasLiveAppointmentsAsync(command.TenantId, session.Id, cancellationToken))
         {
             throw new SchedulingDomainException(
                 SchedulingErrorCodes.SessionHasAppointments,
@@ -171,9 +185,20 @@ public sealed class RemovePublishedSessionHandler(
         }
 
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
-        sessions.Remove(session);
+        string action;
+        if (await sessions.HasAppointmentsAsync(command.TenantId, session.Id, cancellationToken))
+        {
+            session.Deactivate(now);
+            action = SchedulingAuditActions.SessionDeactivated;
+        }
+        else
+        {
+            sessions.Remove(session);
+            action = SchedulingAuditActions.SessionRemoved;
+        }
+
         SchedulingAudit.Publish(
-            auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SessionRemoved,
+            auditPublisher, executionContext, command.TenantId, action,
             SchedulingAuditActions.Resources.Session, session.Id.Value, ["removed"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
