@@ -21,6 +21,13 @@ internal sealed class AppHubDispatcher(IHubContext<AppHub> hub, AppHubConnection
 
     public async Task DispatchAsync(RealtimeEnvelope envelope, CancellationToken cancellationToken)
     {
+        if (envelope.MemberId is { } memberId)
+        {
+            await hub.Clients.Group(RealtimeTopics.MemberGroupOf(envelope.TenantId, memberId))
+                .SendAsync(envelope.Kind, envelope.Payload, cancellationToken);
+            return;
+        }
+
         if (!string.Equals(envelope.Kind, AppHubEvents.PresenceChanged, StringComparison.Ordinal))
         {
             await hub.Clients.Group(RealtimeTopics.GroupOf(envelope.TenantId, envelope.Topic))

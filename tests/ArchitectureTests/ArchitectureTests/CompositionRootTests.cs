@@ -1332,6 +1332,26 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-22 §9.1: el grupo personal de un miembro se llama <c>{tenant}:@member:{id}</c> y el hub lo une desde las claims. Si algún
+    /// autorizador declarara un prefijo que empieza por <c>@</c>, un cliente podría suscribirse a ese grupo y leer avisos ajenos.
+    /// </summary>
+    [Fact]
+    public void NoAuthorizerPrefixStartsWithAt()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var authorizers = scope.ServiceProvider.GetServices<BuildingBlocks.Application.Realtime.IRealtimeTopicAuthorizer>().ToList();
+
+        Assert.NotEmpty(authorizers);
+        Assert.All(authorizers, authorizer => Assert.False(
+            authorizer.Prefix.StartsWith('@'),
+            $"{authorizer.GetType().Name} declara el prefijo '{authorizer.Prefix}': los tópicos '@…' son grupos personales."));
+    }
+
+    /// <summary>
     /// Observabilidad fase 2: sin el muestreador registrado los gauges de cola no publican nada y nadie se entera; y como los gauges
     /// son singleton, ValidateScopes caza que dependan de un servicio scoped (IClock lo es).
     /// </summary>

@@ -24,7 +24,10 @@ internal sealed class RecordingHubContext : IHubContext<AppHub>
 
     public IHubClients Clients { get; }
 
-    public IGroupManager Groups { get; } = new NoGroups();
+    public IGroupManager Groups => AddedGroups;
+
+    /// <summary>The groups the hub joined its connections to, as <c>(connectionId, group)</c>.</summary>
+    public RecordingGroups AddedGroups { get; } = new();
 
     public IReadOnlyList<(string ConnectionId, string Method, JsonElement Payload)> Sent => [.. _sent];
 
@@ -69,9 +72,17 @@ internal sealed class RecordingHubContext : IHubContext<AppHub>
         }
     }
 
-    private sealed class NoGroups : IGroupManager
+    internal sealed class RecordingGroups : IGroupManager
     {
-        public Task AddToGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        private readonly ConcurrentQueue<(string ConnectionId, string Group)> _added = new();
+
+        public IReadOnlyList<(string ConnectionId, string Group)> Added => [.. _added];
+
+        public Task AddToGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default)
+        {
+            _added.Enqueue((connectionId, groupName));
+            return Task.CompletedTask;
+        }
 
         public Task RemoveFromGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
