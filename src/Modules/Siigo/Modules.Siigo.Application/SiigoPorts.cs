@@ -181,3 +181,18 @@ public interface ISiigoOrderSource
     Task MarkInvoicedAsync(
         Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Quotations. Entregar el PDF de una factura de Siigo al WhatsApp del cliente del pedido (spec 2026-11-21). El adaptador
+/// (<c>SiigoInvoiceWhatsApp</c>, Bootstrapper) sólo reenvía a <c>IInvoiceWhatsAppDelivery</c>: canal, teléfono, plantilla y copia pública son
+/// de Quotations y Siigo no los conoce. Los errores de dominio (<c>invoice.whatsapp.*</c>) salen tal cual.
+/// </summary>
+public interface ISiigoInvoiceWhatsApp
+{
+    /// <summary>Manda la factura. El PDF viaja en memoria: ni Siigo ni este puerto lo guardan.</summary>
+    Task SendAsync(
+        Guid tenantId, Guid orderId, string invoiceNumber, decimal? invoiceTotal, ReadOnlyMemory<byte> pdf, CancellationToken cancellationToken);
+
+    /// <summary>Si hoy se podría mandar (canal que se resuelve y cliente con teléfono). Nunca lanza por falta de algo: responde <c>false</c>.</summary>
+    Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+}

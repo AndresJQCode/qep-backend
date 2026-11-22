@@ -17,7 +17,8 @@ public sealed class GetSiigoInvoicesHandler(
     ITenantModules tenantModules,
     ISiigoInvoiceRepository invoices,
     ISiigoUnitOfWork unitOfWork,
-    IClock clock) : IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>
+    IClock clock,
+    ISiigoInvoiceWhatsApp whatsApp) : IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>
 {
     public async Task<IReadOnlyList<SiigoInvoiceDto>> HandleAsync(GetSiigoInvoicesQuery query, CancellationToken cancellationToken)
     {
@@ -42,6 +43,10 @@ public sealed class GetSiigoInvoicesHandler(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        return [.. SiigoInvoiceSupport.Current(rows).Select(row => SiigoInvoiceDto.From(row))];
+        // Una sola pregunta por petición, y ninguna si ninguna fila tiene PDF: es el camino caliente de la pantalla del pedido.
+        var current = SiigoInvoiceSupport.Current(rows);
+        var canSend = current.Any(row => row.HasPdf)
+            && await whatsApp.CanSendAsync(query.TenantId, query.OrderId, cancellationToken);
+        return [.. current.Select(row => SiigoInvoiceDto.From(row, canSendWhatsApp: canSend))];
     }
 }

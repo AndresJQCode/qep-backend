@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
+using Modules.Quotations.Domain;
 using Modules.Siigo.Application;
+using static Modules.Siigo.IntegrationTests.InvoiceWhatsAppHarness;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
 using static Modules.Siigo.IntegrationTests.SiigoInvoicingHarness;
 
@@ -112,6 +114,71 @@ public sealed class SiigoNoLeakTests
             Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(secret, StringComparison.Ordinal));
             Assert.DoesNotContain(secret, audit, StringComparison.Ordinal);
             Assert.Empty(bodies.Where(entry => entry.Body.Contains(secret, StringComparison.Ordinal)).Select(entry => $"{entry.Call} lleva «{secret}»: {entry.Body}"));
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-21: mandar la factura por WhatsApp. El PDF, la URL pública de la copia de Zenvia y el teléfono del cliente sólo existen
+    /// en memoria y en el mensaje que sale: tras un envío bueno y uno que falla, ninguno aparece en lo que el host logueó, en
+    /// <c>siigo.call_failures</c>, en la auditoría ni en una respuesta.
+    /// </summary>
+    [Fact]
+    public async Task ThePdfThePublicUrlAndThePhoneNeverReachLogsFailuresAuditOrResponsesWhenSendingByWhatsApp()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        var invoiceId = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0].GetProperty("id").GetGuid();
+        SiigoServesThePdf(world);
+        var (host, doubles) = Host(world, Zenvia);
+        var logs = new RecordingLoggerProvider();
+        using var factory = host.WithWebHostBuilder(builder => builder
+            .ConfigureServices(services => services.AddSingleton<ILoggerProvider>(logs))
+            .ConfigureLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddFilter<RecordingLoggerProvider>(null, LogLevel.Trace)));
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, [.. InvoicerPermissions, SiigoPermissions.CallsRead]);
+
+        var bodies = new List<(string Call, string Body)>();
+        async Task<HttpStatusCode> CallAsync(string call, Func<Task<HttpResponseMessage>> send)
+        {
+            using var response = await send();
+            bodies.Add(($"{call} → {(int)response.StatusCode}", await response.Content.ReadAsStringAsync(Ct)));
+            return response.StatusCode;
+        }
+
+        var route = $"{world.BaseRoute}/{invoiceId}/send-whatsapp";
+        await CallAsync("POST send ok", () => client.PostAsync(route, null, Ct));
+        doubles.Sender.Failure = new QuotationsDomainException("invoice.whatsapp.send_failed", "The WhatsApp send failed.");
+        await CallAsync("POST send failed", () => client.PostAsync(route, null, Ct));
+        await CallAsync("GET invoices", () => client.GetAsync(world.BaseRoute, Ct));
+        await CallAsync("GET call-failures", () => client.GetAsync($"/api/v1/tenants/{world.TenantId}/siigo/call-failures", Ct));
+
+        // Control positivo: cada envío publicó su copia (el malo también: publica antes de mandar), el bueno llevó el teléfono y el malo
+        // contestó su 422; si no, buscar acá no probaría nada.
+        Assert.Equal(2, doubles.Storage.Published.Count);
+        var sent = Assert.Single(doubles.Sender.Invoices).Message;
+        Assert.Equal(["POST send ok → 204", "POST send failed → 422", "GET invoices → 200", "GET call-failures → 200"], bodies.Select(entry => entry.Call));
+        Assert.Contains(logs.Entries, entry => entry.Level == LogLevel.Trace);
+        Assert.False(string.IsNullOrWhiteSpace(sent.ToPhone));
+
+        string[] secrets =
+        [
+            .. doubles.Storage.Published.Select(copy => copy.Url),
+            .. doubles.Storage.Published.Select(copy => copy.Url.Split('/')[^1].Replace(".pdf", string.Empty, StringComparison.Ordinal)),
+            PdfBase64,
+            "invoice-pdf-sentinel-7c41",
+            sent.ToPhone!,
+            sent.ToPhone!.Replace(" ", string.Empty, StringComparison.Ordinal),
+        ];
+        var audit = await ScalarAsync<string>(world.ConnectionString, "SELECT coalesce(string_agg(e::text, E'\n'), '') FROM audit.entries e");
+        var failures = await ScalarAsync<string>(world.ConnectionString, "SELECT coalesce(string_agg(f::text, E'\n'), '') FROM siigo.call_failures f");
+        Assert.Contains("siigo.invoice.whatsapp_sent", audit, StringComparison.Ordinal);
+        foreach (var secret in secrets)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(secret));
+            Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(secret, StringComparison.Ordinal));
+            Assert.DoesNotContain(secret, audit, StringComparison.Ordinal);
+            Assert.DoesNotContain(secret, failures, StringComparison.Ordinal);
+            Assert.Empty(bodies.Where(entry => entry.Body.Contains(secret, StringComparison.Ordinal)).Select(entry => $"{entry.Call} lleva «{secret}»"));
         }
     }
 
