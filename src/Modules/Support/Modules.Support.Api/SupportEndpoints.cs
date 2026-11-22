@@ -17,6 +17,7 @@ public static class SupportEndpoints
             .WithTags("Support");
 
         MapTickets(group);
+        MapTasks(group);
         MapTicketTypes(group);
         MapSettings(group);
         MapConversations(group);
@@ -353,6 +354,33 @@ public static class SupportEndpoints
             .Produces<SupportAssigneesDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
     }
+
+    // Spec 2026-11-22 §5.2: las tareas internas entre miembros. La política deja pasar a quien gestiona o usa tareas; leer sola no crea.
+    private static void MapTasks(RouteGroupBuilder group)
+    {
+        group.MapPost("/tasks", CreateTaskAsync)
+            .RequireAuthorization(SupportPolicies.TicketAct)
+            .Accepts<CreateTaskRequest>("application/json")
+            .Produces<SupportTicketDetailDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/tasks/assignees", ListTaskAssigneesAsync)
+            .RequireAuthorization(SupportPolicies.TicketAct)
+            .Produces<SupportAssigneesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+    }
+
+    private static async Task<IResult> CreateTaskAsync(
+        Guid tenantId, CreateTaskRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var ticket = await dispatcher.SendAsync(CreateTaskCommand.From(tenantId, request), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/support/tickets/{ticket.Id}", ticket);
+    }
+
+    private static async Task<IResult> ListTaskAssigneesAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListTaskAssigneesQuery(tenantId), cancellationToken));
 
     private static void MapTicketAction<TRequest>(
         RouteGroupBuilder group, string action, Delegate handler, string policy = SupportPermissions.Manage)

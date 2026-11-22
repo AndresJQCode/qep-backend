@@ -944,6 +944,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Support.Application.GetNoteFileDownloadCommand, Modules.Support.Application.SupportAttachmentDownloadDto>,
             Modules.Support.Application.GetNoteFileDownloadHandler>();
+        // Spec 2026-11-22 (tareas internas) §5.2: el alta y los candidatos a responsable. El validador entra con
+        // AddValidatorsFromAssemblyContaining<UpdateSupportSettingsValidator>.
+        services.AddScoped<
+            ICommandHandler<Modules.Support.Application.CreateTaskCommand, Modules.Support.Application.SupportTicketDetailDto>,
+            Modules.Support.Application.CreateTaskHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Support.Application.ListTaskAssigneesQuery, Modules.Support.Application.SupportAssigneesDto>,
+            Modules.Support.Application.ListTaskAssigneesHandler>();
         services.AddScoped<Modules.Support.Application.SupportTicketDtoComposer>();
         // Spec 2026-11-22 (tareas internas) §5.6: la puerta única de todo ticket; una instancia por request memoiza el acceso.
         services.AddScoped<Modules.Support.Application.SupportTicketScope>();

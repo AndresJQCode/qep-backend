@@ -54,6 +54,8 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<IFileReferenceProbe, SupportAttachmentReferenceProbe>();
         // Spec 2026-11-15 §5.2: the ticket notices of the app hub, after each commit.
         services.AddScoped<ISupportRealtime, SupportRealtimeNotifier>();
+        // Spec 2026-11-22 §6 D-3: los eventos de integración van al outbox de plataforma, en la transacción del handler.
+        services.AddScoped<ISupportIntegrationEvents, SupportIntegrationEvents>();
 
         // Fase 4b (H12): el PDF de la respuesta formal, con sección y clave propias de qcode-pdf. Sin la clave en Production el pod no
         // arranca (ValidateOnStart). Singleton por fábrica con un HttpClient propio y su timeout, como QCodePdfRenderer: sin estado.

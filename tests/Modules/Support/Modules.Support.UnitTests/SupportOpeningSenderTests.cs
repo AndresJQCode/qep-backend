@@ -331,6 +331,9 @@ public sealed class SupportOpeningSenderTests
 
         public Task<IReadOnlyList<SupportMemberRef>> ListManagersAsync(Guid tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SupportMemberRef>>(Managers.ToList());
+
+        public Task<IReadOnlyList<SupportMemberRef>> ListTaskMembersAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<SupportMemberRef>>(Managers.ToList());
     }
 
     private sealed class FakeOpeningEmail : ISupportOpeningEmail

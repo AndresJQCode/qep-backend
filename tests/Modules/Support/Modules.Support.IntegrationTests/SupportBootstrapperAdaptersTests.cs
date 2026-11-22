@@ -539,6 +539,34 @@ public sealed class SupportBootstrapperAdaptersTests : IAsyncLifetime
             ("occurred", occurredAt));
     }
 
+    // Spec 2026-11-22 §5.2 (Task 9): el conjunto exacto de GET /tasks/assignees y del responsable de una tarea.
+    [Fact]
+    public async Task TaskMembersAreActiveMembersWithTaskUseOrManage()
+    {
+        var tenant = NewTenantId();
+        await SeedTenantAsync(Factory, tenant);
+        var cashier = await SeedMemberAsync(Factory, $"caja-{Guid.CreateVersion7():N}@example.com", "Cora Cajera", "cashier", tenantId: tenant);
+        var removedCashier = await SeedMemberAsync(
+            Factory, $"caja-{Guid.CreateVersion7():N}@example.com", "Quitada", "cashier", removed: true, tenantId: tenant);
+        var advisor = await SeedMemberAsync(Factory, $"asesor-{Guid.CreateVersion7():N}@example.com", "Aldo Asesor", "advisor", tenantId: tenant);
+        var other = NewTenantId();
+        await SeedTenantAsync(Factory, other);
+        var foreign = await SeedMemberAsync(Factory, $"otra-{Guid.CreateVersion7():N}@example.com", "De otra empresa", "cashier", tenantId: other);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ISupportMemberDirectory>();
+        var members = await directory.ListTaskMembersAsync(Guid.Parse(tenant), Ct);
+
+        Assert.Contains(members, member => member.MemberId == cashier && member.CanUseTasks);
+        Assert.Contains(members, member => member.MemberId == advisor && member.CanManage);
+        Assert.DoesNotContain(members, member => member.MemberId == removedCashier);
+        Assert.DoesNotContain(members, member => member.MemberId == foreign);
+
+        var found = await directory.FindAsync(Guid.Parse(tenant), [cashier, removedCashier], Ct);
+        Assert.True(found.Single(member => member.MemberId == cashier).CanUseTasks);
+        Assert.False(found.Single(member => member.MemberId == removedCashier).CanUseTasks);
+    }
+
     private async Task<Guid> NewSeededTenantAsync()
     {
         var tenant = NewTenantId();

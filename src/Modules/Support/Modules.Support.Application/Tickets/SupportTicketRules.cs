@@ -70,6 +70,20 @@ internal static class SupportTicketRules
         }
     }
 
+    /// <summary>Spec 2026-11-22: el responsable de una tarea es una membresía activa con <c>support.task.use</c> o
+    /// <c>support.ticket.manage</c>: el mismo conjunto que ofrece <c>GET /tasks/assignees</c>. Un externo sigue con
+    /// <see cref="EnsureAssigneeAsync"/>.</summary>
+    public static async Task EnsureTaskAssigneeAsync(
+        ISupportMemberDirectory members, Guid tenantId, Guid assigneeMemberId, CancellationToken cancellationToken)
+    {
+        var found = await members.FindAsync(tenantId, [assigneeMemberId], cancellationToken);
+        if (found.Count == 0 || !found[0].IsActive || !(found[0].CanUseTasks || found[0].CanManage))
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.AssigneeInvalid, "The assignee must be an active member who can use internal tasks.");
+        }
+    }
+
     /// <summary>
     /// Plan D8 y spec §8.3, para un ticket manual: no hay hilo abierto, así que <c>Thread</c> no está disponible; <c>Email</c> exige
     /// el correo de la foto del solicitante y <c>WhatsAppTemplate</c> su celular. Con cliente vinculado, el alta ya copió en la foto
