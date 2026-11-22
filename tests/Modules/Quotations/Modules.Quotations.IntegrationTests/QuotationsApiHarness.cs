@@ -1336,6 +1336,8 @@ internal static class QuotationsApiHarness
     /// `QCodePdfRendererTests` contra el contrato del servicio.</summary>
     private sealed class StubPdfStorage : IQuotationPdfStorage
     {
+        public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<string> SaveAsync(
             Guid tenantId,
             QuotationId quotationId,
@@ -1639,6 +1641,8 @@ internal static class QuotationsApiHarness
     /// </summary>
     public sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public const string BaseUrl = "https://assets.qep.test";
 
         // Concurrente desde D19 (spec 2026-09-16): PaymentProofDetachProcessor borra copias desde el hilo

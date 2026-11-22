@@ -23,6 +23,8 @@ internal sealed class FakeQuotationPdfRenderer : IQuotationPdfRenderer
 
 internal sealed class FakeQuotationPdfStorage : IQuotationPdfStorage
 {
+    public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken) => throw new NotSupportedException();
+
     public Task<string> SaveAsync(Guid tenantId, QuotationId quotationId, byte[] content, CancellationToken cancellationToken) =>
         Task.FromResult($"quotations/tenants/{tenantId:N}/{Guid.CreateVersion7():N}.pdf");
 

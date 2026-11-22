@@ -870,6 +870,18 @@ internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfSto
         return Task.FromResult(PublicUrl);
     }
 
+    /// <summary>La URL pública de la copia de una factura para Zenvia.</summary>
+    public const string InvoicePublicUrl = "https://assets-qep.example.co/invoices/abc.pdf";
+
+    /// <summary>Los bytes de cada copia de factura publicada, en orden.</summary>
+    public List<byte[]> PublishedInvoices { get; } = [];
+
+    public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken)
+    {
+        PublishedInvoices.Add(content.ToArray());
+        return Task.FromResult(InvoicePublicUrl);
+    }
+
     public Task<string> CreateDownloadUrlAsync(
         string storageKey, string downloadFileName, CancellationToken cancellationToken)
     {

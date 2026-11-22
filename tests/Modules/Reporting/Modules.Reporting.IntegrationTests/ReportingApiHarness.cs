@@ -1040,6 +1040,8 @@ internal static class ReportingApiHarness
 
     private sealed class StubPdfStorage : IQuotationPdfStorage
     {
+        public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<string> SaveAsync(
             Guid tenantId,
             QuotationId quotationId,
