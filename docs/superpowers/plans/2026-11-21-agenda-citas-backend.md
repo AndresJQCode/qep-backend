@@ -19,7 +19,7 @@ Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. *
 | 6 Persistencia, migración, aprovisionador | Hecha | `4fc9cbc` |
 | 7 Configuración (sedes, recursos, servicios, reglas, `setup`) | Hecha | `9c7b5de92` |
 | 8 Franjas, sesiones publicadas, bloqueos | Hecha | `42a3d4d0f` |
-| 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Hecha (sin correr `dotnet test`: orden del owner) | HASHES9 |
+| 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Hecha (sin correr `dotnet test`: orden del owner) | `c083fc0c2`, `c7abf6da6`, `714679456` |
 | 10 Calendario y escritorio (lecturas BFF) | Por hacer | |
 | 11 Clientes: fusión y borrado | Por hacer | |
 | 12 Recordatorio por WhatsApp (dos commits) | Por hacer | |
