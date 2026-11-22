@@ -79,6 +79,13 @@ internal sealed partial class ClosedXmlInputsImporter : IExcelInputsImporter
             }
 
             rows.Add(new ExcelInputsRow(rowNumber, cells));
+
+            // MaxRows + 1 rows are enough for the analyzer to answer too_many_rows; walking on to the last used row (up to a million)
+            // would read every cell of a hostile workbook for nothing.
+            if (rows.Count > InputsImportColumns.MaxRows)
+            {
+                break;
+            }
         }
 
         return rows;

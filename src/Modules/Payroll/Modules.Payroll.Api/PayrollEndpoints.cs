@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Modules.Payroll.Application;
 
@@ -8,6 +9,10 @@ namespace Modules.Payroll.Api;
 
 public static class PayrollEndpoints
 {
+    // The analyzer rejects a file over 5 MB only after the form was buffered; the body limit is the file limit plus room for the multipart
+    // envelope, and it stops a hostile upload before it is read.
+    private const long ImportBodyMaxBytes = InputsImportColumns.MaxSizeInBytes + (1024 * 1024);
+
     public static IEndpointRouteBuilder MapPayrollEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como hr y loans: la política frena a quien no tiene el permiso y el handler (PayrollAuthorization) a
@@ -46,8 +51,6 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        // Importación de novedades: las tres rutas van antes de `{p}/employees/{employeeId:guid}`. Antiforgery apagado como en Hr: el
-        // CSRF lo frena X-Qep-Client, no el token de formulario.
         group.MapGet("/periods/{periodId:guid}/export", ExportPeriodAsync)
             .RequireAuthorization(PayrollPermissions.PeriodRead)
             .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
@@ -55,6 +58,8 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Importación de novedades: las tres rutas van antes de `{p}/employees/{employeeId:guid}`. Antiforgery apagado como en Hr: el
+        // CSRF lo frena X-Qep-Client, no el token de formulario.
         group.MapGet("/periods/{periodId:guid}/inputs/template", GetInputsTemplateAsync)
             .RequireAuthorization(PayrollPermissions.PeriodManage)
             .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
@@ -68,6 +73,7 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .WithMetadata(new RequestSizeLimitAttribute(ImportBodyMaxBytes))
             .DisableAntiforgery();
 
         group.MapPost("/periods/{periodId:guid}/inputs/import", ImportInputsAsync)
@@ -78,6 +84,7 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired)
+            .WithMetadata(new RequestSizeLimitAttribute(ImportBodyMaxBytes))
             .DisableAntiforgery();
 
         group.MapGet("/periods/{periodId:guid}/employees/{employeeId:guid}", GetPeriodEmployeeAsync)

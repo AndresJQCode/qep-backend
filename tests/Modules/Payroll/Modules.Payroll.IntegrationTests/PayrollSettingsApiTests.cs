@@ -417,4 +417,22 @@ public sealed class PayrollSettingsApiTests : IClassFixture<PayrollApiFixture>
         Assert.Equal(company.Id, listed.GetProperty("id").GetGuid());
         Assert.False(listed.GetProperty("isActive").GetBoolean());
     }
-}
+
+    // An inactive company that already has periods stays listed too: its liquidated months are still read and exported.
+    [Fact]
+    public async Task AnInactiveCompanyWithPeriodsIsListed()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var company = await CreateCompanyAsync(tenant.Admin, tenant.Id, "Comercializadora QEP S.A.S.");
+        var plain = await CreateCompanyAsync(tenant.Admin, tenant.Id, "Sin periodos S.A.S.");
+        var ensured = await tenant.Payroll.PostAsync($"{tenant.Url}/companies/{company.Id}/periods/ensure-current", null, Ct);
+        Assert.Equal(System.Net.HttpStatusCode.OK, ensured.StatusCode);
+        await DeactivateCompanyAsync(tenant.Admin, tenant.Id, company.Id);
+        await DeactivateCompanyAsync(tenant.Admin, tenant.Id, plain.Id);
+
+        var companies = await GetJsonAsync(tenant.Payroll, $"{tenant.Url}/companies");
+
+        var listed = Assert.Single(companies.EnumerateArray());
+        Assert.Equal(company.Id, listed.GetProperty("id").GetGuid());
+        Assert.False(listed.GetProperty("isActive").GetBoolean());
+    }}
