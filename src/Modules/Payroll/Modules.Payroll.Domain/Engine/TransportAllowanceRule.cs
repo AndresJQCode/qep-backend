@@ -36,15 +36,12 @@ public static class TransportAllowanceRule
 
         var allowance = legal.TransportAllowance.Value;
         var raw = allowance * worked.Days / 30m;
-        if (input.Settings.TransportFrequency == TransportFrequency.Monthly)
-        {
-            if (input.Period.Half == PayrollHalf.First)
-            {
-                return new TransportOutcome(Line(0m, "Se paga en la segunda quincena"), 0m);
-            }
 
-            var wholeMonth = PayrollRounding.ToPeso(allowance * (input.Prior.WorkedDays + worked.Days) / 30m);
-            return new TransportOutcome(Line(wholeMonth, null), raw);
+        // Monthly pays in the second half but accumulates the first half's raw too, so a mid-month switch of the frequency neither
+        // pays the first half twice nor drops it: both frequencies settle as round(accumulated raw) - what was already paid.
+        if (input.Settings.TransportFrequency == TransportFrequency.Monthly && input.Period.Half == PayrollHalf.First)
+        {
+            return new TransportOutcome(Line(0m, "Se paga en la segunda quincena"), raw);
         }
 
         var amount = PayrollRounding.ToPeso(input.Prior.TransportRaw + raw) - input.Prior.Transport;

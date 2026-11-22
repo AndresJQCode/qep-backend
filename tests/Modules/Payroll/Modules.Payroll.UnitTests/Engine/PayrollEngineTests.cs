@@ -39,7 +39,7 @@ public sealed class PayrollEngineTests
         Assert.False(result.NegativeNet);
         Assert.Equal(929_801m, result.Summary.Net);
         Assert.Equal(1_357_907m, result.Summary.EmployerCost);
-        Assert.Equal("2026.11.1", result.EngineVersion);
+        Assert.Equal("2026.11.2", result.EngineVersion);
         Assert.Equal(PayrollEngine.Version, result.EngineVersion);
     }
 

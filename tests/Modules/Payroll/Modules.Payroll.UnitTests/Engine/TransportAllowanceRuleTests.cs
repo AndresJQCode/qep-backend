@@ -104,10 +104,57 @@ public sealed class TransportAllowanceRuleTests
     [Fact]
     public void MonthlyPaysTheWholeMonthInTheSecond()
     {
-        var input = EngineTestData.Input(SecondHalf) with { Prior = MonthAccumulators.Empty with { WorkedDays = 15 } };
-        input = input with { Settings = input.Settings with { TransportFrequency = TransportFrequency.Monthly } };
+        var first = FirstHalfOutcome(TransportFrequency.Monthly);
 
-        Assert.Equal(249_095m, EngineTestData.Earnings(input).Transport.Line.Amount);
+        Assert.Equal(249_095m, EngineTestData.Earnings(SecondHalfAfter(first, TransportFrequency.Monthly)).Transport.Line.Amount);
+    }
+
+    // Monthly keeps the line at 0 in the first half but still carries the half's raw amount (249 095 x 15 / 30 = 124 547.5) for the second.
+    [Fact]
+    public void MonthlyFirstHalfPaysNothingButCarriesTheRaw()
+    {
+        var first = FirstHalfOutcome(TransportFrequency.Monthly);
+
+        Assert.Equal(0m, first.Line.Amount);
+        Assert.Equal(124_547.5m, first.Raw);
+    }
+
+    // Switch A: Biweekly first half paid 124 548; Monthly second half pays round(124 547.5 + 124 547.5) - 124 548 = 249 095 - 124 548 = 124 547.
+    [Fact]
+    public void SwitchingFromBiweeklyToMonthlyDoesNotPayTwice()
+    {
+        var first = FirstHalfOutcome(TransportFrequency.Biweekly);
+
+        var second = EngineTestData.Earnings(SecondHalfAfter(first, TransportFrequency.Monthly)).Transport;
+
+        Assert.Equal(124_548m, first.Line.Amount);
+        Assert.Equal(124_547m, second.Line.Amount);
+    }
+
+    // Switch B: Monthly first half paid 0 (raw 124 547.5); Biweekly second half pays round(124 547.5 + 124 547.5) - 0 = 249 095.
+    [Fact]
+    public void SwitchingFromMonthlyToBiweeklyDoesNotDropTheFirstHalf()
+    {
+        var first = FirstHalfOutcome(TransportFrequency.Monthly);
+
+        var second = EngineTestData.Earnings(SecondHalfAfter(first, TransportFrequency.Biweekly)).Transport;
+
+        Assert.Equal(249_095m, second.Line.Amount);
+    }
+
+    private static TransportOutcome FirstHalfOutcome(TransportFrequency frequency)
+    {
+        var input = EngineTestData.Input(FirstHalf);
+        return EngineTestData.Earnings(input with { Settings = input.Settings with { TransportFrequency = frequency } }).Transport;
+    }
+
+    private static EngineInput SecondHalfAfter(TransportOutcome first, TransportFrequency frequency)
+    {
+        var input = EngineTestData.Input(SecondHalf) with
+        {
+            Prior = MonthAccumulators.Empty with { WorkedDays = 15, TransportRaw = first.Raw, Transport = first.Line.Amount },
+        };
+        return input with { Settings = input.Settings with { TransportFrequency = frequency } };
     }
 
     [Fact]
