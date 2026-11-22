@@ -22,7 +22,9 @@ public sealed class SupportReportsApiTests(ClockedSupportHost host) : IClassFixt
     {
         var factory = await host.StartTestAsync();
         var scenario = await StartAsync(factory);
-        var types = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/ticket-types", Ct))).EnumerateArray().ToList();
+        // El reporte no cuenta el tipo interno: las tareas no son tickets de cliente.
+        var types = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/ticket-types", Ct))).EnumerateArray()
+            .Where(type => !type.GetProperty("isInternal").GetBoolean()).ToList();
 
         var report = await ReportAsync(scenario.Client, scenario.Tenant, "2026-11-01", "2026-11-30");
 

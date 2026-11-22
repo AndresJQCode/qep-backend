@@ -21,7 +21,8 @@ public sealed record SupportTicketTypeDto(
     int Position,
     long Version,
     bool InUse,
-    string? FormalNextStep);
+    string? FormalNextStep,
+    bool IsInternal = false);
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3. <c>FormalNextStep</c> (fase 4b, H6) es
@@ -187,7 +188,9 @@ public sealed record SupportTicketListItemDto(
     DateTimeOffset ReceivedAt,
     DateOnly? DueOn,
     string DueState,
-    int? BusinessDaysLeft);
+    int? BusinessDaysLeft,
+    bool IsInternal = false,
+    SupportMemberDto? CreatedBy = null);
 
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
 /// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
@@ -208,7 +211,7 @@ public sealed record SupportTicketDetailDto(
     SupportClockDto Clock,
     string Intake,
     string? ManualMedium,
-    string ReplyChannel,
+    string? ReplyChannel,
     SupportCustomerRefDto? Customer,
     SupportRequesterDto? Requester,
     SupportMemberDto? Assignee,
@@ -229,7 +232,9 @@ public sealed record SupportTicketDetailDto(
     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
     string? IssuedPin,
     IReadOnlyList<SupportSurveyDto> Surveys,
-    string? ConsultUrl = null);
+    string? ConsultUrl = null,
+    bool IsInternal = false,
+    SupportMemberDto? CreatedBy = null);
 
 /// <summary>
 /// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
@@ -525,7 +530,8 @@ internal static class SupportDtoMapping
         type.Position,
         type.Version,
         inUse,
-        type.FormalNextStep);
+        type.FormalNextStep,
+        type.IsInternal);
 
     public static SupportSettingsDto ToDto(SupportTenantSettings settings) => new(
         settings.DueSoonBusinessDays,
