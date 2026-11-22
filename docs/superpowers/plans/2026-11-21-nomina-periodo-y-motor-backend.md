@@ -52,7 +52,12 @@ las repiten. Patrones: `docs/superpowers/plans/2026-11-20-rrhh-fase-1-backend.md
   `authorization.denied`, nunca 404. Todo método de repositorio recibe `tenantId`, así que el id de un período, una empresa o
   un concepto de otro tenant pedido con la ruta del propio responde el mismo 404 `payroll.*.not_found` que un id inventado:
   no confirma que exista en otro lado (mismo criterio que Hr).
-- **Cada escritura exige también `payroll.period.read`** (mismo criterio D-1 de RRHH).
+- **Cada escritura exige también `payroll.period.read`** (mismo criterio D-1 de RRHH), **salvo** las de configuración y
+  conceptos de la empresa, que exigen sólo `payroll.settings.manage` (decisión del owner, 2026-11-21: un rol con sólo
+  `payroll.settings.manage` usa las pantallas de configuración). Por lo mismo, `GET /payroll/companies` y `GET {c}/settings`
+  (que trae el catálogo de conceptos) aceptan **cualquiera** de `payroll.period.read` o `payroll.settings.manage`: política
+  `PayrollPolicies.SettingsView` (calco de `SupportPolicies.SettingsView`, `AddAnyPermissionRequirement`) y en el handler
+  `PayrollAuthorization.EnsureAnyAsync`. Ese rol no ve períodos, liquidaciones, rastro ni Excel (403).
 - Auditoría atómica en el handler (`IPayrollAuditPublisher`, calco de `IHrAuditPublisher`, `Source = "payroll"`):
   `audit.entries` guarda **nombres** de campos, nunca valores. Las transiciones del período viven además en
   `payroll.period_events` (quién, cuándo, desde, hacia, motivo, confirmación de ausencias). Payroll no publica eventos: no hay
@@ -460,15 +465,16 @@ Códigos de línea (`PayrollLineDto.code`), estables para el frontend y el Excel
 
 ### Rutas
 
-Permisos: la política de la ruta es el permiso **en negrita**; el handler revalida la lista completa. `{p}` es
+Permisos: la política de la ruta es el permiso **en negrita**; el handler revalida la lista completa. «A o B» es
+**cualquiera** de los dos (decisión del owner, 2026-11-21). `{p}` es
 `/payroll/periods/{periodId:guid}`; `{c}` es `/payroll/companies/{companyId:guid}`.
 
 | Método y ruta | Permiso | Cuerpo | Respuesta | Errores |
 | --- | --- | --- | --- | --- |
-| `GET /payroll/companies` | **`payroll.period.read`** | — | 200 `[PayrollCompanyDto]`: activas más las inactivas con algún período, por nombre | — |
-| `GET {c}/settings` | **`payroll.period.read`** | — | 200 `PayrollSettingsDto` | 404 `payroll.company.not_found` |
-| `PUT {c}/settings` | `payroll.period.read`, **`payroll.settings.manage`**, `If-Match` | `PayrollSettingsRequest` | 200 `PayrollSettingsDto` | 404, 422 `errors`, 412/428 |
-| `POST {c}/concepts` | ídem sin `If-Match` | `ConceptRequest` | 201 `PayrollConceptDto` | 404, 409 `payroll.concept.name_taken` (por empresa y tipo), 422 `errors` |
+| `GET /payroll/companies` | **`payroll.period.read` o `payroll.settings.manage`** (política `SettingsView`) | — | 200 `[PayrollCompanyDto]`: activas más las inactivas con algún período, por nombre | — |
+| `GET {c}/settings` | **`payroll.period.read` o `payroll.settings.manage`** (política `SettingsView`) | — | 200 `PayrollSettingsDto` (con el catálogo de conceptos) | 404 `payroll.company.not_found` |
+| `PUT {c}/settings` | **`payroll.settings.manage`**, `If-Match` | `PayrollSettingsRequest` | 200 `PayrollSettingsDto` | 404, 422 `errors`, 412/428 |
+| `POST {c}/concepts` | **`payroll.settings.manage`** | `ConceptRequest` | 201 `PayrollConceptDto` | 404, 409 `payroll.concept.name_taken` (por empresa y tipo), 422 `errors` |
 | `PUT {c}/concepts/{conceptId}` | ídem, `If-Match` | `ConceptRequest` (`kind` igual al guardado ⇒ si no, 422 `errors.kind`) | 200 `PayrollConceptDto` | 404 `payroll.concept.not_found`, 422 `payroll.concept.system_readonly`, 409, 412/428 |
 | `POST {c}/concepts/{conceptId}/archive` · `…/unarchive` | ídem | — | 200 `PayrollConceptDto` | 404, 422 `payroll.concept.system_readonly`, 409 `payroll.concept.already_archived` / `payroll.concept.not_archived` |
 | `GET {c}/employees/{employeeId}/recurring-concepts` | **`payroll.period.read`** | — | 200 `[RecurringConceptDto]` (activos primero, luego por nombre) | 404 `payroll.employee.not_found` (sin contrato con la empresa) |
@@ -777,7 +783,7 @@ Calco del commit de `hr` (`20261121015802_AddHrModuleKey.cs` y sus pruebas).
   Infrastructure y a `Modules.Payroll.IntegrationTests` en Infrastructure).
 - Create Domain: `PayrollDomainException.cs` (calco de `HrDomainException`, con `IHasFieldErrors`), `PayrollErrorCodes.cs`
   (una constante por código de «Mensajes de dominio» y de la importación; `Conflicts` con los de 409).
-- Create Application: `PayrollPermissions.cs`, `PayrollAuthorization.cs`, `PayrollValidator.cs`, `PayrollIfMatch.cs`,
+- Create Application: `PayrollPermissions.cs`, `PayrollPolicies.cs`, `PayrollAuthorization.cs`, `PayrollValidator.cs`, `PayrollIfMatch.cs`,
   `PayrollNotFound.cs`, `PayrollAuditActions.cs`, `IPayrollAuditPublisher.cs`, `IPayrollUnitOfWork.cs`
 - Create Infrastructure: `PayrollInfrastructureExtensions.cs`, `PayrollDatabaseInitializer.cs`, `Persistence/PayrollDbContext.cs`
   (esquema `payroll`, `AuditEntries` con `AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false)`, historial
@@ -819,6 +825,12 @@ Calco del commit de `hr` (`20261121015802_AddHrModuleKey.cs` y sus pruebas).
   - `PayrollAuthorization.EnsureAsync(IExecutionContext, ITenantModules, Guid tenantId, CancellationToken, params string[]
     permissions)` — copia de `HrAuthorization` con `TenantModuleKeys.Payroll`; `Denied()` con «…this payroll operation…».
   - `PayrollValidator<T>` (copia de `HrValidator<T>`; además convierte `Overtime[0].Hours` ⇒ `overtime[0].hours`).
+  - `PayrollAuthorization.EnsureAnyAsync(IExecutionContext, ITenantModules, Guid tenantId, CancellationToken, params string[]
+    anyOf)`: igual que `EnsureAsync` pero basta **uno** de los permisos. `PayrollPolicies` (Application, `public static`):
+    `SettingsView = "payroll.policies.settings_view"`, registrada en `AddAuthorization` con
+    `AddAnyPermissionRequirement(policy, PayrollPermissions.PeriodRead, PayrollPermissions.SettingsManage)`, junto a las de
+    `SupportPolicies` (`QepServiceCollectionExtensions.cs:4297`). No es un permiso: no se asigna a roles ni cuenta en la
+    prueba de los 104.
   - `PayrollIfMatch.Require(string? ifMatch)` (copia de `HrIfMatch`) y `PayrollIfMatch.RequireAllowingZero(string?)` (acepta
     `"0"` para la primera escritura de la configuración, R-17).
   - `IPayrollUnitOfWork.SaveChangesAsync`; `IPayrollAuditPublisher.Publish(…)` con la firma de `IHrAuditPublisher`.
@@ -1286,7 +1298,9 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
   - `PayrollLabels` (`public static`): un diccionario por enum con las etiquetas exactas de la tabla del contrato,
     `TryParse<TEnum>` con `PayrollText.Fold`.
   - Casos de uso y rutas: `GET /payroll/companies`, `GET|PUT {c}/settings`, `POST|PUT {c}/concepts…`, `…/archive`,
-    `…/unarchive`, con los permisos, cuerpos y errores del contrato. Auditoría: `payroll.settings.updated`,
+    `…/unarchive`, con los permisos, cuerpos y errores del contrato: los dos `GET` con `RequireAuthorization(PayrollPolicies.SettingsView)`
+    y `PayrollAuthorization.EnsureAnyAsync(…, PeriodRead, SettingsManage)`; las escrituras con
+    `RequireAuthorization(PayrollPermissions.SettingsManage)` y `EnsureAsync(…, SettingsManage)` (sin `PeriodRead`). Auditoría: `payroll.settings.updated`,
     `payroll.concept.created|updated|archived|unarchived`.
   - `GET /payroll/companies`: activas del puerto más las inactivas que tienen configuración guardada o algún período
     (`FindCompanyAsync` por cada `company_id` distinto de `payroll.company_settings`; desde la Tarea 9 también de
@@ -1304,8 +1318,14 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     `WithoutIfMatchIs428`; `ACustomOvertimeConceptIsListedAfterTheSystemOnes`;
     `ACustomNameEqualToASystemOneIsTaken` (`"hora extra diurna "` ⇒ 409 `payroll.concept.name_taken`);
     `SystemConceptsCannotBeEditedOrArchived` (422 `payroll.concept.system_readonly`); `ArchivingTwiceIs409`;
-    `ChangingTheKindIs422`; `AnUnknownCompanyIs404`; `SettingsNeedSettingsManage` (sólo `payroll.period.read` ⇒ 403 en PUT);
-    `ReadingNeedsPeriodRead`; `CompaniesListsActiveOnesByName`; `WritesAreAudited`
+    `ChangingTheKindIs422`; `AnUnknownCompanyIs404`; `CompaniesListsActiveOnesByName`; `WritesAreAudited`
+    (decisión del owner 2026-11-21, se escriben **primero**, antes que las demás de la clase):
+    `ASettingsOnlyRoleReadsCompaniesAndSettings` (sólo `payroll.settings.manage` ⇒ 200 en `GET /payroll/companies` y en
+    `GET {c}/settings`, con el catálogo de conceptos); `ASettingsOnlyRoleWritesSettingsAndConcepts` (sólo
+    `payroll.settings.manage` ⇒ 200 en `PUT {c}/settings` y 201 en `POST {c}/concepts`);
+    `AReadOnlyRoleReadsSettingsButCannotWriteThem` (sólo `payroll.period.read` ⇒ 200 en los dos `GET`, 403
+    `authorization.denied` en `PUT {c}/settings`, `POST {c}/concepts` y `…/archive`);
+    `WithoutEitherPermissionTheSettingsAre403` (sólo `payroll.period.manage` ⇒ 403 en los dos `GET`);
     (`payroll.settings.updated` y `payroll.concept.created` en `audit.entries`).
 - [ ] **Step 2: RED de compilación.** Run: `dotnet build tests/Modules/Payroll/Modules.Payroll.UnitTests`.
   Expected: `error CS0246: The type or namespace name 'ConceptCatalog' could not be found`.
@@ -1415,7 +1435,9 @@ copiado de la salida del motor no prueba nada (la revisión del bloque lo verifi
     (un empleado estándar, uno con salario integral ⇒ `employees` 1, `excluded[0].reason == "SalaryTypeNotSupported"`,
     `blocked` vacío, `totals == null`, `can.liquidate == true`, `history[0].action == "Created"`);
     `CanFollowsTheCallerPermissions` (sólo `payroll.period.read` ⇒ los seis de `can` en `false`, porque en `Draft` tampoco
-    se exporta; con `manage` ⇒ `capture` y `liquidate` en `true`); `AnUnknownPeriodIs404`; `EnsuringIsAudited`.
+    se exporta; con `manage` ⇒ `capture` y `liquidate` en `true`); `AnUnknownPeriodIs404`; `EnsuringIsAudited`;
+    `ASettingsOnlyRoleCannotReadPeriods` (sólo `payroll.settings.manage` ⇒ 403 `authorization.denied` en `ensure-current`,
+    la lista y el detalle; decisión del owner 2026-11-21).
   - `PayrollPersistenceTests`: `APeriodWithInputsAndEventsRoundTrips`; `TwoPeriodsCannotShareAStart`;
     `AStaleVersionIsAConcurrencyConflict`; `APeriodOfAnUnknownCompanyViolatesTheForeignKey`
     (`FK_periods_companies_company_id`).
@@ -1690,7 +1712,12 @@ El generador no calcula: recibe filas ya liquidadas y un diseño (spec, «Excel�
     liquidado en B, la sesión de A contra cada ruta `{p}…` de la tabla con la ruta de B ⇒ 403 `authorization.denied`; con la
     ruta de A y el id de B ⇒ 404 `payroll.period.not_found`; nunca un cuerpo con datos de B); teoría
     `EachRouteRequiresItsPermissions` (una fila por ruta del contrato: sin el permiso en negrita ⇒ 403; con la lista completa ⇒
-    distinto de 403); `WithThePayrollModuleOffEverythingIs403`; `WithHrOffPayrollIsOffToo` (dependencia de la Tarea 1);
+    distinto de 403; en las filas «A o B», con sólo A y con sólo B ⇒ distinto de 403); teoría
+    `ASettingsOnlyRoleSeesOnlyTheSettingsScreens` (sólo `payroll.settings.manage`: 200 en `GET /payroll/companies` y
+    `GET {c}/settings`, éxito en las escrituras de configuración y conceptos, 403 en cada ruta de períodos, empleados del
+    período, capturas, importación y Excel); teoría `AReadOnlyRoleCannotWriteSettings` (sólo `payroll.period.read`: 200 en
+    los dos `GET`, 403 en `PUT {c}/settings`, `POST|PUT {c}/concepts…`, `…/archive` y `…/unarchive`);
+    `WithThePayrollModuleOffEverythingIs403`; `WithHrOffPayrollIsOffToo` (dependencia de la Tarea 1);
     `ACompanyOfAnotherTenantIs404`.
   - `PayrollEndToEndApiTests`: `AWholeMonthFromOpeningToExport` (dos empleados, uno con comisión y horas en la primera
     quincena: ensure ⇒ capturas ⇒ liquidar ⇒ aprobar ⇒ cerrar; segunda: ensure ⇒ liquidar ⇒ aprobar ⇒ cerrar ⇒ exportar;
