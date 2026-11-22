@@ -301,7 +301,7 @@ public sealed class InAppNotificationEndpointsTests
         Assert.Equal(conversation, items[transferred].GetProperty("conversationId").GetGuid());
         // The system did it (a heritage or a handoff): no actor is named, even when the row remembers one.
         Assert.Equal(JsonValueKind.Null, items[inherited].GetProperty("actorName").ValueKind);
-        // Until the Messaging reader exists (plan, task 6) the contact has no name.
+        // The conversation does not exist, so the contact has no name (InAppConversationsTests covers the one that does).
         Assert.Equal(JsonValueKind.Null, items[transferred].GetProperty("contactName").ValueKind);
     }
 
