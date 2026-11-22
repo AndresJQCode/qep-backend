@@ -2013,6 +2013,21 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
         services.AddSingleton<IDialablePhoneNumbers, DialablePhoneNumbers>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Spec 2026-11-22: la campana de avisos. Los nombres se resuelven al leer, con la regla de Mensajería.
+        services.AddScoped<Modules.Notifications.Application.IInAppNotificationNames, InAppNotificationNames>();
+        services.AddScoped<
+            IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
+            Modules.Notifications.Application.ListInAppNotificationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Notifications.Application.GetUnreadCountQuery, Modules.Notifications.Application.UnreadCountDto>,
+            Modules.Notifications.Application.GetUnreadCountHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Notifications.Application.MarkNotificationReadCommand, Modules.Notifications.Application.InAppNotificationReadDto>,
+            Modules.Notifications.Application.MarkNotificationReadHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Notifications.Application.MarkAllNotificationsReadCommand, Modules.Notifications.Application.MarkAllReadResultDto>,
+            Modules.Notifications.Application.MarkAllNotificationsReadHandler>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Notifications.Application.ListInAppNotificationsValidator>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
         // Soporte fase 2: el número de los tickets que nombran los eventos del hilo, leído de Soporte.

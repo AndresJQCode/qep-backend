@@ -39,6 +39,69 @@ internal static class InAppTestSupport
         return (Guid)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
+    /// <summary>The development stub authenticates by headers; the member is whoever has an active membership for that user.</summary>
+    public static HttpClient ClientFor(NotificationsApiFactory factory, Guid tenantId, Guid userId)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Subject-Id", userId.ToString());
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString());
+        return client;
+    }
+
+    /// <summary>A second member of the tenant, written directly (no invitation), named so a name lookup has something to find.</summary>
+    public static async Task<(Guid MemberId, Guid UserId)> SeedMemberAsync(string connectionString, Guid tenantId, string displayName)
+    {
+        var memberId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO tenancy.memberships (id, user_id, tenant_id, state, roles, origin, invited_at, accepted_at, expires_at, version, created_at, updated_at, display_name)
+            VALUES (@id, @user, @tenant, 'Active', ARRAY['advisor']::text[], 'invitation', now(), now(), now() + interval '3 days', 1, now(), now(), @name)
+            """,
+            connection);
+        command.Parameters.AddWithValue("id", memberId);
+        command.Parameters.AddWithValue("user", userId);
+        command.Parameters.AddWithValue("tenant", tenantId);
+        command.Parameters.AddWithValue("name", displayName);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        return (memberId, userId);
+    }
+
+    /// <summary>An entry written the way the consumers leave it, with a chosen age and read state.</summary>
+    public static async Task<Guid> InsertEntryAsync(
+        string connectionString,
+        Guid tenantId,
+        Guid memberId,
+        string kind,
+        string dataJson,
+        DateTimeOffset createdAt,
+        DateTimeOffset? readAt = null,
+        Guid? resourceId = null)
+    {
+        var id = Guid.CreateVersion7();
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO notifications.in_app_notifications (id, tenant_id, member_id, kind, resource_id, data, dedupe_key, created_at, read_at)
+            VALUES (@id, @tenant, @member, @kind, @resource, CAST(@data AS jsonb), @key, @created, @read)
+            """,
+            connection);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("tenant", tenantId);
+        command.Parameters.AddWithValue("member", memberId);
+        command.Parameters.AddWithValue("kind", kind);
+        command.Parameters.AddWithValue("resource", (object?)resourceId ?? DBNull.Value);
+        command.Parameters.AddWithValue("data", dataJson);
+        command.Parameters.AddWithValue("key", id.ToString("D"));
+        command.Parameters.AddWithValue("created", createdAt);
+        command.Parameters.Add(new NpgsqlParameter("read", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = (object?)readAt ?? DBNull.Value });
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        return id;
+    }
+
     public static async Task<IReadOnlyList<InAppRow>> EntriesAsync(string connectionString, Guid tenantId)
     {
         await using var connection = new NpgsqlConnection(connectionString);

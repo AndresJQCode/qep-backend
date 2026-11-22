@@ -15,6 +15,7 @@ using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
 using Modules.Ai.Api;
 using Modules.Ai.Infrastructure;
+using Modules.Notifications.Api;
 using Modules.ApiAccess.Api;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
@@ -422,6 +423,8 @@ app.MapHrEndpoints();
 app.MapPayrollEndpoints();
 // Spec 2026-11-14: soporte (tickets y PQRSF).
 app.MapSupportEndpoints();
+// Spec 2026-11-22: la campana de avisos de cada miembro.
+app.MapNotificationEndpoints();
 // Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
 app.MapStoreEndpoints();
 // Tienda pública: sin sesión ni CSRF, con la clave del storefront y limitadores por IP del visitante.
