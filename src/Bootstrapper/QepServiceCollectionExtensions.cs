@@ -51,6 +51,8 @@ using Modules.Loans.Infrastructure;
 using Modules.Messaging.Application;
 using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Payroll.Application;
+using Modules.Payroll.Infrastructure;
 using Modules.Pipeline.Application;
 using Modules.Pipeline.Infrastructure;
 using Modules.Platform.Application;
@@ -1587,6 +1589,8 @@ public static class QepServiceCollectionExtensions
         // Hr: se escanea el ensamblado (sólo registra validadores públicos, y todos los de Hr lo son), porque HrPermissions es
         // estática y no sirve de argumento de tipo.
         services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
+        // Payroll: igual que Hr, PayrollPermissions es estática y no sirve de argumento de tipo.
+        services.AddValidatorsFromAssembly(typeof(PayrollPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
@@ -1609,6 +1613,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddHrInfrastructure(configuration);
+        services.AddPayrollInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
         services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
@@ -2614,6 +2619,11 @@ public static class QepServiceCollectionExtensions
                 HrPermissions.ContractRead,
                 HrPermissions.ContractManage,
                 HrPermissions.SettingsManage,
+                // Spec 2026-11-21 (nómina): los cuatro permisos ven plata; sólo admin los lleva de fábrica.
+                PayrollPermissions.PeriodRead,
+                PayrollPermissions.PeriodManage,
+                PayrollPermissions.PeriodApprove,
+                PayrollPermissions.SettingsManage,
                 // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
@@ -3766,6 +3776,48 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("hr.settings", "Configuración de RRHH", "manage"),
         });
+        // Spec 2026-11-21 (nómina): con [payroll], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo
+        // ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. Todos ven plata: riesgo alto.
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.PeriodRead,
+            "Ver nómina",
+            "Permite ver los períodos de nómina, la liquidación de cada empleado con su rastro de cálculo y exportar el resumen a Excel.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.period", "Períodos de nómina", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.PeriodManage,
+            "Liquidar nómina",
+            "Permite abrir quincenas, registrar horas extras, ingresos y deducciones, liquidar, cerrar y reabrir.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.period", "Períodos de nómina", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.PeriodApprove,
+            "Aprobar nómina",
+            "Permite aprobar una quincena liquidada.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.period", "Períodos de nómina", "approve"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            PayrollPermissions.SettingsManage,
+            "Configurar nómina",
+            "Permite cambiar la configuración de nómina de cada empresa, sus conceptos y los conceptos recurrentes de cada empleado.",
+            "Nómina",
+            "high",
+            RequiredModules: [ModuleKeys.Payroll])
+        {
+            Shape = new("payroll.settings", "Configuración de nómina", "manage"),
+        });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -4291,6 +4343,23 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 HrPermissions.SettingsManage,
                 policy => AddPermissionRequirement(policy, HrPermissions.SettingsManage))
+            // Spec 2026-11-21 (nómina): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                PayrollPermissions.PeriodRead,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.PeriodRead))
+            .AddPolicy(
+                PayrollPermissions.PeriodManage,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.PeriodManage))
+            .AddPolicy(
+                PayrollPermissions.PeriodApprove,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.PeriodApprove))
+            .AddPolicy(
+                PayrollPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, PayrollPermissions.SettingsManage))
+            // Spec 2026-11-21 (nómina): leer empresas y configuración basta con ver períodos o con configurar; no es un permiso.
+            .AddPolicy(
+                PayrollPolicies.SettingsView,
+                policy => AddAnyPermissionRequirement(policy, PayrollPermissions.PeriodRead, PayrollPermissions.SettingsManage))
             // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 SupportPermissions.Read,

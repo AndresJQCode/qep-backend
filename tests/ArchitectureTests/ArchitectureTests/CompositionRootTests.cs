@@ -17,6 +17,7 @@ using Modules.Hr.Application;
 using Modules.Integrations.Application;
 using Modules.Loans.Application;
 using Modules.Messaging.Application;
+using Modules.Payroll.Application;
 using Modules.Pipeline.Application;
 using Modules.Pos.Application;
 using Modules.Purchases.Application;
@@ -325,9 +326,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheHundredConstants()
+    public void PermissionDiscoveryFindsTheHundredAndFourConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -353,7 +354,8 @@ public sealed class CompositionRootTests
         // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18)
         // + el de las fallas de las llamadas a Siigo (siigo.calls.read, spec 2026-11-21)
         // + the five hr.* permissions (spec 2026-11-20).
-        Assert.Equal(100, PermissionConstants().Length);
+        // + the four payroll.* permissions (spec 2026-11-21).
+        Assert.Equal(104, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -945,6 +947,41 @@ public sealed class CompositionRootTests
         }
     }
 
+    /// <summary>
+    /// Spec 2026-11-21 (nómina): los cuatro permisos exigen el módulo <c>payroll</c> y van sólo a admin; ni asesor, ni facturación,
+    /// ni cajero. Todos ven plata.
+    /// </summary>
+    [Fact]
+    public void ThePayrollPermissionsRequireThePayrollModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (PayrollPermissions.PeriodRead, "payroll.period", "Períodos de nómina", "read"),
+            (PayrollPermissions.PeriodManage, "payroll.period", "Períodos de nómina", "manage"),
+            (PayrollPermissions.PeriodApprove, "payroll.period", "Períodos de nómina", "approve"),
+            (PayrollPermissions.SettingsManage, "payroll.settings", "Configuración de nómina", "manage"),
+        ];
+        Assert.Equal(
+            ["payroll.period.read", "payroll.period.manage", "payroll.period.approve", "payroll.settings.manage"],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Nómina", definition.Category);
+            Assert.Equal([ModuleKeys.Payroll], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
     /// <summary>
     /// Spec 2026-11-17 (compras, P-3 propuesta): los dos permisos exigen el módulo <c>purchases</c> (apagado, el editor de roles
     /// los oculta y la API responde un 403 pelado) y van sólo a admin; ni asesor, ni facturación, ni cajero.
