@@ -50,6 +50,8 @@ public sealed class LinkTicketCustomerHandler(
 
         var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
         SupportTicketScope.EnsureVersion(ticket, command.ExpectedVersion);
+        // Una tarea no tiene cliente: se rechaza antes de buscar el cliente, que no tiene por qué existir para saberlo.
+        SupportTicketScope.EnsureExternal(ticket);
         if (command.CustomerId is { } customerId && customerId != ticket.CustomerId)
         {
             await SupportTicketRules.EnsureCustomerAsync(tenantModules, customers, command.TenantId, customerId, cancellationToken);

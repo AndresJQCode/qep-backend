@@ -53,7 +53,7 @@ public sealed class SendTicketReplyValidator : AbstractValidator<SendTicketReply
     {
         RuleFor(command => command.ClientId).NotNull().NotEqual(Guid.Empty);
         RuleFor(command => command.Channel)
-            .Must(text => SupportTicketRules.TryParseExact<SupportReplyChannel>(text, out _))
+            .Must(text => SupportTicketRules.TryParseExact<SupportReplyChannel>(text, out var channel) && channel is not SupportReplyChannel.None)
             .WithMessage("Channel must be Thread, WhatsAppTemplate, Email or Portal.");
         RuleFor(command => command.Text)
             .Must(SupportTicketReply.IsValidText)

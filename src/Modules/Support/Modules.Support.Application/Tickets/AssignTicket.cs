@@ -34,6 +34,7 @@ public sealed class AssignTicketHandler(
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
+    ISupportIntegrationEvents integrationEvents,
     SupportTicketDtoComposer composer,
     IValidator<AssignTicketCommand> validator)
     : ICommandHandler<AssignTicketCommand, SupportTicketDetailDto>
@@ -46,11 +47,30 @@ public sealed class AssignTicketHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
-        await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, command.AssigneeMemberId, cancellationToken);
+        // Una tarea la puede recibir quien usa tareas; un externo, sólo quien gestiona (spec 2026-11-22, D19).
+        if (ticket.IsInternal)
+        {
+            if (command.AssigneeMemberId is { } taskAssignee)
+            {
+                await SupportTicketRules.EnsureTaskAssigneeAsync(members, command.TenantId, taskAssignee, cancellationToken);
+            }
+        }
+        else
+        {
+            await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, command.AssigneeMemberId, cancellationToken);
+        }
+
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         var version = ticket.Version;
         ticket.Assign(command.AssigneeMemberId, actor, now);
+        // El aviso a quien recibe la tarea va al outbox en la misma transacción del guardado: sólo si cambió de manos y no se la pasó
+        // a sí mismo ni la dejó sin responsable.
+        if (ticket.IsInternal && ticket.Version != version && command.AssigneeMemberId is { } newAssignee && newAssignee != actor)
+        {
+            integrationEvents.PublishTaskAssigned(ticket, actor, now);
+        }
+
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketAssigned, ChangedFields, now,
             cancellationToken);

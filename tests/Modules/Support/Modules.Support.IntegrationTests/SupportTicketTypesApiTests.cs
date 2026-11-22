@@ -265,7 +265,7 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
 
     // Revisión final, m5: el alta de un tipo toma la fila de ajustes del tenant (la misma que bloquea el radicado) antes de leer la
     // posición mayor, así dos altas a la vez no comparten posición. Acá la fila la tiene otra transacción: las dos altas esperan, y al
-    // soltarla salen una tras otra con 9 y 10. Host propio: la prueba mide una espera (como SupportCustomerReferenceLockApiTests).
+    // soltarla salen una tras otra con 10 y 11 (la 9 es del tipo interno). Host propio: la prueba mide una espera (como SupportCustomerReferenceLockApiTests).
     [Fact]
     public async Task ConcurrentCreationsWaitForTheTenantRowAndGetDistinctPositions()
     {

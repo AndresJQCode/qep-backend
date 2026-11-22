@@ -27,7 +27,17 @@ public sealed class TakeTicketHandler(
     public async Task<SupportTicketDetailDto> HandleAsync(TakeTicketCommand command, CancellationToken cancellationToken)
     {
         var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
-        await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, actor, cancellationToken);
+        // Quien toma una tarea sólo necesita usar tareas; un externo exige gestionar (spec 2026-11-22, D19). Tomar nunca avisa: el
+        // responsable es quien actúa.
+        if (ticket.IsInternal)
+        {
+            await SupportTicketRules.EnsureTaskAssigneeAsync(members, command.TenantId, actor, cancellationToken);
+        }
+        else
+        {
+            await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, actor, cancellationToken);
+        }
+
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         var version = ticket.Version;

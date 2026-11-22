@@ -24,6 +24,12 @@ internal static class SupportTicketRules
         ISupportTicketTypeRepository types, Guid tenantId, Guid typeId, CancellationToken cancellationToken)
     {
         var type = await types.FindAsync(tenantId, new SupportTicketTypeId(typeId), cancellationToken);
+        // El tipo interno sólo lo toma una tarea por POST /tasks: ninguna otra entrada lo ofrece (spec 2026-11-22, D11).
+        if (type is { IsInternal: true })
+        {
+            throw new SupportDomainException(SupportErrorCodes.InternalTypeLocked, "The internal ticket type only takes tasks.");
+        }
+
         if (type is not { IsActive: true })
         {
             throw new SupportDomainException(SupportErrorCodes.TicketTypeUnavailable, "The ticket type does not exist or is inactive.");
