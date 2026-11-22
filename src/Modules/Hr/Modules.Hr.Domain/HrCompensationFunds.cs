@@ -58,8 +58,9 @@ public static class HrCompensationFunds
         new("COMFAMILIAR Risaralda", "Risaralda", "891480000"),
     ];
 
-    /// <summary>Los nombres, en el orden del catálogo: es lo que <c>GET /hr/settings</c> devuelve como <c>compensationFunds</c>.</summary>
-    public static IReadOnlyList<string> Names { get; } = All.Select(fund => fund.Name).ToList();
+    /// <summary>Los nombres en orden alfabético (el catálogo conserva el orden de la UGPP): es lo que <c>GET /hr/settings</c> devuelve como <c>compensationFunds</c>.</summary>
+    public static IReadOnlyList<string> Names { get; } =
+        All.Select(fund => fund.Name).OrderBy(name => name, StringComparer.InvariantCultureIgnoreCase).ToList();
 
     private static readonly HashSet<string> NameSet = new(Names, StringComparer.Ordinal);
 
