@@ -6,8 +6,9 @@ namespace Modules.Payroll.Domain.Engine;
 /// </summary>
 public static class EmployerContributionsRule
 {
-    private const string Formula = "techo100(base del mes × tasa) − lo aportado en la primera quincena";
+    private const string Formula = "techo100(base del mes × tasa), 0 si está exonerado; menos lo aportado en la primera quincena";
     private const string ExemptNote = "Exonerado (ET art. 114-1)";
+    private const string RefundNote = "Exonerado en el mes (ET art. 114-1): se reversa lo aportado en la primera quincena";
 
     public static IReadOnlyList<PayrollLine> Compute(EngineInput input, IbcOutcome ibc, MonthIncome month)
     {
@@ -45,7 +46,10 @@ public static class EmployerContributionsRule
         decimal prior,
         bool exempt)
     {
-        var amount = exempt ? 0m : PayrollRounding.CeilingToHundred(baseAmount * rate) - prior;
+        // Decision 2: the second half settles the month. An exempt month owes 0, so what the first half paid comes back here, on the
+        // employer side; the worker's lines never depend on the exoneration.
+        var month = exempt ? 0m : PayrollRounding.CeilingToHundred(baseAmount * rate);
+        var amount = month - prior;
         return new PayrollLine(
             code,
             PayrollLineGroup.EmployerContribution,
@@ -56,6 +60,6 @@ public static class EmployerContributionsRule
                 Formula,
                 [new TraceInput(baseName, baseAmount), new TraceInput("Tasa", rate), new TraceInput("Aportado en la primera quincena", prior)],
                 legalValues,
-                exempt ? ExemptNote : null));
+                exempt ? (prior != 0m ? RefundNote : ExemptNote) : null));
     }
 }

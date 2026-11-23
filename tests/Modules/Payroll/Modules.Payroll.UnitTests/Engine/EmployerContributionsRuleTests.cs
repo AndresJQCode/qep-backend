@@ -123,6 +123,51 @@ public sealed class EmployerContributionsRuleTests
         Assert.Equal(1_000_000m, Line(lines, "compensation_fund").Amount);
     }
 
+    // The first half paid health, ICBF and SENA (company not exonerated then); the month is exempt: the second half refunds them
+    // on the employer side. The fund is never exempt.
+    [Fact]
+    public void AMonthThatTurnsExemptRefundsTheFirstHalfOnTheEmployerSide()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 11, 16)) with
+        {
+            Prior = MonthAccumulators.Empty with
+            {
+                WorkedDays = 15, SalaryRaw = 875_452.5m, Salary = 875_453m,
+                HealthEmployer = 74_500m, PensionEmployer = 105_100m, Arl = 4_600m, CompensationFund = 35_100m,
+                Icbf = 26_300m, Sena = 17_600m,
+            },
+        };
+
+        var lines = Contributions(input);
+
+        Assert.Equal(-74_500m, Line(lines, "health_employer").Amount);
+        Assert.Equal(-26_300m, Line(lines, "icbf").Amount);
+        Assert.Equal(-17_600m, Line(lines, "sena").Amount);
+        Assert.Equal(
+            "Exonerado en el mes (ET art. 114-1): se reversa lo aportado en la primera quincena",
+            Line(lines, "health_employer").Trace.Note);
+        Assert.Equal(35_000m, Line(lines, "compensation_fund").Amount);
+    }
+
+    // Characterization: first half exempt (9 000 000 < 10 SMMLV); a 9 000 000 commission in the second takes the month to
+    // 18 000 000: the second half charges the whole month.
+    [Fact]
+    public void AMonthThatStopsBeingExemptChargesTheWholeMonthInTheSecondHalf()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 11, 16), 9_000_000m) with
+        {
+            Incomes = [EngineTestData.Income(SystemConceptKey.Commissions, 9_000_000m, true)],
+            Prior = MonthAccumulators.Empty with { WorkedDays = 15, SalaryRaw = 4_500_000m, Salary = 4_500_000m },
+        };
+
+        var lines = Contributions(input);
+
+        Assert.Equal(1_530_000m, Line(lines, "health_employer").Amount);
+        Assert.Equal(540_000m, Line(lines, "icbf").Amount);
+        Assert.Equal(360_000m, Line(lines, "sena").Amount);
+        Assert.Null(Line(lines, "health_employer").Trace.Note);
+    }
+
     [Fact]
     public void TheSecondHalfSettlesEachContribution()
     {
