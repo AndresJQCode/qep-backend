@@ -1,4 +1,7 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Infrastructure;
+using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Scheduling.Application;
@@ -8,6 +11,15 @@ namespace Modules.Scheduling.Infrastructure.Persistence;
 
 internal sealed class SchedulingUnitOfWork(SchedulingDbContext dbContext) : ISchedulingUnitOfWork
 {
+    // Deleting customers (spec 2026-11-10, P1/P2): an appointment holds a loose reference to customers.customers (no FK). Saving a new
+    // one takes the customer's shared CustomerReferenceLock and, holding it, checks the row still exists, all inside the transaction that
+    // saves: if the deletion won the race, the lock waits for its commit and the check sees the customer gone. The "code" is the field the
+    // screen marks (the booking handler answers the same 422 for a customer that does not exist).
+    private const string CustomerField = "customerId";
+
+    private static readonly CustomerReferenceSource AppointmentCustomer =
+        new(typeof(Appointment), nameof(Appointment.CustomerId), CustomerField);
+
     public async Task<ISchedulingTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         new SchedulingTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
 
@@ -15,7 +27,11 @@ internal sealed class SchedulingUnitOfWork(SchedulingDbContext dbContext) : ISch
     {
         try
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await CustomerReferenceWrites.SaveHoldingAsync(
+                dbContext,
+                CustomerReferenceWrites.Collect(dbContext.ChangeTracker, AppointmentCustomer),
+                CustomerNotFound,
+                cancellationToken);
         }
         // Traducido acá y no en Application, que no referencia EF Core. `version` es el token de concurrencia de toda fila editable (412).
         catch (DbUpdateConcurrencyException exception)
@@ -52,6 +68,10 @@ internal sealed class SchedulingUnitOfWork(SchedulingDbContext dbContext) : ISch
                 SchedulingErrorCodes.SlotTaken, "Ese espacio ya no está disponible. Elige otro.", exception);
         }
     }
+
+    // Same 422 validation.failed (with the errors map) that the booking handler answers for a customer it does not find.
+    private static ValidationException CustomerNotFound(CustomerReferenceToHold reference) =>
+        new([new ValidationFailure(reference.NotFoundCode, "El cliente no existe en esta organización o está inactivo.")]);
 
     private sealed class SchedulingTransaction(IDbContextTransaction transaction) : ISchedulingTransaction
     {

@@ -209,6 +209,41 @@ public sealed class SchedulingBookingApiTests(SchedulingApiWorld world) : IClass
         Assert.Equal(bookedOk ? 1 : 0, (await CountAppointmentsAsync(world.Factory, scene.Resource)).Appointments);
     }
 
+    // Written, not run. Deleting a customer and booking an appointment for them at once (spec 2026-11-10, Review Focus 5): the booking
+    // holds the customer's shared reference lock while it saves, so either it goes first and the deletion is blocked by the new
+    // appointment, or the deletion goes first and the booking is refused. Never an appointment pointing at a deleted customer.
+    [Fact]
+    public async Task ADeletedCustomerAndABookingForThemNeverBothLand()
+    {
+        var scene = await SceneAsync();
+        using var owner = scene.Tenant;
+        var doomed = await CreateCustomerAsync(scene.Tenant, "Cliente efímero", "3009876543");
+        using var deleter = scene.Tenant.Client(null, "customers.customer.delete");
+
+        var booking = BookAsync(scene, NineOClock(scene.Day), scene.Resource, customer: doomed);
+        var deleting = deleter.PostAsJsonAsync(
+            $"/api/v1/tenants/{scene.Tenant.IdText}/customers/bulk-delete",
+            new { customerIds = new[] { doomed } },
+            TestContext.Current.CancellationToken);
+        var booked = await booking;
+        var deletion = await JsonOfAsync(await deleting);
+
+        var deleted = deletion.GetProperty("deleted").EnumerateArray().Select(id => id.GetGuid()).Contains(doomed);
+        var appointments = (await CountAppointmentsAsync(world.Factory, scene.Resource)).Appointments;
+        if (booked.StatusCode == HttpStatusCode.Created)
+        {
+            Assert.False(deleted, "A customer was deleted with an appointment pointing at them.");
+            Assert.Equal(1, appointments);
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, booked.StatusCode);
+            Assert.True(HasError(await JsonOfAsync(booked), "customerId"));
+            Assert.True(deleted);
+            Assert.Equal(0, appointments);
+        }
+    }
+
     [Fact]
     public async Task AStartThatIsNotAValidStartIs422OutsideRules()
     {
