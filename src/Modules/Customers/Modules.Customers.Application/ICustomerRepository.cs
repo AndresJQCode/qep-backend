@@ -16,10 +16,10 @@ public interface ICustomerRepository
     /// cuando el llamador manda mas de uno. <c>search</c> es el criterio OR original —sobre los
     /// mismos tres campos y el telefono— que el combobox de clientes de <c>quotes</c> todavia
     /// necesita. El telefono se compara solo por los digitos del termino contra <c>PhoneE164</c>,
-    /// y solo desde siete digitos: un fragmento mas corto aparece en casi cualquier numero.
+    /// y solo desde seis digitos: un fragmento mas corto aparece en casi cualquier numero.
     ///
     /// <c>phone</c> es una cuarta caja al nivel de las otras tres (AND): compara solo los digitos del
-    /// valor contra <c>PhoneE164</c>, sin el minimo de siete, porque quien llena el campo Telefono ya
+    /// valor contra <c>PhoneE164</c>, sin el minimo de seis, porque quien llena el campo Telefono ya
     /// dijo que busca un telefono. Sin ningun digito no filtra.
     ///
     /// <c>includeContacts</c> en <c>false</c> deja fuera a los clientes que son contacto de una empresa (spec 2026-11-10 §5); el

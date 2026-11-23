@@ -26,7 +26,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
     // Menos digitos que esto aparecen en casi cualquier numero: el telefono dejaria de filtrar y el
     // listado se llenaria de coincidencias que nadie busco.
-    private const int MinPhoneSearchDigits = 7;
+    private const int MinPhoneSearchDigits = 6;
 
     // El telefono se compara solo por sus digitos: quien busca pega el numero como lo ve en un chat
     // o una tarjeta (`+57 (300) 123-4567`), y `phone_e164` lo guarda sin formato (`+573001234567`).
