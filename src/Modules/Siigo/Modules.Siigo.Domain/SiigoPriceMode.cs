@@ -16,9 +16,20 @@ public static class SiigoPriceModes
     public static bool TryParse(string? value, out SiigoPriceMode mode)
     {
         mode = default;
-        return !string.IsNullOrWhiteSpace(value)
-            && !char.IsDigit(value.Trim()[0])
-            && Enum.TryParse(value.Trim(), ignoreCase: true, out mode)
-            && Enum.IsDefined(mode);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        // Sólo el nombre exacto: Enum.TryParse también acepta «+1» y «BaseWithDiscount,DiscountedPrice» (que suma los dos valores).
+        var name = Enum.GetNames<SiigoPriceMode>()
+            .FirstOrDefault(candidate => string.Equals(candidate, value.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (name is null)
+        {
+            return false;
+        }
+
+        mode = Enum.Parse<SiigoPriceMode>(name);
+        return true;
     }
 }

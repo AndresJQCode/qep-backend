@@ -25,6 +25,8 @@ public sealed class UpdateSiigoDocumentValidatorTests
     [InlineData("Nope")]
     [InlineData("")]
     [InlineData("1")]
+    [InlineData("BaseWithDiscount,DiscountedPrice")]
+    [InlineData("+1")]
     public void AnUnknownPriceModeFailsOnThePriceModeField(string priceMode)
     {
         var result = new UpdateSiigoDocumentValidator().Validate(Command(priceMode));
