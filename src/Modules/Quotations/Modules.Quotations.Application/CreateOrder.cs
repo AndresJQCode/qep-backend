@@ -176,7 +176,7 @@ public sealed class CreateOrderHandler(
                 new OrderDraftInput(
                     command.TenantId, command.ClientId, advisorId, command.PaymentMethod, command.Notes,
                     command.IsRetail, command.GlobalScaleFloor, command.Parties, command.BillingAccount,
-                    command.Items, proofs, AllowIncompleteCustomer: false, command.Shipping),
+                    command.Items, proofs, AllowIncompleteCustomer: false, command.Shipping, Gifts: command.Gifts),
                 orderNumber,
                 now,
                 cancellationToken);

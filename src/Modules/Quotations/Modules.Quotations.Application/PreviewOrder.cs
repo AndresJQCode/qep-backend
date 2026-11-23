@@ -54,7 +54,7 @@ public sealed class PreviewOrderHandler(
             new OrderDraftInput(
                 query.TenantId, query.ClientId, advisorId, query.PaymentMethod, query.Notes, query.IsRetail,
                 query.GlobalScaleFloor, query.Parties, query.BillingAccount, query.Items, proofs,
-                AllowIncompleteCustomer: false, query.Shipping, query.BillingCompanyId),
+                AllowIncompleteCustomer: false, query.Shipping, query.BillingCompanyId, query.Gifts),
             now,
             cancellationToken);
 

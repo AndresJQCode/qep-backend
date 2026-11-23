@@ -22,7 +22,9 @@ public sealed record OrderDraftInput(
     bool AllowIncompleteCustomer,
     ShippingRequest? Shipping = null,
     // Preview only (spec 2026-11-16 withholdings by company): the company chosen before its bank account.
-    Guid? BillingCompanyId = null);
+    Guid? BillingCompanyId = null,
+    // Spec 2026-11-23: los regalos, aparte de Items (que son las líneas pagadas); null es «sin regalos».
+    IReadOnlyList<OrderItemAddition>? Gifts = null);
 
 /// <summary>
 /// Arma un <see cref="Order"/> manual preciado como lo haría el cotizador: cliente elegible, cuenta de cobro
@@ -146,6 +148,8 @@ public sealed class OrderDraftBuilder(
         CancellationToken cancellationToken)
     {
         var lines = await PriceLinesAsync(input.TenantId, input.Items, currency, input.IsRetail, cancellationToken);
+        // Los regalos van después de las pagadas: así las posiciones de las pagadas no dependen de ellos.
+        lines.AddRange(await PriceGiftLinesAsync(input.TenantId, input.Gifts, currency, cancellationToken));
         var withholdings = await OrderCustomerWithholdings.ResolveAsync(
             withholdingLookup,
             input.TenantId,
@@ -163,6 +167,44 @@ public sealed class OrderDraftBuilder(
             customer.VatSurplus,
             withholdings);
         return (header, input.Parties.ToDomain(), lines);
+    }
+
+    /// <summary>Los regalos del cuerpo (spec 2026-11-23), preciados como <c>AddOrderGift</c>: <c>isRetail: true</c> salta las
+    /// escalas a propósito, porque el regalo va a precio de lista y su descuento es el fijo del 100 %. Aparte de
+    /// <see cref="PriceLinesAsync"/>, que también usa la tienda pública.</summary>
+    private async Task<List<OrderLineInput>> PriceGiftLinesAsync(
+        Guid tenantId, IReadOnlyList<OrderItemAddition>? gifts, string currency, CancellationToken cancellationToken)
+    {
+        if (gifts is null or { Count: 0 })
+        {
+            return [];
+        }
+
+        var pricedVariants = await QuotationProductPricingResolver.FindVariantsAsync(
+            pricingLookup, tenantId, gifts.Select(gift => gift.VariantId), cancellationToken);
+        var products = await productLookup.FindManyAsync(
+            tenantId, gifts.Select(gift => gift.VariantId).Distinct().ToArray(), cancellationToken);
+        var lines = new List<OrderLineInput>(gifts.Count);
+        foreach (var gift in gifts)
+        {
+            var priced = QuotationProductPricingResolver.Resolve(
+                pricedVariants.GetValueOrDefault(gift.VariantId), tenantId, gift.VariantId, gift.Quantity,
+                currency, isRetail: true);
+            products.TryGetValue(gift.VariantId, out var product);
+            lines.Add(new OrderLineInput(
+                gift.VariantId,
+                priced.ProductId,
+                gift.Quantity,
+                priced.Pricing.UnitPrice,
+                priced.Pricing.DiscountPercentage,
+                priced.Pricing.TaxPercentage,
+                product is null ? null : new QuotationProductSnapshot(product.Code, product.Name),
+                Kind: priced.Kind,
+                SalesUnit: priced.SalesUnit,
+                IsGift: true));
+        }
+
+        return lines;
     }
 
     /// <summary>Las líneas preciadas con el catálogo del tenant, sin cliente ni cuenta: lo comparten el pedido
