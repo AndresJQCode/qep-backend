@@ -827,6 +827,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Scheduling.Application.AppointmentBooking>();
         services.AddScoped<Modules.Scheduling.Application.AppointmentCancellation>();
         services.AddScoped<Modules.Scheduling.Application.AppointmentRescheduling>();
+        services.AddScoped<Modules.Scheduling.Application.IChannelScheduling, Modules.Scheduling.Application.ChannelScheduling>();
         services.AddScoped<
             IQueryHandler<Modules.Scheduling.Application.ListAvailabilityQuery, Modules.Scheduling.Application.AvailabilityDto>,
             Modules.Scheduling.Application.ListAvailabilityHandler>();

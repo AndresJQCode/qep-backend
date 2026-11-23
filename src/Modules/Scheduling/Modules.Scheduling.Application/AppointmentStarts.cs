@@ -13,6 +13,8 @@ internal static class AppointmentStarts
 {
     public const string OutsideRulesMessage = "Ese horario no está disponible para este servicio. Elige uno de los que ofrece la agenda.";
 
+    public const string ResourceNotChoosableMessage = "En ese horario no se puede elegir quién atiende: la agenda asigna a quien esté libre. Intenta sin elegir.";
+
     /// <summary>The resources that could take <paramref name="startsAt"/> by the rules alone, in the engine's order (the "first free" order).</summary>
     public static IReadOnlyList<ResourceId> RulesCandidates(
         LoadedAvailability loaded,
@@ -34,6 +36,23 @@ internal static class AppointmentStarts
         }
 
         return candidates;
+    }
+
+    /// <summary>
+    /// D-11 and D-16, only on the agent's path: the option the rules give <paramref name="requested"/> at that start must allow the client to
+    /// choose it. The back office books any resource it likes and never calls this. Rules only (<c>ignoreOccupancy</c>): whether somebody
+    /// holds the start is the seat check's business, and a 409 is the answer a retry can fix, this one is not.
+    /// </summary>
+    public static void EnsureClientChoice(
+        LoadedAvailability loaded, Service service, IReadOnlyList<Session> sessions, DateTimeOffset startsAt, ResourceId requested)
+    {
+        var slot = AvailabilityEngine
+            .Compute(loaded.Query(service, sessions, requested, ignoreOccupancy: true))
+            .FirstOrDefault(candidate => candidate.StartsAt == startsAt);
+        if (slot is null || !slot.Options.Any(option => option.ResourceId == requested && option.AllowClientChoice))
+        {
+            throw new SchedulingDomainException(SchedulingErrorCodes.ResourceNotChoosable, ResourceNotChoosableMessage);
+        }
     }
 
     /// <summary>

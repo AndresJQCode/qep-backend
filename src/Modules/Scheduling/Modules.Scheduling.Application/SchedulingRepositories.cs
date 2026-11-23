@@ -197,6 +197,13 @@ public interface IAppointmentReadRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// The next appointments of one customer: <c>Pending</c> or <c>Confirmed</c> that start at or after <paramref name="now"/>, by start and
+    /// then id, at most <paramref name="take"/>. Without the resource scope on purpose: it serves the channel, where the customer is the filter.
+    /// </summary>
+    Task<IReadOnlyList<Appointment>> ListUpcomingByCustomerAsync(
+        Guid tenantId, Guid customerId, DateTimeOffset now, int take, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Los contadores y las colas del escritorio dentro del alcance. Las del día son las que <b>empiezan</b> en <c>[dayStart, dayEnd)</c>;
     /// «por confirmar» y «sin marcar» (<see cref="DeskRules.Unmarked"/>) son colas de cualquier día. Cada lista trae como mucho
     /// <paramref name="take"/> filas y su total viaja aparte.

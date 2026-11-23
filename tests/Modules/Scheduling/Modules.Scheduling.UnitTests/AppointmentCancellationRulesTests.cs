@@ -26,4 +26,19 @@ public sealed class AppointmentCancellationRulesTests
     [Fact]
     public void TheMessageSaysHowManyHoursAreNeeded() =>
         Assert.Contains("24 horas", AppointmentCancellationRules.TooLateMessage(24), StringComparison.Ordinal);
+
+    // D-15: a client moves an appointment under the same cutoff that rules its cancellation.
+    [Fact]
+    public void ChangeByChatUntilIsTheStartMinusTheCutoff()
+    {
+        Assert.Equal(Start.AddHours(-24), AppointmentCancellationRules.ChangeByChatUntil(Start, 24));
+        Assert.Equal(Start, AppointmentCancellationRules.ChangeByChatUntil(Start, 0));
+    }
+
+    [Fact]
+    public void TheMoveMessagesSayWhatTheClientCanDo()
+    {
+        Assert.Contains("24 horas", AppointmentCancellationRules.TooLateToMoveMessage(24), StringComparison.Ordinal);
+        Assert.Equal("Esta cita sólo la puede mover el negocio.", AppointmentCancellationRules.NotMovableByChatMessage);
+    }
 }

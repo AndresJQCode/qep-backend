@@ -355,6 +355,18 @@ internal sealed class AppointmentReadRepository(SchedulingDbContext dbContext) :
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Appointment>> ListUpcomingByCustomerAsync(
+        Guid tenantId, Guid customerId, DateTimeOffset now, int take, CancellationToken cancellationToken) =>
+        await dbContext.Appointments.AsNoTracking()
+            .Where(appointment => appointment.TenantId == tenantId
+                && appointment.CustomerId == customerId
+                && appointment.StartsAt >= now
+                && (appointment.Status == AppointmentStatus.Pending || appointment.Status == AppointmentStatus.Confirmed))
+            .OrderBy(appointment => appointment.StartsAt)
+            .ThenBy(appointment => appointment.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
     public async Task<DeskSnapshot> ReadDeskAsync(
         Guid tenantId,
         ResourceScope scope,

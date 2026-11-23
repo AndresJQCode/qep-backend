@@ -18,6 +18,17 @@ public static class AppointmentCancellationRules
 
     public static string TooLateMessage(int cutoffHours) =>
         $"Ya no puedes cancelar esta cita por tu cuenta: se puede hasta {cutoffHours} horas antes. Comunícate con nosotros.";
+
+    /// <summary>
+    /// The last instant a client may change the appointment on their own (D-15): moving it by chat has the same cutoff as cancelling it, so
+    /// nobody dodges the deadline by moving the appointment instead of cancelling it.
+    /// </summary>
+    public static DateTimeOffset ChangeByChatUntil(DateTimeOffset startsAt, int cutoffHours) => startsAt - TimeSpan.FromHours(cutoffHours);
+
+    public static string TooLateToMoveMessage(int cutoffHours) =>
+        $"Ya no puedes cambiar la hora de esta cita por tu cuenta: se puede hasta {cutoffHours} horas antes. Comunícate con nosotros.";
+
+    public const string NotMovableByChatMessage = "Esta cita sólo la puede mover el negocio.";
 }
 
 /// <summary>

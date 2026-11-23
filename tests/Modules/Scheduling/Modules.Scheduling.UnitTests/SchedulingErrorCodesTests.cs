@@ -28,6 +28,7 @@ public sealed class SchedulingErrorCodesTests
                 "scheduling.appointment.invalid_transition",
                 "scheduling.appointment.not_found",
                 "scheduling.appointment.outside_rules",
+                "scheduling.appointment.resource_not_choosable",
                 "scheduling.appointment.session_full",
                 "scheduling.appointment.slot_taken",
                 "scheduling.block.not_found",
