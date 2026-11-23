@@ -22,7 +22,6 @@ public sealed class AppointmentReminderWorkerTests
     private static readonly DateTimeOffset Start = new(2026, 11, 24, 15, 0, 0, TimeSpan.Zero);
     private static readonly Guid Tenant = Guid.CreateVersion7();
     private static readonly Guid Connection = Guid.CreateVersion7();
-    private static readonly Guid Template = Guid.CreateVersion7();
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -141,7 +140,7 @@ public sealed class AppointmentReminderWorkerTests
             var service = Service.Create(ServiceId.New(), Tenant, "Consulta general", 30, 0, true, now);
             var session = Session.Create(SessionId.New(), Tenant, resource.Id, service.Id, Start, Start.AddMinutes(30), 0, 1, false, now);
             var settings = SchedulingSettings.Create(Tenant, now);
-            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, Template, now);
+            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, now);
             var appointment = Appointment.Create(
                 AppointmentId.New(), Tenant, location.Id, resource.Id, service.Id, customerId, session.Id, blockId: null, Start,
                 Start.AddMinutes(30), AppointmentStatus.Confirmed, AppointmentSource.BackOffice, conversationId: null, note: null,
@@ -194,7 +193,7 @@ public sealed class AppointmentReminderWorkerTests
             var resource = Resource.Create(ResourceId.New(), tenantId, location.Id, "Sala 1", null, now);
             var service = Service.Create(ServiceId.New(), tenantId, "Control", 5, 0, true, now);
             var settings = SchedulingSettings.Create(tenantId, now);
-            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, Template, now);
+            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, now);
             context.AddRange(location, resource, service, settings);
             for (var index = 0; index < count; index++)
             {
@@ -234,8 +233,8 @@ public sealed class AppointmentReminderWorkerTests
         var message = Assert.Single(h.Sender.Messages);
         Assert.Equal(AppointmentReminderRules.KeyOf(h.AppointmentId.Value, Start), message.IdempotencyKey);
         Assert.Equal(
-            (Tenant, Connection, Template, h.MemberId, h.CustomerId, "Ana Pérez", "+573001234567"),
-            (message.TenantId, message.ConnectionId, message.TemplateId, message.SentByMemberId, message.CustomerId, message.CustomerName, message.PhoneE164));
+            (Tenant, Connection, h.MemberId, h.CustomerId, "Ana Pérez", "+573001234567"),
+            (message.TenantId, message.ConnectionId, message.SentByMemberId, message.CustomerId, message.CustomerName, message.PhoneE164));
         Assert.Equal(
             ("Consulta general", "Dra. Paula Ruiz", "Sede Centro", Start),
             (message.ServiceName, message.ResourceName, message.LocationName, message.StartsAt));

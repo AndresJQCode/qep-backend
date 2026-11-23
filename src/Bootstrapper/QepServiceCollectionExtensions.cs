@@ -793,6 +793,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Scheduling.Application.UpdateSettingsCommand, Modules.Scheduling.Application.SettingsDto>,
             Modules.Scheduling.Application.UpdateSettingsHandler>();
         services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListSessionsQuery, IReadOnlyList<Modules.Scheduling.Application.PublishedSessionDto>>,
+            Modules.Scheduling.Application.ListSessionsHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Scheduling.Application.ListBlocksQuery, IReadOnlyList<Modules.Scheduling.Application.BlockDto>>,
             Modules.Scheduling.Application.ListBlocksHandler>();
         services.AddScoped<
@@ -2484,6 +2487,8 @@ public static class QepServiceCollectionExtensions
         // consentimiento llegan por ISchedulingReminderRecipients; la Agenda no referencia ni Mensajería ni Clientes.
         services.AddScoped<IAppointmentReminderSender, SchedulingReminderSender>();
         services.AddScoped<ISchedulingReminderRecipients, SchedulingReminderRecipients>();
+        // Spec 2026-11-23 §2: el estado de la plantilla de recordatorio de la conexión guardada, por puerto y con adaptador hacia Mensajería.
+        services.AddScoped<ISchedulingReminderTemplateStatus, SchedulingReminderTemplateStatus>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
         // Notifications; Soporte sólo declara los puertos.
         services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();

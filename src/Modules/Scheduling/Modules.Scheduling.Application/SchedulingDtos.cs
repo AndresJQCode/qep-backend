@@ -64,8 +64,12 @@ public sealed record SettingsDto(
     bool ReminderEnabled,
     int ReminderOffsetHours,
     Guid? ReminderConnectionId,
-    Guid? ReminderTemplateId,
+    ReminderTemplateStateDto? ReminderTemplate,
     long Version);
+
+/// <summary>El estado de la plantilla de recordatorio de la conexión guardada (spec 2026-11-23 §2): <c>Status</c> es el de Meta tal cual
+/// (<c>APPROVED</c>, <c>PENDING</c>, <c>REJECTED</c>…) o <c>Missing</c> si la conexión no tiene la fila.</summary>
+public sealed record ReminderTemplateStateDto(string Status, string? StatusReason);
 
 /// <summary>
 /// <c>GET setup</c>: lo que el asistente de primer uso necesita en una llamada. <c>Layout</c> lo decide el backend contando sedes y

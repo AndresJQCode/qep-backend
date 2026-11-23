@@ -25,7 +25,6 @@ public static class SchedulingErrorCodes
 
     // Tarea 8: una sesión con citas (aun canceladas) no se quita, porque su historial le apunta.
     public const string SessionHasAppointments = "scheduling.session.has_appointments";
-    public const string ReminderTemplateMissing = "scheduling.reminder.template_missing";
     public const string ReminderConnectionInvalid = "scheduling.reminder.connection_invalid";
 
     // 404: lo que se pide por id dentro del tenant del llamador y no está entre sus datos. Uno de otro tenant no llega acá: lo frena el 403.

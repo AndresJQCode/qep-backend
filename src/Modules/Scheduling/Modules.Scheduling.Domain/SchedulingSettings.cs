@@ -2,7 +2,7 @@ namespace Modules.Scheduling.Domain;
 
 /// <summary>
 /// Las reglas de reserva de un tenant: una fila por tenant, con su <c>version</c>. La aprovisiona el primer acceso con
-/// <see cref="SchedulingDefaults"/>. El recordatorio sólo puede prenderse con su conexión y su plantilla; apagado, las suelta.
+/// <see cref="SchedulingDefaults"/>. El recordatorio sólo puede prenderse con su conexión (la plantilla la resuelve el envío por la conexión); apagado, la suelta.
 /// </summary>
 public sealed class SchedulingSettings : VersionedEntity
 {
@@ -23,8 +23,6 @@ public sealed class SchedulingSettings : VersionedEntity
     public int ReminderOffsetHours { get; private set; }
 
     public Guid? ReminderConnectionId { get; private set; }
-
-    public Guid? ReminderTemplateId { get; private set; }
 
     public static SchedulingSettings Create(Guid tenantId, DateTimeOffset now)
     {
@@ -49,7 +47,6 @@ public sealed class SchedulingSettings : VersionedEntity
         bool reminderEnabled,
         int reminderOffsetHours,
         Guid? reminderConnectionId,
-        Guid? reminderTemplateId,
         DateTimeOffset now)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(minNoticeMinutes, 0);
@@ -67,12 +64,6 @@ public sealed class SchedulingSettings : VersionedEntity
                 SchedulingErrorCodes.ReminderConnectionInvalid, "The reminder needs the WhatsApp number it is sent from.");
         }
 
-        if (reminderEnabled && reminderTemplateId is null)
-        {
-            throw new SchedulingDomainException(
-                SchedulingErrorCodes.ReminderTemplateMissing, "The reminder needs its approved template.");
-        }
-
         ConfirmationMode = confirmationMode;
         MinNoticeMinutes = minNoticeMinutes;
         HorizonDays = horizonDays;
@@ -80,7 +71,6 @@ public sealed class SchedulingSettings : VersionedEntity
         ReminderEnabled = reminderEnabled;
         ReminderOffsetHours = reminderOffsetHours;
         ReminderConnectionId = reminderEnabled ? reminderConnectionId : null;
-        ReminderTemplateId = reminderEnabled ? reminderTemplateId : null;
         Touch(now);
     }
 }

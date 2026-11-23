@@ -104,6 +104,21 @@ public static class SchedulingEndpoints
     // Publicar o quitar una sesión de una franja `PublishedSessions`: el contrato no lo separa de las franjas, es `availability.manage`.
     private static void MapSessions(RouteGroupBuilder group)
     {
+        // Spec 2026-11-23 §1: las sesiones publicadas del rango (días del tenant), dentro del alcance de recursos de quien pide.
+        group.MapGet("/sessions", async (
+                Guid tenantId,
+                DateOnly? from,
+                DateOnly? to,
+                Guid? resourceId,
+                IRequestDispatcher dispatcher,
+                CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(
+                    new ListSessionsQuery(tenantId, new ListSessionsRequest(from, to, resourceId)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AvailabilityManage)
+            .Produces<IReadOnlyList<PublishedSessionDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/sessions", async (Guid tenantId, PublishSessionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
             {
                 var session = await dispatcher.SendAsync(new PublishSessionCommand(tenantId, request), cancellationToken);

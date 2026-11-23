@@ -257,4 +257,29 @@ public sealed class AppointmentReminderTemplateProvisioningApiTests
         Assert.Contains("{{nombre_cliente}}", approved!.ComponentsJson, StringComparison.Ordinal);
         Assert.Null(await ApprovedAsync(otherConnectionId));
     }
+
+    [Fact]
+    public async Task TheReadinessPortReportsTheRawStatusOfTheRowOfThatConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        async Task<AppointmentReminderTemplateStatus?> StatusAsync(Guid connectionId)
+        {
+            using var scope = f.Factory.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<IAppointmentReminderReadiness>()
+                .FindStatusAsync(f.Tenant.TenantId, connectionId, Ct);
+        }
+
+        Assert.Null(await StatusAsync(f.ConnectionId));
+        Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, NoticeUrl(f))).StatusCode);
+        Assert.Equal("PENDING", (await StatusAsync(f.ConnectionId))?.Status);
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.message_templates SET status = 'REJECTED', status_reason = 'INVALID_FORMAT' WHERE kind = 'AppointmentReminder' AND tenant_id = @t",
+            ("t", f.Tenant.TenantId));
+
+        Assert.Equal(new AppointmentReminderTemplateStatus("REJECTED", "INVALID_FORMAT"), await StatusAsync(f.ConnectionId));
+        Assert.Null(await StatusAsync(Guid.CreateVersion7()));
+    }
 }

@@ -98,7 +98,7 @@ public sealed class SchedulingReminderSenderTests
     private SchedulingReminderSender Sender() => new(_outbound, _readiness, new StubClock());
 
     private static ReminderMessage Message() => new(
-        TenantId, Guid.CreateVersion7(), "appointment-reminder:" + Guid.CreateVersion7().ToString("D"), ConnectionId, Guid.CreateVersion7(),
+        TenantId, Guid.CreateVersion7(), "appointment-reminder:" + Guid.CreateVersion7().ToString("D"), ConnectionId,
         Guid.CreateVersion7(), Guid.CreateVersion7(), "Ana Pérez", "+573001234567", "Consulta general", "Dra. Paula Ruiz", "Sede Centro", StartsAt);
 
     private sealed class StubClock : ITenantClock
@@ -114,6 +114,9 @@ public sealed class SchedulingReminderSenderTests
 
         public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult(Approved.GetValueOrDefault((tenantId, connectionId)));
+
+        public Task<AppointmentReminderTemplateStatus?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The sender only reads the approved row.");
     }
 
     private sealed class StubOutbound : IAppointmentReminderOutbound

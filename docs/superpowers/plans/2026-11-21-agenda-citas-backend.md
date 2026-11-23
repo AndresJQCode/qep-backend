@@ -422,7 +422,7 @@ Enums con su nombre. Colecciones de tamaño fijo completas, aun en cero.
 | `GET/POST/PUT resources`, `…/{id}/archive` | alta y estructura: `settings.manage`; datos y vínculo de **su** recurso: `availability.manage` | Archivar con citas futuras → 422 `resource.has_future_appointments` |
 | `GET/POST/PUT services`, `…/{id}/archive` | `settings.manage` | `service.in_use` si tiene citas futuras |
 | `GET/POST/PUT blocks`, `…/{id}/archive` | `availability.manage` | Dentro del alcance |
-| `POST sessions`, `DELETE sessions/{id}` | `availability.manage` | Publicar o quitar una sesión (`PublishedSessions`) |
+| `GET sessions?from&to[&resourceId]`, `POST sessions`, `DELETE sessions/{id}` | `availability.manage` | Listar, publicar o quitar una sesión (`PublishedSessions`). El `GET` (`yyyy-MM-dd`, días del tenant, hasta 62 días, dentro del alcance) lo agrega la [spec 2026-11-23](../specs/2026-11-23-agenda-sesiones-y-recordatorio-design.md) |
 | `GET/POST closures`, `DELETE closures/{id}` | `availability.manage` | `closure.overlaps_appointments` si cruza citas vigentes |
 | `GET/PUT settings` | lectura: `appointment.read`; escritura: `settings.manage` | Fila única con `version` |
 
@@ -440,7 +440,12 @@ resourceName,start,source,requestedAgo}], unmarked[{…}], upcoming[{…}] }`. �
 ### Reglas de reserva (`settings`)
 
 `confirmationMode`, `minNoticeMinutes`, `horizonDays`, `clientCancelCutoffHours`, `reminderEnabled`, `reminderOffsetHours`,
-`reminderConnectionId`, `reminderTemplateId`, `version`. Defaults en `SchedulingDefaults`.
+`reminderConnectionId`, `reminderTemplate`, `version`. Defaults en `SchedulingDefaults`.
+
+> **Actualizado por la [spec 2026-11-23](../specs/2026-11-23-agenda-sesiones-y-recordatorio-design.md) §2:** `reminderTemplateId` salió del
+> request y del DTO (un cliente viejo que lo mande no se rechaza: se ignora). `reminderTemplate` es `{ status, statusReason }` de la fila
+> `AppointmentReminder` de la conexión guardada (`APPROVED`, `PENDING`, `REJECTED`… tal cual Meta, o `Missing`), y `null` si no hay conexión
+> guardada. La columna `reminder_template_id` sigue en la tabla, sin mapear; se borra en una migración posterior (expand/contract).
 
 ### Códigos de error
 
@@ -453,7 +458,7 @@ resourceName,start,source,requestedAgo}], unmarked[{…}], upcoming[{…}] }`. �
 | `scheduling.session.has_appointments` (una sesión con alguna cita **no cancelada** no se quita; con sólo canceladas se desactiva, ver PD-3) | 422 |
 | `scheduling.location.not_found`, `scheduling.resource.not_found`, `scheduling.service.not_found`, `scheduling.block.not_found`, `scheduling.closure.not_found`, `scheduling.session.not_found`, `scheduling.appointment.not_found` | 404 |
 | `scheduling.location.main_cannot_be_archived`, `scheduling.session.not_published_mode` | 422 |
-| `scheduling.reminder.template_missing`, `…connection_invalid` | 422 |
+| `scheduling.reminder.connection_invalid` (`template_missing` salió con la spec 2026-11-23) | 422 |
 | recurso fuera de alcance, sin permiso | 403 `authorization.denied` |
 
 ---
