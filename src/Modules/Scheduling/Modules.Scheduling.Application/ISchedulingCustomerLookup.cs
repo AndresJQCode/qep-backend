@@ -18,6 +18,11 @@ public interface ISchedulingCustomerLookup
     /// <summary>El cliente del tenant, activo o no; <c>null</c> si no existe en él.</summary>
     Task<SchedulingCustomerRef?> FindAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 
+    /// <summary>El nombre de cada uno de esos clientes en una sola consulta, para dibujar una grilla de citas sin pedir un cliente por fila. Un
+    /// id que no existe en el tenant no aparece en el resultado.</summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
     /// <summary>Una ficha incompleta con nombre y, si lo dio, teléfono: el cliente puede completarse después en Clientes.</summary>
     Task<SchedulingCustomerRef> CreateAsync(Guid tenantId, NewSchedulingCustomer input, CancellationToken cancellationToken);
 }

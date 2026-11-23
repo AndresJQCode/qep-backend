@@ -33,6 +33,18 @@ internal sealed class SchedulingCustomerLookup(
         return customer is null ? null : ToRef(customer);
     }
 
+    public async Task<IReadOnlyDictionary<Guid, string>> FindNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        if (customerIds.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var names = await customers.FindNamesByIdsAsync(tenantId, [.. customerIds.Select(id => new CustomerId(id))], cancellationToken);
+        return names.ToDictionary(pair => pair.Key.Value, pair => pair.Value);
+    }
+
     public async Task<SchedulingCustomerRef> CreateAsync(
         Guid tenantId, NewSchedulingCustomer input, CancellationToken cancellationToken)
     {

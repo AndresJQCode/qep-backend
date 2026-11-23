@@ -13,7 +13,7 @@ public sealed class AppointmentComposer(
     ISchedulingMemberDirectory members)
 {
     // Un cliente que ya no está entre los datos del tenant no debería existir (una cita bloquea borrarlo); si pasa, la fila igual se dibuja.
-    private const string UnknownCustomer = "Cliente sin nombre";
+    internal const string UnknownCustomer = "Cliente sin nombre";
 
     public async Task<AppointmentDto> ComposeAsync(Guid tenantId, Appointment appointment, CancellationToken cancellationToken)
     {

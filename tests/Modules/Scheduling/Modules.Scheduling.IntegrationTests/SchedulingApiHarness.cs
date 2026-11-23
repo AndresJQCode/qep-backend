@@ -39,6 +39,9 @@ internal static class SchedulingApiHarness
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    /// <summary>La fecha como la serializa la API (<c>yyyy-MM-dd</c>), sin depender de la cultura de quien corre la prueba.</summary>
+    public static string Iso(DateOnly day) => day.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
     public static string SchedulingUrl(string tenantId) => $"/api/v1/tenants/{tenantId}/scheduling";
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
@@ -320,6 +323,59 @@ internal static class SchedulingApiHarness
             Guid.CreateVersion7(), session.Id, null, session.StartsAt, session.EndsAt, AppointmentStatus.Confirmed,
             AppointmentSource.BackOffice, null, null, null, now));
         await db.SaveChangesAsync(Ct);
+    }
+
+    /// <summary>
+    /// Una cita en el estado y la hora que se pida, sembrada directo en la base con su propia sesión de cupo 1: las lecturas del calendario y
+    /// del escritorio necesitan citas ya vencidas, ya atendidas o pedidas hace horas, y la API de reserva no deja crearlas así. Se crea en
+    /// <paramref name="requestedAt"/> (por defecto, una hora antes del inicio) y se marca con la hora de su fin, que es lo que haría quien
+    /// la atiende después de la cita.
+    /// </summary>
+    public static async Task<Guid> SeedAppointmentAsync(
+        QepApiFactory factory,
+        string tenantId,
+        Guid locationId,
+        Guid resourceId,
+        Guid serviceId,
+        Guid customerId,
+        DateTimeOffset start,
+        AppointmentStatus status,
+        DateTimeOffset? requestedAt = null,
+        AppointmentSource source = AppointmentSource.BackOffice,
+        int minutes = 30)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var tenant = Guid.Parse(tenantId);
+        var end = start.AddMinutes(minutes);
+        var created = requestedAt ?? start.AddHours(-1);
+
+        var session = Session.Create(
+            SessionId.New(), tenant, new ResourceId(resourceId), new ServiceId(serviceId), start, end, 0, 1, false, created);
+        session.Reserve(created);
+        var appointment = Appointment.Create(
+            AppointmentId.New(), tenant, new LocationId(locationId), new ResourceId(resourceId), new ServiceId(serviceId),
+            customerId, session.Id, null, start, end,
+            status == AppointmentStatus.Pending ? AppointmentStatus.Pending : AppointmentStatus.Confirmed,
+            source, null, null, null, created);
+        switch (status)
+        {
+            case AppointmentStatus.Completed:
+                appointment.MarkAttended(null, end);
+                break;
+            case AppointmentStatus.NoShow:
+                appointment.MarkNoShow(null, end);
+                break;
+            case AppointmentStatus.Cancelled:
+                appointment.Cancel(null, null, created);
+                session.Release(created);
+                break;
+        }
+
+        db.Sessions.Add(session);
+        db.Appointments.Add(appointment);
+        await db.SaveChangesAsync(Ct);
+        return appointment.Id.Value;
     }
 
     /// <summary>

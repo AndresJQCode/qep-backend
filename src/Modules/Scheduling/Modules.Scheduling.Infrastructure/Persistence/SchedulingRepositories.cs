@@ -295,3 +295,100 @@ internal sealed class AppointmentRepository(SchedulingDbContext dbContext) : IAp
 
     public void Add(Appointment appointment) => dbContext.Appointments.Add(appointment);
 }
+
+internal sealed class AppointmentReadRepository(SchedulingDbContext dbContext) : IAppointmentReadRepository
+{
+    // The scope is applied in the query: an empty scope is not "no filter", it matches nothing (Contains over an empty list).
+    private IQueryable<Appointment> InScope(Guid tenantId, ResourceScope scope)
+    {
+        var query = dbContext.Appointments.AsNoTracking().Where(appointment => appointment.TenantId == tenantId);
+        if (scope.IsAll)
+        {
+            return query;
+        }
+
+        var ids = scope.ResourceIds.Select(id => new ResourceId(id)).ToArray();
+        return query.Where(appointment => ids.Contains(appointment.ResourceId));
+    }
+
+    public async Task<IReadOnlyList<Appointment>> ListInRangeAsync(
+        Guid tenantId,
+        ResourceScope scope,
+        IReadOnlyCollection<ResourceId> resourceIds,
+        DateTimeOffset rangeStart,
+        DateTimeOffset rangeEnd,
+        CancellationToken cancellationToken)
+    {
+        if (resourceIds.Count == 0)
+        {
+            return [];
+        }
+
+        var wanted = resourceIds.ToArray();
+        return await InScope(tenantId, scope)
+            .Where(appointment => appointment.Status != AppointmentStatus.Cancelled
+                && wanted.Contains(appointment.ResourceId)
+                && appointment.StartsAt < rangeEnd
+                && appointment.EndsAt > rangeStart)
+            .OrderBy(appointment => appointment.StartsAt)
+            .ThenBy(appointment => appointment.Id)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<DeskSnapshot> ReadDeskAsync(
+        Guid tenantId,
+        ResourceScope scope,
+        DateTimeOffset dayStart,
+        DateTimeOffset dayEnd,
+        DateTimeOffset now,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var inScope = InScope(tenantId, scope);
+        var day = inScope.Where(appointment => appointment.StartsAt >= dayStart
+            && appointment.StartsAt < dayEnd
+            && appointment.Status != AppointmentStatus.Cancelled);
+
+        var byStatus = await day
+            .GroupBy(appointment => appointment.Status)
+            .Select(group => new { Status = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+        var upcoming = await day
+            .Where(appointment => (appointment.Status == AppointmentStatus.Pending || appointment.Status == AppointmentStatus.Confirmed)
+                && appointment.EndsAt >= now)
+            .OrderBy(appointment => appointment.StartsAt)
+            .ThenBy(appointment => appointment.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        // The longest-waiting request first: the queue is worked from the top.
+        var pendingQuery = inScope.Where(appointment => appointment.Status == AppointmentStatus.Pending);
+        var pendingTotal = await pendingQuery.CountAsync(cancellationToken);
+        var pending = await pendingQuery
+            .OrderBy(appointment => appointment.CreatedAt)
+            .ThenBy(appointment => appointment.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        // The most recent first: it is the one the secretary remembers to mark.
+        var unmarkedQuery = inScope.Where(DeskRules.Unmarked(now));
+        var unmarkedTotal = await unmarkedQuery.CountAsync(cancellationToken);
+        var unmarked = await unmarkedQuery
+            .OrderByDescending(appointment => appointment.EndsAt)
+            .ThenBy(appointment => appointment.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        int CountOf(AppointmentStatus status) => byStatus.Where(row => row.Status == status).Sum(row => row.Count);
+
+        return new DeskSnapshot(
+            byStatus.Sum(row => row.Count),
+            CountOf(AppointmentStatus.Completed),
+            CountOf(AppointmentStatus.NoShow),
+            pendingTotal,
+            pending,
+            unmarkedTotal,
+            unmarked,
+            upcoming);
+    }
+}

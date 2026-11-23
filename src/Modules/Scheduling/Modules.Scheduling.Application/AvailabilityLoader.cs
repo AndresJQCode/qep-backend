@@ -30,7 +30,8 @@ public sealed class AvailabilityLoader(
         return await LoadAsync(tenantId, scope, calendar, day, day, cancellationToken);
     }
 
-    private async Task<LoadedAvailability> LoadAsync(
+    /// <summary>The same load for a caller that already read the tenant's calendar (the desk needs "today" before it can pick the day).</summary>
+    public async Task<LoadedAvailability> LoadAsync(
         Guid tenantId, ResourceScope scope, TenantCalendar calendar, DateOnly firstDay, DateOnly lastDay, CancellationToken cancellationToken)
     {
         var rules = await settings.FindAsync(tenantId, cancellationToken)

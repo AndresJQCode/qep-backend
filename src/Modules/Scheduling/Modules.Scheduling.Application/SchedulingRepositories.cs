@@ -161,3 +161,45 @@ public interface IAppointmentRepository
 
     void Add(Appointment appointment);
 }
+
+/// <summary>Lo que el escritorio lee de las citas en una sola pasada (ver <see cref="IAppointmentReadRepository.ReadDeskAsync"/>).</summary>
+public sealed record DeskSnapshot(
+    int DayAppointments,
+    int Attended,
+    int NoShow,
+    int PendingTotal,
+    IReadOnlyList<Appointment> Pending,
+    int UnmarkedTotal,
+    IReadOnlyList<Appointment> Unmarked,
+    IReadOnlyList<Appointment> Upcoming);
+
+/// <summary>
+/// Las lecturas de citas del calendario y del escritorio, sin seguimiento de cambios. Aparte de <see cref="IAppointmentRepository"/>, que
+/// es de escritura y trae cada cita con su historial. Toda consulta filtra por el alcance <b>en la base</b>: un miembro sin «ver todas las
+/// agendas» nunca recibe una fila de otro recurso, ni siquiera para descartarla después.
+/// </summary>
+public interface IAppointmentReadRepository
+{
+    /// <summary>Las citas que ocupan lugar (no canceladas) y se solapan con el rango, de esos recursos y dentro del alcance, por inicio y luego por id.</summary>
+    Task<IReadOnlyList<Appointment>> ListInRangeAsync(
+        Guid tenantId,
+        ResourceScope scope,
+        IReadOnlyCollection<ResourceId> resourceIds,
+        DateTimeOffset rangeStart,
+        DateTimeOffset rangeEnd,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los contadores y las colas del escritorio dentro del alcance. Las del día son las que <b>empiezan</b> en <c>[dayStart, dayEnd)</c>;
+    /// «por confirmar» y «sin marcar» (<see cref="DeskRules.Unmarked"/>) son colas de cualquier día. Cada lista trae como mucho
+    /// <paramref name="take"/> filas y su total viaja aparte.
+    /// </summary>
+    Task<DeskSnapshot> ReadDeskAsync(
+        Guid tenantId,
+        ResourceScope scope,
+        DateTimeOffset dayStart,
+        DateTimeOffset dayEnd,
+        DateTimeOffset now,
+        int take,
+        CancellationToken cancellationToken);
+}

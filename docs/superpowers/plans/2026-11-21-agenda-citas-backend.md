@@ -7,7 +7,7 @@
 
 ## Estado y traspaso (2026-11-21)
 
-Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A y B (Tareas 1 a 6) y las Tareas 7 a 9.** Faltan la Tarea 10 del Bloque C y el Bloque D.
+Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A, B y C (Tareas 1 a 10).** Falta el Bloque D.
 
 | Tarea | Estado | Commit |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. *
 | 7 Configuración (sedes, recursos, servicios, reglas, `setup`) | Hecha | `9c7b5de92` |
 | 8 Franjas, sesiones publicadas, bloqueos | Hecha | `42a3d4d0f` |
 | 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Hecha (sin correr `dotnet test`: orden del owner) | `c083fc0c2`, `c7abf6da6`, `714679456` |
-| 10 Calendario y escritorio (lecturas BFF) | Por hacer | |
+| 10 Calendario y escritorio (lecturas BFF) | Hecha (sin correr `dotnet test`: orden del owner) | `@@COMMIT@@` |
 | 11 Clientes: fusión y borrado | Por hacer | |
 | 12 Recordatorio por WhatsApp (dos commits) | Por hacer | |
 | 13 Verificación final | Por hacer | |
@@ -157,6 +157,35 @@ Tarea 9 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suite
 22. **Límites conocidos, no resueltos:** (a) una sesión abierta por una reserva que se vació y se reabre conserva el rango y el cupo con que nació, aunque
     el servicio o la franja hayan cambiado después; (b) `Appointment.BlockId` no cambia al reprogramar; (c) reprogramar sólo ofrece recursos de la sede de la
     cita.
+
+Tarea 10 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suites al final):
+
+23. **`freeCount` y `counters.free` son inicios libres, no cupos.** Salen de `AvailabilityEngine` (una pasada por servicio activo, con las reglas
+    del tenant: anticipación y horizonte incluidos) y cuentan los inicios *distintos* por recurso: un inicio que sirve a dos servicios es un hueco.
+    Lo ya pasado, o dentro de la anticipación mínima, no cuenta. `FreeSlotCounter` lo comparte entre el calendario y el escritorio.
+24. **`openWindows` es el horario, no lo libre.** Franjas del recurso expandidas en la zona del tenant, sin festivos (si la franja cierra en
+    festivos) y fundidas cuando se tocan; no descuenta bloqueos (viajan en `closures`) ni citas. En una franja `PublishedSessions` el recurso sólo
+    abre donde hay una sesión publicada y activa, que es lo único que el motor ofrece ahí (`OpenWindows`, pura y con prueba unitaria).
+25. **Qué dibuja el calendario.** Las citas canceladas no viajan ni cuentan en `appointmentCount` (liberaron su lugar). `booked`/`capacity` son los
+    de la sesión de la cita. `layout` es el del tenant (`SchedulingLayout.Of`, el mismo de `GET setup`), no el del alcance de quien mira.
+    `date` y `from`/`to` son excluyentes (422 en `date`); rango máximo 62 días, como `GET availability` (422 en `to`). `resourceIds` se repite en la
+    query (`?resourceIds=a&resourceIds=b`); uno fuera del alcance es 403 (se revisa antes de decir si existe) y uno que no existe o está archivado,
+    404 `resource.not_found`. `locationId` sólo filtra las columnas y uno inexistente es 404 `location.not_found`.
+26. **Escritorio: contadores y colas.** `appointments`, `attended`, `noShow` y `upcoming` son del día pedido (por hora de inicio, zona del tenant;
+    sin `date`, hoy); `pending` y `unmarked` son colas de **cualquier día** (una solicitud por confirmar o una cita vencida sin marcar no se
+    caducan a medianoche), y sus contadores son los totales aunque la lista se acote a 50 filas (`GetDeskHandler.QueueLimit`). `pending` va de la
+    solicitud más vieja a la más nueva; `unmarked`, de la más reciente a la más vieja. «Sin marcar» es `DeskRules.Unmarked` (expresión que el
+    repositorio traduce a SQL: `Confirmed` y `ends_at < ahora`).
+27. **`requestedAgo` viaja como minutos enteros** (`DeskRules.RequestedAgoMinutes`, nunca negativo) con el reloj del servidor; el contrato no decía el
+    tipo. Si el frontend prefiere un instante (`requestedAt`) o un texto, es un cambio de una línea que decide el owner.
+28. **Puerto nuevo en lo existente.** `ISchedulingCustomerLookup.FindNamesAsync` (batch, sobre `FindNamesByIdsAsync` de Clientes): la grilla no puede
+    pedir un cliente por celda. `IAppointmentReadRepository` es aparte de `IAppointmentRepository` (escritura, con historial y seguimiento) y filtra
+    por alcance en la consulta. `AvailabilityLoader.LoadAsync` ganó una sobrecarga que recibe el `TenantCalendar` ya leído (el escritorio necesita
+    «hoy» antes de elegir el día).
+29. **Observación, no tocada:** `Closure.AppliesTo(resource)` (y por tanto el motor) trata un bloqueo de sede completa como aplicable a *cualquier*
+    recurso, sin mirar la sede. Con varias sedes, un bloqueo de una cierra los huecos de las otras en el cálculo de `freeCount` aunque el calendario
+    sólo dibuje el bloqueo en las columnas de su sede. Con una sola sede no se nota; conviene corregirlo en `AvailabilityEngine.IsClosed` antes de
+    activar varias sedes.
 
 ## Global Constraints
 
@@ -503,12 +532,15 @@ asignación (`FirstFree`) ocurre aquí. Idempotente por `clientRequestId` (misma
 
 ### Task 10: Lecturas BFF — calendario y escritorio
 
-- [ ] **Step 1: Pruebas que fallan:** `AMemberWithoutReadAllNeverSeesAnotherResource` (Review Focus 2), `ReadAllSeesEveryResource`,
+- [x] **Step 1: Pruebas que fallan:** `AMemberWithoutReadAllNeverSeesAnotherResource` (Review Focus 2), `ReadAllSeesEveryResource`,
   `CalendarReturnsOneResponseWithLayoutAndCounts`, `DeskCountersMatchWhatTheScopeSees`, `UnmarkedAreConfirmedAppointmentsAlreadyOver`,
   `ThePendingQueueIsOrderedByRequestTime`, `TheCountersOfEveryStatusTravelEvenAtZero`, calendario con `from > to` ⇒ 422.
-- [ ] **Step 2: RED. Step 3: Implementar** (las consultas filtran por `ResourceScope` en el repositorio). **Step 4: GREEN.**
-- [ ] **Step 5: Cerrar el bloque:** correr las clases completas `*ApiTests` de Scheduling, en primer plano, y pegar la salida.
-- [ ] **Step 6: Commit** — `feat(scheduling): calendar and desk reads`
+- [x] **Step 2: RED. Step 3: Implementar** (las consultas filtran por `ResourceScope` en el repositorio). **Step 4: GREEN.** RED y GREEN fueron
+  `dotnet build` (sin `dotnet test`: orden del owner).
+- [ ] **Step 5: Cerrar el bloque:** correr las clases completas `*ApiTests` de Scheduling, en primer plano, y pegar la salida. **Pendiente: lo corre
+  el owner con las suites al final.** Pruebas nuevas sin correr: `SchedulingCalendarApiTests` (10), `SchedulingDeskApiTests` (8) y
+  `SchedulingCalendarReadTests` (unitarias).
+- [x] **Step 6: Commit** — `feat(scheduling): calendar and desk reads`
 
 ---
 

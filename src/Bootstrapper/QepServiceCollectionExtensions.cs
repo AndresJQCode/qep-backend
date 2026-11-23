@@ -702,6 +702,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Scheduling.Application.GetAppointmentQuery, Modules.Scheduling.Application.AppointmentDto>,
             Modules.Scheduling.Application.GetAppointmentHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListCalendarQuery, Modules.Scheduling.Application.CalendarDto>,
+            Modules.Scheduling.Application.ListCalendarHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetDeskQuery, Modules.Scheduling.Application.DeskDto>,
+            Modules.Scheduling.Application.GetDeskHandler>();
         services.AddScoped<Modules.Scheduling.Application.AppointmentTransitions>();
         services.AddScoped<
             ICommandHandler<Modules.Scheduling.Application.ConfirmAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,

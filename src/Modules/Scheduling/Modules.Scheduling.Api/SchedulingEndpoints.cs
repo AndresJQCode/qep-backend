@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Modules.Scheduling.Application;
 
@@ -11,7 +12,7 @@ public static class SchedulingEndpoints
     public static IEndpointRouteBuilder MapSchedulingEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como hr y loans: la política frena a quien no tiene el permiso y el handler
-        // (SchedulingAuthorization) a quien lo tiene en otro tenant. El calendario y el escritorio llegan con la Tarea 10.
+        // (SchedulingAuthorization) a quien lo tiene en otro tenant.
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/scheduling")
             .WithTags("Scheduling");
@@ -27,8 +28,36 @@ public static class SchedulingEndpoints
         MapAvailability(group);
         MapCustomers(group);
         MapAppointments(group);
+        MapReads(group);
 
         return endpoints;
+    }
+
+    // Lecturas BFF: el calendario y el escritorio son `appointment.read` y vienen ya filtrados por el alcance de quien pide.
+    private static void MapReads(RouteGroupBuilder group)
+    {
+        group.MapGet("/calendar", async (
+                Guid tenantId,
+                DateOnly? date,
+                DateOnly? from,
+                DateOnly? to,
+                Guid? locationId,
+                [FromQuery] Guid[]? resourceIds,
+                IRequestDispatcher dispatcher,
+                CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(
+                    new ListCalendarQuery(tenantId, new CalendarRequest(date, from, to, locationId, resourceIds)), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentRead)
+            .Produces<CalendarDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/desk", async (Guid tenantId, DateOnly? date, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                Results.Ok(await dispatcher.QueryAsync(new GetDeskQuery(tenantId, date), cancellationToken)))
+            .RequireAuthorization(SchedulingPermissions.AppointmentRead)
+            .Produces<DeskDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
     }
 
     // Franjas: toda ruta es `availability.manage` (y el handler exige también el `read`), dentro del alcance de recursos de quien pide.
