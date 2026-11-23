@@ -58,6 +58,11 @@ internal sealed class MessageTemplateRepository(MessagingDbContext dbContext) : 
                 && template.Kind == MessageTemplateKind.WholesaleInvitationNotice,
             cancellationToken);
 
+    public Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.FirstOrDefaultAsync(
+            template => template.TenantId == tenantId && template.ConnectionId == connectionId && template.Kind == MessageTemplateKind.TaskNotice,
+            cancellationToken);
+
     public async Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
         var rows = await dbContext.MessageTemplates

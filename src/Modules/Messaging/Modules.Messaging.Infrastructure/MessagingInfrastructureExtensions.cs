@@ -149,6 +149,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ISupportSurveyTemplateReadiness, SupportSurveyTemplateReadiness>();
         // Mayorista: la del aviso de invitación de distribuidor, para las conexiones que Mayorista ofrece y el envío del aviso.
         services.AddScoped<IWholesaleInvitationNoticeReadiness, WholesaleInvitationNoticeTemplateReadiness>();
+        // Support task notices: the readiness of the assignment notice template (the escalation worker and /settings/support read it).
+        services.AddScoped<ITaskNoticeTemplateReadiness, TaskNoticeTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

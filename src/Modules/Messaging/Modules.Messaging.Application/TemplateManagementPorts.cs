@@ -40,6 +40,9 @@ public interface IMessageTemplateRepository
     /// <summary>Mayorista: la única fila <c>WholesaleInvitationNotice</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindWholesaleInvitationNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Support task notices: the only <c>TaskNotice</c> row of the connection, tracked, or <c>null</c>.</summary>
+    Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Todas, con tracking, por nombre e idioma en orden ordinal: el refresco las recorre y las modifica.</summary>
     Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -122,6 +125,16 @@ public interface ISupportSurveyTemplateReadiness
 public interface IWholesaleInvitationNoticeReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Support task notices: the readiness signal of the task notice template, sibling of <see cref="IWholesaleInvitationNoticeReadiness"/>.
+/// <c>FindApprovedAsync</c> returns the <c>TaskNotice</c> row when it is <c>APPROVED</c> on that connection, or <c>null</c>;
+/// <c>FindStatusAsync</c> returns Meta's raw status of that row, or <c>null</c> when there is none.</summary>
+public interface ITaskNoticeTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<string?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
 
 /// <summary>Cobros recurrentes §5: la señal para el consumidor Billing, hermana de <see cref="IQuotationTemplateReadiness"/>. Devuelve la fila de ese

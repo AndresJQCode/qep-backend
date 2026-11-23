@@ -34,6 +34,10 @@ public enum MessageTemplateKind
     /// <summary>Spec 2026-11-21: la plantilla de la factura de Siigo, hermana de <see cref="Order"/> con el PDF como encabezado de documento
     /// (se guarda por nombre: va al final).</summary>
     Invoice,
+
+    /// <summary>Support task notices: the WhatsApp notice that a ticket or internal task was assigned to a member, body only (stored by name:
+    /// it goes at the end).</summary>
+    TaskNotice,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -136,6 +140,11 @@ public static partial class MessageTemplateName
 
     public const string InvoicePrefix = "qep_factura_";
 
+    /// <summary>Support task notices: <c>qep_tarea_asignada</c> and its versions (<c>qep_tarea_asignada_v2</c>…).</summary>
+    public const string TaskNoticeName = "qep_tarea_asignada";
+
+    public const string TaskNoticePrefix = "qep_tarea_asignada_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
@@ -152,7 +161,9 @@ public static partial class MessageTemplateName
             || string.Equals(name, WholesaleInvitationNoticeName, StringComparison.Ordinal)
             || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal)
             || string.Equals(name, InvoiceName, StringComparison.Ordinal)
-            || name.StartsWith(InvoicePrefix, StringComparison.Ordinal));
+            || name.StartsWith(InvoicePrefix, StringComparison.Ordinal)
+            || string.Equals(name, TaskNoticeName, StringComparison.Ordinal)
+            || name.StartsWith(TaskNoticePrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -437,6 +448,18 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.WholesaleInvitationNotice;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Support task notices: the same as <see cref="AdoptAsWholesaleInvitationNotice"/> for a <c>qep_tarea_asignada</c> created in Meta's console.</summary>
+    public void AdoptAsTaskNotice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateTaskNoticeConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.TaskNotice;
         UpdatedAt = now;
     }
 
