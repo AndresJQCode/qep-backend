@@ -214,6 +214,8 @@ public static class MultiReplicaInventory
         new("Bootstrapper.Valkey.Sessions.MemorySessionCache", StateClassification.SharedWithLocalFallback,
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:107-114 — con Valkey:Areas:Sessions la entrada y la marca de revocación viven en qep:sess:*; apagada, en este MemoryCache"),
 
+        new("Bootstrapper.Valkey.LegalParameters.MemoryLegalParameterCache", StateClassification.PerPodByDesign,
+            "Bootstrapper/Valkey/LegalParameters/LegalParameterCacheRegistration.cs:37-41 — con Valkey:Areas:LegalParameters la tabla vive en qep:legalparams:{ver}; apagada, copia del pod con TTL de 60 s (decisión del spec 2026-11-22, «Caché»): el pod que escribe se invalida al instante y los demás sirven la tabla vieja a lo sumo 60 s, así que el área no es prerrequisito de más de una réplica"),
         new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
             "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
         new("Api.WebTelemetryMetrics", StateClassification.PerPodByDesign,

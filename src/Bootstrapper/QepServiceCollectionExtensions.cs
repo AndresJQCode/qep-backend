@@ -6,6 +6,7 @@ using Bootstrapper.Messaging;
 using Bootstrapper.Realtime;
 using Bootstrapper.Seeding;
 using Bootstrapper.Valkey;
+using Bootstrapper.Valkey.LegalParameters;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
@@ -1881,6 +1882,8 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddHrInfrastructure(configuration);
+        // Después de AddHrInfrastructure y no en AddQepValkey: envuelve el ILegalParameterSource que ésta registra (spec 2026-11-22).
+        services.AddLegalParameterCache(configuration);
         services.AddPayrollInfrastructure(configuration);
         services.AddSchedulingInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
@@ -2178,8 +2181,6 @@ public static class QepServiceCollectionExtensions
         // La consola de valores legales de Hr sabe qué nóminas ya se calcularon por este puerto (PayrollLayerTests.NoPayrollLayerReferencesHr):
         // Payroll expone sus períodos calculados y este adaptador los traduce al puerto de Hr.
         services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
-        // Provisional: hasta que el área de caché de valores legales se registre (Tarea 7), subir la versión no hace nada.
-        services.AddSingleton<Modules.Hr.Application.ILegalParameterCacheVersion, Bootstrapper.Valkey.LegalParameters.NullLegalParameterCacheVersion>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
         services.AddScoped<Modules.Payroll.Application.IPayrollMemberDirectory, PayrollMemberDirectory>();
