@@ -29,6 +29,14 @@ public sealed class MarkExitNotAttendedHandler(MedicalExamWrites writes, IValida
             ?? throw new HrDomainException(HrErrorCodes.MedicalExamNoPendingExit, "The employee has no pending exit exam.");
         pending.MarkNotAttended(command.Request.NotifiedOn!.Value, command.Request.Notes, context.Calendar.Today);
 
-        return await writes.CommitAsync(command.TenantId, context, cancellationToken);
+        return await writes.CommitAsync(
+            command.TenantId,
+            context,
+            HrActivityAction.ExitExamNotAttended,
+            ActivityChanges.ExitExamNotAttended(command.Request.NotifiedOn.Value),
+            HrAuditActions.MedicalExamExitNotAttended,
+            HrAuditActions.Resources.Employee,
+            context.Employee.Id.Value,
+            cancellationToken);
     }
 }

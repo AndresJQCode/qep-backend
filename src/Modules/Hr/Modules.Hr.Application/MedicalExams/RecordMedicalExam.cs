@@ -38,6 +38,14 @@ public sealed class RecordMedicalExamHandler(MedicalExamWrites writes, IValidato
             context.Calendar.UtcNow);
         writes.Add(context, exam);
 
-        return await writes.CommitAsync(command.TenantId, context, cancellationToken);
+        return await writes.CommitAsync(
+            command.TenantId,
+            context,
+            HrActivityAction.MedicalExamRecorded,
+            ActivityChanges.MedicalExamRecorded(exam.Type, exam.ExamDate, hasDocument: false),
+            HrAuditActions.MedicalExamCreated,
+            HrAuditActions.Resources.MedicalExam,
+            exam.Id.Value,
+            cancellationToken);
     }
 }

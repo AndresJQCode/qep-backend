@@ -29,6 +29,7 @@ public sealed class UpdateMedicalExamHandler(MedicalExamWrites writes, IValidato
 
         var type = Enum.Parse<MedicalExamType>(request.Type!);
         MedicalExamWrites.EnsureNotDuplicated(context, type, request.ExamDate!.Value, except: exam.Id);
+        var before = (exam.Type, exam.ExamDate, exam.DocumentFileId is not null);
         exam.Update(
             type,
             request.ExamDate.Value,
@@ -39,6 +40,14 @@ public sealed class UpdateMedicalExamHandler(MedicalExamWrites writes, IValidato
             request.RestrictionsUntil,
             context.Calendar.UtcNow);
 
-        return await writes.CommitAsync(command.TenantId, context, cancellationToken);
+        return await writes.CommitAsync(
+            command.TenantId,
+            context,
+            HrActivityAction.MedicalExamUpdated,
+            ActivityChanges.MedicalExamUpdated(before, (exam.Type, exam.ExamDate, exam.DocumentFileId is not null)),
+            HrAuditActions.MedicalExamUpdated,
+            HrAuditActions.Resources.MedicalExam,
+            exam.Id.Value,
+            cancellationToken);
     }
 }

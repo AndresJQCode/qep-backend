@@ -16,4 +16,8 @@ public enum HrActivityAction
     EmployeeDeactivated,
     EmployeeReincorporated,
     DocumentAttached,
+    MedicalExamRecorded,
+    MedicalExamUpdated,
+    MedicalExamDeleted,
+    ExitExamNotAttended,
 }

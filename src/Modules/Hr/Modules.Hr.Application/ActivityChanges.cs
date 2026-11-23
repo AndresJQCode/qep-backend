@@ -110,6 +110,28 @@ internal static class ActivityChanges
             .. AssignmentFields(null, next.Assignments[0], names),
         ]);
 
+    // Spec 2026-11-23 §10: type, date and whether there is a PDF; never restrictions, recommendations or the provider. None of these
+    // is marked sensitive: the whole Medical category is already hidden from whoever lacks hr.medical.read.
+    public static IReadOnlyList<ActivityChange> MedicalExamRecorded(MedicalExamType type, DateOnly date, bool hasDocument) => Collect([
+        Change("type", null, type),
+        Change("examDate", null, date),
+        Change("hasDocument", null, hasDocument)]);
+
+    public static IReadOnlyList<ActivityChange> MedicalExamUpdated(
+        (MedicalExamType Type, DateOnly Date, bool HasDocument) before, (MedicalExamType Type, DateOnly Date, bool HasDocument) after) => Collect([
+        Change("type", before.Type, after.Type),
+        Change("examDate", before.Date, after.Date),
+        Change("hasDocument", before.HasDocument, after.HasDocument)]);
+
+    public static IReadOnlyList<ActivityChange> MedicalExamDeleted(MedicalExamType type, DateOnly date, bool hasDocument) => Collect([
+        Change("type", type, null),
+        Change("examDate", date, null),
+        Change("hasDocument", hasDocument, null)]);
+
+    public static IReadOnlyList<ActivityChange> ExitExamNotAttended(DateOnly notifiedOn) => Collect([
+        Change("status", ExitExamStatus.Pending, ExitExamStatus.NotAttended),
+        Change("notifiedOn", null, notifiedOn)]);
+
     /// <param name="target">Qué se adjuntó: <c>contract</c>, <c>salary</c>, <c>assignment</c> o <c>renewal</c>.</param>
     public static IReadOnlyList<ActivityChange> DocumentAttached(string target, string? beforeFileName, string? afterFileName) => Collect([
         Change($"{target}Document", beforeFileName, afterFileName, sensitive: true)]);

@@ -24,6 +24,8 @@ public sealed class MedicalExamWrites(
     IEmployeeRepository employees,
     IMedicalExamRepository medicalExams,
     IHrUnitOfWork unitOfWork,
+    ActivityWriter activity,
+    IHrAuditPublisher auditPublisher,
     EmployeeMedicalExamsComposer composer)
 {
     public Task AuthorizeReadAsync(Guid tenantId, CancellationToken cancellationToken) => HrAuthorization.EnsureAsync(
@@ -65,13 +67,26 @@ public sealed class MedicalExamWrites(
         composer.ComposeAsync(tenantId, context.Employee, context.Exams, context.Requirements, context.Calendar.Today, cancellationToken);
 
     /// <summary>
-    /// After <b>every</b> write of exams the exit requirements are recalculated (spec §5.3) and saved in the same unit of work as
-    /// the write itself.
+    /// After <b>every</b> write of exams the exit requirements are recalculated (spec §5.3), and the activity entry and the audit
+    /// row are saved in the same unit of work as the write itself (spec §10). <paramref name="changes"/> only ever carries the type,
+    /// the date and whether there is a PDF, and the audit only the names of those fields: restrictions, recommendations and the
+    /// provider never leave the exam.
     /// </summary>
     public async Task<EmployeeMedicalExamsDto> CommitAsync(
-        Guid tenantId, MedicalExamContext context, CancellationToken cancellationToken)
+        Guid tenantId,
+        MedicalExamContext context,
+        HrActivityAction action,
+        IReadOnlyList<ActivityChange> changes,
+        string auditAction,
+        string auditResource,
+        Guid auditResourceId,
+        CancellationToken cancellationToken)
     {
         MedicalExamRules.Recalculate(context.Requirements, context.Exams);
+        await activity.AppendAsync(tenantId, context.Employee, action, HrActivityCategory.Medical, null, changes, cancellationToken);
+        HrSettingsSupport.PublishAudit(
+            auditPublisher, executionContext, tenantId, auditAction, auditResource, auditResourceId,
+            changes.Select(change => change.Field).ToList(), context.Calendar.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await ComposeAsync(tenantId, context, cancellationToken);

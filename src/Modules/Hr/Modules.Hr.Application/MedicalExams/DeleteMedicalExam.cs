@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Modules.Hr.Domain;
 
 namespace Modules.Hr.Application.MedicalExams;
 
@@ -22,6 +23,14 @@ public sealed class DeleteMedicalExamHandler(MedicalExamWrites writes)
         HrSettingsSupport.EnsureVersion(exam.Version, expectedVersion);
         writes.Remove(context, exam);
 
-        return await writes.CommitAsync(command.TenantId, context, cancellationToken);
+        return await writes.CommitAsync(
+            command.TenantId,
+            context,
+            HrActivityAction.MedicalExamDeleted,
+            ActivityChanges.MedicalExamDeleted(exam.Type, exam.ExamDate, exam.DocumentFileId is not null),
+            HrAuditActions.MedicalExamDeleted,
+            HrAuditActions.Resources.MedicalExam,
+            exam.Id.Value,
+            cancellationToken);
     }
 }

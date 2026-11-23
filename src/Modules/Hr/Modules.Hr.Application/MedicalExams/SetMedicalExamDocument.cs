@@ -25,9 +25,18 @@ public sealed class SetMedicalExamDocumentHandler(MedicalExamWrites writes, IHrD
         var context = await writes.LoadAsync(command.TenantId, command.EmployeeId, cancellationToken);
         var exam = MedicalExamWrites.Find(context, command.ExamId);
         var document = await HrDocumentAttachment.ResolveAsync(documents, command.TenantId, command.FileId, cancellationToken);
+        var hadDocument = exam.DocumentFileId is not null;
         exam.SetDocument(document?.FileId, context.Calendar.UtcNow);
 
-        return await writes.CommitAsync(command.TenantId, context, cancellationToken);
+        return await writes.CommitAsync(
+            command.TenantId,
+            context,
+            HrActivityAction.MedicalExamUpdated,
+            ActivityChanges.MedicalExamUpdated((exam.Type, exam.ExamDate, hadDocument), (exam.Type, exam.ExamDate, exam.DocumentFileId is not null)),
+            HrAuditActions.MedicalExamDocumentUpdated,
+            HrAuditActions.Resources.MedicalExam,
+            exam.Id.Value,
+            cancellationToken);
     }
 }
 
