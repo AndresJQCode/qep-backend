@@ -58,9 +58,3 @@ internal sealed class MemoryLegalParameterCacheVersion(MemoryLegalParameterCache
         return Task.CompletedTask;
     }
 }
-
-/// <summary>Sin caché que invalidar (pruebas): subir la versión no hace nada.</summary>
-internal sealed class NullLegalParameterCacheVersion : ILegalParameterCacheVersion
-{
-    public Task BumpAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-}
