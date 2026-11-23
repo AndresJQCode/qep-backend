@@ -1,0 +1,64 @@
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
+
+namespace Bootstrapper.UnitTests;
+
+/// <summary>
+/// Spec 2026-11-23 (medical exams) §5.5: the exit exam is due on the 5th business day strictly after the termination. Monday to
+/// Friday, minus the national holidays when the tenant country is Colombia (same rule as <c>SupportBusinessCalendar</c>).
+/// </summary>
+public sealed class HrBusinessCalendarSourceTests
+{
+    // 2026-11-16 is a Colombian holiday Monday.
+    private static readonly DateOnly Friday = new(2026, 11, 13);
+
+    [Fact]
+    public async Task AddBusinessDaysSkipsWeekendsAndColombianHolidays()
+    {
+        var tenant = Guid.CreateVersion7();
+        var colombia = new HrBusinessCalendarSource(new Directory("CO"));
+        var unitedStates = new HrBusinessCalendarSource(new Directory("US"));
+
+        Assert.Equal(new DateOnly(2026, 11, 17), await colombia.AddBusinessDaysAsync(tenant, Friday, 1, CancellationToken.None));
+        Assert.Equal(new DateOnly(2026, 11, 16), await unitedStates.AddBusinessDaysAsync(tenant, Friday, 1, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AddBusinessDaysFiveDaysCountsStrictlyAfterTheStart()
+    {
+        var calendar = new HrBusinessCalendarSource(new Directory("US"));
+
+        Assert.Equal(
+            new DateOnly(2026, 11, 20),
+            await calendar.AddBusinessDaysAsync(Guid.CreateVersion7(), Friday, 5, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AddBusinessDaysFailsForATenantWithoutRegionalSettings()
+    {
+        var calendar = new HrBusinessCalendarSource(new Directory(null));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            calendar.AddBusinessDaysAsync(Guid.CreateVersion7(), Friday, 5, CancellationToken.None));
+    }
+
+    private sealed class Directory(string? country) : ITenantDirectory
+    {
+        public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<TenantRegionalSettings?>(country is null
+                ? null
+                : new TenantRegionalSettings("America/Bogota", "dd/MM/yyyy", "COP", "es-CO", country));
+
+        public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+}

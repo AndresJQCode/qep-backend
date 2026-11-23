@@ -2404,6 +2404,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        services.AddScoped<Modules.Hr.Application.MedicalExams.IHrBusinessCalendar, HrBusinessCalendarSource>();
         // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
         services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();
         services.AddScoped<ISchedulingTenantDirectory, SchedulingTenantDirectory>();
@@ -2984,6 +2985,9 @@ public static class QepServiceCollectionExtensions
                 HrPermissions.ContractRead,
                 HrPermissions.ContractManage,
                 HrPermissions.SettingsManage,
+                // Spec 2026-11-23 (exámenes médicos): datos de salud; sólo admin los lleva de fábrica.
+                HrPermissions.MedicalRead,
+                HrPermissions.MedicalManage,
                 // Spec 2026-11-21 (nómina): los cuatro permisos ven plata; sólo admin los lleva de fábrica.
                 PayrollPermissions.PeriodRead,
                 PayrollPermissions.PeriodManage,
@@ -4203,6 +4207,27 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("hr.settings", "Configuración de RRHH", "manage"),
         });
+        // Spec 2026-11-23 (exámenes médicos): restricciones y recomendaciones son datos de salud (Ley 1581), así que ver la ficha no basta.
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.MedicalRead,
+            "Ver exámenes médicos",
+            "Permite ver los exámenes médicos ocupacionales de los empleados, con sus restricciones, recomendaciones y certificados.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.medical", "Exámenes médicos", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.MedicalManage,
+            "Gestionar exámenes médicos",
+            "Permite registrar, editar y eliminar exámenes médicos, adjuntar certificados, marcar egresos sin asistir e importar el historial.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.medical", "Exámenes médicos", "manage"),
+        });
         // Spec 2026-11-21 (nómina): con [payroll], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo
         // ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. Todos ven plata: riesgo alto.
         services.AddSingleton(new PermissionDefinition(
@@ -4842,6 +4867,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 HrPermissions.SettingsManage,
                 policy => AddPermissionRequirement(policy, HrPermissions.SettingsManage))
+            // Spec 2026-11-23 (exámenes médicos): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                HrPermissions.MedicalRead,
+                policy => AddPermissionRequirement(policy, HrPermissions.MedicalRead))
+            .AddPolicy(
+                HrPermissions.MedicalManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.MedicalManage))
             // Spec 2026-11-21 (nómina): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 PayrollPermissions.PeriodRead,

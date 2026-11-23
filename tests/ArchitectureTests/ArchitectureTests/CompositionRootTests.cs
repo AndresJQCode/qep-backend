@@ -374,7 +374,8 @@ public sealed class CompositionRootTests
         // + the four payroll.* permissions (spec 2026-11-21).
         // + los cinco de la Agenda (scheduling.*, spec 2026-11-21).
         // + los dos de parámetros legales del operador (operator.legal_parameters.read|manage, spec 2026-11-22).
-        Assert.Equal(112, PermissionConstants().Length);
+        // + the two hr.medical.* permissions (spec 2026-11-23).
+        Assert.Equal(114, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -949,9 +950,14 @@ public sealed class CompositionRootTests
             (HrPermissions.ContractRead, "hr.contract", "Contratos laborales", "read"),
             (HrPermissions.ContractManage, "hr.contract", "Contratos laborales", "manage"),
             (HrPermissions.SettingsManage, "hr.settings", "Configuración de RRHH", "manage"),
+            (HrPermissions.MedicalRead, "hr.medical", "Exámenes médicos", "read"),
+            (HrPermissions.MedicalManage, "hr.medical", "Exámenes médicos", "manage"),
         ];
         Assert.Equal(
-            ["hr.employee.read", "hr.employee.manage", "hr.contract.read", "hr.contract.manage", "hr.settings.manage"],
+            [
+                "hr.employee.read", "hr.employee.manage", "hr.contract.read", "hr.contract.manage", "hr.settings.manage",
+                "hr.medical.read", "hr.medical.manage",
+            ],
             expected.Select(row => row.Permission));
         foreach (var (permission, entity, entityLabel, action) in expected)
         {
