@@ -90,6 +90,28 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
+    public void DiscountedPriceKeepsTheSameValuesWithAFractionalQuantity()
+    {
+        var input = Order();
+        input = input with { Lines = [input.Lines[0] with { Quantity = 1.5m, Subtotal = 100000m, TaxAmount = 19000m }, input.Lines[1]] };
+
+        var baseDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.BaseWithDiscount)));
+        var discountedDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice)));
+        using var baseJson = Json(baseDraft);
+        using var discountedJson = Json(discountedDraft);
+        var baseItem = baseJson.RootElement.GetProperty("items")[0];
+        var discountedItem = discountedJson.RootElement.GetProperty("items")[0];
+
+        Assert.Equal(Net(baseItem), Net(discountedItem));
+        Assert.Equal(100000m, Net(discountedItem));
+        Assert.Equal(
+            baseItem.GetProperty("taxes")[0].GetProperty("id").GetInt32(),
+            discountedItem.GetProperty("taxes")[0].GetProperty("id").GetInt32());
+        Assert.Equal(baseDraft.Total, discountedDraft.Total);
+        Assert.Equal(PaymentsOf(baseJson), PaymentsOf(discountedJson));
+    }
+
+    [Fact]
     public void DiscountedPriceWithZeroQuantityDoesNotDivide()
     {
         var input = Order();
