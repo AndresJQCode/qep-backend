@@ -103,7 +103,13 @@ public static class LegalParameterRules
                 return $"Los límites del tramo {position} no pueden pasar de 99999.9999 SMMLV.";
             }
 
-            if (bracket.Rate is not (> 0m and <= 1m))
+            // Pasarse de 1 es casi siempre un «12» en vez de 12 %; cero o negativo no, y esa pista sería engañosa.
+            if (bracket.Rate > 1m)
+            {
+                return RateOutOfRangeMessage;
+            }
+
+            if (bracket.Rate <= 0m)
             {
                 return $"La tasa del tramo {position} tiene que estar entre 0 % y 100 %, sin incluir el 0 %.";
             }

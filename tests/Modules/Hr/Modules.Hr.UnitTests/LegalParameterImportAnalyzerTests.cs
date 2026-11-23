@@ -245,6 +245,23 @@ public sealed class LegalParameterImportAnalyzerTests
     }
 
     [Fact]
+    public async Task ABracketRateZeroDoesNotSuggestAMissingPercentFormat()
+    {
+        var world = new World();
+        world.Workbook = world.Workbook with
+        {
+            Brackets = world.Workbook.Brackets.Select(row => row.RowNumber == 3 ? row with { Rate = "0" } : row).ToList(),
+        };
+
+        var analysis = await world.AnalyzeAsync();
+
+        var set = analysis.Preview.Items.Single(item => item.Kind == "Brackets");
+        Assert.Equal(HrErrorCodes.LegalParameterImportRow.BracketsInvalid, set.Code);
+        Assert.NotEqual(LegalParameterRules.RateOutOfRangeMessage, set.Message);
+        Assert.Contains("sin incluir el 0 %", set.Message);
+    }
+
+    [Fact]
     public async Task UnknownKeyAndBadDateAreRowErrors()
     {
         var world = new World();

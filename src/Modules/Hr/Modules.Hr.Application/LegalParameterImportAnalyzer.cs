@@ -281,12 +281,6 @@ public sealed class LegalParameterImportAnalyzer(
 
         // Las filas pueden venir en cualquier orden: el conjunto se ordena por límite inferior antes de validarse.
         var sorted = inputs.OrderBy(input => input.LowerBound).ToList();
-        if (sorted.Any(input => input.Rate is not (> 0m and <= 1m)))
-        {
-            return new Entry(Error(
-                HrErrorCodes.LegalParameterImportRow.BracketsInvalid, LegalParameterRules.RateOutOfRangeMessage, key, date));
-        }
-
         if (LegalParameterRules.CheckBrackets(sorted) is { } message)
         {
             return new Entry(Error(HrErrorCodes.LegalParameterImportRow.BracketsInvalid, message, key, date));

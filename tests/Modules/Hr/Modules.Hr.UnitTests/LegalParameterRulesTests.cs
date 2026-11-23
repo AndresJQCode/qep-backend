@@ -21,6 +21,23 @@ public sealed class LegalParameterRulesTests
             LegalParameterRules.RateOutOfRangeMessage,
             LegalParameterRules.Check(LegalParameterKey.SundaySurchargeRate, decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture)));
 
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-0.04")]
+    public void ABracketRateAtOrBelowZeroDoesNotSuggestAMissingPercentFormat(string rate)
+    {
+        var message = LegalParameterRules.CheckBrackets(
+            [new(0m, 4m, 0.01m), new(4m, null, decimal.Parse(rate, System.Globalization.CultureInfo.InvariantCulture))]);
+
+        Assert.Equal("La tasa del tramo 2 tiene que estar entre 0 % y 100 %, sin incluir el 0 %.", message);
+    }
+
+    [Fact]
+    public void ABracketRateAboveOneSuggestsAMissingPercentFormat() =>
+        Assert.Equal(
+            LegalParameterRules.RateOutOfRangeMessage,
+            LegalParameterRules.CheckBrackets([new(0m, 4m, 0.01m), new(4m, null, 12m)]));
+
     [Fact]
     public void TheRateMessageIsTheOneTheSpecFixes() =>
         Assert.Equal(
