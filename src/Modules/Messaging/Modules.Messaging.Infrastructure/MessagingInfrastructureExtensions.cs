@@ -36,6 +36,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IInvoiceTemplateOutbound, InvoiceTemplateOutbound>();
         // Mayorista: el aviso por WhatsApp de una invitación de distribuidor, por el mismo núcleo que la plantilla de cobro.
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
+        // Support task notices: the assignment notice, through the same core as the wholesale invitation notice.
+        services.AddScoped<ITaskNoticeOutbound, TaskNoticeOutbound>();
         // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
         services.AddScoped<ISupportReplyOutbound, SupportReplyOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
