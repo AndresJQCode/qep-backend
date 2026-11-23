@@ -48,7 +48,7 @@ dejarlos fijos en el código.
   (`PayrollLegalValues.cs:48-81`), y `IntegralSalaryFloor` no está entre ellas: **nómina exige 26 claves escalares por año**, no 27.
   `IntegralSalaryFloor` lo usa sólo Hr (`SalaryRules`), que no caduca la tabla (D-8). **Los tramos `SolidarityFund` también son anuales para nómina** (decisión del owner 6,
   2026-11-22; spec `2026-11-22-nomina-decisiones-del-owner-design.md`): faltan si el conjunto vigente es de un año anterior al del
-  periodo. ❓ Si el aviso `nextYearMissing`/`currentYearMissing` los cubre lo decide el owner.
+  periodo. **Decidido por el owner (2026-11-22):** el aviso `nextYearMissing`/`currentYearMissing` los cubre.
   *(Corregido en la revisión: decía «27 claves escalares más los tramos, 28 cada enero».)* Qué cubre el aviso de «falta el año
   siguiente» es decisión del owner (ver «Pendiente del owner»).
 - La foto del periodo (`LegalValueSet`) incluye los tramos de solidaridad y la fecha con que se resolvió
@@ -162,7 +162,7 @@ Base `/api/v1/tenants/{tenantId}/operator/legal-parameters`, mismo estilo que un
 - **`nextYearMissing`** (corregido tras leer `PayrollLegalValues`): se prende cuando no hay fila con vigencia exactamente el 1 de
   enero del año siguiente: nómina marca faltante a una clave cuya fila vigente sea de un año anterior, y la primera quincena de
   enero resuelve con su `StartDate` (el día 1), que sólo se cubre con una fila de ese día. Las tres no anuales no lo llevan.
-  *Revisión:* las claves que nómina exige cada año son 26, no 27, y los tramos no son anuales para nómina (ver «Restricciones»);
+  *Revisión:* las claves que nómina exige cada año son 26, no 27 (ver «Restricciones»);
   **decidido por el owner (2026-11-22):** el aviso cubre esas 26 más `IntegralSalaryFloor` (27 claves, las que el DTO marca
   `yearly: true`). **Tramos `SolidarityFund`: re-decidido por el owner (2026-11-22), sí llevan aviso** — con la decisión 6 de
   nómina son anuales y un enero sin conjunto del año no liquida. El conjunto lleva `nextYearMissing` y `currentYearMissing` con la
@@ -207,12 +207,12 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
   "currentYear": 2026,
   "currentYearMissingCount": 0,   // siempre activo: claves anuales sin fila vigente del año en curso
   "nextYear": 2027,              // nextYearMissingCount vale 0 antes del 1 de diciembre
-  "nextYearMissingCount": 27,     // cuántas claves traen nextYearMissing (los tramos no); el navegador no cuenta
+  "nextYearMissingCount": 28,     // 27 claves más el conjunto de tramos; el navegador no cuenta
   "parameters": [                 // las 30, en el orden de LegalParameterKey
     {
       "key": "Smmlv",
-      "name": "Salario mínimo mensual legal vigente",  // ❓ ver «Nombres y grupos»
-      "group": "SalaryAndCaps",                        // ❓ ver «Nombres y grupos»
+      "name": "Salario mínimo mensual legal vigente",  // de LegalParameterLabels (Hr.Domain)
+      "group": "SalaryAndCaps",                        // de LegalParameterLabels (Hr.Domain)
       "unit": "Currency",          // Currency | Fraction | SmmlvMultiple | Hours | Flag
       "yearly": true,
       "nextYearMissing": true,
@@ -228,7 +228,8 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
     {
       "key": "SolidarityFund",
       "name": "Fondo de solidaridad pensional",
-      "nextYearMissing": false,    // ❓
+      "nextYearMissing": true,     // los tramos llevan aviso (re-decidido 2026-11-22, decisión 6 de nómina)
+      "currentYearMissing": false,
       "current": { "effectiveFrom": "2026-01-01" },
       "sets": [
         { "effectiveFrom": "2026-01-01", "inUse": false, "updatedAt": null,
@@ -245,18 +246,24 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
   *Mi decisión de revisor:* así el frontend escribe la respuesta en caché sin recomponer `inUse` ni `current`.
 - `GET /history?page=1&pageSize=50` responde `{ items, total, page, pageSize }`, como `OperatorHistoryPageDto` de Tenancy. Cada
   ítem: `{ id, key, effectiveFrom, action, oldValue, newValue, changedAt, changedBy: { subjectId, displayName }, source,
-  batchId, fileName }`. `oldValue`/`newValue` llegan como texto (número o JSON de tramos, tal cual la columna); ❓ si conviene
-  mandarlos ya tipados (`number` o lista de tramos) para que el frontend no parsee JSON.
+  batchId, fileName }`. **Valores tipados** (*decidido 2026-11-22*): cada ítem trae `kind`
+  (`Parameter | Brackets`); un `Parameter` lleva `oldValue`/`newValue` como `number` (nulos en «Creó» y «Borró»), y un `Brackets`
+  lleva `oldBrackets`/`newBrackets` como lista de tramos. El frontend nunca parsea JSON. En la base, las columnas son `jsonb`.
 - **Nombres y grupos:** la plantilla de Excel tiene columna `Nombre`, y la arma Hr.Infrastructure, que **no puede leer**
   `LegalBasis` (vive en `Modules.Payroll.Domain.Engine`; `HrLayerTests` prohíbe referenciar otro módulo de negocio). Así que los
   nombres en español tienen que vivir también en Hr (por ejemplo `LegalParameterLabels` en Hr.Domain) o pasar a
-  BuildingBlocks. Ya que existen en Hr, el `GET` los manda con el grupo y la unidad. Los grupos del mockup («Salario y topes»,
-  «Aportes», «Escalas por tramos») no existen en el código: ❓ el owner fija la lista y a qué grupo va cada clave.
+  BuildingBlocks. Ya que existen en Hr, el `GET` los manda con el grupo y la unidad. **Grupos decididos (2026-11-22):**
+  `SalaryAndCaps` (`Smmlv`, `IntegralSalaryFloor`, `TransportAllowanceCapSmmlv`, `ExonerationThresholdSmmlv`, `IbcCapSmmlv`,
+  `NonSalaryCapRate`), `Allowances` (`TransportAllowance`, `ConnectivityAllowanceSince`), `Contributions` (salud, pensión, alto
+  riesgo, ARL I-V, caja, ICBF, SENA), `Provisions` (cesantías, prima, vacaciones, intereses a las cesantías) y `WorkingTime`
+  (`WeeklyHours`, `SundaySurchargeRate`, `ExtraDayRate`, `ExtraNightRate`, `NightSurchargeRate`); los tramos van en su propia
+  sección. `LegalParameterLabels` es la **única** fuente de nombre, grupo y unidad; los nombres se copian de `LegalBasis` para que
+  la consola y el rastro de nómina digan lo mismo, y una prueba de Hr compara las dos listas de claves.
 
 ### Carga por Excel (el flujo de enero)
 
 Decisión del owner (2026-11-22): la investigación de los valores nuevos la hace él por fuera, arma un Excel y lo carga. **No
-hay copiloto ni IA en este spec.** Cada enero son 26 claves que nómina exige (27 con `IntegralSalaryFloor`; *corregido en la revisión*, decía 28): el Excel evita
+hay copiloto ni IA en este spec.** Cada enero son 26 claves que nómina exige más el conjunto de tramos (28 entradas con `IntegralSalaryFloor`): el Excel evita
 teclearlas una por una.
 
 Copia el patrón de la importación de empleados: tres rutas, un puerto de Aplicación para Excel (`IExcelLegalParameterImporter`)
@@ -307,8 +314,8 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
   ```
 
   `action` en inglés (`Create | Carry | Update | Unchanged | Error`), como los demás enums de la API; el español es del frontend.
-  `oldValue` es la fila que existía en esa misma `(clave, fecha)` (nula en `Create`); ❓ si el owner quiere ver «Antes» como el
-  valor **vigente** (lo que muestra el mockup), el backend manda los dos. `message` va en español para la persona, como en la
+  `oldValue` (*decidido 2026-11-22*) es el valor **vigente a esa fecha antes de aplicar** (lo que muestra el mockup): en `Update`
+  coincide con la fila de esa misma fecha, y en `Create` y `Carry` es la fila anterior. Nulo sólo si no había ninguna vigente. `message` va en español para la persona, como en la
   importación de empleados (`EmployeeImportRowIssueDto.Message`). `POST /import` responde `{ fileName, receivedAt, batchId,
   created, carried, updated, unchanged }` y el frontend relee el `GET`.
 - **Qué bloquea:** cualquier fila en `Error` (valor fuera de rango, fecha inválida, clave desconocida, tramos incoherentes, fila ya
@@ -334,7 +341,7 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
 ### Datos
 
 - Tabla nueva `hr.legal_parameter_changes`: `id`, `key`, `effective_from`, `action` (`Created|Updated|Deleted`),
-  `old_value`, `new_value` (texto: el número, o el JSON del conjunto de tramos), `changed_by` (miembro), `changed_by_name`, `changed_at`, `source` (`Manual|Excel`), `batch_id` (nulo en lo manual) y `file_name` (sólo Excel). Sólo inserta.
+  `old_value`, `new_value` (`jsonb`: el número, o el conjunto de tramos), `changed_by` (miembro), `changed_by_name`, `changed_at`, `source` (`Manual|Excel`), `batch_id` (nulo en lo manual) y `file_name` (sólo Excel). Sólo inserta.
   *Revisión:* `changed_by` es el `SubjectId` del usuario (`IExecutionContext.SubjectId`), no un miembro: el operador actúa desde el
   tenant operador y el registro es de la plataforma, sin `tenant_id`. El nombre se resuelve como en `ActivityWriter` (Hr) y se
   guarda en `changed_by_name`. `key` es `varchar(32)` como en las otras dos tablas (`SolidarityFund` cabe).
@@ -395,16 +402,17 @@ Backend primero (migración de `legal_parameter_changes` y columnas), luego fron
   vigencia libre (ya no el 1 de enero obligatorio).
 - Por decidir en la carga por Excel (mis decisiones, marcadas arriba): plantilla **precargada** con el valor vigente y el 1 de
   enero siguiente (el operador cambia sólo lo que cambió), y límites de 1 MB y 500 filas.
-- Las reglas de validación de los tramos (contiguos, primero desde 0 o más) son propuesta mía: el owner confirma que reflejan
-  cómo se publica el fondo de solidaridad.
+- ~~Reglas de validación de los tramos~~ **Cerrado (2026-11-22):** contiguos, el primero desde 0 o más, `upperBound` mayor que
+  `lowerBound` y vacío sólo en el último. Coincide con los datos sembrados (2025 y 2026: de 4 a 25 SMMLV, contiguos, el último con
+  tope 25).
 
 ### Agregado en la revisión (2026-11-22), en orden de importancia
 
-1. ~~Alcance de `nextYearMissing`~~ **Decidido (2026-11-22): las 26 que nómina exige más `IntegralSalaryFloor` = 27 claves;
-   los tramos sin aviso.** Planteamiento original: nómina exige 26 claves por año, no 27, y no exige tramos anuales. ¿El aviso cubre las 26,
+1. ~~Alcance de `nextYearMissing`~~ **Decidido (2026-11-22): las 26 que nómina exige más `IntegralSalaryFloor` = 27 claves,
+   más el conjunto de tramos = 28 entradas.** Planteamiento original: nómina exige 26 claves por año, no 27, y no exige tramos anuales. ¿El aviso cubre las 26,
    también `IntegralSalaryFloor` (anual de hecho, deriva del SMMLV) y/o los tramos? *Recomendación:* 26 + `IntegralSalaryFloor`;
-   tramos sin aviso. ❓ **Reabierto (2026-11-22)** para los tramos: la premisa («no exige tramos anuales») cambió con la
-   decisión 6 de nómina (spec `2026-11-22-nomina-decisiones-del-owner-design.md`).
+   tramos sin aviso. **Re-decidido (2026-11-22)** para los tramos: la premisa («no exige tramos anuales») cambió con la
+   decisión 6 de nómina (spec `2026-11-22-nomina-decisiones-del-owner-design.md`), y el owner aceptó que lleven aviso.
 2. ~~Desde cuándo se prende y el año en curso~~ **Decidido (2026-11-22):** `nextYearMissing` desde el 1 de diciembre, y
    `currentYearMissing` siempre activo, que es el que hace fallar la nómina de enero.
 3. ~~Vigencia retroactiva sobre una nómina calculada~~ **Decidido (2026-11-22): se rechaza con `in_use`.** De las nóminas
@@ -413,8 +421,13 @@ Backend primero (migración de `legal_parameter_changes` y columnas), luego fron
    aparte de `Crear` para las filas que repiten el valor.
 5. ~~TTL de 24 h con bump fallido~~ **Decidido (2026-11-22): TTL de 1 h** (opción A). Sin reintento del `INCR` ni borrado de la
    clave: el daño máximo de un bump fallido queda en 1 h.
-6. **Grupos y nombres** de la pantalla: la lista de grupos del mockup no existe en el código; el owner la fija.
-7. Historial con valores tipados (número o lista de tramos) o como texto.
+6. ~~Grupos y nombres~~ **Decidido (2026-11-22):** cinco grupos más tramos, en `LegalParameterLabels` (ver «Nombres y grupos»).
+7. ~~Historial tipado o texto~~ **Decidido (2026-11-22):** tipado (`kind` más número o lista de tramos), columnas `jsonb`.
+8. **«Antes» en la vista previa: decidido (2026-11-22)** el valor vigente a esa fecha.
+9. **Tasas en el Excel: decidido (2026-11-22).** Las celdas de tasa de la plantilla vienen con formato de porcentaje (`0.00%`):
+   el operador ve y teclea «12 %» y la celda guarda `0.12`, que es lo que lee el importador. Un valor mayor que 1 en una tasa
+   sigue siendo `Error`, con el mensaje «La tasa tiene que estar entre 0 % y 100 %. ¿Escribiste 12 en una celda sin formato de
+   porcentaje?». Así formulario y Excel muestran las tasas igual.
 
 ## Cambios de la revisión (2026-11-22)
 
