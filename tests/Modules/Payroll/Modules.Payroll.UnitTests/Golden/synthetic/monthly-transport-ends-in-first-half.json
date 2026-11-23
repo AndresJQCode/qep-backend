@@ -40,8 +40,8 @@
       { "code": "salary", "amount": 583635 },
       { "code": "transport_allowance", "amount": 83032 },
       { "code": "ibc", "amount": 583635 },
-      { "code": "health_employee", "amount": 23400 },
-      { "code": "pension_employee", "amount": 23400 },
+      { "code": "health_employee", "amount": 23345 },
+      { "code": "pension_employee", "amount": 23345 },
       { "code": "health_employer", "amount": 0 },
       { "code": "pension_employer", "amount": 70100 },
       { "code": "arl", "amount": 3100 },
@@ -53,14 +53,14 @@
       { "code": "premium", "amount": 55533 },
       { "code": "vacation", "amount": 24338 }
     ],
-    "net": 619867,
+    "net": 619977,
     "employerCost": 905338
   },
   "notes": [
     "días = 10 (1 al 10); finalSettlementPending = true (el contrato termina en la quincena)",
     "salary = 1 750 905 ÷ 30 × 10 = 583 635",
     "transport_allowance = round(249 095 ÷ 30 × 10 = 83031.67) = 83 032 (mensual, pero no hay segunda quincena: se paga lo causado)",
-    "ibc = piso 583 635; health_employee y pension_employee = techo100(23 345,4) = 23 400",
+    "ibc = piso 583 635; health_employee y pension_employee = al peso(23 345,4) = 23 345",
     "exonerado = true: health_employer, icbf y sena = 0",
     "pension_employer = techo100(70 036,2) = 70 100; arl = techo100(3 046,57) = 3 100; compensation_fund = 23 400",
     "provisiones sobre 666 667 (583 635 + 83 032): severance = round(55 533,36) = 55 533; severance_interest = round(6 666,67) = 6 667; premium = 55 533; vacation = round(583 635 × 0,0417 = 24 337,58) = 24 338",

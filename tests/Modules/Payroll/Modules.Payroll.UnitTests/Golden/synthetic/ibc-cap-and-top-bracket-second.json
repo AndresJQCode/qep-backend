@@ -58,8 +58,8 @@
       { "code": "salary", "amount": 25000000 },
       { "code": "transport_allowance", "amount": 0 },
       { "code": "ibc", "amount": 43772625 },
-      { "code": "health_employee", "amount": 751000 },
-      { "code": "pension_employee", "amount": 751000 },
+      { "code": "health_employee", "amount": 750905 },
+      { "code": "pension_employee", "amount": 750905 },
       { "code": "solidarity_fund", "amount": 375500 },
       { "code": "health_employer", "amount": 1595700 },
       { "code": "pension_employer", "amount": 2252800 },
@@ -72,7 +72,7 @@
       { "code": "premium", "amount": 2082500 },
       { "code": "vacation", "amount": 1042500 }
     ],
-    "net": 23122500,
+    "net": 23122690,
     "employerCost": 36654000
   },
   "notes": [
@@ -81,8 +81,8 @@
     "salary: SalaryRaw = 50 000 000 ÷ 30 × 15 = 25000000; salary = round(25000000 + 25000000) − 25000000 = 25 000 000",
     "transport_allowance = 0: ingreso para el tope 50 000 000 > 3 501 810 (2 × SMMLV)",
     "SalDev_m = 25000000 + 25000000 + 0 + 0 = 50000000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 1750905; tope 43772625; ibc = techo(50000000) = 43 772 625",
-    "health_employee = techo100(43 772 625 × 0,04 = 1750905) − 1000000 = 751 000",
-    "pension_employee = techo100(43 772 625 × 0,04) − 1000000 = 751 000",
+    "health_employee = al peso(43 772 625 × 0,04 = 1750905) − 1000000 = 750 905",
+    "pension_employee = al peso(43 772 625 × 0,04) − 1000000 = 750 905",
     "solidarity_fund: tramo por 25 SMMLV = 0.02; techo100(43 772 625 × 0.02) − 500000 = 375 500",
     "exonerado = false (empresa exonerada = true; ingreso salarial del mes 50 000 000 ≥ 17 509 050)",
     "health_employer = techo100(43 772 625 × 0,085) − 2125000 = 1 595 700",

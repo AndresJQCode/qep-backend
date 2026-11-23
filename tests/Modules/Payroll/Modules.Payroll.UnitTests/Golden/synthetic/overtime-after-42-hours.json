@@ -57,8 +57,8 @@
       { "code": "overtime:00000000-0000-0000-0001-000000000001", "amount": 125000 },
       { "code": "overtime:00000000-0000-0000-0001-000000000004", "amount": 72000 },
       { "code": "ibc", "amount": 1247000 },
-      { "code": "health_employee", "amount": 49900 },
-      { "code": "pension_employee", "amount": 49900 },
+      { "code": "health_employee", "amount": 49880 },
+      { "code": "pension_employee", "amount": 49880 },
       { "code": "health_employer", "amount": 0 },
       { "code": "pension_employer", "amount": 149700 },
       { "code": "arl", "amount": 6600 },
@@ -70,7 +70,7 @@
       { "code": "premium", "amount": 114250 },
       { "code": "vacation", "amount": 43785 }
     ],
-    "net": 1271748,
+    "net": 1271788,
     "employerCost": 1863748
   },
   "notes": [
@@ -81,8 +81,8 @@
     "overtime Recargo dominical y festivo = round(8 × 10000 × (0.9 = 0.9)) = 72 000",
     "transport_allowance = round(0 + 249 095 ÷ 30 × 15) − 0 = round(124547.5) − 0 = 124 548",
     "SalDev_m = 0 + 1050000 + 197000 + 0 = 1247000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(1247000) = 1 247 000",
-    "health_employee = techo100(1 247 000 × 0,04 = 49880) − 0 = 49 900",
-    "pension_employee = techo100(1 247 000 × 0,04) − 0 = 49 900",
+    "health_employee = al peso(1 247 000 × 0,04 = 49880) − 0 = 49 880",
+    "pension_employee = al peso(1 247 000 × 0,04) − 0 = 49 880",
     "solidarity_fund: ≈1.19938 SMMLV < 4 y sin retención previa ⇒ sin línea",
     "exonerado = true (empresa exonerada = true; ingreso salarial del mes 2 297 000 < 17 509 050)",
     "health_employer = 0 (exonerado)",
