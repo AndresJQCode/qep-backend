@@ -7,7 +7,7 @@ namespace BuildingBlocks.Domain.Pricing;
 /// es el mismo descuento en base sin IVA, el que guardan cotización y pedido.
 /// </summary>
 public readonly record struct VatIncludedLineAmounts(
-    decimal DiscountAmount, decimal TaxAmount, decimal Subtotal, decimal DiscountAmountWithoutTax = 0m)
+    decimal DiscountAmount, decimal TaxAmount, decimal Subtotal, decimal DiscountAmountWithoutTax)
 {
     /// <summary>Lo que se cobra por la línea, IVA adentro.</summary>
     public decimal LineTotal => Subtotal + TaxAmount;
