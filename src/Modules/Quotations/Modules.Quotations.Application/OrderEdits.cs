@@ -84,6 +84,10 @@ public interface IOrderEdits
 
     /// <summary>La fecha del pedido (spec 2026-11-16 §4). <b>Null es «no la toques»</b>, como <see cref="Shipping"/>.</summary>
     DateOnly? OrderDate { get; }
+
+    /// <summary>Los regalos del pedido (spec 2026-11-23). <b>Null es «no los toques»</b>, como <see cref="Shipping"/>: un
+    /// frontend viejo no los borra. Presente —también vacía— es la lista entera deseada, por variante.</summary>
+    IReadOnlyList<OrderItemAddition>? Gifts { get; }
 }
 
 /// <summary>Aplica el bloque <c>billing</c> de la edición al pedido. Lo comparten el guardado y el cálculo
@@ -427,6 +431,15 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
         RuleFor(edits => edits.Items)
             .Must(items => !HasDuplicates(items.Select(line => line.VariantId)))
             .WithMessage("La misma variante no puede aparecer más de una vez.");
+        RuleForEach(edits => edits.Gifts).ChildRules(gift =>
+        {
+            gift.RuleFor(line => line.VariantId).NotEmpty();
+            gift.RuleFor(line => line.Quantity).GreaterThan(0m);
+        }).When(edits => edits.Gifts is not null);
+        RuleFor(edits => edits.Gifts)
+            .Must(gifts => !HasDuplicates(gifts!.Select(line => line.VariantId)))
+            .WithMessage("La misma variante no puede ir más de una vez como regalo.")
+            .When(edits => edits.Gifts is not null);
 
         RuleForEach(edits => edits.Proofs.Add).ChildRules(addition =>
         {

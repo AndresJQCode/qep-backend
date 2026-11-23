@@ -23,7 +23,8 @@ public sealed record PreviewOrderEditsQuery(
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
     DateOnly? OrderDate = null,
-    Guid? BillingCompanyId = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    Guid? BillingCompanyId = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -80,6 +81,9 @@ public sealed class PreviewOrderEditsHandler(
         await OrderItemEdits.ApplyAsync(
             order, query.Items, pricingLookup, costLookup, wholesalePricing, query.TenantId, updatedBy, now, query.IsRetail,
             cancellationToken);
+        // Mismo orden que el guardado (spec 2026-11-23): los regalos después de las pagadas, y null no los toca.
+        await OrderGiftEdits.ApplyAsync(
+            order, query.Gifts, pricingLookup, costLookup, query.TenantId, updatedBy, now, cancellationToken);
         foreach (var proofId in query.Proofs.RemoveIds)
         {
             order.RemovePaymentProof(new OrderPaymentProofId(proofId), now);
