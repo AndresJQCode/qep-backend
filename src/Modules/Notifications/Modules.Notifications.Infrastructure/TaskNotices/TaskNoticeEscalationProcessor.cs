@@ -123,15 +123,15 @@ internal sealed partial class TaskNoticeEscalationProcessor(
             .Select(row => new { row.ReadAt, row.ResolvedAt })
             .SingleOrDefaultAsync(cancellationToken);
         var ticket = await state.FindAsync(escalation.TenantId, escalation.TicketId, cancellationToken);
-        var recipient = await recipients.FindAsync(escalation.TenantId, escalation.MemberId, cancellationToken);
 
         // An entry the retention already deleted takes its row with it (cascade), so a missing one here is a race: nothing left to say.
+        // Cheap checks first: a row that is skipped, or deferred because the member is connected (the common case for a connected member,
+        // every minute), never resolves the recipient, which is a call into another module.
         var skip = TaskNoticePolicy.SkipReason(
             entryRead: entry?.ReadAt is not null,
             entryResolved: entry is null || entry.ResolvedAt is not null,
             ticket,
-            escalation.MemberId,
-            recipient);
+            escalation.MemberId);
         if (skip is not null)
         {
             escalation.Skip(skip, now);
@@ -142,6 +142,16 @@ internal sealed partial class TaskNoticeEscalationProcessor(
         if (await IsConnectedAsync(escalation, cancellationToken))
         {
             escalation.Defer(now + TaskNoticePolicy.PresenceRecheck);
+            await dbContext.SaveChangesAsync(CancellationToken.None);
+            return;
+        }
+
+        // About to send: only now is the recipient resolved, and an inactive or missing member is skipped here.
+        var recipient = await recipients.FindAsync(escalation.TenantId, escalation.MemberId, cancellationToken);
+        var memberSkip = TaskNoticePolicy.MemberSkipReason(recipient);
+        if (memberSkip is not null)
+        {
+            escalation.Skip(memberSkip, now);
             await dbContext.SaveChangesAsync(CancellationToken.None);
             return;
         }

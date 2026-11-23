@@ -133,6 +133,44 @@ public sealed class SupportAssigneeEventsApiTests(ClockedSupportHost host) : ICl
     }
 
     [Fact]
+    public async Task CreatingACustomerTicketForSomeoneElsePublishesAssigned()
+    {
+        var world = await StartAsync();
+        var body = SupportTicketScenario.Body(await world.Manager.TypeIdAsync("Petición general"), assignee: world.AdvisorMember);
+
+        var created = await world.Manager.CreateAsync(body);
+
+        var id = SupportTicketScenario.Id(created);
+        var assigned = Assert.Single(await EventsAsync(world.Factory, Assigned, id));
+        Assert.Equal(world.AdvisorMember, assigned.GetProperty("assigneeMemberId").GetGuid());
+        Assert.Equal(world.Manager.CallerMemberId, assigned.GetProperty("assignedByMemberId").GetGuid());
+        Assert.Empty(await EventsAsync(world.Factory, TaskAssigned, id));
+    }
+
+    [Fact]
+    public async Task CreatingACustomerTicketForOneselfPublishesNoAssigned()
+    {
+        var world = await StartAsync();
+        var body = SupportTicketScenario.Body(await world.Manager.TypeIdAsync("Petición general"), assignee: world.Manager.CallerMemberId);
+
+        var created = await world.Manager.CreateAsync(body);
+
+        Assert.Empty(await EventsAsync(world.Factory, Assigned, SupportTicketScenario.Id(created)));
+    }
+
+    [Fact]
+    public async Task OpeningATicketFromAConversationForSomeoneElsePublishesAssigned()
+    {
+        var world = await StartAsync();
+        var conversation = await SupportMessagingSeed.SeedConversationAsync(world.Factory, world.TenantId);
+
+        var created = await world.Manager.CreateFromConversationAsync(conversation, assignee: world.AdvisorMember);
+
+        var assigned = Assert.Single(await EventsAsync(world.Factory, Assigned, SupportTicketScenario.Id(created)));
+        Assert.Equal(world.AdvisorMember, assigned.GetProperty("assigneeMemberId").GetGuid());
+    }
+
+    [Fact]
     public async Task AssigningATaskStillPublishesTaskAssignedOnly()
     {
         var world = await StartAsync();

@@ -4,6 +4,7 @@ using BuildingBlocks.Application.Realtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Notifications.Application;
 using Modules.Notifications.Infrastructure.TaskNotices;
 using Npgsql;
@@ -57,6 +58,69 @@ public sealed class TaskNoticeEscalationTests
         Assert.Equal("[]", state.ChannelAttempts.GetRawText());
         Assert.Empty(rig.WhatsApp.Sends);
         Assert.Empty(rig.Email.Sent);
+    }
+
+    // The cheap checks and the presence come before the recipient: a connected member is asked about every minute and must cost nothing.
+    [Fact]
+    public async Task AConnectedMemberIsDeferredWithoutResolvingTheRecipient()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Presence.Connected = true;
+        await rig.SeedAsync();
+
+        await rig.RunAsync(T0);
+
+        Assert.Equal(0, rig.Recipients.Calls);
+    }
+
+    [Fact]
+    public async Task ASkippedRowIsSkippedWithoutResolvingTheRecipient()
+    {
+        await using var rig = await Rig.StartAsync();
+        var row = await rig.SeedAsync(readAt: T0.AddMinutes(-5));
+
+        await rig.RunAsync(T0);
+
+        Assert.Equal("read", (await rig.ReadAsync(row.EscalationId)).SkipReason);
+        Assert.Equal(0, rig.Recipients.Calls);
+    }
+
+    [Fact]
+    public async Task AnInactiveMemberIsSkippedOnceDisconnected()
+    {
+        await using var rig = await Rig.StartAsync();
+        var row = await rig.SeedAsync();
+        rig.Recipients.Members[row.MemberId] = rig.Recipient with { IsActive = false };
+
+        await rig.RunAsync(T0);
+
+        var state = await rig.ReadAsync(row.EscalationId);
+        Assert.Equal("Skipped", state.Status);
+        Assert.Equal("member_inactive", state.SkipReason);
+        Assert.Empty(rig.WhatsApp.Sends);
+        Assert.Empty(rig.Email.Sent);
+    }
+
+    // 25 due rows of connected members: the first pass claims 20 and defers them a minute; without a second pass in the same tick the
+    // other 5 would wait for the next minute, and so on for as long as the first ones keep being deferred.
+    [Fact]
+    public async Task AFullBatchIsFollowedByAnotherPassInTheSameTick()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Presence.Connected = true;
+        var rows = new List<SeededRow>();
+        for (var index = 0; index < TaskNoticeEscalationProcessor.BatchSize + 5; index++)
+        {
+            rows.Add(await rig.SeedAsync(dueAt: T0.AddMinutes(-30).AddSeconds(index)));
+        }
+
+        await rig.TickAsync();
+
+        foreach (var row in rows)
+        {
+            var state = await rig.ReadAsync(row.EscalationId);
+            Assert.True(state.DueAt > T0, $"Row {row.EscalationId} was never looked at in the tick.");
+        }
     }
 
     [Fact]
@@ -468,10 +532,18 @@ public sealed class TaskNoticeEscalationTests
 
     private sealed class FakeRecipients : ITaskNoticeRecipients
     {
+        private int _calls;
+
         public ConcurrentDictionary<Guid, TaskNoticeRecipient> Members { get; } = new();
 
-        public Task<TaskNoticeRecipient?> FindAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) =>
-            Task.FromResult(Members.GetValueOrDefault(memberId));
+        /// <summary>How many times the processor resolved a recipient: the deferral and the cheap skips must not.</summary>
+        public int Calls => Volatile.Read(ref _calls);
+
+        public Task<TaskNoticeRecipient?> FindAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            return Task.FromResult(Members.GetValueOrDefault(memberId));
+        }
     }
 
     private sealed class FakePresence : ITaskNoticePresence
@@ -627,6 +699,12 @@ public sealed class TaskNoticeEscalationTests
             Recipients.Members[member] = Recipient;
             return row;
         }
+
+        /// <summary>One tick of the real worker (several passes, the clock of the host), as opposed to <see cref="RunAsync"/>.</summary>
+        public Task TickAsync() =>
+            new TaskNoticeEscalationWorker(
+                _factory.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<TaskNoticeEscalationWorker>.Instance)
+                .TickAsync(Ct);
 
         public async Task<int> RunAsync(DateTimeOffset now)
         {

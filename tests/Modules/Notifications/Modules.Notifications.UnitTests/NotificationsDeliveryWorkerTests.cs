@@ -8,6 +8,7 @@ using Modules.Notifications.Infrastructure;
 using Modules.Notifications.Infrastructure.InApp;
 using Modules.Notifications.Infrastructure.Messaging;
 using Modules.Notifications.Infrastructure.Persistence;
+using Modules.Notifications.Infrastructure.TaskNotices;
 
 namespace Modules.Notifications.UnitTests;
 
@@ -96,11 +97,12 @@ public sealed class NotificationsDeliveryWorkerTests
             .Build();
         var services = new ServiceCollection().AddNotificationsInfrastructure(configuration);
 
-        // One loop for every consumer (emails and the bell's); the only other hosted service is the bell's hourly retention.
+        // One loop for every consumer (emails and the bell's); the only other hosted services are the bell's hourly retention and the task notice escalation (every minute).
         var hosted = services.Where(descriptor => descriptor.ServiceType == typeof(IHostedService)).ToList();
         Assert.Single(hosted, descriptor => descriptor.ImplementationType == typeof(NotificationsDeliveryWorker));
         Assert.Single(hosted, descriptor => descriptor.ImplementationType == typeof(InAppNotificationRetentionWorker));
-        Assert.Equal(2, hosted.Count);
+        Assert.Single(hosted, descriptor => descriptor.ImplementationType == typeof(TaskNoticeEscalationWorker));
+        Assert.Equal(3, hosted.Count);
         // 14 con la invitación de mayorista (spec 2026-11-17); 15 con el código de correo y 17 con los dos avisos de correo
         // cambiado del distribuidor (spec 2026-11-19).
         Assert.Equal(17, services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)
