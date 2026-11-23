@@ -1,0 +1,148 @@
+using System.Text.Json.Nodes;
+using Modules.Ai.Application;
+using Modules.Ai.Domain;
+using Modules.Ai.Infrastructure.Seed;
+using Modules.Tenancy.Domain;
+
+namespace Modules.Ai.UnitTests;
+
+/// <summary>
+/// Spec 2026-11-23 §3 y §6: las plantillas de agente del sistema son JSON embebidos que se leen una vez al arrancar. Un archivo roto
+/// tumba el host (no deja un agente con un valor por defecto en silencio), y cada plantilla real tiene que poder publicarse apenas el
+/// tenant elija lo que le toca: proveedor y modelo, conexiones y miembro del traspaso. Copia de <c>SystemTemplatesTests</c> de Automations.
+/// </summary>
+public sealed class SystemAgentTemplatesTests
+{
+    // Perezoso a propósito: un inicializador estático que lanza tumbaría también las pruebas con archivos en memoria de esta clase.
+    private static readonly Lazy<SystemAgentTemplateCatalog> Real = new(() => new SystemAgentTemplateCatalog());
+
+    private static readonly AgentModelRef DefaultModel = new("anthropic", "claude-opus-5-5");
+
+    private static SystemAgentTemplateCatalog Catalog => Real.Value;
+
+    private static JsonObject Valid(string id = "prueba") => new()
+    {
+        ["id"] = id,
+        ["name"] = "Prueba",
+        ["description"] = "Una plantilla de prueba.",
+        ["requires"] = new JsonArray("scheduling"),
+        ["config"] = new JsonObject
+        {
+            ["instructions"] = "Atiende a los clientes.",
+            ["tone"] = "friendly",
+            ["greeting"] = null,
+            ["faq"] = new JsonArray(),
+            ["useQuickReplies"] = false,
+            ["answerOnlyFromSources"] = true,
+            ["tools"] = new JsonObject { ["catalog"] = false, ["orderStatus"] = false, ["quotationDraft"] = false, ["scheduling"] = true },
+            ["handoff"] = new JsonObject
+            {
+                ["destination"] = "unassigned",
+                ["memberId"] = null,
+                ["message"] = null,
+                ["maxRepliesWithoutHuman"] = 20,
+                ["maxConsecutiveFailures"] = 2,
+            },
+            ["trigger"] = "NewConversation",
+        },
+    };
+
+    private static (string ResourceName, string Json) File(JsonObject json, string? fileId = null) =>
+        ($"Modules.Ai.Infrastructure.Seed.AgentTemplates.{fileId ?? json["id"]!.GetValue<string>()}.json", json.ToJsonString());
+
+    [Fact]
+    public void AValidFileLoadsWithItsModulesAndItsConfig()
+    {
+        var catalog = new SystemAgentTemplateCatalog([File(Valid())]);
+
+        Assert.Single(catalog.All);
+        var template = catalog.Find("prueba")!;
+        Assert.Equal([TenantModuleKeys.Scheduling], template.Requires);
+        var config = template.ConfigFor(new AgentModelRef("anthropic", "claude-opus-5-5"));
+        Assert.True(config.Tools.Scheduling);
+        Assert.Equal("claude-opus-5-5", config.Model.Id);
+        Assert.Null(catalog.Find("otra"));
+    }
+
+    [Fact]
+    public void ACatalogWithoutTemplateResourcesDoesNotStart()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => new SystemAgentTemplateCatalog(typeof(SystemAgentTemplatesTests).Assembly));
+
+        Assert.Contains("No hay plantillas de agente del sistema", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("not-json", "no se puede leer")]
+    [InlineData("missing-config", "Falta «config»")]
+    [InlineData("id-not-kebab", "kebab-case")]
+    [InlineData("id-not-file-name", "kebab-case")]
+    [InlineData("duplicate-id", "dos plantillas")]
+    [InlineData("name-too-long", "«name»")]
+    [InlineData("unknown-module", "«agenda», que no existe")]
+    [InlineData("repeated-module", "repite el módulo")]
+    [InlineData("config-with-model", "«model»")]
+    [InlineData("config-with-quotation-draft", "«quotationDraft»")]
+    [InlineData("config-with-member", "«handoff.memberId»")]
+    [InlineData("unknown-config-property", "no se puede leer")]
+    public void ABrokenTemplateDoesNotStart(string mutation, string fragment)
+    {
+        var json = Valid();
+        var files = new List<(string, string)>();
+        switch (mutation)
+        {
+            case "not-json":
+                files.Add(("Modules.Ai.Infrastructure.Seed.AgentTemplates.prueba.json", "{"));
+                break;
+            case "missing-config":
+                json.Remove("config");
+                files.Add(File(json));
+                break;
+            case "id-not-kebab":
+                json["id"] = "Prueba_1";
+                files.Add(File(json));
+                break;
+            case "id-not-file-name":
+                files.Add(File(json, fileId: "otra"));
+                break;
+            case "duplicate-id":
+                files.Add(File(json));
+                files.Add(File(Valid()));
+                break;
+            case "name-too-long":
+                json["name"] = new string('a', 81);
+                files.Add(File(json));
+                break;
+            case "unknown-module":
+                json["requires"] = new JsonArray("agenda");
+                files.Add(File(json));
+                break;
+            case "repeated-module":
+                json["requires"] = new JsonArray("scheduling", "scheduling");
+                files.Add(File(json));
+                break;
+            case "config-with-model":
+                json["config"]!["model"] = new JsonObject { ["provider"] = "anthropic", ["id"] = "x" };
+                files.Add(File(json));
+                break;
+            case "config-with-quotation-draft":
+                json["config"]!["quotationDraft"] = new JsonObject { ["advisorMemberId"] = Guid.NewGuid(), ["billingAccount"] = null };
+                files.Add(File(json));
+                break;
+            case "config-with-member":
+                json["config"]!["handoff"]!["memberId"] = Guid.NewGuid();
+                files.Add(File(json));
+                break;
+            case "unknown-config-property":
+                json["config"]!["answerOnlyFromSource"] = true;
+                files.Add(File(json));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mutation));
+        }
+
+        var error = Assert.Throws<InvalidOperationException>(() => new SystemAgentTemplateCatalog(files));
+
+        Assert.Contains(fragment, error.Message, StringComparison.Ordinal);
+    }
+}
