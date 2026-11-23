@@ -51,15 +51,21 @@ internal sealed partial class TaskNoticeEscalationProcessor(
     [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Task notice {EscalationId} could not resolve the assigner name; the email goes without it.")]
     private static partial void LogNameFailed(ILogger logger, Guid escalationId, Exception exception);
 
+    [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "Task notice {EscalationId} WhatsApp send threw; falling back to email.")]
+    private static partial void LogWhatsAppFailed(ILogger logger, Guid escalationId, Exception exception);
+
     /// <returns>How many rows this pass claimed. Internal for the tests.</returns>
     internal async Task<int> RunAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var claimed = await ClaimAsync(now, cancellationToken);
+        // The lease end doubles as this pass's ownership token: a replica that takes a row over after the lease expired writes its own
+        // value, and the token check before sending sees it. Truncated to microseconds, the precision Postgres stores, so it compares.
+        var leaseEnd = ToMicroseconds((now + Lease).ToUniversalTime());
+        var claimed = await ClaimAsync(now, leaseEnd, cancellationToken);
         foreach (var id in claimed)
         {
             try
             {
-                await ProcessAsync(id, now, cancellationToken);
+                await ProcessAsync(id, now, leaseEnd, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -79,10 +85,9 @@ internal sealed partial class TaskNoticeEscalationProcessor(
     }
 
     // The attempt is counted at claim time, so a row that crashes the worker every time cannot loop forever.
-    private async Task<IReadOnlyList<Guid>> ClaimAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<Guid>> ClaimAsync(DateTimeOffset now, DateTimeOffset leaseEnd, CancellationToken cancellationToken)
     {
         var utcNow = now.ToUniversalTime();
-        var leaseEnd = (now + Lease).ToUniversalTime();
         return await dbContext.Database
             .SqlQuery<Guid>(
                 $"""
@@ -95,9 +100,16 @@ internal sealed partial class TaskNoticeEscalationProcessor(
             .ToListAsync(cancellationToken);
     }
 
-    private async Task ProcessAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task ProcessAsync(Guid id, DateTimeOffset now, DateTimeOffset leaseEnd, CancellationToken cancellationToken)
     {
         var escalation = await dbContext.TaskNoticeEscalations.SingleAsync(row => row.Id == id, cancellationToken);
+        // A batch is processed one row at a time; by the time this row's turn comes its lease may have expired and another replica may
+        // have taken it (or finished it). Whatever this pass would write then would overwrite that replica's work.
+        if (escalation.Status != TaskNoticeEscalationStatus.Pending || escalation.ClaimedUntil != leaseEnd)
+        {
+            return;
+        }
+
         if (escalation.Attempts > MaxAttempts)
         {
             escalation.Fail(TaskNoticeSkipReasons.AttemptsExhausted, now);
@@ -134,9 +146,32 @@ internal sealed partial class TaskNoticeEscalationProcessor(
             return;
         }
 
+        // The checks above read other modules and can take a while: confirm the row is still this pass's, and push the lease forward in
+        // the same statement, right before sending. The email has no idempotency key, so this is what keeps a slow pass from mailing a
+        // member twice when another replica took the row over meanwhile.
+        if (!await RenewOwnershipAsync(escalation.Id, leaseEnd, cancellationToken))
+        {
+            return;
+        }
+
         await SendAsync(escalation, ticket!, recipient!, now, cancellationToken);
         await dbContext.SaveChangesAsync(CancellationToken.None);
     }
+
+    private async Task<bool> RenewOwnershipAsync(Guid id, DateTimeOffset leaseEnd, CancellationToken cancellationToken)
+    {
+        var renewed = leaseEnd + Lease;
+        var affected = await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE notifications.task_notice_escalations SET claimed_until = {renewed}
+            WHERE id = {id} AND status = 'Pending' AND claimed_until = {leaseEnd}
+            """,
+            cancellationToken);
+        return affected == 1;
+    }
+
+    private static DateTimeOffset ToMicroseconds(DateTimeOffset value) =>
+        new(value.UtcTicks - (value.UtcTicks % 10), TimeSpan.Zero);
 
     private async Task<bool> IsConnectedAsync(TaskNoticeEscalation escalation, CancellationToken cancellationToken)
     {
@@ -162,16 +197,32 @@ internal sealed partial class TaskNoticeEscalationProcessor(
     {
         if (TaskNoticePolicy.Route(ticket.WhatsAppConnectionId, recipient.PhoneE164) is TaskNoticeRoute.WhatsApp route)
         {
-            var result = await whatsApp.SendAsync(
-                new TaskNoticeWhatsAppSend(
-                    escalation.TenantId,
-                    route.ConnectionId,
-                    escalation.AssignedByMemberId,
-                    ClientId: escalation.Id,
-                    route.PhoneE164,
-                    recipient.DisplayName,
-                    ticket.TicketNumber),
-                cancellationToken);
+            TaskNoticeWhatsAppResult result;
+            try
+            {
+                result = await whatsApp.SendAsync(
+                    new TaskNoticeWhatsAppSend(
+                        escalation.TenantId,
+                        route.ConnectionId,
+                        escalation.AssignedByMemberId,
+                        ClientId: escalation.Id,
+                        route.PhoneE164,
+                        recipient.DisplayName,
+                        ticket.TicketNumber),
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // A WhatsApp path that throws (Meta down, a database error inside Messaging) is a failed channel like any other: the
+                // member still gets the email. Letting it escape would only retry WhatsApp until the attempts run out.
+                LogWhatsAppFailed(logger, escalation.Id, exception);
+                result = new TaskNoticeWhatsAppResult.Failed("send_failed:exception");
+            }
+
             switch (result)
             {
                 case TaskNoticeWhatsAppResult.Sent:

@@ -376,6 +376,57 @@ public sealed class TaskNoticeEscalationTests
         Assert.Equal("Whatsapp", (await rig.ReadAsync(row.EscalationId)).Status);
     }
 
+    [Fact]
+    public async Task ARowTakenOverByAnotherReplicaMidPassIsNotSent()
+    {
+        await using var rig = await Rig.StartAsync();
+        var row = await rig.SeedAsync();
+        var otherReplicaLease = T0.AddMinutes(30);
+        // This pass's lease expired while it was busy and another replica claimed the row with its own lease.
+        rig.State.DuringRead = () => rig.ExecuteAsync(
+            $"UPDATE notifications.task_notice_escalations SET claimed_until = '{otherReplicaLease:O}' WHERE id = '{row.EscalationId}'");
+
+        await rig.RunAsync(T0);
+
+        Assert.Empty(rig.WhatsApp.Sends);
+        Assert.Empty(rig.Email.Sent);
+        var state = await rig.ReadAsync(row.EscalationId);
+        Assert.Equal("Pending", state.Status);
+        Assert.Equal(otherReplicaLease, state.ClaimedUntil);
+    }
+
+    [Fact]
+    public async Task ARowFinishedByAnotherReplicaMidPassIsLeftAlone()
+    {
+        await using var rig = await Rig.StartAsync();
+        var row = await rig.SeedAsync();
+        rig.State.DuringRead = () => rig.ExecuteAsync(
+            $"UPDATE notifications.task_notice_escalations SET status = 'Email', claimed_until = NULL WHERE id = '{row.EscalationId}'");
+
+        await rig.RunAsync(T0);
+
+        Assert.Empty(rig.WhatsApp.Sends);
+        Assert.Empty(rig.Email.Sent);
+        Assert.Equal("Email", (await rig.ReadAsync(row.EscalationId)).Status);
+    }
+
+    [Fact]
+    public async Task AWhatsAppThatThrowsFallsBackToEmail()
+    {
+        await using var rig = await Rig.StartAsync();
+        var row = await rig.SeedAsync();
+        rig.WhatsApp.Throws = true;
+
+        await rig.RunAsync(T0);
+
+        var state = await rig.ReadAsync(row.EscalationId);
+        Assert.Equal("Email", state.Status);
+        var attempts = state.ChannelAttempts.EnumerateArray().ToList();
+        Assert.Equal("send_failed:exception", attempts[0].GetProperty("result").GetString());
+        Assert.Equal("sent", attempts[1].GetProperty("result").GetString());
+        Assert.Single(rig.Email.Sent);
+    }
+
     private static async Task AssertSkippedAsync(Rig rig, SeededRow row, string reason)
     {
         var state = await rig.ReadAsync(row.EscalationId);
@@ -396,10 +447,23 @@ public sealed class TaskNoticeEscalationTests
 
         public Guid? ThrowForTenant { get; set; }
 
-        public Task<TaskNoticeTicket?> FindAsync(Guid tenantId, Guid ticketId, CancellationToken cancellationToken) =>
-            tenantId == ThrowForTenant
-                ? throw new InvalidOperationException("The ticket read failed.")
-                : Task.FromResult(Tickets.GetValueOrDefault(ticketId));
+        /// <summary>Runs while the processor is between its checks and the send: lets a test act as another replica meanwhile.</summary>
+        public Func<Task>? DuringRead { get; set; }
+
+        public async Task<TaskNoticeTicket?> FindAsync(Guid tenantId, Guid ticketId, CancellationToken cancellationToken)
+        {
+            if (tenantId == ThrowForTenant)
+            {
+                throw new InvalidOperationException("The ticket read failed.");
+            }
+
+            if (DuringRead is { } during)
+            {
+                await during();
+            }
+
+            return Tickets.GetValueOrDefault(ticketId);
+        }
     }
 
     private sealed class FakeRecipients : ITaskNoticeRecipients
@@ -430,6 +494,8 @@ public sealed class TaskNoticeEscalationTests
 
         public TimeSpan Delay { get; set; }
 
+        public bool Throws { get; set; }
+
         public async Task<TaskNoticeWhatsAppResult> SendAsync(TaskNoticeWhatsAppSend send, CancellationToken cancellationToken)
         {
             _sends.Enqueue(send);
@@ -438,7 +504,7 @@ public sealed class TaskNoticeEscalationTests
                 await Task.Delay(Delay, cancellationToken);
             }
 
-            return Next;
+            return Throws ? throw new InvalidOperationException("Meta is down.") : Next;
         }
     }
 
