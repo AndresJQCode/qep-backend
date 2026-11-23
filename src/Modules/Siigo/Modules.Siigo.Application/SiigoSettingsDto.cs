@@ -40,7 +40,8 @@ public sealed record SiigoDocumentDto(
     bool SendToDian,
     bool SendMail,
     bool FreightSeparateInvoice,
-    string? FreightProductCode);
+    string? FreightProductCode,
+    string PriceMode);
 
 /// <summary>El paso «Impuestos y retenciones»: el IVA por porcentaje y las retenciones de la empresa, cada uno con su impuesto de
 /// Siigo (<c>null</c> es «sin vincular»).</summary>

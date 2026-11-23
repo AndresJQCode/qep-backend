@@ -25,6 +25,18 @@ public sealed class SiigoSettingsSellersDtoTests
         Assert.Equal(2, dto.Sellers!.Count);
     }
 
+    [Fact]
+    public async Task TheDocumentStepCarriesThePriceModeByItsEnumName()
+    {
+        var settings = SiigoSettings.Create(Guid.CreateVersion7(), Guid.CreateVersion7());
+        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", null, null, false, false, false, null, SiigoPriceMode.DiscountedPrice));
+
+        var dto = await SiigoSettingsSupport.ToDtoAsync(
+            settings, new SiigoConnectionInfo(settings.ConnectionId, "Siigo", "Active"), new FakeCompanies(), new FakeTaxRates(), new FakeMembers([]), CancellationToken.None);
+
+        Assert.Equal("DiscountedPrice", dto.Document.PriceMode);
+    }
+
     private sealed class FakeMembers(IReadOnlyList<SiigoMemberRef> roster) : ISiigoMemberDirectory
     {
         public Task<IReadOnlyList<SiigoMemberRef>> ListAsync(Guid tenantId, IReadOnlyCollection<Guid> alsoInclude, CancellationToken cancellationToken) =>

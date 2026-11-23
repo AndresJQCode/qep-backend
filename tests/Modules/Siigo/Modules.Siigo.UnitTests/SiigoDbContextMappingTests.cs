@@ -26,6 +26,19 @@ public sealed class SiigoDbContextMappingTests
     }
 
     [Fact]
+    public void ThePriceModeIsTextNotNullWithTheBaseWithDiscountDefault()
+    {
+        using var context = new SiigoDbContextFactory().CreateDbContext([]);
+
+        var property = context.Model.FindEntityType(typeof(SiigoSettings))!.FindProperty(nameof(SiigoSettings.PriceMode))!;
+
+        Assert.Equal("price_mode", property.GetColumnName());
+        Assert.False(property.IsNullable);
+        Assert.Equal(typeof(string), property.GetProviderClrType());
+        Assert.Equal(SiigoPriceMode.BaseWithDiscount, property.GetDefaultValue());
+    }
+
+    [Fact]
     public void TheSellerColumnIsNoLongerMapped()
     {
         using var context = new SiigoDbContextFactory().CreateDbContext([]);
