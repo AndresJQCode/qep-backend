@@ -7,7 +7,7 @@
 
 ## Estado y traspaso (2026-11-21)
 
-Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A, B y C (Tareas 1 a 10).** Falta el Bloque D.
+Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A, B y C (Tareas 1 a 10) y la Tarea 11.** Faltan las Tareas 12 y 13.
 
 | Tarea | Estado | Commit |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. *
 | 8 Franjas, sesiones publicadas, bloqueos | Hecha | `42a3d4d0f` |
 | 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Hecha (sin correr `dotnet test`: orden del owner) | `c083fc0c2`, `c7abf6da6`, `714679456` |
 | 10 Calendario y escritorio (lecturas BFF) | Hecha (sin correr `dotnet test`: orden del owner) | `e53a4e10b` |
-| 11 Clientes: fusión y borrado | Por hacer | |
+| 11 Clientes: fusión y borrado | Hecha (sin correr `dotnet test`: orden del owner), más el arreglo de bloqueos por sede (corrección 30) | `bf1c15b8c`, `d60b131a9` |
 | 12 Recordatorio por WhatsApp (dos commits) | Por hacer | |
 | 13 Verificación final | Por hacer | |
 
@@ -185,7 +185,20 @@ Tarea 10 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suit
 29. **Observación, no tocada:** `Closure.AppliesTo(resource)` (y por tanto el motor) trata un bloqueo de sede completa como aplicable a *cualquier*
     recurso, sin mirar la sede. Con varias sedes, un bloqueo de una cierra los huecos de las otras en el cálculo de `freeCount` aunque el calendario
     sólo dibuje el bloqueo en las columnas de su sede. Con una sola sede no se nota; conviene corregirlo en `AvailabilityEngine.IsClosed` antes de
-    activar varias sedes.
+    activar varias sedes. **Corregida (commit `bf1c15b8c`):** ver la corrección 30.
+
+Tarea 11 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suites al final):
+
+30. **Bloqueo de sede: `Closure.AppliesTo(resourceId, resourceLocation)`.** Un bloqueo con recurso aplica sólo a ese recurso; uno sin recurso, sólo a los
+    recursos de **su** sede (`closure.LocationId` siempre existe: no hay bloqueo de todo el tenant, la spec dice «o toda la sede»). Para que el motor
+    conozca la sede de cada recurso, `AvailabilityQuery.OfferedResources` pasó de `IReadOnlySet<ResourceId>` a `IReadOnlyDictionary<ResourceId, LocationId>`
+    (lo arma `LoadedAvailability.Query`). `FreeSlotCounter`, el calendario, la disponibilidad y la reserva pasan por ahí; sin otros cambios de firma.
+31. **Motivo nuevo `schedulingAppointments`** en `CustomerDeletionBlockReasons` (después de `supportTickets`, antes de `blockedContact`; está en `Ordered`).
+    El frontend de Clientes tiene que mostrarlo (PD-6: cualquier cita, también la cancelada, bloquea el borrado; la salida es la fusión).
+32. **Pruebas de la Tarea 11 sin correr.** Su RED fue de compilación (`CustomerDeletionBlockReasons.SchedulingAppointments` no existía). Las pruebas de integración
+    siembran la cita por SQL con `session_replication_role = replica` (sin sede, recurso, servicio ni sesión), igual que el resto de las siembras de
+    `CustomerDeletionAcrossModulesTests`; las réplicas de `CustomerMergeReferencesTests` llevan `scheduling.appointments` mínima. La fusión **no** suma
+    citas a `CustomerMergeReferenceCounts` (la vista previa no cambia, como con soporte y cobros).
 
 ## Global Constraints
 
