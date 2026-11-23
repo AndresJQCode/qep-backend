@@ -87,7 +87,7 @@ public sealed class AppointmentReminderTemplateDefinitionTests
         Assert.Equal(AppointmentReminderTemplateDefinition.BaseBody, component.GetProperty("text").GetString());
         Assert.Equal(
             [
-                "nombre_cliente|María González", "servicio|Consulta general", "fecha_hora|martes 24 de noviembre a las 3:00 p. m.",
+                "nombre_cliente|María González", "servicio|Consulta general", "fecha_hora|martes 24 de noviembre a las 15:00",
                 "recurso|Dra. Paula Ruiz", "sede|Sede Centro",
             ],
             component.GetProperty("example").GetProperty("body_text_named_params").EnumerateArray()

@@ -44,6 +44,21 @@ public sealed class Appointment : VersionedEntity
 
     public DateTimeOffset? ReminderSentAt { get; private set; }
 
+    /// <summary>How many times the reminder worker claimed this appointment to send its reminder. The worker claims with a single UPDATE so two
+    /// pods never send the same one; this only mirrors that column.</summary>
+    public int ReminderAttempts { get; private set; }
+
+    /// <summary>Until when the last claim of the reminder worker holds: a failed send is retried only after it.</summary>
+    public DateTimeOffset? ReminderClaimedUntil { get; private set; }
+
+    /// <summary>The code of the last failed send of the reminder, kept for whoever has to look at it.</summary>
+    public string? ReminderLastError { get; private set; }
+
+    /// <summary>Why the reminder will never be sent (no phone, revoked consent, retries exhausted…). Final: it is also in the history.</summary>
+    public string? ReminderSkippedReason { get; private set; }
+
+    public const int ReminderReasonMaxLength = 150;
+
     /// <summary>
     /// The key the caller (the AI agent, a retrying client) booked with: a repeat of the same key answers with this appointment instead of
     /// taking a second seat. Unique per tenant when present.
@@ -143,17 +158,44 @@ public sealed class Appointment : VersionedEntity
         Record(AppointmentAction.Rescheduled, actorMemberId, null, now);
     }
 
-    /// <summary>El recordatorio sale una sola vez y sólo para una cita confirmada: si salió ya, es un error de quien reintenta.</summary>
+    /// <summary>El recordatorio sale una sola vez y sólo para una cita confirmada: si salió ya (o se omitió), es un error de quien reintenta.</summary>
     public void RecordReminderSent(DateTimeOffset now)
     {
         RequireStatus(AppointmentStatus.Confirmed);
+        RequireReminderPending();
+        ReminderSentAt = now;
+        ReminderLastError = null;
+        Record(AppointmentAction.ReminderSent, null, null, now);
+    }
+
+    /// <summary>
+    /// The reminder will not go out: the reason stays on the row and in the history, so nobody has to guess why a client was not reminded.
+    /// Final, like <see cref="RecordReminderSent"/>: the worker does not evaluate this appointment again.
+    /// </summary>
+    public void RecordReminderSkipped(string reason, DateTimeOffset now)
+    {
+        RequireStatus(AppointmentStatus.Confirmed);
+        RequireReminderPending();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length > ReminderReasonMaxLength)
+        {
+            throw new ArgumentException($"The reason must have between 1 and {ReminderReasonMaxLength} characters.", nameof(reason));
+        }
+
+        ReminderSkippedReason = reason.Trim();
+        Record(AppointmentAction.ReminderSkipped, null, ReminderSkippedReason, now);
+    }
+
+    private void RequireReminderPending()
+    {
         if (ReminderSentAt is not null)
         {
             throw new InvalidOperationException("The reminder was already sent.");
         }
 
-        ReminderSentAt = now;
-        Record(AppointmentAction.ReminderSent, null, null, now);
+        if (ReminderSkippedReason is not null)
+        {
+            throw new InvalidOperationException("The reminder was already skipped.");
+        }
     }
 
     private static void RequireRange(DateTimeOffset startsAt, DateTimeOffset endsAt)

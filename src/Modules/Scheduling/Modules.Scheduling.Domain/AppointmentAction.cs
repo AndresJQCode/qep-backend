@@ -10,4 +10,7 @@ public enum AppointmentAction
     NoShow,
     Rescheduled,
     ReminderSent,
+
+    /// <summary>El recordatorio no salió y no va a salir: el detalle dice por qué (sin teléfono, sin consentimiento, fallos agotados…).</summary>
+    ReminderSkipped,
 }

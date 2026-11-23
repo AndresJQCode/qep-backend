@@ -155,6 +155,41 @@ public sealed class AppointmentTests
         AssertInvalid(() => cancelled.RecordReminderSent(Created.AddHours(1)));
     }
 
+    [Fact]
+    public void ASkippedReminderIsFinalAndLeavesItsReasonInTheHistory()
+    {
+        var appointment = NewAppointment();
+
+        appointment.RecordReminderSkipped("no_phone", Created.AddHours(1));
+
+        Assert.Equal("no_phone", appointment.ReminderSkippedReason);
+        Assert.Null(appointment.ReminderSentAt);
+        var entry = appointment.Events[^1];
+        Assert.Equal((AppointmentAction.ReminderSkipped, "no_phone", (Guid?)null), (entry.Action, entry.Detail, entry.ActorMemberId));
+        // Ni se omite dos veces ni se envía después de omitida: el motivo es la última palabra.
+        Assert.Throws<InvalidOperationException>(() => appointment.RecordReminderSkipped("no_phone", Created.AddHours(2)));
+        Assert.Throws<InvalidOperationException>(() => appointment.RecordReminderSent(Created.AddHours(2)));
+
+        var sent = NewAppointment();
+        sent.RecordReminderSent(Created.AddHours(1));
+        Assert.Throws<InvalidOperationException>(() => sent.RecordReminderSkipped("no_phone", Created.AddHours(2)));
+
+        var cancelled = NewAppointment();
+        cancelled.Cancel(null, Actor, Created.AddMinutes(1));
+        AssertInvalid(() => cancelled.RecordReminderSkipped("no_phone", Created.AddHours(1)));
+    }
+
+    [Fact]
+    public void AReminderThatWasNeverAttemptedStartsWithoutAttemptsNorError()
+    {
+        var appointment = NewAppointment();
+
+        Assert.Equal(0, appointment.ReminderAttempts);
+        Assert.Null(appointment.ReminderClaimedUntil);
+        Assert.Null(appointment.ReminderLastError);
+        Assert.Null(appointment.ReminderSkippedReason);
+    }
+
     private static void AssertInvalid(Action action)
     {
         var error = Assert.Throws<SchedulingDomainException>(action);

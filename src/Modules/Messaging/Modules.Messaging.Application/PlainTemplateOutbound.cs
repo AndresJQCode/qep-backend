@@ -29,7 +29,7 @@ internal abstract record PlainTemplateSendResult
 }
 
 /// <summary>
-/// El núcleo que comparten <see cref="BillingTemplateOutbound"/> y <see cref="WholesaleInvitationNoticeOutbound"/>: la plantilla (con variables
+/// El núcleo que comparten <see cref="BillingTemplateOutbound"/>, <see cref="WholesaleInvitationNoticeOutbound"/> y <see cref="AppointmentReminderOutbound"/>: la plantilla (con variables
 /// con nombre; las filas viejas POSITIONAL siguen saliendo), sin encabezado de documento, al hilo del número en esa conexión. Es
 /// <see cref="QuotationTemplateOutbound"/> sin documento ni R2 y por la misma razón no usa <see cref="OutboundGuards"/>: el envío lo autoriza
 /// el módulo que llama, no se rechaza si la conversación está resuelta o asignada a otra persona y no cambia su estado ni su asignación.

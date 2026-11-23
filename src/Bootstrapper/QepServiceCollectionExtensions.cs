@@ -2262,6 +2262,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
         // Spec 2026-11-21 (Agenda), D-10: los festivos de las franjas, por puerto y con el adaptador de Bootstrapper (calco del de Soporte).
         services.AddScoped<ISchedulingHolidayCalendar, SchedulingHolidayCalendar>();
+        // Plan 2026-11-21, Tarea 12: el recordatorio de cita sale por Mensajería (puerto IAppointmentReminderSender) y el cliente, su teléfono y su
+        // consentimiento llegan por ISchedulingReminderRecipients; la Agenda no referencia ni Mensajería ni Clientes.
+        services.AddScoped<IAppointmentReminderSender, SchedulingReminderSender>();
+        services.AddScoped<ISchedulingReminderRecipients, SchedulingReminderRecipients>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
         // Notifications; Soporte sólo declara los puertos.
         services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();

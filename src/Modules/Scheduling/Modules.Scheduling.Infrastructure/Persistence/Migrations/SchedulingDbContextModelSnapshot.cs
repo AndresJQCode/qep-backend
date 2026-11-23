@@ -136,9 +136,29 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("note");
 
+                    b.Property<int>("ReminderAttempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("reminder_attempts");
+
+                    b.Property<DateTimeOffset?>("ReminderClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reminder_claimed_until");
+
+                    b.Property<string>("ReminderLastError")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("reminder_last_error");
+
                     b.Property<DateTimeOffset?>("ReminderSentAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("reminder_sent_at");
+
+                    b.Property<string>("ReminderSkippedReason")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("reminder_skipped_reason");
 
                     b.Property<Guid>("ResourceId")
                         .HasColumnType("uuid")
@@ -194,7 +214,7 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("StartsAt")
                         .HasDatabaseName("IX_appointments_reminder_due")
-                        .HasFilter("status = 'Confirmed' AND reminder_sent_at IS NULL");
+                        .HasFilter("status = 'Confirmed' AND reminder_sent_at IS NULL AND reminder_skipped_reason IS NULL");
 
                     b.HasIndex("TenantId", "ClientRequestId")
                         .IsUnique()
@@ -253,7 +273,7 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
 
                     b.ToTable("appointment_events", "scheduling", t =>
                         {
-                            t.HasCheckConstraint("CK_appointment_events_action", "action IN ('Created','Confirmed','Cancelled','Attended','NoShow','Rescheduled','ReminderSent')");
+                            t.HasCheckConstraint("CK_appointment_events_action", "action IN ('Created','Confirmed','Cancelled','Attended','NoShow','Rescheduled','ReminderSent','ReminderSkipped')");
                         });
                 });
 

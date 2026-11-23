@@ -104,6 +104,8 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/ScheduledMessages/ScheduledMessageStore.cs:25-28 — FOR UPDATE SKIP LOCKED y locked_until"),
         new("Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker", WorkerClassification.Claimed,
             "Modules/ServiceContracts/Modules.ServiceContracts.Infrastructure/Reminders/TenantRunStore.cs:26 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until"),
+        new("Modules.Scheduling.Infrastructure.Reminders.AppointmentReminderWorker", WorkerClassification.Claimed,
+            "Modules/Scheduling/Modules.Scheduling.Infrastructure/Reminders/AppointmentReminderProcessor.cs (ClaimAsync) — UPDATE … RETURNING sobre scheduling.appointments con reminder_claimed_until por intento y reminder_attempts; sólo el ganador del reclamo envía, y el envío es idempotente por el clientId derivado de la cita (appointment-reminder:{id}), así que un reintento tras un envío que sí salió devuelve la misma fila de Mensajería"),
         new("Modules.Loans.Infrastructure.Generation.LoansGenerationWorker", WorkerClassification.Claimed,
             "Modules/Loans/Modules.Loans.Infrastructure/Generation/TenantRunStore.cs:24-27 — reclamo por (tenant, día) con claimed_until"),
         new("Modules.Buyers.Infrastructure.Signup.BuyerSignupRequestedWorker", WorkerClassification.Claimed,

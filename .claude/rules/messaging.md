@@ -175,5 +175,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   manda en la misma llamada que el leído (`status: "read"` + `typing_indicator`), así que el contacto ve el chulo azul aunque en QEP la
   conversación siga sin leer. No es un bug: `POST …/typing` no toca `unread_count`, y no hay que «arreglar» la diferencia. Instagram no
   tiene ese efecto: `typing_on` va solo.
+- **El recordatorio de cita de la Agenda es una plantilla del sistema más (`AppointmentReminder`, `qep_agenda_recordatorio`, plan 2026-11-21 Tarea 12)**, y su
+  envío tiene tres reglas que no se ven en la plantilla. (1) Sale por `AppointmentReminderOutbound` (el mismo `PlainTemplateOutbound` del cobro y el aviso
+  de Mayorista), con cliente: abre la conversación por teléfono y la cuelga del cliente de la cita; un cliente borrado devuelve
+  `messaging.customer.not_found`, no una excepción. (2) La fila de `messages` exige un autor y la elige la Agenda, no Mensajería: el miembro del recurso
+  y, sin él o inactivo, quien tocó la cita por última vez; sin ninguno activo la cita se omite con `no_sender_member`. (3) El `clientId` es un `Guid`
+  derivado (SHA-256) de la llave `appointment-reminder:{id}` (`SchedulingReminderSender.ClientIdOf`): si el mensaje salió y marcar la cita falló, el
+  reintento devuelve la misma fila. Las variables son `nombre_cliente`, `servicio`, `fecha_hora` (zona del tenant, hora en 24 h, `es-CO`), `recurso` y
+  `sede`, más las cuatro fijas; `nombre_cliente` repite a la fija `nombre_contacto`, y si se renombra una clave hay que cambiar plantilla, definición y
+  adaptador en el mismo despliegue. El consentimiento (PD-7) no se pide: se omite con `consent_revoked` si la última fila de `customers.data_consents`
+  del cliente es una revocación (también una `Medium = Other`) y con `marketing_opt_out` si la ficha lo tiene; no hay baja automática por texto libre.
 - **El presupuesto de envío de campañas se queda en Postgres** (`messaging.connection_send_budgets`, decisión del owner 2026-11-13).
   D-6 del spec de Valkey no se construyó: no hay adaptador de Valkey para el cubo.

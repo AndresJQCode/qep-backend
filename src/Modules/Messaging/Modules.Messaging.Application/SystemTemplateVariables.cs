@@ -74,7 +74,7 @@ public static class SystemTemplateVariables
         .. Fixed,
         new("nombre_cliente", "Nombre del cliente", "María González"),
         new("servicio", "Servicio", "Consulta general"),
-        new("fecha_hora", "Fecha y hora de la cita", "martes 24 de noviembre a las 3:00 p. m."),
+        new("fecha_hora", "Fecha y hora de la cita", "martes 24 de noviembre a las 15:00"),
         new("recurso", "Recurso o profesional", "Dra. Paula Ruiz"),
         new("sede", "Sede", "Sede Centro"),
     ];

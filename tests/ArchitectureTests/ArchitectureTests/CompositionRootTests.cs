@@ -1338,6 +1338,28 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Plan 2026-11-21, Tarea 12: sin el worker registrado, o con un puerto sin adaptador de Bootstrapper (el envío por Mensajería y el
+    /// cliente con su consentimiento), ningún recordatorio de cita sale, sin error en ningún lado. Mismo armado que el de Contratos de servicio.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheSchedulingReminderWorker()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Scheduling.Infrastructure.Reminders.AppointmentReminderWorker");
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.IAppointmentReminderSender>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.ISchedulingReminderRecipients>());
+    }
+
+    /// <summary>
     /// Sin el worker registrado, o con un puerto del procesador sin adaptador, ninguna cuota de préstamo se genera al cerrar su
     /// período, sin error en ningún lado. Mismo armado que el de Contratos de servicio.
     /// </summary>

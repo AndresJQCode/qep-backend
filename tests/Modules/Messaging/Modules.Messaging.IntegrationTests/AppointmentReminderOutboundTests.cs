@@ -30,7 +30,7 @@ public sealed class AppointmentReminderOutboundTests
         {
             ["nombre_cliente"] = "Ana Pérez",
             ["servicio"] = "Consulta general",
-            ["fecha_hora"] = "martes 24 de noviembre a las 3:00 p. m.",
+            ["fecha_hora"] = "martes 24 de noviembre a las 15:00",
             ["recurso"] = "Dra. Paula Ruiz",
         };
         if (withLocation)
@@ -90,7 +90,7 @@ public sealed class AppointmentReminderOutboundTests
             "SELECT customer_id FROM messaging.conversations WHERE id = @id",
             ("id", sent.ConversationId)));
         // La fila de la plantilla (su details), liquidada como Sent (1) con el wamid de Meta, con el miembro dado como autor.
-        var text = "¡Hola, Ana Pérez! Te recordamos tu cita de Consulta general el martes 24 de noviembre a las 3:00 p. m. con Dra. Paula Ruiz "
+        var text = "¡Hola, Ana Pérez! Te recordamos tu cita de Consulta general el martes 24 de noviembre a las 15:00 con Dra. Paula Ruiz "
             + "en Sede Centro. Si no puedes asistir, avísanos con tiempo para reprogramarla.";
         Assert.Equal($"{sent.ConversationId}|{f.MemberId}|{TemplateName}|es|1|wamid.n|{text}", await ScalarAsync<string>(f.ConnectionString,
             """
@@ -110,7 +110,7 @@ public sealed class AppointmentReminderOutboundTests
         Assert.Equal("body", component.GetProperty("type").GetString());
         Assert.Equal(
             [
-                "nombre_cliente|Ana Pérez", "servicio|Consulta general", "fecha_hora|martes 24 de noviembre a las 3:00 p. m.",
+                "nombre_cliente|Ana Pérez", "servicio|Consulta general", "fecha_hora|martes 24 de noviembre a las 15:00",
                 "recurso|Dra. Paula Ruiz", "sede|Sede Centro",
             ],
             component.GetProperty("parameters").EnumerateArray()

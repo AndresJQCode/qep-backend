@@ -263,6 +263,11 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         appointment.Property(value => value.Note).HasColumnName("note").HasMaxLength(1000);
         appointment.Property(value => value.CancelReason).HasColumnName("cancel_reason").HasMaxLength(500);
         appointment.Property(value => value.ReminderSentAt).HasColumnName("reminder_sent_at");
+        // The reminder worker claims a row with a single UPDATE (attempts and lease) so two pods never send the same reminder; see AppointmentReminderProcessor.
+        appointment.Property(value => value.ReminderAttempts).HasColumnName("reminder_attempts").HasDefaultValue(0);
+        appointment.Property(value => value.ReminderClaimedUntil).HasColumnName("reminder_claimed_until");
+        appointment.Property(value => value.ReminderLastError).HasColumnName("reminder_last_error").HasMaxLength(100);
+        appointment.Property(value => value.ReminderSkippedReason).HasColumnName("reminder_skipped_reason").HasMaxLength(Appointment.ReminderReasonMaxLength);
         appointment.Property(value => value.ClientRequestId).HasColumnName("client_request_id").HasMaxLength(100);
         appointment.HasOne<Location>().WithMany().HasForeignKey(value => value.LocationId).OnDelete(DeleteBehavior.Restrict);
         appointment.HasOne<Resource>().WithMany().HasForeignKey(value => value.ResourceId).OnDelete(DeleteBehavior.Restrict);
@@ -280,9 +285,9 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
             .IsUnique()
             .HasFilter("client_request_id IS NOT NULL")
             .HasDatabaseName(AppointmentClientRequestIndex);
-        // Lo que lee el recordatorio: las confirmadas que aún no lo tienen.
+        // Lo que lee el recordatorio: las confirmadas que aún no lo tienen ni se omitieron.
         appointment.HasIndex(value => value.StartsAt)
-            .HasFilter("status = 'Confirmed' AND reminder_sent_at IS NULL")
+            .HasFilter("status = 'Confirmed' AND reminder_sent_at IS NULL AND reminder_skipped_reason IS NULL")
             .HasDatabaseName("IX_appointments_reminder_due");
 
         var entry = modelBuilder.Entity<AppointmentEvent>();

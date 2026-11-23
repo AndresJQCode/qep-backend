@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Scheduling.Application;
 using Modules.Scheduling.Infrastructure.Persistence;
+using Modules.Scheduling.Infrastructure.Reminders;
 
 namespace Modules.Scheduling.Infrastructure;
 
@@ -36,6 +37,11 @@ public static class SchedulingInfrastructureExtensions
         services.AddScoped<IAppointmentRepository, AppointmentRepository>();
         services.AddScoped<IAppointmentReadRepository, AppointmentReadRepository>();
         services.AddScoped<ISchedulingSetupReader, SchedulingSetupReader>();
+
+        // Recordatorio por WhatsApp (plan 2026-11-21, Tarea 12): el barredor reclama cada cita con un UPDATE, así que varios pods pueden correrlo.
+        services.Configure<SchedulingWorkerOptions>(configuration.GetSection(SchedulingWorkerOptions.SectionName));
+        services.AddSingleton<AppointmentReminderProcessor>();
+        services.AddHostedService<AppointmentReminderWorker>();
 
         return services;
     }
