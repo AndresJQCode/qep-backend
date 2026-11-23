@@ -54,4 +54,80 @@ public sealed class AgentTemplatesApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
+
+    private static string FromTemplate => $"{AiUrl()}/agents/from-template";
+
+    private static async Task<(string? Code, JsonElement Root)> ProblemAsync(HttpResponseMessage response)
+    {
+        var root = await JsonAsync(response);
+        return (root.TryGetProperty("code", out var code) ? code.GetString() : null, root);
+    }
+
+    [Fact]
+    public async Task AnAgentFromATemplateIsBornAsADraftWithTheTemplatesConfig()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateClient(factory, permissions: Manage);
+
+        var response = await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "asistente-de-citas", name = "  Citas  " });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var agent = await JsonAsync(response);
+        Assert.Equal("Citas", agent.GetProperty("name").GetString());
+        Assert.Equal("Draft", agent.GetProperty("status").GetString());
+        Assert.Equal(1, agent.GetProperty("version").GetInt64());
+        Assert.Empty(agent.GetProperty("connectionIds").EnumerateArray());
+        var config = agent.GetProperty("draft").GetProperty("config");
+        var model = config.GetProperty("model");
+        Assert.Equal(("anthropic", "claude-opus-5-5"), (model.GetProperty("provider").GetString(), model.GetProperty("id").GetString()));
+        Assert.True(config.GetProperty("tools").GetProperty("scheduling").GetBoolean());
+        Assert.Equal("friendly", config.GetProperty("tone").GetString());
+        Assert.Equal(2, config.GetProperty("faq").GetArrayLength());
+        var issues = agent.GetProperty("issues").EnumerateArray().Select(issue => issue.GetProperty("code").GetString()).ToList();
+        Assert.Contains("connections_missing", issues);
+        Assert.DoesNotContain("instructions_missing", issues);
+        Assert.Equal(1, await ScalarAsync<long>(
+            database.GetConnectionString(),
+            "SELECT count(*) FROM audit.entries WHERE action = 'ai.agent.created' AND resource_id = @id",
+            ("id", agent.GetProperty("id").GetGuid().ToString())));
+    }
+
+    [Fact]
+    public async Task AdoptingATemplateIsRejectedWithItsCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateClient(factory, permissions: Manage);
+        using var reader = CreateClient(factory, permissions: AiPermissions.AgentRead);
+        Assert.Equal(
+            HttpStatusCode.Created,
+            (await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "asistente-de-citas", name = "Citas" })).StatusCode);
+
+        var missing = await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "no-existe", name = "Otra" });
+        // Una plantilla de chatbot no se cruza con las de agente.
+        var chatbot = await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "welcome-menu-handoff", name = "Otra" });
+        var taken = await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "asistente-de-citas", name = "citas" });
+        var blank = await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "asistente-de-citas", name = string.Empty });
+        var denied = await SendAsync(reader, HttpMethod.Post, FromTemplate, new { templateId = "asistente-de-citas", name = "Otra" });
+        // Una pestaña vieja con la galería de antes: la Agenda se apagó después de pintarla.
+        await DisableSchedulingAsync(database.GetConnectionString());
+        var off = await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "asistente-de-citas", name = "Otra" });
+
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal("ai.template.not_found", (await ProblemAsync(missing)).Code);
+        Assert.Equal(HttpStatusCode.NotFound, chatbot.StatusCode);
+        Assert.Equal("ai.template.not_found", (await ProblemAsync(chatbot)).Code);
+        Assert.Equal(HttpStatusCode.Conflict, taken.StatusCode);
+        Assert.Equal("ai.agent.name_taken", (await ProblemAsync(taken)).Code);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, blank.StatusCode);
+        Assert.Equal("validation.failed", (await ProblemAsync(blank)).Code);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, off.StatusCode);
+        Assert.Equal("ai.template.module_not_enabled", (await ProblemAsync(off)).Code);
+        var agents = await JsonAsync(await client.GetAsync($"{AiUrl()}/agents", Ct));
+        Assert.Equal(1, agents.GetProperty("items").GetArrayLength());
+    }
 }

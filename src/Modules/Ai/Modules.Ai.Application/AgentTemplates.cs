@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using FluentValidation;
 using Modules.Ai.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -66,5 +67,60 @@ public sealed class ListAgentTemplatesHandler(
                 [.. template.Requires.Select(key => key.Value)],
                 AgentTemplateModules.Missing(template, modules).Count == 0)),
         ];
+    }
+}
+
+public sealed record CreateAgentFromTemplateCommand(Guid TenantId, string TemplateId, string Name) : ICommand<AgentEditorDto>;
+
+public sealed class CreateAgentFromTemplateValidator : AbstractValidator<CreateAgentFromTemplateCommand>
+{
+    public CreateAgentFromTemplateValidator()
+    {
+        AgentRules.Name(RuleFor(command => command.Name));
+        RuleFor(command => command.TemplateId).NotEmpty().MaximumLength(SystemAgentTemplate.IdMaxLength);
+    }
+}
+
+/// <summary>Nace como un agente en blanco (borrador, sin conexiones, modelo predeterminado) pero con el <c>config</c> de la plantilla,
+/// copiado: cambiar la plantilla después no toca los agentes ya creados. Los módulos se revalidan acá y no se confía en lo que la
+/// galería mostró: una pestaña vieja puede pedir una plantilla que el tenant ya no puede usar, y un agente que no se puede publicar
+/// sería peor que el 422.</summary>
+public sealed class CreateAgentFromTemplateHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    AiCaller caller,
+    IAgentRepository agents,
+    IAiModelCatalog catalog,
+    ISystemAgentTemplateCatalog templates,
+    IAiUnitOfWork unitOfWork,
+    IAiAuditRecorder audit,
+    IClock clock,
+    IValidator<CreateAgentFromTemplateCommand> validator,
+    AgentEditorBuilder builder)
+    : ICommandHandler<CreateAgentFromTemplateCommand, AgentEditorDto>
+{
+    public async Task<AgentEditorDto> HandleAsync(CreateAgentFromTemplateCommand command, CancellationToken cancellationToken)
+    {
+        await AiAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, AiPermissions.AgentManage, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var template = templates.Find(command.TemplateId) ?? throw AiNotFound.Template(command.TemplateId);
+        var missing = AgentTemplateModules.Missing(template, await tenantModules.FindAsync(command.TenantId, cancellationToken));
+        if (missing.Count > 0)
+        {
+            throw new AiDomainException(
+                AiErrorCodes.TemplateModuleNotEnabled,
+                $"La plantilla necesita módulos que no están activos: {string.Join(", ", missing)}.");
+        }
+
+        var by = await caller.RequireAsync(command.TenantId, cancellationToken);
+        var name = command.Name.Trim();
+        await CreateAgentHandler.EnsureNameIsFreeAsync(agents, command.TenantId, name, null, cancellationToken);
+
+        var now = clock.UtcNow;
+        var agent = Agent.Create(command.TenantId, name, template.ConfigFor(ModelCatalog.DefaultFor(catalog)), by, now);
+        agents.Add(agent);
+        audit.Record(command.TenantId, executionContext.SubjectId, AiAuditActions.AgentCreated, agent.Id, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return await builder.BuildAsync(agent, cancellationToken);
     }
 }
