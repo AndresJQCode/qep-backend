@@ -281,6 +281,18 @@ public sealed class LegalParameterOperatorApiTests
     }
 
     [Fact]
+    public async Task AHugePageIsClampedAndAnswersEmptyInsteadOfOverflowing()
+    {
+        await using var world = await OpenAsync(NovemberThirtieth);
+
+        var history = await JsonAsync(await world.Client.GetAsync(Base() + "/history?page=2147483647&pageSize=100", Ct));
+
+        Assert.Empty(history.GetProperty("items").EnumerateArray());
+        Assert.Equal(100, history.GetProperty("pageSize").GetInt32());
+        Assert.True(history.GetProperty("page").GetInt32() >= 1);
+    }
+
+    [Fact]
     public async Task PutBracketsReplacesTheSet()
     {
         await using var world = await OpenAsync(NovemberThirtieth);

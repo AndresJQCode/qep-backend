@@ -156,8 +156,11 @@ public sealed class ListLegalParameterHistoryHandler(
         OperatorAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, HrOperatorPermissions.LegalParametersRead, operatorTenant);
 
-        var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, MaxPageSize);
+
+        // `(page - 1) * pageSize` es el OFFSET: con una página enorme desbordaría el int y Postgres lo rechazaría con un 500. Una
+        // página más allá del último dato responde vacía, así que acotarla no esconde nada.
+        var page = Math.Clamp(query.Page, 1, int.MaxValue / pageSize);
         var (items, total) = await repository.ListChangesAsync(page, pageSize, cancellationToken);
 
         return new LegalParameterHistoryPageDto(items.Select(ToDto).ToList(), total, page, pageSize);
