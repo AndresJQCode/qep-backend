@@ -602,6 +602,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.EmployeeImportCatalogs>();
         services.AddScoped<Modules.Hr.Application.EmployeeImportAnalyzer>();
         services.AddScoped<Modules.Hr.Application.IHrPhoneNormalizer, HrPhoneNormalizer>();
+        services.AddScoped<Modules.Tenancy.Application.IMemberPhoneDirectory, MemberPhoneDirectory>();
+        services.AddScoped<Modules.Tenancy.Application.MembershipPhoneReader>();
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetEmployeeImportTemplateQuery, Modules.Hr.Application.EmployeeImportTemplateFile>,
             Modules.Hr.Application.GetEmployeeImportTemplateHandler>();
