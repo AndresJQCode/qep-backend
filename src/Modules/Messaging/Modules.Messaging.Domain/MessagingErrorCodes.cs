@@ -226,6 +226,20 @@ public static class MessagingErrorCodes
     /// <summary>Mayorista: existe una <c>qep_mayorista_invitacion</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
     public const string TemplateWholesaleInvitationNoticeConflict = "messaging.template.wholesale_invitation_notice_conflict";
 
+    /// <summary>Support task notices: the connection already has its live task notice template, or two provisionings raced on
+    /// <c>UX_message_templates_task_notice</c>.</summary>
+    public const string TemplateTaskNoticeExists = "messaging.template.task_notice_exists";
+
+    /// <summary>Support task notices: a <c>qep_tarea_asignada</c> created outside QEP has another body or an incompatible shape.</summary>
+    public const string TemplateTaskNoticeConflict = "messaging.template.task_notice_conflict";
+
+    /// <summary>Agenda: la conexión ya tiene su plantilla de recordatorio de cita viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_appointment_reminder</c>.</summary>
+    public const string TemplateAppointmentReminderExists = "messaging.template.appointment_reminder_exists";
+
+    /// <summary>Agenda: existe una <c>qep_agenda_recordatorio</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateAppointmentReminderConflict = "messaging.template.appointment_reminder_conflict";
+
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
 

@@ -315,8 +315,11 @@ internal static class PayrollApiHarness
     /// <param name="configureServices">
     /// Sustituciones de servicios para la prueba; corre después del registro de la aplicación.
     /// </param>
+    /// <param name="operatorTenantId">
+    /// El tenant que hace de operador de la plataforma (<c>Platform:OperatorTenantId</c>); sin él ninguno lo es.
+    /// </param>
     public sealed class QepApiFactory(
-        string connectionString, Action<IServiceCollection>? configureServices = null)
+        string connectionString, Action<IServiceCollection>? configureServices = null, Guid? operatorTenantId = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -338,6 +341,10 @@ internal static class PayrollApiHarness
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos
             // en el tenant de pruebas. El harness no depende del entorno del shell.
             builder.UseSetting("Seed:Enabled", "false");
+            if (operatorTenantId is { } operatorTenant)
+            {
+                builder.UseSetting("Platform:OperatorTenantId", operatorTenant.ToString());
+            }
 
             if (configureServices is not null)
             {

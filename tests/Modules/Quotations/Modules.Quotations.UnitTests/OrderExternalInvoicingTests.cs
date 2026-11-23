@@ -153,6 +153,7 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal("FV-1-123", order.InvoiceNumber);
         Assert.Equal(["quotation.order.invoiced"], audit.Actions);
         Assert.Equal([OrderHistoryEventType.Invoiced], repository.History.Select(entry => entry.EventType));
+        Assert.Equal(["Facturado en Siigo, factura FV-1-123."], repository.History.Select(entry => entry.Details));
     }
 
     // «Los mismos del cliente» no guarda parte de envío: el despacho va a la dirección y ciudad de la ficha del cliente, como la facturación.

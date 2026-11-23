@@ -77,6 +77,43 @@ public sealed class NotificationsDbContextMappingTests
         Assert.Contains(entry.GetIndexes(), index => index.GetDatabaseName() == "IX_in_app_notifications_created");
     }
 
+    // The worker claims by (status, due_at) and the writer's ON CONFLICT names the unique index by column, so both are part of the contract.
+    [Fact]
+    public void TaskNoticeEscalationsHaveAUniqueIndexOnTheEntry()
+    {
+        using var context = new NotificationsDbContextFactory().CreateDbContext([]);
+        var escalation = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(TaskNoticeEscalation))!;
+
+        Assert.Equal("task_notice_escalations", escalation.GetTableName());
+        Assert.Equal("notifications", escalation.GetSchema());
+        var unique = escalation.GetIndexes().Single(index => index.GetDatabaseName() == "UX_task_notice_escalations_notification");
+        Assert.True(unique.IsUnique);
+        Assert.Equal(["in_app_notification_id"], unique.Properties.Select(property => property.GetColumnName()));
+        var due = escalation.GetIndexes().Single(index => index.GetDatabaseName() == "IX_task_notice_escalations_due");
+        Assert.Equal(["status", "due_at"], due.Properties.Select(property => property.GetColumnName()));
+        Assert.Equal("jsonb", escalation.FindProperty(nameof(TaskNoticeEscalation.ChannelAttemptsJson))!.GetColumnType());
+    }
+
+    [Fact]
+    public void TheEscalationStatusFitsItsColumn()
+    {
+        using var context = new NotificationsDbContextFactory().CreateDbContext([]);
+        var status = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(TaskNoticeEscalation))!
+            .FindProperty(nameof(TaskNoticeEscalation.Status))!;
+
+        var max = status.GetMaxLength()!.Value;
+        Assert.Equal(16, max);
+        Assert.All(Enum.GetNames<TaskNoticeEscalationStatus>(), name => Assert.True(name.Length <= max));
+    }
+
+    [Fact]
+    public void TheNewBellKindsFitTheirColumn()
+    {
+        Assert.All(
+            [nameof(InAppNotificationKind.SupportTaskAssigned), nameof(InAppNotificationKind.SupportTicketAssigned)],
+            name => Assert.True(name.Length <= 64));
+    }
+
     [Fact]
     public void TheNotificationTenantIsOptional()
     {

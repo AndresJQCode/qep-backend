@@ -102,6 +102,7 @@ public sealed class AppHubMemberGroupTests
             connections,
             new AppHubDispatcher(context, connections),
             new NoPresence(),
+            new LocalAppMemberPresence(connections),
             new FixedMemberNames(),
             new NoPublisher(),
             NullLogger<AppHub>.Instance)

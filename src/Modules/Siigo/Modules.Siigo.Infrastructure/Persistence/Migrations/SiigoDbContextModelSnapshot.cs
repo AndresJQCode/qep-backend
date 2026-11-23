@@ -512,6 +512,14 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("freight_separate_invoice");
 
+                    b.Property<string>("PriceMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasDefaultValue("BaseWithDiscount")
+                        .HasColumnName("price_mode");
+
                     b.Property<DateTimeOffset?>("ProductsAutoLinkedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("products_auto_linked_at");

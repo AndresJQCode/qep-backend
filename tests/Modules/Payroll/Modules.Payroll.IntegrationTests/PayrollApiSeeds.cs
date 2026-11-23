@@ -18,7 +18,7 @@ namespace Modules.Payroll.IntegrationTests;
 /// <see cref="StripAssignmentsOf"/> hace que el directorio de Hr responda sin cargos para un empleado (un bloqueado que por la API
 /// de Hr no se puede producir).
 /// </summary>
-public sealed class PayrollApiFixture : IAsyncLifetime
+public class PayrollApiFixture : IAsyncLifetime
 {
     public static readonly DateTimeOffset DefaultNow = new(2026, 11, 10, 15, 0, 0, TimeSpan.Zero);
 
@@ -27,6 +27,9 @@ public sealed class PayrollApiFixture : IAsyncLifetime
     internal MutableTenantClock Clock { get; } = new(DefaultNow);
 
     internal QepApiFactory Factory { get; private set; } = null!;
+
+    /// <summary>El tenant que hace de operador de la plataforma en esta base; nulo = ninguno. Lo fija una subclase.</summary>
+    protected virtual Guid? OperatorTenant => null;
 
     /// <summary>El empleado al que el directorio le quita los cargos; nulo = ninguno.</summary>
     internal Guid? StripAssignmentsOf { get; set; }
@@ -46,7 +49,7 @@ public sealed class PayrollApiFixture : IAsyncLifetime
             services.AddScoped<IPayrollHrDirectory>(provider => new StrippingHrDirectory(
                 (IPayrollHrDirectory)ActivatorUtilities.CreateInstance(provider, original.ImplementationType!),
                 () => StripAssignmentsOf));
-        });
+        }, OperatorTenant);
     }
 
     public async ValueTask DisposeAsync()
@@ -56,6 +59,8 @@ public sealed class PayrollApiFixture : IAsyncLifetime
         {
             await _database.DisposeAsync();
         }
+
+        GC.SuppressFinalize(this);
     }
 
     private sealed class StrippingHrDirectory(IPayrollHrDirectory inner, Func<Guid?> stripped) : IPayrollHrDirectory

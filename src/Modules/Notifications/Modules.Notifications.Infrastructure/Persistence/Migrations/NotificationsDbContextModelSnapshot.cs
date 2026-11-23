@@ -154,6 +154,84 @@ namespace Modules.Notifications.Infrastructure.Persistence.Migrations
                     b.ToTable("notifications", "notifications");
                 });
 
+            modelBuilder.Entity("Modules.Notifications.Domain.TaskNoticeEscalation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AssignedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_by_member_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("ChannelAttemptsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("channel_attempts")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("DueAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("due_at");
+
+                    b.Property<Guid>("InAppNotificationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("in_app_notification_id");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<string>("SkipReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("skip_reason");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InAppNotificationId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_task_notice_escalations_notification");
+
+                    b.HasIndex("Status", "DueAt")
+                        .HasDatabaseName("IX_task_notice_escalations_due");
+
+                    b.ToTable("task_notice_escalations", "notifications");
+                });
+
             modelBuilder.Entity("Modules.Notifications.Infrastructure.Persistence.NotificationInboxMessage", b =>
                 {
                     b.Property<string>("Consumer")
@@ -211,6 +289,15 @@ namespace Modules.Notifications.Infrastructure.Persistence.Migrations
                         {
                             t.ExcludeFromMigrations();
                         });
+                });
+
+            modelBuilder.Entity("Modules.Notifications.Domain.TaskNoticeEscalation", b =>
+                {
+                    b.HasOne("Modules.Notifications.Domain.InAppNotification", null)
+                        .WithMany()
+                        .HasForeignKey("InAppNotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

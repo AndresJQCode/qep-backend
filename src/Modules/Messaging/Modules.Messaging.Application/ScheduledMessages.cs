@@ -113,6 +113,11 @@ public sealed class CreateScheduledMessageValidator : AbstractValidator<CreateSc
             .When(command => command.UploadId is not null && !string.IsNullOrWhiteSpace(command.FileName) && SendMediaMessageValidator.IsAudio(command.FileName))
             .WithMessage("Los audios se envían sin texto.")
             .OverridePropertyName("caption");
+        RuleFor(command => command.Caption)
+            .Must(caption => string.IsNullOrWhiteSpace(caption))
+            .When(command => command.UploadId is not null && !string.IsNullOrWhiteSpace(command.FileName) && SendMediaMessageValidator.IsSticker(command.FileName))
+            .WithMessage("Los stickers se envían sin texto.")
+            .OverridePropertyName("caption");
     }
 
     private static bool IsAcceptableMeasuredText(string? text) =>

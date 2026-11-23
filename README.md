@@ -116,7 +116,7 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
 | `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
-| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`, `LegalParameters`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
 | `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
@@ -823,7 +823,7 @@ fórmula de la línea es **una sola** para todas las monedas y todos los tenants
 lista     = R(precio de lista)
 unitario  = R(lista × (1 − descuento/100))
 línea     = Round2(cantidad × unitario)               // lo que se cobra, IVA adentro
-descuento = Round2(cantidad × lista) − línea
+descuento = Round2(cantidad × lista) − línea          // con IVA: lo guarda el POS
 IVA       = Round2(línea × tasa / (100 + tasa))       // sólo COP discrimina IVA
 base      = línea − IVA
 ```
@@ -833,6 +833,15 @@ aleja de cero), `Up` (hacia arriba) o `Down` (hacia abajo). Los decimales van de
 catálogo de monedas (COP 0, USD 2, EUR 2). **Por defecto**, una moneda sin configurar usa
 `(decimales del catálogo, Nearest)`: para COP es exactamente lo de antes. Ejemplo de aceptación: USD
 `(2, Up)`, 13,19 con 15 % da unitario 11,22; con 10 unidades, línea 112,20 y descuento 19,70.
+
+**El descuento de cotizaciones y pedidos se guarda sin IVA**, igual que el subtotal de la línea. Con
+`bruto = Round2(cantidad × lista cobrada)` y `t` la tasa de IVA de la línea:
+
+```
+descuento = (bruto − Round2(bruto × t / (100 + t))) − base     // base = Subtotal de la línea, sin IVA
+```
+
+El POS conserva el descuento con IVA de la fórmula de arriba.
 
 La regla aplica sólo al precio con IVA incluido. Los valores sin IVA (los que lee el Excel del ERP),
 los totales del encabezado y los del POS siguen a 2 decimales, al más cercano.
@@ -1384,7 +1393,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)) | `messaging.template.manage` |
+| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)); `appointment-reminder` (`POST`, cuerpo opcional `{ body }`) y `appointment-reminder/draft` (`GET`), la plantilla `qep_agenda_recordatorio` del recordatorio de cita de la Agenda | `messaging.template.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -2976,8 +2985,9 @@ pasar sin límite. El limitador de concurrencia del webhook se queda en memoria 
 [§ Verificación](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#verificación); acá va sólo lo que el código fijó.
 Lo hace el owner, un área por commit
 (`chore(k8s): enable valkey <area> area`, el flag en `"true"` en `k8s/prod-configMap.yaml`). Después de `Presence` y
-`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
-`Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
+`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells`,
+`Valkey__Areas__ApiKeyTouch` y `Valkey__Areas__LegalParameters` (la tabla de valores legales de Hr, spec 2026-11-22: contador
+`qep:legalparams:ver` y tabla en `qep:legalparams:{ver}` con TTL de 1 h; apagada, copia del pod de 60 s). Con el área prendida, una migración o un SQL manual sobre `hr.legal_parameters*` no sube la versión: hace falta `INCR qep:legalparams:ver` (o un reinicio, que la sube al arrancar) para verlo antes de que venza la hora. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
 (`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
 
 **Con `Sessions` y `Permissions` apagadas hay caché igual, pero por pod** (2026-11-17). Antes, apagada el área era «cada request
@@ -3020,6 +3030,7 @@ kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-con
 | `Permissions` | `permissions`   | `increase(...[1h])` = 0          | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente     |
 | `Doorbells`   | `doorbells`     | `increase(...[1h])` = 0          | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
 | `ApiKeyTouch` | `api_key_touch` | `increase(...[1h])` = 0          | Sin comportamiento visible: el contador es la verificación                                               |
+| `LegalParameters` | `legal_parameters` | `increase(...[1h])` = 0     | Cambia un valor legal desde la consola del operador y léelo desde otra réplica: el valor nuevo se ve al instante |
 
 Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
 el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
@@ -3647,7 +3658,7 @@ sobrescribe la misma clave.
 `messaging/staging/{tenantId}/{conversationId}/{memberId}/{uploadId}{ext}`). Después `POST …/messages/media` con
 `{ uploadId, clientId, fileName, caption?, replyTo? }` confirma: revisa tamaño y firma binaria, comprime la imagen, la
 sube a Meta y envía; responde 201 cuando Meta contesta. Imagen jpeg/png hasta 25 MB, recomprimida siempre a JPEG q80 con
-el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls o xlsx hasta 100 MB. `caption`
+el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls, xlsx, ppt, pptx o txt hasta 100 MB. `caption`
 opcional hasta 1024. Mismas reglas que el texto: ventana, asignado, autoasignación, cita e idempotencia por `clientId`; un
 `Failed` conserva el staging para el reintento. Errores 422: `messaging.media.upload_not_found`, `too_large`,
 `unsupported_format` e `invalid_image`.
@@ -3666,10 +3677,17 @@ bytes de cabecera):
 | Audio | `.aac` → `audio/aac` | 16 MB | 25 MB | ADTS (`FF F1`/`FF F9`) |
 | Audio | `.amr` → `audio/amr` | 16 MB | — | `#!AMR\n` o `#!AMR-WB\n` |
 | Audio | `.ogg` → `audio/ogg` | 16 MB | — | `OggS` con `OpusHead` (Vorbis no) |
+| Documento | `.ppt` → `application/vnd.ms-powerpoint` | 100 MB | — | OLE (`D0CF11E0A1B11AE1`, como `.doc`/`.xls`) |
+| Documento | `.pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation` | 100 MB | — | zip (`PK`, como `.docx`/`.xlsx`) |
+| Documento | `.txt` → `text/plain` | 100 MB | — | UTF-8 válido sin bytes de control (sin firma; deja fuera binarios y UTF-16) |
+| Sticker | `.webp` → `image/webp` | 100 KB estático, 500 KB animado | — | `RIFF`…`WEBP` con chunk `VP8 `, `VP8L` o `VP8X` |
 
 **La tabla está en borrador hasta las verificaciones V-1..V-3 con Meta real** (las corre el owner; ver el spec): lo que Meta
 no acepte se quita de `OutboundMediaPolicy` y de esta tabla. No hay transcodificación ni `ffmpeg`: `.mov`, `.webm`, `.avi`,
-`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. El video sale con `type: video` y su `caption`; el audio,
+`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. **Sticker** (2026-11-22): Meta sólo admite WebP como sticker, no como
+imagen, así que `.webp` sale con `type: sticker`, sin `caption` (422 `validation.failed` en `caption`), sin recomprimir y sólo por WhatsApp.
+El tope depende del contenido: 500 KB si el chunk `VP8X` trae la bandera de animación y 100 KB si no, y por eso el estático se mide al
+leer el archivo (`media_too_large` al confirmar, no al pedir la sesión). El chatbot no lo manda: su flujo no tiene ese tipo. El video sale con `type: video` y su `caption`; el audio,
 con `type: audio` **sin** `voice` (la nota de voz sigue con `voice: true`) y **sin texto**: un `caption` con un audio es 422
 `validation.failed` en `caption`. El multipart a Meta lleva `video{ext}` o `audio{ext}`; el nombre real queda en
 `message_media.file_name` y viaja en `media.fileName`, que en un audio adjunto **no es nulo** y en una nota de voz sí: así

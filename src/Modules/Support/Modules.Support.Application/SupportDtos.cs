@@ -38,7 +38,16 @@ public sealed record SupportSettingsDto(
     int AutoCloseBusinessDays,
     int MinAutoCloseBusinessDays,
     int MaxAutoCloseBusinessDays,
-    SupportUnassignedAlertDto UnassignedAlert);
+    SupportUnassignedAlertDto UnassignedAlert,
+    SupportTaskNoticeDto TaskNotice);
+
+/// <summary>Task-notices spec 2026-11-22 §5.4: the WhatsApp connection chosen for task notices (null = none, notices go by email), the ones
+/// to choose from with the state of the template on each, and the global wait before escalating. The chosen id is shown even when it is no
+/// longer among <c>Connections</c>.</summary>
+public sealed record SupportTaskNoticeDto(
+    Guid? WhatsAppConnectionId, IReadOnlyList<SupportTaskNoticeConnectionDto> Connections, int EscalationAfterMinutes);
+
+public sealed record SupportTaskNoticeConnectionDto(Guid ConnectionId, string Name, string? PhoneNumber, string TemplateStatus);
 
 /// <summary>
 /// Spec 2026-11-22 §8.6: the «ticket sin asignar» alert, with everything the settings screen needs to draw it without crossing data
@@ -567,7 +576,8 @@ internal static class SupportDtoMapping
         type.FormalNextStep,
         type.IsInternal);
 
-    public static SupportSettingsDto ToDto(SupportTenantSettings settings, SupportUnassignedAlertDto unassignedAlert) => new(
+    public static SupportSettingsDto ToDto(
+        SupportTenantSettings settings, SupportUnassignedAlertDto unassignedAlert, SupportTaskNoticeDto taskNotice) => new(
         settings.DueSoonBusinessDays,
         SupportTenantSettings.MinDueSoonBusinessDays,
         SupportTenantSettings.MaxDueSoonBusinessDays,
@@ -577,5 +587,6 @@ internal static class SupportDtoMapping
         settings.AutoCloseBusinessDays,
         SupportTenantSettings.MinAutoCloseBusinessDays,
         SupportTenantSettings.MaxAutoCloseBusinessDays,
-        unassignedAlert);
+        unassignedAlert,
+        taskNotice);
 }

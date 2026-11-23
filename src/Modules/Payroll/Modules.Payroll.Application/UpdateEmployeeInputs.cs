@@ -55,6 +55,7 @@ public sealed class UpdateEmployeeInputsHandler(
         }
 
         var concepts = await catalog.LoadAsync(command.TenantId, period.CompanyId, cancellationToken);
+        var quota = ArchivedLineQuota.Of(period.Inputs, command.EmployeeId);
         var failures = new List<ValidationFailure>();
         var request = command.Request;
         var drafts = new List<PeriodInputDraft>(request.Overtime!.Count + request.Incomes!.Count + request.Deductions!.Count);
@@ -62,7 +63,7 @@ public sealed class UpdateEmployeeInputsHandler(
         for (var index = 0; index < request.Overtime.Count; index++)
         {
             var line = request.Overtime[index];
-            if (CheckConcept(concepts, line.ConceptId!.Value, ConceptKind.Overtime, $"overtime[{index}].conceptId", failures))
+            if (CheckConcept(concepts, line.ConceptId!.Value, ConceptKind.Overtime, quota, $"overtime[{index}].conceptId", failures))
             {
                 drafts.Add(new PeriodInputDraft(line.ConceptId.Value, ConceptKind.Overtime, line.Hours, null, null));
             }
@@ -71,7 +72,7 @@ public sealed class UpdateEmployeeInputsHandler(
         for (var index = 0; index < request.Incomes.Count; index++)
         {
             var line = request.Incomes[index];
-            if (CheckConcept(concepts, line.ConceptId!.Value, ConceptKind.Income, $"incomes[{index}].conceptId", failures))
+            if (CheckConcept(concepts, line.ConceptId!.Value, ConceptKind.Income, quota, $"incomes[{index}].conceptId", failures))
             {
                 drafts.Add(new PeriodInputDraft(line.ConceptId.Value, ConceptKind.Income, null, line.Amount, line.SalaryConstitutive));
             }
@@ -80,7 +81,7 @@ public sealed class UpdateEmployeeInputsHandler(
         for (var index = 0; index < request.Deductions.Count; index++)
         {
             var line = request.Deductions[index];
-            if (CheckConcept(concepts, line.ConceptId!.Value, ConceptKind.Deduction, $"deductions[{index}].conceptId", failures))
+            if (CheckConcept(concepts, line.ConceptId!.Value, ConceptKind.Deduction, quota, $"deductions[{index}].conceptId", failures))
             {
                 drafts.Add(new PeriodInputDraft(line.ConceptId.Value, ConceptKind.Deduction, null, line.Amount, null));
             }
@@ -105,16 +106,17 @@ public sealed class UpdateEmployeeInputsHandler(
             period, command.EmployeeId, actor, actors.CallerPermissions(), cancellationToken);
     }
 
-    // Un concepto que no existe (o es de otra empresa), está archivado o es de otro tipo es 422 en el campo de su línea.
+    // Un concepto que no existe (o es de otra empresa), es de otro tipo o está archivado en una línea nueva es 422 en el campo de su
+    // línea; una línea archivada que ya estaba guardada se acepta (decisión del owner 5).
     private static bool CheckConcept(
-        ConceptCatalogSnapshot concepts, Guid conceptId, ConceptKind kind, string field, List<ValidationFailure> failures)
+        ConceptCatalogSnapshot concepts, Guid conceptId, ConceptKind kind, ArchivedLineQuota quota, string field, List<ValidationFailure> failures)
     {
         var concept = concepts.Find(conceptId);
         if (concept is null)
         {
             failures.Add(new ValidationFailure(field, "El concepto no existe."));
         }
-        else if (concept.Archived)
+        else if (concept.Archived && !quota.TryTake(conceptId, kind))
         {
             failures.Add(new ValidationFailure(field, "El concepto está archivado."));
         }

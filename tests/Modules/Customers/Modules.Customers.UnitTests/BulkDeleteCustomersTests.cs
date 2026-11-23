@@ -68,6 +68,7 @@ public sealed class BulkDeleteCustomersTests
         CustomerDeletionBlockReasons.Loans,
         CustomerDeletionBlockReasons.ServiceContracts,
         CustomerDeletionBlockReasons.SupportTickets,
+        CustomerDeletionBlockReasons.SchedulingAppointments,
         CustomerDeletionBlockReasons.BlockedContact,
     ];
 

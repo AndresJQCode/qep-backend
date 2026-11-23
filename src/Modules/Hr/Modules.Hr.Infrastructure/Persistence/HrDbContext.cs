@@ -26,6 +26,7 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
     public DbSet<LegalParameterValue> LegalParameters => Set<LegalParameterValue>();
 
     public DbSet<LegalParameterBracket> LegalParameterBrackets => Set<LegalParameterBracket>();
+    public DbSet<LegalParameterChange> LegalParameterChanges => Set<LegalParameterChange>();
 
     public DbSet<Site> Sites => Set<Site>();
 
@@ -86,6 +87,8 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         parameter.Property(value => value.EffectiveFrom).HasColumnName("effective_from");
         // Seis decimales: las tasas (0.00522) y las fracciones caben sin redondeo (R-1 de nómina).
         parameter.Property(value => value.Value).HasColumnName("value").HasPrecision(18, 6);
+        parameter.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        parameter.Property(value => value.UpdatedBy).HasColumnName("updated_by");
 
         var bracket = modelBuilder.Entity<LegalParameterBracket>();
         bracket.ToTable("legal_parameter_brackets", Schema, table =>
@@ -99,6 +102,27 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         bracket.Property(value => value.LowerBound).HasColumnName("lower_bound").HasPrecision(9, 4);
         bracket.Property(value => value.UpperBound).HasColumnName("upper_bound").HasPrecision(9, 4);
         bracket.Property(value => value.Rate).HasColumnName("rate").HasPrecision(18, 6);
+        bracket.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        bracket.Property(value => value.UpdatedBy).HasColumnName("updated_by");
+
+        // Historial de la consola del operador (spec 2026-11-22): sólo se inserta. `key` es el nombre de un LegalParameterKey o de
+        // un LegalBracketKey, sin CHECK a propósito: una clave nueva no tendría que exigir una migración sólo para el historial.
+        var change = modelBuilder.Entity<LegalParameterChange>();
+        change.ToTable("legal_parameter_changes", Schema);
+        change.HasKey(value => value.Id);
+        change.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        change.Property(value => value.Key).HasColumnName("key").HasMaxLength(32);
+        change.Property(value => value.EffectiveFrom).HasColumnName("effective_from");
+        change.Property(value => value.Action).HasColumnName("action").HasConversion<string>().HasMaxLength(16);
+        change.Property(value => value.OldValue).HasColumnName("old_value").HasColumnType("jsonb");
+        change.Property(value => value.NewValue).HasColumnName("new_value").HasColumnType("jsonb");
+        change.Property(value => value.ChangedBy).HasColumnName("changed_by");
+        change.Property(value => value.ChangedByName).HasColumnName("changed_by_name").HasMaxLength(200);
+        change.Property(value => value.ChangedAt).HasColumnName("changed_at");
+        change.Property(value => value.Source).HasColumnName("source").HasConversion<string>().HasMaxLength(16);
+        change.Property(value => value.BatchId).HasColumnName("batch_id");
+        change.Property(value => value.FileName).HasColumnName("file_name").HasMaxLength(255);
+        change.HasIndex(value => value.ChangedAt).HasDatabaseName("ix_legal_parameter_changes_changed_at");
     }
 
     // Lo común de las cuatro configuraciones: nombre con su forma normalizada, archivado y la versión de `If-Match`.

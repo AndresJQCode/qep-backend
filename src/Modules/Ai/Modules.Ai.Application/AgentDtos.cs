@@ -79,7 +79,12 @@ public sealed record AgentEditorDto(
     IReadOnlyList<AiMemberDto> Members,
     AiModelCatalogDto Models,
     IReadOnlyList<AiMemberDto> QuotationAdvisors,
-    IReadOnlyList<AiBillingAccountOption> QuotationBillingAccounts);
+    IReadOnlyList<AiBillingAccountOption> QuotationBillingAccounts,
+    AgentSchedulingReadinessDto Scheduling);
+
+/// <summary>Spec 2026-11-23 §9.3 y §14: si la Agenda puede atender al agente, para que el editor no ofrezca el interruptor a ciegas.
+/// <c>Ready</c> lo calcula el backend: la pantalla no combina los dos campos.</summary>
+public sealed record AgentSchedulingReadinessDto(bool ModuleEnabled, int BookableServices, bool Ready);
 
 /// <summary>D-A7: guardar responde la versión nueva (para el siguiente <c>If-Match</c>) y los problemas, sin el editor entero: el
 /// borrador lo tiene la pantalla.</summary>

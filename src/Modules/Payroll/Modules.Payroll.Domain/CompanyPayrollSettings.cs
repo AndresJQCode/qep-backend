@@ -38,7 +38,7 @@ public sealed class CompanyPayrollSettings
 
     /// <summary>Lo que rige mientras la empresa nunca guardó su configuración (spec, «Configuración de nómina por empresa»).</summary>
     public static EngineSettings DefaultsFor() =>
-        new(TransportFrequency.Biweekly, TransportCapBase.SalaryOnly, OvertimeBase.SalaryOnly, Exonerated: true);
+        new(TransportFrequency.Biweekly, TransportCapBase.SalaryAndSalaryIncome, OvertimeBase.SalaryOnly, Exonerated: true);
 
     public const bool DefaultDualControl = false;
 

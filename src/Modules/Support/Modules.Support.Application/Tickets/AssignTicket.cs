@@ -66,11 +66,27 @@ public sealed class AssignTicketHandler(
         var version = ticket.Version;
         var formerAssignee = ticket.AssigneeMemberId;
         ticket.Assign(command.AssigneeMemberId, actor, now);
-        // El aviso a quien recibe la tarea va al outbox en la misma transacción del guardado: sólo si cambió de manos y no se la pasó
-        // a sí mismo.
-        if (ticket.IsInternal && ticket.Version != version && command.AssigneeMemberId is { } newAssignee && newAssignee != actor)
+        if (ticket.Version != version)
         {
-            integrationEvents.PublishTaskAssigned(ticket, actor, now);
+            // Both events go to the outbox in the same transaction as the save. The new assignee hears about it unless they took it
+            // themselves; tasks and customer tickets each have their own event (task-notices spec D-7).
+            if (command.AssigneeMemberId is { } newAssignee && newAssignee != actor)
+            {
+                if (ticket.IsInternal)
+                {
+                    integrationEvents.PublishTaskAssigned(ticket, actor, now);
+                }
+                else
+                {
+                    integrationEvents.PublishTicketAssigned(ticket, actor, now);
+                }
+            }
+
+            // The former assignee is released whenever the ticket leaves their hands, also when it is left unassigned or kept by the actor.
+            if (formerAssignee is { } former && former != ticket.AssigneeMemberId)
+            {
+                integrationEvents.PublishAssigneeReleased(ticket, former, SupportAssigneeReleaseReasons.Reassigned, now);
+            }
         }
 
         await SupportTicketActions.SaveIfChangedAsync(

@@ -56,6 +56,15 @@ internal abstract partial class InAppOutboxConsumer(IServiceScopeFactory scopeFa
         OutboxRecord record, InAppContext context, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<InAppResolution>>([]);
 
+    /// <summary>Runs inside the write transaction, after the entries are inserted and before the processed mark, with only the entries that
+    /// really were new. For rows that must exist exactly when an entry does (the task-notice escalation); most consumers add none.</summary>
+    protected virtual Task OnInsertedAsync(
+        NotificationsDbContext dbContext,
+        OutboxRecord record,
+        IReadOnlyList<InAppNotification> inserted,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) => Task.CompletedTask;
+
     // Called by the loop of NotificationsDeliveryWorker and, directly, by the tests (InternalsVisibleTo). Virtual so the loop tests can
     // count drains without a database. Returns true when the batch came full: there may be more.
     internal virtual async Task<bool> DrainAsync(CancellationToken cancellationToken)
@@ -137,14 +146,16 @@ internal abstract partial class InAppOutboxConsumer(IServiceScopeFactory scopeFa
         }
 
         var inserted = await InAppNotificationWriter.SaveAsync(
-            dbContext, Consumer, record.Id, entries, resolutions, now, publisher, cancellationToken);
+            dbContext, Consumer, record.Id, entries, resolutions, now, publisher, cancellationToken,
+            onInserted: created => OnInsertedAsync(dbContext, record, created, now, cancellationToken));
         LogEntriesCreated(logger, record.Id, inserted, Consumer);
     }
 }
 
 /// <summary>Spec D-13: the entries of <paramref name="Kind"/> about <paramref name="ResourceId"/> that are still unresolved become resolved
-/// (and read) with <paramref name="Resolution"/>. An entry that already had a resolution keeps it.</summary>
-internal sealed record InAppResolution(Guid TenantId, InAppNotificationKind Kind, Guid ResourceId, string Resolution);
+/// (and read) with <paramref name="Resolution"/>. An entry that already had a resolution keeps it.
+/// <paramref name="MemberId"/> narrows it to that member's entry (task-notices spec D-2: a reassignment must not close the new assignee's).</summary>
+internal sealed record InAppResolution(Guid TenantId, InAppNotificationKind Kind, Guid ResourceId, string Resolution, Guid? MemberId = null);
 
 /// <summary>What a consumer needs to build its entries, resolved in the scope of the tick. <paramref name="Database"/> is the context of
 /// the claim and the write: only to read before building (the wholesale consumer looks for the entries it resolves).</summary>

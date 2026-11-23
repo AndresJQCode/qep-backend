@@ -87,7 +87,7 @@ public sealed class EmployerContributionsRuleTests
     }
 
     [Fact]
-    public void ArlAndParafiscalsIgnoreTheFortyPercentRule()
+    public void ArlFollowsTheIbcWhileParafiscalsIgnoreTheFortyPercentRule()
     {
         var input = EngineTestData.Input(new DateOnly(2026, 11, 1), 2_000_000m) with
         {
@@ -96,10 +96,76 @@ public sealed class EmployerContributionsRuleTests
 
         var lines = Contributions(input);
 
-        Assert.Equal(5_300m, Line(lines, "arl").Amount);
+        // ARL is social security: 1 200 000 (IBC with the 40 % excess) x 0.00522 = 6 264 -> 6 300. The fund stays on 1 000 000.
+        Assert.Equal(6_300m, Line(lines, "arl").Amount);
+        Assert.Contains(Line(lines, "arl").Trace.Inputs, item => item.Name == "IBC del mes" && Equals(item.Value, 1_200_000m));
         Assert.Equal(40_000m, Line(lines, "compensation_fund").Amount);
         Assert.Equal(0m, Line(lines, "health_employer").Amount);
         Assert.Equal(144_000m, Line(lines, "pension_employer").Amount);
+    }
+
+    [Fact]
+    public void TheArlOfATopEarnerIsCappedLikeTheIbc()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 11, 16), 50_000_000m) with
+        {
+            Prior = MonthAccumulators.Empty with
+            {
+                WorkedDays = 15, SalaryRaw = 25_000_000m, Salary = 25_000_000m, Arl = 130_500m, CompensationFund = 1_000_000m,
+            },
+        };
+
+        var lines = Contributions(input);
+
+        // IBC capped at 25 x 1 750 905 = 43 772 625; x 0.00522 = 228 493.10 -> 228 500 - 130 500.
+        Assert.Equal(98_000m, Line(lines, "arl").Amount);
+        // The fund has no cap: 50 000 000 x 0.04 = 2 000 000 - 1 000 000.
+        Assert.Equal(1_000_000m, Line(lines, "compensation_fund").Amount);
+    }
+
+    // The first half paid health, ICBF and SENA (company not exonerated then); the month is exempt: the second half refunds them
+    // on the employer side. The fund is never exempt.
+    [Fact]
+    public void AMonthThatTurnsExemptRefundsTheFirstHalfOnTheEmployerSide()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 11, 16)) with
+        {
+            Prior = MonthAccumulators.Empty with
+            {
+                WorkedDays = 15, SalaryRaw = 875_452.5m, Salary = 875_453m,
+                HealthEmployer = 74_500m, PensionEmployer = 105_100m, Arl = 4_600m, CompensationFund = 35_100m,
+                Icbf = 26_300m, Sena = 17_600m,
+            },
+        };
+
+        var lines = Contributions(input);
+
+        Assert.Equal(-74_500m, Line(lines, "health_employer").Amount);
+        Assert.Equal(-26_300m, Line(lines, "icbf").Amount);
+        Assert.Equal(-17_600m, Line(lines, "sena").Amount);
+        Assert.Equal(
+            "Exonerado en el mes (ET art. 114-1): se reversa lo aportado en la primera quincena",
+            Line(lines, "health_employer").Trace.Note);
+        Assert.Equal(35_000m, Line(lines, "compensation_fund").Amount);
+    }
+
+    // Characterization: first half exempt (9 000 000 < 10 SMMLV); a 9 000 000 commission in the second takes the month to
+    // 18 000 000: the second half charges the whole month.
+    [Fact]
+    public void AMonthThatStopsBeingExemptChargesTheWholeMonthInTheSecondHalf()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 11, 16), 9_000_000m) with
+        {
+            Incomes = [EngineTestData.Income(SystemConceptKey.Commissions, 9_000_000m, true)],
+            Prior = MonthAccumulators.Empty with { WorkedDays = 15, SalaryRaw = 4_500_000m, Salary = 4_500_000m },
+        };
+
+        var lines = Contributions(input);
+
+        Assert.Equal(1_530_000m, Line(lines, "health_employer").Amount);
+        Assert.Equal(540_000m, Line(lines, "icbf").Amount);
+        Assert.Equal(360_000m, Line(lines, "sena").Amount);
+        Assert.Null(Line(lines, "health_employer").Trace.Note);
     }
 
     [Fact]

@@ -55,6 +55,7 @@ public sealed class PayrollAccessApiTests : IClassFixture<PayrollApiFixture>
         new("recurring-activate", HttpMethod.Post, "/companies/{c}/employees/{e}/recurring-concepts/{r}/activate", [Settings], []),
         new("recurring-deactivate", HttpMethod.Post, "/companies/{c}/employees/{e}/recurring-concepts/{r}/deactivate", [Settings], []),
         new("ensure-current", HttpMethod.Post, "/companies/{c}/periods/ensure-current", [Read, Manage], []),
+        new("open-next", HttpMethod.Post, "/companies/{c}/periods/open-next", [Read, Manage], []),
         new("periods-list", HttpMethod.Get, "/companies/{c}/periods", [Read], []),
         new("period-detail", HttpMethod.Get, "/periods/{p}", [Read], []),
         new("period-employee", HttpMethod.Get, "/periods/{p}/employees/{e}", [Read], []),
@@ -99,7 +100,7 @@ public sealed class PayrollAccessApiTests : IClassFixture<PayrollApiFixture>
 
     private static readonly HashSet<string> WithoutBody =
     [
-        "concept-archive", "concept-unarchive", "recurring-activate", "recurring-deactivate", "ensure-current", "approve", "close",
+        "concept-archive", "concept-unarchive", "recurring-activate", "recurring-deactivate", "ensure-current", "open-next", "approve", "close",
     ];
 
     private static object BodyOf(Route route) => route.Name switch
@@ -256,7 +257,7 @@ public sealed class PayrollAccessApiTests : IClassFixture<PayrollApiFixture>
         using var other = await NewTenantAsync(_fixture);
         var foreign = await CreateCompanyAsync(other.Admin, other.Id, "Empresa Ajena S.A.S.");
 
-        foreach (var name in new[] { "settings-get", "settings-put", "concept-create", "recurring-list", "ensure-current", "periods-list" })
+        foreach (var name in new[] { "settings-get", "settings-put", "concept-create", "recurring-list", "ensure-current", "open-next", "periods-list" })
         {
             using var request = RequestOf(RouteNamed(name), scene.Tenant.IdText, foreign.Id, scene.PeriodId, scene.EmployeeId);
             using var response = await scene.Tenant.Payroll.SendAsync(request, Ct);

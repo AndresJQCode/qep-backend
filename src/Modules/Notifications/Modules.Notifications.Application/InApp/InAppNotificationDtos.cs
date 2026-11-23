@@ -54,9 +54,15 @@ public sealed record InAppNotificationReadDto(InAppNotificationDto Notification,
 
 public sealed record MarkAllReadResultDto(int UnreadCount);
 
+/// <summary>What <c>read-by-resource</c> answers: how many entries it marked and the new badge count.</summary>
+public sealed record MarkResourceReadResultDto(int Marked, int UnreadCount);
+
 /// <summary>
 /// <c>UpTo</c> is text, not a date, on purpose: a malformed date typed as <see cref="DateTimeOffset"/> is rejected by the binder with a 400,
 /// and the screen only knows how to read the 422 with the <c>errors</c> map (same reason as <c>SaveBusinessHoursRequest</c>). The
 /// validator parses it.
 /// </summary>
 public sealed record MarkAllReadRequest(string? UpTo);
+
+/// <summary>Both fields nullable so a missing one reaches the validator as a 422 with its own key, not as a binder 400.</summary>
+public sealed record MarkResourceReadRequest(string? Kind, Guid? ResourceId);

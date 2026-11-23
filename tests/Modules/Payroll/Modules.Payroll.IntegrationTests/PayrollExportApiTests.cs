@@ -5,6 +5,7 @@ using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Hr.Application;
 using Modules.Payroll.Application;
 using Npgsql;
 using static Modules.Payroll.IntegrationTests.PayrollApiHarness;
@@ -137,7 +138,7 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
         Assert.Equal("Analista", sheet.Cell(employeeRow, 4).GetString());
         Assert.Equal("Bodega - Principal", sheet.Cell(employeeRow, 5).GetString());
         Assert.Equal(15, sheet.Cell(employeeRow, 6).GetDouble());
-        Assert.Equal(929_801, sheet.Cell(employeeRow, ColumnOf(sheet, "Neto")).GetDouble());
+        Assert.Equal(929_965, sheet.Cell(employeeRow, ColumnOf(sheet, "Neto")).GetDouble());
         Assert.Equal("#,##0", sheet.Cell(employeeRow, ColumnOf(sheet, "Neto")).Style.NumberFormat.Format);
 
         var totalsRow = employeeRow + 1;
@@ -254,6 +255,8 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
         await connection.OpenAsync(Ct);
         await using var command = new NpgsqlCommand(sql, connection);
         await command.ExecuteNonQueryAsync(Ct);
+        // La caché del pod (área apagada, 60 s) no ve el SQL a mano: sin esto la fila nueva queda invisible y la prueba pasa en vacío.
+        await fixture.Factory.Services.GetRequiredService<ILegalParameterCacheVersion>().BumpAsync(Ct);
     }
 
     private const string InsertNewTransportAllowance =

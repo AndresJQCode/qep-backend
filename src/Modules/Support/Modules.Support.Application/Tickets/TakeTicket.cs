@@ -19,6 +19,7 @@ public sealed class TakeTicketHandler(
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
+    ISupportIntegrationEvents integrationEvents,
     SupportTicketDtoComposer composer)
     : ICommandHandler<TakeTicketCommand, SupportTicketDetailDto>
 {
@@ -43,6 +44,12 @@ public sealed class TakeTicketHandler(
         var version = ticket.Version;
         var formerAssignee = ticket.AssigneeMemberId;
         ticket.Assign(actor, actor, now);
+        // Taking is never told to the one who takes, but whoever had it is released (task-notices spec D-7).
+        if (ticket.Version != version && formerAssignee is { } former && former != actor)
+        {
+            integrationEvents.PublishAssigneeReleased(ticket, former, SupportAssigneeReleaseReasons.Reassigned, now);
+        }
+
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketAssigned, ChangedFields, now,
             cancellationToken);

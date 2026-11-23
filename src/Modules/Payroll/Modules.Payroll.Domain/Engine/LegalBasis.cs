@@ -11,7 +11,7 @@ public static class LegalBasis
         new Dictionary<string, (string Label, string Basis)>(StringComparer.Ordinal)
         {
             ["Smmlv"] = ("Salario mínimo mensual legal vigente", "Decreto anual del salario mínimo"),
-            ["IntegralSalaryFloor"] = ("Piso del salario integral", "CST art. 132"),
+            ["IntegralSalaryFloor"] = ("Piso del salario integral", "CST art. 132, num. 2 (mod. Ley 50 de 1990, art. 18)"),
             ["TransportAllowance"] = ("Auxilio de transporte", "Ley 15/1959"),
             ["ConnectivityAllowanceSince"] = ("Auxilio de conectividad para teletrabajo", "Ley 2121/2021"),
             ["HealthEmployeeRate"] = ("Salud del empleado", "Ley 100/1993 art. 204"),

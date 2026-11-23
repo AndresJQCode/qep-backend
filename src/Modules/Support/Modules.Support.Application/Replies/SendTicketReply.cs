@@ -136,7 +136,8 @@ public sealed class SendTicketReplyHandler(
     SupportTicketDtoComposer composer,
     IValidator<SendTicketReplyCommand> validator,
     SupportFormalReplies formalReplies,
-    ISupportDocumentStorage documentStorage)
+    ISupportDocumentStorage documentStorage,
+    ISupportIntegrationEvents integrationEvents)
     : ICommandHandler<SendTicketReplyCommand, SupportReplyResultDto>
 {
     private static readonly string[] ReplyFields = ["replies"];
@@ -624,7 +625,15 @@ public sealed class SendTicketReplyHandler(
         if (resolve && outcome is SupportChannelSendResult.Sent
             && SupportTicketStatuses.AllowedFrom(ticket.Status).Contains(SupportTicketStatus.Resolved))
         {
+            // Same rule as ChangeTicketStatus: resolving releases the assignee, published before the save so it shares the transaction.
+            // The allowed-from guard above already excludes Resolved and Closed, so the previous status is never finished here.
+            var assignee = ticket.AssigneeMemberId;
             ticket.ChangeStatus(SupportTicketStatus.Resolved, actor, now, context.Clock);
+            if (assignee is { } former)
+            {
+                integrationEvents.PublishAssigneeReleased(ticket, former, SupportAssigneeReleaseReasons.Resolved, now);
+            }
+
             auditPublisher.Publish(
                 ticket.TenantId,
                 executionContext.SubjectId,

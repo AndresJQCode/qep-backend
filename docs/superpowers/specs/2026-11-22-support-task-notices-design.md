@@ -7,18 +7,20 @@ aprobar). Spec del frontend: `qep-frontend/docs/superpowers/specs/2026-11-22-sup
 
 ## 1. Intención
 
-Que el miembro al que le asignan una tarea **se entere**, sin depender de que tenga Soporte abierto. El owner
-(2026-11-22) pidió esta escalera:
+Que el miembro al que le asignan una tarea **o un ticket de cliente** (D-7) **se entere**, sin depender de
+que tenga Soporte abierto. El owner (2026-11-22) pidió esta escalera, la misma para los dos:
 
-1. **En la app**: una entrada en la campana, y en vivo por el hub (SignalR) si está conectado.
-2. Si **no la leyó en 30 minutos**: por **WhatsApp**.
+1. **En la app**: una entrada en la campana, **siempre**, y en vivo por el hub (SignalR) si está conectado.
+2. Si **no la leyó en 30 minutos y no tiene QEP abierto**: por **WhatsApp**. Mientras tenga QEP abierto
+   no sale nada por fuera, aunque no la haya leído (owner, 2026-11-22, D-1).
 3. Si no se puede por WhatsApp: por **correo**.
 
 ## 2. Metas, no metas y antimetas
 
 **Metas**
 - Una tarea asignada a otro miembro siempre deja una entrada en su campana.
-- Una tarea que sigue sin leerse a los 30 minutos sale por WhatsApp; sin WhatsApp posible, por correo.
+- Una tarea que sigue sin leerse a los 30 minutos sale por WhatsApp **sólo si el miembro no tiene QEP
+  abierto**; si lo tiene, se espera a que lo cierre (o la lea). Sin WhatsApp posible, por correo.
 - El celular del miembro es **opcional**; lo carga él o quien administra miembros.
 
 **No metas (v1)**
@@ -46,7 +48,12 @@ Que el miembro al que le asignan una tarea **se entere**, sin depender de que te
 - **La entrega en vivo** es un grupo por miembro que el `AppHub` une en `OnConnectedAsync`
   (`notificationsChanged`). `AppHubConnections` es **en memoria por pod** y la presencia
   (`IRealtimePresence`) es por tópico y con TTL de 45 s: **no existe «¿este miembro está conectado?»**
-  confiable entre réplicas.
+  confiable entre réplicas. **Sí existe el patrón**: la presencia de la bandeja de Mensajería
+  (`MessagingPresence` + `ValkeyMessagingPresence` + `PresenceHeartbeatWorker`, spec 2026-11-13 D-2) es un
+  registro local por pod con latido de 30 s a un sorted set de Valkey por tenant y ventana de lectura de
+  90 s. Este spec lo calca para el `AppHub` (§5.4, «Presencia»). El `AppHub` lo abre **todo miembro con
+  tenant** (`RealtimeConnection` en `_authenticated.tsx`), así que «conectado al `AppHub`» = «tiene QEP
+  abierto», en primer o segundo plano.
 - **WhatsApp a un miembro** necesita una plantilla de sistema aprobada por Meta en una conexión del
   tenant. Precedente: `WholesaleInvitationNotice` (kind de sistema, creación por conexión con
   `POST …/template-management/<kind>`, worker en `Bootstrapper`, el fallo no frena la acción
@@ -63,16 +70,17 @@ Que el miembro al que le asignan una tarea **se entere**, sin depender de que te
 
 | | Enfoque | Veredicto |
 |---|---|---|
-| A | Escalar por **no leído a 30 min**, sin mirar si está conectado | **elegido** |
-| B | Mirar presencia: conectado ⇒ sólo app; desconectado ⇒ WhatsApp ya | **descartado por ahora** (owner, 2026-11-22: «de momento no mirar presencia»): sin presencia confiable entre réplicas, y un conectado que no mira igual se enteraría tarde. Se revisa cuando exista un registro de presencia compartido |
+| A | Escalar por **no leído a 30 min**, sin mirar si está conectado | reemplazado (owner, 2026-11-22, D-1) |
+| B | Mirar presencia al asignar: desconectado ⇒ WhatsApp ya | descartado: un aviso externo a los segundos de asignar es ruido si iba a abrir QEP en un rato |
+| **A+P** | **No leído a 30 min y, en ese momento, sin QEP abierto**; si lo tiene abierto, se vuelve a mirar cada minuto hasta que lo cierre o la lea | **elegido** |
 | C | WhatsApp o correo inmediatos, sin campana | descartado: es lo que el owner quiso evitar |
 
-**Por qué A y no la lectura literal de B.** El owner dijo «si está conectado al hub, por la app; si no hay
-lectura en media hora, WhatsApp». La regla «no leída a los 30 min» cubre los dos casos con una sola
-condición, que se puede verificar (`read_at`): el conectado que lo vio, lo leyó; el conectado que no
-miró, o el desconectado, escalan igual. El costo: un desconectado espera 30 minutos antes del WhatsApp
-en vez de recibirlo al instante. Si el owner lo quiere inmediato, hace falta un registro de presencia
-compartido entre réplicas (Valkey o la base): es otro trabajo y no se asume.
+**Por qué A+P.** El owner (2026-11-22): «si tiene el backoffice abierto no le notifique por canales
+externos, sólo si no ha leído; si le creo un ticket, que le llegue a la campana». La presencia se mira **al
+vencer**, no al asignar, porque es entonces cuando se decide salir por fuera. Un conectado que no lee **no**
+escala mientras siga conectado: se enteró por la campana y el sonido. Si cierra QEP con la tarea sin leer,
+escala en el siguiente minuto (más la ventana de 90 s de la presencia). Un desconectado escala a los 30
+minutos, como antes.
 
 ## 5. Diseño
 
@@ -89,7 +97,9 @@ Asignan la tarea ─► evento support.ticket.task-assigned.v1 (outbox de Soport
   ¿vence_a cumplido?  no ─► espera
   ¿la entrada sigue sin leer, sin resolver, y la tarea sigue siendo de ese miembro y abierta?
         no ─► se cancela (nada que avisar)
-        sí ─► WhatsApp si el tenant eligió una conexión (/settings/support) con la plantilla
+  ¿el miembro tiene QEP abierto (presencia del AppHub)?
+        sí ─► se pospone 1 min (vence_a = ahora + 1 min), sin contar intento
+        no ─► WhatsApp si el tenant eligió una conexión (/settings/support) con la plantilla
               aprobada y el miembro tiene celular válido
               si no se puede, o falla ─► correo
 ```
@@ -100,9 +110,16 @@ Asignan la tarea ─► evento support.ticket.task-assigned.v1 (outbox de Soport
 `assignedByMemberId`, `occurredAt`). Lo publica Soporte al **crear** una tarea y al **reasignarla**,
 nunca cuando el responsable es quien la asigna (a uno mismo no se le avisa). Correlación: el ticket.
 
+**Tickets de cliente (D-7):** `support.ticket.assigned.v1`, mismo payload, al asignar un ticket de cliente a
+**otro** miembro. Tomarlo (a uno mismo) o dejarlo sin responsable no avisa. Y
+`support.ticket.assignee-released.v1` (`…, formerAssigneeMemberId, reason, isInternal`) al reasignar,
+tomar uno ajeno, resolver o cerrar, **para tareas y tickets de cliente**: cierra la entrada de quien lo
+tenía.
+
 ### 5.3 Campana
 
-- `kind` nuevo `SupportTaskAssigned`, `data { ticketId, ticketNumber, actorName }`. `actorName` se
+- `kind` nuevo `SupportTaskAssigned` (tareas) y `SupportTicketAssigned` (tickets de cliente, D-7; mismo
+  `data`, la pantalla cambia «la tarea» por «el ticket»), `data { ticketId, ticketNumber, actorName }`. `actorName` se
   resuelve al leer (como en `ConversationAssigned`). **Nunca el asunto.**
 - `dedupe_key`: `support-task-assigned:{ticketId}:{id del mensaje del outbox}`, así dos reasignaciones
   del mismo ticket son entradas distintas y un reintento no duplica.
@@ -125,6 +142,19 @@ nunca cuando el responsable es quien la asigna (a uno mismo no se le avisa). Cor
 - **Comprobación al enviar**, no al encolar, por un puerto angosto `ITaskNoticeState` implementado en
   `Bootstrapper` (el único lugar que puede tocar Soporte): la tarea sigue abierta y el responsable
   sigue siendo ese miembro. La entrada leída o resuelta se lee de la propia tabla de la campana.
+- **Presencia (D-1).** Después de la comprobación anterior, y sólo si se iba a enviar, el worker pregunta
+  por un puerto angosto `ITaskNoticePresence.IsConnectedAsync(tenantId, memberId)` (implementado en
+  `Bootstrapper`) si el miembro tiene QEP abierto. Si lo tiene, la fila **se pospone**: `due_at = ahora +
+  1 min`, sin lease y sin contar intento (no agota `MaxAttempts`) y sin anotar nada en `channel_attempts`
+  (crecería cada minuto). No hay tope: mientras siga conectado y sin leer, no sale nada por fuera.
+  - El registro calca el de la bandeja: el `AppHub` anota la conexión en el registro local
+    (`AppHubConnections`, que ya guarda tenant y miembro por conexión) y, con `Valkey:Areas:Presence`
+    prendido, en un sorted set por tenant `qep:rt:online:{tenantId}` (miembro → segundo Unix del último
+    latido). Un latido de 30 s por pod reescribe a sus conectados y recorta lo viejo; se lee «conectado»
+    si el último latido cae dentro de 90 s. Al desconectar sólo se quita si el pod no le tiene otra pestaña.
+  - **Sin Valkey, o si Valkey falla**, se lee el registro local del pod. Con varias réplicas eso puede
+    decir «desconectado» de alguien conectado a otro pod: el resultado es el comportamiento anterior
+    (escala a los 30 min). Falla hacia avisar, nunca hacia callar.
 - **Elección de canal:** WhatsApp si (a) el tenant **configuró en `/settings/support`** la conexión
   de los avisos de tareas (§5.7) y ésta sigue activa y con la plantilla `TaskNotice` aprobada, (b) el
   miembro tiene celular válido E.164, propio o autocompletado de RR. HH. (§5.5). Sin conexión
@@ -180,7 +210,7 @@ nunca cuando el responsable es quien la asigna (a uno mismo no se le avisa). Cor
 Plantilla de sistema (categoría utilidad), por conexión, creada como la de invitación de distribuidor
 (`POST …/template-management/task-notice`, `messaging.template.manage`, tarjeta en
 `/integrations/whatsapp/$connectionId/templates`). Texto, con dos variables con nombre:
-«{{asesor}} te asignó la tarea {{numero}}. Ábrela en QEP.» **Sin asunto ni descripción.** El nombre
+«¡Hola! {{asesor}} te asignó {{numero}} en QEP. Ábrelo para ver el detalle.» (genérico: sirve para tareas y tickets de cliente, D-7). **Sin asunto ni descripción.** El nombre
 del `kind` es `TaskNotice` (10 caracteres): verifica el ancho de la columna antes de migrar.
 
 ### 5.7 Ajustes en `/settings/support`
@@ -211,8 +241,9 @@ Se suma a `SupportSettingsDto` (mismo `GET`/`PUT …/support/settings`, mismo `I
 
 ## 6. Decisiones del owner (2026-11-22) — todas resueltas
 
-- **D-1.** De momento **no se mira presencia**: todavía no existe la campana ni un registro de
-  presencia compartido. Se escala por «no leído a 30 min» (§4).
+- **D-1.** (Revisada el 2026-11-22; reemplaza «de momento no mirar presencia».) La campana llega
+  **siempre**. WhatsApp o correo, **sólo** si a los 30 minutos la entrada sigue sin leer **y** el miembro
+  no tiene QEP abierto; si lo tiene, se vuelve a mirar cada minuto (§4, §5.4 «Presencia»).
 - **D-2.** Abrir la tarea, por cualquier camino, marca leída su entrada de campana (§5.3). Se
   coordina con la sesión de la campana.
 - **D-3.** El celular de RR. HH. **se autocompleta** en el perfil del miembro si no tiene el suyo
@@ -220,6 +251,10 @@ Se suma a `SupportSettingsDto` (mismo `GET`/`PUT …/support/settings`, mismo `I
 - **D-4.** Los 30 minutos son un valor global de configuración, no por tenant.
 - **D-5.** La conexión de WhatsApp de los avisos **se configura en `/settings/support`** (§5.7).
 - **D-6.** Sin casilla de consentimiento: un número guardado vale de inmediato (§5.5).
+- **D-7.** (2026-11-22, tarde.) Asignar un **ticket de cliente** a otro miembro avisa **igual que una
+  tarea**: campana siempre y, a los 30 min sin leer y sin QEP abierto, WhatsApp o correo. El owner eligió
+  esto sabiendo que son más mensajes (y más costo de Meta) que con sólo campana. La plantilla de WhatsApp
+  es una sola y genérica (§5.6); el correo dice «el ticket» o «la tarea». Tomar un ticket nunca avisa.
 
 ## 7. Orden de despliegue y dependencias
 
@@ -232,7 +267,8 @@ Backend primero; un frontend viejo pinta el `kind` desconocido como aviso genér
 ## 8. Pruebas (TDD, RED antes que GREEN)
 
 Consumidor: crea entrada y escalada una sola vez ante reintento; no avisa al asignarse a uno mismo.
-Worker: no escala si la entrada se leyó, se resolvió, se reasignó o se cerró; escala por WhatsApp con
+Worker: no escala si la entrada se leyó, se resolvió, se reasignó o se cerró; con el miembro conectado
+pospone 1 min sin contar intento ni enviar, y escala en cuanto deja de estarlo; escala por WhatsApp con
 conexión, plantilla aprobada y celular; cae a correo sin celular, sin
 conexión, con plantilla sin aprobar o con fallo de Meta; nunca manda por dos canales; aísla el error de
 un tenant; lease y reclamo con dos réplicas. Plantilla de WhatsApp: no contiene asunto. Celular:

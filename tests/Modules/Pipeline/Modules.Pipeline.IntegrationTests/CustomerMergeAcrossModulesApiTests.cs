@@ -241,6 +241,25 @@ public sealed class CustomerMergeAcrossModulesApiTests
     private static Task<long> SupportTicketVersionAsync(string connectionString, Guid ticketId) =>
         ScalarAsync<long>(connectionString, "SELECT version FROM support.tickets WHERE id = @id", ("id", ticketId));
 
+    // Agenda (plan 2026-11-21, Tarea 11): la cita va suelta (sin sede, recurso, servicio ni sesión: la sesión de siembra apaga las FK),
+    // con sólo las columnas que la fusión toca por nombre. Cualquier estado se mueve, y sin subir la versión.
+    private static Task<int> InsertAppointmentAsync(string connectionString, Guid appointmentId, Guid tenantId, Guid customerId, string status) =>
+        ExecuteAsync(connectionString,
+            """
+            SET session_replication_role = replica;
+            INSERT INTO scheduling.appointments (id, tenant_id, location_id, resource_id, service_id, customer_id, session_id, starts_at,
+                ends_at, status, source, version, created_at, updated_at)
+            VALUES (@id, @tenant, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), @customer, gen_random_uuid(),
+                now(), now() + interval '30 minutes', @status, 'BackOffice', 1, now(), now());
+            """,
+            ("id", appointmentId), ("tenant", tenantId), ("customer", customerId), ("status", status));
+
+    private static Task<Guid> AppointmentCustomerAsync(string connectionString, Guid appointmentId) =>
+        ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM scheduling.appointments WHERE id = @id", ("id", appointmentId));
+
+    private static Task<long> AppointmentVersionAsync(string connectionString, Guid appointmentId) =>
+        ScalarAsync<long>(connectionString, "SELECT version FROM scheduling.appointments WHERE id = @id", ("id", appointmentId));
+
     private static string[] All(Guid customerId) => [.. Tables.Select(table => $"{table}={customerId}")];
 
     // §4: el negocio que abrió el sent del fusionado, su foto y la conversación pasan al que queda, y el tablero lo dibuja a su
@@ -324,6 +343,14 @@ public sealed class CustomerMergeAcrossModulesApiTests
         await InsertSupportTicketAsync(connectionString, ticketOfBystander, tenantId, arranged.Bystander);
         await InsertSupportTicketAsync(connectionString, foreignTicket, other.TenantId, arranged.Merged);
 
+        // Agenda: la cancelada también se mueve; la del otro cliente y la del otro tenant se quedan.
+        var appointmentOfMerged = Guid.CreateVersion7();
+        var appointmentOfBystander = Guid.CreateVersion7();
+        var foreignAppointment = Guid.CreateVersion7();
+        await InsertAppointmentAsync(connectionString, appointmentOfMerged, tenantId, arranged.Merged, "Cancelled");
+        await InsertAppointmentAsync(connectionString, appointmentOfBystander, tenantId, arranged.Bystander, "Confirmed");
+        await InsertAppointmentAsync(connectionString, foreignAppointment, other.TenantId, arranged.Merged, "Confirmed");
+
         using var scope = factory.Services.CreateScope();
         var references = scope.ServiceProvider.GetRequiredService<ICustomerMergeReferences>();
 
@@ -347,6 +374,10 @@ public sealed class CustomerMergeAcrossModulesApiTests
         Assert.Equal(1, await SupportTicketVersionAsync(connectionString, ticketOfMerged));
         Assert.Equal(arranged.Bystander, await SupportTicketCustomerAsync(connectionString, ticketOfBystander));
         Assert.Equal(arranged.Merged, await SupportTicketCustomerAsync(connectionString, foreignTicket));
+        Assert.Equal(arranged.Survivor, await AppointmentCustomerAsync(connectionString, appointmentOfMerged));
+        Assert.Equal(1, await AppointmentVersionAsync(connectionString, appointmentOfMerged));
+        Assert.Equal(arranged.Bystander, await AppointmentCustomerAsync(connectionString, appointmentOfBystander));
+        Assert.Equal(arranged.Merged, await AppointmentCustomerAsync(connectionString, foreignAppointment));
         Assert.Equal(new CustomerMergeReferenceCounts(0, 0, 0, 0, 0), await references.CountAsync(tenantId, [arranged.Merged], Ct));
         Assert.Equal(new CustomerMergeReferenceCounts(1, 1, 1, 1, 1), await references.CountAsync(tenantId, [arranged.Survivor], Ct));
     }

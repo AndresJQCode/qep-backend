@@ -31,6 +31,9 @@ public static class SupportErrorCodes
     /// <summary>Spec 2026-11-22 §8.6: the schedule of the alert is not one of the tenant's.</summary>
     public const string AlertScheduleInvalid = "support.settings.alert_schedule_invalid";
 
+    /// <summary>Task-notices spec 2026-11-22 §5.4: the WhatsApp connection chosen for the task notices is not one of the tenant connections.</summary>
+    public const string TaskNoticeConnectionInvalid = "support.settings.task_notice_connection_invalid";
+
     public const string TicketTypeNotFound = "support.ticket_type.not_found";
 
     public const string TicketTypeUnavailable = "support.ticket_type.unavailable";

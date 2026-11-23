@@ -46,8 +46,9 @@ dejarlos fijos en el código.
   vigente sea de un año anterior al del periodo (`PayrollLegalValues.cs:29`). `IsYearly` excluye `SundaySurchargeRate`,
   `WeeklyHours` y `ConnectivityAllowanceSince`, pero el chequeo sólo corre sobre las claves que `LegalValueSet` lee con `Get(...)`
   (`PayrollLegalValues.cs:48-81`), y `IntegralSalaryFloor` no está entre ellas: **nómina exige 26 claves escalares por año**, no 27.
-  `IntegralSalaryFloor` lo usa sólo Hr (`SalaryRules`), que no caduca la tabla (D-8). **Los tramos `SolidarityFund` no son
-  anuales para nómina:** sólo faltan si no hay ningún conjunto vigente (`PayrollLegalValues.cs:38-42`); el de 2026 sirve para 2027.
+  `IntegralSalaryFloor` lo usa sólo Hr (`SalaryRules`), que no caduca la tabla (D-8). **Los tramos `SolidarityFund` también son anuales para nómina** (decisión del owner 6,
+  2026-11-22; spec `2026-11-22-nomina-decisiones-del-owner-design.md`): faltan si el conjunto vigente es de un año anterior al del
+  periodo. **Decidido por el owner (2026-11-22):** el aviso `nextYearMissing`/`currentYearMissing` los cubre.
   *(Corregido en la revisión: decía «27 claves escalares más los tramos, 28 cada enero».)* Qué cubre el aviso de «falta el año
   siguiente» es decisión del owner (ver «Pendiente del owner»).
 - La foto del periodo (`LegalValueSet`) incluye los tramos de solidaridad y la fecha con que se resolvió
@@ -96,18 +97,22 @@ ya calculado la usó.**
   *Mi decisión.*
 - Valkey caído: se lee de la base y se sigue (fallback del gateway, con la métrica `qep.valkey.fallbacks`).
 - Implementación: decorador de `ILegalParameterSource`; `SalaryRules`, la importación y nómina no se tocan. **No puede
-  registrarse en `AddQepValkey`** *(corregido en la revisión)*: `AddQepValkey` corre en `QepServiceCollectionExtensions.cs:121` y
-  `AddHrInfrastructure` en la línea 1709, con `AddScoped<ILegalParameterSource, LegalParameterSource>()`
+  registrarse en `AddQepValkey`** *(corregido en la revisión)*: `AddQepValkey` corre en `QepServiceCollectionExtensions.cs:125` y
+  `AddHrInfrastructure` en la línea 1896 *(Corregido en la implementación, 2026-11-23)*, con `AddScoped<ILegalParameterSource, LegalParameterSource>()`
   (`HrInfrastructureExtensions.cs:29`), que pisaría el decorador. Se registra **después** de `AddHrInfrastructure`, envolviendo el
   descriptor previo (`LegalParameterSource` es `internal` en Hr.Infrastructure y el Bootstrapper no lo puede nombrar).
 - **Subir la versión es un puerto de Hr.Application** (`ILegalParameterCacheVersion.BumpAsync`, el patrón de `ITenantAccessVersion`
   de Tenancy): los casos de uso de escritura viven en Hr y no ven Valkey (`HrLayerTests` prohíbe `StackExchange.Redis`). Tres
   implementaciones en el Bootstrapper: Valkey (`INCR`, sin el token de quien llama, como `ValkeyTenantAccessVersion`), memoria del
-  pod (área apagada: invalida la caché local del pod que escribió) y ninguna para pruebas.
+  pod (área apagada: invalida la caché local del pod que escribió). *(Corregido en la implementación, 2026-11-23)* No hay implementación «ninguna para pruebas»: no habría servido,
+  porque la caché del pod seguiría sirviendo la tabla; las pruebas que escriben SQL a mano suben la versión real después.
 - **Riesgo residual, aceptado con TTL de 1 h:** si el `INCR` posterior al commit falla (Valkey caído en ese instante), las
   réplicas pueden servir la versión vieja **hasta 1 h** (antes 24 h, que contradecía la antimeta «un valor viejo durante
   horas»). No se elimina, se acota: `ValkeyTenantAccessVersion` lo acota con entradas de 60 s. El fallo del `INCR` se cuenta en
   `qep.valkey.fallbacks` y se loguea, y la respuesta de la escritura sigue siendo correcta (el dato ya está en la base).
+- **Escrituras fuera de la consola** (migración que siembra el año, hotfix de SQL, restauración) no suben la versión: con el área
+  prendida se ven hasta 1 h después, incluso tras un despliegue. Hacen falta `INCR qep:legalparams:ver` o un reinicio. El
+  arranque sube la versión una vez (`LegalParameterCacheStartupBump`, sólo con el área prendida), así que un despliegue basta.
 
 ### Uso: qué es «una nómina ya calculada la usó»
 
@@ -161,9 +166,12 @@ Base `/api/v1/tenants/{tenantId}/operator/legal-parameters`, mismo estilo que un
 - **`nextYearMissing`** (corregido tras leer `PayrollLegalValues`): se prende cuando no hay fila con vigencia exactamente el 1 de
   enero del año siguiente: nómina marca faltante a una clave cuya fila vigente sea de un año anterior, y la primera quincena de
   enero resuelve con su `StartDate` (el día 1), que sólo se cubre con una fila de ese día. Las tres no anuales no lo llevan.
-  *Revisión:* las claves que nómina exige cada año son 26, no 27, y los tramos no son anuales para nómina (ver «Restricciones»);
+  *Revisión:* las claves que nómina exige cada año son 26, no 27 (ver «Restricciones»);
   **decidido por el owner (2026-11-22):** el aviso cubre esas 26 más `IntegralSalaryFloor` (27 claves, las que el DTO marca
-  `yearly: true`), y los tramos `SolidarityFund` no llevan aviso.
+  `yearly: true`). **Tramos `SolidarityFund`: re-decidido por el owner (2026-11-22), sí llevan aviso** — con la decisión 6 de
+  nómina son anuales y un enero sin conjunto del año no liquida. El conjunto lleva `nextYearMissing` y `currentYearMissing` con la
+  misma regla que las claves: no hay conjunto con vigencia exactamente el 1 de enero del año correspondiente. Cuenta como una
+  entrada más en `nextYearMissingCount`.
   **Decidido por el owner (2026-11-22):** `nextYearMissing` se prende **desde el 1 de diciembre** (no los 12 meses; el de UVT usa el
   24) y se agrega `currentYearMissing`, **siempre activo**, verdadero cuando una clave anual no tiene fila vigente del año en curso
   (lo que hace fallar la nómina de enero). Cada uno trae su conteo, que calcula el backend.
@@ -186,8 +194,13 @@ Base `/api/v1/tenants/{tenantId}/operator/legal-parameters`, mismo estilo que un
   `IntegralSalaryFloor` es un monto en pesos (16.900.000 en 2024), no un múltiplo. Los datos sembrados cumplen todas estas
   reglas y la de tramos (`SundaySurchargeRate` 2027 vale exactamente `1.00`, el borde superior).
 - **Borrar:** no se puede borrar la única fila de una clave (el resolver necesita al menos una), ni una fila en uso.
-- Códigos de error (mapeo por `code`, `ApiExceptionHandler`): `hr.legal_parameter.in_use` (409), `.value_invalid` (422),
-  `.date_invalid` (422), `.last_row` (422), `.key_unknown` (404). Existente: `hr.legal_parameter.missing`.
+- Códigos de error: `hr.legal_parameter.in_use` (409), `.value_invalid` (422), `.date_invalid` (422), `.last_row` (422),
+  `.key_unknown` (404). Existente: `hr.legal_parameter.missing`. *(Corregido en la implementación, 2026-11-23)* El mapeo no es por `code`: lo decide el tipo de
+  excepción en `ApiExceptionHandler.MapException` (`ResourceConflictException` 409, `ResourceNotFoundException` 404,
+  `HrDomainException` 422) y no se agregó ninguna entrada por código al manejador.
+- **Código de la validación de tramos** *(Corregido en la implementación, 2026-11-23)*: el `PUT` manual de un conjunto que no pasa las reglas responde
+  `hr.legal_parameter.value_invalid` (el spec no nombraba código); en la vista previa del Excel el mismo mensaje viaja como el código
+  de fila `hr.legal_parameter.import.row.brackets_invalid`.
 - Concurrencia: dos operadores editando la misma fila. *Mi decisión:* la última escritura gana y las dos quedan en el
   historial; el volumen (pocos cambios al año) no justifica `If-Match`.
 
@@ -203,12 +216,12 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
   "currentYear": 2026,
   "currentYearMissingCount": 0,   // siempre activo: claves anuales sin fila vigente del año en curso
   "nextYear": 2027,              // nextYearMissingCount vale 0 antes del 1 de diciembre
-  "nextYearMissingCount": 27,     // cuántas claves traen nextYearMissing (los tramos no); el navegador no cuenta
+  "nextYearMissingCount": 28,     // 27 claves más el conjunto de tramos; el navegador no cuenta
   "parameters": [                 // las 30, en el orden de LegalParameterKey
     {
       "key": "Smmlv",
-      "name": "Salario mínimo mensual legal vigente",  // ❓ ver «Nombres y grupos»
-      "group": "SalaryAndCaps",                        // ❓ ver «Nombres y grupos»
+      "name": "Salario mínimo mensual legal vigente",  // de LegalParameterLabels (Hr.Domain)
+      "group": "SalaryAndCaps",                        // de LegalParameterLabels (Hr.Domain)
       "unit": "Currency",          // Currency | Fraction | SmmlvMultiple | Hours | Flag
       "yearly": true,
       "nextYearMissing": true,
@@ -224,7 +237,8 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
     {
       "key": "SolidarityFund",
       "name": "Fondo de solidaridad pensional",
-      "nextYearMissing": false,    // ❓
+      "nextYearMissing": true,     // los tramos llevan aviso (re-decidido 2026-11-22, decisión 6 de nómina)
+      "currentYearMissing": false,
       "current": { "effectiveFrom": "2026-01-01" },
       "sets": [
         { "effectiveFrom": "2026-01-01", "inUse": false, "updatedAt": null,
@@ -241,18 +255,26 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
   *Mi decisión de revisor:* así el frontend escribe la respuesta en caché sin recomponer `inUse` ni `current`.
 - `GET /history?page=1&pageSize=50` responde `{ items, total, page, pageSize }`, como `OperatorHistoryPageDto` de Tenancy. Cada
   ítem: `{ id, key, effectiveFrom, action, oldValue, newValue, changedAt, changedBy: { subjectId, displayName }, source,
-  batchId, fileName }`. `oldValue`/`newValue` llegan como texto (número o JSON de tramos, tal cual la columna); ❓ si conviene
-  mandarlos ya tipados (`number` o lista de tramos) para que el frontend no parsee JSON.
+  batchId, fileName }`. **Valores tipados** (*decidido 2026-11-22*): cada ítem trae `kind`
+  (`Parameter | Brackets`); un `Parameter` lleva `oldValue`/`newValue` como `number` (nulos en «Creó» y «Borró»), y un `Brackets`
+  lleva `oldBrackets`/`newBrackets` como lista de tramos. El frontend nunca parsea JSON. En la base, las columnas son `jsonb`. *(Corregido en la implementación, 2026-11-23)* `kind` **se deriva de `key`** (los nombres de
+  `LegalParameterKey` y `LegalBracketKey` no se repiten): la tabla no tiene columna de tipo.
 - **Nombres y grupos:** la plantilla de Excel tiene columna `Nombre`, y la arma Hr.Infrastructure, que **no puede leer**
   `LegalBasis` (vive en `Modules.Payroll.Domain.Engine`; `HrLayerTests` prohíbe referenciar otro módulo de negocio). Así que los
   nombres en español tienen que vivir también en Hr (por ejemplo `LegalParameterLabels` en Hr.Domain) o pasar a
-  BuildingBlocks. Ya que existen en Hr, el `GET` los manda con el grupo y la unidad. Los grupos del mockup («Salario y topes»,
-  «Aportes», «Escalas por tramos») no existen en el código: ❓ el owner fija la lista y a qué grupo va cada clave.
+  BuildingBlocks. Ya que existen en Hr, el `GET` los manda con el grupo y la unidad. **Grupos decididos (2026-11-22):**
+  `SalaryAndCaps` (`Smmlv`, `IntegralSalaryFloor`, `TransportAllowanceCapSmmlv`, `ExonerationThresholdSmmlv`, `IbcCapSmmlv`,
+  `NonSalaryCapRate`), `Allowances` (`TransportAllowance`, `ConnectivityAllowanceSince`), `Contributions` (salud, pensión, alto
+  riesgo, ARL I-V, caja, ICBF, SENA), `Provisions` (cesantías, prima, vacaciones, intereses a las cesantías) y `WorkingTime`
+  (`WeeklyHours`, `SundaySurchargeRate`, `ExtraDayRate`, `ExtraNightRate`, `NightSurchargeRate`); los tramos van en su propia
+  sección. `LegalParameterLabels` es la **única** fuente de nombre, grupo y unidad; los nombres se copian de `LegalBasis` para que
+  la consola y el rastro de nómina digan lo mismo, y una prueba compara las dos listas de claves. *(Corregido en la implementación, 2026-11-23)* Esa prueba vive en `Bootstrapper.UnitTests`
+  (`LegalParameterLabelsMatchLegalBasisTests`), no en Hr: necesita `LegalBasis` y Hr no puede referenciar Payroll.
 
 ### Carga por Excel (el flujo de enero)
 
 Decisión del owner (2026-11-22): la investigación de los valores nuevos la hace él por fuera, arma un Excel y lo carga. **No
-hay copiloto ni IA en este spec.** Cada enero son 26 claves que nómina exige (27 con `IntegralSalaryFloor`; *corregido en la revisión*, decía 28): el Excel evita
+hay copiloto ni IA en este spec.** Cada enero son 26 claves que nómina exige más el conjunto de tramos (28 entradas con `IntegralSalaryFloor`): el Excel evita
 teclearlas una por una.
 
 Copia el patrón de la importación de empleados: tres rutas, un puerto de Aplicación para Excel (`IExcelLegalParameterImporter`)
@@ -266,7 +288,12 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
 
 - **Plantilla** (*mi decisión*): dos hojas. «Parámetros»: una fila por clave con `Clave`, `Nombre`, `Valor vigente`,
   `Vigente desde` (sólo lectura) y las dos columnas que se llenan, `Rige desde` y `Valor nuevo`. Viene **precargada** con el 1 de
-  enero del año siguiente y con el valor vigente, para que el operador sólo cambie lo que cambió. «Tramos»: una fila por tramo
+  enero del año siguiente y con el valor vigente, para que el operador sólo cambie lo que cambió. *(Corregido en la implementación, 2026-11-23)* Sólo las **27 claves
+  anuales** vienen precargadas; las tres que no son anuales (`SundaySurchargeRate`, `WeeklyHours`, `ConnectivityAllowanceSince`)
+  salen con `Rige desde` y `Valor nuevo` vacíos: arrastrar `ConnectivityAllowanceSince` al 1 de enero movería la fecha desde la que
+  rige la conectividad, y `WeeklyHours` cambia el 15 de julio, no el 1 de enero. La plantilla trae las 30 filas y la vista previa de
+  una plantilla sin tocar da 28 `Carry` (27 claves más el conjunto). El valor «vigente» que arrastra es el que rige el 1 de enero
+  siguiente (la última fila con fecha menor o igual), no el de hoy, para que una fila futura ya cargada no la pise. «Tramos»: una fila por tramo
   (`Clave`, `Rige desde`, `Desde`, `Hasta`, `Tasa`), precargada con el conjunto vigente. Una fila con `Valor nuevo` vacío se
   ignora.
 - **`Valor nuevo` viene precargado — decidido por el owner (2026-11-22).** La plantilla trae en `Valor nuevo` el valor vigente, y
@@ -303,8 +330,8 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
   ```
 
   `action` en inglés (`Create | Carry | Update | Unchanged | Error`), como los demás enums de la API; el español es del frontend.
-  `oldValue` es la fila que existía en esa misma `(clave, fecha)` (nula en `Create`); ❓ si el owner quiere ver «Antes» como el
-  valor **vigente** (lo que muestra el mockup), el backend manda los dos. `message` va en español para la persona, como en la
+  `oldValue` (*decidido 2026-11-22*) es el valor **vigente a esa fecha antes de aplicar** (lo que muestra el mockup): en `Update`
+  coincide con la fila de esa misma fecha, y en `Create` y `Carry` es la fila anterior. Nulo sólo si no había ninguna vigente. `message` va en español para la persona, como en la
   importación de empleados (`EmployeeImportRowIssueDto.Message`). `POST /import` responde `{ fileName, receivedAt, batchId,
   created, carried, updated, unchanged }` y el frontend relee el `GET`.
 - **Qué bloquea:** cualquier fila en `Error` (valor fuera de rango, fecha inválida, clave desconocida, tramos incoherentes, fila ya
@@ -318,19 +345,26 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
   topes de la importación de empleados», que son otros (5 MB y 1000 filas, `HrImportColumns.cs:15-17`): rigen 1 MB y 500, en
   constantes propias. Lo que sí se replica es el mecanismo (endpoint con `IFormFile?` y `DisableAntiforgery()`,
   `HrEndpoints.cs:223-235`; sin archivo, 422 y no 400 del binding).
-- Códigos de error `hr.legal_parameter.import.*`, mapeados por `code`. *Revisión:* el borrador listaba `file_required`,
+- Códigos de error `hr.legal_parameter.import.*`. *(Corregido en la implementación, 2026-11-23)* No se mapean por `code`: el status
+  sale del tipo de la excepción (`HrDomainException` ⇒ 422), igual que el resto de los códigos de Hr, y `ApiExceptionHandler` no
+  lleva entradas por código. *Revisión:* el borrador listaba `file_required`,
   `file_invalid`, `header_missing`, `too_many_rows`; se alinean con los de empleados (`HrErrorCodes.cs:57-64`) para que el
   frontend reuse el mapeo: `file_required`, `extension_invalid`, `too_large`, `unreadable`, `header_mismatch`, `empty`,
   `too_many_rows`, y **`rows_invalid`**, que faltaba: es lo que responde `POST /import` cuando el reanálisis encuentra una fila en
   `Error` (todo o nada). Los de fila (`hr.legal_parameter.import.row.*`) viajan en la vista previa con su `message`, no como error
-  HTTP; ❓ su lista la cierra el implementador con el analizador.
+  HTTP. *(Corregido en la implementación, 2026-11-23)* Lista cerrada de los códigos de fila: `key_unknown` (la clave no es el nombre exacto de un valor ni de un
+  conjunto), `date_invalid` (`Rige desde` falta o no es `yyyy-MM-dd`), `value_invalid` (no es un número o no pasa
+  `LegalParameterRules`, con su mensaje), `brackets_invalid` (el conjunto no pasa las reglas de tramos o trae una celda que no es un
+  número; un conjunto es **un solo elemento** con todas sus filas), `duplicated` (el mismo `(clave, fecha)` otra vez en el archivo:
+  falla la segunda aparición) e `in_use` (la fila cae en el rango de una nómina ya calculada, con el mensaje del 409). El aviso
+  `hr.legal_parameter.import.next_year_missing` va aparte, en `warnings`, y no bloquea.
 - La plantilla `GET /import/template` responde el archivo con `Results.File(…, ExcelContentType, fileName)` como la de empleados
   (`HrEndpoints.cs:467-473`); *propuesta*: `parametros-legales-<año siguiente>.xlsx`.
 
 ### Datos
 
 - Tabla nueva `hr.legal_parameter_changes`: `id`, `key`, `effective_from`, `action` (`Created|Updated|Deleted`),
-  `old_value`, `new_value` (texto: el número, o el JSON del conjunto de tramos), `changed_by` (miembro), `changed_by_name`, `changed_at`, `source` (`Manual|Excel`), `batch_id` (nulo en lo manual) y `file_name` (sólo Excel). Sólo inserta.
+  `old_value`, `new_value` (`jsonb`: el número, o el conjunto de tramos), `changed_by` (miembro), `changed_by_name`, `changed_at`, `source` (`Manual|Excel`), `batch_id` (nulo en lo manual) y `file_name` (sólo Excel). Sólo inserta.
   *Revisión:* `changed_by` es el `SubjectId` del usuario (`IExecutionContext.SubjectId`), no un miembro: el operador actúa desde el
   tenant operador y el registro es de la plataforma, sin `tenant_id`. El nombre se resuelve como en `ActivityWriter` (Hr) y se
   guarda en `changed_by_name`. `key` es `varchar(32)` como en las otras dos tablas (`SolidarityFund` cabe).
@@ -348,12 +382,12 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
 de otorgarlos al rol de operador que `CatalogOperatorPermissions`. *Revisión, verificado:* `operator.tax_units.*` se registra en
 tres lugares de `src/Bootstrapper/QepServiceCollectionExtensions.cs`, y los dos nuevos van en los mismos:
 
-1. En la lista de permisos del rol `admin` de fábrica (línea ~2656): el rol vive en código, sin migración. No hay un «rol de
+1. En la lista de permisos del rol `admin` de fábrica (línea ~2884) *(Corregido en la implementación, 2026-11-23)*: el rol vive en código, sin migración. No hay un «rol de
    operador»: `OperatorPermissionFilter` (prefijo `operator.`) deja vivos estos permisos sólo en el tenant operador.
-2. Un `PermissionDefinition` por permiso (línea ~3433): categoría `"Operator"`, `RequiredModules: []` (núcleo; **no** el módulo
+2. Un `PermissionDefinition` por permiso (línea ~3724) *(Corregido en la implementación, 2026-11-23)*: categoría `"Operator"`, `RequiredModules: []` (núcleo; **no** el módulo
    `hr`, o el enmascarado por módulos los apaga en el tenant operador sin `hr`), riesgo `"medium"` para `read` y `"high"` para
    `manage` (mueve la nómina de todos los tenants), `Shape = new("operator.legal_parameters", "Parámetros legales", "read"|"manage")`.
-3. La política de autorización (línea ~4310): `AddPermissionRequirement(policy, …)`.
+3. La política de autorización (línea ~4672) *(Corregido en la implementación, 2026-11-23)*: `AddPermissionRequirement(policy, …)`.
 
 Segunda capa en cada handler: `OperatorAuthorization.EnsureAuthorized`.
 
@@ -391,15 +425,17 @@ Backend primero (migración de `legal_parameter_changes` y columnas), luego fron
   vigencia libre (ya no el 1 de enero obligatorio).
 - Por decidir en la carga por Excel (mis decisiones, marcadas arriba): plantilla **precargada** con el valor vigente y el 1 de
   enero siguiente (el operador cambia sólo lo que cambió), y límites de 1 MB y 500 filas.
-- Las reglas de validación de los tramos (contiguos, primero desde 0 o más) son propuesta mía: el owner confirma que reflejan
-  cómo se publica el fondo de solidaridad.
+- ~~Reglas de validación de los tramos~~ **Cerrado (2026-11-22):** contiguos, el primero desde 0 o más, `upperBound` mayor que
+  `lowerBound` y vacío sólo en el último. Coincide con los datos sembrados (2025 y 2026: de 4 a 25 SMMLV, contiguos, el último con
+  tope 25).
 
 ### Agregado en la revisión (2026-11-22), en orden de importancia
 
-1. ~~Alcance de `nextYearMissing`~~ **Decidido (2026-11-22): las 26 que nómina exige más `IntegralSalaryFloor` = 27 claves;
-   los tramos sin aviso.** Planteamiento original: nómina exige 26 claves por año, no 27, y no exige tramos anuales. ¿El aviso cubre las 26,
+1. ~~Alcance de `nextYearMissing`~~ **Decidido (2026-11-22): las 26 que nómina exige más `IntegralSalaryFloor` = 27 claves,
+   más el conjunto de tramos = 28 entradas.** Planteamiento original: nómina exige 26 claves por año, no 27, y no exige tramos anuales. ¿El aviso cubre las 26,
    también `IntegralSalaryFloor` (anual de hecho, deriva del SMMLV) y/o los tramos? *Recomendación:* 26 + `IntegralSalaryFloor`;
-   tramos sin aviso.
+   tramos sin aviso. **Re-decidido (2026-11-22)** para los tramos: la premisa («no exige tramos anuales») cambió con la
+   decisión 6 de nómina (spec `2026-11-22-nomina-decisiones-del-owner-design.md`), y el owner aceptó que lleven aviso.
 2. ~~Desde cuándo se prende y el año en curso~~ **Decidido (2026-11-22):** `nextYearMissing` desde el 1 de diciembre, y
    `currentYearMissing` siempre activo, que es el que hace fallar la nómina de enero.
 3. ~~Vigencia retroactiva sobre una nómina calculada~~ **Decidido (2026-11-22): se rechaza con `in_use`.** De las nóminas
@@ -408,15 +444,32 @@ Backend primero (migración de `legal_parameter_changes` y columnas), luego fron
    aparte de `Crear` para las filas que repiten el valor.
 5. ~~TTL de 24 h con bump fallido~~ **Decidido (2026-11-22): TTL de 1 h** (opción A). Sin reintento del `INCR` ni borrado de la
    clave: el daño máximo de un bump fallido queda en 1 h.
-6. **Grupos y nombres** de la pantalla: la lista de grupos del mockup no existe en el código; el owner la fija.
-7. Historial con valores tipados (número o lista de tramos) o como texto.
+6. ~~Grupos y nombres~~ **Decidido (2026-11-22):** cinco grupos más tramos, en `LegalParameterLabels` (ver «Nombres y grupos»).
+7. ~~Historial tipado o texto~~ **Decidido (2026-11-22):** tipado (`kind` más número o lista de tramos), columnas `jsonb`.
+8. **«Antes» en la vista previa: decidido (2026-11-22)** el valor vigente a esa fecha.
+9. **Tasas en el Excel: decidido (2026-11-22).** Las celdas de tasa de la plantilla vienen con formato de porcentaje (`0.00%`):
+   el operador ve y teclea «12 %» y la celda guarda `0.12`, que es lo que lee el importador. Un valor mayor que 1 en una tasa
+   sigue siendo `Error`, con el mensaje «La tasa tiene que estar entre 0 % y 100 %. ¿Escribiste 12 en una celda sin formato de
+   porcentaje?». Así formulario y Excel muestran las tasas igual.
+
+### Agregado en la implementación (2026-11-23), para el owner
+
+- ❓ **Borrar un `(clave, fecha)` que no existe responde 404 `key_unknown`.** El código lo hace así (`LegalParameterWriter`: «No hay
+  una fila de X que rija desde …»), porque el recurso que no existe es la fila; el spec no decía nada. El nombre del código es
+  engañoso (la clave sí existe, la fila no). Alternativa: un código propio (`row_unknown`) con el mismo 404.
+- ❓ **`MemoryLegalParameterCache` es `PerPodByDesign` en `MultiReplicaInventory`.** Con el área `LegalParameters` apagada y más de una
+  réplica, el pod que escribe se invalida al instante pero los demás pueden servir la tabla vieja **hasta 60 s**. Está aceptado
+  mientras el área esté apagada; con ella prendida la versión compartida cubre todos los pods.
+- **El `INCR` de Valkey** (`ValkeyLegalParameterCacheVersion`) también fija un `EXPIRE` de 30 días y siembra la clave con la base de
+  tiempo de `TenantAccessVersionBase` (`SET NX`), para que una clave desalojada no vuelva a contar desde 1 y alcance la versión de
+  una tabla sobreviviente. Todo en un `MULTI`; si falla se cuenta en `qep.valkey.fallbacks` y se loguea, y la escritura sigue siendo 200.
 
 ## Cambios de la revisión (2026-11-22)
 
 Revisión contra el código de `develop`. Cada cambio está marcado en su sección:
 
-- «Restricciones»: nómina exige 26 claves por año (`IntegralSalaryFloor` no está en `LegalValueSet`) y los tramos no son anuales
-  (`PayrollLegalValues.cs:29,38-42`). Agregados: `nextYearMissing` de UVT sólo desde el 24/12 y handlers de operador sin módulo `hr`.
+- «Restricciones»: nómina exige 26 claves por año (`IntegralSalaryFloor` no está en `LegalValueSet`) y los tramos no eran anuales
+  (`PayrollLegalValues.cs:29,38-42`; desde la decisión 6 de nómina, 2026-11-22, sí lo son). Agregados: `nextYearMissing` de UVT sólo desde el 24/12 y handlers de operador sin módulo `hr`.
 - «Caché»: el decorador no puede ir en `AddQepValkey` (lo pisa `AddHrInfrastructure`, registrado después); falta el puerto de
   versión en Hr.Application; los cuatro lugares de un área nueva; el riesgo del TTL.
 - «Uso»: puerto de lectura en Payroll.Application; verificación de `legal_values_date` por quincena; hueco de la vigencia retroactiva.

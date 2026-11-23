@@ -13,7 +13,8 @@ public sealed record UpdatePayrollSettingsCommand(Guid TenantId, Guid CompanyId,
 /// Guarda la configuración de la empresa. Exige sólo <c>payroll.settings.manage</c> (decisión del owner, 2026-11-21: sin
 /// <c>PeriodRead</c>). Mientras nunca se guardó el <c>GET</c> responde <c>version: 0</c> y el primer guardado va con
 /// <c>If-Match: "0"</c> (R-17); otro guardado con <c>"0"</c> después es 412. Dos primeros guardados a la vez los separa el índice
-/// único, que la unidad de trabajo traduce a 412.
+/// único, que la unidad de trabajo traduce a 412. Una empresa inactiva es 422
+/// <c>payroll.company.inactive</c>; el <c>GET</c> la sigue respondiendo.
 /// </summary>
 public sealed class UpdatePayrollSettingsHandler(
     IExecutionContext executionContext,
@@ -35,6 +36,7 @@ public sealed class UpdatePayrollSettingsHandler(
         await validator.ValidateAndThrowAsync(command.Request, cancellationToken);
 
         var company = await companies.RequireAsync(command.TenantId, command.CompanyId, cancellationToken);
+        PayrollCompanies.EnsureActive(company, "An inactive company cannot change its payroll settings.");
         var request = command.Request;
         var frequency = Enum.Parse<TransportFrequency>(request.TransportFrequency!);
         var capBase = Enum.Parse<TransportCapBase>(request.TransportCapBase!);

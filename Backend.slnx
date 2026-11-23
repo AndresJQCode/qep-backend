@@ -195,6 +195,16 @@
     <Project Path="tests/Modules/Payroll/Modules.Payroll.UnitTests/Modules.Payroll.UnitTests.csproj" />
     <Project Path="tests/Modules/Payroll/Modules.Payroll.IntegrationTests/Modules.Payroll.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Scheduling/">
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Api/Modules.Scheduling.Api.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Application/Modules.Scheduling.Application.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Domain/Modules.Scheduling.Domain.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Infrastructure/Modules.Scheduling.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Scheduling/">
+    <Project Path="tests/Modules/Scheduling/Modules.Scheduling.UnitTests/Modules.Scheduling.UnitTests.csproj" />
+    <Project Path="tests/Modules/Scheduling/Modules.Scheduling.IntegrationTests/Modules.Scheduling.IntegrationTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Purchases/">
     <Project Path="src/Modules/Purchases/Modules.Purchases.Api/Modules.Purchases.Api.csproj" />
     <Project Path="src/Modules/Purchases/Modules.Purchases.Application/Modules.Purchases.Application.csproj" />

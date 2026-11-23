@@ -35,6 +35,7 @@ public sealed class ChangeTicketStatusHandler(
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
+    ISupportIntegrationEvents integrationEvents,
     ISupportConversationEvents conversationEvents,
     SupportTicketDtoComposer composer,
     IValidator<ChangeTicketStatusCommand> validator)
@@ -55,7 +56,19 @@ public sealed class ChangeTicketStatusHandler(
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         var version = ticket.Version;
+        var wasFinished = ticket.Status is SupportTicketStatus.Resolved or SupportTicketStatus.Closed;
         ticket.ChangeStatus(status, actor, now, context.Clock);
+        // Finishing the work releases the assignee. Published before the save so it travels in the same transaction in both branches.
+        if (!wasFinished
+            && status is SupportTicketStatus.Resolved or SupportTicketStatus.Closed
+            && ticket.AssigneeMemberId is { } assignee)
+        {
+            var reason = status is SupportTicketStatus.Resolved
+                ? SupportAssigneeReleaseReasons.Resolved
+                : SupportAssigneeReleaseReasons.Closed;
+            integrationEvents.PublishAssigneeReleased(ticket, assignee, reason, now);
+        }
+
         if (status is not SupportTicketStatus.Closed || ticket.ConversationId is not { } conversationId)
         {
             await SupportTicketActions.SaveIfChangedAsync(

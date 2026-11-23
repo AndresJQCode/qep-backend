@@ -7,6 +7,7 @@ using Modules.Notifications.Infrastructure.Channels;
 using Modules.Notifications.Infrastructure.InApp;
 using Modules.Notifications.Infrastructure.Messaging;
 using Modules.Notifications.Infrastructure.Persistence;
+using Modules.Notifications.Infrastructure.TaskNotices;
 
 namespace Modules.Notifications.Infrastructure;
 
@@ -78,6 +79,9 @@ public static class NotificationsInfrastructureExtensions
         services.AddScoped<IInAppNotificationRepository, InAppNotificationRepository>();
         services.AddHostedService<NotificationsDeliveryWorker>();
         services.AddHostedService<InAppNotificationRetentionWorker>();
+        // Task-notices spec 2026-11-22 §5.4: the escalation of unread assignments, a pass a minute; ports implemented in Bootstrapper.
+        services.AddScoped<TaskNoticeEscalationProcessor>();
+        services.AddHostedService<TaskNoticeEscalationWorker>();
 
         return services;
     }

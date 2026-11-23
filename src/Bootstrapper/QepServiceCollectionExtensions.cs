@@ -6,6 +6,7 @@ using Bootstrapper.Messaging;
 using Bootstrapper.Realtime;
 using Bootstrapper.Seeding;
 using Bootstrapper.Valkey;
+using Bootstrapper.Valkey.LegalParameters;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
@@ -25,6 +26,7 @@ using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
+using Modules.Authorization.Domain;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Application;
 using Modules.Automations.Application.Engine;
@@ -65,6 +67,8 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
+using Modules.Scheduling.Application;
+using Modules.Scheduling.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
@@ -192,6 +196,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateMemberProfileCommand, MembershipListItemDto>,
             UpdateMemberProfileHandler>();
+        // Notice phone (spec 2026-11-22 section 5.5): the caller's own membership. The validator enters with
+        // AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            IQueryHandler<GetMyMembershipQuery, MyMembershipDto>,
+            GetMyMembershipHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateMyPhoneCommand, MyMembershipDto>,
+            UpdateMyPhoneHandler>();
         services.AddScoped<
             ICommandHandler<CreateUploadSessionCommand, UploadSessionDto>,
             CreateUploadSessionHandler>();
@@ -595,10 +607,46 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetHrFileDownloadUrlQuery, Modules.Hr.Application.HrDownloadUrlDto>,
             Modules.Hr.Application.GetHrFileDownloadUrlHandler>();
+        // La consola de valores legales del operador (spec 2026-11-22). Sus handlers no revisan el módulo `hr`: el tenant operador
+        // puede no tenerlo. La escritura (y la carga por Excel, después) pasa por LegalParameterWriter; la pantalla la arma el composer.
+        services.AddScoped<Modules.Hr.Application.LegalParameterWriter>();
+        services.AddScoped<Modules.Hr.Application.LegalParametersComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListLegalParametersQuery, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.ListLegalParametersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListLegalParameterHistoryQuery, Modules.Hr.Application.LegalParameterHistoryPageDto>,
+            Modules.Hr.Application.ListLegalParameterHistoryHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetLegalParameterCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.SetLegalParameterHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteLegalParameterCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.DeleteLegalParameterHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetLegalBracketsCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.SetLegalBracketsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteLegalBracketsCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.DeleteLegalBracketsHandler>();
+        // La carga anual por Excel (spec 2026-11-22): plantilla, vista previa y confirmación comparten análisis y escriben por el mismo escritor.
+        services.AddScoped<Modules.Hr.Application.LegalParameterImportAnalyzer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetLegalParameterImportTemplateQuery, Modules.Hr.Application.LegalParameterImportTemplateFile>,
+            Modules.Hr.Application.GetLegalParameterImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.PreviewLegalParameterImportCommand, Modules.Hr.Application.LegalParameterImportPreviewDto>,
+            Modules.Hr.Application.PreviewLegalParameterImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ImportLegalParametersCommand, Modules.Hr.Application.LegalParameterImportResultDto>,
+            Modules.Hr.Application.ImportLegalParametersHandler>();
+
         // La importación de empleados por Excel (spec 2026-11-20): plantilla, vista previa y confirmación comparten análisis.
         services.AddScoped<Modules.Hr.Application.EmployeeImportCatalogs>();
         services.AddScoped<Modules.Hr.Application.EmployeeImportAnalyzer>();
         services.AddScoped<Modules.Hr.Application.IHrPhoneNormalizer, HrPhoneNormalizer>();
+        services.AddScoped<Modules.Tenancy.Application.IMemberPhoneDirectory, MemberPhoneDirectory>();
+        services.AddScoped<Modules.Tenancy.Application.MembershipPhoneReader>();
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetEmployeeImportTemplateQuery, Modules.Hr.Application.EmployeeImportTemplateFile>,
             Modules.Hr.Application.GetEmployeeImportTemplateHandler>();
@@ -637,6 +685,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.EnsureCurrentPeriodsCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.EnsureCurrentPeriodsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.OpenNextPeriodCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.OpenNextPeriodHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.ListPeriodsQuery, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.ListPeriodsHandler>();
@@ -691,6 +742,130 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.ExportPeriodQuery, Modules.Payroll.Application.PayrollExportFile>,
             Modules.Payroll.Application.ExportPeriodHandler>();
+
+        // Scheduling, spec 2026-11-21. A mano y con ruta completa, como Hr: un handler olvidado responde 500.
+        services.AddScoped<Modules.Scheduling.Application.SchedulingFirstAccess>();
+        services.AddScoped<Modules.Scheduling.Application.ResourceScopeResolver>();
+        services.AddScoped<Modules.Scheduling.Application.SchedulingComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetSetupQuery, Modules.Scheduling.Application.SetupDto>,
+            Modules.Scheduling.Application.GetSetupHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListLocationsQuery, IReadOnlyList<Modules.Scheduling.Application.LocationDto>>,
+            Modules.Scheduling.Application.ListLocationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListResourcesQuery, IReadOnlyList<Modules.Scheduling.Application.ResourceDto>>,
+            Modules.Scheduling.Application.ListResourcesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListServicesQuery, IReadOnlyList<Modules.Scheduling.Application.ServiceDto>>,
+            Modules.Scheduling.Application.ListServicesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetSettingsQuery, Modules.Scheduling.Application.SettingsDto>,
+            Modules.Scheduling.Application.GetSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.CreateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.UpdateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.ArchiveLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.CreateResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.UpdateResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.ArchiveResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.CreateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.UpdateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.ArchiveServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateSettingsCommand, Modules.Scheduling.Application.SettingsDto>,
+            Modules.Scheduling.Application.UpdateSettingsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListSessionsQuery, IReadOnlyList<Modules.Scheduling.Application.PublishedSessionDto>>,
+            Modules.Scheduling.Application.ListSessionsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListBlocksQuery, IReadOnlyList<Modules.Scheduling.Application.BlockDto>>,
+            Modules.Scheduling.Application.ListBlocksHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.CreateBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.UpdateBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.ArchiveBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.PublishSessionCommand, Modules.Scheduling.Application.PublishedSessionDto>,
+            Modules.Scheduling.Application.PublishSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.RemovePublishedSessionCommand, Modules.Scheduling.Application.PublishedSessionRemovedResult>,
+            Modules.Scheduling.Application.RemovePublishedSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListClosuresQuery, IReadOnlyList<Modules.Scheduling.Application.ClosureDto>>,
+            Modules.Scheduling.Application.ListClosuresHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateClosureCommand, Modules.Scheduling.Application.ClosureDto>,
+            Modules.Scheduling.Application.CreateClosureHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.DeleteClosureCommand, Modules.Scheduling.Application.ClosureDeletedResult>,
+            Modules.Scheduling.Application.DeleteClosureHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AvailabilityLoader>();
+        services.AddScoped<Modules.Scheduling.Application.AvailabilitySearch>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentBooking>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentCancellation>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentRescheduling>();
+        services.AddScoped<Modules.Scheduling.Application.IChannelScheduling, Modules.Scheduling.Application.ChannelScheduling>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListAvailabilityQuery, Modules.Scheduling.Application.AvailabilityDto>,
+            Modules.Scheduling.Application.ListAvailabilityHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.SearchAppointmentCustomersQuery, IReadOnlyList<Modules.Scheduling.Application.AppointmentCustomerDto>>,
+            Modules.Scheduling.Application.SearchAppointmentCustomersHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateAppointmentCustomerCommand, Modules.Scheduling.Application.AppointmentCustomerDto>,
+            Modules.Scheduling.Application.CreateAppointmentCustomerHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentComposer>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.BookAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.BookAppointmentHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetAppointmentQuery, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.GetAppointmentHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListCalendarQuery, Modules.Scheduling.Application.CalendarDto>,
+            Modules.Scheduling.Application.ListCalendarHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetDeskQuery, Modules.Scheduling.Application.DeskDto>,
+            Modules.Scheduling.Application.GetDeskHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentTransitions>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ConfirmAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.ConfirmAppointmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CancelAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.CancelAppointmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.MarkAttendedCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.MarkAttendedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.MarkNoShowCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.MarkNoShowHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.RescheduleAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.RescheduleAppointmentHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -1604,6 +1779,12 @@ public static class QepServiceCollectionExtensions
         // Mayorista: la plantilla del aviso de invitación de distribuidor, calcada de la «Aviso de respuesta».
         services.AddScoped<ICommandHandler<ProvisionWholesaleInvitationNoticeTemplateCommand, ManagedTemplateDto>, ProvisionWholesaleInvitationNoticeTemplateHandler>();
         services.AddScoped<IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetWholesaleInvitationNoticeTemplateDraftHandler>();
+        // Support task notices: the assignment notice template, sibling of the wholesale invitation notice.
+        services.AddScoped<ICommandHandler<ProvisionTaskNoticeTemplateCommand, ManagedTemplateDto>, ProvisionTaskNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetTaskNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetTaskNoticeTemplateDraftHandler>();
+        // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista.
+        services.AddScoped<ICommandHandler<ProvisionAppointmentReminderTemplateCommand, ManagedTemplateDto>, ProvisionAppointmentReminderTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetAppointmentReminderTemplateDraftQuery, SystemTemplateDraftDto>, GetAppointmentReminderTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Spec 2026-11-20: cambiar la imagen del encabezado sin pasar por Meta. El validador entra con AddValidatorsFromAssemblyContaining.
@@ -1708,6 +1889,8 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
         // Payroll: igual que Hr, PayrollPermissions es estática y no sirve de argumento de tipo.
         services.AddValidatorsFromAssembly(typeof(PayrollPermissions).Assembly);
+        // Scheduling: igual que Hr, por ensamblado (SchedulingPermissions es estática y no sirve de argumento de tipo).
+        services.AddValidatorsFromAssembly(typeof(SchedulingPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
@@ -1730,7 +1913,10 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddHrInfrastructure(configuration);
+        // Después de AddHrInfrastructure y no en AddQepValkey: envuelve el ILegalParameterSource que ésta registra (spec 2026-11-22).
+        services.AddLegalParameterCache(configuration);
         services.AddPayrollInfrastructure(configuration);
+        services.AddSchedulingInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
         services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
@@ -1821,6 +2007,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAiQuickReplies, AiQuickReplies>();
         // Spec 2026-10-29 §8.3 y P-4: create_quotation_draft escribe en Quotations y valida la asesora del agente, por adaptadores.
         services.AddScoped<IAiQuotationDrafts, AiQuotationDrafts>();
+        // Spec 2026-11-23 §7.2: la Agenda del agente; Ai no referencia Scheduling, Mensajería ni Clientes.
+        services.AddScoped<IAiScheduling, AiScheduling>();
         services.AddScoped<IAiQuotationAdvisors, AiQuotationAdvisors>();
         // Plan 2026-11-17 A3: las cuentas de cobro del editor del agente, con la regla de la tienda (ActiveBillingAccountOptions).
         services.AddScoped<IAiQuotationBillingAccounts, AiQuotationBillingAccounts>();
@@ -2023,6 +2211,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrCompanyLookup, HrCompanyLookup>();
         // Payroll lee los valores legales de Hr por su propio puerto (PayrollLayerTests.NoPayrollLayerReferencesHr).
         services.AddScoped<Modules.Payroll.Application.IPayrollLegalValues, PayrollLegalValues>();
+        // La consola de valores legales de Hr sabe qué nóminas ya se calcularon por este puerto (PayrollLayerTests.NoPayrollLayerReferencesHr):
+        // Payroll expone sus períodos calculados y este adaptador los traduce al puerto de Hr.
+        services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
         services.AddScoped<Modules.Payroll.Application.IPayrollMemberDirectory, PayrollMemberDirectory>();
@@ -2041,6 +2232,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-11-22: la campana de avisos. Los nombres se resuelven al leer, con la regla de Mensajería.
         services.AddScoped<Modules.Notifications.Application.IInAppNotificationNames, InAppNotificationNames>();
+        // Spec 2026-11-22 D-1: the task notice worker asks whether the member has QEP open (the app hub's presence).
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticePresence, TaskNoticePresence>();
+        // Task-notices spec 2026-11-22 §5.4: the escalation reads the ticket (Support), the recipient (Tenancy, HR, Identity) and sends
+        // the WhatsApp template (Messaging) only through these narrow ports.
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeState, TaskNoticeState>();
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeRecipients, TaskNoticeRecipients>();
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeWhatsApp, TaskNoticeWhatsAppSender>();
         services.AddScoped<
             IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
             Modules.Notifications.Application.ListInAppNotificationsHandler>();
@@ -2053,6 +2251,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Notifications.Application.MarkAllNotificationsReadCommand, Modules.Notifications.Application.MarkAllReadResultDto>,
             Modules.Notifications.Application.MarkAllNotificationsReadHandler>();
+        // Task-notices spec D-2: abrir un ticket lee sus avisos de asignación. El validador lo registra el escaneo de abajo.
+        services.AddScoped<
+            ICommandHandler<Modules.Notifications.Application.MarkResourceNotificationsReadCommand, Modules.Notifications.Application.MarkResourceReadResultDto>,
+            Modules.Notifications.Application.MarkResourceNotificationsReadHandler>();
         services.AddValidatorsFromAssemblyContaining<Modules.Notifications.Application.ListInAppNotificationsValidator>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
@@ -2200,6 +2402,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
+        services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();
+        services.AddScoped<ISchedulingTenantDirectory, SchedulingTenantDirectory>();
+        // La Agenda busca y da de alta al cliente de la cita por su propio puerto (plan 2026-11-21, corrección 5), calco de IPosCustomerLookup.
+        services.AddScoped<ISchedulingCustomerLookup, SchedulingCustomerLookup>();
 
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.
@@ -2267,6 +2474,8 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Task-notices spec 2026-11-22 §5.4: the WhatsApp connections (Integrations) and the state of the TaskNotice template (Messaging).
+        services.AddScoped<Modules.Support.Application.ISupportTaskNoticeChannels, SupportTaskNoticeChannels>();
         // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
         services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
         // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.
@@ -2279,6 +2488,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Messaging.Application.IMessagingMemberPermissions, MessagingMemberPermissions>();
         services.AddAppRealtime();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
+        // Spec 2026-11-21 (Agenda), D-10: los festivos de las franjas, por puerto y con el adaptador de Bootstrapper (calco del de Soporte).
+        services.AddScoped<ISchedulingHolidayCalendar, SchedulingHolidayCalendar>();
+        // Plan 2026-11-21, Tarea 12: el recordatorio de cita sale por Mensajería (puerto IAppointmentReminderSender) y el cliente, su teléfono y su
+        // consentimiento llegan por ISchedulingReminderRecipients; la Agenda no referencia ni Mensajería ni Clientes.
+        services.AddScoped<IAppointmentReminderSender, SchedulingReminderSender>();
+        services.AddScoped<ISchedulingReminderRecipients, SchedulingReminderRecipients>();
+        // Spec 2026-11-23 §2: el estado de la plantilla de recordatorio de la conexión guardada, por puerto y con adaptador hacia Mensajería.
+        services.AddScoped<ISchedulingReminderTemplateStatus, SchedulingReminderTemplateStatus>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
         // Notifications; Soporte sólo declara los puertos.
         services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
@@ -2699,6 +2916,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-10 (Impuestos por tipo): la consola de la unidad tributaria, con el mismo criterio.
                 CatalogOperatorPermissions.TaxUnitsRead,
                 CatalogOperatorPermissions.TaxUnitsManage,
+                // Spec 2026-11-22: la consola de los parámetros legales (nómina), con el mismo criterio.
+                HrOperatorPermissions.LegalParametersRead,
+                HrOperatorPermissions.LegalParametersManage,
                 // Reporte de uso de la plataforma: misma categoría y mismo criterio que los de arriba.
                 OperatorPermissions.UsageRead,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
@@ -2767,6 +2987,13 @@ public static class QepServiceCollectionExtensions
                 PayrollPermissions.PeriodManage,
                 PayrollPermissions.PeriodApprove,
                 PayrollPermissions.SettingsManage,
+                // Spec 2026-11-21 (Agenda): admin lleva los cinco; los dos roles de sistema de la Agenda llevan los operativos y ninguno
+                // la configuración (servicios, reglas y estructura son del administrador).
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage,
+                SchedulingPermissions.AgendaReadAll,
+                SchedulingPermissions.SettingsManage,
                 // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
@@ -2908,6 +3135,33 @@ public static class QepServiceCollectionExtensions
                 PosPermissions.RegisterOperate,
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
+            ]));
+        // Spec 2026-11-21 (Agenda), D-13: roles de sistema en código, no se crean al activar el módulo; con el módulo apagado no son
+        // asignables (RoleAssignability). Llevan sólo permisos de la Agenda, a propósito: uno de núcleo (Clientes) los haría asignables
+        // en un tenant sin Agenda, así que la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS.
+        // Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador.
+        services.AddSingleton(new RoleDefinition(
+            SystemRoleKeys.SchedulingManager,
+            "Gestor de agenda",
+            "Ve y administra las agendas de todos los médicos o recursos: citas, franjas y bloqueos.",
+            "Tenancy",
+            "medium",
+            [
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage,
+                SchedulingPermissions.AgendaReadAll
+            ]));
+        services.AddSingleton(new RoleDefinition(
+            SystemRoleKeys.SchedulingProvider,
+            "Profesional de agenda",
+            "Ve y administra su propia agenda: la del recurso vinculado a su usuario.",
+            "Tenancy",
+            "medium",
+            [
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -3501,6 +3755,27 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("operator.tax_units", "Unidad tributaria", "manage"),
         });
+        // Spec 2026-11-22: los parámetros legales de nómina. Cambiar un valor mueve los cálculos de todos los tenants: "high".
+        services.AddSingleton(new PermissionDefinition(
+            HrOperatorPermissions.LegalParametersRead,
+            "Ver los parámetros legales",
+            "Permite ver los valores legales de nómina (salario mínimo, aportes, provisiones, fondo de solidaridad) y su historial.",
+            "Operator",
+            "medium",
+            RequiredModules: [])
+        {
+            Shape = new("operator.legal_parameters", "Parámetros legales", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrOperatorPermissions.LegalParametersManage,
+            "Gestionar los parámetros legales",
+            "Permite cargar, corregir y borrar los valores legales de nómina, a mano o por Excel: los usan los cálculos de todos los tenants.",
+            "Operator",
+            "high",
+            RequiredModules: [])
+        {
+            Shape = new("operator.legal_parameters", "Parámetros legales", "manage"),
+        });
         // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.UsageRead,
@@ -3968,6 +4243,59 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("payroll.settings", "Configuración de nómina", "manage"),
         });
+        // Spec 2026-11-21 (Agenda): con [scheduling], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no
+        // lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. `agenda.read_all` no concede acciones: sólo amplía
+        // sobre qué recursos valen las demás.
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AppointmentRead,
+            "Ver citas",
+            "Permite ver el calendario, las citas y los espacios libres de los recursos a los que tiene alcance.",
+            "Agenda",
+            "low",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.appointment", "Citas", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AppointmentManage,
+            "Gestionar citas",
+            "Permite crear, confirmar, reprogramar, cancelar y marcar como asistidas las citas de los recursos a los que tiene alcance.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.appointment", "Citas", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AvailabilityManage,
+            "Gestionar franjas y bloqueos",
+            "Permite abrir y cerrar franjas, publicar sesiones y bloquear horas de los recursos a los que tiene alcance.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.availability", "Franjas y bloqueos", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AgendaReadAll,
+            "Ver todas las agendas",
+            "Amplía el alcance de los demás permisos de la Agenda a todos los recursos del tenant; sin él, sólo los vinculados a su membresía.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.agenda", "Todas las agendas", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.SettingsManage,
+            "Configurar la agenda",
+            "Permite crear sedes, recursos y servicios, y cambiar las reglas de reserva y el recordatorio.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.settings", "Configuración de la agenda", "manage"),
+        });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -4375,6 +4703,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CatalogOperatorPermissions.TaxUnitsManage,
                 policy => AddPermissionRequirement(policy, CatalogOperatorPermissions.TaxUnitsManage))
+            // Sin estas dos, RequireAuthorization de la consola de parámetros legales no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                HrOperatorPermissions.LegalParametersRead,
+                policy => AddPermissionRequirement(policy, HrOperatorPermissions.LegalParametersRead))
+            .AddPolicy(
+                HrOperatorPermissions.LegalParametersManage,
+                policy => AddPermissionRequirement(policy, HrOperatorPermissions.LegalParametersManage))
             // Sin esta, RequireAuthorization del reporte de uso no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 OperatorPermissions.UsageRead,
@@ -4522,6 +4857,22 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 PayrollPolicies.SettingsView,
                 policy => AddAnyPermissionRequirement(policy, PayrollPermissions.PeriodRead, PayrollPermissions.SettingsManage))
+            // Spec 2026-11-21 (Agenda): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SchedulingPermissions.AppointmentRead,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AppointmentRead))
+            .AddPolicy(
+                SchedulingPermissions.AppointmentManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AppointmentManage))
+            .AddPolicy(
+                SchedulingPermissions.AvailabilityManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AvailabilityManage))
+            .AddPolicy(
+                SchedulingPermissions.AgendaReadAll,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AgendaReadAll))
+            .AddPolicy(
+                SchedulingPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.SettingsManage))
             // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 SupportPermissions.Read,

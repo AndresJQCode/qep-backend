@@ -565,6 +565,10 @@ namespace Modules.Support.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("survey_enabled");
 
+                    b.Property<Guid?>("TaskNoticeConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("task_notice_connection_id");
+
                     b.Property<bool>("UnassignedAlertEnabled")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")

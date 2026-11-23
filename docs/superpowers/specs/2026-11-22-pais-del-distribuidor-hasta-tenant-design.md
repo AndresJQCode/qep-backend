@@ -62,9 +62,9 @@ tenant con el país de la invitación.
 - Crear la empresa al aceptar; derivar cultura, zona horaria o formato de fecha del país.
 - Moneda y formato de número: siguen en `COP` / `CommaDecimal` (el país hoy es informativo).
 
-## Pendiente (decisión del owner)
+## Decisión del owner (2026-11-22)
 
-- Distribuidores ya aceptados conservan `CO`; si se rellenan (backfill) desde `wholesale.distributors.country` lo decide el owner.
+- Sin backfill: los distribuidores ya aceptados conservan `CO`.
 
 ## Frontend
 

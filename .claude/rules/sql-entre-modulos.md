@@ -29,7 +29,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`, `messaging.conversations.customer_id`,
   `messaging.campaigns.audience_customer_ids`, `billing.services`/`charges`/`customer_profiles.customer_id`,
   `loans.loans.customer_id`, `support.tickets.customer_id` (sin subir `version`, como el préstamo), `ai.tests.customer_id` (las pruebas
-  del playground de agentes de IA; las sesiones siguen a su conversación) y `shopify.orders.qep_customer_id`, sobre la
+  del playground de agentes de IA; las sesiones siguen a su conversación), `scheduling.appointments.customer_id` (citas en
+  cualquier estado, sin subir `version`) y `shopify.orders.qep_customer_id`, sobre la
   conexión del `CustomersDbContext` para quedar dentro de su transacción. Renombrar una de esas columnas compila y la fusión
   responde 500 (`42703`); como todo es una transacción, no fusiona nada. Lo amarran `CustomerMergeReferencesTests` (réplicas
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
@@ -91,4 +92,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
   `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
   cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros), tickets de soporte (`support.tickets.customer_id`, motivo
-  `supportTickets`, en cualquier estado: también uno cerrado) y una conversación bloqueada.
+  `supportTickets`, en cualquier estado: también uno cerrado), citas de la Agenda (`scheduling.appointments.customer_id`, motivo
+  `schedulingAppointments`, en cualquier estado: también una cancelada, PD-6; la salida es la fusión, que las mueve sin subir `version`)
+  y una conversación bloqueada. Los amarran `CustomerMergeReferencesTests` (réplica de `scheduling.appointments`),
+  `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema` y `ADeleteIsBlockedByAnAppointmentInAnyState`.

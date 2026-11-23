@@ -20,6 +20,7 @@ public static class EngineInputFactory
         IReadOnlyList<PeriodInput> inputs,
         IReadOnlyList<RecurringConcept> recurring,
         IReadOnlyDictionary<Guid, decimal> appliedBefore,
+        IReadOnlySet<Guid> retiredConcepts,
         MonthAccumulators prior)
     {
         ArgumentNullException.ThrowIfNull(employee);
@@ -58,7 +59,7 @@ public static class EngineInputFactory
             Overtime(mine, concepts),
             Incomes(mine, concepts),
             Deductions(mine, concepts),
-            RecurringOf(employee.EmployeeId, recurring, appliedBefore, concepts),
+            RecurringOf(employee.EmployeeId, recurring, appliedBefore, retiredConcepts, concepts),
             prior);
     }
 
@@ -90,11 +91,12 @@ public static class EngineInputFactory
         .Select(input => new DeductionInput(input.ConceptId, Require(concepts, input.ConceptId).Name, input.Amount ?? 0m))
         .ToList();
 
-    // Only active, not exhausted ones; the order is fixed (creation, then id) so the fingerprint never depends on the database.
+    // Only active, not exhausted ones of a concept that is not retired (decision 5); the order is fixed (creation, then id) so the fingerprint never depends on the database.
     private static List<RecurringInput> RecurringOf(
         Guid employeeId,
         IReadOnlyList<RecurringConcept> recurring,
         IReadOnlyDictionary<Guid, decimal> appliedBefore,
+        IReadOnlySet<Guid> retiredConcepts,
         ConceptCatalogSnapshot concepts)
     {
         var result = new List<RecurringInput>();
@@ -103,6 +105,11 @@ public static class EngineInputFactory
             .OrderBy(item => item.CreatedAt)
             .ThenBy(item => item.Id.Value))
         {
+            if (retiredConcepts.Contains(item.ConceptId))
+            {
+                continue;
+            }
+
             var applied = appliedBefore.GetValueOrDefault(item.Id.Value);
             if (item.StatusFor(applied) != RecurringStatus.Active)
             {

@@ -20,6 +20,14 @@ public sealed class SendMediaMessageHandlerTests
     private static readonly byte[] Zip = [0x50, 0x4B, 0x03, 0x04, 1, 2, 3, 4, 5];
     private static readonly byte[] Ole = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 7, 7];
     private static readonly byte[] Exe = [0x4D, 0x5A, 0x90, 0x00, 3, 0, 0, 0, 4];
+    private static readonly byte[] Txt = Encoding.UTF8.GetBytes("Cotización de mayo\r\nTotal: 1.200.000");
+
+    // WebP: contenedor RIFF con el primer chunk VP8 (estático) o VP8X con la bandera de animación (0x02), y relleno hasta el tamaño pedido.
+    private static byte[] Webp(string chunk, byte flags, int length) =>
+        [.. "RIFF"u8, 0x24, 0, 0, 0, .. "WEBP"u8, .. Encoding.ASCII.GetBytes(chunk), 10, 0, 0, 0, flags, .. new byte[length - 21]];
+
+    private static readonly byte[] StaticWebp = Webp("VP8 ", 0, 64);
+    private static readonly byte[] AnimatedWebp = Webp("VP8X", 0x02, 64);
 
     // Spec 2026-10-20: cabeceras reales, como las del sniffer, con algo de cuerpo detrás.
     private static readonly byte[] Mp4 = [0, 0, 0, 0x18, .. "ftypmp42"u8, 0, 0, 0, 0, .. "isommp42"u8, 0, 0, 0, 8, .. "free"u8, .. new byte[40]];
@@ -130,10 +138,13 @@ public sealed class SendMediaMessageHandlerTests
     [InlineData("a.xlsx", Mime.Xlsx)]
     [InlineData("a.doc", "application/msword")]
     [InlineData("a.xls", "application/vnd.ms-excel")]
+    [InlineData("a.ppt", "application/vnd.ms-powerpoint")]
+    [InlineData("a.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")]
+    [InlineData("a.txt", "text/plain")]
     public async Task EveryAllowedDocumentWithItsOwnSignatureIsSent(string fileName, string mimeType)
     {
         var bed = new MessagingTestBed();
-        var bytes = fileName switch { "a.pdf" => Pdf, "a.doc" or "a.xls" => Ole, _ => Zip };
+        var bytes = fileName switch { "a.pdf" => Pdf, "a.doc" or "a.xls" or "a.ppt" => Ole, "a.txt" => Txt, _ => Zip };
         var staged = Prepare(bed, fileName, bytes);
 
         var message = await bed.SendMediaHandler().HandleAsync(Command(bed, staged, fileName), Ct);
@@ -248,7 +259,7 @@ public sealed class SendMediaMessageHandlerTests
         var conversation = bed.OpenConversation(lastInboundHoursAgo: 1);
 
         var error = await Assert.ThrowsAsync<MessagingDomainException>(() =>
-            bed.SendMediaHandler().HandleAsync(new SendMediaMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, Guid.CreateVersion7(), "a.webp", null), Ct));
+            bed.SendMediaHandler().HandleAsync(new SendMediaMessageCommand(bed.TenantId, conversation.Id, bed.ClientId, Guid.CreateVersion7(), "a.zip", null), Ct));
 
         Assert.Equal(MessagingErrorCodes.MediaUnsupportedFormat, error.Code);
         Assert.Empty(bed.Staging.Stats);
@@ -597,5 +608,101 @@ public sealed class SendMediaMessageHandlerTests
 
         Assert.Equal(MessagingErrorCodes.MediaTooLarge, error.Code);
         Assert.Empty(bed.Meta.StreamUploads);
+    }
+
+    // Meta sólo recibe WebP como sticker: viaja como tal, sin caption, con el mime image/webp y sin pasar por el compresor de imágenes.
+    [Fact]
+    public async Task AWebpGoesAsAStickerWithoutCaptionAndWithoutTheImageCompressor()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "Gracias.webp", StaticWebp);
+        bed.Meta.NextUpload = new MessagingGraphResult<string>("media.stk", null);
+        bed.Meta.NextSend = new SendResult(SendOutcome.Sent, "wamid.stk", null, null);
+
+        var message = await bed.SendMediaHandler().HandleAsync(Command(bed, staged, "Gracias.webp"), Ct);
+
+        Assert.Equal(("Sticker", "Sent", "image/webp", "Gracias.webp"), (message.Kind, message.Status, message.Media!.MimeType, message.Media.FileName));
+        Assert.Empty(bed.Compressor.Received);
+        var upload = Assert.Single(bed.Meta.StreamUploads);
+        Assert.Equal(StaticWebp, upload.Content);
+        Assert.Equal(("image/webp", "sticker.webp"), (upload.MimeType, upload.FileName));
+        var send = Assert.Single(bed.Meta.StickerSends);
+        Assert.Equal(("media.stk", $"qep:{message.Id}"), (send.MediaId, send.CallbackData));
+        Assert.Empty(bed.Meta.ImageSends);
+        Assert.Empty(bed.Meta.DocumentSends);
+        var claim = Assert.Single(bed.Outbound.Claims);
+        Assert.Equal((MessageKind.Sticker, (string?)null), (claim.Draft.Kind, claim.Draft.Caption));
+        Assert.Equal((staged.StagingKey, FinalKeyOf(bed, claim), FakeUploadStaging.ETag), Assert.Single(bed.Staging.Promoted));
+    }
+
+    // Tope de Meta: 100 KB un sticker estático y 500 KB uno animado. El pre-chequeo del canal usa el mayor (500 KB); el estático se
+    // mide al leer el contenido, que es cuando se sabe si está animado.
+    [Fact]
+    public async Task AStaticWebpOver100KbIsTooLargeButAnAnimatedOneUpTo500KbIsSent()
+    {
+        var bed = new MessagingTestBed();
+        var staticStaged = Prepare(bed, "estatico.webp", StaticWebp);
+        bed.Staging.StatSize = 100L * 1024 + 1;
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staticStaged, "estatico.webp"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MediaTooLarge, error.Code);
+        Assert.Empty(bed.Meta.StreamUploads);
+        Assert.Empty(bed.Outbound.Claims);
+        Assert.Contains(staticStaged.StagingKey, bed.Store.Deleted);
+
+        var animatedBed = new MessagingTestBed();
+        var animatedStaged = Prepare(animatedBed, "animado.webp", AnimatedWebp);
+        animatedBed.Staging.StatSize = 500L * 1024;
+        animatedBed.Meta.NextUpload = new MessagingGraphResult<string>("media.anim", null);
+
+        var message = await animatedBed.SendMediaHandler().HandleAsync(Command(animatedBed, animatedStaged, "animado.webp"), Ct);
+
+        Assert.Equal("Sticker", message.Kind);
+        Assert.Single(animatedBed.Meta.StickerSends);
+    }
+
+    [Fact]
+    public async Task AWebpOver500KbIsTooLargeEvenIfAnimated()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "pesado.webp", AnimatedWebp);
+        bed.Staging.StatSize = 500L * 1024 + 1;
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staged, "pesado.webp"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MediaTooLarge, error.Code);
+        Assert.Empty(bed.Meta.StreamUploads);
+    }
+
+    [Fact]
+    public async Task APngRenamedToWebpIsRejectedByItsContent()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "falso.webp", Png);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staged, "falso.webp"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MediaUnsupportedFormat, error.Code);
+        Assert.Empty(bed.Meta.StickerSends);
+    }
+
+    // Instagram no recibe stickers ni documentos de Office o de texto: el canal los rechaza antes de tocar el staging.
+    [Theory]
+    [InlineData("a.webp")]
+    [InlineData("a.ppt")]
+    [InlineData("a.pptx")]
+    [InlineData("a.txt")]
+    public async Task InstagramDoesNotAcceptTheNewFormats(string fileName)
+    {
+        var bed = new MessagingTestBed();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 1, assignedTo: bed.MemberId, userId: "1789", waId: null, channel: ConversationChannel.Instagram);
+        var uploadId = Guid.CreateVersion7();
+        var staged = new Staged(conversation, uploadId, bed.Stage(conversation.Id, uploadId, fileName, Txt));
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staged, fileName), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MediaUnsupportedFormat, error.Code);
+        Assert.Empty(bed.Staging.Stats);
     }
 }
