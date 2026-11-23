@@ -635,7 +635,7 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
     }
 
     [Fact]
-    public async Task ARescheduleAfterAnotherMoveStillAppliesTheRequestedStart()
+    public async Task ARescheduleAfterAnotherMoveIsAConcurrencyConflict()
     {
         var scene = await BookSceneAsync();
         using var owner = scene.Tenant;
@@ -643,19 +643,19 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
         await using var _ = scope;
         await HumanMovesAsync(scene, id, 11);
 
-        var result = await scope.ServiceProvider.GetRequiredService<IChannelScheduling>()
-            .RescheduleAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, At(scene, 10), null, Ct);
+        // Block 2 review: the cutoff and the same-location filter were decided from the pre-lock read (9:00). Once the lock shows a different
+        // start the decision is stale, so the caller re-reads instead of writing over the other move.
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => scope.ServiceProvider.GetRequiredService<IChannelScheduling>()
+            .RescheduleAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, At(scene, 10), null, Ct));
 
-        // The customer asked for 10:00 and that is where it ends, with the seat of the 11:00 move released (not released twice).
-        Assert.False(result.AlreadyDone);
-        Assert.Equal(10, result.Appointment.StartsAt.Hour);
         var stored = await ReadAppointmentAsync(scene, id);
         Assert.Equal("Confirmed", stored.GetProperty("status").GetString());
+        Assert.Equal(11, stored.GetProperty("startsAt").GetDateTimeOffset().ToOffset(TimeSpan.FromHours(-5)).Hour);
         Assert.Equal(1, (await CountAppointmentsAsync(world.Factory, scene.Resource)).Appointments);
     }
 
     [Fact]
-    public async Task ACancelAfterAMoveStillCancels()
+    public async Task ACancelAfterAMoveIsAConcurrencyConflict()
     {
         var scene = await BookSceneAsync();
         using var owner = scene.Tenant;
@@ -663,11 +663,11 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
         await using var _ = scope;
         await HumanMovesAsync(scene, id, 10);
 
-        var result = await scope.ServiceProvider.GetRequiredService<IChannelScheduling>()
-            .CancelAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, null, Ct);
+        // Block 2 review: the cutoff used the old start and the lock the old resource; after the move both are stale, so nothing is written.
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => scope.ServiceProvider.GetRequiredService<IChannelScheduling>()
+            .CancelAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, null, Ct));
 
-        Assert.False(result.AlreadyDone);
-        Assert.Equal("Cancelled", (await ReadAppointmentAsync(scene, id)).GetProperty("status").GetString());
+        Assert.Equal("Confirmed", (await ReadAppointmentAsync(scene, id)).GetProperty("status").GetString());
     }
 
     // Block 1 review: a replay answers with the stored appointment, so it must be this customer's. Another customer's key is a conflict that

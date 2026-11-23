@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Modules.Scheduling.Domain;
 using Modules.Tenancy.Application;
 
@@ -21,6 +22,7 @@ public sealed class AppointmentCancellation(
     public async Task CancelAsync(
         Guid tenantId, Appointment appointment, string? reason, bool byClient, SchedulingActor actor, CancellationToken cancellationToken)
     {
+        var readBeforeTheLock = (appointment.ResourceId, appointment.StartsAt, appointment.LocationId);
         var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
 
         // The cutoff only matters for an appointment that can still be cancelled: a closed one answers invalid_transition on its own.
@@ -41,6 +43,13 @@ public sealed class AppointmentCancellation(
         // The appointment was read before the lock: whoever held it may have cancelled or moved it. Read it again so a closed one answers
         // invalid_transition below instead of releasing a seat that is already free.
         await appointments.RefreshAsync(appointment, cancellationToken);
+
+        // The cutoff used the start read before the lock, and the lock was taken on the resource read then. If the move landed in between,
+        // both decisions are stale: the caller re-reads and decides again.
+        if ((appointment.ResourceId, appointment.StartsAt, appointment.LocationId) != readBeforeTheLock)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The appointment changed after it was read.");
+        }
 
         var session = await sessions.FindAsync(tenantId, appointment.SessionId, cancellationToken)
             ?? throw new InvalidOperationException($"The session of appointment '{appointment.Id.Value}' does not exist.");

@@ -279,6 +279,31 @@ public sealed class AgentTurnRunnerTests
         Assert.Equal([1, 1], book.Invocations.Select(invocation => invocation.BookingOrdinal));
     }
 
+    // La respuesta que sigue a una escritura exitosa de la Agenda sale marcada: el procesador no la descarta por un turno nuevo del cliente.
+    [Fact]
+    public async Task AReplyAfterASuccessfulSchedulingWriteIsMarkedWrote()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Ok(new { appointmentId = "a" }));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Listo."));
+
+        var outcome = await RunAsync(Context(), tools: [book]);
+
+        Assert.True(Assert.IsType<AgentReplied>(outcome).Wrote);
+    }
+
+    [Fact]
+    public async Task AReplyAfterAFailedSchedulingWriteIsNotMarkedWrote()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Error(AgentToolErrors.SlotTaken));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Esa hora ya no está."));
+
+        var outcome = await RunAsync(Context(), tools: [book]);
+
+        Assert.False(Assert.IsType<AgentReplied>(outcome).Wrote);
+    }
+
     // Un trabajo retomado corre otra vez con un perfil nuevo: vuelve a contar desde 1 y encuentra la cita que ya hizo.
     [Fact]
     public async Task ResumedJobFindsTheBookingItAlreadyMade()

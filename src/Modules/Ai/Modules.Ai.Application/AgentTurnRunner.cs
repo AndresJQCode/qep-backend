@@ -45,14 +45,15 @@ public abstract record AgentTurnOutcome;
 public sealed record AgentFinished(string Summary) : AgentTurnOutcome;
 
 /// <param name="SourceIds">Sólo las fuentes que existen (§8.2): las demás se descartan.</param>
-public sealed record AgentReplied(string Text, IReadOnlyList<string> SourceIds) : AgentTurnOutcome;
+/// <param name="Wrote">Una herramienta de escritura de la Agenda o de cotizaciones tuvo éxito en este trabajo: la respuesta no se descarta por un turno nuevo del cliente.</param>
+public sealed record AgentReplied(string Text, IReadOnlyList<string> SourceIds, bool Wrote = false) : AgentTurnOutcome;
 
 /// <param name="Reason">Uno de <see cref="AgentHandoffReasons.All"/>, o el código de la herramienta que terminó el turno
 /// (<see cref="AgentToolHandoff"/>).</param>
 /// <param name="Note">Para el evento interno, nunca para el cliente.</param>
 /// <param name="MemberId">P-4b: a quién va la conversación en vez del destino configurado (la asesora del borrador de cotización).</param>
 /// <param name="QuotationNumber">Spec 2026-11-17 D-B13: el número del borrador, que vuelve al flujo en modo bloque.</param>
-public sealed record AgentHandedOff(string Reason, string? Note, Guid? MemberId = null, string? QuotationNumber = null) : AgentTurnOutcome;
+public sealed record AgentHandedOff(string Reason, string? Note, Guid? MemberId = null, string? QuotationNumber = null, bool Wrote = false) : AgentTurnOutcome;
 
 /// <summary>Un error que el worker reintenta (D-A17): proveedor caído o límite de tasa.</summary>
 public sealed record AgentTurnRetry(string Code, TimeSpan? RetryAfter) : AgentTurnOutcome;
@@ -221,6 +222,10 @@ public sealed class AgentTurnRunner(
         // trabajo, así que un trabajo retomado vuelve a contar desde cero y encuentra la cita que ya hizo con la misma llave.
         private int _bookings;
 
+        // Una escritura que tuvo éxito ya está hecha: descartar la respuesta por un turno nuevo del cliente dejaría que el siguiente trabajo
+        // (otro JobId, otra llave) la repita.
+        private bool _wrote;
+
         public AgentProfile(AgentTurnContext context, IEnumerable<IAgentTool> tools)
         {
             _context = context;
@@ -253,6 +258,11 @@ public sealed class AgentTurnRunner(
             if (toolCall.Name == AgentToolNames.BookAppointment && !result.IsError)
             {
                 _bookings++;
+            }
+
+            if (AgentToolNames.Writes(toolCall.Name) && !result.IsError)
+            {
+                _wrote = true;
             }
 
             // P-4 y P-4b: una herramienta que escribió (o que no pudo por el cliente) termina el turno con su traspaso: lo que siga lo decide
@@ -294,7 +304,8 @@ public sealed class AgentTurnRunner(
                 }
 
                 var note = AgentToolArguments.TryString(arguments, "note", out var text) ? text.Trim() : null;
-                return new AgentHandedOff(reason, string.IsNullOrEmpty(note) ? null : note[..Math.Min(note.Length, AgentHandoffReasons.NoteMaxLength)]);
+                return new AgentHandedOff(
+                    reason, string.IsNullOrEmpty(note) ? null : note[..Math.Min(note.Length, AgentHandoffReasons.NoteMaxLength)], Wrote: _wrote);
             }
 
             if (!AgentToolArguments.TryString(arguments, "text", out var reply)
@@ -314,7 +325,7 @@ public sealed class AgentTurnRunner(
                     .Distinct(StringComparer.Ordinal)
                     .ToArray()
                 : [];
-            return new AgentReplied(reply.Trim(), sources);
+            return new AgentReplied(reply.Trim(), sources, _wrote);
         }
     }
 }
