@@ -94,6 +94,41 @@ public sealed class AgentTemplatesApiTests
             ("id", agent.GetProperty("id").GetGuid().ToString())));
     }
 
+    // Spec 2026-11-23 menores M2: sólo crear desde una plantilla guarda el origen; duplicar e importar no lo heredan.
+    [Fact]
+    public async Task AnAgentRemembersTheTemplateItCameFromAndNothingElseCopiesIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateClient(factory, permissions: Manage);
+
+        var created = await SendAsync(client, HttpMethod.Post, FromTemplate, new { templateId = "asistente-de-citas", name = "Citas" });
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var agent = await JsonAsync(created);
+        var id = agent.GetProperty("id").GetGuid();
+        Assert.Equal(("asistente-de-citas", "Asistente de citas"), (agent.GetProperty("sourceTemplateId").GetString(), agent.GetProperty("sourceTemplateName").GetString()));
+        var read = await JsonAsync(await client.GetAsync($"{AiUrl()}/agents/{id}", Ct));
+        Assert.Equal(("asistente-de-citas", "Asistente de citas"), (read.GetProperty("sourceTemplateId").GetString(), read.GetProperty("sourceTemplateName").GetString()));
+        Assert.Equal("asistente-de-citas", await ScalarAsync<string>(
+            database.GetConnectionString(), "SELECT source_template_id FROM ai.agents WHERE id = @id", ("id", id)));
+
+        var export = await JsonAsync(await client.GetAsync($"{AiUrl()}/agents/{id}/export", Ct));
+        Assert.False(export.TryGetProperty("sourceTemplateId", out _));
+
+        var copy = await JsonAsync(await SendAsync(
+            client, HttpMethod.Post, $"{AiUrl()}/agents", new { name = "Citas copia", source = new { kind = "duplicate", agentId = id } }));
+        Assert.Equal(
+            (JsonValueKind.Null, JsonValueKind.Null),
+            (copy.GetProperty("sourceTemplateId").ValueKind, copy.GetProperty("sourceTemplateName").ValueKind));
+
+        var imported = await JsonAsync(await SendAsync(client, HttpMethod.Post, $"{AiUrl()}/agents/import", new { name = "Citas importado", export }));
+        Assert.Equal(
+            (JsonValueKind.Null, JsonValueKind.Null),
+            (imported.GetProperty("sourceTemplateId").ValueKind, imported.GetProperty("sourceTemplateName").ValueKind));
+    }
+
     [Fact]
     public async Task AdoptingATemplateIsRejectedWithItsCode()
     {
