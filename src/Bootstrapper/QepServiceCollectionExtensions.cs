@@ -793,6 +793,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Scheduling.Application.UpdateSettingsCommand, Modules.Scheduling.Application.SettingsDto>,
             Modules.Scheduling.Application.UpdateSettingsHandler>();
         services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListSessionsQuery, IReadOnlyList<Modules.Scheduling.Application.PublishedSessionDto>>,
+            Modules.Scheduling.Application.ListSessionsHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Scheduling.Application.ListBlocksQuery, IReadOnlyList<Modules.Scheduling.Application.BlockDto>>,
             Modules.Scheduling.Application.ListBlocksHandler>();
         services.AddScoped<

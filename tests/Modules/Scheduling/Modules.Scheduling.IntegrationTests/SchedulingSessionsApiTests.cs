@@ -263,6 +263,120 @@ public sealed class SchedulingSessionsApiTests(SchedulingApiWorld world) : IClas
         Assert.Equal(8, (await JsonOfAsync(republished)).GetProperty("capacity").GetInt32());
     }
 
+    private static string ListUrl(SchedulingTenant tenant, DateOnly from, DateOnly to, Guid? resourceId = null) =>
+        $"{tenant.Url}/sessions?from={Iso(from)}&to={Iso(to)}" + (resourceId is { } id ? $"&resourceId={id}" : string.Empty);
+
+    [Fact]
+    public async Task PublishedSessionsAreListedByDayRangeWithTheirRealBookedCount()
+    {
+        var (tenant, resource, service, block, day) = await PublishedBlockAsync();
+        using var _ = tenant;
+        var first = NineOClock(day);
+        var late = await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, resource, service, first.AddMinutes(60)));
+        var early = await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, resource, service, first));
+        await SeedAppointmentOnSessionAsync(world.Factory, tenant.IdText, await MainLocationIdAsync(tenant), early.GetProperty("id").GetGuid());
+
+        var listed = await GetJsonAsync(tenant.Admin, ListUrl(tenant, day, day));
+        var outside = await GetJsonAsync(tenant.Admin, ListUrl(tenant, day.AddDays(1), day.AddDays(2)));
+
+        var rows = listed.EnumerateArray().ToArray();
+        Assert.Equal(2, rows.Length);
+        Assert.Equal(early.GetProperty("id").GetGuid(), rows[0].GetProperty("id").GetGuid());
+        Assert.Equal(late.GetProperty("id").GetGuid(), rows[1].GetProperty("id").GetGuid());
+        Assert.Equal(first, rows[0].GetProperty("startsAt").GetDateTimeOffset());
+        Assert.Equal(5, rows[0].GetProperty("capacity").GetInt32());
+        Assert.Equal(1, rows[0].GetProperty("bookedCount").GetInt32());
+        Assert.Equal(0, rows[1].GetProperty("bookedCount").GetInt32());
+        Assert.True(rows[0].GetProperty("isPublished").GetBoolean());
+        Assert.Empty(outside.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task ARemovedSessionAndASessionOfAnArchivedResourceAreNotListed()
+    {
+        var (tenant, resource, service, block, day) = await PublishedBlockAsync();
+        using var _ = tenant;
+        var removed = await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, resource, service, NineOClock(day)));
+        var kept = await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, resource, service, NineOClock(day).AddMinutes(60)));
+        (await tenant.Admin.DeleteAsync($"{tenant.Url}/sessions/{removed.GetProperty("id").GetGuid()}", Ct)).EnsureSuccessStatusCode();
+
+        var listed = await GetJsonAsync(tenant.Admin, ListUrl(tenant, day, day));
+
+        Assert.Equal(kept.GetProperty("id").GetGuid(), Assert.Single(listed.EnumerateArray()).GetProperty("id").GetGuid());
+
+        var archive = await tenant.Admin.PostAsync($"{tenant.Url}/resources/{resource}/archive", null, Ct);
+        Assert.True(archive.IsSuccessStatusCode, await BodyAsync(archive));
+        Assert.Empty((await GetJsonAsync(tenant.Admin, ListUrl(tenant, day, day))).EnumerateArray());
+    }
+
+    [Fact]
+    public async Task TheListCanBeNarrowedToOneResource()
+    {
+        var tenant = await NewTenantAsync(world.Factory);
+        using var _ = tenant;
+        var one = await CreateResourceAsync(tenant, "Sala 1");
+        var two = await CreateResourceAsync(tenant, "Sala 2");
+        var service = await CreateServiceAsync(tenant, "Yoga", 60);
+        var day = FutureMonday();
+        var block = (await CreatedAsync(
+            tenant.Admin, $"{tenant.Url}/blocks", OneOffBlockBody(day, [one, two], [service], "Clases", 5, "PublishedSessions")))
+            .GetProperty("id").GetGuid();
+        await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, one, service, NineOClock(day)));
+        await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, two, service, NineOClock(day)));
+
+        var all = await GetJsonAsync(tenant.Admin, ListUrl(tenant, day, day));
+        var onlyTwo = await GetJsonAsync(tenant.Admin, ListUrl(tenant, day, day, two));
+
+        Assert.Equal(2, all.GetArrayLength());
+        Assert.Equal(two, Assert.Single(onlyTwo.EnumerateArray()).GetProperty("resourceId").GetGuid());
+    }
+
+    [Fact]
+    public async Task AProviderListsOnlyTheSessionsOfItsOwnResource()
+    {
+        var tenant = await NewTenantAsync(world.Factory);
+        using var _ = tenant;
+        var (own, provider) = await CreateProviderAsync(tenant, "torres@example.com", "Torres");
+        using var __ = provider;
+        var another = await CreateResourceAsync(tenant, "Sala 2");
+        var service = await CreateServiceAsync(tenant, "Yoga", 60);
+        var day = FutureMonday();
+        var block = (await CreatedAsync(
+            tenant.Admin, $"{tenant.Url}/blocks", OneOffBlockBody(day, [own, another], [service], "Clases", 5, "PublishedSessions")))
+            .GetProperty("id").GetGuid();
+        await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, own, service, NineOClock(day)));
+        await CreatedAsync(tenant.Admin, $"{tenant.Url}/sessions", Publish(block, another, service, NineOClock(day)));
+
+        var mine = await GetJsonAsync(provider, ListUrl(tenant, day, day));
+        var theirs = await provider.GetAsync(ListUrl(tenant, day, day, another), Ct);
+
+        Assert.Equal(own, Assert.Single(mine.EnumerateArray()).GetProperty("resourceId").GetGuid());
+        Assert.Equal(HttpStatusCode.Forbidden, theirs.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListingNeedsAValidRangeAndAvailabilityManage()
+    {
+        var (tenant, _, _, _, day) = await PublishedBlockAsync();
+        using var __ = tenant;
+        using var reader = tenant.Client(null, SchedulingPermissions.AppointmentRead, SchedulingPermissions.AgendaReadAll);
+
+        var missing = await tenant.Admin.GetAsync($"{tenant.Url}/sessions", Ct);
+        var backwards = await tenant.Admin.GetAsync(ListUrl(tenant, day, day.AddDays(-1)), Ct);
+        var tooLong = await tenant.Admin.GetAsync(ListUrl(tenant, day, day.AddDays(63)), Ct);
+        var forbidden = await reader.GetAsync(ListUrl(tenant, day, day), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);
+        var problem = await JsonOfAsync(missing);
+        Assert.Equal("validation.failed", CodeOf(problem));
+        Assert.True(HasError(problem, "from"));
+        Assert.True(HasError(problem, "to"));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, backwards.StatusCode);
+        Assert.True(HasError(await JsonOfAsync(backwards), "to"));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, tooLong.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
     [Fact]
     public async Task AProviderCannotRemoveTheSessionOfAnotherResource()
     {
