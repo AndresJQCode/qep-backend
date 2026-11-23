@@ -621,6 +621,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.DeleteLegalBracketsCommand, Modules.Hr.Application.LegalParametersDto>,
             Modules.Hr.Application.DeleteLegalBracketsHandler>();
+        // La carga anual por Excel (spec 2026-11-22): plantilla, vista previa y confirmación comparten análisis y escriben por el mismo escritor.
+        services.AddScoped<Modules.Hr.Application.LegalParameterImportAnalyzer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetLegalParameterImportTemplateQuery, Modules.Hr.Application.LegalParameterImportTemplateFile>,
+            Modules.Hr.Application.GetLegalParameterImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.PreviewLegalParameterImportCommand, Modules.Hr.Application.LegalParameterImportPreviewDto>,
+            Modules.Hr.Application.PreviewLegalParameterImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ImportLegalParametersCommand, Modules.Hr.Application.LegalParameterImportResultDto>,
+            Modules.Hr.Application.ImportLegalParametersHandler>();
+
         // La importación de empleados por Excel (spec 2026-11-20): plantilla, vista previa y confirmación comparten análisis.
         services.AddScoped<Modules.Hr.Application.EmployeeImportCatalogs>();
         services.AddScoped<Modules.Hr.Application.EmployeeImportAnalyzer>();

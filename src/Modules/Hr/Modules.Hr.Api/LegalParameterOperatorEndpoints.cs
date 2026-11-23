@@ -16,6 +16,7 @@ namespace Modules.Hr.Api;
 public static class LegalParameterOperatorEndpoints
 {
     private const int DefaultPageSize = 50;
+    private const string ExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     public static IEndpointRouteBuilder MapLegalParameterOperatorEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -66,6 +67,26 @@ public static class LegalParameterOperatorEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/import/template", GetImportTemplateAsync)
+            .RequireAuthorization(HrOperatorPermissions.LegalParametersManage)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/import/preview", PreviewImportAsync)
+            .RequireAuthorization(HrOperatorPermissions.LegalParametersManage)
+            .Produces<LegalParameterImportPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
+        group.MapPost("/import", ImportAsync)
+            .RequireAuthorization(HrOperatorPermissions.LegalParametersManage)
+            .Produces<LegalParameterImportResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
 
         return endpoints;
     }
@@ -130,6 +151,40 @@ public static class LegalParameterOperatorEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new DeleteLegalBracketsCommand(new TenantId(tenantId), key, effectiveFrom), cancellationToken));
+
+    private static async Task<IResult> GetImportTemplateAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var template = await dispatcher.QueryAsync(
+            new GetLegalParameterImportTemplateQuery(new TenantId(tenantId)), cancellationToken);
+
+        return Results.File(template.Content, ExcelContentType, template.FileName);
+    }
+
+    // IFormFile anulable: sin archivo el handler responde 422 hr.legal_parameter.import.file_required y no un 400 del binding.
+    private static async Task<IResult> PreviewImportAsync(
+        Guid tenantId, IFormFile? file, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var preview = await dispatcher.SendAsync(
+            new PreviewLegalParameterImportCommand(
+                new TenantId(tenantId), file?.FileName ?? string.Empty, file?.Length ?? 0, content),
+            cancellationToken);
+
+        return Results.Ok(preview);
+    }
+
+    private static async Task<IResult> ImportAsync(
+        Guid tenantId, IFormFile? file, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var result = await dispatcher.SendAsync(
+            new ImportLegalParametersCommand(
+                new TenantId(tenantId), file?.FileName ?? string.Empty, file?.Length ?? 0, content),
+            cancellationToken);
+
+        return Results.Ok(result);
+    }
 
     private static int ReadInt(string? raw, int fallback) =>
         int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : fallback;
