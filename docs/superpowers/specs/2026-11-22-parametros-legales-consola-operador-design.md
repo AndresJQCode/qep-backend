@@ -104,11 +104,15 @@ ya calculado la usó.**
 - **Subir la versión es un puerto de Hr.Application** (`ILegalParameterCacheVersion.BumpAsync`, el patrón de `ITenantAccessVersion`
   de Tenancy): los casos de uso de escritura viven en Hr y no ven Valkey (`HrLayerTests` prohíbe `StackExchange.Redis`). Tres
   implementaciones en el Bootstrapper: Valkey (`INCR`, sin el token de quien llama, como `ValkeyTenantAccessVersion`), memoria del
-  pod (área apagada: invalida la caché local del pod que escribió) y ninguna para pruebas.
+  pod (área apagada: invalida la caché local del pod que escribió). *(Corregido en la implementación, 2026-11-23)* No hay implementación «ninguna para pruebas»: no habría servido,
+  porque la caché del pod seguiría sirviendo la tabla; las pruebas que escriben SQL a mano suben la versión real después.
 - **Riesgo residual, aceptado con TTL de 1 h:** si el `INCR` posterior al commit falla (Valkey caído en ese instante), las
   réplicas pueden servir la versión vieja **hasta 1 h** (antes 24 h, que contradecía la antimeta «un valor viejo durante
   horas»). No se elimina, se acota: `ValkeyTenantAccessVersion` lo acota con entradas de 60 s. El fallo del `INCR` se cuenta en
   `qep.valkey.fallbacks` y se loguea, y la respuesta de la escritura sigue siendo correcta (el dato ya está en la base).
+- **Escrituras fuera de la consola** (migración que siembra el año, hotfix de SQL, restauración) no suben la versión: con el área
+  prendida se ven hasta 1 h después, incluso tras un despliegue. Hacen falta `INCR qep:legalparams:ver` o un reinicio. El
+  arranque sube la versión una vez (`LegalParameterCacheStartupBump`, sólo con el área prendida), así que un despliegue basta.
 
 ### Uso: qué es «una nómina ya calculada la usó»
 
@@ -341,7 +345,9 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
   topes de la importación de empleados», que son otros (5 MB y 1000 filas, `HrImportColumns.cs:15-17`): rigen 1 MB y 500, en
   constantes propias. Lo que sí se replica es el mecanismo (endpoint con `IFormFile?` y `DisableAntiforgery()`,
   `HrEndpoints.cs:223-235`; sin archivo, 422 y no 400 del binding).
-- Códigos de error `hr.legal_parameter.import.*`, mapeados por `code`. *Revisión:* el borrador listaba `file_required`,
+- Códigos de error `hr.legal_parameter.import.*`. *(Corregido en la implementación, 2026-11-23)* No se mapean por `code`: el status
+  sale del tipo de la excepción (`HrDomainException` ⇒ 422), igual que el resto de los códigos de Hr, y `ApiExceptionHandler` no
+  lleva entradas por código. *Revisión:* el borrador listaba `file_required`,
   `file_invalid`, `header_missing`, `too_many_rows`; se alinean con los de empleados (`HrErrorCodes.cs:57-64`) para que el
   frontend reuse el mapeo: `file_required`, `extension_invalid`, `too_large`, `unreadable`, `header_mismatch`, `empty`,
   `too_many_rows`, y **`rows_invalid`**, que faltaba: es lo que responde `POST /import` cuando el reanálisis encuentra una fila en

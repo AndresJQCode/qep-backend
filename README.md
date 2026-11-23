@@ -2978,7 +2978,7 @@ Lo hace el owner, un área por commit
 (`chore(k8s): enable valkey <area> area`, el flag en `"true"` en `k8s/prod-configMap.yaml`). Después de `Presence` y
 `RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells`,
 `Valkey__Areas__ApiKeyTouch` y `Valkey__Areas__LegalParameters` (la tabla de valores legales de Hr, spec 2026-11-22: contador
-`qep:legalparams:ver` y tabla en `qep:legalparams:{ver}` con TTL de 1 h; apagada, copia del pod de 60 s). El presupuesto de envío de campañas no está en la lista: se queda en Postgres
+`qep:legalparams:ver` y tabla en `qep:legalparams:{ver}` con TTL de 1 h; apagada, copia del pod de 60 s). Con el área prendida, una migración o un SQL manual sobre `hr.legal_parameters*` no sube la versión: hace falta `INCR qep:legalparams:ver` (o un reinicio, que la sube al arrancar) para verlo antes de que venza la hora. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
 (`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
 
 **Con `Sessions` y `Permissions` apagadas hay caché igual, pero por pod** (2026-11-17). Antes, apagada el área era «cada request

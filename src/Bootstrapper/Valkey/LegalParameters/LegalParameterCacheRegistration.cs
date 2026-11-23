@@ -31,6 +31,7 @@ public static class LegalParameterCacheRegistration
             services.AddScoped<ILegalParameterSource>(provider => new ValkeyLegalParameterSource(
                 CreateInner(provider), provider.GetRequiredService<ValkeyGateway>(), provider.GetRequiredService<TimeProvider>()));
             services.AddSingleton<ILegalParameterCacheVersion, ValkeyLegalParameterCacheVersion>();
+            services.AddHostedService<LegalParameterCacheStartupBump>();
             return services;
         }
 
