@@ -7,8 +7,8 @@ aprobar). Spec del frontend: `qep-frontend/docs/superpowers/specs/2026-11-22-sup
 
 ## 1. Intención
 
-Que el miembro al que le asignan una tarea **se entere**, sin depender de que tenga Soporte abierto. El owner
-(2026-11-22) pidió esta escalera:
+Que el miembro al que le asignan una tarea **o un ticket de cliente** (D-7) **se entere**, sin depender de
+que tenga Soporte abierto. El owner (2026-11-22) pidió esta escalera, la misma para los dos:
 
 1. **En la app**: una entrada en la campana, **siempre**, y en vivo por el hub (SignalR) si está conectado.
 2. Si **no la leyó en 30 minutos y no tiene QEP abierto**: por **WhatsApp**. Mientras tenga QEP abierto
@@ -110,9 +110,16 @@ Asignan la tarea ─► evento support.ticket.task-assigned.v1 (outbox de Soport
 `assignedByMemberId`, `occurredAt`). Lo publica Soporte al **crear** una tarea y al **reasignarla**,
 nunca cuando el responsable es quien la asigna (a uno mismo no se le avisa). Correlación: el ticket.
 
+**Tickets de cliente (D-7):** `support.ticket.assigned.v1`, mismo payload, al asignar un ticket de cliente a
+**otro** miembro. Tomarlo (a uno mismo) o dejarlo sin responsable no avisa. Y
+`support.ticket.assignee-released.v1` (`…, formerAssigneeMemberId, reason, isInternal`) al reasignar,
+tomar uno ajeno, resolver o cerrar, **para tareas y tickets de cliente**: cierra la entrada de quien lo
+tenía.
+
 ### 5.3 Campana
 
-- `kind` nuevo `SupportTaskAssigned`, `data { ticketId, ticketNumber, actorName }`. `actorName` se
+- `kind` nuevo `SupportTaskAssigned` (tareas) y `SupportTicketAssigned` (tickets de cliente, D-7; mismo
+  `data`, la pantalla cambia «la tarea» por «el ticket»), `data { ticketId, ticketNumber, actorName }`. `actorName` se
   resuelve al leer (como en `ConversationAssigned`). **Nunca el asunto.**
 - `dedupe_key`: `support-task-assigned:{ticketId}:{id del mensaje del outbox}`, así dos reasignaciones
   del mismo ticket son entradas distintas y un reintento no duplica.
@@ -203,7 +210,7 @@ nunca cuando el responsable es quien la asigna (a uno mismo no se le avisa). Cor
 Plantilla de sistema (categoría utilidad), por conexión, creada como la de invitación de distribuidor
 (`POST …/template-management/task-notice`, `messaging.template.manage`, tarjeta en
 `/integrations/whatsapp/$connectionId/templates`). Texto, con dos variables con nombre:
-«{{asesor}} te asignó la tarea {{numero}}. Ábrela en QEP.» **Sin asunto ni descripción.** El nombre
+«¡Hola! {{asesor}} te asignó {{numero}} en QEP. Ábrelo para ver el detalle.» (genérico: sirve para tareas y tickets de cliente, D-7). **Sin asunto ni descripción.** El nombre
 del `kind` es `TaskNotice` (10 caracteres): verifica el ancho de la columna antes de migrar.
 
 ### 5.7 Ajustes en `/settings/support`
@@ -244,6 +251,10 @@ Se suma a `SupportSettingsDto` (mismo `GET`/`PUT …/support/settings`, mismo `I
 - **D-4.** Los 30 minutos son un valor global de configuración, no por tenant.
 - **D-5.** La conexión de WhatsApp de los avisos **se configura en `/settings/support`** (§5.7).
 - **D-6.** Sin casilla de consentimiento: un número guardado vale de inmediato (§5.5).
+- **D-7.** (2026-11-22, tarde.) Asignar un **ticket de cliente** a otro miembro avisa **igual que una
+  tarea**: campana siempre y, a los 30 min sin leer y sin QEP abierto, WhatsApp o correo. El owner eligió
+  esto sabiendo que son más mensajes (y más costo de Meta) que con sólo campana. La plantilla de WhatsApp
+  es una sola y genérica (§5.6); el correo dice «el ticket» o «la tarea». Tomar un ticket nunca avisa.
 
 ## 7. Orden de despliegue y dependencias
 

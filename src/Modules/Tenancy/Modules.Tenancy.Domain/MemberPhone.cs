@@ -32,7 +32,8 @@ public static partial class MemberPhone
 
     public static bool IsValid(string value) => E164().IsMatch(value);
 
-    [GeneratedRegex(@"^\+[1-9]\d{7,14}$", RegexOptions.CultureInvariant)]
+    // [0-9], not \d: in .NET \d matches any Unicode decimal digit (Arabic-Indic, Devanagari…), which WhatsApp cannot dial.
+    [GeneratedRegex(@"^\+[1-9][0-9]{7,14}$", RegexOptions.CultureInvariant)]
     private static partial Regex E164();
 }
 

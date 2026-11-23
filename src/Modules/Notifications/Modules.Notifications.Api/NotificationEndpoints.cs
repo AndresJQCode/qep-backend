@@ -38,6 +38,11 @@ public static class NotificationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapPost("/read-by-resource", MarkReadByResourceAsync)
+            .Produces<MarkResourceReadResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -57,6 +62,13 @@ public static class NotificationEndpoints
     private static async Task<IResult> MarkReadAsync(
         Guid tenantId, Guid notificationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new MarkNotificationReadCommand(tenantId, notificationId), cancellationToken));
+
+    // Task-notices spec D-2/D-3: opening a ticket reads its assignment entries. A missing body is the same 422 as an empty one.
+    private static async Task<IResult> MarkReadByResourceAsync(
+        Guid tenantId, MarkResourceReadRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new MarkResourceNotificationsReadCommand(tenantId, request?.Kind ?? string.Empty, request?.ResourceId ?? Guid.Empty),
+            cancellationToken));
 
     // The body is optional: without one (or with a null upTo) every unread entry is marked.
     private static async Task<IResult> MarkAllReadAsync(

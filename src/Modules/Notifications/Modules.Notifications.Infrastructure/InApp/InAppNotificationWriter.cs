@@ -25,7 +25,7 @@ internal static class InAppNotificationWriter
         DateTimeOffset now,
         IRealtimeMemberPublisher publisher,
         CancellationToken cancellationToken) =>
-        SaveAsync(dbContext, consumer, messageId, entries, [], now, publisher, cancellationToken);
+        SaveAsync(dbContext, consumer, messageId, entries, [], now, publisher, cancellationToken, onInserted: null);
 
     /// <returns>How many entries were new; the ones a repeated event already had are left as they were.</returns>
     public static async Task<int> SaveAsync(
@@ -36,7 +36,8 @@ internal static class InAppNotificationWriter
         IReadOnlyList<InAppResolution> resolutions,
         DateTimeOffset now,
         IRealtimeMemberPublisher publisher,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<IReadOnlyList<InAppNotification>, Task>? onInserted = null)
     {
         var inserted = new List<InAppNotification>(entries.Count);
         var resolved = new List<ResolvedRow>();
@@ -54,6 +55,12 @@ internal static class InAppNotificationWriter
             foreach (var resolution in resolutions)
             {
                 resolved.AddRange(await ResolveAsync(dbContext, resolution, now));
+            }
+
+            // Inside the transaction and only for entries that really are new: a repeated message adds no second row of anything else.
+            if (onInserted is not null && inserted.Count > 0)
+            {
+                await onInserted(inserted);
             }
 
             await dbContext.Database.ExecuteSqlAsync(
@@ -106,6 +113,23 @@ internal static class InAppNotificationWriter
     {
         var kind = resolution.Kind.ToString();
         var at = now.ToUniversalTime();
+        // With a member, only that member's entry closes (task-notices spec D-2): a reassignment publishes the release of A and the
+        // assignment of B with the same occurred_at, and B's new entry must stay open. Two statements, never an IS NULL on a parameter.
+        if (resolution.MemberId is { } memberId)
+        {
+            return await dbContext.Database
+                .SqlQuery<ResolvedRow>($"""
+                    UPDATE notifications.in_app_notifications
+                    SET resolved_at = {at},
+                        read_at = COALESCE(read_at, {at}),
+                        data = jsonb_set(data, ARRAY['resolution'], to_jsonb({resolution.Resolution}::text))
+                    WHERE tenant_id = {resolution.TenantId} AND kind = {kind} AND resource_id = {resolution.ResourceId}
+                        AND member_id = {memberId} AND resolved_at IS NULL
+                    RETURNING id AS "Id", tenant_id AS "TenantId", member_id AS "MemberId"
+                    """)
+                .ToListAsync(CancellationToken.None);
+        }
+
         return await dbContext.Database
             .SqlQuery<ResolvedRow>($"""
                 UPDATE notifications.in_app_notifications

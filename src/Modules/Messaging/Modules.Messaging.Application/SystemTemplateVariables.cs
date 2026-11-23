@@ -76,6 +76,14 @@ public static class SystemTemplateVariables
         new("correo", "Correo de la invitación", "compras@distribuidora.co"),
     ];
 
+    /// <summary>Support task notices: the assignment notice. <c>numero</c> is the ticket number (SOP-0042); <c>asesor</c> is the fixed variable
+    /// filled with the name of whoever assigned. Neither the subject nor the description is a variable: they never travel by WhatsApp.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> TaskNotice { get; } =
+    [
+        .. Fixed,
+        new("numero", "Número del caso", "SOP-000127"),
+    ];
+
     /// <summary>Agenda: el recordatorio de una cita. <c>fecha_hora</c> ya viene formateada en la zona del tenant por el emisor; <c>recurso</c> y
     /// <c>sede</c> son los nombres vigentes al enviar. Las fijas van primero, como en toda plantilla del sistema.</summary>
     public static IReadOnlyList<SystemTemplateVariable> AppointmentReminder { get; } =

@@ -23,6 +23,11 @@ public interface IInAppNotificationRepository
     /// <returns>The entry marked read (the first <c>ReadAt</c> stays when it already was), or <c>null</c> when it is not the caller's.</returns>
     Task<InAppNotification?> MarkReadAsync(Guid tenantId, Guid memberId, Guid notificationId, DateTimeOffset now, CancellationToken cancellationToken);
 
+    /// <summary>Marks the caller's unread entries of <paramref name="kind"/> about <paramref name="resourceId"/> (task-notices spec D-2).</summary>
+    /// <returns>How many it marked; zero when there were none or all were already read.</returns>
+    Task<int> MarkReadByResourceAsync(
+        Guid tenantId, Guid memberId, InAppNotificationKind kind, Guid resourceId, DateTimeOffset now, CancellationToken cancellationToken);
+
     /// <summary>Marks the unread ones created at or before <paramref name="upTo"/>, or every unread one when it is <c>null</c>.</summary>
     Task MarkAllReadAsync(Guid tenantId, Guid memberId, DateTimeOffset? upTo, DateTimeOffset now, CancellationToken cancellationToken);
 }
