@@ -91,6 +91,23 @@ internal sealed class AiScheduling(IChannelScheduling channel, IConversationQuer
                 check.Status, check.StartsAt, check.EndsAt, check.TimeZone, check.ServiceName, check.ResourceName, check.LocationName));
         });
 
+    public Task<AiSchedulingResult<AiReschedulePreview>> PreviewRescheduleAsync(
+        AiSchedulingCaller caller, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) =>
+        GuardAsync(async () =>
+        {
+            if (await ReadingCustomerAsync(caller, cancellationToken) is not { } customerId)
+            {
+                // Sin ficha no hay citas propias: el mismo silencio que cancelar o mover.
+                return AiSchedulingResult<AiReschedulePreview>.Error(AgentToolErrors.AppointmentNotFound);
+            }
+
+            var check = await channel.CheckRescheduleAsync(caller.TenantId, customerId, appointmentId, localStartsAt, resourceId, cancellationToken);
+            var start = check.Start;
+            return AiSchedulingResult<AiReschedulePreview>.Ok(new AiReschedulePreview(
+                new AiStartPreview(start.Status, start.StartsAt, start.EndsAt, start.TimeZone, start.ServiceName, start.ResourceName, start.LocationName),
+                check.AlreadyDone));
+        });
+
     public Task<AiSchedulingResult<AiAppointments>> ListMyAppointmentsAsync(AiSchedulingCaller caller, CancellationToken cancellationToken) =>
         GuardAsync(async () =>
         {
