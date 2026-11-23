@@ -59,6 +59,16 @@ public static class AiInfrastructureExtensions
         services.AddScoped<IAgentTool, SimulatedQuotationDraftTool>();
         // Spec 2026-10-29 §8.2 y P-4: la real, sólo en canales reales (sus puertos van en Bootstrapper).
         services.AddScoped<IAgentTool, CreateQuotationDraftTool>();
+        // Spec 2026-11-23 §5: las seis de la Agenda y sus tres gemelas simuladas del playground (el puerto va en Bootstrapper).
+        services.AddScoped<IAgentTool, ListBookableServicesTool>();
+        services.AddScoped<IAgentTool, CheckAvailabilityTool>();
+        services.AddScoped<IAgentTool, ListMyAppointmentsTool>();
+        services.AddScoped<IAgentTool, BookAppointmentTool>();
+        services.AddScoped<IAgentTool, CancelAppointmentTool>();
+        services.AddScoped<IAgentTool, RescheduleAppointmentTool>();
+        services.AddScoped<IAgentTool, SimulatedBookAppointmentTool>();
+        services.AddScoped<IAgentTool, SimulatedCancelAppointmentTool>();
+        services.AddScoped<IAgentTool, SimulatedRescheduleAppointmentTool>();
         services.AddScoped<IAiRunLedger, AiRunLedger>();
         // Plan 2026-11-12 Tarea 9: la actividad, el historial y los conteos de la lista.
         services.AddScoped<IAgentActivityReader, AgentActivityReader>();
