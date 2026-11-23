@@ -123,6 +123,45 @@ public sealed class LegalParameterPersistenceTests : IClassFixture<LegalParamete
         Assert.Equal(author, bracket.UpdatedBy);
     }
 
+    // El escritor reemplaza un conjunto de tramos borrando sus filas y escribiendo las nuevas en el mismo guardado; la llave primaria
+    // incluye el límite inferior, así que un tramo que conserva su inicio repite llave con el que se borra.
+    [Fact]
+    public async Task ReplacingABracketSetThatKeepsALowerBoundSavesInOneTransaction()
+    {
+        var author = Guid.NewGuid();
+        var at = new DateTimeOffset(2092, 1, 1, 10, 0, 0, TimeSpan.Zero);
+        var date = new DateOnly(2092, 1, 1);
+        await SaveInScopeAsync(repository => repository.AddBrackets(
+        [
+            LegalParameterBracket.Create(LegalBracketKey.SolidarityFund, date, new LegalBracketInput(4m, 16m, 0.01m), author, at),
+            LegalParameterBracket.Create(LegalBracketKey.SolidarityFund, date, new LegalBracketInput(16m, 25m, 0.02m), author, at),
+        ]));
+
+        await InScopeAsync<object?>(async provider =>
+        {
+            var repository = provider.GetRequiredService<ILegalParameterRepository>();
+            var old = (await repository.ListBracketsAsync(Ct)).Where(row => row.EffectiveFrom == date).ToList();
+            repository.RemoveBrackets(old);
+            repository.AddBrackets(
+            [
+                LegalParameterBracket.Create(LegalBracketKey.SolidarityFund, date, new LegalBracketInput(4m, 18m, 0.015m), author, at),
+                LegalParameterBracket.Create(LegalBracketKey.SolidarityFund, date, new LegalBracketInput(18m, null, 0.025m), author, at),
+            ]);
+            await provider.GetRequiredService<IHrUnitOfWork>().SaveChangesAsync(Ct);
+            return null;
+        });
+
+        var rows = await InScopeAsync(async provider =>
+            (await provider.GetRequiredService<ILegalParameterRepository>().ListBracketsAsync(Ct))
+            .Where(row => row.EffectiveFrom == date)
+            .OrderBy(row => row.LowerBound)
+            .ToList());
+
+        Assert.Equal([4m, 18m], rows.Select(row => row.LowerBound));
+        Assert.Equal([18m, (decimal?)null], rows.Select(row => row.UpperBound));
+        Assert.Equal([0.015m, 0.025m], rows.Select(row => row.Rate));
+    }
+
     [Fact]
     public async Task AChangeRoundTripsWithJson()
     {

@@ -2840,6 +2840,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-10 (Impuestos por tipo): la consola de la unidad tributaria, con el mismo criterio.
                 CatalogOperatorPermissions.TaxUnitsRead,
                 CatalogOperatorPermissions.TaxUnitsManage,
+                // Spec 2026-11-22: la consola de los parámetros legales (nómina), con el mismo criterio.
+                HrOperatorPermissions.LegalParametersRead,
+                HrOperatorPermissions.LegalParametersManage,
                 // Reporte de uso de la plataforma: misma categoría y mismo criterio que los de arriba.
                 OperatorPermissions.UsageRead,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
@@ -3675,6 +3678,27 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [])
         {
             Shape = new("operator.tax_units", "Unidad tributaria", "manage"),
+        });
+        // Spec 2026-11-22: los parámetros legales de nómina. Cambiar un valor mueve los cálculos de todos los tenants: "high".
+        services.AddSingleton(new PermissionDefinition(
+            HrOperatorPermissions.LegalParametersRead,
+            "Ver los parámetros legales",
+            "Permite ver los valores legales de nómina (salario mínimo, aportes, provisiones, fondo de solidaridad) y su historial.",
+            "Operator",
+            "medium",
+            RequiredModules: [])
+        {
+            Shape = new("operator.legal_parameters", "Parámetros legales", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrOperatorPermissions.LegalParametersManage,
+            "Gestionar los parámetros legales",
+            "Permite cargar, corregir y borrar los valores legales de nómina, a mano o por Excel: los usan los cálculos de todos los tenants.",
+            "Operator",
+            "high",
+            RequiredModules: [])
+        {
+            Shape = new("operator.legal_parameters", "Parámetros legales", "manage"),
         });
         // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
         services.AddSingleton(new PermissionDefinition(
@@ -4603,6 +4627,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CatalogOperatorPermissions.TaxUnitsManage,
                 policy => AddPermissionRequirement(policy, CatalogOperatorPermissions.TaxUnitsManage))
+            // Sin estas dos, RequireAuthorization de la consola de parámetros legales no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                HrOperatorPermissions.LegalParametersRead,
+                policy => AddPermissionRequirement(policy, HrOperatorPermissions.LegalParametersRead))
+            .AddPolicy(
+                HrOperatorPermissions.LegalParametersManage,
+                policy => AddPermissionRequirement(policy, HrOperatorPermissions.LegalParametersManage))
             // Sin esta, RequireAuthorization del reporte de uso no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 OperatorPermissions.UsageRead,

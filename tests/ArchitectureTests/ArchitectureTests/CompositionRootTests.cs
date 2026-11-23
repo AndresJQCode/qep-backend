@@ -345,7 +345,7 @@ public sealed class CompositionRootTests
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
     /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21 y las cinco <c>scheduling.*</c> del spec 2026-11-21 (Agenda).</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheHundredAndTenConstants()
+    public void PermissionDiscoveryFindsTheHundredAndTwelveConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -373,7 +373,8 @@ public sealed class CompositionRootTests
         // + the five hr.* permissions (spec 2026-11-20).
         // + the four payroll.* permissions (spec 2026-11-21).
         // + los cinco de la Agenda (scheduling.*, spec 2026-11-21).
-        Assert.Equal(110, PermissionConstants().Length);
+        // + los dos de parámetros legales del operador (operator.legal_parameters.read|manage, spec 2026-11-22).
+        Assert.Equal(112, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
