@@ -11,6 +11,8 @@ paths:
 Reglas de `qep-backend` que no se deducen leyendo el código. Se cargan solas al leer o editar un
 archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAUDE.md`](../../CLAUDE.md).
 
+- **`siigo.settings.price_mode` decide cómo viaja el precio del ítem:** `BaseWithDiscount` (de fábrica) manda el precio de lista y `discount`; `DiscountedPrice`
+  manda el precio ya descontado (`Subtotal / cantidad`) y `discount: 0`. El total no cambia entre modos, y un `priceMode` ausente en el `PUT …/document` conserva el guardado.
 - **`siigo.invoices` es el registro de un documento legal: no tiene purga y su `Down` no se corre.** Una fila `Created` o
   `Stamped` es una factura que existe en Siigo; borrarla aquí no la borra allá y deja el pedido sin rastro de ella.
 - **«Enviar a la DIAN» (`send_to_dian`) nace apagado y prenderlo lo decide quien configura.** No hay empresa de pruebas de Siigo:
