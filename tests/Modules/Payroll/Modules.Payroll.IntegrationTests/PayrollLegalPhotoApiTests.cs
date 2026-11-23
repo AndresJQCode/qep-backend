@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Hr.Application;
 using Modules.Payroll.Application;
 using Npgsql;
 using static Modules.Payroll.IntegrationTests.PayrollApiHarness;
@@ -32,6 +33,8 @@ public sealed class PayrollLegalPhotoApiTests : IClassFixture<PayrollApiFixture>
         await connection.OpenAsync(Ct);
         await using var command = new NpgsqlCommand(sql, connection);
         await command.ExecuteNonQueryAsync(Ct);
+        // La caché del pod (área apagada, 60 s) no ve el SQL a mano: sin esto la fila nueva queda invisible y la prueba pasa en vacío.
+        await fixture.Factory.Services.GetRequiredService<ILegalParameterCacheVersion>().BumpAsync(Ct);
     }
 
     [Fact]

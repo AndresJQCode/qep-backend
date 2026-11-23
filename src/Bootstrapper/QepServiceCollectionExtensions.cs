@@ -6,6 +6,7 @@ using Bootstrapper.Messaging;
 using Bootstrapper.Realtime;
 using Bootstrapper.Seeding;
 using Bootstrapper.Valkey;
+using Bootstrapper.Valkey.LegalParameters;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
@@ -606,6 +607,40 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetHrFileDownloadUrlQuery, Modules.Hr.Application.HrDownloadUrlDto>,
             Modules.Hr.Application.GetHrFileDownloadUrlHandler>();
+        // La consola de valores legales del operador (spec 2026-11-22). Sus handlers no revisan el módulo `hr`: el tenant operador
+        // puede no tenerlo. La escritura (y la carga por Excel, después) pasa por LegalParameterWriter; la pantalla la arma el composer.
+        services.AddScoped<Modules.Hr.Application.LegalParameterWriter>();
+        services.AddScoped<Modules.Hr.Application.LegalParametersComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListLegalParametersQuery, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.ListLegalParametersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListLegalParameterHistoryQuery, Modules.Hr.Application.LegalParameterHistoryPageDto>,
+            Modules.Hr.Application.ListLegalParameterHistoryHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetLegalParameterCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.SetLegalParameterHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteLegalParameterCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.DeleteLegalParameterHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetLegalBracketsCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.SetLegalBracketsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteLegalBracketsCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.DeleteLegalBracketsHandler>();
+        // La carga anual por Excel (spec 2026-11-22): plantilla, vista previa y confirmación comparten análisis y escriben por el mismo escritor.
+        services.AddScoped<Modules.Hr.Application.LegalParameterImportAnalyzer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.GetLegalParameterImportTemplateQuery, Modules.Hr.Application.LegalParameterImportTemplateFile>,
+            Modules.Hr.Application.GetLegalParameterImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.PreviewLegalParameterImportCommand, Modules.Hr.Application.LegalParameterImportPreviewDto>,
+            Modules.Hr.Application.PreviewLegalParameterImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.ImportLegalParametersCommand, Modules.Hr.Application.LegalParameterImportResultDto>,
+            Modules.Hr.Application.ImportLegalParametersHandler>();
+
         // La importación de empleados por Excel (spec 2026-11-20): plantilla, vista previa y confirmación comparten análisis.
         services.AddScoped<Modules.Hr.Application.EmployeeImportCatalogs>();
         services.AddScoped<Modules.Hr.Application.EmployeeImportAnalyzer>();
@@ -1870,6 +1905,8 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddHrInfrastructure(configuration);
+        // Después de AddHrInfrastructure y no en AddQepValkey: envuelve el ILegalParameterSource que ésta registra (spec 2026-11-22).
+        services.AddLegalParameterCache(configuration);
         services.AddPayrollInfrastructure(configuration);
         services.AddSchedulingInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
@@ -2164,6 +2201,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrCompanyLookup, HrCompanyLookup>();
         // Payroll lee los valores legales de Hr por su propio puerto (PayrollLayerTests.NoPayrollLayerReferencesHr).
         services.AddScoped<Modules.Payroll.Application.IPayrollLegalValues, PayrollLegalValues>();
+        // La consola de valores legales de Hr sabe qué nóminas ya se calcularon por este puerto (PayrollLayerTests.NoPayrollLayerReferencesHr):
+        // Payroll expone sus períodos calculados y este adaptador los traduce al puerto de Hr.
+        services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
         services.AddScoped<Modules.Payroll.Application.IPayrollMemberDirectory, PayrollMemberDirectory>();
@@ -2864,6 +2904,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-10 (Impuestos por tipo): la consola de la unidad tributaria, con el mismo criterio.
                 CatalogOperatorPermissions.TaxUnitsRead,
                 CatalogOperatorPermissions.TaxUnitsManage,
+                // Spec 2026-11-22: la consola de los parámetros legales (nómina), con el mismo criterio.
+                HrOperatorPermissions.LegalParametersRead,
+                HrOperatorPermissions.LegalParametersManage,
                 // Reporte de uso de la plataforma: misma categoría y mismo criterio que los de arriba.
                 OperatorPermissions.UsageRead,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
@@ -3699,6 +3742,27 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [])
         {
             Shape = new("operator.tax_units", "Unidad tributaria", "manage"),
+        });
+        // Spec 2026-11-22: los parámetros legales de nómina. Cambiar un valor mueve los cálculos de todos los tenants: "high".
+        services.AddSingleton(new PermissionDefinition(
+            HrOperatorPermissions.LegalParametersRead,
+            "Ver los parámetros legales",
+            "Permite ver los valores legales de nómina (salario mínimo, aportes, provisiones, fondo de solidaridad) y su historial.",
+            "Operator",
+            "medium",
+            RequiredModules: [])
+        {
+            Shape = new("operator.legal_parameters", "Parámetros legales", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrOperatorPermissions.LegalParametersManage,
+            "Gestionar los parámetros legales",
+            "Permite cargar, corregir y borrar los valores legales de nómina, a mano o por Excel: los usan los cálculos de todos los tenants.",
+            "Operator",
+            "high",
+            RequiredModules: [])
+        {
+            Shape = new("operator.legal_parameters", "Parámetros legales", "manage"),
         });
         // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
         services.AddSingleton(new PermissionDefinition(
@@ -4627,6 +4691,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CatalogOperatorPermissions.TaxUnitsManage,
                 policy => AddPermissionRequirement(policy, CatalogOperatorPermissions.TaxUnitsManage))
+            // Sin estas dos, RequireAuthorization de la consola de parámetros legales no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                HrOperatorPermissions.LegalParametersRead,
+                policy => AddPermissionRequirement(policy, HrOperatorPermissions.LegalParametersRead))
+            .AddPolicy(
+                HrOperatorPermissions.LegalParametersManage,
+                policy => AddPermissionRequirement(policy, HrOperatorPermissions.LegalParametersManage))
             // Sin esta, RequireAuthorization del reporte de uso no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 OperatorPermissions.UsageRead,

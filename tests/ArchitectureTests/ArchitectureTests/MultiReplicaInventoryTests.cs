@@ -50,7 +50,7 @@ public sealed class MultiReplicaInventoryTests
 
     // Las propiedades de ValkeyAreaOptions (src/Bootstrapper/Valkey/ValkeyOptions.cs).
     private static readonly string[] ValkeyAreas =
-        ["Presence", "RateLimiting", "Sessions", "Permissions", "SendBudget", "Doorbells", "ApiKeyTouch"];
+        ["Presence", "RateLimiting", "Sessions", "Permissions", "SendBudget", "Doorbells", "ApiKeyTouch", "LegalParameters"];
 
     /// <summary>
     /// Los <c>builder.Services.X</c> de <c>Program.cs</c> que <see cref="ReplayProgramRegistrations"/> repite. Un registro

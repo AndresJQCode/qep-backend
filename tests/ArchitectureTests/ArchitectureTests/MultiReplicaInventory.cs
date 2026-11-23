@@ -158,6 +158,8 @@ public static class MultiReplicaInventory
             "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportUnassignedAlertStore.cs:75-94 (TryClaimAsync) y :26-36 (HealAsync) — el reclamo es un INSERT … ON CONFLICT (ticket_id, unassigned_since) DO NOTHING en la misma transacción que el evento del outbox: dos réplicas sobre el mismo ticket y el mismo tramo, la segunda inserta cero filas y no publica; la sanación de unassigned_since (HealAsync) son dos UPDATE idempotentes (sella las sin asignar con null, limpia las asignadas con marca) que no tocan version"),
         new("Modules.Support.Infrastructure.SupportThreadFollowWorker", WorkerClassification.Idempotent,
             "Modules/Support/Modules.Support.Infrastructure/SupportThreadFollowWorker.cs:9-13 — idempotente por índices (IX_ticket_messages_ticket_message, PK_unclassified_messages); el segundo pod choca y no duplica"),
+        new("Bootstrapper.Valkey.LegalParameters.LegalParameterCacheStartupBump", WorkerClassification.Idempotent,
+            "Bootstrapper/Valkey/LegalParameters/LegalParameterCacheStartupBump.cs — sube qep:legalparams:ver una vez al arrancar, sólo con Valkey:Areas:LegalParameters; cada pod que arranca invalida una vez más y el INCR no daña a otro pod"),
 
         // --- Noisy: el segundo choca con el inbox o con Version y sólo deja log o un tick perdido. ---
         new("Modules.Support.Infrastructure.SupportAutoCloseWorker", WorkerClassification.Noisy,
@@ -218,6 +220,8 @@ public static class MultiReplicaInventory
         new("Bootstrapper.Valkey.Sessions.MemorySessionCache", StateClassification.SharedWithLocalFallback,
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:107-114 — con Valkey:Areas:Sessions la entrada y la marca de revocación viven en qep:sess:*; apagada, en este MemoryCache"),
 
+        new("Bootstrapper.Valkey.LegalParameters.MemoryLegalParameterCache", StateClassification.PerPodByDesign,
+            "Bootstrapper/Valkey/LegalParameters/LegalParameterCacheRegistration.cs:37-41 — con Valkey:Areas:LegalParameters la tabla vive en qep:legalparams:{ver}; apagada, copia del pod con TTL de 60 s (decisión del spec 2026-11-22, «Caché»): el pod que escribe se invalida al instante y los demás sirven la tabla vieja a lo sumo 60 s, así que el área no es prerrequisito de más de una réplica"),
         new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
             "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
         new("Api.WebTelemetryMetrics", StateClassification.PerPodByDesign,

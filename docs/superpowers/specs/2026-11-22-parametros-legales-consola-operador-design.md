@@ -97,18 +97,22 @@ ya calculado la usó.**
   *Mi decisión.*
 - Valkey caído: se lee de la base y se sigue (fallback del gateway, con la métrica `qep.valkey.fallbacks`).
 - Implementación: decorador de `ILegalParameterSource`; `SalaryRules`, la importación y nómina no se tocan. **No puede
-  registrarse en `AddQepValkey`** *(corregido en la revisión)*: `AddQepValkey` corre en `QepServiceCollectionExtensions.cs:121` y
-  `AddHrInfrastructure` en la línea 1709, con `AddScoped<ILegalParameterSource, LegalParameterSource>()`
+  registrarse en `AddQepValkey`** *(corregido en la revisión)*: `AddQepValkey` corre en `QepServiceCollectionExtensions.cs:125` y
+  `AddHrInfrastructure` en la línea 1896 *(Corregido en la implementación, 2026-11-23)*, con `AddScoped<ILegalParameterSource, LegalParameterSource>()`
   (`HrInfrastructureExtensions.cs:29`), que pisaría el decorador. Se registra **después** de `AddHrInfrastructure`, envolviendo el
   descriptor previo (`LegalParameterSource` es `internal` en Hr.Infrastructure y el Bootstrapper no lo puede nombrar).
 - **Subir la versión es un puerto de Hr.Application** (`ILegalParameterCacheVersion.BumpAsync`, el patrón de `ITenantAccessVersion`
   de Tenancy): los casos de uso de escritura viven en Hr y no ven Valkey (`HrLayerTests` prohíbe `StackExchange.Redis`). Tres
   implementaciones en el Bootstrapper: Valkey (`INCR`, sin el token de quien llama, como `ValkeyTenantAccessVersion`), memoria del
-  pod (área apagada: invalida la caché local del pod que escribió) y ninguna para pruebas.
+  pod (área apagada: invalida la caché local del pod que escribió). *(Corregido en la implementación, 2026-11-23)* No hay implementación «ninguna para pruebas»: no habría servido,
+  porque la caché del pod seguiría sirviendo la tabla; las pruebas que escriben SQL a mano suben la versión real después.
 - **Riesgo residual, aceptado con TTL de 1 h:** si el `INCR` posterior al commit falla (Valkey caído en ese instante), las
   réplicas pueden servir la versión vieja **hasta 1 h** (antes 24 h, que contradecía la antimeta «un valor viejo durante
   horas»). No se elimina, se acota: `ValkeyTenantAccessVersion` lo acota con entradas de 60 s. El fallo del `INCR` se cuenta en
   `qep.valkey.fallbacks` y se loguea, y la respuesta de la escritura sigue siendo correcta (el dato ya está en la base).
+- **Escrituras fuera de la consola** (migración que siembra el año, hotfix de SQL, restauración) no suben la versión: con el área
+  prendida se ven hasta 1 h después, incluso tras un despliegue. Hacen falta `INCR qep:legalparams:ver` o un reinicio. El
+  arranque sube la versión una vez (`LegalParameterCacheStartupBump`, sólo con el área prendida), así que un despliegue basta.
 
 ### Uso: qué es «una nómina ya calculada la usó»
 
@@ -190,8 +194,13 @@ Base `/api/v1/tenants/{tenantId}/operator/legal-parameters`, mismo estilo que un
   `IntegralSalaryFloor` es un monto en pesos (16.900.000 en 2024), no un múltiplo. Los datos sembrados cumplen todas estas
   reglas y la de tramos (`SundaySurchargeRate` 2027 vale exactamente `1.00`, el borde superior).
 - **Borrar:** no se puede borrar la única fila de una clave (el resolver necesita al menos una), ni una fila en uso.
-- Códigos de error (mapeo por `code`, `ApiExceptionHandler`): `hr.legal_parameter.in_use` (409), `.value_invalid` (422),
-  `.date_invalid` (422), `.last_row` (422), `.key_unknown` (404). Existente: `hr.legal_parameter.missing`.
+- Códigos de error: `hr.legal_parameter.in_use` (409), `.value_invalid` (422), `.date_invalid` (422), `.last_row` (422),
+  `.key_unknown` (404). Existente: `hr.legal_parameter.missing`. *(Corregido en la implementación, 2026-11-23)* El mapeo no es por `code`: lo decide el tipo de
+  excepción en `ApiExceptionHandler.MapException` (`ResourceConflictException` 409, `ResourceNotFoundException` 404,
+  `HrDomainException` 422) y no se agregó ninguna entrada por código al manejador.
+- **Código de la validación de tramos** *(Corregido en la implementación, 2026-11-23)*: el `PUT` manual de un conjunto que no pasa las reglas responde
+  `hr.legal_parameter.value_invalid` (el spec no nombraba código); en la vista previa del Excel el mismo mensaje viaja como el código
+  de fila `hr.legal_parameter.import.row.brackets_invalid`.
 - Concurrencia: dos operadores editando la misma fila. *Mi decisión:* la última escritura gana y las dos quedan en el
   historial; el volumen (pocos cambios al año) no justifica `If-Match`.
 
@@ -248,7 +257,8 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
   ítem: `{ id, key, effectiveFrom, action, oldValue, newValue, changedAt, changedBy: { subjectId, displayName }, source,
   batchId, fileName }`. **Valores tipados** (*decidido 2026-11-22*): cada ítem trae `kind`
   (`Parameter | Brackets`); un `Parameter` lleva `oldValue`/`newValue` como `number` (nulos en «Creó» y «Borró»), y un `Brackets`
-  lleva `oldBrackets`/`newBrackets` como lista de tramos. El frontend nunca parsea JSON. En la base, las columnas son `jsonb`.
+  lleva `oldBrackets`/`newBrackets` como lista de tramos. El frontend nunca parsea JSON. En la base, las columnas son `jsonb`. *(Corregido en la implementación, 2026-11-23)* `kind` **se deriva de `key`** (los nombres de
+  `LegalParameterKey` y `LegalBracketKey` no se repiten): la tabla no tiene columna de tipo.
 - **Nombres y grupos:** la plantilla de Excel tiene columna `Nombre`, y la arma Hr.Infrastructure, que **no puede leer**
   `LegalBasis` (vive en `Modules.Payroll.Domain.Engine`; `HrLayerTests` prohíbe referenciar otro módulo de negocio). Así que los
   nombres en español tienen que vivir también en Hr (por ejemplo `LegalParameterLabels` en Hr.Domain) o pasar a
@@ -258,7 +268,8 @@ camelCase como el resto de la API; lo marcado ❓ es decisión del owner.
   riesgo, ARL I-V, caja, ICBF, SENA), `Provisions` (cesantías, prima, vacaciones, intereses a las cesantías) y `WorkingTime`
   (`WeeklyHours`, `SundaySurchargeRate`, `ExtraDayRate`, `ExtraNightRate`, `NightSurchargeRate`); los tramos van en su propia
   sección. `LegalParameterLabels` es la **única** fuente de nombre, grupo y unidad; los nombres se copian de `LegalBasis` para que
-  la consola y el rastro de nómina digan lo mismo, y una prueba de Hr compara las dos listas de claves.
+  la consola y el rastro de nómina digan lo mismo, y una prueba compara las dos listas de claves. *(Corregido en la implementación, 2026-11-23)* Esa prueba vive en `Bootstrapper.UnitTests`
+  (`LegalParameterLabelsMatchLegalBasisTests`), no en Hr: necesita `LegalBasis` y Hr no puede referenciar Payroll.
 
 ### Carga por Excel (el flujo de enero)
 
@@ -277,7 +288,12 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
 
 - **Plantilla** (*mi decisión*): dos hojas. «Parámetros»: una fila por clave con `Clave`, `Nombre`, `Valor vigente`,
   `Vigente desde` (sólo lectura) y las dos columnas que se llenan, `Rige desde` y `Valor nuevo`. Viene **precargada** con el 1 de
-  enero del año siguiente y con el valor vigente, para que el operador sólo cambie lo que cambió. «Tramos»: una fila por tramo
+  enero del año siguiente y con el valor vigente, para que el operador sólo cambie lo que cambió. *(Corregido en la implementación, 2026-11-23)* Sólo las **27 claves
+  anuales** vienen precargadas; las tres que no son anuales (`SundaySurchargeRate`, `WeeklyHours`, `ConnectivityAllowanceSince`)
+  salen con `Rige desde` y `Valor nuevo` vacíos: arrastrar `ConnectivityAllowanceSince` al 1 de enero movería la fecha desde la que
+  rige la conectividad, y `WeeklyHours` cambia el 15 de julio, no el 1 de enero. La plantilla trae las 30 filas y la vista previa de
+  una plantilla sin tocar da 28 `Carry` (27 claves más el conjunto). El valor «vigente» que arrastra es el que rige el 1 de enero
+  siguiente (la última fila con fecha menor o igual), no el de hoy, para que una fila futura ya cargada no la pise. «Tramos»: una fila por tramo
   (`Clave`, `Rige desde`, `Desde`, `Hasta`, `Tasa`), precargada con el conjunto vigente. Una fila con `Valor nuevo` vacío se
   ignora.
 - **`Valor nuevo` viene precargado — decidido por el owner (2026-11-22).** La plantilla trae en `Valor nuevo` el valor vigente, y
@@ -329,12 +345,19 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
   topes de la importación de empleados», que son otros (5 MB y 1000 filas, `HrImportColumns.cs:15-17`): rigen 1 MB y 500, en
   constantes propias. Lo que sí se replica es el mecanismo (endpoint con `IFormFile?` y `DisableAntiforgery()`,
   `HrEndpoints.cs:223-235`; sin archivo, 422 y no 400 del binding).
-- Códigos de error `hr.legal_parameter.import.*`, mapeados por `code`. *Revisión:* el borrador listaba `file_required`,
+- Códigos de error `hr.legal_parameter.import.*`. *(Corregido en la implementación, 2026-11-23)* No se mapean por `code`: el status
+  sale del tipo de la excepción (`HrDomainException` ⇒ 422), igual que el resto de los códigos de Hr, y `ApiExceptionHandler` no
+  lleva entradas por código. *Revisión:* el borrador listaba `file_required`,
   `file_invalid`, `header_missing`, `too_many_rows`; se alinean con los de empleados (`HrErrorCodes.cs:57-64`) para que el
   frontend reuse el mapeo: `file_required`, `extension_invalid`, `too_large`, `unreadable`, `header_mismatch`, `empty`,
   `too_many_rows`, y **`rows_invalid`**, que faltaba: es lo que responde `POST /import` cuando el reanálisis encuentra una fila en
   `Error` (todo o nada). Los de fila (`hr.legal_parameter.import.row.*`) viajan en la vista previa con su `message`, no como error
-  HTTP; ❓ su lista la cierra el implementador con el analizador.
+  HTTP. *(Corregido en la implementación, 2026-11-23)* Lista cerrada de los códigos de fila: `key_unknown` (la clave no es el nombre exacto de un valor ni de un
+  conjunto), `date_invalid` (`Rige desde` falta o no es `yyyy-MM-dd`), `value_invalid` (no es un número o no pasa
+  `LegalParameterRules`, con su mensaje), `brackets_invalid` (el conjunto no pasa las reglas de tramos o trae una celda que no es un
+  número; un conjunto es **un solo elemento** con todas sus filas), `duplicated` (el mismo `(clave, fecha)` otra vez en el archivo:
+  falla la segunda aparición) e `in_use` (la fila cae en el rango de una nómina ya calculada, con el mensaje del 409). El aviso
+  `hr.legal_parameter.import.next_year_missing` va aparte, en `warnings`, y no bloquea.
 - La plantilla `GET /import/template` responde el archivo con `Results.File(…, ExcelContentType, fileName)` como la de empleados
   (`HrEndpoints.cs:467-473`); *propuesta*: `parametros-legales-<año siguiente>.xlsx`.
 
@@ -359,12 +382,12 @@ con su adaptador ClosedXML en Infrastructure, y analizador, parser y DTO separad
 de otorgarlos al rol de operador que `CatalogOperatorPermissions`. *Revisión, verificado:* `operator.tax_units.*` se registra en
 tres lugares de `src/Bootstrapper/QepServiceCollectionExtensions.cs`, y los dos nuevos van en los mismos:
 
-1. En la lista de permisos del rol `admin` de fábrica (línea ~2656): el rol vive en código, sin migración. No hay un «rol de
+1. En la lista de permisos del rol `admin` de fábrica (línea ~2884) *(Corregido en la implementación, 2026-11-23)*: el rol vive en código, sin migración. No hay un «rol de
    operador»: `OperatorPermissionFilter` (prefijo `operator.`) deja vivos estos permisos sólo en el tenant operador.
-2. Un `PermissionDefinition` por permiso (línea ~3433): categoría `"Operator"`, `RequiredModules: []` (núcleo; **no** el módulo
+2. Un `PermissionDefinition` por permiso (línea ~3724) *(Corregido en la implementación, 2026-11-23)*: categoría `"Operator"`, `RequiredModules: []` (núcleo; **no** el módulo
    `hr`, o el enmascarado por módulos los apaga en el tenant operador sin `hr`), riesgo `"medium"` para `read` y `"high"` para
    `manage` (mueve la nómina de todos los tenants), `Shape = new("operator.legal_parameters", "Parámetros legales", "read"|"manage")`.
-3. La política de autorización (línea ~4310): `AddPermissionRequirement(policy, …)`.
+3. La política de autorización (línea ~4672) *(Corregido en la implementación, 2026-11-23)*: `AddPermissionRequirement(policy, …)`.
 
 Segunda capa en cada handler: `OperatorAuthorization.EnsureAuthorized`.
 
@@ -428,6 +451,18 @@ Backend primero (migración de `legal_parameter_changes` y columnas), luego fron
    el operador ve y teclea «12 %» y la celda guarda `0.12`, que es lo que lee el importador. Un valor mayor que 1 en una tasa
    sigue siendo `Error`, con el mensaje «La tasa tiene que estar entre 0 % y 100 %. ¿Escribiste 12 en una celda sin formato de
    porcentaje?». Así formulario y Excel muestran las tasas igual.
+
+### Agregado en la implementación (2026-11-23), para el owner
+
+- ❓ **Borrar un `(clave, fecha)` que no existe responde 404 `key_unknown`.** El código lo hace así (`LegalParameterWriter`: «No hay
+  una fila de X que rija desde …»), porque el recurso que no existe es la fila; el spec no decía nada. El nombre del código es
+  engañoso (la clave sí existe, la fila no). Alternativa: un código propio (`row_unknown`) con el mismo 404.
+- ❓ **`MemoryLegalParameterCache` es `PerPodByDesign` en `MultiReplicaInventory`.** Con el área `LegalParameters` apagada y más de una
+  réplica, el pod que escribe se invalida al instante pero los demás pueden servir la tabla vieja **hasta 60 s**. Está aceptado
+  mientras el área esté apagada; con ella prendida la versión compartida cubre todos los pods.
+- **El `INCR` de Valkey** (`ValkeyLegalParameterCacheVersion`) también fija un `EXPIRE` de 30 días y siembra la clave con la base de
+  tiempo de `TenantAccessVersionBase` (`SET NX`), para que una clave desalojada no vuelva a contar desde 1 y alcance la versión de
+  una tabla sobreviviente. Todo en un `MULTI`; si falla se cuenta en `qep.valkey.fallbacks` y se loguea, y la escritura sigue siendo 200.
 
 ## Cambios de la revisión (2026-11-22)
 
