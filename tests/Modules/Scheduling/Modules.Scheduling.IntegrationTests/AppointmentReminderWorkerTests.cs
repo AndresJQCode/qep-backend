@@ -37,10 +37,19 @@ public sealed class AppointmentReminderWorkerTests
 
         public ReminderDelivery Result { get; set; } = new ReminderDelivery.Sent();
 
-        public Task<ReminderDelivery> SendAsync(ReminderMessage message, CancellationToken cancellationToken)
+        /// <summary>Runs once, inside the next send and before it answers: the way a test changes the world while the pass is busy.</summary>
+        public Func<Task>? OnNextSend { get; set; }
+
+        public async Task<ReminderDelivery> SendAsync(ReminderMessage message, CancellationToken cancellationToken)
         {
             Messages.Add(message);
-            return Task.FromResult(Result);
+            if (OnNextSend is { } hook)
+            {
+                OnNextSend = null;
+                await hook();
+            }
+
+            return Result;
         }
     }
 
@@ -61,10 +70,13 @@ public sealed class AppointmentReminderWorkerTests
     {
         public bool Messaging { get; set; } = true;
 
+        /// <summary>Tenants whose Messaging is off while it stays on for the rest.</summary>
+        public HashSet<Guid> WithoutMessaging { get; } = [];
+
         public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
         {
             List<TenantModuleKey> keys = [TenantModuleKeys.Customers, TenantModuleKeys.Scheduling];
-            if (Messaging)
+            if (Messaging && !WithoutMessaging.Contains(tenantId))
             {
                 keys.Add(TenantModuleKeys.Messaging);
             }
@@ -167,7 +179,41 @@ public sealed class AppointmentReminderWorkerTests
         public async Task<Appointment> LoadAsync()
         {
             await using var context = _database.CreateContext();
-            return await context.Appointments.AsNoTracking().Include(appointment => appointment.Events).SingleAsync(Ct);
+            return await context.Appointments.AsNoTracking().Include(appointment => appointment.Events).SingleAsync(value => value.Id == AppointmentId, Ct);
+        }
+
+        /// <summary>
+        /// Another tenant with the reminder on and <paramref name="count"/> confirmed appointments inside its window that start <b>before</b>
+        /// the harness appointment, so they fill the whole batch of a pass if nobody filters them out.
+        /// </summary>
+        public async Task SeedCrowdedTenantAsync(Guid tenantId, int count)
+        {
+            await using var context = _database.CreateContext();
+            var now = Start.AddDays(-5);
+            var location = Location.Create(LocationId.New(), tenantId, "Sede Norte", true, now);
+            var resource = Resource.Create(ResourceId.New(), tenantId, location.Id, "Sala 1", null, now);
+            var service = Service.Create(ServiceId.New(), tenantId, "Control", 5, 0, true, now);
+            var settings = SchedulingSettings.Create(tenantId, now);
+            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, Template, now);
+            context.AddRange(location, resource, service, settings);
+            for (var index = 0; index < count; index++)
+            {
+                // Five-minute appointments one after the other from 19 h before the harness one: all inside the window, none overlapping.
+                var start = Start.AddHours(-19).AddMinutes(5 * index);
+                var session = Session.Create(SessionId.New(), tenantId, resource.Id, service.Id, start, start.AddMinutes(5), 0, 1, false, now);
+                var appointment = Appointment.Create(
+                    AppointmentId.New(), tenantId, location.Id, resource.Id, service.Id, Guid.CreateVersion7(), session.Id, blockId: null, start,
+                    start.AddMinutes(5), AppointmentStatus.Confirmed, AppointmentSource.BackOffice, conversationId: null, note: null, null, now);
+                context.AddRange(session, appointment);
+            }
+
+            await context.SaveChangesAsync(Ct);
+        }
+
+        public async Task<int> UntouchedAppointmentsOfAsync(Guid tenantId)
+        {
+            await using var context = _database.CreateContext();
+            return await context.Appointments.AsNoTracking().CountAsync(value => value.TenantId == tenantId && value.ReminderAttempts == 0, Ct);
         }
 
         public async ValueTask DisposeAsync()
@@ -194,6 +240,84 @@ public sealed class AppointmentReminderWorkerTests
             ("Consulta general", "Dra. Paula Ruiz", "Sede Centro", Start),
             (message.ServiceName, message.ResourceName, message.LocationName, message.StartsAt));
         Assert.Equal(h.Clock.UtcNow, (await h.LoadAsync()).ReminderSentAt);
+    }
+
+    // Written, not run. The batch is 50 rows ordered by start across every tenant: 60 earlier appointments of a tenant without Messaging must
+    // not keep the appointment of the tenant that has it out of the batch on every pass.
+    [Fact]
+    public async Task AppointmentsOfATenantWithoutMessagingDoNotStarveTheOthers()
+    {
+        await using var h = await Harness.StartAsync();
+        var crowded = Guid.CreateVersion7();
+        await h.SeedCrowdedTenantAsync(crowded, AppointmentReminderRules.BatchSize + 10);
+        h.Modules.WithoutMessaging.Add(crowded);
+
+        await h.PassAsync();
+
+        Assert.Equal(h.CustomerId, Assert.Single(h.Sender.Messages).CustomerId);
+        Assert.Equal(h.Clock.UtcNow, (await h.LoadAsync()).ReminderSentAt);
+        // Nothing of the other tenant was claimed: turning Messaging on later finds those appointments intact.
+        Assert.Equal(AppointmentReminderRules.BatchSize + 10, await h.UntouchedAppointmentsOfAsync(crowded));
+    }
+
+    // Written, not run. Recording the reminder is a system write: the version the open screens hold stays valid.
+    [Fact]
+    public async Task RecordingTheReminderDoesNotBumpTheVersion()
+    {
+        await using var h = await Harness.StartAsync();
+        var before = (await h.LoadAsync()).Version;
+
+        await h.PassAsync();
+
+        var after = await h.LoadAsync();
+        Assert.NotNull(after.ReminderSentAt);
+        Assert.Equal(before, after.Version);
+    }
+
+    // Written, not run. The sender does not use reminder_template_id (it sends the approved template of the connection), so a rules row
+    // without it must not hide the appointment from the sweeper.
+    [Fact]
+    public async Task TheTemplateIdOfTheRulesIsNotRequiredToRemind()
+    {
+        await using var h = await Harness.StartAsync();
+        await using (var context = h.NewContext())
+        {
+            await context.Database.ExecuteSqlAsync($"UPDATE scheduling.settings SET reminder_template_id = NULL WHERE tenant_id = {Tenant}", Ct);
+        }
+
+        await h.PassAsync();
+
+        Assert.Single(h.Sender.Messages);
+        Assert.NotNull((await h.LoadAsync()).ReminderSentAt);
+    }
+
+    // Written, not run. The last attempt sends and then loses a race against another write to the appointment (its version moved): the
+    // pass reads the appointment again, sends with the same key and records it. It must not end as send_failed nor without any mark.
+    [Fact]
+    public async Task TheLastAttemptThatLosesARaceWhileRecordingStillRecordsTheSend()
+    {
+        await using var h = await Harness.StartAsync();
+        h.Sender.Result = new ReminderDelivery.Failed("connection_unavailable:paused");
+        await h.PassAsync();
+        h.Clock.UtcNow = h.Clock.UtcNow.Add(AppointmentReminderRules.Leases[0]).AddSeconds(1);
+        await h.PassAsync();
+        h.Clock.UtcNow = h.Clock.UtcNow.Add(AppointmentReminderRules.Leases[1]).AddSeconds(1);
+        h.Sender.Result = new ReminderDelivery.Sent();
+        h.Sender.OnNextSend = async () =>
+        {
+            await using var context = h.NewContext();
+            await context.Database.ExecuteSqlAsync($"UPDATE scheduling.appointments SET version = version + 1", Ct);
+        };
+
+        await h.PassAsync();
+
+        var appointment = await h.LoadAsync();
+        Assert.Equal(AppointmentReminderRules.MaxAttempts, appointment.ReminderAttempts);
+        Assert.NotNull(appointment.ReminderSentAt);
+        Assert.Null(appointment.ReminderSkippedReason);
+        Assert.Equal(AppointmentAction.ReminderSent, appointment.Events.OrderBy(value => value.At).Last().Action);
+        // The same key every time: Messaging answers a repeat with the message it already has.
+        Assert.Single(h.Sender.Messages.Select(message => message.IdempotencyKey).Distinct());
     }
 
     [Fact]

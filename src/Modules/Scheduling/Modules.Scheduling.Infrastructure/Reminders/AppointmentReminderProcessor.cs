@@ -46,11 +46,6 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         {
             try
             {
-                if (!await ModulesAllowAsync(tenantRows.Key, cancellationToken))
-                {
-                    continue;
-                }
-
                 foreach (var row in tenantRows)
                 {
                     if (await ProcessAsync(row, cancellationToken))
@@ -73,17 +68,54 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         return handled;
     }
 
+    // The batch is ordered by start across every tenant, and a tenant without Scheduling or Messaging is never claimed: its rows would come
+    // back first on every pass and, with a batch of their size, starve everyone behind them. So the tenants found disabled are left out of
+    // the query and the batch is read again until it holds only rows of tenants that may be reminded (each round excludes at least one
+    // more tenant, so it ends). Turning the module on later still finds those appointments untouched.
     private async Task<List<DueRow>> ListDueAsync(CancellationToken cancellationToken)
+    {
+        var skipped = new List<Guid>();
+        var allowed = new Dictionary<Guid, bool>();
+        while (true)
+        {
+            var rows = await QueryDueAsync([.. skipped], cancellationToken);
+            var disabled = new List<Guid>();
+            foreach (var tenantId in rows.Select(row => row.TenantId).Distinct())
+            {
+                if (!allowed.TryGetValue(tenantId, out var isAllowed))
+                {
+                    isAllowed = await ModulesAllowAsync(tenantId, cancellationToken);
+                    allowed[tenantId] = isAllowed;
+                }
+
+                if (!isAllowed)
+                {
+                    disabled.Add(tenantId);
+                }
+            }
+
+            if (disabled.Count == 0)
+            {
+                return rows;
+            }
+
+            skipped.AddRange(disabled);
+        }
+    }
+
+    private async Task<List<DueRow>> QueryDueAsync(Guid[] skippedTenants, CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
         var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow.ToUniversalTime();
+        // reminder_template_id is informative: the sender uses the approved template of the connection (plan, correction 47).
         return await dbContext.Database.SqlQuery<DueRow>(
             $"""
             SELECT a.id AS "AppointmentId", a.tenant_id AS "TenantId"
               FROM scheduling.appointments a
               JOIN scheduling.settings s ON s.tenant_id = a.tenant_id
-             WHERE s.reminder_enabled AND s.reminder_connection_id IS NOT NULL AND s.reminder_template_id IS NOT NULL
+             WHERE s.reminder_enabled AND s.reminder_connection_id IS NOT NULL
+               AND a.tenant_id <> ALL({skippedTenants})
                AND a.status = 'Confirmed' AND a.reminder_sent_at IS NULL AND a.reminder_skipped_reason IS NULL
                AND a.starts_at > {now}
                AND a.starts_at - make_interval(hours => s.reminder_offset_hours) <= {now}
@@ -94,14 +126,22 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
             """).ToListAsync(cancellationToken);
     }
 
-    // Without Messaging there is no template to send and nothing to claim: turning it on later finds the appointment untouched.
+    // Without Messaging there is no template to send and nothing to claim. A tenant whose modules cannot be read is left out of this pass.
     private async Task<bool> ModulesAllowAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var modules = await scope.ServiceProvider.GetRequiredService<ITenantModules>().FindAsync(tenantId, cancellationToken);
-        return modules is not null
-            && modules.IsEnabled(TenantModuleKeys.Scheduling)
-            && modules.IsEnabled(TenantModuleKeys.Messaging);
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var modules = await scope.ServiceProvider.GetRequiredService<ITenantModules>().FindAsync(tenantId, cancellationToken);
+            return modules is not null
+                && modules.IsEnabled(TenantModuleKeys.Scheduling)
+                && modules.IsEnabled(TenantModuleKeys.Messaging);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogTenantFailed(logger, exception, tenantId);
+            return false;
+        }
     }
 
     private async Task<bool> ProcessAsync(DueRow row, CancellationToken cancellationToken)
@@ -118,29 +158,86 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
             return false;
         }
 
+        var state = new PassState();
         try
         {
-            await HandleAsync(services, dbContext, row, attempt.Value, now, cancellationToken);
+            await HandleAsync(services, dbContext, row, attempt.Value, now, state, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (DbUpdateConcurrencyException)
-        {
-            LogConcurrentChange(logger, row.AppointmentId, row.TenantId);
-        }
         catch (Exception exception)
         {
-            // The claim stays alive: it comes back when the lease ends. On the last attempt it gives up with a reason, so it is not silent.
-            LogAttemptFailed(logger, exception, row.AppointmentId, row.TenantId, attempt.Value);
+            // The claim stays alive: with attempts left it comes back when the lease ends. On the last attempt there is no next time, so
+            // the pass settles the appointment now (never leaves it with the attempts spent and neither a sent mark nor a reason).
+            if (exception is DbUpdateConcurrencyException)
+            {
+                LogConcurrentChange(logger, row.AppointmentId, row.TenantId);
+            }
+            else
+            {
+                LogAttemptFailed(logger, exception, row.AppointmentId, row.TenantId, attempt.Value);
+            }
+
             if (attempt.Value >= AppointmentReminderRules.MaxAttempts)
             {
-                await GiveUpAsync(row, SendFailed("unexpected_error"), now, cancellationToken);
+                await SettleLastAttemptAsync(row, attempt.Value, state, now, cancellationToken);
             }
         }
 
         return true;
+    }
+
+    // The last attempt failed after the claim: the context that failed may be broken, so the whole evaluation runs once more in a fresh
+    // scope, which reads the appointment as it is now (cancelled, already recorded, changed by someone) and sends again with the same
+    // idempotency key, which Messaging answers with the message it already has. If even that fails: a message that did go out is marked
+    // as sent with a plain statement, and one that did not is given up with a reason.
+    private async Task SettleLastAttemptAsync(
+        DueRow row, int attempt, PassState state, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+            await HandleAsync(scope.ServiceProvider, dbContext, row, attempt, now, state, cancellationToken);
+            return;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogAttemptFailed(logger, exception, row.AppointmentId, row.TenantId, attempt);
+        }
+
+        if (state.Delivered)
+        {
+            await MarkSentAsync(row, now, cancellationToken);
+        }
+        else
+        {
+            await GiveUpAsync(row, SendFailed("unexpected_error"), now, cancellationToken);
+        }
+    }
+
+    // Last resort for a reminder that did go out: only the column, no history line (the entity could not be saved), so the sweeper stops
+    // treating the appointment as pending.
+    private async Task MarkSentAsync(DueRow row, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+            await dbContext.Database.ExecuteSqlAsync(
+                $"""
+                UPDATE scheduling.appointments SET reminder_sent_at = {now}, reminder_last_error = NULL
+                 WHERE id = {row.AppointmentId} AND tenant_id = {row.TenantId}
+                   AND reminder_sent_at IS NULL AND reminder_skipped_reason IS NULL
+                """,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogTenantFailed(logger, exception, row.TenantId);
+        }
     }
 
     private static async Task<int?> ClaimAsync(SchedulingDbContext dbContext, DueRow row, DateTimeOffset now, CancellationToken cancellationToken)
@@ -162,7 +259,13 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
     }
 
     private static async Task HandleAsync(
-        IServiceProvider services, SchedulingDbContext dbContext, DueRow row, int attempt, DateTimeOffset now, CancellationToken cancellationToken)
+        IServiceProvider services,
+        SchedulingDbContext dbContext,
+        DueRow row,
+        int attempt,
+        DateTimeOffset now,
+        PassState state,
+        CancellationToken cancellationToken)
     {
         // Read after the claim: the attempts and the history are the ones this pass owns.
         var appointmentId = new AppointmentId(row.AppointmentId);
@@ -174,7 +277,7 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         // The appointment changed between the selection and the claim (cancelled, moved to the past) or the tenant switched the reminder off.
         if (appointment is not { Status: AppointmentStatus.Confirmed, ReminderSentAt: null, ReminderSkippedReason: null }
             || appointment.StartsAt <= now
-            || settings is not { ReminderEnabled: true, ReminderConnectionId: { } connectionId, ReminderTemplateId: { } templateId })
+            || settings is not { ReminderEnabled: true, ReminderConnectionId: { } connectionId })
         {
             return;
         }
@@ -203,13 +306,15 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         }
 
         var message = new ReminderMessage(
-            row.TenantId, row.AppointmentId, AppointmentReminderRules.KeyOf(row.AppointmentId), connectionId, templateId, senderMemberId,
+            row.TenantId, row.AppointmentId, AppointmentReminderRules.KeyOf(row.AppointmentId), connectionId, settings.ReminderTemplateId, senderMemberId,
             appointment.CustomerId, recipient!.Name, recipient.PhoneE164!, serviceName, resource.DisplayName, locationName, appointment.StartsAt);
         var delivery = await services.GetRequiredService<IAppointmentReminderSender>().SendAsync(message, cancellationToken);
 
         switch (delivery)
         {
             case ReminderDelivery.Sent:
+                // From here on the client has the message: whatever fails next must not be recorded as a failed send.
+                state.Delivered = true;
                 appointment.RecordReminderSent(now);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 break;
@@ -301,4 +406,10 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
 
     private sealed record DueRow(Guid AppointmentId, Guid TenantId);
+
+    /// <summary>What one pass learned before it failed: whether Messaging already accepted the message.</summary>
+    private sealed class PassState
+    {
+        public bool Delivered { get; set; }
+    }
 }

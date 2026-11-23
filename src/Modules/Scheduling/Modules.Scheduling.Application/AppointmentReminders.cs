@@ -56,7 +56,7 @@ public sealed record ReminderMessage(
     Guid AppointmentId,
     string IdempotencyKey,
     Guid ConnectionId,
-    Guid TemplateId,
+    Guid? TemplateId,
     Guid SentByMemberId,
     Guid CustomerId,
     string CustomerName,
