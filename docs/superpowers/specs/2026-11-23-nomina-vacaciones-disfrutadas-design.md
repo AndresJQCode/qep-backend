@@ -60,8 +60,13 @@ los días de diciembre y enero los de enero.
 - **Saldo de días causados.** Ver llamada 1.
 - PILA, nómina electrónica, colillas y archivos de banco (no objetivos del spec base).
 - Solicitudes de tiempo libre del empleado, aprobaciones y calendario de ausencias.
+- **Integración con Siigo, en cualquier sentido** (decisión del owner, 2026-11-23). Siigo es la nómina oficial y QEP la replica
+  para control. QEP no importa nada a Siigo y Siigo no alimenta a QEP. Lo que Siigo ya pagó entra a mano (origen `External`).
 
 **Antiobjetivos** (fallan aunque «funcionen»)
+- Que el Excel se trate como un layout de importación a Siigo: es para control y conciliación contra Siigo.
+- Que las vacaciones de QEP den otros números que las de Siigo sin que nadie lo vea: la liquidación de vacaciones se verifica
+  contra la exportación real de Siigo (Tarea 15 del plan base), y una diferencia es un RED, no un redondeo aceptado.
 - Pagar dos veces un día: como vacaciones en la quincena del inicio y como salario en la siguiente.
 - Que un día de vacaciones de enero cotice en diciembre, o al revés.
 - Que la nómina de una quincena aprobada o cerrada cambie porque alguien editó unas vacaciones.
@@ -105,13 +110,33 @@ los días de diciembre y enero los de enero.
 | `TenantId`, `CompanyId`, `EmployeeId` | `Guid` | La empresa empleadora es la del período que la paga. |
 | `StartDate` | `DateOnly` | Primer día de descanso. Debe ser un día hábil del empleado. |
 | `EndDate` | `DateOnly` | Último día de descanso, inclusive. Incluye los descansos y festivos del final si quien registra los marca (ver «Días»). |
-| `BusinessDays` | `int` | Días hábiles entre inicio y fin, calculados al guardar. Sólo se muestran. |
+| `Origin` | `VacationOrigin` | `Qep` (las paga una quincena de QEP) o `External` (las pagó Siigo). Viaja con su nombre. |
+| `BusinessDays` | `int` | `Qep`: días hábiles entre inicio y fin, calculados al guardar. `External`: tecleados, los de Siigo. Sólo se muestran. |
 | `ReturnDate` | `DateOnly` | El primer día hábil después de `EndDate`, calculado al guardar. Sólo se muestra. |
-| `PreviousMonthIbc` | `decimal?` | IBC del mes anterior al inicio, tecleado. Sólo se usa si QEP no lo tiene (ver «IBC»). |
+| `PreviousMonthIbc` | `decimal?` | IBC del mes anterior al inicio, tecleado. `Qep`: opcional, sólo se usa si QEP no lo tiene (ver «IBC»). `External`: **obligatorio**. |
+| `ExternalMonths` | lista, sólo `External` | Por mes que tocan (`yyyy-MM`): `vacationPay?` (lo que Siigo pagó por los días de ese mes) y lo que Siigo ya retuvo por adelantado de salud, pensión y FSP del trabajador. Cada valor ausente vale 0. Tabla hija o JSON, al implementador. |
 | `Version` | `long` | Concurrencia optimista, `If-Match`. |
 | `CreatedAt`, `UpdatedAt` | `DateTimeOffset` | |
 
-La quincena que paga **no se guarda**: es la que contiene `StartDate` (`QuincenaCalendar`), exista o no todavía. No hay columna de
+**Origen externo (decisión de la sesión).** Siigo es la nómina oficial y QEP la replica sólo para control, sin importar nada
+entre los dos (decisión del owner, 2026-11-23). Por eso unas vacaciones que empezaron en noviembre, pagadas en Siigo, y siguen en
+diciembre existen al arrancar y tienen que registrarse. Unas `External` **no tienen quincena que paga**: no generan `vacation_pay`
+ni anticipos en QEP. Las quincenas de QEP que tocan las tratan igual que a unas `Qep` pagadas en otra quincena: salario y auxilio 0
+por esos días, aportes repartidos por mes, IBC anterior, ARL 0. Lo que en el caso `Qep` sale de la foto de la quincena que paga
+(salario del inicio, IBC anterior, anticipo por mes), en el `External` sale de los valores tecleados:
+
+- IBC anterior: `PreviousMonthIbc`, sin buscar en QEP (no hay noviembre).
+- Anticipo del mes, término (b) de «Álgebra del anticipo»: lo retenido por Siigo que se tecleó para ese mes; 0 si no se tecleó.
+- Valor de un día de vacaciones (base parafiscal y provisiones): `vacationPay` del mes ÷ días de nómina del mes si se tecleó; si no,
+  el salario vigente el día del inicio ÷ 30 (Hr guarda el historial de salario).
+- Días hábiles: los tecleados. No se exige que el inicio sea día hábil ni que los hábiles calculados coincidan: el dato es de Siigo.
+
+Las reglas 4 y 5 del ciclo de vida (`paid_period_locked`, `not_paid_yet`) no aplican a unas `External`: nunca se busca una quincena
+que paga. El bloqueo es sólo la regla 1, por las quincenas que tocan, Aprobadas o Cerradas. El inicio de unas `External` puede
+caer antes de la primera quincena de la empresa en QEP; su fin no puede caer antes de esa quincena (si no, no tocan nada de QEP y
+no hay qué registrar: `payroll.vacation.before_first_period`).
+
+La quincena que paga unas `Qep` **no se guarda**: es la que contiene `StartDate` (`QuincenaCalendar`), exista o no todavía. No hay columna de
 estado: lo que la pantalla necesita se deriva al leer (ver `VacationDto`). Índice `(tenant_id, company_id, employee_id,
 start_date)`. El solapamiento se valida en el handler. Si el implementador quiere la garantía en la base, la restricción `EXCLUDE`
 por rango de fechas pide la extensión `btree_gist`, que se decide en el plan.
@@ -380,18 +405,25 @@ recurrentes.
 recurrentes). Las quincenas que cambian de estado suben su propia versión: una pestaña con el período viejo recibe 412 en su próxima
 escritura.
 
-`VacationRequest`: `{ startDate, endDate, previousMonthIbc? }`, con validador FluentValidation (`validation.failed` y mapa
-`errors`): fechas obligatorias, `endDate ≥ startDate`, `previousMonthIbc > 0` si viene.
+`VacationRequest`: `{ origin, startDate, endDate, previousMonthIbc?, businessDays?, externalMonths? }`, con validador
+FluentValidation (`validation.failed` y mapa `errors`): `origin` (`Qep` | `External`) y fechas obligatorias, `endDate ≥ startDate`,
+`previousMonthIbc > 0` si viene. Con `External`: `previousMonthIbc` y `businessDays ≥ 1` obligatorios; `externalMonths` opcional,
+`[{ month: 'yyyy-MM', vacationPay?, healthAdvance?, pensionAdvance?, solidarityFundAdvance? }]`, cada mes dentro del rango y sin
+repetir, cada monto `≥ 0` (clave `externalMonths[i].<campo>`). Con `Qep`, `businessDays` y `externalMonths` deben venir vacíos.
+Cambiar el origen al editar se permite con las mismas reglas de bloqueo.
 
-`VacationPreviewDto`: `{ businessDays, returnDate, quincenas: [{ startDate, endDate, days }], paidIn: { startDate, endDate } }`.
+`VacationPreviewDto`: `{ businessDays, returnDate, quincenas: [{ startDate, endDate, days }], months: ['yyyy-MM'], paidIn: { startDate, endDate } | null }`.
+Con `External`, `businessDays` es el calculado por QEP (como referencia junto al tecleado), `months` son los meses que el diálogo
+ofrece para los montos de Siigo, y `paidIn` es `null`.
 Existe para que el diálogo muestre «15 días hábiles, regresa el 6 de enero» antes de guardar, sin contar en el navegador (BFF).
 
 `VacationDto`:
 
 ```
-{ id, employeeId, startDate, endDate, businessDays, returnDate, previousMonthIbc,
+{ id, employeeId, origin, startDate, endDate, businessDays, returnDate, previousMonthIbc,
   quincenas: [{ startDate, endDate, days }],          // días de nómina; la pantalla no los cuenta
-  paidIn: { startDate, endDate, periodId?, status? }, // la quincena que paga; periodId y status nulos si no existe
+  paidIn: { startDate, endDate, periodId?, status? } | null, // la quincena que paga; null si origin es External
+  externalMonths: [{ month, vacationPay, healthAdvance, pensionAdvance, solidarityFundAdvance }], // vacío si origin es Qep
   version,
   can: { update, delete } }                           // falso si alguna quincena que tocan está Aprobada o Cerrada
 ```
@@ -410,12 +442,12 @@ Cambios en DTOs existentes:
 | --- | --- | --- |
 | `payroll.vacation.not_found` | 404 | El id no existe en esa empresa y empleado del tenant. Se lanza como `ResourceNotFoundException` (un `PayrollNotFound.Vacation(id)` nuevo, como `Recurring`); `ApiExceptionHandler.MapException` la responde 404. Un `PayrollDomainException` con ese código sería 422. |
 | `payroll.vacation.overlap` | 409 | Se solapa con otras vacaciones del empleado en la empresa. Entra en `PayrollErrorCodes.Conflicts`, y `PayrollConflicts.Run` lo convierte en `ResourceConflictException` (409). |
-| `payroll.vacation.starts_on_rest_day` | 422 | El inicio es día de descanso o festivo. |
-| `payroll.vacation.no_business_days` | 422 | El rango no tiene ningún día hábil. |
+| `payroll.vacation.starts_on_rest_day` | 422 | Sólo `Qep`: el inicio es día de descanso o festivo. |
+| `payroll.vacation.no_business_days` | 422 | Sólo `Qep`: el rango no tiene ningún día hábil. |
 | `payroll.vacation.outside_contract` | 422 | El contrato vigente el día del inicio no cubre el día del fin (o no hay contrato ese día). |
-| `payroll.vacation.before_first_period` | 422 | El inicio cae antes de la primera quincena de la empresa en QEP: la pagó Siigo (pregunta 2). |
-| `payroll.vacation.not_paid_yet` | 422 | Al liquidar: la quincena que paga unas vacaciones de ésta no está liquidada y al día. |
-| `payroll.vacation.paid_period_locked` | 422 | Al volver a liquidar la que paga: cambiaría lo que leyó una quincena Aprobada o Cerrada. |
+| `payroll.vacation.before_first_period` | 422 | `Qep`: el inicio cae antes de la primera quincena de la empresa en QEP (esas las pagó Siigo: se registran como `External`). `External`: el fin cae antes de esa quincena (no toca nada de QEP). |
+| `payroll.vacation.not_paid_yet` | 422 | Sólo `Qep`. Al liquidar: la quincena que paga unas vacaciones de ésta no está liquidada y al día. |
+| `payroll.vacation.paid_period_locked` | 422 | Sólo `Qep`. Al volver a liquidar la que paga: cambiaría lo que leyó una quincena Aprobada o Cerrada. |
 
 Se reutilizan: `payroll.company.not_found`, `payroll.employee.not_found` (404), `payroll.company.inactive`,
 `payroll.employee.not_liquidable` (el empleado no es liquidable en la quincena que paga) y `payroll.period.not_editable` (422).
@@ -439,11 +471,15 @@ pruebas en un cambio de nómina. Si un cuarto módulo lo necesita, se mueve ento
 «Salario». «Total devengado» las incluye. «Salud», «Pensión» y «FSP» son lo retenido en la colilla, anticipos incluidos. La columna
 de provisión «Vacaciones» no cambia de nombre: es la provisión, no el pago. El generador sigue sin calcular: lee el resumen.
 
+El Excel es para **control y conciliación contra Siigo**, no un layout de importación (decisión del owner, 2026-11-23). Las
+quincenas tocadas por unas `External` muestran sus días de vacaciones, salario 0 por esos días y los aportes del mes, pero no una
+«Vacaciones disfrutadas»: ese pago está en Siigo.
+
 ## Auditoría
 
 Outbox (`IPayrollAuditPublisher`), en la misma transacción. Acciones nuevas en `PayrollAuditActions`: `payroll.vacation.created`,
 `payroll.vacation.updated`, `payroll.vacation.deleted`, recurso `vacation`. Se guardan nombres de campos, nunca valores
-(`startDate`, `endDate`, `previousMonthIbc`). Las quincenas que quedan desactualizadas dejan su evento de hoy en
+(`origin`, `startDate`, `endDate`, `previousMonthIbc`, `businessDays`, `externalMonths`). Las quincenas que quedan desactualizadas dejan su evento de hoy en
 `payroll.period_events`.
 
 ## Cómo se prueba
@@ -455,6 +491,12 @@ TDD estricto. Casos de oro nuevos, uno por regla:
 - `vacation-starts-second-half-of-february`: el final absorbe la diferencia de febrero.
 - `vacation-ibc-previous-month-from-qep` y `vacation-ibc-fallback-salary`: las fuentes del IBC anterior.
 - `vacation-new-year-floor`: salario mínimo, enero entero de vacaciones, el piso del SMMLV nuevo deja diferencia, tope por neto.
+- `vacation-external-november-into-december`: origen `External` del 2026-11-23 al 2026-12-04, IBC de noviembre tecleado, con y sin
+  anticipo de diciembre tecleado: la primera de diciembre paga salario por los días trabajados, sin `vacation_pay`, y resta el
+  anticipo tecleado como término (b).
+
+La liquidación de vacaciones se verifica contra la exportación real de Siigo (Tarea 15 del plan base): Siigo es la nómina oficial y
+los números de QEP tienen que coincidir con los suyos.
 
 Pruebas de Application: días hábiles con descansos y festivos (sábado hábil con el default), solapamiento, un solo contrato,
 desactualizar Liquidadas y Reabiertas (y no tocar Borradores), «pagada» con `Outdated` o `SourceChanged`, `not_paid_yet`. El
@@ -475,19 +517,22 @@ fin dentro de una quincena no aprobada) pasa. Integración (Testcontainers) filt
 6. **Confirmación de ausencias:** se mantiene y cambia el texto. Las vacaciones registradas cuentan como declaradas por sus días.
 7. **El IBC anterior** es el del mes anterior al mes del inicio: de QEP si sus dos quincenas tienen resultado (Liquidada o más); si
    no, del valor tecleado; si tampoco, del salario (decisión de la sesión).
+8. **El inicio debe ser día hábil** en unas `Qep`; el fin es libre (con o sin el fin de semana de cierre).
+9. **Parafiscales por mes de causación**, no por mes de pago, igual que la seguridad social y la PILA.
 10. **Bloqueo por huella, desactualizar con `MarkOutdated` de hoy, «pagada» sin `Outdated` ni `SourceChanged`, un solo contrato y
    anticipo guardado por mes** (decisiones de la sesión; ver sus secciones).
-8. **El inicio debe ser día hábil**; el fin es libre (con o sin el fin de semana de cierre).
-9. **Parafiscales por mes de causación**, no por mes de pago, igual que la seguridad social y la PILA.
+11. **Origen `External`** para lo que pagó Siigo: valores tecleados (IBC anterior obligatorio, días hábiles, y por mes lo pagado y
+   lo retenido por adelantado, 0 si no se teclea), sin quincena que paga ni sus chequeos; el valor por día sale de lo pagado si se
+   tecleó, si no del salario del inicio (decisiones de la sesión).
 
 ## Preguntas para el owner (cambian lo que se construye)
 
-Resuelta: una segunda quincena entera de vacaciones con piso nuevo del SMMLV deja unos pesos sin retener; se aceptó no retenerlos y
-dejarlo en la nota de la línea («Tope por neto en la posterior»).
+Ninguna abierta. Resueltas:
 
-1. **Vacaciones que empezaron en noviembre (pagadas en Siigo) y siguen en diciembre.** Con este diseño no se registran
-   (`before_first_period`). Diciembre pagaría salario por esos días. Si alguien está en ese caso al arrancar, hace falta un
-   registro «pagado fuera de QEP» que sólo descuente días y cotice: ¿lo hay?
+- Una segunda quincena entera de vacaciones con piso nuevo del SMMLV deja unos pesos sin retener: se aceptó no retenerlos y
+  dejarlo en la nota de la línea («Tope por neto en la posterior»).
+- Vacaciones de noviembre pagadas en Siigo que siguen en diciembre: existen al arrancar y se registran con origen `External`
+  (owner, 2026-11-23: Siigo es la nómina oficial, QEP la replica para control y no se importa nada entre los dos).
 
 ## Lo que queda al implementador
 
