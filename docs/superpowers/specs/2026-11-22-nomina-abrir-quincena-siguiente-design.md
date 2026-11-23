@@ -12,8 +12,10 @@ Lo único que depende de «hoy» es abrir; liquidar una quincena abierta no mira
 
 ## Enfoques
 
-- **A (elegido por el owner):** acción explícita «Abrir la quincena siguiente», como máximo **una** quincena por delante de la
-  actual. La apertura automática de la actual no cambia.
+- **A (elegido por el owner):** acción explícita «Abrir la quincena siguiente». La apertura automática de la actual no cambia.
+  **Revisado el 2026-11-23 (owner):** cada clic abre **una más** por delante, con tope en la segunda quincena del mes siguiente al
+  de hoy, para dejar listas las dos quincenas del mes que viene (el 22 de noviembre, las dos de diciembre). El tope existe porque
+  una quincena no se borra: un clic de más no tiene vuelta atrás.
 - B: abrir siempre la siguiente de forma automática. Descartado: toda empresa vería una quincena futura abierta, la use o no.
 
 ## Contrato
@@ -22,19 +24,19 @@ Lo único que depende de «hoy» es abrir; liquidar una quincena abierta no mira
 módulo `payroll`, `PeriodRead` **y** `PeriodManage`, empresa inactiva ⇒ 422 `payroll.company.inactive`. Responde
 `PayrollPeriodListDto` (200), igual que `ensure-current`.
 
-Con `current = QuincenaCalendar.Containing(today)` (día del tenant) y `target = QuincenaCalendar.After(current.Start)`:
+Con `current = QuincenaCalendar.Containing(today)` (día del tenant), `next` = la siguiente a la última quincena (sin quincenas:
+`current` si es primera quincena, si no la siguiente; una empresa siempre arranca en una primera quincena), `target` = `next` si
+empieza después de `current`, si no `QuincenaCalendar.After(current.Start)`, y `limit` = el día 16 del mes siguiente al de hoy:
 
-- Sin quincenas: abre desde `current` si es primera quincena, si no desde `target` (una empresa siempre arranca en una primera
-  quincena), hasta `target` inclusive.
-- Con quincenas: abre todas las que faltan desde la siguiente a la última hasta `target` inclusive (sin huecos, como
-  `ensure-current`).
-- Nada que abrir (ya existe `target`): **idempotente**, responde la lista sin cambios. No hay código de error nuevo.
-- Nunca abre más allá de `target`.
+- Si `target.Start <= limit`: abre de `next` a `target` inclusive (sin huecos, como `ensure-current`). En la práctica, una
+  quincena más por clic; si la última está detrás de hoy, llena el hueco hasta la siguiente a la actual.
+- Si no (ya se llegó al tope): no abre nada y responde la lista sin cambios. No hay código de error nuevo.
+- Nunca abre una quincena que empiece después de `limit`.
 - Misma carrera que `ensure-current`: el índice único `IX_periods_tenant_company_start` resuelve dos solicitudes a la vez
   (la perdedora relee). Misma auditoría `PeriodCreated` por quincena abierta.
 
-`PayrollPeriodListDto` gana `nextPeriodStartsOn: DateOnly?` = `target.Start` cuando no existe quincena con ese inicio; si
-existe, `null`. Lo traen las dos rutas que responden la lista (`GET …/periods` y `ensure-current`) y `open-next`. Se calcula
+`PayrollPeriodListDto` gana `nextPeriodStartsOn: DateOnly?` = `target.Start` cuando `target.Start <= limit` (lo que abriría el
+próximo clic); en el tope, `null`. Lo traen las dos rutas que responden la lista (`GET …/periods` y `ensure-current`) y `open-next`. Se calcula
 también para una empresa inactiva (el frontend no ofrece la acción sin `PeriodManage` ni con la empresa inactiva).
 `firstPeriodStartsOn` no cambia.
 
@@ -62,4 +64,4 @@ la más nueva sólo si no hay quincena de hoy), y por eso el id lo decide el bac
 
 ## Fuera de alcance
 
-Abrir dos o más quincenas por delante, cerrar o borrar una quincena abierta por error, y cambiar la apertura automática.
+Abrir más allá de la segunda quincena del mes siguiente, cerrar o borrar una quincena abierta por error, y cambiar la apertura automática.

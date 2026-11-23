@@ -32,20 +32,21 @@ internal static class PeriodPlan
     }
 
     /// <summary>
-    /// Lo que falta hasta la quincena siguiente a la actual, inclusive y nunca más allá (abrir por adelantado). Con quincenas, desde
-    /// la siguiente a la última sin huecos; sin ninguna, desde la actual si es primera y si no desde la siguiente (una empresa
-    /// siempre arranca en una primera quincena).
+    /// Lo que abre «Abrir la quincena siguiente»: una quincena más por delante en cada llamada, sin huecos, y nunca más allá de la
+    /// segunda quincena del mes siguiente al de hoy (así se pueden dejar listas las dos del mes que viene; una quincena no se borra,
+    /// por eso hay tope). Con quincenas, desde la siguiente a la última; sin ninguna, desde la actual si es primera y si no desde la
+    /// siguiente (una empresa siempre arranca en una primera quincena). Si la última está detrás de hoy, llena el hueco hasta la
+    /// siguiente a la actual.
     /// </summary>
     public static IReadOnlyList<(DateOnly Start, DateOnly End, PayrollHalf Half)> MissingThroughNext(
         IReadOnlyList<PayrollPeriod> existing, DateOnly today)
     {
-        var current = QuincenaCalendar.Containing(today);
-        var target = QuincenaCalendar.After(current.Start);
-        var next = existing.Count == 0
-            ? (current.Half == PayrollHalf.First ? current : target)
-            : QuincenaCalendar.After(existing.Max(period => period.StartDate));
-
         var missing = new List<(DateOnly Start, DateOnly End, PayrollHalf Half)>();
+        if (OpenNextRange(existing, today) is not var (next, target))
+        {
+            return missing;
+        }
+
         while (next.Start <= target.Start)
         {
             missing.Add(next);
@@ -55,11 +56,20 @@ internal static class PeriodPlan
         return missing;
     }
 
-    /// <summary>El inicio de la quincena siguiente a la actual si todavía no existe; si existe, nulo.</summary>
-    public static DateOnly? NextPeriodStartsOn(IReadOnlyList<PayrollPeriod> existing, DateOnly today)
+    /// <summary>El inicio de la quincena que abriría «Abrir la quincena siguiente»; nulo si ya se llegó al tope.</summary>
+    public static DateOnly? NextPeriodStartsOn(IReadOnlyList<PayrollPeriod> existing, DateOnly today) =>
+        OpenNextRange(existing, today)?.Target.Start;
+
+    private static ((DateOnly Start, DateOnly End, PayrollHalf Half) Next, (DateOnly Start, DateOnly End, PayrollHalf Half) Target)?
+        OpenNextRange(IReadOnlyList<PayrollPeriod> existing, DateOnly today)
     {
-        var target = QuincenaCalendar.After(QuincenaCalendar.Containing(today).Start);
-        return existing.Any(period => period.StartDate == target.Start) ? null : target.Start;
+        var current = QuincenaCalendar.Containing(today);
+        var next = existing.Count == 0
+            ? (current.Half == PayrollHalf.First ? current : QuincenaCalendar.After(current.Start))
+            : QuincenaCalendar.After(existing.Max(period => period.StartDate));
+        var target = next.Start > current.Start ? next : QuincenaCalendar.After(current.Start);
+        var limit = new DateOnly(today.Year, today.Month, 16).AddMonths(1);
+        return target.Start <= limit ? (next, target) : null;
     }
 
     /// <summary>El período cuyo rango contiene el día del tenant; nulo si no existe (p. ej. sólo hay uno abierto por adelantado).</summary>
@@ -185,8 +195,8 @@ internal static class PeriodOpener
 public sealed record OpenNextPeriodCommand(Guid TenantId, Guid CompanyId) : ICommand<PayrollPeriodListDto>;
 
 /// <summary>
-/// Abre la quincena siguiente a la actual (y las que falten hasta ella) para liquidar por adelantado. Mismas reglas que
-/// <c>ensure-current</c>; idempotente, y nunca abre más allá de la siguiente.
+/// Abre una quincena más por delante (y las que falten hasta ella) para liquidar por adelantado, hasta la segunda quincena del mes
+/// siguiente. Mismas reglas que <c>ensure-current</c>; en el tope no abre nada y responde la lista.
 /// </summary>
 public sealed class OpenNextPeriodHandler(
     IExecutionContext executionContext,
