@@ -598,6 +598,28 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.GetHrFileDownloadUrlQuery, Modules.Hr.Application.HrDownloadUrlDto>,
             Modules.Hr.Application.GetHrFileDownloadUrlHandler>();
+        // La consola de valores legales del operador (spec 2026-11-22). Sus handlers no revisan el módulo `hr`: el tenant operador
+        // puede no tenerlo. La escritura (y la carga por Excel, después) pasa por LegalParameterWriter; la pantalla la arma el composer.
+        services.AddScoped<Modules.Hr.Application.LegalParameterWriter>();
+        services.AddScoped<Modules.Hr.Application.LegalParametersComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListLegalParametersQuery, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.ListLegalParametersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.ListLegalParameterHistoryQuery, Modules.Hr.Application.LegalParameterHistoryPageDto>,
+            Modules.Hr.Application.ListLegalParameterHistoryHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetLegalParameterCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.SetLegalParameterHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteLegalParameterCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.DeleteLegalParameterHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.SetLegalBracketsCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.SetLegalBracketsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.DeleteLegalBracketsCommand, Modules.Hr.Application.LegalParametersDto>,
+            Modules.Hr.Application.DeleteLegalBracketsHandler>();
         // La importación de empleados por Excel (spec 2026-11-20): plantilla, vista previa y confirmación comparten análisis.
         services.AddScoped<Modules.Hr.Application.EmployeeImportCatalogs>();
         services.AddScoped<Modules.Hr.Application.EmployeeImportAnalyzer>();
@@ -2153,6 +2175,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrCompanyLookup, HrCompanyLookup>();
         // Payroll lee los valores legales de Hr por su propio puerto (PayrollLayerTests.NoPayrollLayerReferencesHr).
         services.AddScoped<Modules.Payroll.Application.IPayrollLegalValues, PayrollLegalValues>();
+        // La consola de valores legales de Hr sabe qué nóminas ya se calcularon por este puerto (PayrollLayerTests.NoPayrollLayerReferencesHr):
+        // Payroll expone sus períodos calculados y este adaptador los traduce al puerto de Hr.
+        services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
+        // Provisional: hasta que el área de caché de valores legales se registre (Tarea 7), subir la versión no hace nada.
+        services.AddSingleton<Modules.Hr.Application.ILegalParameterCacheVersion, Bootstrapper.Valkey.LegalParameters.NullLegalParameterCacheVersion>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
         services.AddScoped<Modules.Payroll.Application.IPayrollMemberDirectory, PayrollMemberDirectory>();

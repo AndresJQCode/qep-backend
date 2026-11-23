@@ -371,6 +371,8 @@ app.MapGeographyEndpoints();
 app.MapCityOperatorEndpoints();
 // Spec 2026-11-10: la consola de la unidad tributaria del operador.
 app.MapTaxUnitOperatorEndpoints();
+// Spec 2026-11-22: la consola de valores legales de nómina del operador.
+app.MapLegalParameterOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
