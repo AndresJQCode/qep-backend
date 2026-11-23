@@ -293,6 +293,26 @@ internal sealed class AppointmentRepository(SchedulingDbContext dbContext) : IAp
             """).ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Appointment>> ListFutureLiveAsync(
+        Guid tenantId, IReadOnlyCollection<ResourceId> resourceIds, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (resourceIds.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = resourceIds.ToArray();
+        return await dbContext.Appointments
+            .Include(appointment => appointment.Events)
+            .Where(appointment => appointment.TenantId == tenantId
+                && ids.Contains(appointment.ResourceId)
+                && appointment.StartsAt > now
+                && (appointment.Status == AppointmentStatus.Pending || appointment.Status == AppointmentStatus.Confirmed))
+            .OrderBy(appointment => appointment.StartsAt)
+            .ThenBy(appointment => appointment.Id)
+            .ToListAsync(cancellationToken);
+    }
+
     public void Add(Appointment appointment) => dbContext.Appointments.Add(appointment);
 }
 

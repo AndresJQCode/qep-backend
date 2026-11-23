@@ -287,6 +287,20 @@ Revisión final de la rama (2026-11-22; ninguna de sus pruebas se corrió: el ow
     `clientId` derivado habría sido el mismo y Mensajería habría deduplicado el segundo envío contra el primero. La consulta de vencidos y el
     `UPDATE … RETURNING` del reclamo no cambian (leen las columnas ya limpias); el historial `Rescheduled` se conserva y el `ReminderSent` previo
     queda como rastro. Límite: reprogramar a un instante igual al anterior produce la misma llave (Mensajería deduplica; es el comportamiento correcto).
+50. **Archivar una sede es una cascada, y no se puede revertir (decisión del owner, opción B).** `ArchiveLocationHandler` ya no sólo marca la
+    sede: en una transacción, con el candado de reserva de todos los recursos de la sede (`LockResourcesAsync`), cancela las citas futuras
+    vigentes (`Pending`/`Confirmed` con `starts_at > ahora`, motivo «La sede fue archivada.», cupo liberado con `Session.Release`), archiva los
+    recursos no archivados de la sede (reutiliza `BlockDetachment.DetachResourceAsync`, que los saca de las franjas y archiva las que quedan
+    vacías), archiva las franjas que siguen vigentes en la sede (`block.LocationId`) y, al final, la sede. Las citas pasadas, en curso o ya
+    cerradas no se tocan. Auditoría atómica: una entrada por entidad que cambió de verdad (sede, cada recurso, cada franja y cada cita
+    cancelada, con su línea `Cancelled` en el historial). La principal sigue rechazándose (422 `main_cannot_be_archived`; el dominio lo rechaza
+    antes de cambiar nada) y archivar una sede ya archivada no hace ni audita nada. Nueva consulta `IAppointmentRepository.ListFutureLiveAsync`.
+    Revisado: reservar, disponibilidad y sesiones publicadas ya excluyen recursos y franjas archivados, y crear recursos o cierres en una sede
+    archivada ya se rechaza, así que una sede archivada no se reserva por ninguna otra vía. **Límite: la cascada es irreversible.** No existe
+    endpoint ni caso de uso para desarchivar la sede, los recursos, las franjas ni las citas canceladas (`Unarchive` sólo existe en el dominio y
+    nadie lo llama); reabrir una sede es crearla de nuevo. El frontend debe avisarlo antes de confirmar. Pruebas añadidas sin correr: en
+    `SchedulingLocationsApiTests` (cascada, citas pasadas intactas, auditoría, idempotencia, sede archivada sin reservas ni recursos nuevos,
+    tenant ajeno 403, principal rechazada sin cancelar nada).
 
 ## Global Constraints
 
@@ -391,7 +405,7 @@ Enums con su nombre. Colecciones de tamaño fijo completas, aun en cero.
 | `POST appointments/{id}/confirm` · `/cancel` · `/attend` · `/no-show` | `appointment.manage` | Transiciones |
 | `PUT appointments/{id}/reschedule` | `appointment.manage` | Cambia de sesión, conserva id y estado |
 | `GET customers?search=`, `POST customers` | `appointment.manage` | Buscar y crear el cliente de la cita sin el padrón de Clientes (punto 5) |
-| `GET/POST/PUT locations`, `…/{id}/archive` | `settings.manage` (lectura: `appointment.read`) | La principal no se archiva |
+| `GET/POST/PUT locations`, `…/{id}/archive` | `settings.manage` (lectura: `appointment.read`) | La principal no se archiva; archivar otra cancela sus citas futuras y archiva sus recursos y franjas, sin vuelta atrás (corrección 50) |
 | `GET/POST/PUT resources`, `…/{id}/archive` | alta y estructura: `settings.manage`; datos y vínculo de **su** recurso: `availability.manage` | Archivar con citas futuras → 422 `resource.has_future_appointments` |
 | `GET/POST/PUT services`, `…/{id}/archive` | `settings.manage` | `service.in_use` si tiene citas futuras |
 | `GET/POST/PUT blocks`, `…/{id}/archive` | `availability.manage` | Dentro del alcance |

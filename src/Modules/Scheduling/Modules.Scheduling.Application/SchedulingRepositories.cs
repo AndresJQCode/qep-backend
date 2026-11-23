@@ -159,6 +159,13 @@ public interface IAppointmentRepository
     /// </summary>
     Task LockResourcesAsync(Guid tenantId, IReadOnlyCollection<ResourceId> resourceIds, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Las citas <c>Pending</c> o <c>Confirmed</c> de esos recursos que empiezan después de <paramref name="now"/>, con su historial y con
+    /// seguimiento de cambios: es lo que archivar una sede cancela. Una cita que ya empezó no entra.
+    /// </summary>
+    Task<IReadOnlyList<Appointment>> ListFutureLiveAsync(
+        Guid tenantId, IReadOnlyCollection<ResourceId> resourceIds, DateTimeOffset now, CancellationToken cancellationToken);
+
     void Add(Appointment appointment);
 }
 
