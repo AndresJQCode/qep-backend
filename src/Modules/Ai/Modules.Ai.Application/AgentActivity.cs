@@ -21,9 +21,11 @@ public sealed record AgentUsageDto(
 /// <param name="HandedOff">De ésas, las que terminaron en manos de una persona por el agente: traspaso pedido, tope, falla o ventana cerrada.
 /// Una que una persona tomó por su cuenta (<c>Interrupted</c>) no cuenta: el agente no la soltó.</param>
 /// <param name="QuotationDrafts">Borradores de cotización que el agente creó hoy (§8.2), sin los del playground.</param>
-public sealed record AgentTodayDto(int Handled, int HandedOff, int QuotationDrafts)
+/// <param name="Appointments">Spec 2026-11-23 §9.5: citas que el agente reservó hoy (<c>book_appointment</c> con <c>alreadyBooked: false</c>),
+/// sin las repetidas ni las del playground.</param>
+public sealed record AgentTodayDto(int Handled, int HandedOff, int QuotationDrafts, int Appointments)
 {
-    public static AgentTodayDto None { get; } = new(0, 0, 0);
+    public static AgentTodayDto None { get; } = new(0, 0, 0, 0);
 }
 
 /// <summary>Una sesión del historial (spec §5 <c>GET /sessions</c>): estado, motivo de fin, respuestas y consumo.</summary>

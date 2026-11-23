@@ -38,7 +38,7 @@ public sealed class SchedulingSettingsTests
         var settings = SchedulingSettings.Create(Tenant, Now);
         var connection = Guid.CreateVersion7();
 
-        settings.Update(ConfirmationMode.Manual, 60, 90, 12, reminderEnabled: true, 48, connection, Now.AddMinutes(1));
+        settings.Update(ConfirmationMode.Manual, 60, 90, 12, reminderEnabled: true, 48, connection, null, Now.AddMinutes(1));
 
         Assert.Equal((ConfirmationMode.Manual, 60, 90, 12, true, 48), (settings.ConfirmationMode, settings.MinNoticeMinutes,
             settings.HorizonDays, settings.ClientCancelCutoffHours, settings.ReminderEnabled, settings.ReminderOffsetHours));
@@ -57,7 +57,7 @@ public sealed class SchedulingSettingsTests
         var settings = SchedulingSettings.Create(Tenant, Now);
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            settings.Update(ConfirmationMode.Automatic, minNotice, horizon, cutoff, false, reminderOffset, null, Now));
+            settings.Update(ConfirmationMode.Automatic, minNotice, horizon, cutoff, false, reminderOffset, null, null, Now));
     }
 
     [Fact]
@@ -66,13 +66,13 @@ public sealed class SchedulingSettingsTests
         var settings = SchedulingSettings.Create(Tenant, Now);
 
         var noConnection = Assert.Throws<SchedulingDomainException>(() =>
-            settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, null, Now));
+            settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, null, null, Now));
 
         Assert.Equal(SchedulingErrorCodes.ReminderConnectionInvalid, noConnection.Code);
         Assert.Equal(1, settings.Version);
 
         var connection = Guid.CreateVersion7();
-        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, connection, Now);
+        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, connection, null, Now);
 
         Assert.True(settings.ReminderEnabled);
         Assert.Equal(connection, settings.ReminderConnectionId);
@@ -82,11 +82,24 @@ public sealed class SchedulingSettingsTests
     public void TurningTheReminderOffDropsTheConnection()
     {
         var settings = SchedulingSettings.Create(Tenant, Now);
-        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, Guid.CreateVersion7(), Now);
+        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, Guid.CreateVersion7(), null, Now);
 
-        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, false, 24, Guid.CreateVersion7(), Now.AddMinutes(1));
+        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, false, 24, Guid.CreateVersion7(), null, Now.AddMinutes(1));
 
         Assert.False(settings.ReminderEnabled);
+        Assert.Null(settings.ReminderConnectionId);
+    }
+
+    // D-18: el remitente por defecto del recordatorio se conserva aunque el recordatorio esté apagado.
+    [Fact]
+    public void TheReminderSenderIsKeptWithTheReminderOff()
+    {
+        var settings = SchedulingSettings.Create(Tenant, Now);
+        var sender = Guid.CreateVersion7();
+
+        settings.Update(ConfirmationMode.Manual, 60, 30, 24, reminderEnabled: false, 24, null, sender, Now.AddMinutes(1));
+
+        Assert.Equal(sender, settings.ReminderSenderMemberId);
         Assert.Null(settings.ReminderConnectionId);
     }
 }

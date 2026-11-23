@@ -467,4 +467,21 @@ public sealed class SchedulingAppointmentTransitionsApiTests(SchedulingApiWorld 
         var (exists, isActive, isPublished, _) = await ReadSessionAsync(world.Factory, sessionId);
         return (exists, isActive, isPublished);
     }
+
+    // D-17: no write over HTTP marks its history line as the channel's, not even one that declares source Channel.
+    [Fact]
+    public async Task BackOfficeWritesLeaveByChannelFalse()
+    {
+        var scene = await SceneAsync();
+        using var owner = scene.Tenant;
+        var booked = await BookedAsync(scene, NineOClock(scene.Day), scene.Resource, source: "Channel");
+
+        var cancelled = await PostAsync(
+            scene.Tenant.Admin, UrlOf(scene, booked, "cancel"), new { reason = "Pedido por el cliente", source = "Channel" }, VersionOf(booked));
+
+        Assert.Equal(HttpStatusCode.OK, cancelled.StatusCode);
+        var history = (await JsonOfAsync(cancelled)).GetProperty("history").EnumerateArray().ToArray();
+        Assert.Equal(["Created", "Cancelled"], history.Select(entry => entry.GetProperty("action").GetString()));
+        Assert.All(history, entry => Assert.False(entry.GetProperty("byChannel").GetBoolean()));
+    }
 }

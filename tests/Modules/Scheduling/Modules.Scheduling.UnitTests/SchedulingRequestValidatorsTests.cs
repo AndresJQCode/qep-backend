@@ -57,9 +57,14 @@ public sealed class SchedulingRequestValidatorsTests
             ["confirmationMode", "minNoticeMinutes", "horizonDays", "clientCancelCutoffHours", "reminderOffsetHours"],
             FailedFields(
                 new SettingsRequestValidator(),
-                new SettingsRequest("Sometimes", 10_081, 366, 721, false, 0, null)));
+                new SettingsRequest("Sometimes", 10_081, 366, 721, false, 0, null, null)));
 
     [Fact]
     public void TheRulesAcceptTheDefaults() =>
-        new SettingsRequestValidator().ValidateAndThrow(new SettingsRequest("Automatic", 120, 30, 24, false, 24, null));
+        new SettingsRequestValidator().ValidateAndThrow(new SettingsRequest("Automatic", 120, 30, 24, false, 24, null, null));
+
+    // D-18: el remitente es un id de membresía; que sea activo lo decide el caso de uso con el directorio, no la forma del request.
+    [Fact]
+    public void TheRulesAcceptADefaultReminderSender() =>
+        new SettingsRequestValidator().ValidateAndThrow(new SettingsRequest("Automatic", 120, 30, 24, false, 24, null, Guid.CreateVersion7()));
 }

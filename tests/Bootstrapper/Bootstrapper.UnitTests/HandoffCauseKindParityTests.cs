@@ -31,6 +31,8 @@ public sealed class HandoffCauseKindParityTests
         Assert.Contains("ai.provider.permission_denied", AgentHandoffCodes.All);
         Assert.Contains("ai.provider.refused", AgentHandoffCodes.All);
         Assert.Contains("ai.agent.request_invalid", AgentHandoffCodes.All);
+        Assert.Contains("appointment_change_blocked", AgentHandoffCodes.All);
+        Assert.Contains("appointment_customer_unavailable", AgentHandoffCodes.All);
         Assert.All(AgentHandoffCodes.All, code => Assert.True(AutomationHandoff.IsValidCode(code), code));
     }
 

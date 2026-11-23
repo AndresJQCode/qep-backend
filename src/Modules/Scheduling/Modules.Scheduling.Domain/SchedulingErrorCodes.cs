@@ -21,6 +21,8 @@ public static class SchedulingErrorCodes
     public const string ServiceInUse = "scheduling.service.in_use";
     public const string MainLocationCannotBeArchived = "scheduling.location.main_cannot_be_archived";
     public const string ResourceMemberAlreadyLinked = "scheduling.resource.member_already_linked";
+    // Spec 2026-11-23, D-16: la franja no deja al cliente elegir el recurso; sólo lo aplica el camino del agente.
+    public const string ResourceNotChoosable = "scheduling.appointment.resource_not_choosable";
     public const string SessionNotPublishedMode = "scheduling.session.not_published_mode";
 
     // Tarea 8: una sesión con citas (aun canceladas) no se quita, porque su historial le apunta.

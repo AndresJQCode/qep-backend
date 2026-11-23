@@ -216,6 +216,47 @@ public sealed class AppointmentTests
         Assert.Null(appointment.ReminderSkippedReason);
     }
 
+    private static Appointment ChannelAppointment() =>
+        Appointment.Create(
+            AppointmentId.New(), Tenant, LocationId.New(), ResourceId.New(), ServiceId.New(), Guid.CreateVersion7(), SessionId.New(),
+            blockId: null, Start, Start.AddMinutes(30), AppointmentStatus.Confirmed, AppointmentSource.Channel, conversationId: null,
+            note: null, actorMemberId: null, Created, byChannel: true);
+
+    // D-17: sólo las escrituras del agente marcan su línea del historial como hechas por el canal.
+    [Fact]
+    public void ChannelWritesMarkTheirHistoryEntry()
+    {
+        var appointment = ChannelAppointment();
+        appointment.Reschedule(
+            ResourceId.New(), SessionId.New(), Start.AddDays(1), Start.AddDays(1).AddMinutes(30), null, Created.AddMinutes(1), byChannel: true);
+        appointment.Cancel(null, null, Created.AddMinutes(2), byChannel: true);
+
+        Assert.Equal(3, appointment.Events.Count);
+        Assert.All(appointment.Events, entry => Assert.True(entry.ByChannel));
+    }
+
+    [Fact]
+    public void WritesWithoutTheFlagAreNotByChannel()
+    {
+        var appointment = NewAppointment(AppointmentStatus.Pending);
+        appointment.Confirm(Actor, Created.AddMinutes(1));
+        appointment.Cancel(null, Actor, Created.AddMinutes(2));
+
+        Assert.Equal(3, appointment.Events.Count);
+        Assert.All(appointment.Events, entry => Assert.False(entry.ByChannel));
+    }
+
+    [Fact]
+    public void ReminderEntriesAreNeverByChannel()
+    {
+        var appointment = ChannelAppointment();
+
+        appointment.RecordReminderSent(Created.AddHours(1));
+
+        Assert.Equal(AppointmentAction.ReminderSent, appointment.Events[^1].Action);
+        Assert.False(appointment.Events[^1].ByChannel);
+    }
+
     private static void AssertInvalid(Action action)
     {
         var error = Assert.Throws<SchedulingDomainException>(action);

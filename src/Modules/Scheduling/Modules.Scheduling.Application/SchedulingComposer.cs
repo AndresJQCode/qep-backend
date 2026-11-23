@@ -56,7 +56,7 @@ public sealed class SchedulingComposer(ISchedulingMemberDirectory members)
     private static IReadOnlyList<TimeRangeDto> Ranges(IReadOnlyList<TimeRange> ranges) =>
         [.. ranges.Select(range => new TimeRangeDto(range.From, range.To))];
 
-    public static SettingsDto Settings(SchedulingSettings settings, ReminderTemplateStateDto? reminderTemplate) =>
+    public static SettingsDto Settings(SchedulingSettings settings, ReminderTemplateStateDto? reminderTemplate, string? senderName) =>
         new(
             settings.ConfirmationMode.ToString(),
             settings.MinNoticeMinutes,
@@ -65,6 +65,8 @@ public sealed class SchedulingComposer(ISchedulingMemberDirectory members)
             settings.ReminderEnabled,
             settings.ReminderOffsetHours,
             settings.ReminderConnectionId,
+            settings.ReminderSenderMemberId,
+            senderName,
             reminderTemplate,
             settings.Version);
 

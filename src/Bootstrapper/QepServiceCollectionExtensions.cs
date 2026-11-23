@@ -823,6 +823,11 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Scheduling.Application.DeleteClosureCommand, Modules.Scheduling.Application.ClosureDeletedResult>,
             Modules.Scheduling.Application.DeleteClosureHandler>();
         services.AddScoped<Modules.Scheduling.Application.AvailabilityLoader>();
+        services.AddScoped<Modules.Scheduling.Application.AvailabilitySearch>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentBooking>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentCancellation>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentRescheduling>();
+        services.AddScoped<Modules.Scheduling.Application.IChannelScheduling, Modules.Scheduling.Application.ChannelScheduling>();
         services.AddScoped<
             IQueryHandler<Modules.Scheduling.Application.ListAvailabilityQuery, Modules.Scheduling.Application.AvailabilityDto>,
             Modules.Scheduling.Application.ListAvailabilityHandler>();
@@ -2002,6 +2007,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAiQuickReplies, AiQuickReplies>();
         // Spec 2026-10-29 §8.3 y P-4: create_quotation_draft escribe en Quotations y valida la asesora del agente, por adaptadores.
         services.AddScoped<IAiQuotationDrafts, AiQuotationDrafts>();
+        // Spec 2026-11-23 §7.2: la Agenda del agente; Ai no referencia Scheduling, Mensajería ni Clientes.
+        services.AddScoped<IAiScheduling, AiScheduling>();
         services.AddScoped<IAiQuotationAdvisors, AiQuotationAdvisors>();
         // Plan 2026-11-17 A3: las cuentas de cobro del editor del agente, con la regla de la tienda (ActiveBillingAccountOptions).
         services.AddScoped<IAiQuotationBillingAccounts, AiQuotationBillingAccounts>();

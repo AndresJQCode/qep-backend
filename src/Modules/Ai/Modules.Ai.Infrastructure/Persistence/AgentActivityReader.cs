@@ -12,6 +12,9 @@ namespace Modules.Ai.Infrastructure.Persistence;
 internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivityReader
 {
     /// <summary>Las sesiones que terminaron en manos de una persona por el agente (los cuatro caminos de <c>HandOffAsync</c>).</summary>
+    /// <summary>El resultado de una reserva nueva, no de una repetida (spec 2026-11-23 §9.5).</summary>
+    private const string BookedForReal = """{"alreadyBooked":false}""";
+
     private static readonly AgentSessionStatus[] HandedOffStatuses =
         [AgentSessionStatus.HandedOff, AgentSessionStatus.Failed, AgentSessionStatus.WindowClosed];
 
@@ -60,13 +63,32 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
                 select new { AgentId = perAgent.Key, Count = perAgent.Count() })
             .ToListAsync(cancellationToken);
 
+        // Spec 2026-11-23 §9.5: reservas que el agente hizo hoy. Una repetida (alreadyBooked: true) describe una cita de antes y no cuenta.
+        // La columna es jsonb, que normaliza los espacios: se pregunta por contención (@>) y no por el texto del resultado.
+        var bookings = await (
+                from call in dbContext.ToolCalls.AsNoTracking()
+                join job in dbContext.ModelJobs.AsNoTracking() on call.JobId equals job.Id
+                join session in dbContext.Sessions.AsNoTracking() on job.SessionId equals session.Id
+                where call.TenantId == tenantId
+                    && call.Tool == AgentToolNames.BookAppointment
+                    && call.Outcome == AiRunOutcomes.Ok
+                    && call.CreatedAt >= window.DayStart
+                    && call.CreatedAt < window.DayEnd
+                    && EF.Functions.JsonContains(call.Result!, BookedForReal)
+                group call by session.AgentId into perAgent
+                select new { AgentId = perAgent.Key, Count = perAgent.Count() })
+            .ToListAsync(cancellationToken);
+
         var draftsByAgent = drafts.ToDictionary(row => row.AgentId, row => row.Count);
+        var bookingsByAgent = bookings.ToDictionary(row => row.AgentId, row => row.Count);
         var today = sessions.ToDictionary(
-            row => row.AgentId, row => new AgentTodayDto(row.Handled, row.HandedOff, draftsByAgent.GetValueOrDefault(row.AgentId)));
-        foreach (var (agentId, count) in draftsByAgent.Where(entry => !today.ContainsKey(entry.Key)))
+            row => row.AgentId,
+            row => new AgentTodayDto(
+                row.Handled, row.HandedOff, draftsByAgent.GetValueOrDefault(row.AgentId), bookingsByAgent.GetValueOrDefault(row.AgentId)));
+        foreach (var agentId in draftsByAgent.Keys.Concat(bookingsByAgent.Keys).Distinct().Where(id => !today.ContainsKey(id)))
         {
-            // Un borrador de hoy en una sesión que empezó ayer.
-            today[agentId] = new AgentTodayDto(0, 0, count);
+            // Un borrador o una reserva de hoy en una sesión que empezó ayer.
+            today[agentId] = new AgentTodayDto(0, 0, draftsByAgent.GetValueOrDefault(agentId), bookingsByAgent.GetValueOrDefault(agentId));
         }
 
         return new AgentListActivity(

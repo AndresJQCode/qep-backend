@@ -227,7 +227,7 @@ public sealed class SchedulingPersistenceTests
         var closure = Closure.Create(ClosureId.New(), Tenant, seed.Location.Id, seed.Resource.Id, Start, Start.AddHours(4), "Congreso", Now);
         var rules = SchedulingSettings.Create(Tenant, Now);
         var connection = Guid.CreateVersion7();
-        rules.Update(ConfirmationMode.Manual, 60, 90, 12, true, 48, connection, Now.AddMinutes(1));
+        rules.Update(ConfirmationMode.Manual, 60, 90, 12, true, 48, connection, null, Now.AddMinutes(1));
         await using (var context = database.CreateContext())
         {
             context.Closures.Add(closure);

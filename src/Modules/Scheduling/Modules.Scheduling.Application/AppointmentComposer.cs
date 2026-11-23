@@ -53,6 +53,7 @@ public sealed class AppointmentComposer(
                     entry.Action.ToString(),
                     entry.At,
                     entry.ActorMemberId is { } actor && actorNames.TryGetValue(actor, out var name) ? name : null,
-                    entry.Detail))]);
+                    entry.Detail,
+                    entry.ByChannel))]);
     }
 }

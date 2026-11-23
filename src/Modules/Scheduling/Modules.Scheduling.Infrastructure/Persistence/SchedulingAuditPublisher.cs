@@ -20,10 +20,33 @@ internal sealed class SchedulingAuditPublisher(SchedulingDbContext dbContext) : 
         string outcome,
         IReadOnlyCollection<string> changedFields,
         DateTimeOffset occurredAt) =>
+        Add(tenantId, actorId, AuditActorType.Human, action, resourceType, resourceId, outcome, changedFields, occurredAt);
+
+    public void PublishByAgent(
+        Guid tenantId,
+        Guid agentId,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        IReadOnlyCollection<string> changedFields,
+        DateTimeOffset occurredAt) =>
+        Add(tenantId, agentId, AuditActorType.AiAgent, action, resourceType, resourceId, outcome, changedFields, occurredAt);
+
+    private void Add(
+        Guid tenantId,
+        Guid actorId,
+        AuditActorType actorType,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        IReadOnlyCollection<string> changedFields,
+        DateTimeOffset occurredAt) =>
         dbContext.AuditEntries.Add(AuditEntry.Create(
             tenantId,
             actorId,
-            AuditActorType.Human,
+            actorType,
             action,
             resourceType,
             resourceId,

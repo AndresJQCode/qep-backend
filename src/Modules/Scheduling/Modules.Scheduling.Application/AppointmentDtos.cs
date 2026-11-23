@@ -26,7 +26,10 @@ public sealed record AvailabilityDto(string TimeZone, IReadOnlyList<Availability
 /// <c>Rescheduled</c> o <c>ReminderSent</c>.</param>
 /// <param name="ActorName">Quién lo hizo, ya resuelto: la pantalla no consulta Personas. Nulo cuando lo hizo el sistema o el cliente por un canal.</param>
 /// <param name="Detail">El motivo de una cancelación, si lo hubo.</param>
-public sealed record AppointmentEventDto(string Action, DateTimeOffset At, string? ActorName, string? Detail);
+/// <param name="ByChannel">Verdadero cuando la línea la escribió el agente de IA por WhatsApp (D-17). La pantalla pinta «Cliente por WhatsApp» con
+/// este campo y no lo deduce del origen de la cita: un cambio de hora por chat sobre una cita de back office, o cualquier cambio por chat,
+/// salía «Sistema». Nunca lo pone una escritura por HTTP ni el recordatorio; las filas anteriores a la columna quedan en falso.</param>
+public sealed record AppointmentEventDto(string Action, DateTimeOffset At, string? ActorName, string? Detail, bool ByChannel);
 
 /// <summary>
 /// La cita tal como la pantalla de detalle la dibuja, con los nombres ya resueltos (recurso, servicio, cliente): quien la pinta no consulta

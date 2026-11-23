@@ -56,7 +56,7 @@ public sealed class AvailabilityEngineTests
     private static SchedulingSettings Rules(int minNotice = 0, int horizonDays = 365)
     {
         var settings = SchedulingSettings.Create(Tenant, LongBefore);
-        settings.Update(ConfirmationMode.Automatic, minNotice, horizonDays, 24, false, 24, null, LongBefore);
+        settings.Update(ConfirmationMode.Automatic, minNotice, horizonDays, 24, false, 24, null, null, LongBefore);
         return settings;
     }
 

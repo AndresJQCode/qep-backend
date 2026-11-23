@@ -149,6 +149,20 @@ public interface IAppointmentRepository
     /// <summary>La cita del tenant con su historial, con seguimiento de cambios: cada transición la edita.</summary>
     Task<Appointment?> FindAsync(Guid tenantId, AppointmentId id, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// La cita como está en la base ahora, después de que un guardado perdió la carrera por la versión (<c>RequestConcurrencyException</c>).
+    /// Descarta lo que el contexto tenía pendiente y sin seguimiento previo: la transacción del guardado ya se deshizo, así que esos cambios
+    /// no existen. Sólo para decidir qué le cuenta un camino sin sesión a quien llama; un handler HTTP relee con la pantalla.
+    /// </summary>
+    Task<Appointment?> FindFreshAsync(Guid tenantId, AppointmentId id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Vuelve a leer los campos de la cita desde la base. Se llama con el candado del recurso ya tomado: lo que otra petición escribió entre
+    /// la lectura y el candado (una cancelación, un cambio de hora) se ve acá y no después, cuando liberar un cupo que ya se liberó fallaría
+    /// con un <c>InvalidOperationException</c> o, peor, descontaría dos veces.
+    /// </summary>
+    Task RefreshAsync(Appointment appointment, CancellationToken cancellationToken);
+
     /// <summary>La cita que el tenant ya reservó con esa llave de idempotencia, con su historial.</summary>
     Task<Appointment?> FindByClientRequestAsync(Guid tenantId, string clientRequestId, CancellationToken cancellationToken);
 
@@ -195,6 +209,13 @@ public interface IAppointmentReadRepository
         DateTimeOffset rangeStart,
         DateTimeOffset rangeEnd,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The next appointments of one customer: <c>Pending</c> or <c>Confirmed</c> that start at or after <paramref name="now"/>, by start and
+    /// then id, at most <paramref name="take"/>. Without the resource scope on purpose: it serves the channel, where the customer is the filter.
+    /// </summary>
+    Task<IReadOnlyList<Appointment>> ListUpcomingByCustomerAsync(
+        Guid tenantId, Guid customerId, DateTimeOffset now, int take, CancellationToken cancellationToken);
 
     /// <summary>
     /// Los contadores y las colas del escritorio dentro del alcance. Las del día son las que <b>empiezan</b> en <c>[dayStart, dayEnd)</c>;

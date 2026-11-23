@@ -299,7 +299,7 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         var locationName = await dbContext.Locations.AsNoTracking()
             .Where(value => value.Id == appointment.LocationId).Select(value => value.Name).SingleAsync(cancellationToken);
 
-        if (await SenderOfAsync(services, appointment, resource.MemberId, cancellationToken) is not { } senderMemberId)
+        if (await SenderOfAsync(services, appointment, resource.MemberId, settings.ReminderSenderMemberId, cancellationToken) is not { } senderMemberId)
         {
             await SkipAsync(dbContext, appointment, ReminderSkipReasons.NoSenderMember, now, cancellationToken);
             return;
@@ -346,9 +346,10 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
     };
 
     // Messaging needs an author for the message: the member linked to the resource and, without one (or inactive), whoever touched the
-    // appointment last. Neither one active is a reason to skip, not a guess.
+    // appointment last and, last of all, the default sender of the rules (D-18: an appointment the AI agent made has no human actor).
+    // Neither one active is a reason to skip, not a guess.
     private static async Task<Guid?> SenderOfAsync(
-        IServiceProvider services, Appointment appointment, Guid? resourceMemberId, CancellationToken cancellationToken)
+        IServiceProvider services, Appointment appointment, Guid? resourceMemberId, Guid? defaultSenderMemberId, CancellationToken cancellationToken)
     {
         var candidates = new List<Guid>();
         if (resourceMemberId is { } linked)
@@ -360,6 +361,11 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
             .Where(entry => entry.ActorMemberId is not null)
             .OrderByDescending(entry => entry.At)
             .Select(entry => entry.ActorMemberId!.Value));
+        if (defaultSenderMemberId is { } fallback)
+        {
+            candidates.Add(fallback);
+        }
+
         candidates = [.. candidates.Distinct()];
         if (candidates.Count == 0)
         {

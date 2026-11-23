@@ -217,6 +217,10 @@ public sealed class AgentTurnRunner(
         private readonly Dictionary<string, IAgentTool> _offered;
         private readonly HashSet<string> _finals;
 
+        // Spec 2026-11-23 D-14: cuántas llamadas a book_appointment devolvieron una cita en esta corrida. Un perfil es uno por corrida del
+        // trabajo, así que un trabajo retomado vuelve a contar desde cero y encuentra la cita que ya hizo con la misma llave.
+        private int _bookings;
+
         public AgentProfile(AgentTurnContext context, IEnumerable<IAgentTool> tools)
         {
             _context = context;
@@ -241,9 +245,16 @@ public sealed class AgentTurnRunner(
         {
             var result = await _offered[toolCall.Name].ExecuteAsync(
                 new AgentToolInvocation(
-                    _context.TenantId, _context.JobId, toolCall.Id, _context.CustomerId, _context.IsTest, _context.Config.QuotationDraft),
+                    _context.TenantId, _context.JobId, toolCall.Id, _context.CustomerId, _context.IsTest, _context.Config.QuotationDraft,
+                    _context.AgentId, _context.ConversationId, BookingOrdinal: _bookings + 1),
                 arguments,
                 cancellationToken);
+            // Una llamada que falla no consume número (D-14): si el modelo elige otra hora al reintentar, la llave sigue siendo la misma.
+            if (toolCall.Name == AgentToolNames.BookAppointment && !result.IsError)
+            {
+                _bookings++;
+            }
+
             // P-4 y P-4b: una herramienta que escribió (o que no pudo por el cliente) termina el turno con su traspaso: lo que siga lo decide
             // una persona.
             return new ToolLoopExecution(

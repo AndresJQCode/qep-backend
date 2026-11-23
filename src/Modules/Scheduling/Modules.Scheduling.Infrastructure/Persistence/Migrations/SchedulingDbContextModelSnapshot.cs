@@ -261,6 +261,12 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("at");
 
+                    b.Property<bool>("ByChannel")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("by_channel");
+
                     b.Property<string>("Detail")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -591,6 +597,10 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
                     b.Property<int>("ReminderOffsetHours")
                         .HasColumnType("integer")
                         .HasColumnName("reminder_offset_hours");
+
+                    b.Property<Guid?>("ReminderSenderMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reminder_sender_member_id");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
