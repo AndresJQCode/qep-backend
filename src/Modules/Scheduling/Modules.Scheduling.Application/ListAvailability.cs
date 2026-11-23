@@ -20,7 +20,7 @@ public sealed class ListAvailabilityHandler(
     ResourceScopeResolver scopeResolver,
     IServiceRepository services,
     IResourceRepository resources,
-    AvailabilityLoader loader,
+    AvailabilitySearch search,
     IValidator<AvailabilityRequest> validator)
     : IQueryHandler<ListAvailabilityQuery, AvailabilityDto>
 {
@@ -55,14 +55,12 @@ public sealed class ListAvailabilityHandler(
             throw SchedulingNotFound.Service(query.ServiceId.Value);
         }
 
-        var loaded = await loader.LoadAsync(query.TenantId, scope, query.From!.Value, query.To!.Value, cancellationToken);
-        var sessions = await loader.SessionsAsync(query.TenantId, loaded, loaded.OfferedResourceIds, onlyActive: true, cancellationToken);
-        var slots = AvailabilityEngine.Compute(loaded.Query(service, sessions, onlyResource));
+        var found = await search.SearchAsync(query.TenantId, scope, service, query.From!.Value, query.To!.Value, onlyResource, cancellationToken);
 
-        var names = loaded.OfferedResources.ToDictionary(resource => resource.Id, resource => resource.DisplayName);
+        var names = found.ResourceNames;
         return new AvailabilityDto(
-            loaded.Calendar.TimeZone.Id,
-            [.. slots.Select(slot => new AvailabilitySlotDto(
+            found.TimeZone.Id,
+            [.. found.Slots.Select(slot => new AvailabilitySlotDto(
                 slot.StartsAt,
                 slot.EndsAt,
                 slot.SeatsLeft,

@@ -823,6 +823,10 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Scheduling.Application.DeleteClosureCommand, Modules.Scheduling.Application.ClosureDeletedResult>,
             Modules.Scheduling.Application.DeleteClosureHandler>();
         services.AddScoped<Modules.Scheduling.Application.AvailabilityLoader>();
+        services.AddScoped<Modules.Scheduling.Application.AvailabilitySearch>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentBooking>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentCancellation>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentRescheduling>();
         services.AddScoped<
             IQueryHandler<Modules.Scheduling.Application.ListAvailabilityQuery, Modules.Scheduling.Application.AvailabilityDto>,
             Modules.Scheduling.Application.ListAvailabilityHandler>();

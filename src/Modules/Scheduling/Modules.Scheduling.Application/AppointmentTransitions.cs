@@ -46,26 +46,33 @@ public sealed class AppointmentTransitions(
         return (appointment, scope);
     }
 
-    /// <summary>The instant the change happens and who made it: the membership of the caller, or nobody when the client acts through a channel.</summary>
-    public async Task<(Guid? ActorMemberId, DateTimeOffset Now)> ActorAndNowAsync(
-        Guid tenantId, bool actsAsClient, CancellationToken cancellationToken)
+    /// <summary>Who makes the change: the membership of the caller, or nobody in the history when the client acts through a channel.</summary>
+    public async Task<SchedulingActor> ActorAsync(Guid tenantId, bool actsAsClient, CancellationToken cancellationToken)
     {
-        var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
-        var actor = actsAsClient ? null : await members.FindBySubjectAsync(tenantId, executionContext.SubjectId, cancellationToken);
-        return (actor?.MemberId, now);
+        var member = actsAsClient ? null : await members.FindBySubjectAsync(tenantId, executionContext.SubjectId, cancellationToken);
+        return SchedulingActor.Human(executionContext.SubjectId, member?.MemberId);
     }
+
+    /// <summary>The instant the change happens, by the clock of the tenant.</summary>
+    public async Task<DateTimeOffset> NowAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
+
+    /// <summary>The whole appointment with its new version, for the handlers whose core already saved the change.</summary>
+    public Task<AppointmentDto> ComposeAsync(Guid tenantId, Appointment appointment, CancellationToken cancellationToken) =>
+        composer.ComposeAsync(tenantId, appointment, cancellationToken);
 
     /// <summary>Audit entry and save in the same transaction as the change, then the whole appointment with its new version.</summary>
     public async Task<AppointmentDto> SaveAsync(
         Guid tenantId,
         Appointment appointment,
+        SchedulingActor actor,
         string auditAction,
         IReadOnlyCollection<string> changedFields,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         SchedulingAudit.Publish(
-            auditPublisher, executionContext, tenantId, auditAction, SchedulingAuditActions.Resources.Appointment,
+            auditPublisher, actor, tenantId, auditAction, SchedulingAuditActions.Resources.Appointment,
             appointment.Id.Value, changedFields, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await composer.ComposeAsync(tenantId, appointment, cancellationToken);
@@ -81,9 +88,10 @@ public sealed class AppointmentTransitions(
         CancellationToken cancellationToken)
     {
         var (appointment, _) = await LoadAsync(tenantId, appointmentId, ifMatch, cancellationToken);
-        var (actor, now) = await ActorAndNowAsync(tenantId, actsAsClient: false, cancellationToken);
-        change(appointment, actor, now);
-        return await SaveAsync(tenantId, appointment, auditAction, ["status"], now, cancellationToken);
+        var actor = await ActorAsync(tenantId, actsAsClient: false, cancellationToken);
+        var now = await NowAsync(tenantId, cancellationToken);
+        change(appointment, actor.HistoryMemberId, now);
+        return await SaveAsync(tenantId, appointment, actor, auditAction, ["status"], now, cancellationToken);
     }
 }
 
