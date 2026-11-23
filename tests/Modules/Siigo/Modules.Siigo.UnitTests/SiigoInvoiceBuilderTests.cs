@@ -579,6 +579,112 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.DoesNotContain("900123456", Ready(Build()).ToString(), StringComparison.Ordinal);
     }
 
+    // ---- Regalos (spec 2026-11-21): un obsequio va con price 0, tax_base sin IVA y taxpayer "Company". ------------------------------
+
+    private static SiigoInvoiceLineInput Gift(Guid variantId, int taxPercentage = 19, decimal listUnitPrice = 1_000m) =>
+        new(variantId, "Regalo", 1m, 0m, 100m, taxPercentage, 0m, IsGift: true, ListUnitPrice: listUnitPrice);
+
+    // 10 u. pagas a 1.000 con IVA 19 incluido: base 8.403,36 + IVA 1.596,64 = 10.000.
+    private static SiigoInvoiceInput PaidTenPlus(SiigoInvoiceLineInput gift) =>
+        Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 10m, 8_403.36m, 0m, 19, 1_596.64m), gift],
+            ProductsTotal = 10_000m,
+            Total = 10_000m,
+            NetTotal = 10_000m,
+        };
+
+    [Fact]
+    public void AGiftItemIsSentWithZeroPriceTaxBaseAndCompanyTaxpayer()
+    {
+        using var json = Json(Ready(Build(PaidTenPlus(Gift(Line1Variant)))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.Equal("SKU-1", item.GetProperty("code").GetString());
+        Assert.Equal("Regalo", item.GetProperty("description").GetString());
+        Assert.Equal(1m, item.GetProperty("quantity").GetDecimal());
+        Assert.Equal(0m, item.GetProperty("price").GetDecimal());
+        Assert.Equal(0m, item.GetProperty("discount").GetDecimal());
+        Assert.Equal(840.336134m, item.GetProperty("tax_base").GetDecimal());
+        Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
+        var taxes = item.GetProperty("taxes");
+        Assert.Equal(1, taxes.GetArrayLength());
+        Assert.Equal(7001, taxes[0].GetProperty("id").GetInt32());
+    }
+
+    [Fact]
+    public void AGiftDoesNotChangeTheOrderTotal()
+    {
+        var result = Build(PaidTenPlus(Gift(Line1Variant)));
+        using var json = Json(Ready(result));
+
+        Assert.Equal(10_000m, PaymentsSum(json));
+        Assert.IsNotType<SiigoBuildResult.TotalsMismatch>(result);
+    }
+
+    [Fact]
+    public void AGiftWithoutVatHasNoTaxesAndTaxBaseEqualsTheListPrice()
+    {
+        using var json = Json(Ready(Build(PaidTenPlus(Gift(Line2Variant, taxPercentage: 0)))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.False(item.TryGetProperty("taxes", out _));
+        Assert.Equal(1_000m, item.GetProperty("tax_base").GetDecimal());
+        Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
+    }
+
+    [Fact]
+    public void AGiftGetsNoWithholdings()
+    {
+        var input = PaidTenPlus(Gift(Line1Variant)) with { Withholdings = [ReteFuente()] };
+
+        using var json = Json(Ready(Build(input)));
+        var items = json.RootElement.GetProperty("items");
+
+        Assert.Equal([7001, 8001], items[0].GetProperty("taxes").EnumerateArray().Select(tax => tax.GetProperty("id").GetInt32()));
+        Assert.Equal([7001], items[1].GetProperty("taxes").EnumerateArray().Select(tax => tax.GetProperty("id").GetInt32()));
+    }
+
+    [Fact]
+    public void AGiftOfAnUnlinkedVariantIsMissing()
+    {
+        var unlinked = Guid.NewGuid();
+
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(PaidTenPlus(Gift(unlinked)))).Missing);
+
+        Assert.Equal(new SiigoMissing("variant_unlinked", unlinked.ToString(), "Regalo"), missing);
+    }
+
+    [Fact]
+    public void AGiftWithAnUnlinkedTaxIsMissing()
+    {
+        var input = Order() with
+        {
+            Lines = [new SiigoInvoiceLineInput(Line2Variant, "Producto dos", 3m, 90000m, 10m, 0, 0m), Gift(Line1Variant)],
+            ProductsTotal = 90000m,
+            Total = 90000m,
+            NetTotal = 90000m,
+        };
+        var settings = Settings();
+        settings.ReplaceTaxLinks([]);
+
+        var missing = Assert.Single(Assert.IsType<SiigoBuildResult.NotReady>(Build(input, settings)).Missing);
+
+        Assert.Equal("tax_unlinked", missing.Code);
+        Assert.Equal("19", missing.Reference);
+    }
+
+    [Fact]
+    public void PaidItemsAreSerializedExactlyAsBefore()
+    {
+        var json = Ready(Build()).Request.Json;
+
+        // Literal capturado con el armador de antes de los regalos: una línea pagada no cambia ni un byte.
+        const string Expected =
+            """{"document":{"id":24446},"date":"2026-11-18","customer":{"identification":"900123456","branch_office":0},"cost_center":10,"seller":629,"stamp":{"send":false},"mail":{"send":false},"observations":"Pedido P-1042","items":[{"code":"SKU-1","description":"Producto uno","quantity":2,"price":50000,"discount":0,"warehouse":1,"taxes":[{"id":7001}]},{"code":"SKU-2","description":"Producto dos","quantity":3,"price":33333.333333,"discount":10,"warehouse":1}],"payments":[{"id":9001,"value":209000.00,"due_date":"2026-11-18"}]}""";
+        Assert.Equal(Expected, json);
+    }
+
     private static decimal PaymentsSum(System.Text.Json.JsonDocument json) =>
         json.RootElement.GetProperty("payments").EnumerateArray().Sum(payment => payment.GetProperty("value").GetDecimal());
 }

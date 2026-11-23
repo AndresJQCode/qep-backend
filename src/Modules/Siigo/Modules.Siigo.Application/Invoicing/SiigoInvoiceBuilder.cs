@@ -359,11 +359,34 @@ public static class SiigoInvoiceBuilder
         decimal Discount,
         string? TaxId,
         decimal Subtotal,
-        decimal Tax);
+        decimal Tax,
+        bool IsGift = false,
+        decimal? TaxBase = null);
+
+    // Siigo pide el tipo de contribuyente de un obsequio; siempre es la empresa (spec 2026-11-21).
+    private const string GiftTaxpayer = "Company";
 
     private static ResolvedItem Resolve(SiigoInvoiceLineInput line, SiigoSettings settings)
     {
         var quantity = Math.Round(line.Quantity, 2, MidpointRounding.AwayFromZero);
+        if (line.IsGift)
+        {
+            // Un obsequio va con precio 0 y no suma al total: Siigo calcula su IVA sobre `tax_base`, que es el precio de lista sin IVA
+            // (el de lista viene con IVA incluido).
+            var taxBase = Math.Round(line.ListUnitPrice * 100m / (100m + line.TaxPercentage), 6, MidpointRounding.AwayFromZero);
+            return new ResolvedItem(
+                VariantLink(settings, line.VariantId)!.SiigoProductCode,
+                line.Name,
+                quantity,
+                0m,
+                0m,
+                TaxId(settings, line.TaxPercentage),
+                0m,
+                0m,
+                IsGift: true,
+                TaxBase: taxBase);
+        }
+
         var factor = 1m - (line.DiscountPercentage / 100m);
 
         // El precio es el de antes del descuento: el Subtotal del pedido ya lo trae aplicado, y Siigo lo vuelve a aplicar con `discount`.
@@ -492,10 +515,21 @@ public static class SiigoInvoiceBuilder
             taxes.Add(new Dictionary<string, object?> { ["id"] = IdValue(vat) });
         }
 
-        taxes.AddRange(withholdings.Select(id => new Dictionary<string, object?> { ["id"] = IdValue(id) }));
+        // Un regalo no tiene base de retenciones: no recibe ninguna.
+        if (!item.IsGift)
+        {
+            taxes.AddRange(withholdings.Select(id => new Dictionary<string, object?> { ["id"] = IdValue(id) }));
+        }
+
         if (taxes.Count > 0)
         {
             result["taxes"] = taxes;
+        }
+
+        if (item.IsGift)
+        {
+            result["tax_base"] = item.TaxBase;
+            result["taxpayer"] = GiftTaxpayer;
         }
 
         return result;

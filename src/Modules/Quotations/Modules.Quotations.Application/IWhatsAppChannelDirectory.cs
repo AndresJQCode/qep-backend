@@ -21,7 +21,8 @@ public abstract record WhatsAppChannel(Guid ConnectionId, string Name, string? P
 /// <summary>
 /// Una conexión de Zenvia: la cuenta, el número emisor y sus plantillas. El token viaja en claro, en memoria,
 /// sólo para ese envío: <see cref="ToString"/> no lo imprime, y el sender no lo registra.
-/// <see cref="OrderTemplateId"/> es opcional en la conexión: sin él, el pedido no se puede enviar.
+/// <see cref="OrderTemplateId"/> e <see cref="InvoiceTemplateId"/> son opcionales en la conexión: sin ellos, el pedido o
+/// la factura no se pueden enviar.
 /// </summary>
 public sealed record ZenviaWhatsAppChannel(
     Guid ConnectionId,
@@ -29,13 +30,14 @@ public sealed record ZenviaWhatsAppChannel(
     string ApiToken,
     string FromNumber,
     string QuotationTemplateId,
-    string? OrderTemplateId)
+    string? OrderTemplateId,
+    string? InvoiceTemplateId = null)
     : WhatsAppChannel(ConnectionId, Name, FromNumber)
 {
     public override string Provider => WhatsAppChannelProviders.Zenvia;
 
     public override string ToString() =>
-        $"ZenviaWhatsAppChannel {{ ConnectionId = {ConnectionId}, QuotationTemplateId = {QuotationTemplateId}, OrderTemplateId = {OrderTemplateId} }}";
+        $"ZenviaWhatsAppChannel {{ ConnectionId = {ConnectionId}, QuotationTemplateId = {QuotationTemplateId}, OrderTemplateId = {OrderTemplateId}, InvoiceTemplateId = {InvoiceTemplateId} }}";
 }
 
 /// <summary>
@@ -58,6 +60,7 @@ public enum WhatsAppDocument
 {
     Quotation,
     Order,
+    Invoice,
 }
 
 public static class WhatsAppDocuments
@@ -67,6 +70,7 @@ public static class WhatsAppDocuments
     {
         WhatsAppDocument.Quotation => "quotation",
         WhatsAppDocument.Order => "order",
+        WhatsAppDocument.Invoice => "invoice",
         _ => throw new ArgumentOutOfRangeException(nameof(document), document, "Unknown WhatsApp document."),
     };
 }
@@ -80,6 +84,7 @@ public interface IWhatsAppChannelDirectory
 {
     /// <summary>Las conexiones del tenant que pueden enviar <paramref name="document"/> ahora (spec 2026-11-09 D6). Meta: <c>Active</c>,
     /// visible y con la plantilla de ese documento <c>APPROVED</c>. Zenvia: Active, visible, con Zenvia habilitado por el operador, con
-    /// token, número y plantilla de cotización, y para un pedido además con <c>orderTemplateId</c>. Vacía si no hay ninguna.</summary>
+    /// token, número y plantilla de cotización, y para un pedido además con <c>orderTemplateId</c> y para una factura con
+    /// <c>invoiceTemplateId</c> (para una factura, Meta cuenta con la fila <c>Invoice</c> aprobada). Vacía si no hay ninguna.</summary>
     Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, WhatsAppDocument document, CancellationToken cancellationToken);
 }

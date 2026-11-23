@@ -328,9 +328,9 @@ public sealed class IntegrationCatalogTests
 
         Assert.Equal("Zenvia (WhatsApp)", zenvia.DisplayName);
         Assert.Equal(IntegrationCategory.Messaging, zenvia.Category);
-        Assert.Equal([TenantModuleKeys.Quotations], zenvia.ConsumingModules);
+        Assert.Equal([TenantModuleKeys.Quotations, TenantModuleKeys.Orders], zenvia.ConsumingModules);
         Assert.Equal(20, zenvia.MaxConnections);
-        Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId"], zenvia.Fields.Select(field => field.Key));
+        Assert.Equal(["apiToken", "fromNumber", "templateId", "orderTemplateId", "invoiceTemplateId"], zenvia.Fields.Select(field => field.Key));
 
         var apiToken = zenvia.FindField(ZenviaFieldKeys.ApiToken);
         Assert.NotNull(apiToken);
@@ -358,8 +358,24 @@ public sealed class IntegrationCatalogTests
         Assert.False(orderTemplateId.Required);
         Assert.Equal(36, orderTemplateId.MaxLength);
 
-        Assert.Equal(["fromNumber", "templateId", "orderTemplateId"], zenvia.PublicFields.Select(field => field.Key));
+        Assert.Equal(["fromNumber", "templateId", "orderTemplateId", "invoiceTemplateId"], zenvia.PublicFields.Select(field => field.Key));
         Assert.Equal(["apiToken"], zenvia.SecretFields.Select(field => field.Key));
+    }
+
+    [Fact]
+    public void TheZenviaProviderDeclaresAnOptionalInvoiceTemplateId()
+    {
+        Assert.Equal("invoiceTemplateId", ZenviaFieldKeys.InvoiceTemplateId);
+
+        var invoiceTemplateId = IntegrationProviders.Zenvia.FindField(ZenviaFieldKeys.InvoiceTemplateId);
+        var orderTemplateId = IntegrationProviders.Zenvia.FindField(ZenviaFieldKeys.OrderTemplateId);
+
+        Assert.NotNull(invoiceTemplateId);
+        Assert.Equal(FieldKind.Text, invoiceTemplateId.Kind);
+        Assert.False(invoiceTemplateId.Required);
+        Assert.Equal(36, invoiceTemplateId.MaxLength);
+        Assert.Equal(orderTemplateId!.Pattern?.ToString(), invoiceTemplateId.Pattern?.ToString());
+        Assert.Equal(orderTemplateId.InvalidMessage, invoiceTemplateId.InvalidMessage);
     }
 
     [Fact]
@@ -379,7 +395,18 @@ public sealed class IntegrationCatalogTests
     [Fact]
     public void AProviderIsHiddenWhenItsModulesAreOff() =>
         Assert.False(IntegrationProviders.Zenvia.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders]))));
+
+    // Zenvia envía cotizaciones y pedidos (order.whatsapp.not_configured): el tenant que oculta cotizaciones y vende por
+    // pedidos sigue configurándolo, y el que oculta pedidos y cotiza también.
+    [Fact]
+    public void ZenviaIsVisibleWithOnlyOrdersOrOnlyQuotations()
+    {
+        Assert.True(IntegrationProviders.Zenvia.IsVisibleFor(
             TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations]))));
+        Assert.True(IntegrationProviders.Zenvia.IsVisibleFor(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))));
+    }
 
     // Contratado pero apagado por una dependencia: cuenta lo efectivo, como en TenantModuleGuard.
     [Fact]

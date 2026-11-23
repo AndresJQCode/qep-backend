@@ -31,9 +31,7 @@ public sealed class ChangeTicketStatusValidator : AbstractValidator<ChangeTicket
 /// escribe <c>TicketClosed</c> en el hilo en la misma transacción, y avisa al tiempo real de Mensajería después de confirmar.</summary>
 public sealed class ChangeTicketStatusHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
@@ -46,16 +44,14 @@ public sealed class ChangeTicketStatusHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(ChangeTicketStatusCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         if (!SupportTicketRules.TryParseExact<SupportTicketStatus>(command.Status, out var status))
         {
             throw new InvalidOperationException($"Status '{command.Status}' passed validation but is not a ticket status.");
         }
 
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         var version = ticket.Version;
@@ -67,7 +63,7 @@ public sealed class ChangeTicketStatusHandler(
                 cancellationToken);
             if (ticket.Version != version)
             {
-                await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+                await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
             }
 
             return await composer.ComposeDetailAsync(ticket, context, cancellationToken);
@@ -86,7 +82,7 @@ public sealed class ChangeTicketStatusHandler(
         await conversationEvents.NotifyChangedAsync(command.TenantId, conversationId, cancellationToken);
         if (ticket.Version != version)
         {
-            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+            await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
         }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);

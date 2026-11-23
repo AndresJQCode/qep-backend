@@ -43,6 +43,10 @@ public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, 
 /// no aprovisionada. Un frontend viejo lo ignora.</summary>
 public sealed record OrderTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
+/// <summary>Spec 2026-11-21: el estado de la plantilla de factura de la conexión, con la misma forma que la de pedido. <c>null</c> = no
+/// aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record InvoiceTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
 /// <summary>Soporte fase 2: el estado de la plantilla «Aviso de respuesta» de la conexión, con la misma forma que la de pedido. <c>null</c> =
 /// no aprovisionada, botón de crear. Un frontend viejo lo ignora.</summary>
 public sealed record SupportReplyTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
@@ -77,4 +81,5 @@ public sealed record TemplateManagementDto(
     SupportFormalReplyTemplateStatusDto? SupportFormalReplyTemplate = null,
     SupportSurveyTemplateStatusDto? SupportSurveyTemplate = null,
     WholesaleInvitationNoticeTemplateStatusDto? WholesaleInvitationNoticeTemplate = null,
+    InvoiceTemplateStatusDto? InvoiceTemplate = null,
     AppointmentReminderTemplateStatusDto? AppointmentReminderTemplate = null);

@@ -27,9 +27,7 @@ public sealed class ChangeTicketTypeValidator : AbstractValidator<ChangeTicketTy
 /// pausas ya contadas (spec §7.2). Se permite en cualquier estado (pre-flight R9).</summary>
 public sealed class ChangeTicketTypeHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketTypeRepository types,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -42,12 +40,11 @@ public sealed class ChangeTicketTypeHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(ChangeTicketTypeCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
+        SupportTicketScope.EnsureVersion(ticket, command.ExpectedVersion);
         // Acotado al tenant: así el dominio nunca recibe un tipo de otro tenant (su guarda lanzaría ArgumentException).
         var type = await SupportTicketRules.EnsureTypeAsync(types, command.TenantId, command.TicketTypeId, cancellationToken);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);

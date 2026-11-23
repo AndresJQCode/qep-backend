@@ -187,3 +187,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   del cliente es una revocación (también una `Medium = Other`) y con `marketing_opt_out` si la ficha lo tiene; no hay baja automática por texto libre.
 - **El presupuesto de envío de campañas se queda en Postgres** (`messaging.connection_send_budgets`, decisión del owner 2026-11-13).
   D-6 del spec de Valkey no se construyó: no hay adaptador de Valkey para el cubo.
+- **Un formato nuevo de `OutboundMediaPolicy` tiene cuatro dueños más: el sniffer, la tabla de Storage del chatbot, la paridad del chatbot y el cliente de Meta** (2026-11-22). `OutboundMediaFormat` +
+  `OutboundMediaSniffer.Detect` (la extensión sin firma ni sniffer se rechaza) y, si el formato también lo manda el bot, `FileUploadPolicy.ChatbotMediaTypes`: sin esa fila
+  `ChatbotMediaPolicyParityTests` se pone roja. El sticker (`.webp`, kind `Sticker`) es la excepción: Meta lo recibe con `type: sticker`, sin `caption`, y
+  `ChatbotMediaPolicy` lo devuelve como `null` porque `ChatbotMediaKinds` no tiene ese tipo. Su tope depende de si está animado (100 KB estático, 500 KB animado), así que la tabla
+  trae el mayor y `OutboundMediaPreparer` mide el estático al leer. `IsAudio` y `IsSticker` son los únicos que rechazan `caption`: no los fundas en `!AcceptsCaption`, o un sticker
+  devolvería el error «Los audios se envían sin texto».

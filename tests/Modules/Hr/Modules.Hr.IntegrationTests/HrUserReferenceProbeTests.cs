@@ -55,7 +55,7 @@ public sealed class HrUserReferenceProbeTests
             Tenant,
             new EmployeeProfile(
                 "Ana", "Pérez", HrDocumentType.CC, "1020304050", "CO", null, null, null, null, null, null, memberId,
-                null, null, null, null, null, ContributorSubtype.Standard, false, [DayOfWeek.Sunday]),
+                null, null, null, null, ContributorSubtype.Standard, false, [DayOfWeek.Sunday]),
             null,
             new NewContract(
                 EmploymentContractId.New(),

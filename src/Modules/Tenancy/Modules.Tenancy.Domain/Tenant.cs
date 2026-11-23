@@ -27,7 +27,8 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? country)
     {
         Id = id;
         OwnerMembershipId = ownerMembershipId;
@@ -36,6 +37,11 @@ public sealed class Tenant
         DefaultCulture = ValidateCulture(defaultCulture);
         TimeZone = ValidateTimeZone(timeZone);
         DateFormat = ValidateDateFormat(dateFormat);
+        if (country is not null)
+        {
+            Country = NormalizeCountryCode(country);
+        }
+
         Status = TenantStatus.Active;
         Version = 1;
         CreatedAt = createdAt;
@@ -134,14 +140,17 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? country = null)
     {
         // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo. El constructor recibe el slug ya
         // validado y normalizado, así que no lo vuelve a validar.
         var normalizedSlug = ValidateSlug(slug);
         EnsureNotReserved(normalizedSlug);
+
+        // Spec 2026-11-22: sin país el tenant conserva el default CO (signup); con país, el de la invitación del distribuidor.
         return new(id, normalizedSlug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
-            createdAt);
+            createdAt, country);
     }
 
     /// <summary>
@@ -153,7 +162,8 @@ public sealed class Tenant
         string displayName,
         string defaultCulture,
         string timeZone,
-        string dateFormat)
+        string dateFormat,
+        string? country = null)
     {
         var normalizedSlug = ValidateSlug(slug);
         EnsureNotReserved(normalizedSlug);
@@ -161,6 +171,11 @@ public sealed class Tenant
         ValidateCulture(defaultCulture);
         ValidateTimeZone(timeZone);
         ValidateDateFormat(dateFormat);
+        if (country is not null)
+        {
+            NormalizeCountryCode(country);
+        }
+
         return normalizedSlug;
     }
 

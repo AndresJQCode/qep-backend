@@ -7,7 +7,8 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
     /// <inheritdoc />
     public partial class AddAppointmentReminderTemplateKind : Migration
     {
-        /// <inheritdoc />
+        /// <summary>Merge con develop (plan 2026-11-21, entrada 51): <c>AddInvoiceTemplateKind</c> es más vieja y reescribe el mismo
+        /// <c>CHECK</c>, así que esta lista incluye <c>Invoice</c>; sin eso, aplicarla sobre una base con facturas fallaría.</summary>
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropCheckConstraint(
@@ -27,7 +28,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                 name: "CK_message_templates_kind",
                 schema: "messaging",
                 table: "message_templates",
-                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','AppointmentReminder')");
+                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder')");
         }
 
         /// <inheritdoc />
@@ -51,7 +52,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                 name: "CK_message_templates_kind",
                 schema: "messaging",
                 table: "message_templates",
-                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice')");
+                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice')");
         }
     }
 }

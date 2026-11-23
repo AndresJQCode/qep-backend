@@ -14,9 +14,7 @@ public sealed record TakeTicketCommand(Guid TenantId, Guid TicketId, long Expect
 /// </summary>
 public sealed class TakeTicketHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -28,22 +26,29 @@ public sealed class TakeTicketHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(TakeTicketCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        // Quien toma una tarea sólo necesita usar tareas; un externo exige gestionar (spec 2026-11-22, D19). Tomar nunca avisa: el
+        // responsable es quien actúa.
+        if (ticket.IsInternal)
+        {
+            await SupportTicketRules.EnsureTaskAssigneeAsync(members, command.TenantId, actor, cancellationToken);
+        }
+        else
+        {
+            await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, actor, cancellationToken);
+        }
 
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
-        await SupportTicketRules.EnsureAssigneeAsync(members, command.TenantId, actor, cancellationToken);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
         var version = ticket.Version;
+        var formerAssignee = ticket.AssigneeMemberId;
         ticket.Assign(actor, actor, now);
         await SupportTicketActions.SaveIfChangedAsync(
             ticket, version, executionContext, auditPublisher, unitOfWork, SupportAuditActions.TicketAssigned, ChangedFields, now,
             cancellationToken);
         if (ticket.Version != version)
         {
-            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+            await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssignee, CancellationToken.None);
         }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);

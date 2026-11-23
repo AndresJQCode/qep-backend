@@ -8,7 +8,10 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
     public partial class AddSchedulingModuleKey : Migration
     {
         /// <summary>Spec 2026-11-21 (Agenda): <c>scheduling</c> queda fuera de <c>DefaultForNewTenants</c> y sin backfill (se prende
-        /// por tenant). Sólo se ensancha el <c>CHECK</c>.</summary>
+        /// por tenant). Sólo se ensancha el <c>CHECK</c>.
+        /// Merge con develop (plan 2026-11-21, entrada 51): esta migración es más vieja que <c>AddPayrollModuleKey</c> y una base que ya
+        /// corrió esa la aplica después, así que el <c>CHECK</c> incluye <c>payroll</c> para no rechazar sus filas. Si corre antes,
+        /// <c>AddPayrollModuleKey</c> deja la lista sin <c>scheduling</c> y <c>AddSchedulingAfterPayrollModuleKey</c> la repone.</summary>
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropCheckConstraint(
@@ -20,7 +23,7 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                 name: "CK_tenant_modules_module_key",
                 schema: "tenancy",
                 table: "tenant_modules",
-                sql: "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo','hr','scheduling')");
+                sql: "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo','hr','payroll','scheduling')");
         }
 
         /// <inheritdoc />
@@ -38,7 +41,7 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                 name: "CK_tenant_modules_module_key",
                 schema: "tenancy",
                 table: "tenant_modules",
-                sql: "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo','hr')");
+                sql: "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo','hr','payroll')");
         }
     }
 }

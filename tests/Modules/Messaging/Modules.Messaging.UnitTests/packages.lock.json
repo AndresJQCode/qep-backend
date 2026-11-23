@@ -336,6 +336,14 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "modules.messaging.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Messaging.Application": "[1.0.0, )",
+          "Modules.Messaging.Domain": "[1.0.0, )"
+        }
+      },
       "modules.messaging.application": {
         "type": "Project",
         "dependencies": {

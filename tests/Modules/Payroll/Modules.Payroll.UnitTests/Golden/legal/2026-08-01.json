@@ -1,0 +1,182 @@
+{
+  "resolvedAt": "2026-08-01",
+  "smmlv": {
+    "key": "Smmlv",
+    "value": 1750905,
+    "effectiveFrom": "2026-01-01"
+  },
+  "transportAllowance": {
+    "key": "TransportAllowance",
+    "value": 249095,
+    "effectiveFrom": "2026-01-01"
+  },
+  "healthEmployeeRate": {
+    "key": "HealthEmployeeRate",
+    "value": 0.04,
+    "effectiveFrom": "2025-01-01"
+  },
+  "healthEmployerRate": {
+    "key": "HealthEmployerRate",
+    "value": 0.085,
+    "effectiveFrom": "2025-01-01"
+  },
+  "pensionEmployeeRate": {
+    "key": "PensionEmployeeRate",
+    "value": 0.04,
+    "effectiveFrom": "2025-01-01"
+  },
+  "pensionEmployerRate": {
+    "key": "PensionEmployerRate",
+    "value": 0.12,
+    "effectiveFrom": "2025-01-01"
+  },
+  "highRiskPensionTotalRate": {
+    "key": "HighRiskPensionTotalRate",
+    "value": 0.26,
+    "effectiveFrom": "2025-01-01"
+  },
+  "arlClassIRate": {
+    "key": "ArlClassIRate",
+    "value": 0.00522,
+    "effectiveFrom": "2025-01-01"
+  },
+  "arlClassIIRate": {
+    "key": "ArlClassIIRate",
+    "value": 0.01044,
+    "effectiveFrom": "2025-01-01"
+  },
+  "arlClassIIIRate": {
+    "key": "ArlClassIIIRate",
+    "value": 0.02436,
+    "effectiveFrom": "2025-01-01"
+  },
+  "arlClassIVRate": {
+    "key": "ArlClassIVRate",
+    "value": 0.0435,
+    "effectiveFrom": "2025-01-01"
+  },
+  "arlClassVRate": {
+    "key": "ArlClassVRate",
+    "value": 0.0696,
+    "effectiveFrom": "2025-01-01"
+  },
+  "compensationFundRate": {
+    "key": "CompensationFundRate",
+    "value": 0.04,
+    "effectiveFrom": "2025-01-01"
+  },
+  "icbfRate": {
+    "key": "IcbfRate",
+    "value": 0.03,
+    "effectiveFrom": "2025-01-01"
+  },
+  "senaRate": {
+    "key": "SenaRate",
+    "value": 0.02,
+    "effectiveFrom": "2025-01-01"
+  },
+  "severanceProvisionRate": {
+    "key": "SeveranceProvisionRate",
+    "value": 0.0833,
+    "effectiveFrom": "2025-01-01"
+  },
+  "premiumProvisionRate": {
+    "key": "PremiumProvisionRate",
+    "value": 0.0833,
+    "effectiveFrom": "2025-01-01"
+  },
+  "vacationProvisionRate": {
+    "key": "VacationProvisionRate",
+    "value": 0.0417,
+    "effectiveFrom": "2025-01-01"
+  },
+  "severanceInterestProvisionRate": {
+    "key": "SeveranceInterestProvisionRate",
+    "value": 0.01,
+    "effectiveFrom": "2025-01-01"
+  },
+  "transportAllowanceCapSmmlv": {
+    "key": "TransportAllowanceCapSmmlv",
+    "value": 2,
+    "effectiveFrom": "2025-01-01"
+  },
+  "nonSalaryCapRate": {
+    "key": "NonSalaryCapRate",
+    "value": 0.40,
+    "effectiveFrom": "2025-01-01"
+  },
+  "exonerationThresholdSmmlv": {
+    "key": "ExonerationThresholdSmmlv",
+    "value": 10,
+    "effectiveFrom": "2025-01-01"
+  },
+  "ibcCapSmmlv": {
+    "key": "IbcCapSmmlv",
+    "value": 25,
+    "effectiveFrom": "2025-01-01"
+  },
+  "sundaySurchargeRate": {
+    "key": "SundaySurchargeRate",
+    "value": 0.90,
+    "effectiveFrom": "2026-07-01"
+  },
+  "weeklyHours": {
+    "key": "WeeklyHours",
+    "value": 42,
+    "effectiveFrom": "2026-07-15"
+  },
+  "extraDayRate": {
+    "key": "ExtraDayRate",
+    "value": 0.25,
+    "effectiveFrom": "2025-01-01"
+  },
+  "extraNightRate": {
+    "key": "ExtraNightRate",
+    "value": 0.75,
+    "effectiveFrom": "2025-01-01"
+  },
+  "nightSurchargeRate": {
+    "key": "NightSurchargeRate",
+    "value": 0.35,
+    "effectiveFrom": "2025-01-01"
+  },
+  "connectivityAllowanceSince": "2025-06-25",
+  "solidarityBrackets": [
+    {
+      "lowerSmmlv": 4,
+      "upperSmmlv": 16,
+      "rate": 0.01,
+      "effectiveFrom": "2026-01-01"
+    },
+    {
+      "lowerSmmlv": 16,
+      "upperSmmlv": 17,
+      "rate": 0.012,
+      "effectiveFrom": "2026-01-01"
+    },
+    {
+      "lowerSmmlv": 17,
+      "upperSmmlv": 18,
+      "rate": 0.014,
+      "effectiveFrom": "2026-01-01"
+    },
+    {
+      "lowerSmmlv": 18,
+      "upperSmmlv": 19,
+      "rate": 0.016,
+      "effectiveFrom": "2026-01-01"
+    },
+    {
+      "lowerSmmlv": 19,
+      "upperSmmlv": 20,
+      "rate": 0.018,
+      "effectiveFrom": "2026-01-01"
+    },
+    {
+      "lowerSmmlv": 20,
+      "upperSmmlv": 25,
+      "rate": 0.02,
+      "effectiveFrom": "2026-01-01"
+    }
+  ]
+}

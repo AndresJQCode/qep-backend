@@ -30,9 +30,7 @@ public sealed class ListTicketNotesValidator : AbstractValidator<ListTicketNotes
 /// (<see cref="SupportMessageCursor"/> over <c>(created_at, id)</c>). Reading needs <c>support.ticket.view</c> (read or manage).
 /// </summary>
 public sealed class ListTicketNotesHandler(
-    IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketNoteRepository notes,
     ISupportMemberDirectory members,
     ISupportViewer viewer,
@@ -41,10 +39,10 @@ public sealed class ListTicketNotesHandler(
 {
     public async Task<SupportTicketNotesDto> HandleAsync(ListTicketNotesQuery query, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
+        await scope.EnsureAccessAsync(query.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
         var ticketId = new SupportTicketId(query.TicketId);
-        _ = await tickets.FindAsync(query.TenantId, ticketId, cancellationToken) ?? throw SupportNotFound.Ticket(query.TicketId);
+        _ = await scope.ViewAsync(query.TenantId, query.TicketId, cancellationToken);
 
         (DateTimeOffset CreatedAt, Guid Id)? before = SupportMessageCursor.TryDecode(query.Before, out var cursor) ? cursor : null;
         // One more than the page, to know whether another follows without counting.

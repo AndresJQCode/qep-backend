@@ -333,7 +333,7 @@ public sealed class OperatorConsoleApiTests
                 TestContext.Current.CancellationToken),
             HttpStatusCode.UnprocessableEntity, "tenancy.modules.inconsistent_dependencies");
         var detail = await GetOkAsync<DetailPayload>(client, Url($"tenants/{tenantId}"));
-        Assert.All(detail.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store" or "ai" or "copilot" or "support" or "purchases" or "wholesale" or "siigo" or "hr" or "scheduling")), module => Assert.Equal("active", module.Status));
+        Assert.All(detail.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer" or "loans" or "store" or "ai" or "copilot" or "support" or "purchases" or "wholesale" or "siigo" or "hr" or "payroll" or "scheduling")), module => Assert.Equal("active", module.Status));
     }
 
     [Fact]

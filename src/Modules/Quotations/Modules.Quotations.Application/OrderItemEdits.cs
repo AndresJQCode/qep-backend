@@ -54,7 +54,9 @@ internal static class OrderItemEdits
                 WholesaleOrderErrors.UnitPriceNotEditable, "Only a wholesale order lets you change a line price.");
         }
 
-        var current = order.Items.ToDictionary(item => item.VariantId);
+        // Los regalos (spec 2026-11-21) no entran en la lista deseada del PUT: se agregan y se quitan por su propia ruta, y
+        // pueden compartir variante con una línea pagada, así que ni se indexan ni se quitan acá.
+        var current = order.Items.Where(item => !item.IsGift).ToDictionary(item => item.VariantId);
         var desiredVariantIds = desired.Select(line => line.VariantId).ToHashSet();
         var edits = new List<OrderItemEdit>();
 

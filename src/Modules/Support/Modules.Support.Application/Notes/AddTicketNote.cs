@@ -31,8 +31,8 @@ public sealed class AddTicketNoteValidator : AbstractValidator<AddTicketNoteComm
 }
 
 /// <summary>
-/// Spec 2026-11-15 §5.4: an internal note. Order: authorization (<c>support.ticket.manage</c>) → active membership (403) → validator →
-/// ticket (404) → a note with this <c>clientId</c> (plan N15: same ticket and author answers it, even on a closed ticket; anything else
+/// Spec 2026-11-15 §5.4: an internal note. Order: access (<c>support.ticket.manage</c> or <c>support.task.use</c>) → validator → the ticket scope (active
+/// membership 403, ticket 404 for what the member cannot see, 403 for what she can only read) → a note with this <c>clientId</c> (plan N15: same ticket and author answers it, even on a closed ticket; anything else
 /// is 409 <c>concurrency.conflict</c>) → closed ticket (422 <c>support.note.ticket_closed</c>) → files → note and audit → commit →
 /// notice on the hub → 201.
 ///
@@ -41,9 +41,7 @@ public sealed class AddTicketNoteValidator : AbstractValidator<AddTicketNoteComm
 /// </summary>
 public sealed class AddTicketNoteHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketNoteRepository notes,
     ISupportMemberDirectory members,
     ISupportViewer viewer,
@@ -59,13 +57,9 @@ public sealed class AddTicketNoteHandler(
 
     public async Task<SupportTicketNoteDto> HandleAsync(AddTicketNoteCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
-        var actor = await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
-            ?? throw SupportAuthorization.Denied();
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
-        var ticket = await tickets.FindAsync(command.TenantId, new SupportTicketId(command.TicketId), cancellationToken)
-            ?? throw SupportNotFound.Ticket(command.TicketId);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, expectedVersion: null, cancellationToken);
 
         // Before the closed check: the retry of a note whose HTTP answer was lost gets its note even if the ticket closed since.
         var noteId = command.ClientId!.Value;
@@ -99,7 +93,7 @@ public sealed class AddTicketNoteHandler(
             note.CreatedAt);
         // A race with the same clientId loses on PK_ticket_notes and answers 409 (SupportUnitOfWork, plan N15).
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+        await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
         return await SupportNoteDtos.ComposeAsync(members, viewer, command.TenantId, note, cancellationToken);
     }
 

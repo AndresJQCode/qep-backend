@@ -17,10 +17,8 @@ public sealed record ReissueTicketPinCommand(Guid TenantId, Guid TicketId, long 
 /// </summary>
 public sealed class ReissueTicketPinHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
     ITenantDirectory tenantDirectory,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketAccessRepository accesses,
     ISupportPinHasher pinHasher,
     ISupportUnitOfWork unitOfWork,
@@ -35,11 +33,11 @@ public sealed class ReissueTicketPinHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(ReissueTicketPinCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
 
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
+        SupportTicketScope.EnsureExternal(ticket);
+        SupportTicketScope.EnsureVersion(ticket, command.ExpectedVersion);
         // Todo ticket nace con su clave; si faltara, no hay dónde guardar el PIN nuevo, y la respuesta es la misma que la de un ticket
         // con nombre para que la pantalla no tenga un caso más.
         var access = await accesses.FindAsync(command.TenantId, ticket.Id, cancellationToken)

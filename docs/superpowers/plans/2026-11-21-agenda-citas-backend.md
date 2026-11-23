@@ -301,6 +301,19 @@ Revisión final de la rama (2026-11-22; ninguna de sus pruebas se corrió: el ow
     nadie lo llama); reabrir una sede es crearla de nuevo. El frontend debe avisarlo antes de confirmar. Pruebas añadidas sin correr: en
     `SchedulingLocationsApiTests` (cascada, citas pasadas intactas, auditoría, idempotencia, sede archivada sin reservas ni recursos nuevos,
     tenant ajeno 403, principal rechazada sin cancelar nada).
+51. **Merge de `develop` (2026-11-22): llegaron nómina (`payroll`) y la plantilla de factura (`Invoice`), que tocan las mismas listas.** Se
+    conservaron los dos lados: `payroll` y luego `scheduling` en `TenantModuleKeys.All` (25 claves) y en el `CHECK` de `tenant_modules`;
+    `Invoice` y luego `AppointmentReminder` en `MessageTemplateKind` (se guarda por nombre) y en su `CHECK`; 110 constantes de permiso
+    (100 + 5 Agenda + 4 nómina + 1 de soporte). Los snapshots de EF no se resolvieron a mano: se tomó el de `develop` y se regeneró.
+    Las migraciones dependían del orden, porque cada par reescribe el mismo `CHECK` con su lista: `AddSchedulingModuleKey` (2026-11-21)
+    es más vieja que `AddPayrollModuleKey` (2026-11-22), y `AddAppointmentReminderTemplateKind` es más nueva que `AddInvoiceTemplateKind`.
+    Por eso se editaron las dos migraciones de la rama (nunca llegaron a `develop`) para que su lista incluya el valor de `develop`; si no,
+    aplicarlas sobre una base con filas `payroll` o `Invoice` falla al validar el `CHECK`. En Tenancy se agregó además
+    `AddSchedulingAfterPayrollModuleKey`, la última, que deja la lista completa sin importar el orden en que corrieron las otras dos. En
+    Mensajería no hizo falta correctiva: la de la rama es la última, y su `Designer` se regeneró con el modelo combinado (agrega el índice
+    `UX_message_templates_invoice`). `has-pending-model-changes` responde «No changes» en los dos contextos. **Límite:** una base local que
+    ya corrió las migraciones de la rama y tiene filas `scheduling` o `AppointmentReminder` falla al aplicar las de `develop`, que no las
+    conocen; se borran esas filas o se recrea la base.
 
 ## Global Constraints
 

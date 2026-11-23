@@ -16,8 +16,7 @@ public sealed record GetNoteFileDownloadCommand(Guid TenantId, Guid TicketId, Gu
 /// </summary>
 public sealed class GetNoteFileDownloadHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketNoteRepository notes,
     ISupportAttachmentStorage storage,
     ISupportAuditPublisher auditPublisher,
@@ -29,10 +28,10 @@ public sealed class GetNoteFileDownloadHandler(
 
     public async Task<SupportAttachmentDownloadDto> HandleAsync(GetNoteFileDownloadCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, command.TenantId, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
 
         var ticketId = new SupportTicketId(command.TicketId);
-        _ = await tickets.FindAsync(command.TenantId, ticketId, cancellationToken) ?? throw SupportNotFound.Ticket(command.TicketId);
+        _ = await scope.ViewAsync(command.TenantId, command.TicketId, cancellationToken);
         var note = await notes.FindAsync(command.TenantId, command.NoteId, cancellationToken);
         if (note is null || note.TicketId != ticketId || note.Files.All(file => file.FileId != command.FileId))
         {

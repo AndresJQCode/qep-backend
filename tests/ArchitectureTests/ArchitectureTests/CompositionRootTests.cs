@@ -17,6 +17,7 @@ using Modules.Hr.Application;
 using Modules.Integrations.Application;
 using Modules.Loans.Application;
 using Modules.Messaging.Application;
+using Modules.Payroll.Application;
 using Modules.Pipeline.Application;
 using Modules.Pos.Application;
 using Modules.Purchases.Application;
@@ -106,6 +107,22 @@ public sealed class CompositionRootTests
         var catalog = scope.ServiceProvider.GetRequiredService<ITenantRoleCatalog>();
 
         Assert.IsType<TenantRoleCatalog>(catalog);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 D-14: el horario de atención es un contrato de BuildingBlocks que implementa Mensajería. Si su registro faltara o
+    /// se armara mal, el aviso de «sin asignar» de Soporte fallaría en el primer tick del worker, no al compilar.
+    /// </summary>
+    [Fact]
+    public void TheContainerResolvesTheBusinessHoursProvider()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var hours = scope.ServiceProvider.GetRequiredService<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider>();
+
+        // The class is internal to Messaging.Infrastructure: it is told by name.
+        Assert.Equal("BusinessHoursProvider", hours.GetType().Name);
     }
 
     /// <summary>
@@ -326,9 +343,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21 y las cinco <c>scheduling.*</c> del spec 2026-11-21 (Agenda).</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheHundredConstants()
+    public void PermissionDiscoveryFindsTheHundredAndTenConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -354,8 +371,9 @@ public sealed class CompositionRootTests
         // + los dos de Siigo (siigo.settings.manage, siigo.invoice.issue, spec 2026-11-18)
         // + el de las fallas de las llamadas a Siigo (siigo.calls.read, spec 2026-11-21)
         // + the five hr.* permissions (spec 2026-11-20).
+        // + the four payroll.* permissions (spec 2026-11-21).
         // + los cinco de la Agenda (scheduling.*, spec 2026-11-21).
-        Assert.Equal(105, PermissionConstants().Length);
+        Assert.Equal(110, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -948,6 +966,41 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-21 (nómina): los cuatro permisos exigen el módulo <c>payroll</c> y van sólo a admin; ni asesor, ni facturación,
+    /// ni cajero. Todos ven plata.
+    /// </summary>
+    [Fact]
+    public void ThePayrollPermissionsRequireThePayrollModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (PayrollPermissions.PeriodRead, "payroll.period", "Períodos de nómina", "read"),
+            (PayrollPermissions.PeriodManage, "payroll.period", "Períodos de nómina", "manage"),
+            (PayrollPermissions.PeriodApprove, "payroll.period", "Períodos de nómina", "approve"),
+            (PayrollPermissions.SettingsManage, "payroll.settings", "Configuración de nómina", "manage"),
+        ];
+        Assert.Equal(
+            ["payroll.period.read", "payroll.period.manage", "payroll.period.approve", "payroll.settings.manage"],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Nómina", definition.Category);
+            Assert.Equal([ModuleKeys.Payroll], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
+    /// <summary>
     /// Spec 2026-11-21 (Agenda): los cinco permisos exigen el módulo <c>scheduling</c> (apagado, el editor de roles los oculta y la API
     /// responde un 403 pelado) y de fábrica van a <c>admin</c> y a los dos roles de sistema de la Agenda; ni asesor, ni facturación, ni
     /// cajero. Configurar servicios, reglas y estructura (<c>settings.manage</c>) es sólo de admin.
@@ -1160,6 +1213,27 @@ public sealed class CompositionRootTests
         Assert.DoesNotContain(SupportPermissions.SettingsManage, catalog.PermissionsFor("advisor"));
     }
 
+    /// <summary>Spec 2026-11-22 (tareas internas, §5.6): <c>support.task.use</c> es de riesgo bajo, exige el módulo Soporte y lo llevan
+    /// de fábrica los cuatro roles, porque la meta es que cualquier miembro cree y trabaje tareas.</summary>
+    [Fact]
+    public void TheTaskUsePermissionIsLowNeedsSupportAndEveryFactoryRoleHasIt()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definition = RegisteredPermissionDefinitions().Single(d => d.Permission == SupportPermissions.TaskUse);
+
+        Assert.Equal("support.task.use", SupportPermissions.TaskUse);
+        Assert.Equal("Usar tareas internas", definition.DisplayName);
+        Assert.Equal("Soporte", definition.Category);
+        Assert.Equal("low", definition.RiskLevel);
+        Assert.Equal([ModuleKeys.Support], definition.RequiredModules!.ToArray());
+        Assert.Equal(new PermissionShape("support.task", "Tareas internas", "use"), definition.Shape);
+        foreach (var role in new[] { "admin", "advisor", "billing", "cashier" })
+        {
+            Assert.Contains(SupportPermissions.TaskUse, catalog.PermissionsFor(role));
+        }
+    }
+
     /// <summary>La otra mitad de los permisos de soporte, más las dos políticas de visibilidad (D5 y D15): <c>TicketView</c> acepta
     /// leer o gestionar y <c>SettingsView</c> además configurar. Sin ellas, la ruta responde 500, no 403.</summary>
     [Fact]
@@ -1185,6 +1259,17 @@ public sealed class CompositionRootTests
         Assert.Equal(
             [SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage],
             AcceptedPermissions(settingsView));
+
+        // Spec 2026-11-22 (tareas internas) §5.6 y D10: actuar sobre un ticket lo decide la puerta; la política sólo deja pasar a
+        // quien gestiona o usa tareas. Ver acepta además leer.
+        Assert.Equal("support.ticket.act", SupportPolicies.TicketAct);
+        Assert.Equal("support.ticket.scoped_view", SupportPolicies.TicketScopedView);
+        var ticketAct = await policies.GetPolicyAsync(SupportPolicies.TicketAct);
+        Assert.NotNull(ticketAct);
+        Assert.Equal([SupportPermissions.Manage, SupportPermissions.TaskUse], AcceptedPermissions(ticketAct));
+        var scopedView = await policies.GetPolicyAsync(SupportPolicies.TicketScopedView);
+        Assert.NotNull(scopedView);
+        Assert.Equal([SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.TaskUse], AcceptedPermissions(scopedView));
     }
 
     private static string[] AcceptedPermissions(AuthorizationPolicy policy) =>
@@ -1417,6 +1502,26 @@ public sealed class CompositionRootTests
         }
 
         Assert.True(mapsOutbox, "Ningún DbContext mapea platform.outbox_messages: la prueba no estaría mirando los productores.");
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 §9.1: el grupo personal de un miembro se llama <c>{tenant}:@member:{id}</c> y el hub lo une desde las claims. Si algún
+    /// autorizador declarara un prefijo que empieza por <c>@</c>, un cliente podría suscribirse a ese grupo y leer avisos ajenos.
+    /// </summary>
+    [Fact]
+    public void NoAuthorizerPrefixStartsWithAt()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var authorizers = scope.ServiceProvider.GetServices<BuildingBlocks.Application.Realtime.IRealtimeTopicAuthorizer>().ToList();
+
+        Assert.NotEmpty(authorizers);
+        Assert.All(authorizers, authorizer => Assert.False(
+            authorizer.Prefix.StartsWith('@'),
+            $"{authorizer.GetType().Name} declara el prefijo '{authorizer.Prefix}': los tópicos '@…' son grupos personales."));
     }
 
     /// <summary>

@@ -3,6 +3,7 @@ paths:
   - "src/Modules/Siigo/**"
   - "tests/Modules/Siigo/**"
   - "src/Bootstrapper/SiigoOpenInvoiceCheck.cs"
+  - "src/Bootstrapper/SiigoInvoiceWhatsApp.cs"
 ---
 
 # Siigo (facturación de pedidos)
@@ -40,6 +41,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
   `Created` y la respuesta lleva `orderMarkFailed`; el siguiente `POST` reintenta sólo la marca. Nunca deja el `POST` fallando.
+- **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
+  `ListUnitPrice × 100 / (100 + IVA)` a 6 decimales; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo
+  hay y **sin retenciones** (no tiene base). No suma al `computedOrderTotal`: el total sin IVA del regalo es 0 y los pagos no cambian. Un regalo
+  de una variante o un IVA sin vincular sale como faltante igual que una línea pagada. **No está probado contra una factura real de Siigo:**
+  verifícalo con `send_to_dian` apagado antes de confiar en `tax_base` y `taxpayer`.
 - **La factura no lleva `additional_fields.purchase_order`.** Siigo lo rechaza con `document_settings` (`Params: ["additional_fields.purchase_order"]`) si el
   tipo de comprobante no tiene la orden de compra configurada, y Ritual Botánico factura sin él. El número del pedido ya va en `observations`.
 - **Los pagos suman el total que calcula Siigo, no el de QEP.** QEP saca el IVA de un precio con IVA incluido como bruto − neto; Siigo lo redondea por
@@ -52,6 +58,16 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   entrega como `{"base64": "…"}` (campo tomado de la documentación del SDK, no probado contra una cuenta real: si falla, mirar ese campo
   primero). Sólo lo tiene una fila con id de Siigo y `Created`, `Stamped` o `StampRejected` (`SiigoInvoice.HasPdf`, que viaja como `hasPdf`);
   una resuelta a mano no tiene id y no se puede pedir.
+
+- **Siigo nunca guarda el PDF de una factura ni lo loguea, y enviarla por WhatsApp es de Quotations** (spec 2026-11-21).
+  `POST …/siigo-invoice/{invoiceId}/send-whatsapp` (`SendSiigoInvoiceWhatsAppHandler`) pide el PDF a Siigo por el mismo camino de la descarga
+  (`SiigoInvoiceSupport.LoadPdfAsync`), lo entrega por el puerto `ISiigoInvoiceWhatsApp` y audita `siigo.invoice.whatsapp_sent` sólo si el
+  envío salió. El canal, el teléfono y la plantilla los resuelve `IInvoiceWhatsAppDelivery` (Quotations; adaptador `SiigoInvoiceWhatsApp`, Bootstrapper):
+  **`WhatsAppChannelSelection` es `internal` de Quotations y no se reimplementa en Siigo**, y `canSendWhatsApp` de la lista sale de ese mismo
+  `CanSendAsync` (dos canales sin elección guardada → `false`). Ni el PDF, ni la URL pública, ni el teléfono entran a logs, `call_failures`,
+  auditoría ni respuestas (`SiigoNoLeakTests`). La copia pública de Zenvia vive en `invoices/` del bucket público con clave aleatoria y su
+  lifecycle de 1 día **se crea a mano** (`npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1`):
+  sin esa regla las copias se quedan para siempre abiertas a quien tenga la URL. Por Meta Quotations no publica copia, pero Mensajería deja una copia **privada** del adjunto en el hilo (por tenant, misma retención que cualquier adjunto saliente); sólo Zenvia necesita la copia pública. Mandar una factura no recuerda la elección de canal del tenant.
 
 - **La facturación masiva es una tanda con worker, no un bucle en el request** (`siigo.invoice_batches` e `invoice_batch_items`,
   `SiigoInvoiceBatchWorker`). Cada pedido de la tanda lo factura el mismo `IssueSiigoInvoiceHandler` de siempre, así que el candado por

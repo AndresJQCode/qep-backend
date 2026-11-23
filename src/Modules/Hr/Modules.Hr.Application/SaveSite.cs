@@ -38,6 +38,7 @@ public sealed class CreateSiteHandler(
         var cityId = await HrSettingsSupport.EnsureCityAsync(geography, request.CityId, cancellationToken);
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
 
+        HrSiteCompensationFund.Ensure(company.Country, request.CompensationFund);
         var site = Site.Create(
             SiteId.New(), command.TenantId, company.Id, request.Name!, HrText.Clean(request.Address), cityId,
             HrText.Clean(request.CompensationFund), now);
@@ -56,6 +57,7 @@ public sealed class UpdateSiteHandler(
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     IHrSettingsRepository settings,
+    HrCompanyRefs companies,
     IHrGeographyLookup geography,
     IHrUnitOfWork unitOfWork,
     IHrAuditPublisher auditPublisher,
@@ -79,6 +81,9 @@ public sealed class UpdateSiteHandler(
             HrFieldErrors.Throw("companyId", "La empresa de una sede no cambia.");
         }
 
+        // La empresa de una sede es fija: el país que manda es el de la guardada, aunque esté desactivada.
+        var company = (await companies.ResolveAsync(command.TenantId, [site.CompanyId], cancellationToken))[site.CompanyId];
+        HrSiteCompensationFund.Ensure(company.Country, request.CompensationFund);
         var cityId = await HrSettingsSupport.EnsureCityAsync(geography, request.CityId, cancellationToken);
         var address = HrText.Clean(request.Address);
         var fund = HrText.Clean(request.CompensationFund);

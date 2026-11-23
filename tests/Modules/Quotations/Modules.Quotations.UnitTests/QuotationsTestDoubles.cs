@@ -20,10 +20,15 @@ internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
         Task.FromException(failure);
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken) =>
+        Task.FromException(failure);
 }
 
 /// <summary>Los canales del tenant, fijos por prueba (spec 2026-10-21). Replica la única regla por documento del adaptador real
-/// (spec 2026-11-09 D6) que un handler puede notar: para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible.
+/// (spec 2026-11-09 D6) que un handler puede notar: para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible, y
+/// para una factura, una sin <c>InvoiceTemplateId</c>.
 /// <see cref="Documents"/> guarda qué documento pidió cada llamada.</summary>
 internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] channels) : IWhatsAppChannelDirectory
 {
@@ -33,9 +38,12 @@ internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] chan
     {
         Documents.Add(document);
         return Task.FromResult<IReadOnlyList<WhatsAppChannel>>(
-            document == WhatsAppDocument.Order
-                ? [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })]
-                : channels);
+            document switch
+            {
+                WhatsAppDocument.Order => [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })],
+                WhatsAppDocument.Invoice => [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { InvoiceTemplateId: null or "" })],
+                _ => channels,
+            });
     }
 }
 
@@ -76,9 +84,12 @@ internal static class WhatsAppChannels
 {
     public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-    public static ZenviaWhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
+    public const string InvoiceTemplateId = "5f6e7d8c-9b0a-4c1d-8e2f-3a4b5c6d7e8f";
+
+    public static ZenviaWhatsAppChannel Any(
+        Guid? connectionId = null, string? orderTemplateId = OrderTemplateId, string? invoiceTemplateId = InvoiceTemplateId) =>
         new(connectionId ?? Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000",
-            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
+            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId, invoiceTemplateId);
 
     public static MetaWhatsAppChannel Meta(Guid? connectionId = null) =>
         new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233");
@@ -98,10 +109,19 @@ internal sealed class RecordingZenviaSender : IZenviaWhatsAppSender
         return Task.CompletedTask;
     }
 
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppInvoiceMessage Message)> Invoices { get; } = [];
+
     public Task SendOrderAsync(
         ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
         Orders.Add((channel, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendInvoiceAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Invoices.Add((channel, message));
         return Task.CompletedTask;
     }
 }
@@ -120,10 +140,19 @@ internal sealed class RecordingMetaSender : IMetaWhatsAppSender
         return Task.CompletedTask;
     }
 
+    public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppInvoiceMessage Message)> Invoices { get; } = [];
+
     public Task SendOrderAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
         Orders.Add((channel, waId, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendInvoiceAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Invoices.Add((channel, waId, message));
         return Task.CompletedTask;
     }
 }
@@ -162,6 +191,16 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
     {
         Channel = channel;
         SentOrder = message;
+        return Task.CompletedTask;
+    }
+
+    public WhatsAppInvoiceMessage? SentInvoice { get; private set; }
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Channel = channel;
+        SentInvoice = message;
         return Task.CompletedTask;
     }
 }
@@ -838,6 +877,26 @@ internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfSto
         return Task.FromResult(PublicUrl);
     }
 
+    /// <summary>La URL pública de la copia de una factura para Zenvia.</summary>
+    public const string InvoicePublicUrl = "https://assets-qep.example.co/invoices/abc.pdf";
+
+    /// <summary>Los bytes de cada copia de factura publicada, en orden.</summary>
+    public List<byte[]> PublishedInvoices { get; } = [];
+
+    /// <summary>Si se pone, publicar la copia de la factura lanza esta falla (bucket público sin configurar, error de R2).</summary>
+    public Exception? InvoicePublishFailure { get; set; }
+
+    public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken)
+    {
+        if (InvoicePublishFailure is not null)
+        {
+            throw InvoicePublishFailure;
+        }
+
+        PublishedInvoices.Add(content.ToArray());
+        return Task.FromResult(InvoicePublicUrl);
+    }
+
     public Task<string> CreateDownloadUrlAsync(
         string storageKey, string downloadFileName, CancellationToken cancellationToken)
     {
@@ -1502,6 +1561,13 @@ internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
     public static FixedTenantModules WithoutOrders => new(
         TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders])));
 
+    /// <summary>Un tenant que sólo vende por pedidos: cotizaciones oculta, pedidos prendido.</summary>
+    public static FixedTenantModules WithoutQuotations => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations])));
+
+    public static FixedTenantModules WithoutQuotationsNorOrders => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders])));
+
     public int FindCalls { get; private set; }
 
     public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
@@ -1674,10 +1740,18 @@ internal sealed class StubTenantDirectory : ITenantDirectory
     /// <summary>Cuántas veces se leyó la configuración regional del tenant.</summary>
     public int RegionalCalls { get; private set; }
 
+    /// <summary>Si se pone, la lectura regional lanza esta falla (después de contarse).</summary>
+    public Exception? RegionalFailure { get; set; }
+
     public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
         TenantId tenantId, CancellationToken cancellationToken)
     {
         RegionalCalls++;
+        if (RegionalFailure is not null)
+        {
+            throw RegionalFailure;
+        }
+
         return Task.FromResult(Regional);
     }
 

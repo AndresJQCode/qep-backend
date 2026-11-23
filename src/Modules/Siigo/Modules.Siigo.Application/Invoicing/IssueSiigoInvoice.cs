@@ -216,7 +216,7 @@ public sealed class IssueSiigoInvoiceHandler(
             if (row.Kind == SiigoInvoiceKind.Freight && !IsInvoiced(prepared.Rows))
             {
                 // La del pedido no salió (rechazada, sin saber o todavía en camino): la de flete espera. Se suelta su reclamo.
-                row.MarkTransient(clock.UtcNow);
+                row.MarkTransient(null, clock.UtcNow);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
                 continue;
             }
@@ -281,7 +281,8 @@ public sealed class IssueSiigoInvoiceHandler(
 
             default:
                 // Timeout, 5xx, 429 o red: no se sabe si Siigo la creó. Sigue Pending, se suelta el reclamo y el reintento manda lo mismo.
-                row.MarkTransient(now);
+                // El motivo queda en la fila para que el pedido le diga al tenant qué pasó (spec siigo-motivo-pendiente).
+                row.MarkTransient(outcome is SiigoInvoiceOutcome.Transient transient ? SiigoInvoiceSupport.TransientCodeOf(transient.Reason) : null, now);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
                 return false;
         }

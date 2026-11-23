@@ -96,6 +96,16 @@ public sealed class TenantModuleChangeBatchTests
             Rejected(stored, ChangeReason.Contract, [new(Hr, On)]).Code);
     }
 
+    // Spec 2026-11-21 (nómina): payroll depende de hr.
+    [Fact]
+    public void EnablingPayrollWithoutHrIsInconsistent()
+    {
+        var stored = new Dictionary<TenantModuleKey, TenantModuleStatus> { [Companies] = On, [Hr] = Off };
+
+        Assert.Equal(TenantModuleChangeBatch.InconsistentDependenciesCode,
+            Rejected(stored, ChangeReason.Contract, [new(Payroll, On)]).Code);
+    }
+
     // Spec 2026-11-21 (Agenda): toda cita es de un cliente, así que scheduling depende de customers.
     [Fact]
     public void EnablingSchedulingWithoutCustomersIsInconsistent()

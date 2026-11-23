@@ -143,6 +143,15 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Spec 2026-11-21: manda el PDF de esa factura al WhatsApp del cliente del pedido. Mismo permiso que generarla; 204 sin cuerpo.
+        invoice.MapPost("/{invoiceId:guid}/send-whatsapp", SendInvoiceWhatsAppAsync)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         invoice.MapPost("/", IssueInvoiceAsync)
             .Produces<IReadOnlyList<SiigoInvoiceDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -246,6 +255,13 @@ public static class SiigoEndpoints
     {
         var pdf = await dispatcher.QueryAsync(new GetSiigoInvoicePdfQuery(tenantId, orderId, invoiceId), cancellationToken);
         return Results.File(pdf.Content, "application/pdf", pdf.FileName);
+    }
+
+    private static async Task<IResult> SendInvoiceWhatsAppAsync(
+        Guid tenantId, Guid orderId, Guid invoiceId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new SendSiigoInvoiceWhatsAppCommand(tenantId, orderId, invoiceId), cancellationToken);
+        return Results.NoContent();
     }
 
     // El cuerpo es opcional: sin él se usa la propuesta de pagos de la cuenta de cobro.

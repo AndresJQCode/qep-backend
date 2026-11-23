@@ -32,6 +32,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
+        // Spec 2026-11-21: la factura de Siigo, por el mismo núcleo que el pedido.
+        services.AddScoped<IInvoiceTemplateOutbound, InvoiceTemplateOutbound>();
         // Mayorista: el aviso por WhatsApp de una invitación de distribuidor, por el mismo núcleo que la plantilla de cobro.
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
         // Agenda: el recordatorio de una cita por WhatsApp, por el mismo núcleo.
@@ -56,6 +58,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IAutomationInbox, AutomationInbox>();
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();
+        // Spec 2026-11-22 §8.5: the contact name of a conversation, for the bell entries that point at it.
+        services.AddScoped<IMessagingConversationLabels, MessagingConversationLabels>();
         services.AddScoped<IMessageQueries, MessageQueries>();
         services.AddScoped<IExternalMessageQueries, ExternalMessageQueries>();
         services.AddScoped<ConversationSummaryBuilder>();
@@ -127,6 +131,9 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingReportSource, MessagingReportSource>();
         // El cast es a propósito: las dos interfaces tienen que compartir la instancia scoped (un solo repositorio por solicitud).
         services.AddScoped<IBusinessHours>(provider => (BusinessHoursRepository)provider.GetRequiredService<IBusinessHoursRepository>());
+        // Spec 2026-11-22 D-14: the schedules as a capability shared with other modules (the contract lives in BuildingBlocks, like
+        // IUserReferenceProbe); Support counts its unassigned-ticket hours through it without referencing Messaging.
+        services.AddScoped<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider, BusinessHoursProvider>();
         // Spec 2026-10-14 §4.3: el espejo de plantillas.
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
@@ -134,6 +141,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
         // Spec 2026-11-09 D5: la del pedido, para el directorio de canales y el sender de Meta en Bootstrapper.
         services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
+        // Spec 2026-11-21: la de la factura, para el directorio de canales y el sender de Meta.
+        services.AddScoped<IInvoiceTemplateReadiness, InvoiceTemplateReadiness>();
         // Soporte fase 2: la de «Aviso de respuesta», para las opciones de respuesta de un ticket y su envío por plantilla.
         services.AddScoped<ISupportReplyTemplateReadiness, SupportReplyTemplateReadiness>();
         // Soporte fase 4b: la de «Respuesta formal», para las opciones de respuesta formal y su envío por plantilla con el PDF.

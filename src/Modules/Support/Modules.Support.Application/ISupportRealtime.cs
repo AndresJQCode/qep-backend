@@ -8,4 +8,9 @@ namespace Modules.Support.Application;
 public interface ISupportRealtime
 {
     Task TicketChangedAsync(Guid tenantId, Guid ticketId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-22 §5.4: a task changed. Same notice as <see cref="TicketChangedAsync"/> and, besides, one on
+    /// <c>support:tasks:{m}</c> of each distinct member of <paramref name="memberIds"/> (creator, assignee, former assignee). Never
+    /// throws. Handlers go through <see cref="SupportTicketNotices"/>, which picks this or the external one.</summary>
+    Task TaskChangedAsync(Guid tenantId, Guid ticketId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken);
 }

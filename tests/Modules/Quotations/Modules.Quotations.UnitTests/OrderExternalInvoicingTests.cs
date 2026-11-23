@@ -197,6 +197,57 @@ public sealed class OrderExternalInvoicingTests
         Assert.Null(invoicing.ShippingCity);
     }
 
+    // 10 u. pagas a 1.000 (IVA 19 incluido) y un regalo de 1 u. de la misma variante: la factura externa tiene que ver el regalo marcado,
+    // con su precio de lista, y sin sumar al total de productos.
+    private static (Order Order, Guid VariantId) OrderWithAGiftOfThePaidVariant()
+    {
+        var variantId = Guid.CreateVersion7();
+        var productId = Guid.CreateVersion7();
+        var order = Order.CreateManual(
+            OrderId.New(),
+            TenantId,
+            "PED-2026-0002",
+            new OrderHeader(ClientId, Advisor, "COP", "Transferencia", false, null, false, []),
+            QuotationParties.Empty,
+            Account,
+            ShippingDetails.None,
+            [new OrderLineInput(variantId, productId, 10m, 1_000m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
+            null,
+            Advisor,
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)],
+            Now,
+            orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+        order.AddGift(OrderItemId.New(), variantId, productId, 1m, 1_000m, 19, OrderLineCosts.None, Advisor, Now);
+        return (order, variantId);
+    }
+
+    [Fact]
+    public async Task GetForInvoicingMapsAGiftLineWithItsFlagAndListPrice()
+    {
+        var (order, variantId) = OrderWithAGiftOfThePaidVariant();
+        var service = NewService(
+            order,
+            new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Calle 1 # 2-3",
+                WithRetention: false, VatSurplus: false, IdentificationNumber: "900123456", IdentificationType: "Nit"),
+            new Dictionary<Guid, string>());
+
+        var invoicing = await service.GetForInvoicingAsync(TenantId, order.Id.Value, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(invoicing);
+        Assert.Equal(2, invoicing.Lines.Count);
+        var paid = Assert.Single(invoicing.Lines, line => !line.IsGift);
+        var gift = Assert.Single(invoicing.Lines, line => line.IsGift);
+        Assert.Equal(variantId, gift.VariantId);
+        Assert.Equal(1_000m, gift.ListUnitPrice);
+        Assert.Equal(0m, gift.Subtotal);
+        Assert.Equal(0m, gift.TaxAmount);
+        Assert.Equal(10m, paid.Quantity);
+        // El regalo no suma a los productos: sólo la línea pagada (10.000 con IVA).
+        Assert.Equal(paid.Subtotal + paid.TaxAmount, invoicing.ProductsTotal);
+        Assert.Equal(10_000m, invoicing.ProductsTotal);
+    }
+
     private static ExternalOrderInvoicingService NewService(
         Order order, QuotationCustomerRef customer, IReadOnlyDictionary<Guid, string> cityNames) =>
         new(

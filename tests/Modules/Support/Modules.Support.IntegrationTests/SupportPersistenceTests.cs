@@ -497,8 +497,8 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         await using var read = factory.Services.CreateAsyncScope();
         var tickets = read.ServiceProvider.GetRequiredService<ISupportTicketRepository>();
         var today = new DateOnly(2026, 11, 17);
-        var totals = await tickets.TotalsAsync(tenant, today, new DateOnly(2026, 11, 24), Ct);
-        var off = await tickets.TotalsAsync(tenant, today, null, Ct);
+        var totals = await tickets.TotalsAsync(tenant, SupportTicketKind.External, null, today, new DateOnly(2026, 11, 24), Ct);
+        var off = await tickets.TotalsAsync(tenant, SupportTicketKind.External, null, today, null, Ct);
 
         Assert.Equal(SupportTicketStatuses.Ordered, totals.ByStatus.Keys.Order());
         Assert.Equal(
@@ -656,6 +656,138 @@ public sealed class SupportPersistenceTests(SharedSupportHost sharedHost) : ICla
         update.Parameters.AddWithValue("id", ticket.Id.Value);
 
         Assert.Equal(1, await update.ExecuteNonQueryAsync(Ct));
+    }
+
+    // Spec 2026-11-22: tareas internas.
+    [Fact]
+    public async Task ATaskRoundTrips()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var creator = Guid.CreateVersion7();
+        var assignee = Guid.CreateVersion7();
+
+        var saved = await SupportTicketSeed.SaveInternalTicketAsync(factory, tenant, creator, assignee, new DateOnly(2030, 1, 15));
+
+        var found = await SupportTicketSeed.FindTicketAsync(factory, tenant, saved.Id);
+        Assert.True(found.IsInternal);
+        Assert.Equal(creator, found.CreatedByMemberId);
+        Assert.Equal(assignee, found.AssigneeMemberId);
+        Assert.Equal(SupportReplyChannel.None, found.ReplyChannel);
+        Assert.Equal(SupportTicketIntake.Internal, found.Intake);
+        Assert.Equal(new DateOnly(2030, 1, 15), found.DueOn);
+        Assert.Null(found.ManualMedium);
+        Assert.Null(found.CustomerId);
+        Assert.Null(found.Requester);
+        Assert.Equal("Tarea interna", found.TypeName);
+    }
+
+    [Fact]
+    public async Task TheInternalCheckRejectsATaskWithACustomer()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var task = await SupportTicketSeed.SaveInternalTicketAsync(factory, tenant, Guid.CreateVersion7(), Guid.CreateVersion7());
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var update = new NpgsqlCommand("UPDATE support.tickets SET customer_id = gen_random_uuid() WHERE id = @id", connection);
+        update.Parameters.AddWithValue("id", task.Id.Value);
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => update.ExecuteNonQueryAsync(Ct));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal("CK_tickets_internal", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task TheInternalCheckRejectsAnExternalTicketWithoutAReplyChannel()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+        var ticket = NewTicket(tenant, (await TypesAsync(factory, tenant))[0], 1, Now, Guid.CreateVersion7());
+        await SaveAsync(factory, ticket);
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var update = new NpgsqlCommand("UPDATE support.tickets SET reply_channel = 'None' WHERE id = @id", connection);
+        update.Parameters.AddWithValue("id", ticket.Id.Value);
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => update.ExecuteNonQueryAsync(Ct));
+
+        Assert.Equal("CK_tickets_internal", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task ATenantHasOneInternalType()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var insert = new NpgsqlCommand(
+            """
+            INSERT INTO support.ticket_types (id, tenant_id, name, term_is_legal, requires_formal_response, is_published, is_active,
+                is_internal, position, created_at, updated_at, version)
+            VALUES (gen_random_uuid(), @tenant, 'Otra tarea', false, false, false, true, true, 10, now(), now(), 1)
+            """,
+            connection);
+        insert.Parameters.AddWithValue("tenant", tenant);
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => insert.ExecuteNonQueryAsync(Ct));
+
+        Assert.Equal(PostgresErrorCodes.UniqueViolation, exception.SqlState);
+        Assert.Equal("UX_ticket_types_tenant_internal", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task ProvisioningSeedsTheInternalTypeLast()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+
+        await EnsureAsync(factory, tenant);
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var select = new NpgsqlCommand(
+            "SELECT name, position, is_internal FROM support.ticket_types WHERE tenant_id = @tenant ORDER BY position", connection);
+        select.Parameters.AddWithValue("tenant", tenant);
+        var rows = new List<(string Name, int Position, bool IsInternal)>();
+        await using (var reader = await select.ExecuteReaderAsync(Ct))
+        {
+            while (await reader.ReadAsync(Ct))
+            {
+                rows.Add((reader.GetString(0), reader.GetInt32(1), reader.GetBoolean(2)));
+            }
+        }
+
+        Assert.Equal(9, rows.Count);
+        Assert.Equal(("Tarea interna", 9, true), rows[^1]);
+        Assert.All(rows.Take(8), row => Assert.False(row.IsInternal));
+        Assert.Equal(8, (await TypesAsync(factory, tenant)).Count);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var internalType = await scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>().FindInternalAsync(tenant, Ct);
+        Assert.NotNull(internalType);
+        Assert.True(internalType.IsInternal);
+        Assert.Equal(9, internalType.Position);
+        Assert.NotNull(await scope.ServiceProvider.GetRequiredService<ISupportTicketTypeRepository>().FindAsync(tenant, internalType.Id, Ct));
+    }
+
+    [Fact]
+    public async Task EnsuringTheInternalTypeTwiceKeepsOne()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        await EnsureAsync(factory, tenant);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var provisioner = scope.ServiceProvider.GetRequiredService<ISupportProvisioner>();
+            await provisioner.EnsureInternalTypeAsync(tenant, Ct);
+            await provisioner.EnsureInternalTypeAsync(tenant, Ct);
+        }
+
+        await using var connection = new NpgsqlConnection(ConnectionString(factory));
+        await connection.OpenAsync(Ct);
+        await using var count = new NpgsqlCommand(
+            "SELECT count(*) FROM support.ticket_types WHERE tenant_id = @tenant AND is_internal", connection);
+        count.Parameters.AddWithValue("tenant", tenant);
+        Assert.Equal(1L, await count.ExecuteScalarAsync(Ct));
     }
 
     // Fase 4b (H9): el documento de la respuesta formal se guarda en el mismo SaveChanges que la respuesta y se lee igual: la decisión

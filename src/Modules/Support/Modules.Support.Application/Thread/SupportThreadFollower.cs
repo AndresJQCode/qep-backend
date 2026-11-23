@@ -23,6 +23,7 @@ public sealed partial class SupportThreadFollower(
     ISupportUnclassifiedRepository unclassified,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportIntegrationEvents integrationEvents,
     ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     ILogger<SupportThreadFollower> logger)
@@ -109,7 +110,7 @@ public sealed partial class SupportThreadFollower(
         }
         else
         {
-            SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher);
+            SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher, integrationEvents, actorMemberId: null);
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -130,7 +131,7 @@ public sealed partial class SupportThreadFollower(
     {
         links.Add(SupportTicketMessage.Link(
             ticket.TenantId, ticket.Id, conversationId, messageId, occurredAt, SupportTicketMessageState.Linked, context.Now));
-        SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher);
+        SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher, integrationEvents, actorMemberId: null);
     }
 
     // Lo que otra réplica u otra escritura ya ganó no es una falla: se descarta, o se reintenta en la siguiente pasada. Cualquier otra

@@ -36,6 +36,8 @@ public static class PermissionVocabulary
         ["operate"] = "Abrir y cerrar",
         // Spec 2026-11-17 (copiloto): usar el chat no es «Ver» —no da acceso a ningún dato— y gasta saldo del tenant.
         ["use"] = "Usar",
+        // Spec 2026-11-21 (nómina): aprobar una quincena liquidada no es «Gestionar».
+        ["approve"] = "Aprobar",
     };
 
     /// <summary>
@@ -68,6 +70,7 @@ public static class PermissionVocabulary
         ["Mayorista"] = "Mayorista",
         ["Siigo"] = "Siigo",
         ["Recursos humanos"] = "Recursos humanos",
+        ["Nómina"] = "Nómina",
         ["Agenda"] = "Agenda",
         ["Tienda"] = "Tienda",
         ["uncategorized"] = "Sin categoría",

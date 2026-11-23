@@ -21,6 +21,20 @@ public sealed class TenantModuleSetTests
         Assert.True(set.IsEnabled(TenantModuleKeys.Pos));
     }
 
+    // Un pedido nace sin cotización (spec 2026-10-15): apagar quotations no arrastra a orders ni a lo que cuelga de orders.
+    [Fact]
+    public void WithoutQuotationsOrdersAndItsDependentsStayOn()
+    {
+        var set = AllBut(TenantModuleKeys.Quotations);
+
+        Assert.False(set.IsEnabled(TenantModuleKeys.Quotations));
+        Assert.True(set.IsEnabled(TenantModuleKeys.Orders));
+        Assert.True(set.IsEnabled(TenantModuleKeys.Shopify));
+        Assert.True(set.IsEnabled(TenantModuleKeys.Store));
+        Assert.True(set.IsEnabled(TenantModuleKeys.Wholesale));
+        Assert.True(set.IsEnabled(TenantModuleKeys.Siigo));
+    }
+
     // Causa raíz, no la dependencia directa: contratar quotations no arreglaría orders.
     [Fact]
     public void MissingDependenciesNamesTheRootCause()

@@ -224,7 +224,7 @@ tres `SenaApprentice*`, `StudentLaw789` y `StudentDecree055`; `Employee` y `Univ
 { "fileId": "uuid", "fileName": "contrato.pdf" }
 
 // CompanyRefDto — empresa del módulo Companies (razón social propia del tenant, con NIT), leída por IHrCompanyLookup
-{ "id": "uuid", "name": "Comercializadora QEP S.A.S.", "taxId": "900123456",
+{ "id": "uuid", "name": "Comercializadora QEP S.A.S.", "taxId": "900123456", "country": "CO",   // ISO alfa-2 (2026-11-21); "CO" si la empresa no lo tiene
   "isActive": true }                              // false si se desactivó después en Empresas (una con RRHH no se borra: D-11)
 
 // SiteDto (sede)
@@ -431,7 +431,7 @@ registran **antes** que `/hr/employees/{id:guid}`.
 // SiteRequest
 { "companyId": "uuid",                           // requerido al crear: empresa ACTIVA del tenant ⇒ si no, 422 errors.companyId;
                                                  // en el PUT igual al guardado ⇒ si cambia, 422 errors.companyId
-  "name": "string 1..100", "address": "string ≤ 200" | null, "cityId": "uuid" | null, "compensationFund": "uno de GET /hr/settings → compensationFunds" | null }   // fuera de la lista ⇒ 422 errors.compensationFund
+  "name": "string 1..100", "address": "string ≤ 200" | null, "cityId": "uuid" | null, "compensationFund": "uno de GET /hr/settings → compensationFunds" | null }   // fuera de la lista ⇒ 422 errors.compensationFund; sólo empresas de Colombia (2026-11-21): con una empresa de otro país un valor no vacío es 422 «La caja de compensación sólo aplica a empresas de Colombia.», null vale
 // (llamada del plan) además de la empresa, sólo el nombre es requerido: la fase 1 no calcula con la sede.
 
 // WorkplaceRequest

@@ -48,7 +48,6 @@ public sealed class Employee
 
     public string? OccupationalRiskProvider { get; private set; }
 
-    public string? CompensationFund { get; private set; }
 
     public ContributorSubtype ContributorSubtype { get; private set; }
 
@@ -335,7 +334,6 @@ public sealed class Employee
         PensionFund = profile.PensionFund;
         SeveranceFund = profile.SeveranceFund;
         OccupationalRiskProvider = profile.OccupationalRiskProvider;
-        CompensationFund = profile.CompensationFund;
         ContributorSubtype = profile.ContributorSubtype;
         ForeignPensionExempt = profile.ForeignPensionExempt;
         RestDays = profile.RestDays.ToArray();

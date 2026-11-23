@@ -31,8 +31,16 @@ public sealed class ListTicketTypesHandler(
         await provisioner.EnsureAsync(query.TenantId, cancellationToken);
         // Una sola lectura de los tipos usados para toda la lista (plan G6).
         var used = await tickets.UsedTypeIdsAsync(query.TenantId, cancellationToken);
-        return (await types.ListAsync(query.TenantId, cancellationToken))
+        var listed = (await types.ListAsync(query.TenantId, cancellationToken))
             .Select(type => SupportDtoMapping.ToDto(type, used.Contains(type.Id)))
             .ToList();
+        // Ajustes sólo ve los ocho propios del tenant. El selector de tickets agrega al final el tipo interno marcado (D9): el
+        // frontend decide con isInternal si lo ofrece; nunca se reordena ni se edita.
+        if (!query.ForSettings && await types.FindInternalAsync(query.TenantId, cancellationToken) is { } internalType)
+        {
+            listed.Add(SupportDtoMapping.ToDto(internalType, used.Contains(internalType.Id)));
+        }
+
+        return listed;
     }
 }
