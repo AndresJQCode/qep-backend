@@ -9,6 +9,7 @@ using Modules.Ai.Infrastructure.Model.Anthropic;
 using Modules.Ai.Infrastructure.Model.OpenAi;
 using Modules.Ai.Infrastructure.Options;
 using Modules.Ai.Infrastructure.Persistence;
+using Modules.Ai.Infrastructure.Seed;
 
 namespace Modules.Ai.Infrastructure;
 
@@ -20,6 +21,9 @@ public static class AiInfrastructureExtensions
         services.AddSingleton<IValidateOptions<AiOptions>, AiOptionsValidator>();
         services.AddOptions<AiOptions>().Bind(configuration.GetSection(AiOptions.SectionName)).ValidateOnStart();
         services.AddSingleton<IAiModelCatalog, ConfiguredAiModelCatalog>();
+
+        // Spec 2026-11-23: las plantillas de agente del sistema se leen una vez de los recursos embebidos y no cambian mientras corre el proceso.
+        services.AddSingleton<ISystemAgentTemplateCatalog, SystemAgentTemplateCatalog>();
 
         var connectionString = configuration.GetConnectionString("QepDatabase")
             ?? throw new InvalidOperationException("Connection string 'QepDatabase' is required.");

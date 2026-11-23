@@ -254,6 +254,8 @@ public static class MultiReplicaInventory
             "Modules/Authorization/Modules.Authorization.Application/RoleCatalog.cs:72 — tabla inmutable armada del código; igual en cada pod"),
         new("Modules.Automations.Infrastructure.Seed.SystemTemplateCatalog", StateClassification.PerPodByDesign,
             "Modules/Automations/Modules.Automations.Infrastructure/Seed/SystemTemplateCatalog.cs:45 — plantillas embebidas leídas al arrancar; igual en cada pod"),
+        new("Modules.Ai.Infrastructure.Seed.SystemAgentTemplateCatalog", StateClassification.PerPodByDesign,
+            "Modules/Ai/Modules.Ai.Infrastructure/Seed/SystemAgentTemplateCatalog.cs:29 — plantillas embebidas leídas al arrancar; igual en cada pod"),
         new("Modules.Siigo.Infrastructure.Api.SiigoTokenCache", StateClassification.PerPodByDesign,
             "Modules/Siigo/Modules.Siigo.Infrastructure/Api/SiigoTokenCache.cs:17 — caché de token por pod; un token de más por réplica no tiene efecto (Siigo acepta varios vivos y un 401 lo renueva)"),
         new("Modules.Siigo.Infrastructure.Api.SiigoApiClient", StateClassification.PerPodByDesign,

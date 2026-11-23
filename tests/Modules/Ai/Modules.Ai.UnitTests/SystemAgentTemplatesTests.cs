@@ -51,6 +51,58 @@ public sealed class SystemAgentTemplatesTests
         ($"Modules.Ai.Infrastructure.Seed.AgentTemplates.{fileId ?? json["id"]!.GetValue<string>()}.json", json.ToJsonString());
 
     [Fact]
+    public void TheCatalogHasExactlyTheAppointmentAssistant()
+    {
+        Assert.Equal(["asistente-de-citas"], Catalog.All.Select(template => template.Id));
+        var template = Catalog.Find("asistente-de-citas")!;
+        Assert.Equal("Asistente de citas", template.Name);
+        Assert.Equal([TenantModuleKeys.Scheduling], template.Requires);
+    }
+
+    // Las reglas de publicar menos lo que el tenant todavía tiene que elegir (proveedor y modelo, conexiones, miembro del traspaso).
+    [Fact]
+    public void EverySystemAgentTemplateIsPublishableOnceTheTenantChoosesItsPieces()
+    {
+        foreach (var template in Catalog.All)
+        {
+            var config = template.ConfigFor(DefaultModel);
+
+            Assert.True(new AgentConfigFieldsValidator().Validate(config).IsValid, template.Id);
+            var issues = AgentConfigValidator.Validate(
+                config,
+                new AgentValidationContext(
+                    ConnectionCount: 1,
+                    AgentModelAvailability.Available,
+                    HandoffMemberCanReply: null,
+                    Publishing: true,
+                    Scheduling: config.Tools.Scheduling ? new AgentSchedulingReadiness(true, 1) : null));
+            Assert.DoesNotContain(issues, issue => issue.Severity == AgentIssueSeverity.Error);
+            Assert.Equal(template.Requires.Contains(TenantModuleKeys.Scheduling), config.Tools.Scheduling);
+            Assert.True(template.Name.Length <= Agent.NameMaxLength);
+        }
+    }
+
+    [Fact]
+    public void TheAppointmentAssistantKeepsItsContract()
+    {
+        var config = Catalog.Find("asistente-de-citas")!.ConfigFor(DefaultModel);
+
+        Assert.Equal("friendly", config.Tone);
+        Assert.Equal(new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: false, Scheduling: true), config.Tools);
+        Assert.True(config.AnswerOnlyFromSources);
+        Assert.False(config.UseQuickReplies);
+        Assert.Equal(["horarios-de-atencion", "cancelar-o-reprogramar"], config.Faq.Select(faq => faq.Id));
+        Assert.Equal(
+            new AgentHandoff("unassigned", null, "Te paso con una persona del equipo para que te ayude por este mismo chat.", 20, 2),
+            config.Handoff);
+        Assert.Equal("NewConversation", config.Trigger);
+        Assert.StartsWith("¡Hola! Soy el asistente de citas.", config.Greeting, StringComparison.Ordinal);
+        Assert.Contains("check_availability", config.Instructions, StringComparison.Ordinal);
+        Assert.Contains("book_appointment", config.Instructions, StringComparison.Ordinal);
+        Assert.Null(config.QuotationDraft);
+    }
+
+    [Fact]
     public void AValidFileLoadsWithItsModulesAndItsConfig()
     {
         var catalog = new SystemAgentTemplateCatalog([File(Valid())]);

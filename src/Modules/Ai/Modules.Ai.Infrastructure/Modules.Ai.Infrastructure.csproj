@@ -21,6 +21,10 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Spec 2026-11-23: las plantillas de agente del sistema viajan dentro del ensamblado, como las de chatbots. -->
+    <EmbeddedResource Include="Seed\AgentTemplates\*.json" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Modules.Ai.UnitTests" />
     <InternalsVisibleTo Include="Modules.Ai.IntegrationTests" />
   </ItemGroup>
