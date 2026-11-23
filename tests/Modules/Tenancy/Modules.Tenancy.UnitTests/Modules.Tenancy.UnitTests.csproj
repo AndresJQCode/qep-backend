@@ -15,5 +15,7 @@
          mismo patrón que Modules.Authorization.UnitTests con sus handlers. -->
     <ProjectReference Include="..\..\..\..\src\Modules\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Tenancy\Modules.Tenancy.Infrastructure\Modules.Tenancy.Infrastructure.csproj" />
+    <!-- PhoneInput (the three-state phone of a profile PUT) lives with the request it reads. -->
+    <ProjectReference Include="..\..\..\..\src\Modules\Tenancy\Modules.Tenancy.Api\Modules.Tenancy.Api.csproj" />
   </ItemGroup>
 </Project>

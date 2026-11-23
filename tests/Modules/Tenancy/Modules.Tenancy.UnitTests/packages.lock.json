@@ -336,6 +336,13 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "modules.tenancy.api": {
+        "type": "Project",
+        "dependencies": {
+          "Modules.Tenancy.Application": "[1.0.0, )",
+          "Modules.Tenancy.Domain": "[1.0.0, )"
+        }
+      },
       "modules.tenancy.application": {
         "type": "Project",
         "dependencies": {

@@ -192,6 +192,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateMemberProfileCommand, MembershipListItemDto>,
             UpdateMemberProfileHandler>();
+        // Notice phone (spec 2026-11-22 section 5.5): the caller's own membership. The validator enters with
+        // AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            IQueryHandler<GetMyMembershipQuery, MyMembershipDto>,
+            GetMyMembershipHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateMyPhoneCommand, MyMembershipDto>,
+            UpdateMyPhoneHandler>();
         services.AddScoped<
             ICommandHandler<CreateUploadSessionCommand, UploadSessionDto>,
             CreateUploadSessionHandler>();
