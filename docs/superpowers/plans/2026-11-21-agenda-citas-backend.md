@@ -7,7 +7,7 @@
 
 ## Estado y traspaso (2026-11-21)
 
-Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A, B y C (Tareas 1 a 10) y la Tarea 11.** Faltan las Tareas 12 y 13.
+Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. **Hecho: Bloques A, B y C (Tareas 1 a 10) y las Tareas 11 y 12.** Falta la Tarea 13.
 
 | Tarea | Estado | Commit |
 | --- | --- | --- |
@@ -22,7 +22,7 @@ Rama `claude/trusting-archimedes-uk0ksk`, sin mergear a `develop` ni a `main`. *
 | 9 Disponibilidad, reserva, transiciones, clientes de la cita, auditoría | Hecha (sin correr `dotnet test`: orden del owner) | `c083fc0c2`, `c7abf6da6`, `714679456` |
 | 10 Calendario y escritorio (lecturas BFF) | Hecha (sin correr `dotnet test`: orden del owner) | `e53a4e10b` |
 | 11 Clientes: fusión y borrado | Hecha (sin correr `dotnet test`: orden del owner), más el arreglo de bloqueos por sede (corrección 30) | `bf1c15b8c`, `d60b131a9` |
-| 12 Recordatorio por WhatsApp (dos commits) | Por hacer | |
+| 12 Recordatorio por WhatsApp (dos commits) | Hecha (sin correr `dotnet test`: orden del owner; correcciones 33 a 40) | `c9231d5f8` (Mensajería), `6ee6ac8b9` (Agenda) |
 | 13 Verificación final | Por hacer | |
 
 **Lo primero que hay que correr en tu máquina** (el trabajo hasta aquí se hizo en un contenedor sin Docker, con el SDK 10.0.115 y un
@@ -53,7 +53,8 @@ nadie lo llama todavía: lo invoca cada caso de uso antes de leer, con el nombre
 - `dotnet-ef` debe ser la 10.0.13 (la de EF Core del repo).
 
 **Pendiente de decidir (owner):** la posición de «Agenda» en el menú del frontend; si cualquier cita bloquea borrar al cliente (D-11, la spec
-dice que sí); y si un recordatorio por WhatsApp necesita el consentimiento del cliente (Tarea 12).
+dice que sí); y, de la Tarea 12, quién firma el recordatorio cuando el recurso no tiene miembro y nadie confirmó la cita (corrección 34) y si las
+reglas deben validar al guardar que la conexión esté activa y la plantilla aprobada (corrección 37). El consentimiento ya se decidió (PD-7).
 
 **`docs/estado.md`:** no se toca en esta rama. Al mergear a `develop`, agregar la fila «Agenda: citas, franjas, recursos y cupos» (backend,
 Bloques A y B construidos) con estos commits y el enlace a la spec y a este plan, y el renglón del Registro.
@@ -200,6 +201,49 @@ Tarea 11 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suit
     `CustomerDeletionAcrossModulesTests`; las réplicas de `CustomerMergeReferencesTests` llevan `scheduling.appointments` mínima. La fusión **no** suma
     citas a `CustomerMergeReferenceCounts` (la vista previa no cambia, como con soporte y cobros).
 
+Tarea 12 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suites al final):
+
+33. **El `clientId` de Mensajería es un `Guid`; la llave del plan es texto.** `ReminderMessage.IdempotencyKey` es `appointment-reminder:{id}`
+    (`AppointmentReminderRules.KeyOf`) y el adaptador deriva el `Guid` de ella (primeros 16 bytes de su SHA-256, `SchedulingReminderSender.ClientIdOf`).
+    La idempotencia es la de siempre, por `(conversation_id, client_id)`: si el mensaje salió y marcar la cita falló, el reintento devuelve la misma
+    fila de Mensajería.
+34. **Quién firma el mensaje.** `messages` exige un autor (`sent_by_member_id`, CHECK `SentByOneCheck`) y la cita no guarda quién la creó, sólo su
+    historial. El barredor firma con el miembro vinculado al recurso y, sin él o inactivo, con el último actor del historial que siga activo; sin
+    ninguno omite con `no_sender_member`. **Decisión pendiente del owner:** una cita de canal confirmada en automático sobre un recurso sin miembro
+    (una sala, un equipo) no tiene a nadie que firme y nunca se recuerda. La salida es un campo nuevo en las reglas (`reminderSenderMemberId`, no está
+    en el contrato) o aceptar el límite.
+35. **Columnas y reclamo.** Migración `AddAppointmentReminderTracking`: `reminder_attempts`, `reminder_claimed_until`, `reminder_last_error` y
+    `reminder_skipped_reason` en `appointments`, la acción `ReminderSkipped` del historial (el `CHECK` se amplía) y el índice
+    `IX_appointments_reminder_due` ahora excluye las omitidas. El barredor reclama cada cita con un `UPDATE … RETURNING` (como `webhook_deliveries`):
+    con varios pods gana uno, y un fallo vuelve a salir al vencer el reclamo (esperas de 2, 10 y 30 min). **Tope de 3 intentos:** al tercer fallo la
+    cita se omite con `send_failed:{código}` y la entrada queda en el historial. Entra a `MultiReplicaInventory` como `Claimed`.
+36. **Consentimiento (PD-7 verificado en el código).** `ICustomerDataConsentRepository.FindLatestAsync` ordena por `(OccurredAt DESC, Sequence DESC)` y
+    consulta **por cliente**, no por identidad de canal. Una revocación con `Medium = Other` (sin conversación ni canal, `CK_data_consents_identity`) es
+    por eso la última fila igual que una `ThisConversation`, y omite el recordatorio (`consent_revoked`). `MarketingOptOut` es el de la ficha
+    (`marketing_opt_out`). Con el cliente fusionado se lee el que quedó. El adaptador (`SchedulingReminderRecipients`) usa los repositorios públicos
+    de Clientes y no SQL, así que no entra en `sql-entre-modulos`. Motivos de omisión: `customer_missing`, `customer_inactive`, `consent_revoked`,
+    `marketing_opt_out`, `no_phone` (sin E.164 válido) y `no_sender_member`, en ese orden.
+37. **Las reglas (`settings`) no cambian.** El dominio ya responde 422 `scheduling.reminder.connection_invalid` / `template_missing` si falta la conexión o
+    la plantilla al prender el recordatorio. Que la conexión esté activa o la plantilla aprobada **no** se valida al guardar: la Agenda no referencia
+    Mensajería y las pruebas de `settings` usan ids sueltos. Se ve al enviar (`template_not_approved`, `connection_unavailable:*`) y, agotados los
+    intentos, queda en el historial. `reminderTemplateId` no elige la fila: hay una `AppointmentReminder` por conexión y el envío usa la aprobada de
+    `reminderConnectionId`. Si el owner quiere validar al guardar, es un método más en el puerto.
+38. **Variables.** `nombre_cliente`, `servicio`, `fecha_hora`, `recurso` y `sede`, más las cuatro fijas. `nombre_cliente` repite a la fija
+    `nombre_contacto` (el plan la pidió así). `fecha_hora` es `dddd d 'de' MMMM 'a las' HH:mm` en `es-CO` y en la zona del tenant, con la hora en
+    24 h para no depender del designador a. m. / p. m. de cada versión de ICU: «martes 24 de noviembre a las 15:00». El formato de fecha del tenant no se
+    aplica, como con la vigencia de la cotización. Plantilla `qep_agenda_recordatorio` (`UTILITY`, `es`); el borrador y el alta son
+    `POST/GET …/template-management/appointment-reminder[/draft]`.
+39. **El barredor.** `AppointmentReminderProcessor` y `AppointmentReminderWorker` en `Scheduling.Infrastructure/Reminders/`; la opción
+    `Scheduling:Workers:ReminderPollSeconds` (60, en `appsettings.example.json`) y la primera pasada espera un tick, como los demás barredores. No
+    reclama nada de un tenant sin `scheduling` y `messaging` efectivos: prender Mensajería después encuentra la cita intacta. Pide
+    `Microsoft.Extensions.Hosting.Abstractions` y `Microsoft.Extensions.Options.ConfigurationExtensions` a `Scheduling.Infrastructure`, así que los
+    `packages.lock.json` de quien lo referencia cambian.
+40. **Pruebas sin correr.** El RED de 12a y de 12b fue de compilación (`AppointmentReminder*` y `RecordReminderSkipped` no existían). Escritas y no
+    corridas: `AppointmentReminderTemplateDefinitionTests`, `AppointmentReminderTemplateProvisioningApiTests` y `AppointmentReminderOutboundTests`
+    (Mensajería), `AppointmentReminderRulesTests` y las dos de `AppointmentTests` (unitarias de la Agenda), `AppointmentReminderWorkerTests`
+    (integración, contra una base migrada), `SchedulingReminderSenderTests` y `SchedulingReminderRecipientsTests` (Bootstrapper) y
+    `TheContainerValidatesAndBuildsTheSchedulingReminderWorker` (arquitectura). Los nombres del plan son los de `AppointmentReminderWorkerTests`.
+
 ## Global Constraints
 
 - **Rama.** El trabajo va en la rama de la sesión, `claude/trusting-archimedes-uk0ksk` (la que asigna el entorno; el `develop` local está
@@ -278,8 +322,8 @@ Decisiones del owner posteriores a la Tarea 8:
   recordatorio de esa cita. Se **omite** si el último consentimiento del cliente (`customers.data_consents`, última fila por
   `(occurred_at, sequence)`) es `Revoked`, o si tiene `MarketingOptOut`; el motivo queda en el registro del envío. **No hay baja automática
   por texto libre** (decisión P1 del owner, 2026-10-12: una palabra escrita no es consentimiento): quien responde para parar los
-  recordatorios lo atiende un asesor en la bandeja. Pendiente de verificar en la Tarea 12: cómo se trata `Revoked` + `Medium = Other`, que
-  no lleva identidad de canal.
+  recordatorios lo atiende un asesor en la bandeja. Verificado en la Tarea 12 (corrección 36): una revocación con `Medium = Other`, que
+  no lleva identidad de canal, también omite el recordatorio.
 - **Frontend** (2026-11-22): «Agenda» va en el grupo de ventas y atención del menú, junto a Pedidos, Cotizaciones, Embudo y Soporte. Este plan
   es sólo backend.
 
@@ -582,7 +626,7 @@ asignación (`FirstFree`) ocurre aquí. Idempotente por `clientRequestId` (misma
 `AddWholesaleInvitationNoticeTemplateKind` para el CHECK de `kind`), variables en `SystemTemplateVariables` (`nombre_cliente`, `servicio`,
 `fecha_hora`, `recurso`, `sede`) con su valor en el emisor, aprovisionamiento y borrador
 (`POST/GET …/template-management/appointment-reminder`). Pruebas calco de las de `WholesaleInvitationNotice`.
-- [ ] Commit — `feat(messaging): appointment reminder system template`
+- [x] Commit — `feat(messaging): appointment reminder system template` (`c9231d5f8`)
 
 **12b — Agenda:** `IAppointmentReminderSender` (Application), adaptador `src/Bootstrapper/SchedulingReminderSender.cs` sobre el emisor de
 Mensajería (calco de `SupportReplyChannels`), y `AppointmentReminderWorker` (`AddHostedService`, calco de `WebhookDeliveryWorker`).
@@ -590,10 +634,12 @@ Selecciona citas `Confirmed` con `starts_at - offset <= now` y `reminder_sent_at
 prendidos, y `reminder_enabled`; envía con `clientId` `appointment-reminder:{appointmentId}`; marca `reminder_sent_at` y deja la entrada
 «Recordatorio enviado» del historial; un fallo guarda código y reintenta con tope; cliente sin teléfono válido se omite con motivo.
 
-- [ ] **Step 1: Pruebas que fallan:** `TwoPassesSendOneReminder`, `ACancelledAppointmentIsNotReminded`, `AnAppointmentThatAlreadyStartedIsNotReminded`,
-  `ATenantWithoutMessagingNeverReminds`, `ACustomerWithoutAPhoneIsSkippedWithAReason`, `AFailureRetriesUpToTheCap`, `TheReminderLeavesAHistoryEntry`.
-- [ ] **Step 2: RED. Step 3: Implementar. Step 4: GREEN.**
-- [ ] **Step 5: Commit** — `feat(scheduling): appointment reminder worker`
+- [x] **Step 1: Pruebas que fallan:** `TwoPassesSendOneReminder`, `ACancelledAppointmentIsNotReminded`, `AnAppointmentThatAlreadyStartedIsNotReminded`,
+  `ATenantWithoutMessagingNeverReminds`, `ACustomerWithoutAPhoneIsSkippedWithAReason`, `AFailureRetriesUpToTheCap`, `TheReminderLeavesAHistoryEntry`,
+  más `ARevokedCustomerIsNotReminded` y `AMarketingOptOutCustomerIsNotReminded` (PD-7).
+- [x] **Step 2: RED. Step 3: Implementar. Step 4: GREEN.** RED y GREEN fueron `dotnet build` (sin `dotnet test`: orden del owner). Pruebas nuevas sin
+  correr: ver la corrección 40.
+- [x] **Step 5: Commit** — `feat(scheduling): appointment reminder worker` (`6ee6ac8b9`)
 
 ### Task 13: Verificación final
 
