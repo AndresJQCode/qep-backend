@@ -65,7 +65,7 @@ public sealed class SupportAssigneeEventsApiTests(ClockedSupportHost host) : ICl
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(Ct);
         await using var command = new NpgsqlCommand(
-            "SELECT payload_json FROM platform.outbox_messages WHERE event_name = @name AND correlation_id = @id::text ORDER BY occurred_at",
+            "SELECT payload::text FROM platform.outbox_messages WHERE event_name = @name AND correlation_id = @id::text ORDER BY occurred_at",
             connection);
         command.Parameters.AddWithValue("name", eventName);
         command.Parameters.AddWithValue("id", ticketId);
@@ -241,5 +241,71 @@ public sealed class SupportAssigneeEventsApiTests(ClockedSupportHost host) : ICl
 
         Assert.Single(await EventsAsync(world.Factory, Assigned, ticket.Id));
         Assert.Empty(await EventsAsync(world.Factory, Released, ticket.Id));
+    }
+
+    [Fact]
+    public async Task ReplyingAndResolvingReleasesTheAssignee()
+    {
+        var world = await StartAsync();
+        var ticket = await CreateCustomerTicketAsync(world);
+        var version = await AssignAsync(world, ticket.Id, ticket.Version, world.AdvisorMember);
+
+        var replied = await world.Manager.PostActionAsync(
+            $"tickets/{ticket.Id}/replies",
+            new { clientId = Guid.CreateVersion7(), channel = "Email", text = "Ya quedó.", resolve = true },
+            version);
+
+        Assert.True(replied.StatusCode == HttpStatusCode.Created, await BodyAsync(replied));
+        var released = Assert.Single(await EventsAsync(world.Factory, Released, ticket.Id));
+        Assert.Equal(world.AdvisorMember, released.GetProperty("formerAssigneeMemberId").GetGuid());
+        Assert.Equal(SupportAssigneeReleaseReasons.Resolved, released.GetProperty("reason").GetString());
+        Assert.False(released.GetProperty("isInternal").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ClosingAnOpenTicketReleasesWithClosed()
+    {
+        var world = await StartAsync();
+        var ticket = await CreateCustomerTicketAsync(world);
+        var version = await AssignAsync(world, ticket.Id, ticket.Version, world.AdvisorMember);
+        var waiting = await world.Manager.ActAsync(ticket.Id, "status", new { status = "WaitingOnCustomer" }, version);
+        var waitingVersion = SupportTicketScenario.Version(await JsonAsync(waiting));
+
+        var closed = await world.Manager.ActAsync(ticket.Id, "status", new { status = "Closed" }, waitingVersion);
+
+        Assert.Equal(HttpStatusCode.OK, closed.StatusCode);
+        var released = Assert.Single(await EventsAsync(world.Factory, Released, ticket.Id));
+        Assert.Equal(SupportAssigneeReleaseReasons.Closed, released.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task ResolvingAnUnassignedTicketPublishesNoRelease()
+    {
+        var world = await StartAsync();
+        var ticket = await CreateCustomerTicketAsync(world);
+
+        var resolved = await world.Manager.ActAsync(ticket.Id, "status", new { status = "Resolved" }, ticket.Version);
+
+        Assert.Equal(HttpStatusCode.OK, resolved.StatusCode);
+        Assert.Empty(await EventsAsync(world.Factory, Released, ticket.Id));
+    }
+
+    // The Closed branch of the handler with a conversation runs inside its own transaction: the release must travel in it too.
+    [Fact]
+    public async Task ClosingATicketWithAConversationReleasesItsAssignee()
+    {
+        var world = await StartAsync();
+        var conversation = await SupportMessagingSeed.SeedConversationAsync(world.Factory, world.TenantId);
+        var created = await world.Manager.CreateFromConversationAsync(conversation);
+        var id = SupportTicketScenario.Id(created);
+        var version = await AssignAsync(world, id, SupportTicketScenario.Version(created), world.AdvisorMember);
+        var waiting = await world.Manager.ActAsync(id, "status", new { status = "WaitingOnCustomer" }, version);
+        var waitingVersion = SupportTicketScenario.Version(await JsonAsync(waiting));
+
+        var closed = await world.Manager.ActAsync(id, "status", new { status = "Closed" }, waitingVersion);
+
+        Assert.True(closed.StatusCode == HttpStatusCode.OK, await BodyAsync(closed));
+        var released = Assert.Single(await EventsAsync(world.Factory, Released, id));
+        Assert.Equal(SupportAssigneeReleaseReasons.Closed, released.GetProperty("reason").GetString());
     }
 }
