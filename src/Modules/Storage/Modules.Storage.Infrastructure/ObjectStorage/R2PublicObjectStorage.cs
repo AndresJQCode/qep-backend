@@ -25,6 +25,34 @@ internal sealed class R2PublicObjectStorage(IAmazonS3 client, IOptions<StorageOp
             DestinationKey = publicKey,
         }, cancellationToken);
 
+    public async Task UploadAsync(
+        string publicKey,
+        ReadOnlyMemory<byte> content,
+        string contentType,
+        CancellationToken cancellationToken)
+    {
+        // Sin bucket público no hay dónde subir: se falla ruidoso, igual que GetUrl.
+        if (!IsConfigured)
+        {
+            throw new InvalidOperationException("Public image storage is not configured.");
+        }
+
+        using var stream = new MemoryStream(content.ToArray());
+        await client.PutObjectAsync(
+            new PutObjectRequest
+            {
+                BucketName = Settings.PublicBucket,
+                Key = publicKey,
+                InputStream = stream,
+                ContentType = contentType,
+                // Las mismas dos banderas que R2ObjectStorage.UploadAsync: R2 no implementa el cuerpo
+                // firmado en chunks, y el cliente ya se construye sin checksum en trailer.
+                UseChunkEncoding = false,
+                DisablePayloadSigning = true,
+            },
+            cancellationToken);
+    }
+
     public Task DeleteAsync(string publicKey, CancellationToken cancellationToken) =>
         IsConfigured
             ? client.DeleteObjectAsync(Settings.PublicBucket, publicKey, cancellationToken)

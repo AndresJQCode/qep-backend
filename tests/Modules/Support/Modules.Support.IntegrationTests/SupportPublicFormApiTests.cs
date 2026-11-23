@@ -27,7 +27,7 @@ public sealed class SupportPublicFormApiTests(SupportPublicHost host) : IClassFi
         await ExecuteAsync(
             factory,
             """
-            WITH ordered AS (SELECT id, row_number() OVER (ORDER BY position) AS n FROM support.ticket_types WHERE tenant_id = @tenant)
+            WITH ordered AS (SELECT id, row_number() OVER (ORDER BY position) AS n FROM support.ticket_types WHERE tenant_id = @tenant AND NOT is_internal)
             UPDATE support.ticket_types t SET
                 is_published = CASE WHEN o.n = 2 THEN false ELSE t.is_published END,
                 is_active = CASE WHEN o.n = 3 THEN false ELSE t.is_active END,
@@ -51,7 +51,7 @@ public sealed class SupportPublicFormApiTests(SupportPublicHost host) : IClassFi
             2L,
             await ScalarAsync(
                 factory,
-                "SELECT count(*) FROM support.ticket_types WHERE tenant_id = @tenant AND (NOT is_active OR NOT is_published)",
+                "SELECT count(*) FROM support.ticket_types WHERE tenant_id = @tenant AND NOT is_internal AND (NOT is_active OR NOT is_published)",
                 ("tenant", tenantId)));
         Assert.All(types, type => Assert.True(type.TryGetProperty("termBusinessDays", out _)));
     }
@@ -407,5 +407,37 @@ public sealed class SupportPublicFormApiTests(SupportPublicHost host) : IClassFi
         }
 
         return names;
+    }
+
+    // Spec 2026-11-22 §5.3: el tipo interno nunca se ofrece, ni siquiera publicado y activo en la base.
+    [Fact]
+    public async Task ThePublicFormNeverOffersTheInternalType()
+    {
+        var factory = await host.StartTestAsync();
+        var tenant = NewTenantId();
+        var slug = await SeedPublishedTenantAsync(factory, tenant);
+        var tenantId = Guid.Parse(tenant);
+        await SupportTicketSeed.SaveInternalTicketAsync(factory, tenantId, Guid.CreateVersion7(), Guid.CreateVersion7());
+        await MakeInternalTypeVisibleAsync(factory, tenantId);
+        try
+        {
+            using var client = VisitorClient(factory);
+
+            var response = await client.GetAsync(PublicUrl(slug, "/form"), Ct);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var types = (await JsonAsync(response)).GetProperty("types").EnumerateArray().ToList();
+            Assert.DoesNotContain(types, type => type.GetProperty("name").GetString() == "Tarea interna");
+            // La prueba sólo vale si el tipo interno existía publicado y activo: lo que lo esconde es el filtro, no la siembra.
+            Assert.Equal(
+                1L,
+                await ScalarAsync(
+                    factory, "SELECT count(*) FROM support.ticket_types WHERE tenant_id = @tenant AND is_internal AND is_published AND is_active",
+                    ("tenant", tenantId)));
+        }
+        finally
+        {
+            await RestoreInternalTypeConstraintAsync(factory);
+        }
     }
 }

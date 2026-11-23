@@ -29,7 +29,6 @@ internal static class ActivityChanges
         Change("pensionFund", before.PensionFund, after.PensionFund),
         Change("severanceFund", before.SeveranceFund, after.SeveranceFund),
         Change("occupationalRiskProvider", before.OccupationalRiskProvider, after.OccupationalRiskProvider),
-        Change("compensationFund", before.CompensationFund, after.CompensationFund),
         Change("contributorSubtype", before.ContributorSubtype, after.ContributorSubtype),
         Change("foreignPensionExempt", before.ForeignPensionExempt, after.ForeignPensionExempt),
         Change("restDays", string.Join(',', before.RestDays), string.Join(',', after.RestDays))]);

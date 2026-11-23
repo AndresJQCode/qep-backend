@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
 using Modules.Support.Domain;
+using Modules.Support.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
@@ -62,6 +63,27 @@ public sealed class SupportUserReferenceProbeTests(SharedSupportHost sharedHost)
         await SaveTicketAsync(factory, tenant, assignee: null, actor);
 
         Assert.False(await RetainsAsync(factory, bystanderUser));
+    }
+
+    // Spec 2026-11-22: el creador de una tarea también retiene al usuario. Se borra la traza para que sólo created_by_member_id lo
+    // referencie: el responsable es otro y el actor del evento Created desaparece.
+    [Fact]
+    public async Task TheCreatorOfATicketIsRetained()
+    {
+        var (factory, tenant) = await NewTenantAsync();
+        var creator = await SeedMemberAsync(factory, $"creator-{Guid.CreateVersion7():N}@example.com", "Eva", "admin", tenantId: tenant.ToString());
+        var assignee = await SeedMemberAsync(factory, $"assignee-{Guid.CreateVersion7():N}@example.com", "Ana", "admin", tenantId: tenant.ToString());
+        var creatorUser = await UserOfAsync(factory, creator);
+        Assert.False(await RetainsAsync(factory, creatorUser));
+        var task = await SupportTicketSeed.SaveInternalTicketAsync(factory, tenant, creator, assignee);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<SupportDbContext>().Database;
+            await database.ExecuteSqlAsync($"DELETE FROM support.ticket_events WHERE ticket_id = {task.Id.Value}", Ct);
+        }
+
+        Assert.True(await RetainsAsync(factory, creatorUser));
     }
 
     // La respuesta se guarda sin RecordReply: así sólo la fila de ticket_replies referencia al autor, y la traza no lo retiene.

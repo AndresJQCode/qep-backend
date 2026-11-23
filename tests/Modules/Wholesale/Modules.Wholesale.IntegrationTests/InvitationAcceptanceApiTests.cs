@@ -212,6 +212,55 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(1, owner[0]);
     }
 
+    // Spec 2026-11-22: el tenant nuevo nace con el país del distribuidor guardado; un `country` en el cuerpo del accept se ignora.
+    [Fact]
+    public async Task NewTenantIsBornWithTheDistributorCountryAndNotTheBodyOne()
+    {
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(
+            Factory, NewEmail(), "B12345678", country: "ES", identificationType: "NIF");
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        using var session = WholesaleApiHarness.CreateSession(Factory, userId);
+
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant", country = "FR" }, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
+        Assert.True(accepted.Created);
+        Assert.Equal("ES", await TenantCountryAsync(accepted.TenantId));
+    }
+
+    [Fact]
+    public async Task NewTenantOfAColombianDistributorStaysInColombia()
+    {
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+
+        var accepted = (await (await AcceptNewTenantAsync(userId, token)).Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
+
+        Assert.Equal("CO", await TenantCountryAsync(accepted.TenantId));
+    }
+
+    // Spec 2026-11-22: vincular no sobrescribe el país del tenant que el distribuidor ya tenía.
+    [Fact]
+    public async Task LinkTenantDoesNotChangeTheCountryOfTheLinkedTenant()
+    {
+        var mine = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(
+            Factory, WholesaleApiHarness.EmailOf(mine), "B12345678", country: "ES", identificationType: "NIF");
+        using var session = WholesaleApiHarness.CreateSession(Factory, mine.SubjectId, mine.TenantId);
+
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "LinkTenant", tenantId = mine.TenantId }, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("CO", await TenantCountryAsync(mine.TenantId));
+    }
+
+    private async Task<string> TenantCountryAsync(Guid tenantId) =>
+        (await WholesaleApiHarness.RowsAsync<string>(
+            Factory, $"""SELECT country AS "Value" FROM tenancy.tenants WHERE id = {tenantId}"""))[0];
+
     // Spec 2026-11-19 §3b: el formulario llega prellenado con la razón social y un slug sin la forma societaria del final.
     [Fact]
     public async Task TheSummarySuggestsTheSlugWithoutTheCorporateSuffix()

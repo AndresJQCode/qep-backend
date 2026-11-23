@@ -82,6 +82,12 @@ internal sealed class NotificationsOptionsValidator(IHostEnvironment environment
             }
         }
 
+        if (options.InApp.RetentionDays is < InAppOptions.MinRetentionDays or > InAppOptions.MaxRetentionDays)
+        {
+            failures.Add(
+                $"Notifications:InApp:RetentionDays must be between {InAppOptions.MinRetentionDays} and {InAppOptions.MaxRetentionDays}.");
+        }
+
         return failures.Count > 0
             ? ValidateOptionsResult.Fail(failures)
             : ValidateOptionsResult.Success;

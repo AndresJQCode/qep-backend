@@ -554,6 +554,33 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Regiones y ciudades por país
+
+El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. La región (departamento,
+provincia) **sólo sirve para filtrar ciudades: no se guarda**. Colombia guarda `CityId`; el resto de países
+guarda el nombre de la ciudad como texto (`CityName`).
+
+| Ruta | Respuesta |
+| --- | --- |
+| `GET /api/v1/countries` | `[{ code, name, regionKind }]`: el catálogo de países por nombre. `regionKind` es `Department` (`CO`), `Province` (`ES`) o `null` si el país no tiene catálogo de regiones: ahí la pantalla cae al texto libre. |
+| `GET /api/v1/countries/{country}/regions` | `[{ id, code, name }]` por nombre. País sin catálogo: `200 []`. |
+| `GET /api/v1/countries/{country}/regions/{regionId}/cities` | `[{ id, code, name }]` por nombre. Región que no es de ese país: `404 geography.region.not_found`. |
+
+- **Colombia** sale de DIVIPOLA (`departments`, `cities`): los `id` son los mismos que sirven `/api/v1/departments`
+  y `/api/v1/cities`, que no cambian.
+- **Los demás países** salen de `geography.regions` y `geography.region_cities`, que `RegionSeeder` siembra desde
+  `Seed/Data/<país>-regions.json` y `<país>-cities.json`. Un arranque normal no lee esas tablas: compara el SHA-256
+  de los dos archivos con el de `geography.seed_state` y, si coincide, termina. Sólo si cambió (primer arranque, o un
+  archivo nuevo) parsea, valida y aplica el país en una transacción con `INSERT … ON CONFLICT` sobre `unnest`, sin
+  cargar filas ni usar el change tracker. Si cambias la **lógica** del importador y no los archivos, sube
+  `RegionSeedHash.SeederVersion`, o las bases que ya coinciden no se enterarán. Hoy sólo España: 52 provincias y 8.132
+  municipios de la «Relación de municipios y sus códigos por provincias» del INE (1 de enero de 2025; el artículo
+  invertido del INE, «Rozas de Madrid, Las», se guarda como se conoce: «Las Rozas de Madrid»,
+  `https://www.ine.es/daco/daco42/codmun/diccionario25.xlsx`). El código del municipio es `CPRO` + `CMUN`.
+- **Un país nuevo** son sus dos JSON, una entrada en `RegionSeeder.EmbeddedSources` y otra en `CountryCatalogs.All`
+  (una prueba unitaria falla si una de las dos listas se queda atrás).
+  Esto no toca `Customer`, Coordinadora, Siigo ni los sinónimos: ninguna ciudad de afuera entra a `geography.cities`.
+
 ## Nombres de ciudad de Coordinadora
 
 Las ciudades de `geography` son los municipios del DANE (`localities.json`), y se importan en cada
@@ -853,7 +880,7 @@ Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
 `catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai`, `support`, `purchases` y `wholesale`; `quotations` exige
-`catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
+`catalog`, `customers` y `companies`, `orders` exige lo mismo (no `quotations`: un pedido nace sin cotización, así que la consola de plataforma puede ocultar cotizaciones y el tenant sigue vendiendo por pedidos; la configuración de envíos, el contenido del PDF, los canales de WhatsApp y Zenvia los comparten ambos módulos y quedan disponibles con cualquiera de los dos), `pos` exige `catalog` y
 `companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. `purchases` (las órdenes de compra a proveedores) exige `suppliers` y `catalog`; no viene con el signup y se prende por tenant. `wholesale` (el mayorista: listas de precios y distribuidores invitados, ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación)) exige `orders`; no viene con el signup y se prende por tenant. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
@@ -5393,9 +5420,44 @@ pagos sin llamar a Siigo.
 - Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
   Un pedido facturado en Siigo no se revierte con QEP (`422 order.order.invoiced_externally`): revertir es una nota crédito.
 
+**Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
+`POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
+`204`) manda el PDF de **una** factura al WhatsApp del cliente del pedido. Es el mismo PDF de la descarga (se pide a Siigo en cada envío y
+viaja en memoria: Siigo no la guarda; el envío por Meta deja una copia privada en el hilo de Mensajería, ver más abajo). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
+siigo.invoice.not_found` sin llamar a Siigo ni al canal; sin permiso o con el tenant de otra ruta es `403`, nunca `404`. El envío lo hace
+Quotations (`IInvoiceWhatsAppDelivery`; Siigo sólo ve el puerto `ISiigoInvoiceWhatsApp`), así que el canal se resuelve como en el pedido
+y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `no_phone` (el
+cliente del pedido no tiene teléfono; Quotations lo mira dentro del envío, así que el PDF ya se pidió a Siigo) y `send_failed`, más
+`order.order.client_not_found` (el cliente del pedido no existe en el tenant); todos son errores de dominio `422`. `channel_unavailable` y `channel_already_set` no pueden
+salir acá: el envío nunca pide un canal concreto. No
+hay deduplicación: dos clics son dos mensajes y dos entradas de auditoría `siigo.invoice.whatsapp_sent` (sin teléfono, URL ni contenido).
+
+`GET …/siigo-invoice` suma `canSendWhatsApp` a cada fila: la fila tiene PDF **y** hoy se podría entregar (el canal se resuelve igual que en
+el envío y el cliente tiene teléfono). Se calcula una vez por petición, y si ninguna fila tiene PDF no se consulta. **Limitación conocida:**
+un tenant con dos o más canales aptos para facturas y sin elección guardada (la elección se guarda al mandar una cotización o un pedido y
+escoger canal) recibe `canSendWhatsApp = false` hasta que elija uno; mandar una factura nunca guarda la elección.
+
+**Plantilla `Invoice`.** Cada canal necesita su plantilla de factura; sin ella no cuenta como canal para una factura.
+
+- **Meta:** se crea desde QEP con `POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/invoice`
+  (permiso `messaging.template.manage`) y espera la aprobación de Meta. El PDF viaja como encabezado de la plantilla.
+- **Zenvia:** crea la plantilla en Zenvia con las variables **exactamente** `fullname`, `invoice_number` y `total` y el encabezado
+  `documentUrl`, y pon su id en `invoiceTemplateId` de **cada** conexión de Zenvia (Integrations). Zenvia descarga el documento por URL.
+
+**Copia pública (sólo Zenvia).** Para Zenvia el PDF se copia al bucket público bajo `invoices/{guid}.pdf`, con una clave aleatoria que no
+lleva tenant, pedido ni número de factura (la URL queda abierta a quien la tenga). Por Meta Quotations no publica ninguna copia, pero el envío deja una copia **privada** del adjunto en el hilo de la conversación de Mensajería (por tenant y con la retención de cualquier adjunto saliente, como en cotizaciones y pedidos); no es pública. Sin bucket
+público el envío falla, sin caer a una URL firmada. La copia expira con una regla de lifecycle que se crea **a mano** en Cloudflare, y es
+parte del despliegue:
+
+```powershell
+npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1
+npx wrangler r2 bucket lifecycle list <bucket-publico>   # para verificarla
+```
+
 **Seguridad.** La clave de acceso y el token de Siigo no salen a logs, auditoría ni respuestas; `request_json` (con el documento y
 la dirección del cliente) no lo devuelve ningún `GET`, y `error_detail` guarda los códigos de Siigo, no sus mensajes (salvo el
-total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
+total esperado). El PDF, la URL pública y el teléfono del envío por WhatsApp tampoco salen a logs, `siigo.call_failures`, auditoría ni
+respuestas. Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
 
 **Despliegue.**
 
@@ -5406,6 +5468,14 @@ total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
    Integrations borra las conexiones `siigo` con sus secretos, y `siigo.invoices` es el registro de un documento legal.
 3. Prende el módulo al tenant desde la consola de operador, crea la conexión, recorre el asistente y deja «Enviar a la DIAN»
    apagado en las primeras facturas.
+
+**Despliegue del envío por WhatsApp**, en este orden:
+
+1. Migración de Messaging (el tipo de plantilla `Invoice`).
+2. Crea y aprueba la plantilla `Invoice` en Meta (`template-management/invoice`) y en Zenvia, y pon `invoiceTemplateId` en cada conexión
+   de Zenvia.
+3. Regla de lifecycle de `invoices/` en el bucket público (comando de arriba).
+4. Backend y después frontend (spec aparte en `qep-frontend`).
 
 **Lo que se mira en las primeras facturas reales** (no hay empresa de pruebas: se resuelve con ellas, y con el interruptor
 apagado ninguna puede salir mal sin que se vea):

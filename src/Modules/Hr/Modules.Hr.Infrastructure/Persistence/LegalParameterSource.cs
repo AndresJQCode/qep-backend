@@ -10,4 +10,9 @@ internal sealed class LegalParameterSource(HrDbContext dbContext) : ILegalParame
         await dbContext.LegalParameters
             .AsNoTracking()
             .ToArrayAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<LegalParameterBracket>> ListBracketsAsync(CancellationToken cancellationToken) =>
+        await dbContext.LegalParameterBrackets
+            .AsNoTracking()
+            .ToArrayAsync(cancellationToken);
 }

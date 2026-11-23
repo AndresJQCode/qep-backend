@@ -12,6 +12,10 @@ public static class SiigoAuditActions
 
     public const string InvoiceResolved = "siigo.invoice.resolved";
 
+    /// <summary>Se mandó el PDF de la factura al WhatsApp del cliente (spec 2026-11-21). Sólo el pedido, el tipo, el estado y el número:
+    /// nunca el teléfono, la URL ni el contenido.</summary>
+    public const string InvoiceWhatsAppSent = "siigo.invoice.whatsapp_sent";
+
     /// <summary>Se pidió una tanda de facturación; lleva cuántos pedidos, nunca cuáles facturas salieron (esas llevan la suya).</summary>
     public const string InvoiceBatchRequested = "siigo.invoice_batch.requested";
 

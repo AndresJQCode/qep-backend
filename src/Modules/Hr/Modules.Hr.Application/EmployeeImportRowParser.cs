@@ -83,7 +83,6 @@ public static partial class EmployeeImportRowParser
             var pensionFund = Optional(HrImportColumns.PensionFund, "pensionFund", 120, "El fondo de pensiones");
             var severanceFund = Optional(HrImportColumns.SeveranceFund, "severanceFund", 120, "El fondo de cesantías");
             var riskProvider = Optional(HrImportColumns.OccupationalRiskProvider, "occupationalRiskProvider", 120, "La ARL");
-            var compensationFund = Optional(HrImportColumns.CompensationFund, "compensationFund", 120, "La caja de compensación");
             var subtype = Label<ContributorSubtype>(
                 HrImportColumns.ContributorSubtype, "contributorSubtype", HrErrorCodes.ImportRow.ContributorSubtypeInvalid,
                 "Elige un subtipo de cotizante de la lista.", required: false);
@@ -135,7 +134,7 @@ public static partial class EmployeeImportRowParser
 
             var profile = new EmployeeProfile(
                 firstName!, lastName!, documentType!.Value, documentNumber!, country!, birthDate, phone, personalEmail, workEmail, address,
-                cityId, null, health, pensionFund, severanceFund, riskProvider, compensationFund,
+                cityId, null, health, pensionFund, severanceFund, riskProvider,
                 subtype ?? ContributorSubtype.Standard, exempt ?? false, restDays!);
             var terms = new ContractTerms(
                 company!.Id, contractType!.Value, duration!.Value, salaryType!.Value, startDate!.Value, endDate);

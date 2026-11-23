@@ -39,8 +39,6 @@ public record EmployeeRequest
 
     public string? OccupationalRiskProvider { get; init; }
 
-    public string? CompensationFund { get; init; }
-
     /// <summary>Nulo ⇒ <c>Standard</c>.</summary>
     public string? ContributorSubtype { get; init; }
 

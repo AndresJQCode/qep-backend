@@ -13,6 +13,10 @@ public static class MessagingErrorCodes
     public const string MessageNotFound = "messaging.message.not_found";
     public const string WebhookSignatureInvalid = "messaging.webhook.signature_invalid";
 
+    /// <summary>Spec 2026-11-22 §9.3: the app hub refused a subscription to the <c>messaging</c> topic (module off, no
+    /// <c>messaging.conversation.read</c>, or a topic that is not the exact one). The generic code of the hub is <c>realtime.topic_forbidden</c>.</summary>
+    public const string RealtimeTopicForbidden = "messaging.realtime.topic_forbidden";
+
     /// <summary>Spec 2026-10-30 §4.4: el mismo <c>clientId</c> de una clave de API ya salió en otra conversación del tenant (409).</summary>
     public const string ExternalIdempotencyKeyReused = "external.idempotency_key_reused";
 
@@ -186,6 +190,13 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-11-09 D3: existe una <c>qep_pedido</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
     public const string TemplateOrderConflict = "messaging.template.order_conflict";
+
+    /// <summary>Spec 2026-11-21: la conexión ya tiene su plantilla de factura viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_invoice</c>.</summary>
+    public const string TemplateInvoiceExists = "messaging.template.invoice_exists";
+
+    /// <summary>Spec 2026-11-21: existe una <c>qep_factura</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateInvoiceConflict = "messaging.template.invoice_conflict";
 
     /// <summary>Soporte fase 2: la conexión ya tiene su plantilla «Aviso de respuesta» viva, o dos aprovisionamientos a la vez chocaron en
     /// <c>UX_message_templates_support_reply</c>.</summary>

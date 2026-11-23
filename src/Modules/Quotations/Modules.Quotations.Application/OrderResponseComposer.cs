@@ -88,6 +88,7 @@ public sealed class OrderResponseComposer(
                 {
                     // Mayorista fase 3: false = la agregó el mayorista; fuera de un pedido mayorista no aplica.
                     FromPurchaseOrder = order.Wholesale is null ? null : item.SourcePurchaseOrderLineId is not null,
+                    IsGift = item.IsGift,
                 })
                 .ToArray(),
             // Sin el instante no se arma (spec 2026-11-16 F-8): CreatedAt no es opcional en el contrato, y un número sin

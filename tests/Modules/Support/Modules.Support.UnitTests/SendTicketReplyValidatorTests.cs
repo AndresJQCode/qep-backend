@@ -39,6 +39,11 @@ public sealed class SendTicketReplyValidatorTests
         Assert.Equal(["Channel"], Errors(Valid() with { Channel = "0" }));
     }
 
+    // Spec 2026-11-22 D3: None es el canal de una tarea y comparte el enum con los de verdad; ninguna respuesta lo elige.
+    [Fact]
+    public void NoneIsNotAReplyChannel() =>
+        Assert.Equal(["Channel"], Errors(Valid("None")));
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

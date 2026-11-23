@@ -2,8 +2,8 @@ using Modules.Hr.Domain;
 
 namespace Modules.Hr.Application;
 
-/// <summary>La empresa de Companies como la ve la pantalla: razón social, NIT y si sigue activa.</summary>
-public sealed record CompanyRefDto(Guid Id, string Name, string TaxId, bool IsActive);
+/// <summary>La empresa de Companies como la ve la pantalla: razón social, NIT, país (ISO alfa-2) y si sigue activa.</summary>
+public sealed record CompanyRefDto(Guid Id, string Name, string TaxId, bool IsActive, string Country);
 
 /// <summary>
 /// Lo que Hr hace con las empresas de Companies, sobre el puerto <see cref="IHrCompanyLookup"/>. Una empresa con RRHH no se borra
@@ -52,5 +52,5 @@ public sealed class HrCompanyRefs(IHrCompanyLookup companies)
         return company;
     }
 
-    private static CompanyRefDto ToDto(HrCompanyRef company) => new(company.Id, company.Name, company.TaxId, company.IsActive);
+    private static CompanyRefDto ToDto(HrCompanyRef company) => new(company.Id, company.Name, company.TaxId, company.IsActive, company.Country);
 }

@@ -125,6 +125,8 @@ internal sealed class FakeFileReferences : ITemplateImageReferences, IChatbotMed
 
 internal sealed class FailingPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public List<string> DeletedKeys { get; } = [];
 
     public string? FailingFragment { get; set; }

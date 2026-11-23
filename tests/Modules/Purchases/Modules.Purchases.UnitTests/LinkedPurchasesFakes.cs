@@ -259,11 +259,25 @@ internal sealed class FakePurchasesCatalogWriter : IPurchasesCatalogWriter
 
         if (Existing.TryGetValue(code, out var existing))
         {
-            return Task.FromResult(new PurchasesCatalogEntry(existing, Created: false));
+            return Task.FromResult(new PurchasesCatalogEntry(existing, Created: false, ProductId: existing));
         }
 
         var created = Guid.CreateVersion7();
         Existing[code] = created;
-        return Task.FromResult(new PurchasesCatalogEntry(created, Created: true));
+        return Task.FromResult(new PurchasesCatalogEntry(created, Created: true, ProductId: created));
+    }
+}
+
+/// <summary>El copiador de imágenes del mayorista: anota lo pedido, o falla si se le indica.</summary>
+internal sealed class FakePurchasesProductImages : IPurchasesProductImages
+{
+    public List<PendingProductImage> Copies { get; } = [];
+
+    public bool Fails { get; set; }
+
+    public Task CopyAsync(PendingProductImage image, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Copies.Add(image);
+        return Fails ? throw new InvalidOperationException("Storage is down.") : Task.CompletedTask;
     }
 }

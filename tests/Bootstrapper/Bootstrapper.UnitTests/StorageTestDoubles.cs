@@ -64,12 +64,24 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
     /// <summary>Si no es null, <see cref="DeleteAsync"/> la lanza sin anotar el borrado.</summary>
     public Exception? DeleteFailure { get; set; }
 
-    public bool IsConfigured => true;
+    /// <summary>Lo que se subió directo al bucket público: clave, tipo y bytes.</summary>
+    public List<(string Key, string ContentType, byte[] Content)> Uploads { get; } = [];
+
+    public bool IsConfiguredValue { get; set; } = true;
+
+    public bool IsConfigured => IsConfiguredValue;
 
     public Task CopyFromPrivateAsync(
         string privateKey, string publicKey, CancellationToken cancellationToken)
     {
         Copies[publicKey] = privateKey;
+        return Task.CompletedTask;
+    }
+
+    public Task UploadAsync(
+        string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken)
+    {
+        Uploads.Add((publicKey, contentType, content.ToArray()));
         return Task.CompletedTask;
     }
 

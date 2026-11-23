@@ -438,5 +438,8 @@ public sealed class SupportAutoCloseApiTests : IAsyncLifetime
             _tickets.Enqueue(ticketId);
             return Task.CompletedTask;
         }
+
+        public Task TaskChangedAsync(Guid tenantId, Guid ticketId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
+            TicketChangedAsync(tenantId, ticketId, cancellationToken);
     }
 }

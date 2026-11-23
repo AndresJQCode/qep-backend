@@ -151,7 +151,6 @@ public sealed class EmployeeDetailComposer(
         employee.PensionFund,
         employee.SeveranceFund,
         employee.OccupationalRiskProvider,
-        employee.CompensationFund,
         employee.ContributorSubtype.ToString(),
         employee.ForeignPensionExempt,
         employee.RestDays.OrderBy(day => ((int)day + 6) % 7).Select(day => day.ToString()).ToList(),

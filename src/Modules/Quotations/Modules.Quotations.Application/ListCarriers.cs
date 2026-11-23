@@ -18,8 +18,8 @@ public sealed class ListCarriersHandler(
     public async Task<CarrierSettingsDto> HandleAsync(ListCarriersQuery query, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, TenancyPermissions.SettingsRead);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, query.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, query.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
 
         return await CarrierMapping.SettingsAsync(carriers, store, taxRates, query.TenantId, cancellationToken);
     }

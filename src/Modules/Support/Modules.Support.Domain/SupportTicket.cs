@@ -67,6 +67,23 @@ public sealed class SupportTicket
 
     public Guid? AssigneeMemberId { get; private set; }
 
+    /// <summary>Spec 2026-11-22: una tarea interna entre miembros. Sin cliente, solicitante, conversación ni canal de respuesta; su
+    /// fecha límite es libre (no sale de un término) y no hay encuesta ni prórroga.</summary>
+    public bool IsInternal { get; private set; }
+
+    /// <summary>Quien radicó: el actor del alta manual, de una conversación o de una tarea. Null en el formulario público.</summary>
+    public Guid? CreatedByMemberId { get; private set; }
+
+    /// <summary>
+    /// Spec 2026-11-22 D-15: since when the ticket has been, without interruption, <b>without an assignee and in a status that counts</b>
+    /// (<see cref="SupportTicketStatuses.CountsAsUnassigned"/>); null otherwise. It is set when the ticket <b>enters</b> that situation
+    /// (created without an assignee, unassigned while in a status that counts, moved into a status that counts without an assignee, which
+    /// includes the thread follower reopening it) and cleared when it is assigned or leaves it. Moving between two statuses that count does
+    /// not touch it. The alert measures business hours from here, so a ticket that waited days on the customer and comes back to
+    /// <c>Open</c> starts again from zero.
+    /// </summary>
+    public DateTimeOffset? UnassignedSince { get; private set; }
+
     /// <summary>FK blanda a Customers: Guid y no un id tipado, como en el resto de módulos.</summary>
     public Guid? CustomerId { get; private set; }
 
@@ -276,6 +293,40 @@ public sealed class SupportTicket
         return ticket;
     }
 
+    /// <summary>
+    /// Spec 2026-11-22: una tarea interna. <paramref name="dueOn"/> es una fecha libre, de hoy en adelante en la zona del tenant, y
+    /// nunca sale de un término. No tiene solicitante, cliente, medio ni canal de respuesta.
+    /// </summary>
+    public static SupportTicket CreateInternal(
+        SupportTicketId id,
+        Guid tenantId,
+        long number,
+        SupportTicketType type,
+        string subject,
+        string description,
+        SupportTicketPriority priority,
+        Guid assigneeMemberId,
+        DateOnly? dueOn,
+        Guid actorMemberId,
+        DateTimeOffset now,
+        SupportClockContext clock)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(clock);
+        if (!type.IsInternal)
+        {
+            throw new ArgumentException("A task needs the internal ticket type.", nameof(type));
+        }
+
+        EnsureDueOnNotPast(dueOn, clock.LocalDate(now));
+        var ticket = Start(
+            id, tenantId, number, type, subject, description, priority, SupportTicketIntake.Internal, medium: null,
+            SupportReplyChannel.None, conversation: null, customerId: null, requester: null, assigneeMemberId, actorMemberId, now, clock,
+            internalTask: true);
+        ticket.DueOn = dueOn;
+        return ticket;
+    }
+
     // El alta común de las tres entradas. Es un método y no un constructor con parámetros para que EF siga materializando por el
     // constructor vacío. Sin actor sólo entra el formulario público. Con anonymous no se exige solicitante con nombre.
     private static SupportTicket Start(
@@ -296,15 +347,22 @@ public sealed class SupportTicket
         Guid? actorMemberId,
         DateTimeOffset now,
         SupportClockContext clock,
-        bool anonymous = false)
+        bool anonymous = false,
+        bool internalTask = false)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(number);
         EnsureSameTenant(tenantId, type);
+        if (type.IsInternal != internalTask)
+        {
+            throw new ArgumentException(
+                internalTask ? "A task needs the internal ticket type." : "The internal ticket type only takes tasks.", nameof(type));
+        }
+
         conversation?.EnsureValid();
-        // Un anónimo (formulario público o alta manual, plan G2) no tiene a quién nombrar.
-        if (intake is not SupportTicketIntake.PublicForm && !anonymous && customerId is null && requester is not { HasName: true })
+        // Un anónimo (formulario público o alta manual, plan G2) no tiene a quién nombrar; una tarea tampoco.
+        if (intake is not SupportTicketIntake.PublicForm && !anonymous && !internalTask && customerId is null && requester is not { HasName: true })
         {
             throw RequesterRequired();
         }
@@ -322,6 +380,11 @@ public sealed class SupportTicket
             ReplyChannel = replyChannel,
             Status = SupportTicketStatus.New,
             AssigneeMemberId = assigneeMemberId,
+            IsInternal = internalTask,
+            CreatedByMemberId = actorMemberId,
+            // A new ticket is in New, which counts: it starts the clock if nobody has it. A task always has an assignee, so it never
+            // starts one.
+            UnassignedSince = assigneeMemberId is null ? now : null,
             CustomerId = customerId,
             Requester = requester,
             ConversationId = conversation?.Id,
@@ -344,7 +407,7 @@ public sealed class SupportTicket
     public void ChangeStatus(SupportTicketStatus target, Guid? actorMemberId, DateTimeOffset now, SupportClockContext clock)
     {
         ArgumentNullException.ThrowIfNull(clock);
-        if (!SupportTicketStatuses.AllowedFrom(Status).Contains(target))
+        if (!SupportTicketStatuses.AllowedFor(Status, IsInternal).Contains(target))
         {
             throw new SupportDomainException(
                 SupportErrorCodes.TransitionInvalid, $"A ticket cannot go from '{Status}' to '{target}'.");
@@ -362,10 +425,16 @@ public sealed class SupportTicket
             PausedBusinessDays += SupportBusinessDays.CountStrictlyBetween(
                 clock.Calendar, clock.LocalDate(pausedSince), clock.LocalDate(now));
             PausedSince = null;
-            DueOn = DueOnFor(TermBusinessDays, clock);
+
+            // Una tarea tiene fecha libre y sin término: recalcularla desde el término la borraría al reabrir.
+            if (!IsInternal)
+            {
+                DueOn = DueOnFor(TermBusinessDays, clock);
+            }
         }
 
         Status = target;
+        TrackUnassignedSince(from, target, now);
         if (target is SupportTicketStatus.Resolved)
         {
             ResolutionCount++;
@@ -373,7 +442,11 @@ public sealed class SupportTicket
 
             // Fase 4b (H15, owner 2026-11-16, Q-9): todo camino a Resuelto pide la encuesta de este ciclo, aunque el tenant la tenga
             // apagada: el worker la salta con survey_disabled. Así nadie tiene que acordarse de pedirla.
-            surveys.Add(SupportTicketSurvey.Request(TenantId, Id, ResolutionCount, now));
+            // Una tarea interna no tiene a quién preguntarle.
+            if (!IsInternal)
+            {
+                surveys.Add(SupportTicketSurvey.Request(TenantId, Id, ResolutionCount, now));
+            }
         }
         else if (target is SupportTicketStatus.Closed)
         {
@@ -390,6 +463,22 @@ public sealed class SupportTicket
         AddEvent(SupportTicketEventKind.StatusChanged, actorMemberId, now, new { from = from.ToString(), to = target.ToString() });
     }
 
+    // D-15: the clock runs while the ticket is unassigned and in a status that counts. It restarts on entering that situation, stops on
+    // leaving it, and a move between two statuses that count (Open → WaitingInternal) leaves it alone.
+    private void TrackUnassignedSince(SupportTicketStatus from, SupportTicketStatus target, DateTimeOffset now)
+    {
+        var wasRunning = !IsInternal && AssigneeMemberId is null && SupportTicketStatuses.CountsAsUnassigned(from);
+        var isRunning = !IsInternal && AssigneeMemberId is null && SupportTicketStatuses.CountsAsUnassigned(target);
+        if (!isRunning)
+        {
+            UnassignedSince = null;
+        }
+        else if (!wasRunning)
+        {
+            UnassignedSince = now;
+        }
+    }
+
     /// <summary>No cambia el estado. Resuelto o cerrado se rechaza (R9).</summary>
     public void Assign(Guid? assigneeMemberId, Guid actorMemberId, DateTimeOffset now)
     {
@@ -401,6 +490,9 @@ public sealed class SupportTicket
 
         var from = AssigneeMemberId;
         AssigneeMemberId = assigneeMemberId;
+        // Assigned: the clock stops. Unassigned while in a status that counts: it starts now (the early return above means it was assigned).
+        // A task is never «sin asignar» (spec 2026-11-22 §5.2.1): its handler refuses null, and the clock never starts for it anyway.
+        UnassignedSince = !IsInternal && assigneeMemberId is null && SupportTicketStatuses.CountsAsUnassigned(Status) ? now : null;
         AddEvent(SupportTicketEventKind.AssigneeChanged, actorMemberId, now, new { from, to = assigneeMemberId });
     }
 
@@ -411,6 +503,13 @@ public sealed class SupportTicket
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(clock);
         EnsureSameTenant(TenantId, type);
+
+        // Una tarea no sale de su tipo y un ticket externo no entra al interno.
+        if (IsInternal || type.IsInternal)
+        {
+            throw new SupportDomainException(SupportErrorCodes.InternalTypeLocked, "The internal ticket type cannot be assigned or left.");
+        }
+
         EnsureEditable();
         if (type.Id == TypeId)
         {
@@ -420,6 +519,28 @@ public sealed class SupportTicket
         var from = new { id = TypeId.Value, name = TypeName };
         CopyType(type, clock);
         AddEvent(SupportTicketEventKind.TypeChanged, actorMemberId, now, new { from, to = new { id = TypeId.Value, name = TypeName } });
+    }
+
+    /// <summary>Spec 2026-11-22: cambia la fecha límite libre de una tarea (null la quita). Resuelta o cerrada se rechaza (R9); la misma
+    /// fecha no hace nada; una anterior a hoy en la zona del tenant se rechaza.</summary>
+    public void ChangeDueOn(DateOnly? dueOn, Guid actorMemberId, DateTimeOffset now, SupportClockContext clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        if (!IsInternal)
+        {
+            throw new SupportDomainException(SupportErrorCodes.NotInternal, "Only an internal task has a free due date.");
+        }
+
+        EnsureEditable();
+        if (dueOn == DueOn)
+        {
+            return;
+        }
+
+        EnsureDueOnNotPast(dueOn, clock.LocalDate(now));
+        var from = DueOn;
+        DueOn = dueOn;
+        AddEvent(SupportTicketEventKind.DueDateChanged, actorMemberId, now, new { fromDueOn = from, toDueOn = dueOn });
     }
 
     /// <summary>Spec 2026-11-15 §5.1: no toca el vencimiento, el término, las pausas ni el reloj. La misma prioridad no hace nada.
@@ -443,6 +564,7 @@ public sealed class SupportTicket
     /// en la ficha de nadie.</summary>
     public void LinkCustomer(Guid? customerId, Guid actorMemberId, DateTimeOffset now)
     {
+        EnsureNotInternalTask();
         EnsureEditable();
         if (IsAnonymous && customerId is not null)
         {
@@ -502,6 +624,7 @@ public sealed class SupportTicket
     public void LinkConversation(SupportConversationRef conversation, Guid actorMemberId, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(conversation);
+        EnsureNotInternalTask();
         conversation.EnsureValid();
         if (ConversationId is not null)
         {
@@ -716,6 +839,23 @@ public sealed class SupportTicket
         {
             throw new SupportDomainException(
                 SupportErrorCodes.NotEditable, "A closed ticket cannot pin or release messages nor change whether it follows its thread.");
+        }
+    }
+
+    private void EnsureNotInternalTask()
+    {
+        if (IsInternal)
+        {
+            throw new SupportDomainException(SupportErrorCodes.InternalNoReply, "An internal task has no customer nor conversation.");
+        }
+    }
+
+    private static void EnsureDueOnNotPast(DateOnly? dueOn, DateOnly today)
+    {
+        if (dueOn is { } date && date < today)
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.InternalDueInPast, $"The due date {date:yyyy-MM-dd} is before today ({today:yyyy-MM-dd}).");
         }
     }
 

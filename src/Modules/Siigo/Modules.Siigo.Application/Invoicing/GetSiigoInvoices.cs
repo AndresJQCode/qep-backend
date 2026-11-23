@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Siigo.Domain;
 using Modules.Tenancy.Application;
 
@@ -12,12 +13,14 @@ public sealed record GetSiigoInvoicesQuery(Guid TenantId, Guid OrderId) : IQuery
 /// en Siigo. Si el último intento de un tipo fue rechazado, esa fila sigue a la vista para que la pantalla muestre el rechazo. Leer es
 /// el momento de la transición perezosa: una <c>Pending</c> de más de 24 horas pasa a <c>Unknown</c>. Nunca devuelve la petición.
 /// </summary>
-public sealed class GetSiigoInvoicesHandler(
+public sealed partial class GetSiigoInvoicesHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ISiigoInvoiceRepository invoices,
     ISiigoUnitOfWork unitOfWork,
-    IClock clock) : IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>
+    IClock clock,
+    ISiigoInvoiceWhatsApp whatsApp,
+    ILogger<GetSiigoInvoicesHandler> logger) : IQueryHandler<GetSiigoInvoicesQuery, IReadOnlyList<SiigoInvoiceDto>>
 {
     public async Task<IReadOnlyList<SiigoInvoiceDto>> HandleAsync(GetSiigoInvoicesQuery query, CancellationToken cancellationToken)
     {
@@ -42,6 +45,29 @@ public sealed class GetSiigoInvoicesHandler(
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        return [.. SiigoInvoiceSupport.Current(rows).Select(row => SiigoInvoiceDto.From(row))];
+        // Una sola pregunta por petición, y ninguna si ninguna fila tiene PDF: es el camino caliente de la pantalla del pedido.
+        var current = SiigoInvoiceSupport.Current(rows);
+        var canSend = current.Any(row => row.HasPdf) && await CanSendAsync(query, cancellationToken);
+        return [.. current.Select(row => SiigoInvoiceDto.From(row, canSendWhatsApp: canSend))];
     }
+
+    // `canSendWhatsApp` es una pista opcional: si la pregunta falla por lo que sea, la lista sigue entera (con Created y Rejected a la
+    // vista) y la pista queda en false. La cancelación de la petición sí sube (un timeout del HttpClient llega como TaskCanceledException y no cuenta como tal). El log lleva sólo el tipo de la excepción: ni ids, ni teléfono, ni URL.
+    private async Task<bool> CanSendAsync(GetSiigoInvoicesQuery query, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await whatsApp.CanSendAsync(query.TenantId, query.OrderId, cancellationToken);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogCanSendFailed(exception.GetType().Name);
+            return false;
+        }
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Checking whether the Siigo invoice can be sent by WhatsApp failed ({ExceptionType}); the list is returned without the hint.")]
+    private partial void LogCanSendFailed(string exceptionType);
 }

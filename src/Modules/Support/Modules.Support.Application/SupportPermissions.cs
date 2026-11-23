@@ -9,4 +9,8 @@ public static class SupportPermissions
     public const string Manage = "support.ticket.manage";
 
     public const string SettingsManage = "support.settings.manage";
+
+    // Spec 2026-11-22 (tareas internas, §5.6): crear tareas y trabajar las propias. Lo llevan los cuatro roles de fábrica; no da
+    // acceso a ningún ticket de cliente.
+    public const string TaskUse = "support.task.use";
 }

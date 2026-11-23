@@ -93,9 +93,63 @@ una empresa activa con una sede no archivada que tenga un centro de trabajo no a
 
 Sedes y centros de trabajo **pertenecen a una empresa** (ARL y PILA son por aportante). Áreas y cargos son de todo el tenant.
 
+**Caja de compensación (delta 2026-11-21).** Es el aporte parafiscal del 4 % del empleador (Ley 21/1982), no el salario; se afilia por sede porque las cajas se organizan por departamento. El campo de la sede es una **lista fija**: el backend la declara en código y `GET /hr/settings` la devuelve como `compensationFunds: string[]` para que el selector no la duplique. La API guarda el nombre tal cual figura en la lista y rechaza otro con 422 `errors.compensationFund`; `null` sigue valiendo (sede sin caja). **Sólo empresas de Colombia (2026-11-21, owner).** La caja de compensación es un aporte parafiscal colombiano: una sede cuya empresa no es de Colombia no tiene caja. `GET /hr/settings` trae `country` (ISO alfa-2, `CO` si la empresa no lo tiene) en cada empresa; al crear o editar una sede de otra empresa, un `compensationFund` no vacío es 422 `errors.compensationFund` («La caja de compensación sólo aplica a empresas de Colombia.») y `null` vale. La empresa de una sede es fija, así que el país que se revisa es el de la guardada. **Contenido de la lista (inicial, 42 cajas).** Sale del listado de cajas de la UGPP publicado el 14-01-2026 (`ugpp.gov.co/wp-content/uploads/2026/01/LISTADO-CAJAS-DE-COMPENSACION-2026.pdf`, vigencia de un año), que separa las cajas sin medida especial de las que están bajo intervención administrativa de la Superintendencia del Subsidio Familiar; **ambos grupos entran**, porque las intervenidas siguen operando y tienen empresas afiliadas. Se guarda el nombre corto de la tabla. El departamento lo dedujo del nombre de la caja, no de la tabla del PDF (salió desordenada al extraerla), y los NIT se leyeron del PDF en ese orden. **Verificar contra SuperSubsidio (`ssf.gov.co`) antes de la fase de nómina**: Rankia cuenta 43 cajas, así que puede faltar una, y el NIT importa cuando se genere la PILA. En la fase 1 la lista no calcula nada y corregirla es un cambio de una línea, sin migración.
+
+Sin medida especial (30):
+
+| Caja | Departamento | NIT |
+| --- | --- | --- |
+| CAFAMAZ | Amazonas | 800003122 |
+| COMFAMA | Antioquia | 890900841 |
+| CAJASAI | San Andrés y Providencia | 892400320 |
+| COMBARRANQUILLA | Atlántico | 890102002 |
+| CAJACOPI Atlántico | Atlántico | 890102044 |
+| COMFAMILIAR Atlántico | Atlántico | 890101994 |
+| COMFENALCO Cartagena | Bolívar | 890480023 |
+| COMFABOY | Boyacá | 891800213 |
+| CONFA | Caldas | 890806490 |
+| COMFACASANARE | Casanare | 844003392 |
+| COMFACAUCA | Cauca | 891500182 |
+| COMFACESAR | Cesar | 892399989 |
+| COMFACHOCÓ | Chocó | 891600091 |
+| COLSUBSIDIO | Bogotá y Cundinamarca | 860007336 |
+| CAFAM | Bogotá y Cundinamarca | 860013570 |
+| COMPENSAR | Bogotá y Cundinamarca | 860066942 |
+| COMFACUNDI | Cundinamarca | 860045904 |
+| CAJAMAG | Magdalena | 891780093 |
+| COFREM | Meta | 892000146 |
+| COMFAORIENTE | Norte de Santander | 890500675 |
+| COMFAMILIAR Putumayo | Putumayo | 891200337 |
+| COMFENALCO Quindío | Quindío | 890000381 |
+| COMFENALCO Santander | Santander | 890201578 |
+| CAJASAN | Santander | 890200106 |
+| COMFASUCRE | Sucre | 892200015 |
+| CAFASUR | Tolima | 890704737 |
+| COMFENALCO Tolima | Tolima | 890700148 |
+| COMFATOLIMA | Tolima | 800211025 |
+| COMFENALCO Valle | Valle del Cauca | 890303093 |
+| COMFANDI | Valle del Cauca | 890303208 |
+
+Con intervención administrativa (12):
+
+| Caja | Departamento | NIT |
+| --- | --- | --- |
+| COMFENALCO Antioquia | Antioquia | 890900842 |
+| COMFIAR | Arauca | 800219488 |
+| COMFAMILIAR Cartagena y Bolívar | Bolívar | 890480110 |
+| COMFACA | Caquetá | 891190047 |
+| COMFACOR | Córdoba | 891080005 |
+| COMCAJA | Cundinamarca | 800231969 |
+| COMFAGUAJIRA | La Guajira | 892115006 |
+| COMFAMILIAR Huila | Huila | 891180008 |
+| COMFAMILIAR Nariño | Nariño | 891200208 |
+| CAFABA | Norte de Santander | 890270275 |
+| COMFANORTE | Norte de Santander | 890500516 |
+| COMFAMILIAR Risaralda | Risaralda | 891480000 |
+
 | Entidad | Campos | Reglas |
 | --- | --- | --- |
-| Sede | empresa, nombre, dirección, ciudad, caja de compensación (texto) | empresa activa del tenant al crear; la empresa de una sede es fija; nombre único por empresa |
+| Sede | empresa, nombre, dirección, ciudad, caja de compensación (**lista fija**) | la caja se elige de `compensationFunds` (catálogo fijo en el backend, ver abajo) y un valor fuera de la lista es 422, y sólo aplica si la empresa es de Colombia (2026-11-21: «sólo empresas de Colombia»); empresa activa del tenant al crear; la empresa de una sede es fija; nombre único por empresa |
 | Centro de trabajo | nombre, sede, código CIIU (texto, opcional), clase de riesgo ARL `I`–`V`, alto riesgo de pensión (sí/no, default no) | exige al menos una sede; hereda la empresa de su sede; nombre único por sede |
 | Área | nombre | nombre único por tenant |
 | Cargo | nombre | nombre único por tenant |
@@ -116,7 +170,8 @@ sus contratos siguen funcionando completos: salarios, cargo y lugar, prórrogas,
 | país | **nacionalidad**, código ISO 3166-1 alfa-2 del catálogo de países de Geografía; vacío ⇒ el país del tenant (Configuración › General), y `CO` si el tenant no tiene país. Cruce con el tipo de documento: `CC` exige Colombia; `CE`, `PEP`, `PPT`, `PA`, `CD` y `SC` exigen otro país |
 | fecha de nacimiento, celular (E.164), correo personal, correo corporativo, dirección, ciudad | opcionales; ciudad del catálogo de Geografía (residencia en Colombia; no depende del país) |
 | miembro vinculado | opcional; una membresía activa del tenant, única entre empleados |
-| EPS, fondo de pensiones, fondo de cesantías, ARL, caja de compensación | texto libre en la fase 1 |
+| EPS, fondo de pensiones, fondo de cesantías, ARL | texto libre en la fase 1 |
+| caja de compensación | **no se guarda en la ficha** (decisión del owner, 2026-11-21): la caja de un empleado es la de su sede vigente, que es donde vive (Aleluya hace igual: R02§11, R03§8). La ficha, la importación y el historial de actividad no la llevan. |
 | subtipo de cotizante | `Standard` (estándar), `Pensioner` (pensionado), `NotRequiredByAge` (no obligado por edad), `PensionRequirementsMet` (cumplió requisitos de pensión), `SubstituteIndemnity` (recibió indemnización sustitutiva); default estándar (FI-EMP-008). La fase 1 sólo lo guarda. |
 | exento de pensión por cobertura en el exterior | sí/no; sólo con país distinto de Colombia, que por el cruce de arriba equivale a documento extranjero (FI-EMP-017, Ley 100/1993 art. 15) |
 | banco, tipo de cuenta (`Savings`/`Checking`), número de cuenta, medio de pago (`BankTransfer`/`Other`) | número de hasta 17 dígitos (FI-EMP-026); visibles sólo con `hr.contract.read` |

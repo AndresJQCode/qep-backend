@@ -15,8 +15,10 @@ public sealed class ListTicketsValidatorTests
         int page = 1,
         int pageSize = ListTicketsQuery.DefaultPageSize,
         string? priority = null,
-        string? sort = null) =>
-        new(Tenant, status, null, assignee, due, null, priority, sort, page, pageSize);
+        string? sort = null,
+        string? kind = null,
+        string? createdBy = null) =>
+        new(Tenant, status, null, assignee, due, null, priority, sort, page, pageSize, kind, createdBy);
 
     private static List<string> Errors(ListTicketsQuery query) =>
         new ListTicketsValidator().Validate(query).Errors.Select(error => error.PropertyName).ToList();
@@ -67,5 +69,23 @@ public sealed class ListTicketsValidatorTests
         Assert.Equal(["Priority"], Errors(Query(priority: "High,urgent")));
         Assert.Equal(["Priority"], Errors(Query(priority: "2")));
         Assert.Equal(["Sort"], Errors(Query(sort: "Priority")));
+    }
+
+    [Fact]
+    public void KindMustBeExternalInternalOrAll()
+    {
+        Assert.Empty(Errors(Query(kind: "external")));
+        Assert.Empty(Errors(Query(kind: "internal")));
+        Assert.Empty(Errors(Query(kind: "all")));
+        Assert.Equal(["Kind"], Errors(Query(kind: "tasks")));
+        Assert.Equal(["Kind"], Errors(Query(kind: "Internal")));
+    }
+
+    [Fact]
+    public void CreatedByMustBeMe()
+    {
+        Assert.Empty(Errors(Query(createdBy: "me")));
+        Assert.Equal(["CreatedBy"], Errors(Query(createdBy: "someone")));
+        Assert.Equal(["CreatedBy"], Errors(Query(createdBy: Guid.CreateVersion7().ToString())));
     }
 }

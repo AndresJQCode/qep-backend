@@ -98,21 +98,22 @@ public sealed class HrPersistenceTests : IClassFixture<HrPersistenceTests.World>
     private static EmployeeProfile Profile(
         string document, string first = "Ana", string last = "Pérez", Guid? memberId = null, string country = "CO") => new(
             first, last, HrDocumentType.CC, document, country, null, null, null, null, null, null, memberId,
-            null, null, null, null, null, ContributorSubtype.Standard, false, [DayOfWeek.Saturday, DayOfWeek.Sunday]);
+            null, null, null, null, ContributorSubtype.Standard, false, [DayOfWeek.Saturday, DayOfWeek.Sunday]);
 
     private static NewContract Contract(
         Settings settings,
         Guid companyId,
         ContractDuration duration = ContractDuration.FixedTerm,
         DateOnly? end = null,
-        ContractType type = ContractType.Employee) => new(
+        ContractType type = ContractType.Employee,
+        DateOnly? start = null) => new(
             EmploymentContractId.New(),
             new ContractTerms(
                 companyId,
                 type,
                 duration,
                 SalaryType.Monthly,
-                new DateOnly(2026, 1, 15),
+                start ?? new DateOnly(2026, 1, 15),
                 duration == ContractDuration.Indefinite ? null : end ?? new DateOnly(2027, 1, 14)),
             null,
             SalaryRecordId.New(),
@@ -134,12 +135,13 @@ public sealed class HrPersistenceTests : IClassFixture<HrPersistenceTests.World>
         Guid? memberId = null,
         Guid? companyId = null,
         ContractDuration duration = ContractDuration.FixedTerm,
-        DateOnly? end = null) => Employee.Hire(
+        DateOnly? end = null,
+        DateOnly? start = null) => Employee.Hire(
             EmployeeId.New(),
             tenantId,
             Profile(document, first, last, memberId, "VE"),
             null,
-            Contract(settings, companyId ?? _world.CompanyId, duration, end),
+            Contract(settings, companyId ?? _world.CompanyId, duration, end, start: start),
             Floor,
             Now);
 
@@ -158,6 +160,33 @@ public sealed class HrPersistenceTests : IClassFixture<HrPersistenceTests.World>
         Guid? companyId = null) =>
         InScopeAsync(provider => provider.GetRequiredService<IEmployeeRepository>()
             .ListAsync(tenantId, search, status, expiringSoon, companyId, Today, 1, 50, Ct));
+
+    [Fact]
+    public async Task ListForPayrollReturnsOnlyTheCompanyContractsThatCoverTheRange()
+    {
+        var tenant = Guid.NewGuid();
+        var settings = await SeedSettingsAsync(tenant);
+        var active = Hire(tenant, settings, "1001", "Ana", "Alvarez");
+        var retired = Hire(tenant, settings, "1002", "Beto", "Benitez");
+        retired.Deactivate(new DateOnly(2026, 10, 31), Now);
+        var hiredLater = Hire(tenant, settings, "1003", "Carla", "Cardona", duration: ContractDuration.Indefinite, start: new DateOnly(2026, 11, 20));
+        var otherCompany = Hire(tenant, settings, "1004", "Dario", "Duarte", companyId: _world.OtherCompanyId);
+        await AddAsync(active, retired, hiredLater, otherCompany);
+
+        var firstHalf = await InScopeAsync(provider => provider.GetRequiredService<IEmployeeRepository>()
+            .ListForPayrollAsync(tenant, _world.CompanyId, new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 15), Ct));
+        var secondHalf = await InScopeAsync(provider => provider.GetRequiredService<IEmployeeRepository>()
+            .ListForPayrollAsync(tenant, _world.CompanyId, new DateOnly(2026, 11, 16), new DateOnly(2026, 11, 30), Ct));
+        var elsewhere = await InScopeAsync(provider => provider.GetRequiredService<IEmployeeRepository>()
+            .ListForPayrollAsync(Guid.NewGuid(), _world.CompanyId, new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 15), Ct));
+
+        Assert.Equal([active.Id], firstHalf.Select(employee => employee.Id));
+        Assert.Equal([active.Id, hiredLater.Id], secondHalf.Select(employee => employee.Id));
+        Assert.Empty(elsewhere);
+        var contract = Assert.Single(firstHalf[0].Contracts);
+        Assert.Single(contract.Salaries);
+        Assert.Single(contract.Assignments);
+    }
 
     [Fact]
     public async Task ASiteOfAnUnknownCompanyViolatesTheForeignKey()

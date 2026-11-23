@@ -38,6 +38,15 @@ public static class SystemTemplateVariables
         new("valor_total", "Valor total", "2.450.000 COP"),
     ];
 
+    /// <summary>Spec 2026-11-21: la factura de Siigo. Lleva <c>numero_factura</c> (el número legal de la factura, no el del pedido) y el total
+    /// de esa factura; sin vigencia, como el pedido.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> Invoice { get; } =
+    [
+        .. Fixed,
+        new("numero_factura", "Número de factura", "FV-1-000123"),
+        new("valor_total", "Valor total", "2.450.000 COP"),
+    ];
+
     /// <summary>Soporte fase 2: la plantilla «Aviso de respuesta». <c>respuesta</c> es el texto del asesor, así que al enviar tiene que
     /// cumplir <c>TemplateParameterRules</c> (sin saltos de línea).</summary>
     public static IReadOnlyList<SystemTemplateVariable> SupportReply { get; } =

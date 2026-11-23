@@ -236,6 +236,9 @@ public sealed record OrderItemAdditionRequest(Guid VariantId, decimal Quantity);
 
 public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
 
+/// <summary>Cuerpo de <c>POST …/orders/{id}/gifts</c> (spec 2026-11-21): la variante a regalar y cuántas unidades.</summary>
+public sealed record AddOrderGiftRequest(Guid VariantId, decimal Quantity);
+
 /// <summary>Cuerpo de <c>PUT …/orders/{id}/buyer-account</c> (spec 2026-11-15 §4): el correo de la cuenta verificada.</summary>
 public sealed record OrderBuyerAccountRequest(string? Email);
 
