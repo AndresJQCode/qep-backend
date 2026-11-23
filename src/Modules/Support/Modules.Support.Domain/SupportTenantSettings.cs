@@ -67,6 +67,11 @@ public sealed class SupportTenantSettings
     public SupportUnassignedAlertSettings UnassignedAlert =>
         new(UnassignedAlertEnabled, UnassignedAlertHours, UnassignedAlertScheduleId, UnassignedAlertRecipientIds);
 
+    /// <summary>Task-notices spec 2026-11-22 §5.4: the WhatsApp connection (of Integrations, no foreign key: another module's) the task
+    /// notices leave through. Null = none chosen, and the notices go by email. One that was paused or lost its template stays stored
+    /// until somebody saves another: the escalation falls back to email by itself.</summary>
+    public Guid? TaskNoticeConnectionId { get; private set; }
+
     public DateTimeOffset UpdatedAt { get; private set; }
 
     public long Version { get; private set; }
@@ -97,6 +102,7 @@ public sealed class SupportTenantSettings
         bool surveyEnabled,
         int autoCloseBusinessDays,
         SupportUnassignedAlertSettings unassignedAlert,
+        Guid? taskNoticeConnectionId,
         DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(unassignedAlert);
@@ -124,7 +130,8 @@ public sealed class SupportTenantSettings
             normalizedNextStep != FormalNextStep,
             surveyEnabled != SurveyEnabled,
             autoCloseBusinessDays != AutoCloseBusinessDays,
-            !unassignedAlert.SameAs(UnassignedAlert));
+            !unassignedAlert.SameAs(UnassignedAlert),
+            taskNoticeConnectionId != TaskNoticeConnectionId);
         if (!changes.Any)
         {
             return changes;
@@ -140,6 +147,7 @@ public sealed class SupportTenantSettings
         UnassignedAlertHours = unassignedAlert.ThresholdHours;
         UnassignedAlertScheduleId = unassignedAlert.ScheduleId;
         UnassignedAlertRecipientIds = [.. unassignedAlert.RecipientIds];
+        TaskNoticeConnectionId = taskNoticeConnectionId;
 
         DueSoonBusinessDays = dueSoonBusinessDays;
         FormalNextStep = normalizedNextStep;
@@ -151,21 +159,21 @@ public sealed class SupportTenantSettings
     }
 
     public void ChangeDueSoon(int businessDays, DateTimeOffset now) =>
-        Update(businessDays, FormalNextStep, SurveyEnabled, AutoCloseBusinessDays, UnassignedAlert, now);
+        Update(businessDays, FormalNextStep, SurveyEnabled, AutoCloseBusinessDays, UnassignedAlert, TaskNoticeConnectionId, now);
 
     /// <summary>Fase 4b (H14): la encuesta y el cierre automático. Con los mismos valores no cambia nada ni sube la versión.</summary>
     public void ChangeSurvey(bool enabled, int autoCloseBusinessDays, DateTimeOffset now) =>
-        Update(DueSoonBusinessDays, FormalNextStep, enabled, autoCloseBusinessDays, UnassignedAlert, now);
+        Update(DueSoonBusinessDays, FormalNextStep, enabled, autoCloseBusinessDays, UnassignedAlert, TaskNoticeConnectionId, now);
 
     /// <summary>Recortado; vacío es null. Con el mismo valor no cambia nada ni sube la versión.</summary>
     public void ChangeFormalNextStep(string? text, DateTimeOffset now) =>
-        Update(DueSoonBusinessDays, text, SurveyEnabled, AutoCloseBusinessDays, UnassignedAlert, now);
+        Update(DueSoonBusinessDays, text, SurveyEnabled, AutoCloseBusinessDays, UnassignedAlert, TaskNoticeConnectionId, now);
 }
 
 /// <summary>Which groups of <see cref="SupportTenantSettings"/> an <see cref="SupportTenantSettings.Update"/> changed; the handler
 /// names them in the audit row.</summary>
 public readonly record struct SupportTenantSettingsChanges(
-    bool DueSoonBusinessDays, bool FormalNextStep, bool SurveyEnabled, bool AutoCloseBusinessDays, bool UnassignedAlert)
+    bool DueSoonBusinessDays, bool FormalNextStep, bool SurveyEnabled, bool AutoCloseBusinessDays, bool UnassignedAlert, bool TaskNotice)
 {
-    public bool Any => DueSoonBusinessDays || FormalNextStep || SurveyEnabled || AutoCloseBusinessDays || UnassignedAlert;
+    public bool Any => DueSoonBusinessDays || FormalNextStep || SurveyEnabled || AutoCloseBusinessDays || UnassignedAlert || TaskNotice;
 }

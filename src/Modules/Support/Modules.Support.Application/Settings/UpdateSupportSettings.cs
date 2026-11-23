@@ -16,7 +16,15 @@ public sealed record UpdateSupportSettingsRequest(
     string? FormalNextStep = null,
     bool? SurveyEnabled = null,
     int? AutoCloseBusinessDays = null,
-    UnassignedAlertRequest? UnassignedAlert = null);
+    UnassignedAlertRequest? UnassignedAlert = null,
+    TaskNoticeRequest? TaskNotice = null);
+
+/// <summary>Task-notices spec 2026-11-22 §5.4: the block is optional on the PUT (the published frontend does not send it) and absent or
+/// null keeps the stored connection; present, a null <c>WhatsAppConnectionId</c> clears it.</summary>
+public sealed record TaskNoticeRequest(Guid? WhatsAppConnectionId);
+
+/// <summary>The task-notice block as the command carries it.</summary>
+public sealed record TaskNoticeInput(Guid? WhatsAppConnectionId);
 
 /// <summary>Opcional campo a campo para que un cuerpo incompleto salga 422 con el mapa <c>errors</c> y no 400 del binder (como
 /// <c>SaveBusinessHoursRequest</c>): sin <c>enabled</c> se lee apagado, sin <c>recipientIds</c> vacío y sin <c>thresholdHours</c> −1, que el
@@ -37,7 +45,8 @@ public sealed record UpdateSupportSettingsCommand(
     long ExpectedVersion,
     bool? SurveyEnabled = null,
     int? AutoCloseBusinessDays = null,
-    UnassignedAlertInput? UnassignedAlert = null)
+    UnassignedAlertInput? UnassignedAlert = null,
+    TaskNoticeInput? TaskNotice = null)
     : ICommand<SupportSettingsDto>
 {
     /// <summary>Sin umbral, −1: el validador lo rechaza en el campo, en vez de que el dominio lance.</summary>
@@ -46,7 +55,8 @@ public sealed record UpdateSupportSettingsCommand(
             request.AutoCloseBusinessDays,
             request.UnassignedAlert is { } alert
                 ? new UnassignedAlertInput(alert.Enabled ?? false, alert.ThresholdHours ?? -1, alert.ScheduleId, alert.RecipientIds ?? [])
-                : null);
+                : null,
+            request.TaskNotice is { } notice ? new TaskNoticeInput(notice.WhatsAppConnectionId) : null);
 }
 
 public sealed class UpdateSupportSettingsValidator : AbstractValidator<UpdateSupportSettingsCommand>
@@ -99,6 +109,7 @@ public sealed class UpdateSupportSettingsHandler(
     ISupportAuditPublisher auditPublisher,
     ISupportMemberDirectory members,
     IBusinessHoursProvider businessHours,
+    ISupportTaskNoticeChannels taskNoticeChannels,
     SupportSettingsComposer composer,
     IValidator<UpdateSupportSettingsCommand> validator)
     : ICommandHandler<UpdateSupportSettingsCommand, SupportSettingsDto>
@@ -120,6 +131,22 @@ public sealed class UpdateSupportSettingsHandler(
             ? await ValidatedAlertAsync(command.TenantId, input, cancellationToken)
             : settings.UnassignedAlert;
 
+        // Absent keeps the stored one; a present block with a null id clears it. With an id, it has to be one the tenant lists today (the
+        // screen chose it from that list), whatever the state of its template: an unapproved one is accepted and the worker falls back to
+        // email until it is approved.
+        var taskNoticeConnectionId = settings.TaskNoticeConnectionId;
+        if (command.TaskNotice is { } taskNotice)
+        {
+            if (taskNotice.WhatsAppConnectionId is { } chosen
+                && (await taskNoticeChannels.ListAsync(command.TenantId, cancellationToken)).All(connection => connection.ConnectionId != chosen))
+            {
+                throw new SupportDomainException(
+                    SupportErrorCodes.TaskNoticeConnectionInvalid, "The WhatsApp connection is not one of the tenant active connections.");
+            }
+
+            taskNoticeConnectionId = taskNotice.WhatsAppConnectionId;
+        }
+
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         // One PUT, one version (owner 2026-11-16): an absent group is passed back as stored, so it never counts as changed.
         var changes = settings.Update(
@@ -128,6 +155,7 @@ public sealed class UpdateSupportSettingsHandler(
             command.SurveyEnabled ?? settings.SurveyEnabled,
             command.AutoCloseBusinessDays ?? settings.AutoCloseBusinessDays,
             alert,
+            taskNoticeConnectionId,
             now);
         var changedFields = new List<string>();
         if (changes.DueSoonBusinessDays)
@@ -153,6 +181,11 @@ public sealed class UpdateSupportSettingsHandler(
         if (changes.UnassignedAlert)
         {
             changedFields.Add("unassignedAlert");
+        }
+
+        if (changes.TaskNotice)
+        {
+            changedFields.Add("taskNotice");
         }
 
         if (changedFields.Count > 0)

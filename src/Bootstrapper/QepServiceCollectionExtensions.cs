@@ -2277,6 +2277,8 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Task-notices spec 2026-11-22 §5.4: the WhatsApp connections (Integrations) and the state of the TaskNotice template (Messaging).
+        services.AddScoped<Modules.Support.Application.ISupportTaskNoticeChannels, SupportTaskNoticeChannels>();
         // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
         services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
         // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.

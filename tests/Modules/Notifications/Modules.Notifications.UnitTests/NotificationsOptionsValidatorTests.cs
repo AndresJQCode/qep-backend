@@ -184,6 +184,35 @@ public sealed class NotificationsOptionsValidatorTests
         Assert.True(result.Succeeded);
     }
 
+    // Task-notices spec D-4: the wait before a task notice escalates is one global number of minutes, one minute to one day.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1441)]
+    public void RejectsAnEscalationOutsideOneMinuteToOneDay(int minutes)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { TaskNotice = new TaskNoticeOptions { EscalationAfterMinutes = minutes } });
+
+        Assert.Contains(
+            result.Failures!, failure => failure.Contains("Notifications:TaskNotice:EscalationAfterMinutes", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(30)]
+    [InlineData(1440)]
+    public void AcceptsAnEscalationInsideTheRange(int minutes)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { TaskNotice = new TaskNoticeOptions { EscalationAfterMinutes = minutes } });
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void TheEscalationDefaultsToThirtyMinutes() =>
+        Assert.Equal(30, new NotificationsOptions().TaskNotice.EscalationAfterMinutes);
+
     private static NotificationsOptionsValidator ValidatorFor(string environmentName) =>
         new(new StubHostEnvironment(environmentName));
 

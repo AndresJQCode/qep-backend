@@ -371,6 +371,7 @@ public sealed class UnassignedAlertWorkerTests : IAsyncLifetime
             settings.SurveyEnabled,
             settings.AutoCloseBusinessDays,
             new SupportUnassignedAlertSettings(enabled, hours, schedule, recipients),
+            settings.TaskNoticeConnectionId,
             enabledAt);
         await services.GetRequiredService<ISupportUnitOfWork>().SaveChangesAsync(Ct);
     }
