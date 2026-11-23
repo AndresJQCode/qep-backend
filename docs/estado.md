@@ -542,8 +542,8 @@ facturación esté completa; cambiaría D-S7 y D-S15.
   pasan a la base sin IVA (`VatIncludedLine.DiscountAmountWithoutTax`); el POS conserva el descuento con IVA; ningún total cambia.
   `siigo.settings.price_mode` (`BaseWithDiscount` por defecto | `DiscountedPrice`) por conexión, migración `AddSiigoPriceMode` aplicada
   en `dev_qep`; `PUT …/document` acepta `priceMode` opcional (ausente conserva) y `GET` lo devuelve en `document.priceMode`. Unitarias
-  de Siigo, Quotations y Pos en verde sobre el merge; integración sin correr salvo `SiigoNoLeakTests`. **Falta el selector en
-  `qep-frontend`** (spec propio). Decisiones del owner abiertas: ver «Decisiones del owner pendientes».
+  de Siigo, Quotations y Pos en verde sobre el merge; integración sin correr salvo `SiigoNoLeakTests`. El selector
+  («Enviar el descuento aparte», paso «Documento») se mergeó a `develop` de `qep-frontend` (`641b41e7`, sin push, 2026-11-23). Decisiones del owner abiertas: ver «Decisiones del owner pendientes».
 
 - 2026-11-23 — Mergeado a `develop` (`02e59790c`, `--no-ff`, sin push) **parámetros legales de RRHH y nómina desde la consola
   del operador, backend** (`feature/legal-parameters-console`; spec `2026-11-22-parametros-legales-consola-operador-design.md`,
