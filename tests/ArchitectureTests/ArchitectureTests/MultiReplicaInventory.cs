@@ -156,6 +156,8 @@ public static class MultiReplicaInventory
             "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportUnassignedAlertStore.cs:75-94 (TryClaimAsync) y :26-36 (HealAsync) — el reclamo es un INSERT … ON CONFLICT (ticket_id, unassigned_since) DO NOTHING en la misma transacción que el evento del outbox: dos réplicas sobre el mismo ticket y el mismo tramo, la segunda inserta cero filas y no publica; la sanación de unassigned_since (HealAsync) son dos UPDATE idempotentes (sella las sin asignar con null, limpia las asignadas con marca) que no tocan version"),
         new("Modules.Support.Infrastructure.SupportThreadFollowWorker", WorkerClassification.Idempotent,
             "Modules/Support/Modules.Support.Infrastructure/SupportThreadFollowWorker.cs:9-13 — idempotente por índices (IX_ticket_messages_ticket_message, PK_unclassified_messages); el segundo pod choca y no duplica"),
+        new("Bootstrapper.Valkey.LegalParameters.LegalParameterCacheStartupBump", WorkerClassification.Idempotent,
+            "Bootstrapper/Valkey/LegalParameters/LegalParameterCacheStartupBump.cs — sube qep:legalparams:ver una vez al arrancar, sólo con Valkey:Areas:LegalParameters; cada pod que arranca invalida una vez más y el INCR no daña a otro pod"),
 
         // --- Noisy: el segundo choca con el inbox o con Version y sólo deja log o un tick perdido. ---
         new("Modules.Support.Infrastructure.SupportAutoCloseWorker", WorkerClassification.Noisy,
