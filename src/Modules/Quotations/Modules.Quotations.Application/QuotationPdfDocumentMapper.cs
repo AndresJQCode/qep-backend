@@ -160,7 +160,8 @@ public static class QuotationPdfDocumentMapper
     /// <c>QuotationItemResponse.Subtotal</c> es la base <b>sin</b> IVA de la línea, mientras que
     /// <c>UnitPrice</c> viene <b>con</b> el impuesto adentro (<c>QuotationItem.Apply</c>).
     /// Imprimir esos dos juntos daba una fila que no multiplica: 12 × 35.900 no da 307.714. Acá
-    /// se rearma el total bruto con la misma fórmula y los mismos redondeos que el dominio.
+    /// el total de línea es <c>Subtotal + TaxAmount</c>, igual que <c>LineTotal</c> en el dominio: desde el
+    /// 2026-11-23 el descuento de línea es sin IVA y ya no se puede restar del bruto con IVA.
     ///
     /// El unitario con descuento ya no se deriva acá: lo calcula la línea y viaja en el DTO
     /// (<c>QuotationItem.DiscountedUnitPriceUnder</c>, con la regla de redondeo del documento), desde que la pantalla lo muestra en una
@@ -173,7 +174,7 @@ public static class QuotationPdfDocumentMapper
             item.UnitPrice,
             item.DiscountPercentage,
             item.DiscountedUnitPrice,
-            Round(item.Quantity * item.UnitPrice) - item.DiscountAmount,
+            item.Subtotal + item.TaxAmount,
             withUnit ? SalesUnitLabels.Spanish(Enum.Parse<SalesUnit>(item.SalesUnit), item.Quantity) : null);
 
     /// <summary>
@@ -186,9 +187,6 @@ public static class QuotationPdfDocumentMapper
         var withUnit = items.Any(item => item.SalesUnit != nameof(SalesUnit.Unit));
         return [.. items.Select(item => LineFor(item, withUnit))];
     }
-
-    private static decimal Round(decimal value) =>
-        Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
     /// <summary>Sin datos propios la parte se imprime como "los del cliente", en vez de repetir
     /// por tercera vez lo que el bloque Cliente ya muestra.</summary>

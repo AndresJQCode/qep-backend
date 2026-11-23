@@ -823,7 +823,7 @@ fórmula de la línea es **una sola** para todas las monedas y todos los tenants
 lista     = R(precio de lista)
 unitario  = R(lista × (1 − descuento/100))
 línea     = Round2(cantidad × unitario)               // lo que se cobra, IVA adentro
-descuento = Round2(cantidad × lista) − línea
+descuento = Round2(cantidad × lista) − línea          // con IVA: lo guarda el POS
 IVA       = Round2(línea × tasa / (100 + tasa))       // sólo COP discrimina IVA
 base      = línea − IVA
 ```
@@ -833,6 +833,15 @@ aleja de cero), `Up` (hacia arriba) o `Down` (hacia abajo). Los decimales van de
 catálogo de monedas (COP 0, USD 2, EUR 2). **Por defecto**, una moneda sin configurar usa
 `(decimales del catálogo, Nearest)`: para COP es exactamente lo de antes. Ejemplo de aceptación: USD
 `(2, Up)`, 13,19 con 15 % da unitario 11,22; con 10 unidades, línea 112,20 y descuento 19,70.
+
+**El descuento de cotizaciones y pedidos se guarda sin IVA**, igual que el subtotal de la línea. Con
+`bruto = Round2(cantidad × lista cobrada)` y `t` la tasa de IVA de la línea:
+
+```
+descuento = (bruto − Round2(bruto × t / (100 + t))) − base     // base = Subtotal de la línea, sin IVA
+```
+
+El POS conserva el descuento con IVA de la fórmula de arriba.
 
 La regla aplica sólo al precio con IVA incluido. Los valores sin IVA (los que lee el Excel del ERP),
 los totales del encabezado y los del POS siguen a 2 decimales, al más cercano.

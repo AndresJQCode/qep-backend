@@ -389,10 +389,14 @@ public static class SiigoInvoiceBuilder
 
         var factor = 1m - (line.DiscountPercentage / 100m);
 
-        // El precio es el de antes del descuento: el Subtotal del pedido ya lo trae aplicado, y Siigo lo vuelve a aplicar con `discount`.
-        var (price, discount) = quantity > 0 && factor > 0
-            ? (Math.Round(line.Subtotal / (quantity * factor), 6, MidpointRounding.AwayFromZero), line.DiscountPercentage)
-            : (0m, 0m);
+        // BaseWithDiscount: el precio es el de antes del descuento (el Subtotal del pedido ya lo trae aplicado y Siigo lo vuelve a aplicar
+        // con `discount`). DiscountedPrice: el Subtotal ya trae el descuento, así que el precio es Subtotal / cantidad y `discount` va en 0.
+        // El subtotal y el IVA de abajo salen igual en los dos modos, y por eso el total no cambia.
+        var (price, discount) = settings.PriceMode == SiigoPriceMode.DiscountedPrice
+            ? (quantity > 0 ? Math.Round(line.Subtotal / quantity, 6, MidpointRounding.AwayFromZero) : 0m, 0m)
+            : quantity > 0 && factor > 0
+                ? (Math.Round(line.Subtotal / (quantity * factor), 6, MidpointRounding.AwayFromZero), line.DiscountPercentage)
+                : (0m, 0m);
         var subtotal = Math.Round(quantity * price * (1m - (discount / 100m)), 2, MidpointRounding.AwayFromZero);
         var tax = Math.Round(subtotal * line.TaxPercentage / 100m, 2, MidpointRounding.AwayFromZero);
         return new ResolvedItem(

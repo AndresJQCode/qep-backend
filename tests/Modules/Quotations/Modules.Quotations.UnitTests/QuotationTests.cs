@@ -213,7 +213,7 @@ public sealed class QuotationTests
         Assert.Equal(5m, item.DiscountPercentage);
         // El precio viene con IVA incluido: 10 * 119_000 = 1_190_000; descuento 5% = 59_500;
         // cobrado = 1_130_500.
-        Assert.Equal(59_500m, item.DiscountAmount);
+        Assert.Equal(50_000m, item.DiscountAmount); // sin IVA (spec 2026-11-23): 59.500 / 1,19
         // El IVA se extrae de lo cobrado (x 19/119 = 180_500), no se suma encima, y el
         // subtotal es lo que queda de base: 1_130_500 - 180_500 = 950_000.
         Assert.Equal(950_000m, item.Subtotal);
@@ -233,7 +233,7 @@ public sealed class QuotationTests
 
         // cobrado = 1_130_500 con IVA adentro; IVA extraido = 180_500; base = 950_000
         Assert.Equal(950_000m, quotation.Subtotal);
-        Assert.Equal(59_500m, quotation.DiscountAmount);
+        Assert.Equal(50_000m, quotation.DiscountAmount);
         Assert.Equal(180_500m, quotation.TaxAmount);
         Assert.Equal(19m, quotation.TaxPercentage);
         Assert.Equal(1_130_500m, quotation.Total);
@@ -1613,7 +1613,7 @@ public sealed class QuotationTests
 
         // 3 x 10.000 + 3 x 20.000 = 90.000, menos 5% = 85.500, IVA adentro.
         Assert.Equal(85_500m, quotation.Total);
-        Assert.Equal(4_500m, quotation.DiscountAmount);
+        Assert.Equal(3_781.51m, quotation.DiscountAmount); // sin IVA: 4.500 con IVA
         Assert.Equal(versionBefore, quotation.Version);
     }
 
@@ -1626,7 +1626,7 @@ public sealed class QuotationTests
         var item = QuotationItemId.New();
 
         quotation.AddItem(item, Guid.NewGuid(), Guid.NewGuid(), 3m, 10_000m, 5m, 19, AdvisorId, Now);
-        Assert.Equal(1_500m, quotation.DiscountAmount);
+        Assert.Equal(1_260.50m, quotation.DiscountAmount); // sin IVA: 1.500 con IVA
 
         quotation.ApplyGroupDiscounts(
             new Dictionary<QuotationItemId, QuotationItemDiscount>

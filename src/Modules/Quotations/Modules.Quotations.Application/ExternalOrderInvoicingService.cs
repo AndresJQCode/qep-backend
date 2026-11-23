@@ -191,7 +191,7 @@ public sealed class ExternalOrderInvoicingService(
         }
 
         orders.AddHistoryEntry(OrderHistoryEntry.Create(
-            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Invoiced, member, OrderChangeSummary.Invoiced(), now));
+            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Invoiced, member, OrderChangeSummary.InvoicedExternally(provider, number), now));
         auditPublisher.PublishWithDetails(
             tenantId,
             executionContext.SubjectId,

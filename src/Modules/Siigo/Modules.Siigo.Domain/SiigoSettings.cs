@@ -10,7 +10,8 @@ public sealed record SiigoDocumentSettings(
     bool SendToDian,
     bool SendMail,
     bool FreightSeparateInvoice,
-    string? FreightProductCode);
+    string? FreightProductCode,
+    SiigoPriceMode? PriceMode = null);
 
 /// <summary>El paso «Formas de pago» (spec 2026-11-18 §5.2): un vínculo por cuenta de cobro de la empresa, la forma de pago a crédito
 /// con sus días, la de contraentrega y la que se usa cuando el pedido no trae banco.</summary>
@@ -72,6 +73,9 @@ public sealed class SiigoSettings
 
     public string? FreightProductCode { get; private set; }
 
+    /// <summary>Cómo viaja el precio de cada ítem (spec 2026-11-23). <see cref="SiigoPriceMode.BaseWithDiscount"/> de fábrica.</summary>
+    public SiigoPriceMode PriceMode { get; private set; } = SiigoPriceMode.BaseWithDiscount;
+
     public string? CreditPaymentTypeId { get; private set; }
 
     public int? CreditDays { get; private set; }
@@ -110,6 +114,7 @@ public sealed class SiigoSettings
             SendToDian = false,
             SendMail = false,
             FreightSeparateInvoice = false,
+            PriceMode = SiigoPriceMode.BaseWithDiscount,
             Version = 0,
         };
 
@@ -129,6 +134,7 @@ public sealed class SiigoSettings
         SendMail = document.SendMail;
         FreightSeparateInvoice = document.FreightSeparateInvoice;
         FreightProductCode = Text(document.FreightProductCode, FreightProductCodeMaxLength);
+        PriceMode = document.PriceMode ?? PriceMode;
         Touch();
     }
 

@@ -31,7 +31,7 @@ public sealed class QuotationDiscountedUnitPriceTests
 
         var item = quotation.ToDto().Items.Single();
 
-        Assert.Equal(64_620m, item.DiscountAmount);
+        Assert.Equal(54_302.52m, item.DiscountAmount); // sin IVA (spec 2026-11-23); con IVA eran 64.620
         Assert.Equal(30_515m, item.DiscountedUnitPrice);
     }
 

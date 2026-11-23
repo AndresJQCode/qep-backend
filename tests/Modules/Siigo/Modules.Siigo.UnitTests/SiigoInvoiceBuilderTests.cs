@@ -47,6 +47,105 @@ public sealed class SiigoInvoiceBuilderTests
     }
 
     [Fact]
+    public void BaseWithDiscountStaysAsBefore()
+    {
+        using var json = Json(Ready(Build(settings: Settings(priceMode: SiigoPriceMode.BaseWithDiscount))));
+        var items = json.RootElement.GetProperty("items");
+
+        Assert.Equal(50000m, items[0].GetProperty("price").GetDecimal());
+        Assert.Equal(33333.333333m, items[1].GetProperty("price").GetDecimal());
+        Assert.Equal(10m, items[1].GetProperty("discount").GetDecimal());
+    }
+
+    [Fact]
+    public void DiscountedPriceSendsThePriceAfterTheDiscount()
+    {
+        using var json = Json(Ready(Build(settings: Settings(priceMode: SiigoPriceMode.DiscountedPrice))));
+        var items = json.RootElement.GetProperty("items");
+
+        // 3 x 30.000 = 90.000, el Subtotal de la línea (que ya trae el 10 %).
+        Assert.Equal(30000m, items[1].GetProperty("price").GetDecimal());
+        Assert.Equal(0m, items[1].GetProperty("discount").GetDecimal());
+        Assert.Equal(50000m, items[0].GetProperty("price").GetDecimal());
+        Assert.Equal(0m, items[0].GetProperty("discount").GetDecimal());
+    }
+
+    [Fact]
+    public void BothModesProduceTheSameInvoiceTotals()
+    {
+        var input = Order() with { Lines = [.. Order().Lines.Select(line => line with { Quantity = 7m })] };
+        input = input with { Lines = [input.Lines[0] with { Subtotal = 350000m, TaxAmount = 66500m }, input.Lines[1] with { Subtotal = 189000m }] };
+        input = input with { ProductsTotal = 605500m, Total = 605500m, NetTotal = 605500m };
+
+        var baseDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.BaseWithDiscount)));
+        var discountedDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice)));
+        using var baseJson = Json(baseDraft);
+        using var discountedJson = Json(discountedDraft);
+
+        Assert.Equal(baseDraft.Total, discountedDraft.Total);
+        Assert.Equal(PaymentsOf(baseJson), PaymentsOf(discountedJson));
+        Assert.Equal(
+            baseJson.RootElement.GetProperty("items").EnumerateArray().Select(Net),
+            discountedJson.RootElement.GetProperty("items").EnumerateArray().Select(Net));
+    }
+
+    [Fact]
+    public void DiscountedPriceKeepsTheSameValuesWithAFractionalQuantity()
+    {
+        var input = Order();
+        input = input with { Lines = [input.Lines[0] with { Quantity = 1.5m, Subtotal = 100000m, TaxAmount = 19000m }, input.Lines[1]] };
+
+        var baseDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.BaseWithDiscount)));
+        var discountedDraft = Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice)));
+        using var baseJson = Json(baseDraft);
+        using var discountedJson = Json(discountedDraft);
+        var baseItem = baseJson.RootElement.GetProperty("items")[0];
+        var discountedItem = discountedJson.RootElement.GetProperty("items")[0];
+
+        Assert.Equal(Net(baseItem), Net(discountedItem));
+        Assert.Equal(100000m, Net(discountedItem));
+        Assert.Equal(
+            baseItem.GetProperty("taxes")[0].GetProperty("id").GetInt32(),
+            discountedItem.GetProperty("taxes")[0].GetProperty("id").GetInt32());
+        Assert.Equal(baseDraft.Total, discountedDraft.Total);
+        Assert.Equal(PaymentsOf(baseJson), PaymentsOf(discountedJson));
+    }
+
+    [Fact]
+    public void DiscountedPriceWithZeroQuantityDoesNotDivide()
+    {
+        var input = Order();
+        input = input with { Lines = [input.Lines[0], input.Lines[1] with { Quantity = 0m, Subtotal = 0m }], ProductsTotal = 119000m, Total = 119000m, NetTotal = 119000m };
+
+        using var json = Json(Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice))));
+        var item = json.RootElement.GetProperty("items")[1];
+
+        Assert.Equal((0m, 0m), (item.GetProperty("price").GetDecimal(), item.GetProperty("discount").GetDecimal()));
+    }
+
+    [Fact]
+    public void AGiftIsTheSameInBothModes()
+    {
+        var input = Order();
+        input = input with { Lines = [input.Lines[0], input.Lines[1] with { IsGift = true, Subtotal = 0m, ListUnitPrice = 30000m }], ProductsTotal = 119000m, Total = 119000m, NetTotal = 119000m };
+
+        using var baseJson = Json(Ready(Build(input, Settings(priceMode: SiigoPriceMode.BaseWithDiscount))));
+        using var discountedJson = Json(Ready(Build(input, Settings(priceMode: SiigoPriceMode.DiscountedPrice))));
+
+        Assert.Equal(
+            baseJson.RootElement.GetProperty("items")[1].GetRawText(),
+            discountedJson.RootElement.GetProperty("items")[1].GetRawText());
+        Assert.Equal(0m, discountedJson.RootElement.GetProperty("items")[1].GetProperty("price").GetDecimal());
+    }
+
+    private static decimal Net(System.Text.Json.JsonElement item) =>
+        Math.Round(
+            item.GetProperty("quantity").GetDecimal() * item.GetProperty("price").GetDecimal()
+                * (1m - (item.GetProperty("discount").GetDecimal() / 100m)),
+            2,
+            MidpointRounding.AwayFromZero);
+
+    [Fact]
     public void AZeroRateLineWithoutLinkHasNoTaxes()
     {
         using var json = Json(Ready(Build()));

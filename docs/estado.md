@@ -396,6 +396,12 @@ ningún pod ni frontend viejo en producción. Nunca en la misma release que las 
 
 ## Decisiones del owner pendientes
 
+- Descuento sin IVA por línea (2026-11-23): (1) las cotizaciones y pedidos ya guardados conservan el descuento con IVA; editar una línea
+  de uno viejo deja el encabezado sumando valores con y sin IVA: decidir si se migra el dato; (2) la columna de descuento del Excel del
+  ERP (`OrdersExportProcessor`) ahora sale sin IVA: confirmar que la importación lo admite; (3) el «Total utilidad» del PDF
+  (`quotation.typ`) baja ~19 % junto a columnas con IVA: rotularlo «(sin IVA)» o no; (4) el carrito del storefront muestra al comprador
+  un «Descuento» sin IVA junto a precios con IVA: decidir si sigue al POS.
+
 - Parámetros legales (consola del operador): borrar una `(clave, fecha)` que no existe responde 404 `key_unknown`, igual que una
   clave desconocida en la ruta; con el área de Valkey apagada y más de una réplica, los otros pods pueden servir el valor viejo
   hasta 60 s (`MemoryLegalParameterCache` es `PerPodByDesign`); una liquidación que corre al mismo tiempo que la edición no queda
@@ -530,6 +536,15 @@ siempre manda `Billing: null` (D-S7 y D-S15). Propuesta sin respuesta: llenar la
 facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
+
+- 2026-11-23 — Mergeado a `develop` (`9d641c0f8`, `--no-ff`, sin push) **descuento sin IVA por línea y forma del precio hacia Siigo,
+  backend** (`feature/descuento-sin-iva-siigo-precio`; spec `2026-11-23-descuento-sin-iva-y-precio-a-siigo-design.md`). Dos bloques con
+  revisión cada uno, revisión fuerte de la rama y una tanda de correcciones. `QuotationItem.DiscountAmount` y `OrderItem.DiscountAmount`
+  pasan a la base sin IVA (`VatIncludedLine.DiscountAmountWithoutTax`); el POS conserva el descuento con IVA; ningún total cambia.
+  `siigo.settings.price_mode` (`BaseWithDiscount` por defecto | `DiscountedPrice`) por conexión, migración `AddSiigoPriceMode` aplicada
+  en `dev_qep`; `PUT …/document` acepta `priceMode` opcional (ausente conserva) y `GET` lo devuelve en `document.priceMode`. Unitarias
+  de Siigo, Quotations y Pos en verde sobre el merge; integración sin correr salvo `SiigoNoLeakTests`. **Falta el selector en
+  `qep-frontend`** (spec propio). Decisiones del owner abiertas: ver «Decisiones del owner pendientes».
 
 - 2026-11-23 — Mergeado a `develop` (`02e59790c`, `--no-ff`, sin push) **parámetros legales de RRHH y nómina desde la consola
   del operador, backend** (`feature/legal-parameters-console`; spec `2026-11-22-parametros-legales-consola-operador-design.md`,
