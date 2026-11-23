@@ -350,6 +350,11 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
             .IsUnique()
             .HasFilter("advisor_code IS NOT NULL")
             .HasDatabaseName("IX_memberships_tenant_id_advisor_code");
+        // Optional E.164 work mobile (task notices). Nullable and unindexed: nobody looks a member up
+        // by phone, and two members may share a company line.
+        membership.Property(value => value.PhoneE164)
+            .HasColumnName("phone_e164")
+            .HasMaxLength(MemberPhone.MaxLength);
         membership.Property(value => value.InvitedAt).HasColumnName("invited_at");
         membership.Property(value => value.AcceptedAt).HasColumnName("accepted_at");
         membership.Property(value => value.ExpiresAt).HasColumnName("expires_at");
