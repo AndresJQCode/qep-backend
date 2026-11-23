@@ -806,7 +806,8 @@ public sealed class Order
         {
             var item = order.AddItemCore(
                 OrderItemId.New(), line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
-                line.TaxPercentage, line.DiscountOrigin, line.Product, line.Kind, line.SalesUnit, occurredAt);
+                line.TaxPercentage, line.DiscountOrigin, line.Product, line.Kind, line.SalesUnit, occurredAt,
+                isGift: line.IsGift);
             item.LinkPurchaseOrderLine(line.SourcePurchaseOrderLineId);
         }
 
