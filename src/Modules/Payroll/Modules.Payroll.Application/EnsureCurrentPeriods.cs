@@ -64,10 +64,7 @@ public sealed class EnsureCurrentPeriodsHandler(
             PayrollPermissions.PeriodRead, PayrollPermissions.PeriodManage);
 
         var company = await companies.RequireAsync(command.TenantId, command.CompanyId, cancellationToken);
-        if (!company.IsActive)
-        {
-            throw new PayrollDomainException(PayrollErrorCodes.CompanyInactive, "An inactive company cannot open payroll periods.");
-        }
+        PayrollCompanies.EnsureActive(company, "An inactive company cannot open payroll periods.");
 
         // «Hoy» es el día del tenant, no el UTC: a las 23:30 de Bogotá del 15 todavía es la primera quincena (Review Focus 1).
         var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
