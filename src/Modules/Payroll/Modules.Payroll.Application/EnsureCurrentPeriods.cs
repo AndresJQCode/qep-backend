@@ -138,7 +138,6 @@ internal static class ListComposer
     }
 }
 
-
 /// <summary>Abre las quincenas dadas, con su auditoría, y relee lo que quedó (misma carrera que <c>ensure-current</c>).</summary>
 internal static class PeriodOpener
 {

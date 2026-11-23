@@ -209,4 +209,3 @@ public sealed record PayrollEmployeeDetailDto(
     EmployeeInputsDto Inputs,
     IReadOnlyList<RecurringConceptDto> Recurring,
     EmployeeResultDto? Result);
-

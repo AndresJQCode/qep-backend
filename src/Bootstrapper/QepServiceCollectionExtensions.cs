@@ -1,4 +1,4 @@
-﻿using Bootstrapper.ApiKeys;
+using Bootstrapper.ApiKeys;
 using Bootstrapper.Authentication;
 using Bootstrapper.Copilot;
 using Bootstrapper.Deployment;
@@ -4579,4 +4579,3 @@ public static class QepServiceCollectionExtensions
         policy.RequireClaim(QepClaimTypes.Permission, permissions);
     }
 }
-

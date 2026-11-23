@@ -404,4 +404,3 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
         Assert.Equal(1, detail.GetProperty("period").GetProperty("employeeCount").GetInt32());
     }
 }
-

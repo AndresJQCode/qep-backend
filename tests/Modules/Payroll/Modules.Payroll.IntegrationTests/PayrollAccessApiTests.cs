@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using Modules.Payroll.Application;
 using Modules.Tenancy.Domain;
@@ -267,4 +267,3 @@ public sealed class PayrollAccessApiTests : IClassFixture<PayrollApiFixture>
         }
     }
 }
-
