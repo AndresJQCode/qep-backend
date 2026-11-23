@@ -53,6 +53,27 @@ public sealed class TaskNoticePolicyTests
     public void OpenTaskOfTheSameActiveMemberIsSent() =>
         Assert.Null(TaskNoticePolicy.SkipReason(false, false, Ticket(), Member, Recipient()));
 
+    // The worker asks these before it reads the recipient or the presence: the cheap checks cannot depend on the recipient.
+    [Fact]
+    public void TheTicketChecksNeverLookAtTheRecipient()
+    {
+        Assert.Equal(TaskNoticeSkipReasons.Resolved, TaskNoticePolicy.SkipReason(true, true, Ticket(), Member));
+        Assert.Equal(TaskNoticeSkipReasons.Read, TaskNoticePolicy.SkipReason(true, false, Ticket(), Member));
+        Assert.Equal(TaskNoticeSkipReasons.TicketMissing, TaskNoticePolicy.SkipReason(false, false, null, Member));
+        Assert.Equal(TaskNoticeSkipReasons.TaskClosed, TaskNoticePolicy.SkipReason(false, false, Ticket(isOpen: false), Member));
+        Assert.Equal(
+            TaskNoticeSkipReasons.NotAssignee, TaskNoticePolicy.SkipReason(false, false, Ticket(assignee: Guid.CreateVersion7()), Member));
+        Assert.Null(TaskNoticePolicy.SkipReason(false, false, Ticket(), Member));
+    }
+
+    [Fact]
+    public void OnlyAnActiveRecipientPassesTheMemberCheck()
+    {
+        Assert.Null(TaskNoticePolicy.MemberSkipReason(Recipient()));
+        Assert.Equal(TaskNoticeSkipReasons.MemberInactive, TaskNoticePolicy.MemberSkipReason(Recipient(active: false)));
+        Assert.Equal(TaskNoticeSkipReasons.MemberInactive, TaskNoticePolicy.MemberSkipReason(null));
+    }
+
     // Spec D-7: a customer ticket is escalated like a task; only a ticket that does not exist is «missing».
     [Fact]
     public void ACustomerTicketIsNotSkippedAsMissing() =>

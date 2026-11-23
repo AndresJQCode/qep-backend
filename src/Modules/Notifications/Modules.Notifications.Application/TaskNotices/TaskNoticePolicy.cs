@@ -24,9 +24,16 @@ public static class TaskNoticePolicy
     public static readonly TimeSpan PresenceRecheck = TimeSpan.FromMinutes(1);
 
     /// <returns>Why the notice must not go out, or <c>null</c> when it must. The order is part of the contract: a resolved entry reports
-    /// <c>resolved</c> even if it was also read.</returns>
+    /// <c>resolved</c> even if it was also read, and an inactive member comes last.</returns>
     public static string? SkipReason(
-        bool entryRead, bool entryResolved, TaskNoticeTicket? ticket, Guid memberId, TaskNoticeRecipient? recipient)
+        bool entryRead, bool entryResolved, TaskNoticeTicket? ticket, Guid memberId, TaskNoticeRecipient? recipient) =>
+        SkipReason(entryRead, entryResolved, ticket, memberId) ?? MemberSkipReason(recipient);
+
+    /// <summary>
+    /// The checks that need only the entry and the ticket, which the worker already holds. They come first so a row that is going to be
+    /// skipped never costs a presence query or a recipient lookup (each one a call into another module).
+    /// </summary>
+    public static string? SkipReason(bool entryRead, bool entryResolved, TaskNoticeTicket? ticket, Guid memberId)
     {
         if (entryResolved)
         {
@@ -54,8 +61,12 @@ public static class TaskNoticePolicy
             return TaskNoticeSkipReasons.NotAssignee;
         }
 
-        return recipient is not { IsActive: true } ? TaskNoticeSkipReasons.MemberInactive : null;
+        return null;
     }
+
+    /// <summary>The last check, asked only once the row is about to be sent: the recipient is the most expensive thing to resolve.</summary>
+    public static string? MemberSkipReason(TaskNoticeRecipient? recipient) =>
+        recipient is not { IsActive: true } ? TaskNoticeSkipReasons.MemberInactive : null;
 
     /// <summary>Spec D-5: WhatsApp only with a connection chosen for the tenant and a trusted phone; otherwise email.</summary>
     public static TaskNoticeRoute Route(Guid? connectionId, string? phoneE164)
