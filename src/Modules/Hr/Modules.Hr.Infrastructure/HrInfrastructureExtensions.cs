@@ -27,6 +27,7 @@ public static class HrInfrastructureExtensions
         services.AddScoped<IHrUnitOfWork, HrUnitOfWork>();
         services.AddScoped<IHrAuditPublisher, HrAuditPublisher>();
         services.AddScoped<ILegalParameterSource, LegalParameterSource>();
+        services.AddScoped<ILegalParameterRepository, LegalParameterRepository>();
         services.AddScoped<IHrSettingsRepository, HrSettingsRepository>();
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeActivityLog, EmployeeActivityLog>();
