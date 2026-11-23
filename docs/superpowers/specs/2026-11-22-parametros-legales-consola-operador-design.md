@@ -46,8 +46,9 @@ dejarlos fijos en el código.
   vigente sea de un año anterior al del periodo (`PayrollLegalValues.cs:29`). `IsYearly` excluye `SundaySurchargeRate`,
   `WeeklyHours` y `ConnectivityAllowanceSince`, pero el chequeo sólo corre sobre las claves que `LegalValueSet` lee con `Get(...)`
   (`PayrollLegalValues.cs:48-81`), y `IntegralSalaryFloor` no está entre ellas: **nómina exige 26 claves escalares por año**, no 27.
-  `IntegralSalaryFloor` lo usa sólo Hr (`SalaryRules`), que no caduca la tabla (D-8). **Los tramos `SolidarityFund` no son
-  anuales para nómina:** sólo faltan si no hay ningún conjunto vigente (`PayrollLegalValues.cs:38-42`); el de 2026 sirve para 2027.
+  `IntegralSalaryFloor` lo usa sólo Hr (`SalaryRules`), que no caduca la tabla (D-8). **Los tramos `SolidarityFund` también son anuales para nómina** (decisión del owner 6,
+  2026-11-22; spec `2026-11-22-nomina-decisiones-del-owner-design.md`): faltan si el conjunto vigente es de un año anterior al del
+  periodo. ❓ Si el aviso `nextYearMissing`/`currentYearMissing` los cubre lo decide el owner.
   *(Corregido en la revisión: decía «27 claves escalares más los tramos, 28 cada enero».)* Qué cubre el aviso de «falta el año
   siguiente» es decisión del owner (ver «Pendiente del owner»).
 - La foto del periodo (`LegalValueSet`) incluye los tramos de solidaridad y la fecha con que se resolvió
