@@ -1,4 +1,4 @@
-﻿using Modules.Payroll.Application;
+using Modules.Payroll.Application;
 using Modules.Payroll.Domain;
 using Modules.Tenancy.Application;
 
@@ -63,4 +63,20 @@ public sealed class PeriodPlanOpenNextTests
     [Fact]
     public void NextPeriodStartsOnWithoutPeriodsIsTheTarget() =>
         Assert.Equal(D(2026, 11, 16), PeriodPlan.NextPeriodStartsOn([], D(2026, 11, 10)));
+
+    [Fact]
+    public void CurrentPeriodIdIsThePeriodContainingToday()
+    {
+        var existing = Existing(D(2026, 11, 1), D(2026, 11, 16));
+
+        Assert.Equal(existing[0].Id.Value, PeriodPlan.CurrentPeriodId(existing, D(2026, 11, 15)));
+        Assert.Equal(existing[1].Id.Value, PeriodPlan.CurrentPeriodId(existing, D(2026, 11, 16)));
+    }
+
+    [Fact]
+    public void CurrentPeriodIdIsNullWhenNoPeriodContainsToday()
+    {
+        Assert.Null(PeriodPlan.CurrentPeriodId(Existing(D(2026, 12, 1)), D(2026, 11, 22)));
+        Assert.Null(PeriodPlan.CurrentPeriodId([], D(2026, 11, 22)));
+    }
 }

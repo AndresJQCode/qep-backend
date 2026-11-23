@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Modules.Payroll.Domain;
 using Modules.Tenancy.Application;
 
@@ -61,6 +61,10 @@ internal static class PeriodPlan
         var target = QuincenaCalendar.After(QuincenaCalendar.Containing(today).Start);
         return existing.Any(period => period.StartDate == target.Start) ? null : target.Start;
     }
+
+    /// <summary>El período cuyo rango contiene el día del tenant; nulo si no existe (p. ej. sólo hay uno abierto por adelantado).</summary>
+    public static Guid? CurrentPeriodId(IReadOnlyList<PayrollPeriod> existing, DateOnly today) =>
+        existing.FirstOrDefault(period => period.StartDate <= today && today <= period.EndDate)?.Id.Value;
 
     /// <summary>Sin períodos y con hoy en una segunda quincena: el día 1 del mes siguiente (R-13). Si no, nulo.</summary>
     public static DateOnly? FirstPeriodStartsOn(IReadOnlyList<PayrollPeriod> existing, DateOnly today) =>
@@ -129,7 +133,8 @@ internal static class ListComposer
         }
 
         return new PayrollPeriodListDto(PayrollCompanies.ToDto(company), items, PeriodPlan.FirstPeriodStartsOn(periods, today),
-            PeriodPlan.NextPeriodStartsOn(periods, today));
+            PeriodPlan.NextPeriodStartsOn(periods, today),
+            PeriodPlan.CurrentPeriodId(periods, today));
     }
 }
 

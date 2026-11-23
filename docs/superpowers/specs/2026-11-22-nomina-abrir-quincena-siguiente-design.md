@@ -39,6 +39,8 @@ también para una empresa inactiva (el frontend no ofrece la acción sin `Period
 `firstPeriodStartsOn` no cambia.
 
 **Decisión de la sesión:** `PeriodPlan` gana un cálculo con `target` en vez de duplicar el bucle; `Missing` (la actual) no
+
+**`currentPeriodId: Guid?`** (decisión de la sesión del owner): el id de la quincena cuyo rango contiene el día del tenant (el mismo `calendar.Today`), o `null` si no existe. Viaja en las mismas tres rutas. La lista ordena del más nuevo al más viejo, así que con una quincena abierta por adelantado el primer elemento es futuro; la pantalla tiene que aterrizar en la quincena de hoy y no en esa, y por eso el id lo decide el backend y el navegador no lo deduce.
 cambia de comportamiento.
 
 ## Frontend (`qep-frontend`, `features/payroll`)

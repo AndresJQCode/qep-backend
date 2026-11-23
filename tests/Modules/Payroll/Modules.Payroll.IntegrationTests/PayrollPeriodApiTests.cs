@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text.Json;
 using Modules.Payroll.Application;
 using static Modules.Payroll.IntegrationTests.PayrollApiHarness;
@@ -158,6 +158,7 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
         var list = await OpenedNextAsync(tenant, setup.Company.Id);
 
         Assert.Equal(["2026-11-16", "2026-11-01"], StartDates(list));
+        Assert.Equal(list.GetProperty("items")[1].GetProperty("id").GetGuid(), list.GetProperty("currentPeriodId").GetGuid());
         Assert.Equal(JsonValueKind.Null, list.GetProperty("nextPeriodStartsOn").ValueKind);
     }
 
@@ -171,6 +172,7 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
         var list = await OpenedNextAsync(tenant, setup.Company.Id);
 
         Assert.Equal(["2026-12-01"], StartDates(list));
+        Assert.Equal(JsonValueKind.Null, list.GetProperty("currentPeriodId").ValueKind);
     }
 
     [Fact]
@@ -222,7 +224,9 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
 
         var listed = await tenant.Payroll.GetAsync($"{CompanyUrl(tenant, setup.Company.Id)}/periods", Ct);
 
-        Assert.Contains("\"nextPeriodStartsOn\":\"2026-11-16\"", await listed.Content.ReadAsStringAsync(Ct));
+        var body = await listed.Content.ReadAsStringAsync(Ct);
+        Assert.Contains("\"nextPeriodStartsOn\":\"2026-11-16\"", body);
+        Assert.Contains("\"currentPeriodId\":\"", body);
     }
 
     [Fact]
