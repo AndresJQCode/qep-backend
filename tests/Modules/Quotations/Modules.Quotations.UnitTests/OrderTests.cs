@@ -68,7 +68,7 @@ public sealed class OrderTests
         var order = NewOrder(lines: [Line(quantity: 3m, unitPrice: 11_900m, discount: 10m)]);
 
         var item = Assert.Single(order.Items);
-        Assert.Equal(3_570m, item.DiscountAmount);
+        Assert.Equal(3_000m, item.DiscountAmount); // sin IVA (spec 2026-11-23); con IVA eran 3.570
         Assert.Equal(27_000m, item.Subtotal);
         Assert.Equal(5_130m, item.TaxAmount);
         Assert.Equal(10_000m, item.UnitPriceWithoutTax);

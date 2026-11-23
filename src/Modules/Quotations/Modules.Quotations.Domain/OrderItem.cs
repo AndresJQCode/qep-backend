@@ -91,6 +91,7 @@ public sealed class OrderItem
 
     public QuotationDiscountOrigin DiscountOrigin { get; private set; }
 
+    /// <summary>El descuento de la línea en base sin IVA, como <see cref="Subtotal"/> (spec 2026-11-23).</summary>
     public decimal DiscountAmount { get; private set; }
 
     public decimal Subtotal { get; private set; }
@@ -329,7 +330,8 @@ public sealed class OrderItem
         TaxPercentage = taxPercentage;
         ProductTaxPercentage = productTaxPercentage;
         var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage, rounding);
-        DiscountAmount = amounts.DiscountAmount;
+        // Sin IVA, como Subtotal (spec 2026-11-23): bruto sin IVA − descuento = Subtotal.
+        DiscountAmount = amounts.DiscountAmountWithoutTax;
         TaxAmount = amounts.TaxAmount;
         Subtotal = amounts.Subtotal;
         UpdatedAt = occurredAt;

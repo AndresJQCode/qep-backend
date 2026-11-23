@@ -320,6 +320,9 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfNumber(item.Quantity),
                 ExportCell.OfNumber(item.DiscountedUnitPriceWithoutTax),
                 ExportCell.OfNumber(item.TaxAmount),
+                // Desde 2026-11-23 el descuento de la línea es sin IVA, igual que el unitario y el IVA de la
+                // fila, y la hoja del ERP lo recibe así. Decisión pendiente del owner: confirmar si el ERP
+                // esperaba el descuento con IVA de antes.
                 ExportCell.OfNumber(item.DiscountAmount),
                 ExportCell.OfText(string.Empty), // Nota Detalle: no existe nota por línea.
                 .. Enumerable.Range(0, PaymentDateColumns).Select(index => PaymentDateCell(proofs, index, calendar)),
