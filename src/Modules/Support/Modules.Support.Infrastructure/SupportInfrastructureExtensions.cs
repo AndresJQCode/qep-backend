@@ -83,6 +83,8 @@ public static class SupportInfrastructureExtensions
         services.AddScoped<SupportAutoCloser>();
         // Spec 2026-11-22 §7 and D-16: the unassigned-ticket alert reads and claims through this store.
         services.AddScoped<SupportUnassignedAlertStore>();
+        // Task-notices spec 2026-11-22 §5.7 and D-7: what the notice escalation re-checks before sending; reached through a Bootstrapper port.
+        services.AddScoped<ISupportTaskNoticeReader, SupportTaskNoticeReader>();
         services.AddOptions<SupportWorkerOptions>().Bind(configuration.GetSection(SupportWorkerOptions.SectionName));
         if (configuration.GetValue($"{SupportWorkerOptions.SectionName}:Enabled", true))
         {
