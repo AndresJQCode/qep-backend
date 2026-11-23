@@ -54,6 +54,7 @@ public sealed class InvoiceWhatsAppDeliveryTests
         Assert.IsType<ZenviaWhatsAppChannel>(harness.Sender.Channel);
     }
 
+    // Es la copia pública de Quotations (`IQuotationPdfStorage`); el hilo de Mensajería guarda su propia copia privada del adjunto de Meta.
     [Fact]
     public async Task MetaNeverPublishesACopy()
     {
@@ -241,6 +242,71 @@ public sealed class InvoiceWhatsAppDeliveryTests
         Assert.Same(failure, error);
         Assert.Empty(harness.Storage.PublishedInvoices);
         Assert.Null(harness.Sender.SentInvoice);
+    }
+
+    [Fact]
+    public async Task APublishFailureBecomesSendFailedNamingTheStepAndKeepsTheInnerException()
+    {
+        var inner = new InvalidOperationException("Public bucket is not configured: https://secret.example/x 3001234567");
+        var harness = NewHarness(channels: [WhatsAppChannels.Any()]);
+        harness.Storage.InvoicePublishFailure = inner;
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Delivery.SendAsync(harness.Request(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("invoice.whatsapp.send_failed", error.Code);
+        Assert.Same(inner, error.InnerException);
+        Assert.Contains("publish", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("3001234567", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret.example", error.Message, StringComparison.Ordinal);
+        Assert.Null(harness.Sender.SentInvoice);
+    }
+
+    [Fact]
+    public async Task ANonDomainSendFailureBecomesSendFailedNamingTheStep()
+    {
+        var inner = new HttpRequestException("timeout calling zenvia with 3001234567");
+        var harness = NewHarness(whatsAppFailure: inner);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Delivery.SendAsync(harness.Request(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("invoice.whatsapp.send_failed", error.Code);
+        Assert.Same(inner, error.InnerException);
+        Assert.Contains("send", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("3001234567", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACancelledSendStillPropagates()
+    {
+        var harness = NewHarness(whatsAppFailure: new OperationCanceledException());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            harness.Delivery.SendAsync(harness.Request(), TestContext.Current.CancellationToken));
+    }
+
+    // Un teléfono con texto pero sin dígitos no es un destinatario: se rechaza antes de publicar la copia y no se ofrece el botón.
+    [Fact]
+    public async Task APhoneThatCannotBeNormalizedFailsWithNoPhoneBeforePublishing()
+    {
+        var harness = NewHarness(customer: Customer with { Phone = "sin telefono" }, channels: [WhatsAppChannels.Any()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Delivery.SendAsync(harness.Request(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("invoice.whatsapp.no_phone", error.Code);
+        Assert.Empty(harness.Storage.PublishedInvoices);
+        Assert.Empty(harness.Channels.Documents);
+    }
+
+    [Fact]
+    public async Task CanSendIsFalseWhenThePhoneCannotBeNormalized()
+    {
+        var harness = NewHarness(customer: Customer with { Phone = "n/a" });
+
+        Assert.False(await harness.Delivery.CanSendAsync(
+            TenantId, harness.Order.Id.Value, TestContext.Current.CancellationToken));
     }
 
     private sealed record Harness(

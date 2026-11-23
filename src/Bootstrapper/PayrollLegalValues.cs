@@ -7,7 +7,7 @@ using Modules.Payroll.Domain.Engine;
 namespace Bootstrapper;
 
 /// <summary>Adapta las tablas de valores legales de Hr al puerto de Payroll (<c>PayrollLayerTests.NoPayrollLayerReferencesHr</c>): cada
-/// clave se resuelve con la fila vigente a la fecha, y los tramos con los de la mayor vigencia.</summary>
+/// clave se resuelve con la fila vigente a la fecha, y los tramos con los de la mayor vigencia, que también tiene que ser del año.</summary>
 internal sealed class PayrollLegalValues(ILegalParameterSource source) : IPayrollLegalValues
 {
     // Mid-year keys (or keys with their own start date) keep resolving to the row in force from any earlier year.
@@ -36,7 +36,10 @@ internal sealed class PayrollLegalValues(ILegalParameterSource source) : IPayrol
         }
 
         var solidarity = LegalParameters.ResolveBrackets(brackets, LegalBracketKey.SolidarityFund, asOf);
-        if (solidarity.Count == 0)
+
+        // Decisión del owner 6 (2026-11-22): los tramos son anuales para la nómina, como las claves escalares; un conjunto vigente de un
+        // año anterior es un año sin cargar.
+        if (solidarity.Count == 0 || solidarity[0].EffectiveFrom.Year < asOf.Year)
         {
             missing.Add(LegalBracketKey.SolidarityFund.ToString());
         }

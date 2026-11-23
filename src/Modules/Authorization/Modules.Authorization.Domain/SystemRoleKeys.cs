@@ -21,8 +21,16 @@ public static class SystemRoleKeys
     /// no lo pise en silencio en TenantRoleCatalog.</summary>
     public const string Cashier = "cashier";
 
+    /// <summary>Roles de sistema de la Agenda (spec 2026-11-21, D-13). Definidos en código, no se crean al activar el módulo.</summary>
+    public const string SchedulingManager = "scheduling_manager";
+
+    public const string SchedulingProvider = "scheduling_provider";
+
     public static readonly IReadOnlySet<string> All =
-        new HashSet<string>(StringComparer.Ordinal) { Admin, Advisor, Billing, Cashier };
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            Admin, Advisor, Billing, Cashier, SchedulingManager, SchedulingProvider,
+        };
 
     public static bool IsReserved(string key) => All.Contains(key);
 }

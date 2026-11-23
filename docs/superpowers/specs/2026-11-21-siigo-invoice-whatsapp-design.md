@@ -56,7 +56,7 @@ guardada del tenant, sin recordar una nueva) y llama a `IWhatsAppSender.SendInvo
 (`SiigoInvoiceWhatsApp`) sólo reenvía el puerto de Siigo a esa fachada.
 
 - **Meta:** `MessagingInvoiceTemplateOutbound` (hermano de `OrderTemplateOutbound`) con claves `nombre_contacto`, `numero_factura`,
-  `valor_total`. El PDF va en memoria; **no se escribe en Storage**.
+  `valor_total`. El PDF va en memoria hasta Mensajería; Quotations no publica copia. Mensajería deja una copia **privada** del adjunto en el hilo (`messaging/{tenantId}/{messageId}`, por tenant, igual que en cotizaciones y pedidos).
 - **Zenvia:** sube el PDF a una clave aleatoria bajo un prefijo propio `invoices/` del bucket público (sin id de pedido ni número de
   factura en la clave), manda esa URL en `fields.documentUrl` con `invoiceTemplateId`. Sin bucket público configurado, el envío **falla**
   (nunca cae a URL firmada).
@@ -77,12 +77,12 @@ en el detalle del pedido (spec aparte en `qep-frontend`).
 `no_channel`, `channel_required`, `channel_unavailable`, `channel_already_set`, `no_phone` y `send_failed` (con el motivo de Meta o Zenvia).
 `siigo.invoice.not_found` (404, existente) para la factura inexistente, ajena o sin PDF.
 
-**Auditoría.** Evento de auditoría en el handler (quién, pedido, factura, canal); **sin** teléfono ni contenido del PDF. La entrada del
-hilo de Mensajería la deja el envío por Meta como en cotizaciones.
+**Auditoría.** Evento de auditoría en el handler (quién, pedido, factura); **sin** teléfono ni contenido del PDF. La entrada del
+hilo de Mensajería la deja el envío por Meta como en cotizaciones, y ahí se ve el canal (Siigo no lo ve a través del puerto).
 
 ## Privacidad
 
-- El PDF de la factura nunca se persiste en el bucket privado ni en base de datos.
+- Siigo no guarda el PDF de la factura (ni en base de datos) y Quotations no lo publica por Meta. El envío por Meta deja una copia privada del adjunto en el hilo de Mensajería (por tenant, misma retención que cualquier adjunto saliente): no es pública, y el ancla del owner («no en un repositorio público») se mantiene. Sólo Zenvia necesita la copia pública.
 - Zenvia: copia pública con clave aleatoria de v7 sin datos de negocio, vigente hasta que corra el lifecycle (1 día). Es el riesgo
   aceptado por el owner. La regla de lifecycle de `invoices/` se crea a mano en Cloudflare (`wrangler r2 bucket lifecycle add`), igual que
   `quotations/`; **va documentada en el README y es parte del despliegue**.

@@ -21,6 +21,8 @@
     <ProjectReference Include="..\Modules\Hr\Modules.Hr.Infrastructure\Modules.Hr.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Application\Modules.Payroll.Application.csproj" />
     <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Infrastructure\Modules.Payroll.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Application\Modules.Scheduling.Application.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Infrastructure\Modules.Scheduling.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Purchases\Modules.Purchases.Application\Modules.Purchases.Application.csproj" />

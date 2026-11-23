@@ -16,11 +16,11 @@ public static class EmployeeDeductionsRule
             code,
             PayrollLineGroup.Deduction,
             label,
-            PayrollRounding.CeilingToHundred(ibc.IbcMonth * rate.Value) - prior,
+            PayrollRounding.CeilingToHundred(ibc.SocialSecurityIbc * rate.Value) - prior,
             null,
             new LineTrace(
                 Formula,
-                [new TraceInput("IBC del mes", ibc.IbcMonth), new TraceInput("Tasa", rate.Value), new TraceInput("Retenido en la primera quincena", prior)],
+                [new TraceInput("IBC del mes", ibc.SocialSecurityIbc), new TraceInput("Tasa", rate.Value), new TraceInput("Retenido en la primera quincena", prior)],
                 [rate],
                 null));
 }

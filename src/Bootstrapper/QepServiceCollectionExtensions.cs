@@ -25,6 +25,7 @@ using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
+using Modules.Authorization.Domain;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Application;
 using Modules.Automations.Application.Engine;
@@ -65,6 +66,8 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
+using Modules.Scheduling.Application;
+using Modules.Scheduling.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
@@ -648,6 +651,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Payroll.Application.EnsureCurrentPeriodsCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.EnsureCurrentPeriodsHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.OpenNextPeriodCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.OpenNextPeriodHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.ListPeriodsQuery, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.ListPeriodsHandler>();
         services.AddScoped<
@@ -701,6 +707,122 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.ExportPeriodQuery, Modules.Payroll.Application.PayrollExportFile>,
             Modules.Payroll.Application.ExportPeriodHandler>();
+
+        // Scheduling, spec 2026-11-21. A mano y con ruta completa, como Hr: un handler olvidado responde 500.
+        services.AddScoped<Modules.Scheduling.Application.SchedulingFirstAccess>();
+        services.AddScoped<Modules.Scheduling.Application.ResourceScopeResolver>();
+        services.AddScoped<Modules.Scheduling.Application.SchedulingComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetSetupQuery, Modules.Scheduling.Application.SetupDto>,
+            Modules.Scheduling.Application.GetSetupHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListLocationsQuery, IReadOnlyList<Modules.Scheduling.Application.LocationDto>>,
+            Modules.Scheduling.Application.ListLocationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListResourcesQuery, IReadOnlyList<Modules.Scheduling.Application.ResourceDto>>,
+            Modules.Scheduling.Application.ListResourcesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListServicesQuery, IReadOnlyList<Modules.Scheduling.Application.ServiceDto>>,
+            Modules.Scheduling.Application.ListServicesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetSettingsQuery, Modules.Scheduling.Application.SettingsDto>,
+            Modules.Scheduling.Application.GetSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.CreateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.UpdateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveLocationCommand, Modules.Scheduling.Application.LocationDto>,
+            Modules.Scheduling.Application.ArchiveLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.CreateResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.UpdateResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveResourceCommand, Modules.Scheduling.Application.ResourceDto>,
+            Modules.Scheduling.Application.ArchiveResourceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.CreateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.UpdateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveServiceCommand, Modules.Scheduling.Application.ServiceDto>,
+            Modules.Scheduling.Application.ArchiveServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateSettingsCommand, Modules.Scheduling.Application.SettingsDto>,
+            Modules.Scheduling.Application.UpdateSettingsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListBlocksQuery, IReadOnlyList<Modules.Scheduling.Application.BlockDto>>,
+            Modules.Scheduling.Application.ListBlocksHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.CreateBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.UpdateBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.UpdateBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ArchiveBlockCommand, Modules.Scheduling.Application.BlockDto>,
+            Modules.Scheduling.Application.ArchiveBlockHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.PublishSessionCommand, Modules.Scheduling.Application.PublishedSessionDto>,
+            Modules.Scheduling.Application.PublishSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.RemovePublishedSessionCommand, Modules.Scheduling.Application.PublishedSessionRemovedResult>,
+            Modules.Scheduling.Application.RemovePublishedSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListClosuresQuery, IReadOnlyList<Modules.Scheduling.Application.ClosureDto>>,
+            Modules.Scheduling.Application.ListClosuresHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateClosureCommand, Modules.Scheduling.Application.ClosureDto>,
+            Modules.Scheduling.Application.CreateClosureHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.DeleteClosureCommand, Modules.Scheduling.Application.ClosureDeletedResult>,
+            Modules.Scheduling.Application.DeleteClosureHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AvailabilityLoader>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListAvailabilityQuery, Modules.Scheduling.Application.AvailabilityDto>,
+            Modules.Scheduling.Application.ListAvailabilityHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.SearchAppointmentCustomersQuery, IReadOnlyList<Modules.Scheduling.Application.AppointmentCustomerDto>>,
+            Modules.Scheduling.Application.SearchAppointmentCustomersHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CreateAppointmentCustomerCommand, Modules.Scheduling.Application.AppointmentCustomerDto>,
+            Modules.Scheduling.Application.CreateAppointmentCustomerHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentComposer>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.BookAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.BookAppointmentHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetAppointmentQuery, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.GetAppointmentHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.ListCalendarQuery, Modules.Scheduling.Application.CalendarDto>,
+            Modules.Scheduling.Application.ListCalendarHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Scheduling.Application.GetDeskQuery, Modules.Scheduling.Application.DeskDto>,
+            Modules.Scheduling.Application.GetDeskHandler>();
+        services.AddScoped<Modules.Scheduling.Application.AppointmentTransitions>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.ConfirmAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.ConfirmAppointmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.CancelAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.CancelAppointmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.MarkAttendedCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.MarkAttendedHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.MarkNoShowCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.MarkNoShowHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Scheduling.Application.RescheduleAppointmentCommand, Modules.Scheduling.Application.AppointmentDto>,
+            Modules.Scheduling.Application.RescheduleAppointmentHandler>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
 
@@ -1617,6 +1739,9 @@ public static class QepServiceCollectionExtensions
         // Support task notices: the assignment notice template, sibling of the wholesale invitation notice.
         services.AddScoped<ICommandHandler<ProvisionTaskNoticeTemplateCommand, ManagedTemplateDto>, ProvisionTaskNoticeTemplateHandler>();
         services.AddScoped<IQueryHandler<GetTaskNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetTaskNoticeTemplateDraftHandler>();
+        // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista.
+        services.AddScoped<ICommandHandler<ProvisionAppointmentReminderTemplateCommand, ManagedTemplateDto>, ProvisionAppointmentReminderTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetAppointmentReminderTemplateDraftQuery, SystemTemplateDraftDto>, GetAppointmentReminderTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Spec 2026-11-20: cambiar la imagen del encabezado sin pasar por Meta. El validador entra con AddValidatorsFromAssemblyContaining.
@@ -1721,6 +1846,8 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssembly(typeof(HrPermissions).Assembly);
         // Payroll: igual que Hr, PayrollPermissions es estática y no sirve de argumento de tipo.
         services.AddValidatorsFromAssembly(typeof(PayrollPermissions).Assembly);
+        // Scheduling: igual que Hr, por ensamblado (SchedulingPermissions es estática y no sirve de argumento de tipo).
+        services.AddValidatorsFromAssembly(typeof(SchedulingPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
@@ -1744,6 +1871,7 @@ public static class QepServiceCollectionExtensions
         services.AddLoansInfrastructure(configuration);
         services.AddHrInfrastructure(configuration);
         services.AddPayrollInfrastructure(configuration);
+        services.AddSchedulingInfrastructure(configuration);
         services.AddPurchasesInfrastructure(configuration);
         services.AddWholesaleInfrastructure(configuration);
         services.AddSupportInfrastructure(configuration);
@@ -1891,6 +2019,8 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-18 §5.5: el pedido para el armador de la factura, con la ciudad en códigos DANE.
         services.AddScoped<ISiigoGeographyLookup, SiigoGeographyLookup>();
         services.AddScoped<ISiigoOrderSource, SiigoOrderSource>();
+        // Spec 2026-11-21: enviar el PDF de la factura por WhatsApp. Siigo no ve Quotations: el puerto reenvía a su fachada.
+        services.AddScoped<ISiigoInvoiceWhatsApp, SiigoInvoiceWhatsApp>();
         // Tareas 8 a 10: vista previa, generar, consultar, estampar y resolver la factura de un pedido.
         services.AddScoped<IQueryHandler<PreviewSiigoInvoiceQuery, SiigoInvoicePreviewDto>, PreviewSiigoInvoiceHandler>();
         services.AddScoped<IQueryHandler<SiigoInvoiceAvailabilityQuery, SiigoInvoiceAvailabilityDto>, SiigoInvoiceAvailabilityHandler>();
@@ -1902,6 +2032,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>, IssueSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>, StampSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>, ResolveSiigoInvoiceHandler>();
+        services.AddScoped<ICommandHandler<SendSiigoInvoiceWhatsAppCommand, SiigoInvoiceWhatsAppSent>, SendSiigoInvoiceWhatsAppHandler>();
         // Spec 2026-11-21: la tanda de facturación. El invocador corre el handler de arriba como quien la pidió.
         services.AddScoped<ICommandHandler<CreateSiigoInvoiceBatchCommand, SiigoInvoiceBatchDto>, CreateSiigoInvoiceBatchHandler>();
         services.AddScoped<IQueryHandler<GetSiigoInvoiceBatchQuery, SiigoInvoiceBatchDto>, GetSiigoInvoiceBatchHandler>();
@@ -2221,6 +2352,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
+        services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();
+        services.AddScoped<ISchedulingTenantDirectory, SchedulingTenantDirectory>();
+        // La Agenda busca y da de alta al cliente de la cita por su propio puerto (plan 2026-11-21, corrección 5), calco de IPosCustomerLookup.
+        services.AddScoped<ISchedulingCustomerLookup, SchedulingCustomerLookup>();
 
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.
@@ -2302,6 +2438,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Messaging.Application.IMessagingMemberPermissions, MessagingMemberPermissions>();
         services.AddAppRealtime();
         services.AddScoped<Modules.Support.Application.ISupportBusinessCalendarSource, SupportBusinessCalendarSource>();
+        // Spec 2026-11-21 (Agenda), D-10: los festivos de las franjas, por puerto y con el adaptador de Bootstrapper (calco del de Soporte).
+        services.AddScoped<ISchedulingHolidayCalendar, SchedulingHolidayCalendar>();
+        // Plan 2026-11-21, Tarea 12: el recordatorio de cita sale por Mensajería (puerto IAppointmentReminderSender) y el cliente, su teléfono y su
+        // consentimiento llegan por ISchedulingReminderRecipients; la Agenda no referencia ni Mensajería ni Clientes.
+        services.AddScoped<IAppointmentReminderSender, SchedulingReminderSender>();
+        services.AddScoped<ISchedulingReminderRecipients, SchedulingReminderRecipients>();
         // Soporte fase 2: la conversación, sus mensajes, el feed del seguimiento, los eventos del hilo y las respuestas son de Mensajería y
         // Notifications; Soporte sólo declara los puertos.
         services.AddScoped<Modules.Support.Application.ISupportConversationDirectory, SupportConversationDirectory>();
@@ -2790,6 +2932,13 @@ public static class QepServiceCollectionExtensions
                 PayrollPermissions.PeriodManage,
                 PayrollPermissions.PeriodApprove,
                 PayrollPermissions.SettingsManage,
+                // Spec 2026-11-21 (Agenda): admin lleva los cinco; los dos roles de sistema de la Agenda llevan los operativos y ninguno
+                // la configuración (servicios, reglas y estructura son del administrador).
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage,
+                SchedulingPermissions.AgendaReadAll,
+                SchedulingPermissions.SettingsManage,
                 // Spec 2026-11-14 (soporte, C1): admin atiende tickets y además configura los tipos y el umbral de «por vencer».
                 SupportPermissions.Read,
                 SupportPermissions.Manage,
@@ -2931,6 +3080,33 @@ public static class QepServiceCollectionExtensions
                 PosPermissions.RegisterOperate,
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
+            ]));
+        // Spec 2026-11-21 (Agenda), D-13: roles de sistema en código, no se crean al activar el módulo; con el módulo apagado no son
+        // asignables (RoleAssignability). Llevan sólo permisos de la Agenda, a propósito: uno de núcleo (Clientes) los haría asignables
+        // en un tenant sin Agenda, así que la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS.
+        // Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador.
+        services.AddSingleton(new RoleDefinition(
+            SystemRoleKeys.SchedulingManager,
+            "Gestor de agenda",
+            "Ve y administra las agendas de todos los médicos o recursos: citas, franjas y bloqueos.",
+            "Tenancy",
+            "medium",
+            [
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage,
+                SchedulingPermissions.AgendaReadAll
+            ]));
+        services.AddSingleton(new RoleDefinition(
+            SystemRoleKeys.SchedulingProvider,
+            "Profesional de agenda",
+            "Ve y administra su propia agenda: la del recurso vinculado a su usuario.",
+            "Tenancy",
+            "medium",
+            [
+                SchedulingPermissions.AppointmentRead,
+                SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
@@ -3991,6 +4167,59 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("payroll.settings", "Configuración de nómina", "manage"),
         });
+        // Spec 2026-11-21 (Agenda): con [scheduling], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no
+        // lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. `agenda.read_all` no concede acciones: sólo amplía
+        // sobre qué recursos valen las demás.
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AppointmentRead,
+            "Ver citas",
+            "Permite ver el calendario, las citas y los espacios libres de los recursos a los que tiene alcance.",
+            "Agenda",
+            "low",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.appointment", "Citas", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AppointmentManage,
+            "Gestionar citas",
+            "Permite crear, confirmar, reprogramar, cancelar y marcar como asistidas las citas de los recursos a los que tiene alcance.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.appointment", "Citas", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AvailabilityManage,
+            "Gestionar franjas y bloqueos",
+            "Permite abrir y cerrar franjas, publicar sesiones y bloquear horas de los recursos a los que tiene alcance.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.availability", "Franjas y bloqueos", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.AgendaReadAll,
+            "Ver todas las agendas",
+            "Amplía el alcance de los demás permisos de la Agenda a todos los recursos del tenant; sin él, sólo los vinculados a su membresía.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.agenda", "Todas las agendas", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            SchedulingPermissions.SettingsManage,
+            "Configurar la agenda",
+            "Permite crear sedes, recursos y servicios, y cambiar las reglas de reserva y el recordatorio.",
+            "Agenda",
+            "medium",
+            RequiredModules: [ModuleKeys.Scheduling])
+        {
+            Shape = new("scheduling.settings", "Configuración de la agenda", "manage"),
+        });
         // Spec 2026-11-14 (soporte, C1): con [support], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
@@ -4545,6 +4774,22 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 PayrollPolicies.SettingsView,
                 policy => AddAnyPermissionRequirement(policy, PayrollPermissions.PeriodRead, PayrollPermissions.SettingsManage))
+            // Spec 2026-11-21 (Agenda): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                SchedulingPermissions.AppointmentRead,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AppointmentRead))
+            .AddPolicy(
+                SchedulingPermissions.AppointmentManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AppointmentManage))
+            .AddPolicy(
+                SchedulingPermissions.AvailabilityManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AvailabilityManage))
+            .AddPolicy(
+                SchedulingPermissions.AgendaReadAll,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.AgendaReadAll))
+            .AddPolicy(
+                SchedulingPermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, SchedulingPermissions.SettingsManage))
             // Spec 2026-11-14 (soporte): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 SupportPermissions.Read,

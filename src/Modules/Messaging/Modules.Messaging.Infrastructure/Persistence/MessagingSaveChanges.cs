@@ -164,6 +164,17 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateTaskNoticeExists, "This connection already has its task notice template.", exception);
         }
+
+        // Agenda: lo mismo para la plantilla del recordatorio de cita.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateAppointmentReminderIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateAppointmentReminderExists, "This connection already has its appointment reminder template.",
+                exception);
+        }
         // Spec 2026-11-09: un programado activo por conversación y un clientId por conversación. Los dos son 409 ya_existe: el handler de
         // crear relee por clientId y devuelve el existente si fue el mismo reintento.
         catch (DbUpdateException exception)

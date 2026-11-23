@@ -32,7 +32,7 @@ public interface IInvoiceWhatsAppDelivery
     /// <summary>
     /// Si hoy se podría mandar: el cliente del pedido tiene teléfono y el canal se resuelve igual que en el envío (uno solo,
     /// o varios con la elección guardada del tenant).
-    /// Nunca lanza porque falte algo: responde <c>false</c>.
+    /// Que falte algo (pedido, teléfono, canal) responde <c>false</c>; una falla de infraestructura (base, directorio de canales) sí lanza.
     /// </summary>
     Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 }
@@ -68,7 +68,8 @@ public sealed class InvoiceWhatsAppDelivery(
             ?? throw new QuotationsDomainException(
                 "order.order.client_not_found",
                 $"Client '{order.ClientId}' was not found in this tenant.");
-        if (string.IsNullOrWhiteSpace(customer.Phone))
+        // Con el mismo normalizador del sender: un texto sin dígitos no es un destinatario, y se sabe antes de publicar nada.
+        if (WhatsAppPhone.Normalize(customer.Phone) is null)
         {
             throw new QuotationsDomainException(
                 "invoice.whatsapp.no_phone",
@@ -92,31 +93,45 @@ public sealed class InvoiceWhatsAppDelivery(
         // Sólo Zenvia baja el documento por URL. Meta recibe los bytes y Mensajería los sube: no se publica nada.
         string? documentUrl = null;
         byte[]? document = null;
-        if (channel is ZenviaWhatsAppChannel)
+        var stage = "publish";
+        try
         {
-            documentUrl = await pdfStorage.PublishInvoiceAsync(request.Pdf, cancellationToken);
-        }
-        else
-        {
-            document = request.Pdf.ToArray();
-        }
+            if (channel is ZenviaWhatsAppChannel)
+            {
+                documentUrl = await pdfStorage.PublishInvoiceAsync(request.Pdf, cancellationToken);
+            }
+            else
+            {
+                document = request.Pdf.ToArray();
+            }
 
-        // Una falla del envío sale como viene: el sender ya la tradujo a `invoice.whatsapp.send_failed`.
-        await whatsAppSender.SendInvoiceAsync(
-            channel,
-            new WhatsAppInvoiceMessage(
-                ToPhone: customer.Phone,
-                FullName: customer.Name,
-                InvoiceNumber: request.InvoiceNumber,
-                Total: request.InvoiceTotal ?? order.Total,
-                Currency: order.Currency,
-                DocumentUrl: documentUrl,
-                NumberFormat: regional?.NumberFormat,
-                Document: document,
-                SentByMemberId: sentBy.Value,
-                CustomerId: order.ClientId,
-                TenantId: request.TenantId),
-            cancellationToken);
+            stage = "send";
+            await whatsAppSender.SendInvoiceAsync(
+                channel,
+                new WhatsAppInvoiceMessage(
+                    ToPhone: customer.Phone,
+                    FullName: customer.Name,
+                    InvoiceNumber: request.InvoiceNumber,
+                    Total: request.InvoiceTotal ?? order.Total,
+                    Currency: order.Currency,
+                    DocumentUrl: documentUrl,
+                    NumberFormat: regional?.NumberFormat,
+                    Document: document,
+                    SentByMemberId: sentBy.Value,
+                    CustomerId: order.ClientId,
+                    TenantId: request.TenantId),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not QuotationsDomainException and not OperationCanceledException)
+        {
+            // Un error de dominio ya se explica solo y sale tal cual. Lo demás (bucket público sin configurar, R2, un timeout de Zenvia o de
+            // Meta) sale 422 con código propio y sólo el paso en el mensaje, como `order.send.failed`: ni la URL, ni el teléfono, ni el PDF.
+            // La original viaja como InnerException para el log de fallas de la API.
+            throw new QuotationsDomainException(
+                "invoice.whatsapp.send_failed",
+                $"The invoice could not be sent ({stage}).",
+                exception);
+        }
     }
 
     public async Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
@@ -128,7 +143,7 @@ public sealed class InvoiceWhatsAppDelivery(
         }
 
         var customer = await FindCustomerAsync(tenantId, order, cancellationToken);
-        if (customer is null || string.IsNullOrWhiteSpace(customer.Phone))
+        if (customer is null || WhatsAppPhone.Normalize(customer.Phone) is null)
         {
             return false;
         }

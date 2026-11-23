@@ -82,6 +82,7 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
         var wholesaleNotice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.WholesaleInvitationNotice);
         var invoice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.Invoice);
         var taskNotice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.TaskNotice);
+        var appointmentReminder = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.AppointmentReminder);
         return new TemplateManagementDto(
             connection,
             quotation is null ? null : new QuotationTemplateStatusDto(quotation.Id, quotation.Status, quotation.StatusReason),
@@ -97,7 +98,10 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
                 ? null
                 : new WholesaleInvitationNoticeTemplateStatusDto(wholesaleNotice.Id, wholesaleNotice.Status, wholesaleNotice.StatusReason),
             invoice is null ? null : new InvoiceTemplateStatusDto(invoice.Id, invoice.Status, invoice.StatusReason),
-            taskNotice is null ? null : new TaskNoticeTemplateStatusDto(taskNotice.Id, taskNotice.Status, taskNotice.StatusReason));
+            taskNotice is null ? null : new TaskNoticeTemplateStatusDto(taskNotice.Id, taskNotice.Status, taskNotice.StatusReason),
+            appointmentReminder is null
+                ? null
+                : new AppointmentReminderTemplateStatusDto(appointmentReminder.Id, appointmentReminder.Status, appointmentReminder.StatusReason));
     }
 }
 

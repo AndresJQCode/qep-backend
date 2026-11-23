@@ -22,6 +22,7 @@ using Modules.Pipeline.Application;
 using Modules.Pos.Application;
 using Modules.Purchases.Application;
 using Modules.Reporting.Application;
+using Modules.Scheduling.Application;
 using Modules.ServiceContracts.Application;
 using Modules.Shopify.Application;
 using Modules.Siigo.Application;
@@ -342,9 +343,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21 y las cinco <c>scheduling.*</c> del spec 2026-11-21 (Agenda).</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheHundredAndFiveConstants()
+    public void PermissionDiscoveryFindsTheHundredAndTenConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -371,7 +372,8 @@ public sealed class CompositionRootTests
         // + el de las fallas de las llamadas a Siigo (siigo.calls.read, spec 2026-11-21)
         // + the five hr.* permissions (spec 2026-11-20).
         // + the four payroll.* permissions (spec 2026-11-21).
-        Assert.Equal(105, PermissionConstants().Length);
+        // + los cinco de la Agenda (scheduling.*, spec 2026-11-21).
+        Assert.Equal(110, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -999,6 +1001,107 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec 2026-11-21 (Agenda): los cinco permisos exigen el módulo <c>scheduling</c> (apagado, el editor de roles los oculta y la API
+    /// responde un 403 pelado) y de fábrica van a <c>admin</c> y a los dos roles de sistema de la Agenda; ni asesor, ni facturación, ni
+    /// cajero. Configurar servicios, reglas y estructura (<c>settings.manage</c>) es sólo de admin.
+    /// </summary>
+    [Fact]
+    public void TheSchedulingPermissionsRequireTheModuleAndGoToAdminAndTheSchedulingRoles()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        (string Permission, string Entity, string EntityLabel, string Action)[] expected =
+        [
+            (SchedulingPermissions.AppointmentRead, "scheduling.appointment", "Citas", "read"),
+            (SchedulingPermissions.AppointmentManage, "scheduling.appointment", "Citas", "manage"),
+            (SchedulingPermissions.AvailabilityManage, "scheduling.availability", "Franjas y bloqueos", "manage"),
+            (SchedulingPermissions.AgendaReadAll, "scheduling.agenda", "Todas las agendas", "read"),
+            (SchedulingPermissions.SettingsManage, "scheduling.settings", "Configuración de la agenda", "manage"),
+        ];
+        Assert.Equal(
+            [
+                "scheduling.appointment.read", "scheduling.appointment.manage", "scheduling.availability.manage",
+                "scheduling.agenda.read_all", "scheduling.settings.manage",
+            ],
+            expected.Select(row => row.Permission));
+        foreach (var (permission, entity, entityLabel, action) in expected)
+        {
+            var definition = definitions[permission];
+            Assert.Equal("Agenda", definition.Category);
+            Assert.Equal([ModuleKeys.Scheduling], definition.RequiredModules!.ToArray());
+            Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+
+        string[] manager = [.. catalog.PermissionsFor("scheduling_manager")];
+        string[] schedulingProvider = [.. catalog.PermissionsFor("scheduling_provider")];
+        Assert.Equal(
+            new[]
+            {
+                SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage,
+                SchedulingPermissions.AvailabilityManage, SchedulingPermissions.AgendaReadAll,
+            }.Order(StringComparer.Ordinal),
+            manager.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            new[]
+            {
+                SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage, SchedulingPermissions.AvailabilityManage,
+            }.Order(StringComparer.Ordinal),
+            schedulingProvider.Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(SchedulingPermissions.SettingsManage, manager);
+        Assert.DoesNotContain(SchedulingPermissions.SettingsManage, schedulingProvider);
+        Assert.DoesNotContain(SchedulingPermissions.AgendaReadAll, schedulingProvider);
+    }
+
+    /// <summary>
+    /// Los roles de sistema de la Agenda concedían sólo permisos de la Agenda: con el módulo apagado no son asignables, y con él prendido
+    /// sí. Si llevaran un permiso de núcleo (por ejemplo el de Clientes), un tenant sin Agenda vería «Gestor de agenda» en su lista
+    /// (<c>RoleAssignability</c>, spec 2026-11-15). Por eso la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como
+    /// en el POS (spec 2026-10-14, decisión 4).
+    /// </summary>
+    [Fact]
+    public void TheSchedulingRolesAreAssignableOnlyWithTheSchedulingModule()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var mask = provider.GetRequiredService<ModuleEntitlementMask>();
+        var withScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All);
+        var withoutScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All.Where(key => key != ModuleKeys.Scheduling));
+
+        foreach (var role in new[] { "scheduling_manager", "scheduling_provider" })
+        {
+            Assert.Contains(role, catalog.ListRoles().Select(definition => definition.Role));
+            var permissions = catalog.PermissionsFor(role);
+            Assert.All(permissions, permission => Assert.StartsWith("scheduling.", permission));
+            Assert.True(RoleAssignability.IsAssignable(permissions, withScheduling, isOperatorTenant: false, mask));
+            Assert.False(RoleAssignability.IsAssignable(permissions, withoutScheduling, isOperatorTenant: false, mask));
+        }
+    }
+
+    /// <summary>La otra mitad de un permiso nuevo: sin su política, <c>RequireAuthorization</c> no resuelve y la ruta responde 500, no 403.</summary>
+    [Fact]
+    public async Task TheSchedulingPermissionsHaveTheirPolicies()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[]
+        {
+            SchedulingPermissions.AppointmentRead, SchedulingPermissions.AppointmentManage, SchedulingPermissions.AvailabilityManage,
+            SchedulingPermissions.AgendaReadAll, SchedulingPermissions.SettingsManage,
+        })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
+        }
+    }
+
+    /// <summary>
     /// Spec 2026-11-17 (compras, P-3 propuesta): los dos permisos exigen el módulo <c>purchases</c> (apagado, el editor de roles
     /// los oculta y la API responde un 403 pelado) y van sólo a admin; ni asesor, ni facturación, ni cajero.
     /// </summary>
@@ -1317,6 +1420,28 @@ public sealed class CompositionRootTests
             service => service.GetType().FullName == "Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker");
         using var scope = provider.CreateScope();
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IServiceContractsReminderProcessor>());
+    }
+
+    /// <summary>
+    /// Plan 2026-11-21, Tarea 12: sin el worker registrado, o con un puerto sin adaptador de Bootstrapper (el envío por Mensajería y el
+    /// cliente con su consentimiento), ningún recordatorio de cita sale, sin error en ningún lado. Mismo armado que el de Contratos de servicio.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheSchedulingReminderWorker()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Scheduling.Infrastructure.Reminders.AppointmentReminderWorker");
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.IAppointmentReminderSender>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.ISchedulingReminderRecipients>());
     }
 
     /// <summary>

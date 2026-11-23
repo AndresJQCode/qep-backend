@@ -66,6 +66,9 @@ public sealed record WholesaleInvitationNoticeTemplateStatusDto(Guid TemplateId,
 /// <summary>Support task notices: the status of the assignment notice template. <c>null</c> = not provisioned. An old frontend ignores it.</summary>
 public sealed record TaskNoticeTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
+/// <summary>Agenda: el estado de la plantilla del recordatorio de cita. <c>null</c> = no aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record AppointmentReminderTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
 /// <summary>
 /// §4.3: la pantalla de plantillas de una conexión en una llamada: la conexión (nombre y número), el estado de la plantilla de
 /// cotización, cuándo se sincronizó el espejo por última vez (<c>null</c> = nunca) y todas las plantillas, sin paginar, por nombre e
@@ -82,4 +85,5 @@ public sealed record TemplateManagementDto(
     SupportSurveyTemplateStatusDto? SupportSurveyTemplate = null,
     WholesaleInvitationNoticeTemplateStatusDto? WholesaleInvitationNoticeTemplate = null,
     InvoiceTemplateStatusDto? InvoiceTemplate = null,
-    TaskNoticeTemplateStatusDto? TaskNoticeTemplate = null);
+    TaskNoticeTemplateStatusDto? TaskNoticeTemplate = null,
+    AppointmentReminderTemplateStatusDto? AppointmentReminderTemplate = null);

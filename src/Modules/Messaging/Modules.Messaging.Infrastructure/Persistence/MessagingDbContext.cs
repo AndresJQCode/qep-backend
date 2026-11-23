@@ -172,6 +172,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Mayorista: una fila <c>WholesaleInvitationNotice</c> por conexión.</summary>
     public const string MessageTemplateWholesaleInvitationNoticeIndex = "UX_message_templates_wholesale_invitation_notice";
 
+    /// <summary>Agenda: una fila <c>AppointmentReminder</c> por conexión.</summary>
+    public const string MessageTemplateAppointmentReminderIndex = "UX_message_templates_appointment_reminder";
+
     /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
     public const string TemplateMirrorSyncPrimaryKey = "PK_template_mirror_syncs";
@@ -824,7 +827,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.ToTable("message_templates", Schema, table =>
             table.HasCheckConstraint(
                 "CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply',"
-                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','TaskNotice')"));
+                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -868,6 +871,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Support task notices: the assignment notice, same rule.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateTaskNoticeIndex).IsUnique()
             .HasFilter("kind = 'TaskNotice'");
+        // Agenda: el recordatorio de cita, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateAppointmentReminderIndex).IsUnique()
+            .HasFilter("kind = 'AppointmentReminder'");
         // Cobros recurrentes §5: una fila por tipo de aviso en cada conexión, como la de cotización (dos aprovisionamientos a la vez).
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Kind }, MessageTemplateBillingIndex).IsUnique()
             .HasFilter("kind IN ('BillingReminder','BillingOverdue')");

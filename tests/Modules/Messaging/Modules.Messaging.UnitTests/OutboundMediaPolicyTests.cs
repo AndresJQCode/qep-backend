@@ -19,6 +19,10 @@ public sealed class OutboundMediaPolicyTests
     [InlineData(".xls", "application/vnd.ms-excel", MessageKind.Document, 100 * Mb, 0)]
     [InlineData(".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", MessageKind.Document, 100 * Mb, 0)]
     [InlineData(".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", MessageKind.Document, 100 * Mb, 0)]
+    [InlineData(".ppt", "application/vnd.ms-powerpoint", MessageKind.Document, 100 * Mb, 0)]
+    [InlineData(".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", MessageKind.Document, 100 * Mb, 0)]
+    [InlineData(".txt", "text/plain", MessageKind.Document, 100 * Mb, 0)]
+    [InlineData(".webp", "image/webp", MessageKind.Sticker, 500 * 1024, 0)]
     [InlineData(".mp4", "video/mp4", MessageKind.Video, 16 * Mb, 25 * Mb)]
     [InlineData(".3gp", "video/3gpp", MessageKind.Video, 16 * Mb, 0)]
     [InlineData(".mp3", "audio/mpeg", MessageKind.Audio, 16 * Mb, 25 * Mb)]
@@ -45,7 +49,6 @@ public sealed class OutboundMediaPolicyTests
     [InlineData(".wav")]
     [InlineData(".flac")]
     [InlineData(".wma")]
-    [InlineData(".webp")]
     [InlineData("")]
     public void AFormatThatNoChannelReceivesAsIsIsUnknown(string extension) => Assert.Null(OutboundMediaPolicy.FormatOf(extension));
 
@@ -66,7 +69,10 @@ public sealed class OutboundMediaPolicyTests
     [InlineData(".mp4", true)]
     [InlineData(".jpg", true)]
     [InlineData(".pdf", true)]
-    public void OnlyAnAudioRefusesACaption(string extension, bool accepts) =>
+    [InlineData(".txt", true)]
+    [InlineData(".pptx", true)]
+    [InlineData(".webp", false)]
+    public void OnlyAnAudioOrAStickerRefusesACaption(string extension, bool accepts) =>
         Assert.Equal(accepts, OutboundMediaPolicy.AcceptsCaption(OutboundMediaPolicy.FormatOf(extension)!.Value));
 
     [Fact]

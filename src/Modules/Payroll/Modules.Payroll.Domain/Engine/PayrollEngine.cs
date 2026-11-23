@@ -6,7 +6,7 @@ namespace Modules.Payroll.Domain.Engine;
 /// </summary>
 public static class PayrollEngine
 {
-    public const string Version = "2026.11.2";
+    public const string Version = "2026.11.3";
 
     public static EmployeeLiquidation Liquidate(EngineInput input)
     {

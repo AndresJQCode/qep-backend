@@ -35,4 +35,8 @@ public sealed class LegalBasisTests
         Assert.Throws<KeyNotFoundException>(() => LegalBasis.LabelOf("NoSuchKey"));
         Assert.Throws<KeyNotFoundException>(() => LegalBasis.BasisOf("NoSuchKey"));
     }
+
+    [Fact]
+    public void TheIntegralSalaryFloorCitesTheNumeralAndItsReform() =>
+        Assert.Equal("CST art. 132, num. 2 (mod. Ley 50 de 1990, art. 18)", LegalBasis.BasisOf("IntegralSalaryFloor"));
 }

@@ -54,6 +54,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Payroll\Modules.Payroll.Application\Modules.Payroll.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Payroll\Modules.Payroll.Domain\Modules.Payroll.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Payroll\Modules.Payroll.Infrastructure\Modules.Payroll.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Api\Modules.Scheduling.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Application\Modules.Scheduling.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Domain\Modules.Scheduling.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Scheduling\Modules.Scheduling.Infrastructure\Modules.Scheduling.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Api\Modules.Loans.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Domain\Modules.Loans.Domain.csproj" />

@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "payroll"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "payroll", "scheduling"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -178,17 +178,30 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-11-21 (nómina, proyecto 1): liquida a los empleados de Hr; se prende por tenant.
     [Fact]
-    public void PayrollIsTheLastKnownKeyOutsideTheDefaults()
+    public void PayrollIsAKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Payroll, TenantModuleKey.Parse("payroll"));
-        Assert.Equal("payroll", TenantModuleKeys.All[^1].Value);
-        Assert.Equal(24, TenantModuleKeys.All.Count);
+        Assert.Equal(25, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Payroll, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]
     public void PayrollDependsOnHr() =>
         Assert.Equal([TenantModuleKeys.Hr], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Payroll));
+
+    // Spec 2026-11-21 (Agenda): toda cita es de un cliente; se prende por tenant.
+    [Fact]
+    public void SchedulingIsTheLastKnownKeyOutsideTheDefaults()
+    {
+        Assert.Same(TenantModuleKeys.Scheduling, TenantModuleKey.Parse("scheduling"));
+        Assert.Equal("scheduling", TenantModuleKeys.All[^1].Value);
+        Assert.Equal(25, TenantModuleKeys.All.Count);
+        Assert.DoesNotContain(TenantModuleKeys.Scheduling, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    [Fact]
+    public void SchedulingDependsOnCustomers() =>
+        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Scheduling));
 
     [Fact]
     public void MessagingHasNoDependencies() =>

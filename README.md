@@ -1384,7 +1384,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)) | `messaging.template.manage` |
+| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)); `appointment-reminder` (`POST`, cuerpo opcional `{ body }`) y `appointment-reminder/draft` (`GET`), la plantilla `qep_agenda_recordatorio` del recordatorio de cita de la Agenda | `messaging.template.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -3647,7 +3647,7 @@ sobrescribe la misma clave.
 `messaging/staging/{tenantId}/{conversationId}/{memberId}/{uploadId}{ext}`). Después `POST …/messages/media` con
 `{ uploadId, clientId, fileName, caption?, replyTo? }` confirma: revisa tamaño y firma binaria, comprime la imagen, la
 sube a Meta y envía; responde 201 cuando Meta contesta. Imagen jpeg/png hasta 25 MB, recomprimida siempre a JPEG q80 con
-el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls o xlsx hasta 100 MB. `caption`
+el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls, xlsx, ppt, pptx o txt hasta 100 MB. `caption`
 opcional hasta 1024. Mismas reglas que el texto: ventana, asignado, autoasignación, cita e idempotencia por `clientId`; un
 `Failed` conserva el staging para el reintento. Errores 422: `messaging.media.upload_not_found`, `too_large`,
 `unsupported_format` e `invalid_image`.
@@ -3666,10 +3666,17 @@ bytes de cabecera):
 | Audio | `.aac` → `audio/aac` | 16 MB | 25 MB | ADTS (`FF F1`/`FF F9`) |
 | Audio | `.amr` → `audio/amr` | 16 MB | — | `#!AMR\n` o `#!AMR-WB\n` |
 | Audio | `.ogg` → `audio/ogg` | 16 MB | — | `OggS` con `OpusHead` (Vorbis no) |
+| Documento | `.ppt` → `application/vnd.ms-powerpoint` | 100 MB | — | OLE (`D0CF11E0A1B11AE1`, como `.doc`/`.xls`) |
+| Documento | `.pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation` | 100 MB | — | zip (`PK`, como `.docx`/`.xlsx`) |
+| Documento | `.txt` → `text/plain` | 100 MB | — | UTF-8 válido sin bytes de control (sin firma; deja fuera binarios y UTF-16) |
+| Sticker | `.webp` → `image/webp` | 100 KB estático, 500 KB animado | — | `RIFF`…`WEBP` con chunk `VP8 `, `VP8L` o `VP8X` |
 
 **La tabla está en borrador hasta las verificaciones V-1..V-3 con Meta real** (las corre el owner; ver el spec): lo que Meta
 no acepte se quita de `OutboundMediaPolicy` y de esta tabla. No hay transcodificación ni `ffmpeg`: `.mov`, `.webm`, `.avi`,
-`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. El video sale con `type: video` y su `caption`; el audio,
+`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. **Sticker** (2026-11-22): Meta sólo admite WebP como sticker, no como
+imagen, así que `.webp` sale con `type: sticker`, sin `caption` (422 `validation.failed` en `caption`), sin recomprimir y sólo por WhatsApp.
+El tope depende del contenido: 500 KB si el chunk `VP8X` trae la bandera de animación y 100 KB si no, y por eso el estático se mide al
+leer el archivo (`media_too_large` al confirmar, no al pedir la sesión). El chatbot no lo manda: su flujo no tiene ese tipo. El video sale con `type: video` y su `caption`; el audio,
 con `type: audio` **sin** `voice` (la nota de voz sigue con `voice: true`) y **sin texto**: un `caption` con un audio es 422
 `validation.failed` en `caption`. El multipart a Meta lleva `video{ext}` o `audio{ext}`; el nombre real queda en
 `message_media.file_name` y viaja en `media.fileName`, que en un audio adjunto **no es nulo** y en una nota de voz sí: así
@@ -5420,9 +5427,44 @@ pagos sin llamar a Siigo.
 - Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
   Un pedido facturado en Siigo no se revierte con QEP (`422 order.order.invoiced_externally`): revertir es una nota crédito.
 
+**Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
+`POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
+`204`) manda el PDF de **una** factura al WhatsApp del cliente del pedido. Es el mismo PDF de la descarga (se pide a Siigo en cada envío y
+viaja en memoria: Siigo no la guarda; el envío por Meta deja una copia privada en el hilo de Mensajería, ver más abajo). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
+siigo.invoice.not_found` sin llamar a Siigo ni al canal; sin permiso o con el tenant de otra ruta es `403`, nunca `404`. El envío lo hace
+Quotations (`IInvoiceWhatsAppDelivery`; Siigo sólo ve el puerto `ISiigoInvoiceWhatsApp`), así que el canal se resuelve como en el pedido
+y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `no_phone` (el
+cliente del pedido no tiene teléfono; Quotations lo mira dentro del envío, así que el PDF ya se pidió a Siigo) y `send_failed`, más
+`order.order.client_not_found` (el cliente del pedido no existe en el tenant); todos son errores de dominio `422`. `channel_unavailable` y `channel_already_set` no pueden
+salir acá: el envío nunca pide un canal concreto. No
+hay deduplicación: dos clics son dos mensajes y dos entradas de auditoría `siigo.invoice.whatsapp_sent` (sin teléfono, URL ni contenido).
+
+`GET …/siigo-invoice` suma `canSendWhatsApp` a cada fila: la fila tiene PDF **y** hoy se podría entregar (el canal se resuelve igual que en
+el envío y el cliente tiene teléfono). Se calcula una vez por petición, y si ninguna fila tiene PDF no se consulta. **Limitación conocida:**
+un tenant con dos o más canales aptos para facturas y sin elección guardada (la elección se guarda al mandar una cotización o un pedido y
+escoger canal) recibe `canSendWhatsApp = false` hasta que elija uno; mandar una factura nunca guarda la elección.
+
+**Plantilla `Invoice`.** Cada canal necesita su plantilla de factura; sin ella no cuenta como canal para una factura.
+
+- **Meta:** se crea desde QEP con `POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/invoice`
+  (permiso `messaging.template.manage`) y espera la aprobación de Meta. El PDF viaja como encabezado de la plantilla.
+- **Zenvia:** crea la plantilla en Zenvia con las variables **exactamente** `fullname`, `invoice_number` y `total` y el encabezado
+  `documentUrl`, y pon su id en `invoiceTemplateId` de **cada** conexión de Zenvia (Integrations). Zenvia descarga el documento por URL.
+
+**Copia pública (sólo Zenvia).** Para Zenvia el PDF se copia al bucket público bajo `invoices/{guid}.pdf`, con una clave aleatoria que no
+lleva tenant, pedido ni número de factura (la URL queda abierta a quien la tenga). Por Meta Quotations no publica ninguna copia, pero el envío deja una copia **privada** del adjunto en el hilo de la conversación de Mensajería (por tenant y con la retención de cualquier adjunto saliente, como en cotizaciones y pedidos); no es pública. Sin bucket
+público el envío falla, sin caer a una URL firmada. La copia expira con una regla de lifecycle que se crea **a mano** en Cloudflare, y es
+parte del despliegue:
+
+```powershell
+npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1
+npx wrangler r2 bucket lifecycle list <bucket-publico>   # para verificarla
+```
+
 **Seguridad.** La clave de acceso y el token de Siigo no salen a logs, auditoría ni respuestas; `request_json` (con el documento y
 la dirección del cliente) no lo devuelve ningún `GET`, y `error_detail` guarda los códigos de Siigo, no sus mensajes (salvo el
-total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
+total esperado). El PDF, la URL pública y el teléfono del envío por WhatsApp tampoco salen a logs, `siigo.call_failures`, auditoría ni
+respuestas. Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
 
 **Despliegue.**
 
@@ -5433,6 +5475,14 @@ total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
    Integrations borra las conexiones `siigo` con sus secretos, y `siigo.invoices` es el registro de un documento legal.
 3. Prende el módulo al tenant desde la consola de operador, crea la conexión, recorre el asistente y deja «Enviar a la DIAN»
    apagado en las primeras facturas.
+
+**Despliegue del envío por WhatsApp**, en este orden:
+
+1. Migración de Messaging (el tipo de plantilla `Invoice`).
+2. Crea y aprueba la plantilla `Invoice` en Meta (`template-management/invoice`) y en Zenvia, y pon `invoiceTemplateId` en cada conexión
+   de Zenvia.
+3. Regla de lifecycle de `invoices/` en el bucket público (comando de arriba).
+4. Backend y después frontend (spec aparte en `qep-frontend`).
 
 **Lo que se mira en las primeras facturas reales** (no hay empresa de pruebas: se resuelve con ellas, y con el interruptor
 apagado ninguna puede salir mal sin que se vea):
