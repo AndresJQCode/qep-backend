@@ -61,6 +61,15 @@ public sealed class LegalParameterRulesTests
     public void MoreThanSixDecimalsIsInvalid(LegalParameterKey key, string value) =>
         Assert.NotNull(LegalParameterRules.Check(key, decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture)));
 
+    [Theory]
+    [InlineData(LegalParameterKey.Smmlv)]
+    [InlineData(LegalParameterKey.IbcCapSmmlv)]
+    public void AValueTheColumnCannotHoldIsInvalidInsteadOfAServerError(LegalParameterKey key)
+    {
+        Assert.NotNull(LegalParameterRules.Check(key, 10_000_000_000_000m));
+        Assert.Null(LegalParameterRules.Check(key, 999_999_999_999m));
+    }
+
     [Fact]
     public void SixDecimalsAreFine() =>
         Assert.Null(LegalParameterRules.Check(LegalParameterKey.HealthEmployeeRate, 0.123456m));

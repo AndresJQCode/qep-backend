@@ -24,6 +24,9 @@ public static class LegalParameterRules
 
     private const decimal MaxWeeklyHours = 168m;
 
+    // numeric(18,6) guarda 12 dígitos enteros: un valor mayor haría fallar el guardado con un 500 en vez de un 422.
+    private const decimal MaxValue = 999_999_999_999.999999m;
+
     /// <summary><c>null</c> si el valor es válido para la clave; si no, el mensaje que se le muestra al operador.</summary>
     public static string? Check(LegalParameterKey key, decimal value)
     {
@@ -44,6 +47,11 @@ public static class LegalParameterRules
         if (rangeError is not null)
         {
             return rangeError;
+        }
+
+        if (value > MaxValue)
+        {
+            return $"{name} no puede pasar de 999999999999.999999: revisa el valor que escribiste.";
         }
 
         return HasMoreDecimalsThan(value, ValueScale)

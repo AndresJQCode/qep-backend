@@ -21,6 +21,11 @@ public enum LegalParameterChangeSource
 /// </summary>
 public sealed class LegalParameterChange
 {
+    // Los largos de las columnas `changed_by_name` y `file_name`: un texto más largo haría fallar el guardado con un 500, y el historial
+    // no es lugar para rechazar un cambio ya validado, así que se recortan.
+    public const int ChangedByNameMaxLength = 200;
+    public const int FileNameMaxLength = 255;
+
     // EF Core materializa por acá.
     private LegalParameterChange()
     {
@@ -46,11 +51,11 @@ public sealed class LegalParameterChange
         OldValue = oldValue;
         NewValue = newValue;
         ChangedBy = changedBy;
-        ChangedByName = changedByName;
+        ChangedByName = Truncate(changedByName, ChangedByNameMaxLength);
         ChangedAt = changedAt;
         Source = source;
         BatchId = batchId;
-        FileName = fileName;
+        FileName = fileName is null ? null : Truncate(fileName, FileNameMaxLength);
     }
 
     public Guid Id { get; private set; }
@@ -94,4 +99,6 @@ public sealed class LegalParameterChange
         Guid? batchId,
         string? fileName) =>
         new(key, effectiveFrom, action, oldValueJson, newValueJson, changedBy, changedByName, changedAt, source, batchId, fileName);
+
+    private static string Truncate(string text, int maxLength) => text.Length <= maxLength ? text : text[..maxLength];
 }
