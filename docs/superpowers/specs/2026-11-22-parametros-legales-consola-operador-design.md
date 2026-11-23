@@ -164,8 +164,10 @@ Base `/api/v1/tenants/{tenantId}/operator/legal-parameters`, mismo estilo que un
   enero resuelve con su `StartDate` (el día 1), que sólo se cubre con una fila de ese día. Las tres no anuales no lo llevan.
   *Revisión:* las claves que nómina exige cada año son 26, no 27, y los tramos no son anuales para nómina (ver «Restricciones»);
   **decidido por el owner (2026-11-22):** el aviso cubre esas 26 más `IntegralSalaryFloor` (27 claves, las que el DTO marca
-  `yearly: true`), y los tramos `SolidarityFund` no llevan aviso. ❓ **Reabierto (2026-11-22):** esa decisión partía de que los
-  tramos no eran anuales; con la decisión 6 de nómina lo son y un enero sin conjunto del año no liquida.
+  `yearly: true`). **Tramos `SolidarityFund`: re-decidido por el owner (2026-11-22), sí llevan aviso** — con la decisión 6 de
+  nómina son anuales y un enero sin conjunto del año no liquida. El conjunto lleva `nextYearMissing` y `currentYearMissing` con la
+  misma regla que las claves: no hay conjunto con vigencia exactamente el 1 de enero del año correspondiente. Cuenta como una
+  entrada más en `nextYearMissingCount`.
   **Decidido por el owner (2026-11-22):** `nextYearMissing` se prende **desde el 1 de diciembre** (no los 12 meses; el de UVT usa el
   24) y se agrega `currentYearMissing`, **siempre activo**, verdadero cuando una clave anual no tiene fila vigente del año en curso
   (lo que hace fallar la nómina de enero). Cada uno trae su conteo, que calcula el backend.
