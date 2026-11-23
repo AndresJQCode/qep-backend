@@ -335,6 +335,98 @@ public sealed class InAppNotificationEndpointsTests
             downloadUrl = "https://r2.test/x.xlsx",
         });
 
+    [Fact]
+    public async Task ReadByResourceMarksOnlyTheCallersEntriesOfThatTicket()
+    {
+        await using var database = await StartDatabaseAsync();
+        var publisher = new RecordingMemberPublisher();
+        using var factory = NewFactory(database.GetConnectionString(), publisher);
+        var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
+        var owner = await MemberIdOfAsync(database.GetConnectionString(), tenantId, ownerUserId);
+        var other = await SeedMemberAsync(database.GetConnectionString(), tenantId, "Otra Persona");
+        var ticket = Guid.CreateVersion7();
+        var otherTicket = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        const string data = """{"ticketNumber":"SOP-000127","resolution":null}""";
+        var first = await InsertEntryAsync(database.GetConnectionString(), tenantId, owner, "SupportTaskAssigned", data, now.AddMinutes(-3), resourceId: ticket);
+        var second = await InsertEntryAsync(database.GetConnectionString(), tenantId, owner, "SupportTaskAssigned", data, now.AddMinutes(-2), resourceId: ticket);
+        var elsewhere = await InsertEntryAsync(database.GetConnectionString(), tenantId, owner, "SupportTaskAssigned", data, now.AddMinutes(-1), resourceId: otherTicket);
+        var theirs = await InsertEntryAsync(database.GetConnectionString(), tenantId, other.MemberId, "SupportTaskAssigned", data, now, resourceId: ticket);
+        using var client = ClientFor(factory, tenantId, ownerUserId);
+
+        var result = await PostJsonAsync(
+            client, $"/api/v1/tenants/{tenantId}/notifications/read-by-resource", new { kind = "SupportTaskAssigned", resourceId = ticket });
+
+        Assert.Equal(2, result.GetProperty("marked").GetInt32());
+        Assert.Equal(1, result.GetProperty("unreadCount").GetInt32());
+        var rows = await EntriesAsync(database.GetConnectionString(), tenantId);
+        Assert.NotNull(rows.Single(row => row.Id == first).ReadAt);
+        Assert.NotNull(rows.Single(row => row.Id == second).ReadAt);
+        Assert.Null(rows.Single(row => row.Id == elsewhere).ReadAt);
+        Assert.Null(rows.Single(row => row.Id == theirs).ReadAt);
+        var notice = Assert.Single(publisher.Published);
+        Assert.Equal((tenantId, owner, "notificationsChanged"), (notice.TenantId, notice.MemberId, notice.Kind));
+        Assert.Equal(JsonValueKind.Null, notice.Payload.GetProperty("notificationId").ValueKind);
+    }
+
+    [Fact]
+    public async Task ReadByResourceTwiceMarksNothingTheSecondTime()
+    {
+        await using var database = await StartDatabaseAsync();
+        var publisher = new RecordingMemberPublisher();
+        using var factory = NewFactory(database.GetConnectionString(), publisher);
+        var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
+        var owner = await MemberIdOfAsync(database.GetConnectionString(), tenantId, ownerUserId);
+        var ticket = Guid.CreateVersion7();
+        await InsertEntryAsync(
+            database.GetConnectionString(), tenantId, owner, "SupportTicketAssigned", """{"ticketNumber":"SOP-000127"}""", DateTimeOffset.UtcNow, resourceId: ticket);
+        using var client = ClientFor(factory, tenantId, ownerUserId);
+        var url = $"/api/v1/tenants/{tenantId}/notifications/read-by-resource";
+        var body = new { kind = "SupportTicketAssigned", resourceId = ticket };
+
+        var first = await PostJsonAsync(client, url, body);
+        var second = await PostJsonAsync(client, url, body);
+
+        Assert.Equal(1, first.GetProperty("marked").GetInt32());
+        Assert.Equal(0, second.GetProperty("marked").GetInt32());
+        Assert.Equal(0, second.GetProperty("unreadCount").GetInt32());
+        Assert.Single(publisher.Published);
+    }
+
+    [Fact]
+    public async Task ReadByResourceForAnotherTenantIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = NewFactory(database.GetConnectionString(), new RecordingMemberPublisher());
+        var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
+        using var client = ClientFor(factory, tenantId, ownerUserId);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{Guid.CreateVersion7()}/notifications/read-by-resource",
+            new { kind = "SupportTaskAssigned", resourceId = Guid.CreateVersion7() },
+            Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReadByResourceWithABadBodyIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = NewFactory(database.GetConnectionString(), new RecordingMemberPublisher());
+        var (tenantId, ownerUserId, _) = await RegisterOwnerAsync(factory);
+        using var client = ClientFor(factory, tenantId, ownerUserId);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/notifications/read-by-resource", new { kind = "nope", resourceId = Guid.Empty }, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("validation.failed", problem.GetProperty("code").GetString());
+        Assert.True(problem.GetProperty("errors").TryGetProperty("kind", out _));
+        Assert.True(problem.GetProperty("errors").TryGetProperty("resourceId", out _));
+    }
+
     private static async Task<JsonElement> GetJsonAsync(HttpClient client, string url)
     {
         var response = await client.GetAsync(url, Ct);

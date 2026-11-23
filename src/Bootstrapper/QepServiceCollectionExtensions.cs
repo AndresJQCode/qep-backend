@@ -2063,6 +2063,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Notifications.Application.MarkAllNotificationsReadCommand, Modules.Notifications.Application.MarkAllReadResultDto>,
             Modules.Notifications.Application.MarkAllNotificationsReadHandler>();
+        // Task-notices spec D-2: abrir un ticket lee sus avisos de asignación. El validador lo registra el escaneo de abajo.
+        services.AddScoped<
+            ICommandHandler<Modules.Notifications.Application.MarkResourceNotificationsReadCommand, Modules.Notifications.Application.MarkResourceReadResultDto>,
+            Modules.Notifications.Application.MarkResourceNotificationsReadHandler>();
         services.AddValidatorsFromAssemblyContaining<Modules.Notifications.Application.ListInAppNotificationsValidator>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
