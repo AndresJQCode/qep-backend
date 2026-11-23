@@ -67,6 +67,18 @@ public static class SystemTemplateVariables
         new("correo", "Correo de la invitación", "compras@distribuidora.co"),
     ];
 
+    /// <summary>Agenda: el recordatorio de una cita. <c>fecha_hora</c> ya viene formateada en la zona del tenant por el emisor; <c>recurso</c> y
+    /// <c>sede</c> son los nombres vigentes al enviar. Las fijas van primero, como en toda plantilla del sistema.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> AppointmentReminder { get; } =
+    [
+        .. Fixed,
+        new("nombre_cliente", "Nombre del cliente", "María González"),
+        new("servicio", "Servicio", "Consulta general"),
+        new("fecha_hora", "Fecha y hora de la cita", "martes 24 de noviembre a las 3:00 p. m."),
+        new("recurso", "Recurso o profesional", "Dra. Paula Ruiz"),
+        new("sede", "Sede", "Sede Centro"),
+    ];
+
     public static IReadOnlyList<SystemTemplateVariable> BillingReminder { get; } =
     [
         .. Fixed,

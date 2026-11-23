@@ -37,6 +37,9 @@ public interface IMessageTemplateRepository
     /// <summary>Mayorista: la única fila <c>WholesaleInvitationNotice</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindWholesaleInvitationNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Agenda: la única fila <c>AppointmentReminder</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindAppointmentReminderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Todas, con tracking, por nombre e idioma en orden ordinal: el refresco las recorre y las modifica.</summary>
     Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -110,6 +113,14 @@ public interface ISupportSurveyTemplateReadiness
 /// Devuelve la fila <c>WholesaleInvitationNotice</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen las opciones de
 /// conexión de Mayorista y el envío del aviso (<c>IWholesaleInvitationNoticeOutbound</c>).</summary>
 public interface IWholesaleInvitationNoticeReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Agenda: la señal de la plantilla del recordatorio de cita, hermana de <see cref="IWholesaleInvitationNoticeReadiness"/>. Devuelve la
+/// fila <c>AppointmentReminder</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen el envío del recordatorio
+/// (<c>IAppointmentReminderOutbound</c>) y su adaptador de la Agenda.</summary>
+public interface IAppointmentReminderReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

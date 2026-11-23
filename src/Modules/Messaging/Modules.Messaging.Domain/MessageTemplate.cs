@@ -30,6 +30,9 @@ public enum MessageTemplateKind
 
     /// <summary>Mayorista: el aviso por WhatsApp de una invitación de distribuidor, sólo cuerpo (se guarda por nombre: va al final).</summary>
     WholesaleInvitationNotice,
+
+    /// <summary>Agenda: el recordatorio de una cita por WhatsApp, sólo cuerpo (se guarda por nombre: va al final).</summary>
+    AppointmentReminder,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -127,6 +130,11 @@ public static partial class MessageTemplateName
 
     public const string WholesaleInvitationNoticePrefix = "qep_mayorista_invitacion_";
 
+    /// <summary>Agenda: <c>qep_agenda_recordatorio</c> y sus versiones (<c>qep_agenda_recordatorio_v2</c>…).</summary>
+    public const string AppointmentReminderName = "qep_agenda_recordatorio";
+
+    public const string AppointmentReminderPrefix = "qep_agenda_recordatorio_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
@@ -141,7 +149,9 @@ public static partial class MessageTemplateName
             || string.Equals(name, SupportSurveyName, StringComparison.Ordinal)
             || name.StartsWith(SupportSurveyPrefix, StringComparison.Ordinal)
             || string.Equals(name, WholesaleInvitationNoticeName, StringComparison.Ordinal)
-            || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal));
+            || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal)
+            || string.Equals(name, AppointmentReminderName, StringComparison.Ordinal)
+            || name.StartsWith(AppointmentReminderPrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -162,7 +172,7 @@ public sealed class MessageTemplate
     public const int StatusReasonMaxLength = 64;
 
     /// <summary>La columna guarda el nombre del <see cref="MessageTemplateKind"/>: tiene que alcanzar para el más largo
-    /// (<c>WholesaleInvitationNotice</c>, 25). Con 16 <c>SupportFormalReply</c> (18) no se podía guardar.</summary>
+    /// (<c>WholesaleInvitationNotice</c>, 25; <c>AppointmentReminder</c> mide 19). Con 16 <c>SupportFormalReply</c> (18) no se podía guardar.</summary>
     public const int KindMaxLength = 32;
 
     /// <summary>Spec 2026-11-17: el ancho de <c>header_image_url</c>, la URL pública de la imagen fija del encabezado.</summary>
@@ -414,6 +424,19 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.WholesaleInvitationNotice;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Agenda: lo mismo que <see cref="AdoptAsSupportReply"/> para una <c>qep_agenda_recordatorio</c> creada en la consola de Meta.</summary>
+    public void AdoptAsAppointmentReminder(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateAppointmentReminderConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.AppointmentReminder;
         UpdatedAt = now;
     }
 

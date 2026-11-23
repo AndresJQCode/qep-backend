@@ -34,6 +34,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
         // Mayorista: el aviso por WhatsApp de una invitación de distribuidor, por el mismo núcleo que la plantilla de cobro.
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
+        // Agenda: el recordatorio de una cita por WhatsApp, por el mismo núcleo.
+        services.AddScoped<IAppointmentReminderOutbound, AppointmentReminderOutbound>();
         // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
         services.AddScoped<ISupportReplyOutbound, SupportReplyOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
@@ -140,6 +142,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ISupportSurveyTemplateReadiness, SupportSurveyTemplateReadiness>();
         // Mayorista: la del aviso de invitación de distribuidor, para las conexiones que Mayorista ofrece y el envío del aviso.
         services.AddScoped<IWholesaleInvitationNoticeReadiness, WholesaleInvitationNoticeTemplateReadiness>();
+        // Agenda: la del recordatorio de cita, para su envío.
+        services.AddScoped<IAppointmentReminderReadiness, AppointmentReminderTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();
