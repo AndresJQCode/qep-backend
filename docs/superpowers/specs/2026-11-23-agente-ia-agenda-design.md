@@ -195,7 +195,7 @@ borrador de cotización.
 ```json
 { "timeZone": "America/Bogota",
   "appointments": [ { "appointmentId": "7f3d…", "status": "Confirmed", "startsAt": "2026-11-24T09:00",
-                      "endsAt": "2026-11-24T09:30", "serviceName": "Consulta general", "resourceName": "Dra. Pérez",
+                      "endsAt": "2026-11-24T09:30", "serviceId": "1b2c…", "serviceName": "Consulta general", "resourceName": "Dra. Pérez",
                       "locationName": "Sede principal", "canChangeByChat": true, "canRescheduleByChat": true,
                       "changeByChatUntil": "2026-11-23T09:00" } ],
   "truncated": false }

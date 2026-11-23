@@ -443,6 +443,7 @@ public sealed class ListMyAppointmentsTool(IAiScheduling scheduling) : IAgentToo
                 status = appointment.Status,
                 startsAt = AgentSchedulingFormat.Local(appointment.StartsAt),
                 endsAt = AgentSchedulingFormat.Local(appointment.EndsAt),
+                serviceId = appointment.ServiceId,
                 serviceName = appointment.ServiceName,
                 resourceName = appointment.ResourceName,
                 locationName = appointment.LocationName,

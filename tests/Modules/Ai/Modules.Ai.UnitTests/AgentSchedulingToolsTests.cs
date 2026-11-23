@@ -332,7 +332,18 @@ public sealed class AgentSchedulingToolsTests
         using var document = JsonDocument.Parse(result.ResultJson);
         var first = document.RootElement.GetProperty("appointments")[0];
         Assert.True(first.GetProperty("canChangeByChat").GetBoolean());
+        Assert.True(first.GetProperty("canRescheduleByChat").GetBoolean());
         Assert.Equal("2026-11-23T09:00", first.GetProperty("changeByChatUntil").GetString());
+    }
+
+    [Fact]
+    public async Task ListMyAppointmentsCarriesTheServiceIdForCheckAvailability()
+    {
+        var result = await new ListMyAppointmentsTool(_scheduling).ExecuteAsync(Invocation(), Json("{}"), TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(result.ResultJson);
+        var first = document.RootElement.GetProperty("appointments")[0];
+        Assert.Equal(Service, first.GetProperty("serviceId").GetGuid());
     }
 
     // §3: Anthropic acepta a lo sumo 20 herramientas estrictas, 24 parámetros opcionales y 16 uniones por request.

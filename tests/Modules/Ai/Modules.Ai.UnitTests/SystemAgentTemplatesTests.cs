@@ -147,6 +147,10 @@ public sealed class SystemAgentTemplatesTests
     [InlineData("id-not-file-name", "kebab-case")]
     [InlineData("duplicate-id", "dos plantillas")]
     [InlineData("name-too-long", "«name»")]
+    [InlineData("description-too-long", "«description»")]
+    [InlineData("missing-id", "Falta «id»")]
+    [InlineData("missing-name", "Falta «name»")]
+    [InlineData("missing-requires", "Falta «requires»")]
     [InlineData("unknown-module", "«agenda», que no existe")]
     [InlineData("repeated-module", "repite el módulo")]
     [InlineData("config-with-model", "«model»")]
@@ -180,6 +184,16 @@ public sealed class SystemAgentTemplatesTests
             case "name-too-long":
                 json["name"] = new string('a', 81);
                 files.Add(File(json));
+                break;
+            case "description-too-long":
+                json["description"] = new string('a', 301);
+                files.Add(File(json));
+                break;
+            case "missing-id":
+            case "missing-name":
+            case "missing-requires":
+                json.Remove(mutation["missing-".Length..]);
+                files.Add(File(json, fileId: "prueba"));
                 break;
             case "unknown-module":
                 json["requires"] = new JsonArray("agenda");
