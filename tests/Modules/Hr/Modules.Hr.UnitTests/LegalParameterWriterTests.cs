@@ -38,6 +38,7 @@ public sealed class LegalParameterWriterTests
         public List<CalculatedPeriodStamp> Stamps = [];
         public string? ActorName = "Ana Operadora";
         public int StampReads;
+        public bool ThrowOnSave;
 
         public LegalParameterWriter Writer() => new(
             new FakeRepository(this),
@@ -92,7 +93,7 @@ public sealed class LegalParameterWriterTests
         public Task SaveChangesAsync(CancellationToken cancellationToken)
         {
             world.Log.Add("Save");
-            return Task.CompletedTask;
+            return world.ThrowOnSave ? throw new InvalidOperationException("boom") : Task.CompletedTask;
         }
     }
 
@@ -402,29 +403,76 @@ public sealed class LegalParameterWriterTests
         Assert.Equal("Sin nombre", world.Changes.Single().ChangedByName);
     }
 
+    // Con las ediciones del lote cerrando el rango, la primera fila toca un solo período; con rangos por edición (sin mirar el lote) tocaría dos.
     [Fact]
-    public async Task TheRangeOfARowTakesTheOtherEditsOfTheBatchIntoAccount()
+    public async Task ACloserRowInTheSameBatchShrinksTheRangeOfTheEarlierOne()
     {
-        // Crear 2026-06-01 cierra el rango de 2026-01-01; borrar 2026-01-01 no toca nada del 16 de enero si ya hay otra fila antes.
         var world = new World();
-        world.Stamps = [new CalculatedPeriodStamp(new DateOnly(2026, 8, 16), CompanyA)];
+        world.Stamps =
+        [
+            new CalculatedPeriodStamp(new DateOnly(2026, 1, 20), CompanyA),
+            new CalculatedPeriodStamp(new DateOnly(2026, 3, 16), CompanyA),
+        ];
 
-        // El período del 16 de agosto cae en [2026-06-01, ∞): crear esa fila es in_use aunque el lote traiga otra más tarde en 2027.
         var error = await Assert.ThrowsAsync<LegalParameterInUseException>(
             () => ApplyAsync(
                 world,
-                [Edit(LegalParameterKey.Smmlv, new DateOnly(2026, 6, 1), 1_800_000m), Edit(LegalParameterKey.Smmlv, Jan2027, 1_900_000m)]));
+                [
+                    Edit(LegalParameterKey.Smmlv, new DateOnly(2026, 1, 10), 1_800_000m),
+                    Edit(LegalParameterKey.Smmlv, new DateOnly(2026, 2, 1), 1_900_000m),
+                ]));
 
         Assert.Equal(1, error.ProblemExtensions["periodsAffected"]);
+        Assert.Equal("2026-01-20", error.ProblemExtensions["from"]);
+        Assert.Equal("2026-01-20", error.ProblemExtensions["to"]);
+    }
 
-        // Con una fila del lote el 1 de agosto el rango de la de junio se cierra antes del 16: sólo la de agosto lo toca.
-        var second = await Assert.ThrowsAsync<LegalParameterInUseException>(
+    // Borrar la fila siguiente en el mismo lote alarga el rango de la anterior: toca los dos períodos, no uno.
+    [Fact]
+    public async Task DeletingTheNextRowInTheSameBatchGrowsTheRangeOfTheEarlierOne()
+    {
+        var world = new World();
+        world.Values.Add(new LegalParameterValue(LegalParameterKey.Smmlv, new DateOnly(2026, 6, 1), 1_800_000m));
+        world.Stamps =
+        [
+            new CalculatedPeriodStamp(new DateOnly(2026, 3, 16), CompanyA),
+            new CalculatedPeriodStamp(new DateOnly(2026, 7, 16), CompanyA),
+        ];
+
+        var error = await Assert.ThrowsAsync<LegalParameterInUseException>(
             () => ApplyAsync(
-                new World { Stamps = world.Stamps },
-                [Edit(LegalParameterKey.Smmlv, new DateOnly(2026, 6, 1), 1_800_000m), Edit(LegalParameterKey.Smmlv, new DateOnly(2026, 8, 1), 1_900_000m)]));
+                world,
+                [
+                    Edit(LegalParameterKey.Smmlv, Jan2026, 1_760_000m),
+                    Edit(LegalParameterKey.Smmlv, new DateOnly(2026, 6, 1), null),
+                ]));
 
-        Assert.Equal(1, second.ProblemExtensions["periodsAffected"]);
-        Assert.Equal("2026-08-16", second.ProblemExtensions["from"]);
+        Assert.Equal(2, error.ProblemExtensions["periodsAffected"]);
+        Assert.Equal("2026-03-16", error.ProblemExtensions["from"]);
+        Assert.Equal("2026-07-16", error.ProblemExtensions["to"]);
+    }
+
+    [Fact]
+    public async Task NoBumpWhenSaveChangesThrows()
+    {
+        var world = new World { ThrowOnSave = true };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ApplyAsync(world, [Edit(LegalParameterKey.Smmlv, Jan2027, 2_000_000m)]));
+
+        Assert.Equal(["Save"], world.Log);
+    }
+
+    [Fact]
+    public async Task TheInUseMessageNamesTheRange()
+    {
+        var world = new World();
+        world.Stamps = [new CalculatedPeriodStamp(new DateOnly(2026, 1, 16), CompanyA)];
+
+        var error = await Assert.ThrowsAsync<LegalParameterInUseException>(
+            () => ApplyAsync(world, [Edit(LegalParameterKey.Smmlv, Jan2026, 1_800_000m)]));
+
+        Assert.Contains("2026-01-16", error.Message);
     }
 
     [Fact]
