@@ -73,8 +73,10 @@ los días de diciembre y enero los de enero.
 - El motor sigue siendo **puro** (sin base de datos, reloj ni calendario). Los días hábiles se calculan en Application, al guardar.
   El motor sólo cuenta días de nómina a partir de fechas.
 - Payroll no referencia Messaging, donde vive `ColombianHolidays`. El calendario llega por un puerto (llamada 4).
-- Payroll lee Hr sólo por `IPayrollHrDirectory`. Los días de descanso (`Employee.RestDays`) hoy no viajan por ese puerto: se agregan
-  a `HrEmployeeSource` (adaptador `Bootstrapper/PayrollHrDirectory.cs`).
+- Payroll lee Hr sólo por `IPayrollHrDirectory`. Los días de descanso (`Employee.RestDays`) hoy no viajan por ese puerto:
+  `HrEmployeeSource` gana `RestDays` (adaptador `Bootstrapper/PayrollHrDirectory.cs`). En Hr son obligatorios, al menos uno, con el
+  domingo por defecto (spec `2026-11-20-rrhh-fase-1-design.md`, «días de descanso»). Por eso el sábado es hábil salvo que el
+  empleado lo tenga configurado como descanso.
 - Un período Aprobado o Cerrado es una foto fija (R-16): nada de este cambio lo recalcula.
 - Sólo empleados liquidables (spec base, «A quién se liquida»): salario `Mensual`, que es el fijo que este cambio cubre.
 
@@ -119,8 +121,12 @@ vacaciones ya registradas no cambian. Para recalcularlas se editan.
 
 ### Días
 
-- **Día hábil:** ni día de descanso del empleado (`RestDays`) ni festivo nacional de Colombia. Un empleado sin días de descanso
-  en Hr cuenta como hábiles todos los días que no son festivos.
+- **Día hábil:** ni día de descanso del empleado (`RestDays`, siempre al menos uno) ni festivo nacional de Colombia. Con el
+  default de Hr (sólo domingo), el sábado cuenta como hábil.
+- **Un solo contrato** (decisión de la sesión): las vacaciones caben en el contrato del empleado con la empresa **vigente el día
+  del inicio**, y ese contrato debe cubrir también el día del fin. Si no, 422 `payroll.vacation.outside_contract`. Un cambio de
+  contrato o un contrato nuevo en medio de las vacaciones no se soporta: se editan las vacaciones. Un cambio de salario (aumento)
+  después del inicio no cambia el valor de las vacaciones (CST art. 192), y los aportes siguen el Decreto 806/1998 art. 70 igual.
 - **Días de nómina por quincena** (los que el motor paga y cotiza): se cuentan con la misma regla de 30 días de `WorkedDaysRule`
   (una quincena completa son 15). Si las vacaciones cubren el último día de la quincena, sus días son `15 − (días de la quincena
   antes del inicio)`. Si no, son los días reales. Así el 31 de diciembre no cuenta, y en febrero el final absorbe la diferencia.
@@ -138,19 +144,27 @@ vacaciones ya registradas no cambian. Para recalcularlas se editan.
 
 Unas vacaciones **tocan** la quincena que las paga y cada quincena con días dentro del rango. Las reglas:
 
-1. **Se crean, editan y borran** sólo si **ninguna** quincena que tocan, antes o después del cambio, está Aprobada o Cerrada. Si no,
-   la respuesta es 422 `payroll.period.not_editable`, el código de hoy para un período que no recibe capturas, con el mensaje
-   «Reabre la quincena para cambiar estas vacaciones». Las quincenas que tocan y todavía no existen no cuentan.
-2. Crear, editar o borrar deja **desactualizada** (`PayrollPeriod.MarkOutdated`, que sube su versión) cada quincena que tocan y está
-   Liquidada. Una en Borrador o Reabierta no cambia de estado. La huella (R-16) también cambia, así que `sourceChanged` llega solo.
+1. **Bloqueo por foto fija (decisión de la sesión).** Una escritura (crear, editar, borrar) se rechaza si **cambiaría la huella**
+   (`InputFingerprint.Of`) de algún empleado en una quincena Aprobada o Cerrada. Las vacaciones son parte del `EngineInput` y, por
+   tanto, de la huella (ver «Entrada del motor y huella»). Prueba del bloqueo: para cada quincena Aprobada o Cerrada que el rango
+   viejo o el nuevo toca, se arma con el planificador la entrada del empleado con las vacaciones como quedarían. Si su huella
+   difiere de la guardada en el resultado, la respuesta es 422 `payroll.period.not_editable` (el código de hoy para un período que
+   no recibe capturas), con el mensaje «Reabre la quincena para cambiar estas vacaciones». Las quincenas que todavía no existen no
+   cuentan. `can.update` y `can.delete` del DTO dicen si alguna quincena Aprobada o Cerrada toca las vacaciones.
+2. **Desactualizar, como el código de hoy (decisión de la sesión).** Crear, editar o borrar llama `PayrollPeriod.MarkOutdated` en
+   cada quincena que tocan. Hoy ese método marca desactualizado (y sube la versión) a todo período que **no** está en Borrador y no
+   lo estaba ya: Liquidado y Reabierto. En Borrador, o si ya estaba desactualizado, no hace nada ni sube la versión. Aprobados y
+   Cerrados no llegan acá por la regla 1. La huella cambia igual, así que en un Liquidado también llega `sourceChanged`.
 3. **Reabrir la quincena que paga** (la ruta de hoy) vuelve a dejar editables las vacaciones **sólo** si ninguna otra quincena que
-   tocan está Aprobada o Cerrada. Si enero ya se aprobó, hay que reabrir enero también.
-4. **Volver a liquidar la quincena que paga** cambia la foto que leen las siguientes (ver «Foto de las vacaciones»). Si alguna
-   quincena siguiente que tocan está Aprobada o Cerrada y lo que le corresponde cambia (días, IBC, anticipo), la liquidación falla
-   con 422 `payroll.vacation.paid_period_locked` y nombra esa quincena. Si no cambia, pasa. Las siguientes Liquidadas quedan
-   desactualizadas, como R-14 hace con la segunda del mes.
-5. Una quincena con días de vacaciones **pagadas en otra** no se liquida hasta que la que paga esté Liquidada (o más) y al día:
-   422 `payroll.vacation.not_paid_yet`. Es la R-14 extendida entre meses.
+   tocan está Aprobada o Cerrada con una huella que cambiaría. Si enero ya se aprobó, hay que reabrir enero también.
+4. **Volver a liquidar la quincena que paga** cambia la foto que leen las siguientes (ver «Foto de las vacaciones»), y la foto es
+   parte de su entrada. Si con la foto nueva cambiaría la huella de una quincena siguiente Aprobada o Cerrada, la liquidación falla
+   con 422 `payroll.vacation.paid_period_locked` y nombra esa quincena. Si no cambia, pasa. Las siguientes Liquidadas o Reabiertas
+   se marcan con `MarkOutdated`, como R-14 hace con la segunda del mes.
+5. **«Pagada» (decisión de la sesión)** quiere decir: la quincena que paga está Liquidada, Aprobada o Cerrada, **no** está
+   desactualizada (`Outdated`) y **no** tiene `SourceChanged`. Un Borrador que contiene el inicio no la paga todavía. Una quincena
+   con días de vacaciones pagadas en otra no se liquida mientras no estén pagadas: 422 `payroll.vacation.not_paid_yet`. Es la R-14
+   extendida entre meses.
 
 ## Cálculo
 
@@ -204,9 +218,10 @@ la quincena que paga, los días de enero **no** entran en el IBC de diciembre. E
 en la foto. La línea `ibc` (Info) suma al rastro «IBC anterior a las vacaciones», «Días de vacaciones del mes» y «Parte de
 vacaciones».
 
-**IBC anterior al inicio**, resuelto al liquidar la quincena que paga, en este orden:
-1. El `ibc` del empleado en la **segunda quincena del mes anterior** al inicio, si existe en QEP y está Aprobada o Cerrada (es el
-   IBC del mes; R-16).
+**IBC anterior al inicio** (decisión de la sesión): el del **mes anterior al mes del inicio**, resuelto al liquidar la quincena
+que paga, en este orden:
+1. De QEP, si **las dos quincenas** de ese mes tienen resultado del empleado (Liquidada o más): el `ibc` de la segunda, que es el
+   IBC del mes.
 2. Si no, `Vacation.PreviousMonthIbc`, si se tecleó.
 3. Si no, el salario mensual vigente el día anterior al inicio, con la nota «Sin IBC del mes anterior en QEP: se usa el salario».
 
@@ -225,19 +240,57 @@ Sin anticipo, una quincena de enero cubierta por vacaciones tendría salario 0 y
 vacaciones: neto negativo, que hoy bloquea la aprobación (`payroll.period.negative_net`). Por eso la quincena que paga **retiene por
 adelantado** la seguridad social del trabajador de los días de vacaciones de las **otras** quincenas:
 
-- Por cada quincena siguiente `q` con días de vacaciones `d_q`: `parte_q = techo al peso(IBC anterior ÷ 30 × d_q)`;
-  `anticipo de salud_q = redondeo al peso(4 % × parte_q)`, igual para pensión, y FSP con la tasa del tramo del IBC anterior (si
+**Álgebra del anticipo (decisión de la sesión).** El anticipo se guarda **por mes**, no por quincena:
+
+- **Qué se anticipa.** Los días de vacaciones fuera de la quincena que paga, agrupados por mes `m`: los de la otra quincena del mes
+  que paga (si los hay) y los de cada mes siguiente. Por cada mes: `parte_m = techo al peso(IBC anterior ÷ 30 × d_m)`;
+  `anticipo de salud_m = redondeo al peso(4 % × parte_m)`, igual para pensión, y FSP con la tasa del tramo del IBC anterior (si
   llega a 4 SMMLV).
-- Líneas `Deduction` en la quincena que paga, una por concepto: `health_employee_vacation_advance`,
-  `pension_employee_vacation_advance`, `solidarity_fund_vacation_advance`. Cada rastro desglosa por quincena. Lo de los días de
-  vacaciones de la propia quincena que paga va en `health_employee` y `pension_employee`, como hoy.
-- **No** entran en los acumulados del mes de la quincena que paga: son de otra quincena.
-- En la quincena `q`: `línea del mes = (tasa × IBC del mes) − lo retenido antes en el mes − anticipo_q`. Su acumulado del mes suma
-  la línea **más** `anticipo_q`, así que la segunda quincena del mes consolida contra todo lo retenido para ese mes.
-- **Tope por neto:** en una quincena con 0 días trabajados y sin otro devengo, las líneas de salud, pensión y FSP del trabajador no
-  pasan de 0. La diferencia (redondeos, o el piso del SMMLV de un año nuevo sobre un IBC anterior de salario mínimo) queda en la
-  nota y la consolida la segunda quincena del mes. Si la que queda sin devengo es la segunda, la diferencia no se retiene y la nota
-  lo dice (pregunta 1).
+- **Dónde queda.** Líneas `Deduction` en la quincena que paga, una por concepto: `health_employee_vacation_advance`,
+  `pension_employee_vacation_advance`, `solidarity_fund_vacation_advance`; cada rastro desglosa por mes. El monto **efectivamente
+  retenido** por mes queda congelado en la foto (ver «Foto de las vacaciones»). Lo de los días de vacaciones de la propia quincena
+  que paga va en `health_employee` y `pension_employee`, como hoy.
+- **Acumulados.** Las líneas de anticipo **no** entran en `MonthAccumulators.HealthEmployee`, `PensionEmployee` ni `SolidarityFund`
+  de la quincena que paga: son de días de otra quincena o de otro mes.
+- **En una quincena posterior del mes `m`** (cualquiera de las dos), cada línea del trabajador es:
+  `línea = (tasa × IBC del mes) − (a) − (b)`, donde **(a)** es lo retenido como líneas reales por las quincenas anteriores del mes
+  (`Prior.HealthEmployee`, como hoy) y **(b)** es el anticipo guardado para el mes `m`. Son dos términos separados: (a) es un
+  acumulado del mes y (b) llega en la entrada, de la foto. El anticipo de un mes se descuenta **completo** en la primera quincena
+  del mes que liquida con vacaciones de ese mes; la segunda lo recibe otra vez en (b), y su (a) ya incluye la línea de la primera,
+  que a su vez descontó el anticipo. Así la suma del mes cierra: `(a) + (b) + línea = tasa × IBC del mes`.
+- **Anticipo acotado.** Si en la quincena que paga el neto no alcanza para todo el anticipo, se retiene hasta dejar el neto en 0, y
+  la foto guarda **lo retenido**, no lo calculado. La quincena posterior resta sólo lo guardado en (b), así que el resto se retiene
+  allí normalmente.
+- **Tope por neto en la posterior.** En una quincena con 0 días trabajados y sin otro devengo, las líneas de salud, pensión y FSP del
+  trabajador no bajan el neto de 0. Si queda una diferencia (redondeos, o el piso del SMMLV de un año nuevo sobre un IBC anterior
+  de salario mínimo), en la primera quincena del mes la retiene la segunda. Si la que queda sin devengo es la segunda, **los pocos
+  pesos no se retienen** y la nota de la línea lo dice (decisión del owner, antes pregunta 1).
+
+**Ejemplo: segunda de enero con 0 días trabajados y anticipo.** Salario fijo 3 000 000, descanso domingo y sábado, empresa
+exonerada, ARL clase I (0,522 %). Diciembre de 2026 liquidado en QEP con IBC 3 000 000. Vacaciones del martes 2027-01-12 (el lunes
+11 es festivo de Reyes) al lunes 2027-02-01: 15 días hábiles. Los valores legales de 2027 que el ejemplo usa se suponen iguales a
+los de 2026 (salvo el SMMLV, que no toca: el piso queda bajo el IBC).
+
+| | 2027-01-01..15 (paga) | 2027-01-16..31 | 2027-02-01..15 |
+| --- | --- | --- | --- |
+| Días de vacaciones / trabajados | 4 / 11 | 15 / 0 | 1 / 14 |
+| `salary` | 1 100 000 | 0 | 1 400 000 |
+| `vacation_pay` | 2 000 000 (20 días × 100 000) | — | — |
+| Auxilio (valor de 2026 supuesto) | redondeo(249 095 ÷ 30 × 11) = 91 335 | 0 (ningún día trabajado) | — |
+| IBC del mes hasta la quincena | 1 100 000 + 400 000 = 1 500 000 | 1 100 000 + 1 900 000 = 3 000 000 | — |
+| `health_employee` | 4 % × 1 500 000 = 60 000 | 120 000 − (a) 60 000 − (b) 60 000 = **0** | — |
+| `pension_employee` | 60 000 | **0**, igual | — |
+| Anticipo de salud (enero / febrero) | 60 000 (4 % × 1 500 000) / 4 000 (4 % × 100 000) | — | — |
+| Anticipo de pensión (enero / febrero) | 60 000 / 4 000 | — | — |
+| `pension_employer` | techo100(12 % × 1 500 000) = 180 000 | techo100(12 % × 3 000 000) − 180 000 = 180 000 | — |
+| `health_employer`, `icbf`, `sena` | 0 (exonerada) | 0 | — |
+| `arl` (base sin vacaciones) | techo100(1 100 000 × 0,00522 = 5 742) = 5 800 | 5 800 − 5 800 = **0** | — |
+| `compensation_fund` | techo100(4 % × 1 500 000) = 60 000 | techo100(4 % × 3 000 000) − 60 000 = 60 000 | — |
+| Neto de la segunda de enero | | 0 − 0 = **0** | |
+
+La segunda de enero no paga nada al trabajador y tampoco le retiene: su (a) es la línea real de la primera (60 000) y su (b) el
+anticipo de enero (60 000). Febrero resta su (b) de 4 000 en la primera de febrero. Sus provisiones salen de los 15 días de
+vacaciones como tiempo de servicio (1 500 000): cesantías y prima 124 950 cada una, intereses 15 000, vacaciones 62 550.
 
 El resumen (`PayrollSummary`) suma las líneas de anticipo en `HealthEmployee`, `PensionEmployee` y `SolidarityFund`: es lo que la
 colilla de esa quincena le retiene al trabajador. `IsOther` no las toma, porque no empiezan por `deduction:` ni `recurring:`.
@@ -253,16 +306,21 @@ de vacaciones»: se excluye el dinero, no los días (llamada 5).
 ### Foto de las vacaciones
 
 Al liquidar la quincena que paga, el resultado de cada empleado guarda junto a sus líneas una foto por vacaciones (como guarda lo
-aplicado de cada recurrente): `vacationId`, salario del inicio, IBC anterior y su fuente, y por quincena `{ inicio, días, parte de
-IBC, anticipo de salud, de pensión y de FSP }`. Las quincenas siguientes la leen de la última foto de la quincena que paga (el
-planificador, como `FirstHalfResultsAsync`), no la recalculan. Así enero no cambia si después cambian los valores legales o el
-salario de diciembre.
+aplicado de cada recurrente): `vacationId`, salario del inicio, IBC anterior y su fuente, los días de nómina por quincena y, **por
+mes** tocado fuera de la quincena que paga, `{ mes, parte de IBC, anticipo retenido de salud, de pensión y de FSP }` (lo retenido,
+no lo calculado). Las quincenas siguientes la leen de la última foto de la quincena que paga, no la recalculan. Así enero no cambia
+si después cambian los valores legales o el salario de diciembre.
+
+**Lectura del planificador (decisión de la sesión).** `LiquidationPlanner` gana una lectura de repositorio nueva: las vacaciones de
+la empresa que se solapan con el **mes** del período y, para cada una pagada en otra quincena, la foto guardada de esa quincena (la
+del empleado en `payroll.employee_results`). La forma de la consulta (una o dos, índice, unión con resultados) la decide el
+implementador. Con eso arma `VacationInput` y resuelve «pagada» (regla 5 del ciclo de vida).
 
 ### Entrada del motor y huella
 
 `EngineInput` gana `IReadOnlyList<VacationInput> Vacations`: las vacaciones que tocan el **mes** de la quincena (para contar los
 días del mes de la primera quincena en la segunda). Cada una con `VacationId`, `StartDate`, `EndDate`, `BusinessDays`, si esta
-quincena la paga, y, si la paga otra, la foto (`IBC anterior`, `salario del inicio`, el anticipo de esta quincena). La quincena
+quincena la paga, y, si la paga otra, la foto (`IBC anterior`, `salario del inicio`, el anticipo guardado para el mes de esta quincena). La quincena
 que paga recibe el IBC anterior ya resuelto (orden de arriba).
 
 La huella (`InputFingerprint.Of`) la incluye sin cambios de código: serializa el `EngineInput` entero. Editar unas vacaciones o
@@ -284,13 +342,13 @@ enero): **15 días hábiles**, regresa el miércoles 2027-01-06.
 | 2027-01-01..15 | 5 | 10 | 10 días al salario de enero | — | 500 000 |
 
 IBC de diciembre = 1 300 000 + 1 700 000 = 3 000 000. ARL de diciembre sobre 1 300 000. Parafiscales de diciembre sobre 3 000 000.
-Anticipos en la primera de diciembre: salud y pensión 60 000 c/u por la segunda de diciembre, 20 000 c/u por la primera de enero.
-La segunda de diciembre retiene `4 % × 3 000 000 − 60 000 (primera) − 60 000 (anticipo) = 0`.
+Anticipos en la primera de diciembre: salud y pensión 60 000 c/u para diciembre (los días de la segunda), 20 000 c/u para enero.
+La segunda de diciembre retiene `4 % × 3 000 000 − 60 000 (a) − 60 000 (b) = 0`.
 
 ## Interacción con la primera y la segunda quincena
 
 - R-14 sigue igual: la segunda del mes lee la primera. Si la primera paga vacaciones, la segunda lee de ella los acumulados (sin los
-  anticipos) y, por la foto, su anticipo.
+  anticipos) como término (a) y, por la foto, el anticipo del mes como término (b).
 - La segunda del mes cuenta los días de vacaciones de la primera para el IBC, la ARL y los parafiscales del mes (de las fechas, no
   de un acumulado).
 - Auxilio mensual (D-3): los días de vacaciones no lo causan en ninguna de las dos.
@@ -313,7 +371,7 @@ recurrentes.
 | Método y ruta | Política | Handler exige | Responde |
 | --- | --- | --- | --- |
 | `GET …/vacations` | `PeriodRead` | read | 200 `IReadOnlyList<VacationDto>`, del inicio más reciente al más viejo |
-| `POST …/vacations/preview` | `PeriodManage` | read + manage | 200 `VacationPreviewDto`; no escribe |
+| `POST /companies/{companyId:guid}/employees/{employeeId:guid}/vacations/preview` | `PeriodManage` | read + manage | 200 `VacationPreviewDto`; no escribe |
 | `POST …/vacations` | `PeriodManage` | read + manage | 201 la lista entera |
 | `PUT …/vacations/{vacationId:guid}` | `PeriodManage` | read + manage | 200 la lista entera; `If-Match` |
 | `DELETE …/vacations/{vacationId:guid}` | `PeriodManage` | read + manage | 200 la lista entera; `If-Match` |
@@ -350,11 +408,11 @@ Cambios en DTOs existentes:
 
 | Código | HTTP | Cuándo |
 | --- | --- | --- |
-| `payroll.vacation.not_found` | 404 | El id no existe en esa empresa y empleado del tenant. |
-| `payroll.vacation.overlap` | 409 | Se solapa con otras vacaciones del empleado en la empresa. Entra en `PayrollErrorCodes.Conflicts`. |
+| `payroll.vacation.not_found` | 404 | El id no existe en esa empresa y empleado del tenant. Se lanza como `ResourceNotFoundException` (un `PayrollNotFound.Vacation(id)` nuevo, como `Recurring`); `ApiExceptionHandler.MapException` la responde 404. Un `PayrollDomainException` con ese código sería 422. |
+| `payroll.vacation.overlap` | 409 | Se solapa con otras vacaciones del empleado en la empresa. Entra en `PayrollErrorCodes.Conflicts`, y `PayrollConflicts.Run` lo convierte en `ResourceConflictException` (409). |
 | `payroll.vacation.starts_on_rest_day` | 422 | El inicio es día de descanso o festivo. |
 | `payroll.vacation.no_business_days` | 422 | El rango no tiene ningún día hábil. |
-| `payroll.vacation.outside_contract` | 422 | El rango no cabe en un solo contrato del empleado con la empresa. |
+| `payroll.vacation.outside_contract` | 422 | El contrato vigente el día del inicio no cubre el día del fin (o no hay contrato ese día). |
 | `payroll.vacation.before_first_period` | 422 | El inicio cae antes de la primera quincena de la empresa en QEP: la pagó Siigo (pregunta 2). |
 | `payroll.vacation.not_paid_yet` | 422 | Al liquidar: la quincena que paga unas vacaciones de ésta no está liquidada y al día. |
 | `payroll.vacation.paid_period_locked` | 422 | Al volver a liquidar la que paga: cambiaría lo que leyó una quincena Aprobada o Cerrada. |
@@ -398,8 +456,11 @@ TDD estricto. Casos de oro nuevos, uno por regla:
 - `vacation-ibc-previous-month-from-qep` y `vacation-ibc-fallback-salary`: las fuentes del IBC anterior.
 - `vacation-new-year-floor`: salario mínimo, enero entero de vacaciones, el piso del SMMLV nuevo deja diferencia, tope por neto.
 
-Pruebas de Application: días hábiles con descansos y festivos, solapamiento, bloqueos por quincena Aprobada, desactualizar las
-Liquidadas, `not_paid_yet`, `paid_period_locked`. Integración (Testcontainers) filtrada por nombre mientras se itera.
+Pruebas de Application: días hábiles con descansos y festivos (sábado hábil con el default), solapamiento, un solo contrato,
+desactualizar Liquidadas y Reabiertas (y no tocar Borradores), «pagada» con `Outdated` o `SourceChanged`, `not_paid_yet`. El
+bloqueo se prueba **por huella**: con una quincena Aprobada, una edición que cambia su `InputFingerprint.Of` del empleado da
+`payroll.period.not_editable` (y volver a liquidar la que paga, `paid_period_locked`); una que no la cambia (por ejemplo, mover el
+fin dentro de una quincena no aprobada) pasa. Integración (Testcontainers) filtrada por nombre mientras se itera.
 
 ## Llamadas (mías; el owner puede cambiarlas)
 
@@ -412,16 +473,19 @@ Liquidadas, `not_paid_yet`, `paid_period_locked`. Integración (Testcontainers) 
 4. **Festivos por puerto con adaptador en Bootstrapper**, siempre de Colombia.
 5. **Provisiones:** el pago no entra en ninguna base; los días de vacaciones de la quincena sí, como tiempo de servicio.
 6. **Confirmación de ausencias:** se mantiene y cambia el texto. Las vacaciones registradas cuentan como declaradas por sus días.
-7. **El IBC anterior** sale de QEP; si no está, del valor tecleado; si tampoco, del salario.
+7. **El IBC anterior** es el del mes anterior al mes del inicio: de QEP si sus dos quincenas tienen resultado (Liquidada o más); si
+   no, del valor tecleado; si tampoco, del salario (decisión de la sesión).
+10. **Bloqueo por huella, desactualizar con `MarkOutdated` de hoy, «pagada» sin `Outdated` ni `SourceChanged`, un solo contrato y
+   anticipo guardado por mes** (decisiones de la sesión; ver sus secciones).
 8. **El inicio debe ser día hábil**; el fin es libre (con o sin el fin de semana de cierre).
 9. **Parafiscales por mes de causación**, no por mes de pago, igual que la seguridad social y la PILA.
 
 ## Preguntas para el owner (cambian lo que se construye)
 
-1. **Una segunda quincena entera de vacaciones con piso nuevo del SMMLV** (salario mínimo, aumento de enero) deja unos pesos de
-   salud y pensión del trabajador sin retener. Propongo no retenerlos y dejarlo en la nota. La alternativa es cobrarlos en la
-   quincena siguiente con devengo, lo que pide un arrastre entre meses que hoy no existe.
-2. **Vacaciones que empezaron en noviembre (pagadas en Siigo) y siguen en diciembre.** Con este diseño no se registran
+Resuelta: una segunda quincena entera de vacaciones con piso nuevo del SMMLV deja unos pesos sin retener; se aceptó no retenerlos y
+dejarlo en la nota de la línea («Tope por neto en la posterior»).
+
+1. **Vacaciones que empezaron en noviembre (pagadas en Siigo) y siguen en diciembre.** Con este diseño no se registran
    (`before_first_period`). Diciembre pagaría salario por esos días. Si alguien está en ese caso al arrancar, hace falta un
    registro «pagado fuera de QEP» que sólo descuente días y cotice: ¿lo hay?
 
