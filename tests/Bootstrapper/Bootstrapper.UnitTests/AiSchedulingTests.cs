@@ -251,6 +251,8 @@ public sealed class AiSchedulingTests
 
         public int WriteCalls { get; private set; }
 
+        public (Guid CustomerId, Guid AppointmentId)? LastRescheduleCheck { get; private set; }
+
         private void MaybeThrow()
         {
             if (Throws is { } error)
@@ -288,6 +290,15 @@ public sealed class AiSchedulingTests
         {
             MaybeThrow();
             return Task.FromResult<ChannelAppointment?>(Stored);
+        }
+
+        public Task<ChannelRescheduleCheck> CheckRescheduleAsync(
+            Guid tenantId, Guid customerId, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken)
+        {
+            MaybeThrow();
+            LastRescheduleCheck = (customerId, appointmentId);
+            return Task.FromResult(new ChannelRescheduleCheck(
+                new ChannelStartCheck("Confirmed", Stored.StartsAt, Stored.EndsAt, "America/Bogota", "Consulta", "Dra. Pérez", "Sede"), false));
         }
 
         public Task<ChannelStartCheck> CheckStartAsync(
