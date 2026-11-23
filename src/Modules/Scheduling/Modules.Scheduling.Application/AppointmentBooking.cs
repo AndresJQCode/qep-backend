@@ -81,6 +81,10 @@ public sealed class AppointmentBooking(
         var loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
         var rulesSessions = await loader.SessionsAsync(tenantId, loaded, loaded.OfferedResourceIds, onlyActive: false, cancellationToken);
         var candidates = AppointmentStarts.RulesCandidates(loaded, service, rulesSessions, startsAt, requested, _ => true);
+        if (input.RequireClientChoice && requested is { } mustBeChoosable)
+        {
+            AppointmentStarts.EnsureClientChoice(loaded, service, rulesSessions, startsAt, mustBeChoosable);
+        }
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await appointments.LockResourcesAsync(tenantId, candidates, cancellationToken);

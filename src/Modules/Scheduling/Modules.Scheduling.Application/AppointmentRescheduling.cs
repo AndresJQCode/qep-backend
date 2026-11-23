@@ -30,6 +30,24 @@ public sealed class AppointmentRescheduling(
         }
     }
 
+    /// <summary>
+    /// D-15: a client moves an appointment under the same cutoff that rules cancelling it (otherwise moving it would dodge the deadline), and
+    /// only when its service is one the channel books; a person moves the rest. Both are invalid_transition, which the agent turns into a handoff.
+    /// </summary>
+    private static void EnsureClientMayMove(Appointment appointment, Service service, SchedulingSettings rules, DateTimeOffset now)
+    {
+        if (!service.BookableByChannel)
+        {
+            throw new SchedulingDomainException(SchedulingErrorCodes.InvalidTransition, AppointmentCancellationRules.NotMovableByChatMessage);
+        }
+
+        if (!AppointmentCancellationRules.ClientMayCancel(appointment.StartsAt, now, rules.ClientCancelCutoffHours))
+        {
+            throw new SchedulingDomainException(
+                SchedulingErrorCodes.InvalidTransition, AppointmentCancellationRules.TooLateToMoveMessage(rules.ClientCancelCutoffHours));
+        }
+    }
+
     /// <param name="byClient">Rige el plazo del cliente y exige <c>bookableByChannel</c> (D-15): lo pide el agente.</param>
     /// <param name="requireClientChoice">El recurso pedido tiene que ser uno que la franja deja elegir al cliente (D-16).</param>
     public async Task RescheduleAsync(
@@ -48,9 +66,18 @@ public sealed class AppointmentRescheduling(
         var service = (await services.FindManyAsync(tenantId, [appointment.ServiceId], cancellationToken)).SingleOrDefault()
             ?? throw SchedulingNotFound.Service(appointment.ServiceId.Value);
         var loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
+        if (byClient)
+        {
+            EnsureClientMayMove(appointment, service, loaded.Rules, loaded.Calendar.UtcNow);
+        }
+
         var sameLocation = loaded.OfferedResources.Where(resource => resource.LocationId == appointment.LocationId).Select(resource => resource.Id).ToHashSet();
         var rulesSessions = await loader.SessionsAsync(tenantId, loaded, loaded.OfferedResourceIds, onlyActive: false, cancellationToken);
         var candidates = AppointmentStarts.RulesCandidates(loaded, service, rulesSessions, startsAt, resourceId, sameLocation.Contains);
+        if (requireClientChoice && resourceId is { } mustBeChoosable)
+        {
+            AppointmentStarts.EnsureClientChoice(loaded, service, rulesSessions, startsAt, mustBeChoosable);
+        }
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await appointments.LockResourcesAsync(tenantId, [.. candidates, appointment.ResourceId], cancellationToken);

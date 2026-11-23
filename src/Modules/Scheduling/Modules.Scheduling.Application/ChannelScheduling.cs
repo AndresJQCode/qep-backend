@@ -51,6 +51,22 @@ public sealed record ChannelStartCheck(
     string ResourceName,
     string LocationName);
 
+/// <summary>Una reserva del agente: la llave de idempotencia la deriva quien llama del trabajo (D-14) y siempre viaja.</summary>
+public sealed record ChannelBooking(
+    Guid TenantId,
+    Guid AgentId,
+    Guid CustomerId,
+    Guid? ConversationId,
+    Guid ServiceId,
+    DateTime LocalStartsAt,
+    Guid? ResourceId,
+    string? Note,
+    string ClientRequestId);
+
+/// <param name="AlreadyDone">Verdadero cuando la escritura ya estaba hecha (misma llave, cita ya cancelada, hora ya puesta): no se escribió nada y
+/// <paramref name="Appointment"/> describe lo que quedó guardado (D-12).</param>
+public sealed record ChannelWriteResult(ChannelAppointment Appointment, bool AlreadyDone);
+
 /// <summary>
 /// El único camino para operar la Agenda sin sesión (spec 2026-11-23 §6.3), con la doctrina de <c>IExternalQuotationWriter</c>: un módulo
 /// consumidor declara su propio puerto y su adaptador en Bootstrapper llama a éste. Cada método comprueba el módulo <c>scheduling</c>
@@ -77,6 +93,23 @@ public interface IChannelScheduling
     /// <summary>Lanza lo mismo que la reserva lanzaría, sin candado ni escritura.</summary>
     Task<ChannelStartCheck> CheckStartAsync(
         Guid tenantId, Guid serviceId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken);
+
+    /// <summary>Reserva como canal (<c>Source = Channel</c>, actor agente). Repetir la llave devuelve la cita guardada, también si dos llamadas con ella corren a la vez.</summary>
+    Task<ChannelWriteResult> BookAsync(ChannelBooking booking, CancellationToken cancellationToken);
+
+    /// <summary>Cancela una cita del cliente con el plazo del cliente. Ajena o inexistente es el mismo 404; ya cancelada responde <c>AlreadyDone</c>.</summary>
+    Task<ChannelWriteResult> CancelAsync(
+        Guid tenantId, Guid agentId, Guid customerId, Guid appointmentId, string? reason, CancellationToken cancellationToken);
+
+    /// <summary>Cambia la hora (y, si se pide, el recurso) con el mismo plazo (D-15). La misma hora responde <c>AlreadyDone</c>.</summary>
+    Task<ChannelWriteResult> RescheduleAsync(
+        Guid tenantId,
+        Guid agentId,
+        Guid customerId,
+        Guid appointmentId,
+        DateTime localStartsAt,
+        Guid? resourceId,
+        CancellationToken cancellationToken);
 }
 
 public sealed class ChannelScheduling(
@@ -91,7 +124,10 @@ public sealed class ChannelScheduling(
     IAppointmentReadRepository appointmentReads,
     IAppointmentRepository appointments,
     AvailabilitySearch search,
-    AvailabilityLoader loader)
+    AvailabilityLoader loader,
+    AppointmentBooking appointmentBooking,
+    AppointmentCancellation cancellation,
+    AppointmentRescheduling rescheduling)
     : IChannelScheduling
 {
     public async Task<ChannelReadiness> GetReadinessAsync(Guid tenantId, CancellationToken cancellationToken)
@@ -226,6 +262,102 @@ public sealed class ChannelScheduling(
             offered.DisplayName,
             location?.Name ?? string.Empty);
     }
+
+    public async Task<ChannelWriteResult> BookAsync(ChannelBooking booking, CancellationToken cancellationToken)
+    {
+        var tenantId = booking.TenantId;
+        await EnsureAsync(tenantId, cancellationToken);
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var input = new BookingInput(
+            tenantId,
+            booking.ServiceId,
+            booking.CustomerId,
+            ToInstant(calendar, booking.LocalStartsAt),
+            booking.ResourceId is { } chosen ? new ResourceId(chosen) : null,
+            AppointmentSource.Channel,
+            booking.ConversationId,
+            booking.Note,
+            booking.ClientRequestId,
+            RequireClientChoice: true);
+
+        BookingOutcome outcome;
+        try
+        {
+            outcome = await appointmentBooking.BookAsync(input, ResourceScope.All, SchedulingActor.Agent(booking.AgentId), cancellationToken);
+        }
+        catch (ResourceConflictException conflict) when (conflict.Code == SchedulingErrorCodes.SlotTaken)
+        {
+            // The same key booked at once on two resources loses the unique index with a 409 (the lock does not serialize different
+            // resources). The key then exists: whoever lost describes the winner's appointment instead of failing a booking that happened.
+            var stored = await appointments.FindByClientRequestAsync(tenantId, booking.ClientRequestId.Trim(), cancellationToken);
+            if (stored is null)
+            {
+                throw;
+            }
+
+            return new ChannelWriteResult(await DescribeOneAsync(tenantId, stored, calendar, cancellationToken), AlreadyDone: true);
+        }
+
+        return new ChannelWriteResult(await DescribeOneAsync(tenantId, outcome.Appointment, calendar, cancellationToken), outcome.Replayed);
+    }
+
+    public async Task<ChannelWriteResult> CancelAsync(
+        Guid tenantId, Guid agentId, Guid customerId, Guid appointmentId, string? reason, CancellationToken cancellationToken)
+    {
+        await EnsureAsync(tenantId, cancellationToken);
+        var appointment = await LoadOwnAsync(tenantId, customerId, appointmentId, cancellationToken);
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+
+        // D-12: a job that resumes after its own cancellation must not hand off because of it.
+        if (appointment.Status == AppointmentStatus.Cancelled)
+        {
+            return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: true);
+        }
+
+        await cancellation.CancelAsync(tenantId, appointment, reason, byClient: true, SchedulingActor.Agent(agentId), cancellationToken);
+        return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: false);
+    }
+
+    public async Task<ChannelWriteResult> RescheduleAsync(
+        Guid tenantId,
+        Guid agentId,
+        Guid customerId,
+        Guid appointmentId,
+        DateTime localStartsAt,
+        Guid? resourceId,
+        CancellationToken cancellationToken)
+    {
+        await EnsureAsync(tenantId, cancellationToken);
+        var appointment = await LoadOwnAsync(tenantId, customerId, appointmentId, cancellationToken);
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var startsAt = ToInstant(calendar, localStartsAt);
+        ResourceId? requested = resourceId is { } chosen ? new ResourceId(chosen) : null;
+
+        // A closed appointment is not "already moved": it answers invalid_transition, like the core would.
+        AppointmentRescheduling.EnsureOpen(appointment);
+        if (startsAt == appointment.StartsAt && (requested is null || requested == appointment.ResourceId))
+        {
+            return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: true);
+        }
+
+        await rescheduling.RescheduleAsync(
+            tenantId, appointment, ResourceScope.All, requested, startsAt, SchedulingActor.Agent(agentId),
+            byClient: true, requireClientChoice: true, cancellationToken);
+        return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: false);
+    }
+
+    // Another customer's appointment is the same 404 as one that does not exist: the id never confirms who owns it.
+    private async Task<Appointment> LoadOwnAsync(Guid tenantId, Guid customerId, Guid appointmentId, CancellationToken cancellationToken)
+    {
+        var appointment = await appointments.FindAsync(tenantId, new AppointmentId(appointmentId), cancellationToken);
+        return appointment is null || appointment.CustomerId != customerId
+            ? throw SchedulingNotFound.Appointment(appointmentId)
+            : appointment;
+    }
+
+    private async Task<ChannelAppointment> DescribeOneAsync(
+        Guid tenantId, Appointment appointment, TenantCalendar calendar, CancellationToken cancellationToken) =>
+        (await DescribeAsync(tenantId, [appointment], calendar, cancellationToken))[0];
 
     private async Task EnsureAsync(Guid tenantId, CancellationToken cancellationToken)
     {
