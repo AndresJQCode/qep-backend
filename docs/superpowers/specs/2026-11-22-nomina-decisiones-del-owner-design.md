@@ -321,5 +321,5 @@ legales, la importación por Excel, el Excel «Resumen de nómina» y el rendimi
 ## Resuelto con el owner (2026-11-22)
 
 1. **Base del tope del auxilio por defecto:** opción A, `SalaryAndSalaryIncome` por defecto y `SalaryOnly` como opción (Tarea B5b).
-2. **Aviso de año faltante para los tramos del FSP:** sí lo cubre, con la misma regla que las claves (decisión de la sesión,
-   por coherencia con la decisión 6). Se implementa en el spec de parámetros legales, no en este cambio.
+2. **Aviso de año faltante para los tramos del FSP:** reabierto en el spec de parámetros legales. El owner había decidido «tramos
+   sin aviso» cuando no eran anuales; con la decisión 6 lo son. No se implementa en este cambio.
