@@ -27,7 +27,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                 name: "CK_message_templates_kind",
                 schema: "messaging",
                 table: "message_templates",
-                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','TaskNotice')");
+                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')");
         }
 
         /// <inheritdoc />
@@ -51,7 +51,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                 name: "CK_message_templates_kind",
                 schema: "messaging",
                 table: "message_templates",
-                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice')");
+                sql: "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder')");
         }
     }
 }

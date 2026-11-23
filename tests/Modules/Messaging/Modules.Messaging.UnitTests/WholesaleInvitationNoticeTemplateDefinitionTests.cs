@@ -174,5 +174,5 @@ public sealed class WholesaleInvitationNoticeTemplateDefinitionTests
 
     [Fact]
     public void TheKindIsStoredByNameAtTheEnd() =>
-        Assert.Equal(MessageTemplateKind.WholesaleInvitationNotice, Enum.GetValues<MessageTemplateKind>()[^3]);
+        Assert.Equal(MessageTemplateKind.WholesaleInvitationNotice, Enum.GetValues<MessageTemplateKind>()[^4]);
 }
