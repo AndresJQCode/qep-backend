@@ -11,10 +11,10 @@ namespace Modules.Ai.Infrastructure.Persistence;
 /// </summary>
 internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivityReader
 {
-    /// <summary>Las sesiones que terminaron en manos de una persona por el agente (los cuatro caminos de <c>HandOffAsync</c>).</summary>
     /// <summary>El resultado de una reserva nueva, no de una repetida (spec 2026-11-23 §9.5).</summary>
     private const string BookedForReal = """{"alreadyBooked":false}""";
 
+    /// <summary>Las sesiones que terminaron en manos de una persona por el agente (los cuatro caminos de <c>HandOffAsync</c>).</summary>
     private static readonly AgentSessionStatus[] HandedOffStatuses =
         [AgentSessionStatus.HandedOff, AgentSessionStatus.Failed, AgentSessionStatus.WindowClosed];
 

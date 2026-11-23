@@ -40,7 +40,7 @@ public sealed class RescheduleAppointmentHandler(
 
         var actor = await transitions.ActorAsync(tenantId, actsAsClient: false, cancellationToken);
         await rescheduling.RescheduleAsync(
-            tenantId, appointment, scope, requested, startsAt, actor, byClient: false, requireClientChoice: false, cancellationToken);
+            tenantId, appointment, scope, requested, startsAt, actor, byClient: false, requireClientChoice: false, appointment.Version, cancellationToken);
         return await transitions.ComposeAsync(tenantId, appointment, cancellationToken);
     }
 }

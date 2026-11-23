@@ -51,7 +51,7 @@ public sealed class CancelAppointmentHandler(
         var byClient = SchedulingEnums.TryParse<AppointmentSource>(request.Source, out var source) && source == AppointmentSource.Channel;
         var actor = await transitions.ActorAsync(command.TenantId, byClient, cancellationToken);
 
-        await cancellation.CancelAsync(command.TenantId, appointment, request.Reason, byClient, actor, cancellationToken);
+        await cancellation.CancelAsync(command.TenantId, appointment, request.Reason, byClient, actor, appointment.Version, cancellationToken);
         return await transitions.ComposeAsync(command.TenantId, appointment, cancellationToken);
     }
 }

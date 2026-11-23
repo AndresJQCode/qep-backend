@@ -118,7 +118,7 @@ public sealed class AgentSchedulingToolsTests
     }
 
     [Fact]
-    public async Task ChangeBlockedHandsOffToTheConfiguredDestination()
+    public async Task ChangeBlockedOnCancelReturnsTheHandoffCode()
     {
         _scheduling.CancelResult = AiSchedulingResult<AiAppointmentWrite>.HandedOff(
             AgentToolErrors.AppointmentChangeBlocked, AgentHandoffCodes.AppointmentChangeBlocked);

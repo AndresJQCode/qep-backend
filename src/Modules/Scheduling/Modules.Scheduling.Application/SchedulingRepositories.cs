@@ -157,6 +157,12 @@ public interface IAppointmentRepository
     Task<Appointment?> FindFreshAsync(Guid tenantId, AppointmentId id, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Descarta todo lo que el contexto sigue con seguimiento. Un trabajo del agente comparte un contexto entre sus escrituras: la que falla
+    /// (un guardado que perdió, una excepción a mitad de camino) no puede dejar sus entidades pendientes, o la siguiente las vuelve a guardar.
+    /// </summary>
+    void Discard();
+
+    /// <summary>
     /// Vuelve a leer los campos de la cita desde la base. Se llama con el candado del recurso ya tomado: lo que otra petición escribió entre
     /// la lectura y el candado (una cancelación, un cambio de hora) se ve acá y no después, cuando liberar un cupo que ya se liberó fallaría
     /// con un <c>InvalidOperationException</c> o, peor, descontaría dos veces.

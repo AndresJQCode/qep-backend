@@ -287,6 +287,8 @@ public sealed class ChannelScheduling(
         }
         catch (ResourceConflictException conflict) when (conflict.Code == SchedulingErrorCodes.SlotTaken)
         {
+            // The failed save left the new appointment tracked: drop it before reading the winner and before any later write of the job.
+            appointments.Discard();
             // The same key booked at once on two resources loses the unique index with a 409 (the lock does not serialize different
             // resources). The key then exists: whoever lost describes the winner's appointment instead of failing a booking that happened.
             var stored = await appointments.FindByClientRequestAsync(tenantId, booking.ClientRequestId.Trim(), cancellationToken);
@@ -299,6 +301,12 @@ public sealed class ChannelScheduling(
             AppointmentBooking.EnsureSameCustomer(stored, booking.CustomerId);
 
             return new ChannelWriteResult(await DescribeOneAsync(tenantId, stored, calendar, cancellationToken), AlreadyDone: true);
+        }
+        catch
+        {
+            // The job shares one context across its writes: what a failed write left tracked would be flushed by the next one.
+            appointments.Discard();
+            throw;
         }
 
         return new ChannelWriteResult(await DescribeOneAsync(tenantId, outcome.Appointment, calendar, cancellationToken), outcome.Replayed);
@@ -319,7 +327,7 @@ public sealed class ChannelScheduling(
 
         try
         {
-            await cancellation.CancelAsync(tenantId, appointment, reason, byClient: true, SchedulingActor.Agent(agentId), cancellationToken);
+            await cancellation.CancelAsync(tenantId, appointment, reason, byClient: true, SchedulingActor.Agent(agentId), expectedVersion: null, cancellationToken);
         }
         catch (Exception error) when (error is RequestConcurrencyException or SchedulingDomainException { Code: SchedulingErrorCodes.InvalidTransition })
         {
@@ -332,6 +340,12 @@ public sealed class ChannelScheduling(
                 return new ChannelWriteResult(await DescribeOneAsync(tenantId, fresh, calendar, cancellationToken), AlreadyDone: true);
             }
 
+            appointments.Discard();
+            throw;
+        }
+        catch
+        {
+            appointments.Discard();
             throw;
         }
 
@@ -365,7 +379,7 @@ public sealed class ChannelScheduling(
         {
             moved = await rescheduling.RescheduleAsync(
                 tenantId, appointment, ResourceScope.All, requested, startsAt, SchedulingActor.Agent(agentId),
-                byClient: true, requireClientChoice: true, cancellationToken);
+                byClient: true, requireClientChoice: true, expectedVersion: null, cancellationToken);
         }
         catch (RequestConcurrencyException)
         {
@@ -379,6 +393,12 @@ public sealed class ChannelScheduling(
                 return new ChannelWriteResult(await DescribeOneAsync(tenantId, fresh, calendar, cancellationToken), AlreadyDone: true);
             }
 
+            appointments.Discard();
+            throw;
+        }
+        catch
+        {
+            appointments.Discard();
             throw;
         }
 

@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Modules.Scheduling.Domain;
 using Modules.Tenancy.Application;
 
@@ -61,9 +62,11 @@ public sealed class AppointmentRescheduling(
         SchedulingActor actor,
         bool byClient,
         bool requireClientChoice,
+        long? expectedVersion,
         CancellationToken cancellationToken)
     {
         EnsureOpen(appointment);
+        var readBeforeTheLock = (appointment.ResourceId, appointment.StartsAt, appointment.LocationId);
 
         var service = (await services.FindManyAsync(tenantId, [appointment.ServiceId], cancellationToken)).SingleOrDefault()
             ?? throw SchedulingNotFound.Service(appointment.ServiceId.Value);
@@ -86,10 +89,18 @@ public sealed class AppointmentRescheduling(
 
         // Read before the lock, so read again: a cancel or a move that committed in between is visible only now.
         await appointments.RefreshAsync(appointment, cancellationToken);
+        AppointmentCancellation.EnsureNotChanged(appointment, expectedVersion);
         EnsureOpen(appointment);
         if (appointment.StartsAt == startsAt && (resourceId is null || resourceId == appointment.ResourceId))
         {
             return false;
+        }
+
+        // The cutoff used the old start, the lock the old resource and the candidates the old location. If another write moved the
+        // appointment in between, those decisions are stale: the caller re-reads and decides again.
+        if ((appointment.ResourceId, appointment.StartsAt, appointment.LocationId) != readBeforeTheLock)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The appointment changed after it was read.");
         }
 
         // Same reason as in booking: closures committed while the candidates were computed are visible only after the lock.
