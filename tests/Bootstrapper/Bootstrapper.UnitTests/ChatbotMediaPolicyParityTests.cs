@@ -12,13 +12,15 @@ namespace Bootstrapper.UnitTests;
 public sealed class ChatbotMediaPolicyParityTests
 {
     private static readonly string[] OneOfEachKind = ["a.jpg", "a.mp4", "a.ogg", "a.xlsx"];
+    private static readonly string[] PresentationAndText = ["a.ppt", "a.pptx", "a.txt"];
 
     [Fact]
     public void EveryWhatsAppRuleIsAcceptedByStorageForChatbotMedia()
     {
         var policy = new ChatbotMediaPolicy();
 
-        Assert.All(OutboundMediaPolicy.Rules, rule =>
+        // El sticker no es un tipo del flujo del chatbot (ChatbotMediaKinds): sólo lo manda un asesor.
+        Assert.All(OutboundMediaPolicy.Rules.Where(rule => rule.Kind != Modules.Messaging.Domain.MessageKind.Sticker), rule =>
         {
             FileUploadPolicy.ValidateDeclaration("x" + rule.Extension, rule.MimeType, 1, rule.WhatsAppMaxBytes, FileOwnerType.ChatbotMedia);
             Assert.Equal(
@@ -27,11 +29,22 @@ public sealed class ChatbotMediaPolicyParityTests
         });
     }
 
-    // Meta trata un webp como sticker: el asesor no lo manda y el bot tampoco.
+    // Meta trata un webp como sticker: lo manda el asesor, pero el flujo del chatbot no tiene ese tipo.
     [Fact]
-    public void AWebpIsNotSendable()
+    public void AWebpIsNotSendableByTheBot()
     {
-        Assert.Null(new ChatbotMediaPolicy().RuleFor("a.webp"));
+        var policy = new ChatbotMediaPolicy();
+
+        Assert.Null(policy.RuleFor("a.webp"));
+        Assert.Null(ChatbotMediaPolicy.KindOfFileName("a.webp"));
+    }
+
+    [Fact]
+    public void ThePresentationAndTextDocumentsAreDocuments()
+    {
+        var policy = new ChatbotMediaPolicy();
+
+        Assert.Equal(["document", "document", "document"], PresentationAndText.Select(name => policy.RuleFor(name)!.Kind));
     }
 
     [Fact]
