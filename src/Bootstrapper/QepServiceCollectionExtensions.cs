@@ -534,6 +534,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Hr.Application.UpdateNamedSettingCommand, object>,
             Modules.Hr.Application.UpdateNamedSettingHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.SetPositionExamFrequencyCommand, Modules.Hr.Application.PositionDto>,
+            Modules.Hr.Application.MedicalExams.SetPositionExamFrequencyHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Hr.Application.ArchiveSettingCommand, object>,
             Modules.Hr.Application.ArchiveSettingHandler>();
         services.AddScoped<

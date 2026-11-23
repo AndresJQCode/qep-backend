@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Modules.Hr.Application.MedicalExams;
 using Modules.Hr.Domain;
 
 namespace Modules.Hr.Application;
@@ -12,7 +13,11 @@ public sealed record TerminateContractCommand(Guid TenantId, Guid EmployeeId, Gu
 /// de salario o de cargo programado después de esa fecha es <c>hr.contract.records_after_end</c>. Funciona aunque la empresa se haya
 /// desactivado (D-12).
 /// </summary>
-public sealed class TerminateContractHandler(ContractWrites writes, IValidator<TerminateRequest> validator)
+public sealed class TerminateContractHandler(
+    ContractWrites writes,
+    IValidator<TerminateRequest> validator,
+    IMedicalExamRepository medicalExams,
+    IHrBusinessCalendar businessCalendar)
     : ICommandHandler<TerminateContractCommand, EmployeeDetailDto>
 {
     public async Task<EmployeeDetailDto> HandleAsync(TerminateContractCommand command, CancellationToken cancellationToken)
@@ -30,6 +35,13 @@ public sealed class TerminateContractHandler(ContractWrites writes, IValidator<T
         var reason = Enum.Parse<TerminationReason>(request.Reason!);
         var calendar = await writes.CalendarAsync(command.TenantId, cancellationToken);
         ContractRules.Run(() => employee.Terminate(contract.Id, reason, date, HrText.Clean(request.Notes), calendar.UtcNow));
+
+        // The exit exam (spec 2026-11-23 §5.3) is born with the termination, in the same unit of work as the termination itself.
+        // Deactivating a contract is not a retirement and creates nothing.
+        var dueDate = await businessCalendar.AddBusinessDaysAsync(
+            command.TenantId, date, MedicalExamRules.ExitExamBusinessDays, cancellationToken);
+        medicalExams.Add(ExitExamRequirement.Create(
+            ExitExamRequirementId.New(), command.TenantId, employee.Id, contract.Id, date, dueDate, calendar.UtcNow));
 
         return await writes.CommitAsync(
             command.TenantId,

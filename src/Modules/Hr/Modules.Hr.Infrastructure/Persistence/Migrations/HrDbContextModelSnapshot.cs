@@ -525,6 +525,77 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Hr.Domain.ExitExamRequirement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ContractId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("contract_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly>("DueDate")
+                        .HasColumnType("date")
+                        .HasColumnName("due_date");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<Guid?>("ExamId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("exam_id");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("notes");
+
+                    b.Property<DateOnly?>("NotifiedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("notified_on");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateOnly>("TerminatedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("terminated_on");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContractId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_exit_exam_requirements_contract_id");
+
+                    b.HasIndex("EmployeeId");
+
+                    b.HasIndex("ExamId");
+
+                    b.HasIndex("TenantId", "EmployeeId")
+                        .HasDatabaseName("IX_exit_exam_requirements_tenant_employee");
+
+                    b.HasIndex("TenantId", "Status")
+                        .HasDatabaseName("IX_exit_exam_requirements_tenant_status");
+
+                    b.ToTable("exit_exam_requirements", "hr", t =>
+                        {
+                            t.HasCheckConstraint("CK_exit_exam_requirements_status", "status IN ('Pending','Done','NotAttended')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Hr.Domain.LegalParameterBracket", b =>
                 {
                     b.Property<string>("Key")
@@ -666,6 +737,81 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Hr.Domain.MedicalExam", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("DocumentFileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("document_file_id");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<DateOnly>("ExamDate")
+                        .HasColumnType("date")
+                        .HasColumnName("exam_date");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("Recommendations")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("recommendations");
+
+                    b.Property<string>("Restrictions")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("restrictions");
+
+                    b.Property<DateOnly?>("RestrictionsUntil")
+                        .HasColumnType("date")
+                        .HasColumnName("restrictions_until");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("type");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmployeeId", "ExamDate")
+                        .HasDatabaseName("IX_medical_exams_employee_exam_date");
+
+                    b.HasIndex("TenantId", "EmployeeId", "Type", "ExamDate")
+                        .IsUnique()
+                        .HasDatabaseName("IX_medical_exams_tenant_employee_type_date");
+
+                    b.ToTable("medical_exams", "hr", t =>
+                        {
+                            t.HasCheckConstraint("CK_medical_exams_type", "type IN ('PreEmployment','Periodic','OccupationChange','PostIncapacity','ReturnToWork','FollowUp','Exit')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Hr.Domain.Position", b =>
                 {
                     b.Property<Guid>("Id")
@@ -679,6 +825,10 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<int?>("ExamFrequencyMonths")
+                        .HasColumnType("integer")
+                        .HasColumnName("exam_frequency_months");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -711,7 +861,10 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_positions_tenant_normalized_name");
 
-                    b.ToTable("positions", "hr");
+                    b.ToTable("positions", "hr", t =>
+                        {
+                            t.HasCheckConstraint("CK_positions_exam_frequency_months", "exam_frequency_months IS NULL OR exam_frequency_months BETWEEN 1 AND 36");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Hr.Domain.SalaryRecord", b =>
@@ -1021,6 +1174,35 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("PreviousContractId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Hr.Domain.ExitExamRequirement", b =>
+                {
+                    b.HasOne("Modules.Hr.Domain.EmploymentContract", null)
+                        .WithMany()
+                        .HasForeignKey("ContractId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Modules.Hr.Domain.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Modules.Hr.Domain.MedicalExam", null)
+                        .WithMany()
+                        .HasForeignKey("ExamId")
+                        .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("Modules.Hr.Domain.MedicalExam", b =>
+                {
+                    b.HasOne("Modules.Hr.Domain.Employee", null)
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Hr.Domain.SalaryRecord", b =>

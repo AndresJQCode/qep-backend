@@ -6,6 +6,9 @@ public static class MedicalExamRules
     /// <summary>"Due soon" window: the next periodic exam falls within this many days (decision D-5).</summary>
     public const int DueSoonDays = 30;
 
+    /// <summary>The exit exam is due this many business days after the termination (Resolution 1843 of 2025).</summary>
+    public const int ExitExamBusinessDays = 5;
+
     /// <summary>
     /// The one deterministic rule that closes and reopens exit requirements, run after every write of the exams of an employee.
     /// Each requirement, from the oldest termination, takes the oldest <see cref="MedicalExamType.Exit"/> exam dated on or after

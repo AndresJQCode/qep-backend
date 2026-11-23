@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Hr.Application;
+using Modules.Hr.Application.MedicalExams;
 using Modules.Hr.Infrastructure.Excel;
 using Modules.Hr.Infrastructure.Persistence;
 
@@ -31,6 +32,7 @@ public static class HrInfrastructureExtensions
         services.AddScoped<IHrSettingsRepository, HrSettingsRepository>();
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeActivityLog, EmployeeActivityLog>();
+        services.AddScoped<IMedicalExamRepository, MedicalExamRepository>();
         services.AddScoped<IHrMemberPhones, HrMemberPhones>();
         services.AddScoped<IExcelEmployeeImporter, ClosedXmlEmployeeImporter>();
         services.AddScoped<IEmployeeImportTemplateBuilder, ClosedXmlEmployeeImportTemplateBuilder>();

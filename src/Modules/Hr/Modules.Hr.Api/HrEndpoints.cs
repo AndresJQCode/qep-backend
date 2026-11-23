@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Modules.Hr.Application;
+using Modules.Hr.Application.MedicalExams;
 
 namespace Modules.Hr.Api;
 
@@ -115,6 +116,17 @@ public static class HrEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        // Spec 2026-11-23 §5.2: ruta propia, así un frontend viejo que sólo manda el nombre no borra la periodicidad.
+        group.MapPut("/positions/{id:guid}/exam-frequency", SetExamFrequencyAsync)
+            .RequireAuthorization(HrPermissions.SettingsManage)
+            .Accepts<ExamFrequencyRequest>("application/json")
+            .Produces<PositionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
@@ -640,6 +652,20 @@ public static class HrEndpoints
             new UpdateNamedSettingCommand(tenantId, kind, id, request, IfMatchOf(httpContext)), cancellationToken);
 
         return Results.Ok(setting);
+    }
+
+    private static async Task<IResult> SetExamFrequencyAsync(
+        Guid tenantId,
+        Guid id,
+        ExamFrequencyRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var position = await dispatcher.SendAsync(
+            new SetPositionExamFrequencyCommand(tenantId, id, request, IfMatchOf(httpContext)), cancellationToken);
+
+        return Results.Ok(position);
     }
 
     private static async Task<IResult> ArchiveAsync(
