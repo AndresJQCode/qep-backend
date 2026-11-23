@@ -33,6 +33,7 @@ public static class HrInfrastructureExtensions
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeActivityLog, EmployeeActivityLog>();
         services.AddScoped<IMedicalExamRepository, MedicalExamRepository>();
+        services.AddScoped<IMedicalExamOverviewReader, MedicalExamOverviewReader>();
         services.AddScoped<IHrMemberPhones, HrMemberPhones>();
         services.AddScoped<IExcelEmployeeImporter, ClosedXmlEmployeeImporter>();
         services.AddScoped<IEmployeeImportTemplateBuilder, ClosedXmlEmployeeImportTemplateBuilder>();

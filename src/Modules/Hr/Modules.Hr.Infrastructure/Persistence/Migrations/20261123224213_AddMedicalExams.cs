@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -144,7 +144,9 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                 columns: new[] { "tenant_id", "employee_id", "type", "exam_date" },
                 unique: true);
 
-            // Spec 2026-11-23 §5.3 (D-7): the contracts already terminated and still inside their exit exam deadline.
+            // Spec 2026-11-23 §5.3 (D-7): the contracts already terminated and still inside their exit exam deadline. The deadline
+            // is counted Monday to Friday only (the Colombian holidays live in Messaging, out of reach of Hr), so a row may get a due
+            // date a day or two earlier than the exact one; see MedicalExamBackfill.
             migrationBuilder.Sql(MedicalExamBackfill.Sql("CURRENT_DATE"));
         }
 

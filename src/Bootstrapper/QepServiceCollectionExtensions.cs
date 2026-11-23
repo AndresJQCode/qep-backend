@@ -543,6 +543,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Hr.Application.MedicalExams.GetEmployeeMedicalExamsQuery, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
             Modules.Hr.Application.MedicalExams.GetEmployeeMedicalExamsHandler>();
         services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.MedicalExams.GetMedicalExamOverviewQuery, Modules.Hr.Application.MedicalExams.MedicalExamOverviewDto>,
+            Modules.Hr.Application.MedicalExams.GetMedicalExamOverviewHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Hr.Application.MedicalExams.RecordMedicalExamCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
             Modules.Hr.Application.MedicalExams.RecordMedicalExamHandler>();
         services.AddScoped<

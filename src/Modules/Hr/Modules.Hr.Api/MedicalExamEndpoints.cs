@@ -24,6 +24,12 @@ internal static class MedicalExamEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        group.MapGet("/medical-exams/overview", OverviewAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalRead)
+            .Produces<MedicalExamOverviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost(Exams, RecordAsync)
             .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
             .Accepts<MedicalExamRequest>("application/json")
@@ -62,6 +68,27 @@ internal static class MedicalExamEndpoints
     private static async Task<IResult> GetAsync(
         Guid tenantId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetEmployeeMedicalExamsQuery(tenantId, employeeId), cancellationToken));
+
+    // The numbers arrive as text and the validator answers 422 on the field: an automatic binding of `page=abc` would throw a
+    // BadHttpRequestException, which ApiExceptionHandler reduces to 500 (same as the employee list).
+    private static async Task<IResult> OverviewAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? status = null,
+        string? search = null,
+        string? page = null,
+        string? pageSize = null) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new GetMedicalExamOverviewQuery(
+                tenantId,
+                string.IsNullOrWhiteSpace(status) ? null : status.Trim(),
+                string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+                string.IsNullOrWhiteSpace(page) ? 1 : int.TryParse(page, out var number) ? number : 0,
+                string.IsNullOrWhiteSpace(pageSize)
+                    ? GetMedicalExamOverviewQuery.DefaultPageSize
+                    : int.TryParse(pageSize, out var size) ? size : 0),
+            cancellationToken));
 
     private static async Task<IResult> RecordAsync(
         Guid tenantId, Guid employeeId, MedicalExamRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

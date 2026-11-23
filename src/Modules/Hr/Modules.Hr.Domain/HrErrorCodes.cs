@@ -59,6 +59,7 @@ public static class HrErrorCodes
     public const string MedicalExamFutureDate = "hr.medical_exam.future_date";
     public const string MedicalExamRestrictionsUntilInvalid = "hr.medical_exam.restrictions_until_invalid";
     public const string MedicalExamNoPendingExit = "hr.medical_exam.no_pending_exit";
+    public const string MedicalExamStatusInvalid = "hr.medical_exam.status_invalid";
     public const string ExamFrequencyInvalid = "hr.settings.exam_frequency_invalid";
 
     // 422, importación por Excel (Tarea 10): errores de archivo y confirmación.
