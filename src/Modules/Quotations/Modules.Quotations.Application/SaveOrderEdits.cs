@@ -27,7 +27,8 @@ public sealed record SaveOrderEditsCommand(
     OperationCityChoice OperationCity = default,
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
-    DateOnly? OrderDate = null) : ICommand<OrderDetailDto>, IOrderEdits;
+    DateOnly? OrderDate = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {

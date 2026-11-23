@@ -23,7 +23,8 @@ public sealed record PreviewOrderEditsQuery(
     IReadOnlyList<WithholdingPercentageRequest>? WithholdingPercentages = null,
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
     DateOnly? OrderDate = null,
-    Guid? BillingCompanyId = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    Guid? BillingCompanyId = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {

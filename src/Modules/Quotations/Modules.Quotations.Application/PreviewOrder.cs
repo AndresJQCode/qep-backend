@@ -19,7 +19,8 @@ public sealed record PreviewOrderQuery(
     IReadOnlyList<OrderItemAddition> Items,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     ShippingRequest? Shipping = null,
-    Guid? BillingCompanyId = null) : IQuery<OrderDetailDto>, IOrderDraft;
+    Guid? BillingCompanyId = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null) : IQuery<OrderDetailDto>, IOrderDraft;
 
 public sealed class PreviewOrderValidator : OrderDraftValidator<PreviewOrderQuery>
 {
