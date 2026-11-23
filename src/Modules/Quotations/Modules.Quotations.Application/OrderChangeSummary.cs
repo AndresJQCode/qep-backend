@@ -168,6 +168,14 @@ public static class OrderChangeSummary
 
     public static string Invoiced() => "Marcado como facturado.";
 
+    /// <summary>La factura la emitió un proveedor externo: el historial dice cuál y con qué número, en vez del genérico
+    /// «Marcado como facturado.» de la marca manual.</summary>
+    public static string InvoicedExternally(string provider, string number) =>
+        Trim($"Facturado en {ProviderDisplayName(provider)}, factura {number}.");
+
+    private static string ProviderDisplayName(string provider) =>
+        string.Equals(provider, "siigo", StringComparison.OrdinalIgnoreCase) ? "Siigo" : provider;
+
     public static string InvoicingReverted() => "Se revirtió la facturación.";
 
     public static string PaidMarked() => "Marcado como pagado.";
