@@ -3647,7 +3647,7 @@ sobrescribe la misma clave.
 `messaging/staging/{tenantId}/{conversationId}/{memberId}/{uploadId}{ext}`). Después `POST …/messages/media` con
 `{ uploadId, clientId, fileName, caption?, replyTo? }` confirma: revisa tamaño y firma binaria, comprime la imagen, la
 sube a Meta y envía; responde 201 cuando Meta contesta. Imagen jpeg/png hasta 25 MB, recomprimida siempre a JPEG q80 con
-el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls o xlsx hasta 100 MB. `caption`
+el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls, xlsx, ppt, pptx o txt hasta 100 MB. `caption`
 opcional hasta 1024. Mismas reglas que el texto: ventana, asignado, autoasignación, cita e idempotencia por `clientId`; un
 `Failed` conserva el staging para el reintento. Errores 422: `messaging.media.upload_not_found`, `too_large`,
 `unsupported_format` e `invalid_image`.
@@ -3666,10 +3666,17 @@ bytes de cabecera):
 | Audio | `.aac` → `audio/aac` | 16 MB | 25 MB | ADTS (`FF F1`/`FF F9`) |
 | Audio | `.amr` → `audio/amr` | 16 MB | — | `#!AMR\n` o `#!AMR-WB\n` |
 | Audio | `.ogg` → `audio/ogg` | 16 MB | — | `OggS` con `OpusHead` (Vorbis no) |
+| Documento | `.ppt` → `application/vnd.ms-powerpoint` | 100 MB | — | OLE (`D0CF11E0A1B11AE1`, como `.doc`/`.xls`) |
+| Documento | `.pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation` | 100 MB | — | zip (`PK`, como `.docx`/`.xlsx`) |
+| Documento | `.txt` → `text/plain` | 100 MB | — | UTF-8 válido sin bytes de control (sin firma; deja fuera binarios y UTF-16) |
+| Sticker | `.webp` → `image/webp` | 100 KB estático, 500 KB animado | — | `RIFF`…`WEBP` con chunk `VP8 `, `VP8L` o `VP8X` |
 
 **La tabla está en borrador hasta las verificaciones V-1..V-3 con Meta real** (las corre el owner; ver el spec): lo que Meta
 no acepte se quita de `OutboundMediaPolicy` y de esta tabla. No hay transcodificación ni `ffmpeg`: `.mov`, `.webm`, `.avi`,
-`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. El video sale con `type: video` y su `caption`; el audio,
+`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. **Sticker** (2026-11-22): Meta sólo admite WebP como sticker, no como
+imagen, así que `.webp` sale con `type: sticker`, sin `caption` (422 `validation.failed` en `caption`), sin recomprimir y sólo por WhatsApp.
+El tope depende del contenido: 500 KB si el chunk `VP8X` trae la bandera de animación y 100 KB si no, y por eso el estático se mide al
+leer el archivo (`media_too_large` al confirmar, no al pedir la sesión). El chatbot no lo manda: su flujo no tiene ese tipo. El video sale con `type: video` y su `caption`; el audio,
 con `type: audio` **sin** `voice` (la nota de voz sigue con `voice: true`) y **sin texto**: un `caption` con un audio es 422
 `validation.failed` en `caption`. El multipart a Meta lleva `video{ext}` o `audio{ext}`; el nombre real queda en
 `message_media.file_name` y viaja en `media.fileName`, que en un audio adjunto **no es nulo** y en una nota de voz sí: así

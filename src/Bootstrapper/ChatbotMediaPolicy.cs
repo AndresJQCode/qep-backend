@@ -1,5 +1,6 @@
 using Modules.Automations.Application;
 using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
 
 namespace Bootstrapper;
 
@@ -19,14 +20,16 @@ internal sealed class ChatbotMediaPolicy : IChatbotMediaPolicy
         }
 
         var rule = OutboundMediaPolicy.RuleOf(format);
-        return new ChatbotMediaRule(KindOf(rule), rule.MimeType, rule.WhatsAppMaxBytes);
+
+        // El flujo del chatbot no tiene el tipo sticker (ChatbotMediaKinds): sólo lo manda un asesor.
+        return rule.Kind == MessageKind.Sticker ? null : new ChatbotMediaRule(KindOf(rule), rule.MimeType, rule.WhatsAppMaxBytes);
     }
 
     /// <summary>El tipo de un archivo ya guardado, por la extensión de su nombre (tras comprimir, <c>.jpg</c>). <c>null</c> si Mensajería
     /// dejó de aceptar el formato.</summary>
     public static string? KindOfFileName(string fileName) =>
-        OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName)) is { } format
-            ? KindOf(OutboundMediaPolicy.RuleOf(format))
+        OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName)) is { } format && OutboundMediaPolicy.RuleOf(format) is { Kind: not MessageKind.Sticker } rule
+            ? KindOf(rule)
             : null;
 
     private static string KindOf(OutboundMediaRule rule) => rule.Kind.ToString().ToLowerInvariant();
