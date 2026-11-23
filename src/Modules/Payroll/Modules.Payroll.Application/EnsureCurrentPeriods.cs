@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Modules.Payroll.Domain;
 using Modules.Tenancy.Application;
 
@@ -29,6 +29,37 @@ internal static class PeriodPlan
         }
 
         return missing;
+    }
+
+    /// <summary>
+    /// Lo que falta hasta la quincena siguiente a la actual, inclusive y nunca más allá (abrir por adelantado). Con quincenas, desde
+    /// la siguiente a la última sin huecos; sin ninguna, desde la actual si es primera y si no desde la siguiente (una empresa
+    /// siempre arranca en una primera quincena).
+    /// </summary>
+    public static IReadOnlyList<(DateOnly Start, DateOnly End, PayrollHalf Half)> MissingThroughNext(
+        IReadOnlyList<PayrollPeriod> existing, DateOnly today)
+    {
+        var current = QuincenaCalendar.Containing(today);
+        var target = QuincenaCalendar.After(current.Start);
+        var next = existing.Count == 0
+            ? (current.Half == PayrollHalf.First ? current : target)
+            : QuincenaCalendar.After(existing.Max(period => period.StartDate));
+
+        var missing = new List<(DateOnly Start, DateOnly End, PayrollHalf Half)>();
+        while (next.Start <= target.Start)
+        {
+            missing.Add(next);
+            next = QuincenaCalendar.After(next.Start);
+        }
+
+        return missing;
+    }
+
+    /// <summary>El inicio de la quincena siguiente a la actual si todavía no existe; si existe, nulo.</summary>
+    public static DateOnly? NextPeriodStartsOn(IReadOnlyList<PayrollPeriod> existing, DateOnly today)
+    {
+        var target = QuincenaCalendar.After(QuincenaCalendar.Containing(today).Start);
+        return existing.Any(period => period.StartDate == target.Start) ? null : target.Start;
     }
 
     /// <summary>Sin períodos y con hoy en una segunda quincena: el día 1 del mes siguiente (R-13). Si no, nulo.</summary>
@@ -70,30 +101,7 @@ public sealed class EnsureCurrentPeriodsHandler(
         var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
         var existing = await periods.ListAsync(command.TenantId, command.CompanyId, cancellationToken);
         var missing = PeriodPlan.Missing(existing, calendar.Today);
-
-        if (missing.Count > 0)
-        {
-            var actor = await actors.CurrentAsync(command.TenantId, cancellationToken);
-            foreach (var quincena in missing)
-            {
-                var period = PayrollPeriod.Open(PayrollPeriodId.New(), command.TenantId, command.CompanyId, quincena, actor, calendar.UtcNow);
-                periods.Add(period);
-                PayrollSupport.PublishAudit(
-                    auditPublisher, executionContext, command.TenantId, PayrollAuditActions.PeriodCreated,
-                    PayrollAuditActions.Resources.Period, period.Id.ToString(), ["startDate", "endDate", "half"], calendar.UtcNow);
-            }
-
-            try
-            {
-                await unitOfWork.SaveChangesAsync(cancellationToken);
-            }
-            catch (ResourceConflictException exception) when (exception.Code == PayrollErrorCodes.PeriodAlreadyExists)
-            {
-                // Otra solicitud abrió alguna a la vez: lo que quedó es lo que se responde (nada de esto sale por HTTP).
-            }
-
-            existing = await periods.ListAsync(command.TenantId, command.CompanyId, cancellationToken);
-        }
+        existing = await PeriodOpener.OpenAsync(missing, existing, command.TenantId, command.CompanyId, calendar.UtcNow, executionContext, periods, unitOfWork, auditPublisher, actors, cancellationToken);
 
         return await ListComposer.ComposeAsync(
             composer, actors, command.TenantId, existing, company, calendar.Today, cancellationToken);
@@ -120,6 +128,91 @@ internal static class ListComposer
             items.Add(await composer.ComposeHeaderAsync(period, caller, permissions, cancellationToken));
         }
 
-        return new PayrollPeriodListDto(PayrollCompanies.ToDto(company), items, PeriodPlan.FirstPeriodStartsOn(periods, today));
+        return new PayrollPeriodListDto(PayrollCompanies.ToDto(company), items, PeriodPlan.FirstPeriodStartsOn(periods, today),
+            PeriodPlan.NextPeriodStartsOn(periods, today));
+    }
+}
+
+
+/// <summary>Abre las quincenas dadas, con su auditoría, y relee lo que quedó (misma carrera que <c>ensure-current</c>).</summary>
+internal static class PeriodOpener
+{
+    public static async Task<IReadOnlyList<PayrollPeriod>> OpenAsync(
+        IReadOnlyList<(DateOnly Start, DateOnly End, PayrollHalf Half)> missing,
+        IReadOnlyList<PayrollPeriod> existing,
+        Guid tenantId,
+        Guid companyId,
+        DateTimeOffset utcNow,
+        IExecutionContext executionContext,
+        IPayrollPeriodRepository periods,
+        IPayrollUnitOfWork unitOfWork,
+        IPayrollAuditPublisher auditPublisher,
+        PeriodActors actors,
+        CancellationToken cancellationToken)
+    {
+        if (missing.Count == 0)
+        {
+            return existing;
+        }
+
+        var actor = await actors.CurrentAsync(tenantId, cancellationToken);
+        foreach (var quincena in missing)
+        {
+            var period = PayrollPeriod.Open(PayrollPeriodId.New(), tenantId, companyId, quincena, actor, utcNow);
+            periods.Add(period);
+            PayrollSupport.PublishAudit(
+                auditPublisher, executionContext, tenantId, PayrollAuditActions.PeriodCreated,
+                PayrollAuditActions.Resources.Period, period.Id.ToString(), ["startDate", "endDate", "half"], utcNow);
+        }
+
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (ResourceConflictException exception) when (exception.Code == PayrollErrorCodes.PeriodAlreadyExists)
+        {
+            // Otra solicitud abrió alguna a la vez: lo que quedó es lo que se responde (nada de esto sale por HTTP).
+        }
+
+        return await periods.ListAsync(tenantId, companyId, cancellationToken);
+    }
+}
+
+public sealed record OpenNextPeriodCommand(Guid TenantId, Guid CompanyId) : ICommand<PayrollPeriodListDto>;
+
+/// <summary>
+/// Abre la quincena siguiente a la actual (y las que falten hasta ella) para liquidar por adelantado. Mismas reglas que
+/// <c>ensure-current</c>; idempotente, y nunca abre más allá de la siguiente.
+/// </summary>
+public sealed class OpenNextPeriodHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    ITenantClock tenantClock,
+    PayrollCompanies companies,
+    IPayrollPeriodRepository periods,
+    IPayrollUnitOfWork unitOfWork,
+    IPayrollAuditPublisher auditPublisher,
+    PeriodActors actors,
+    PeriodComposer composer)
+    : ICommandHandler<OpenNextPeriodCommand, PayrollPeriodListDto>
+{
+    public async Task<PayrollPeriodListDto> HandleAsync(OpenNextPeriodCommand command, CancellationToken cancellationToken)
+    {
+        await PayrollAuthorization.EnsureAsync(
+            executionContext, tenantModules, command.TenantId, cancellationToken,
+            PayrollPermissions.PeriodRead, PayrollPermissions.PeriodManage);
+
+        var company = await companies.RequireAsync(command.TenantId, command.CompanyId, cancellationToken);
+        PayrollCompanies.EnsureActive(company, "An inactive company cannot open payroll periods.");
+
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var existing = await periods.ListAsync(command.TenantId, command.CompanyId, cancellationToken);
+        var missing = PeriodPlan.MissingThroughNext(existing, calendar.Today);
+        existing = await PeriodOpener.OpenAsync(
+            missing, existing, command.TenantId, command.CompanyId, calendar.UtcNow, executionContext, periods, unitOfWork,
+            auditPublisher, actors, cancellationToken);
+
+        return await ListComposer.ComposeAsync(
+            composer, actors, command.TenantId, existing, company, calendar.Today, cancellationToken);
     }
 }

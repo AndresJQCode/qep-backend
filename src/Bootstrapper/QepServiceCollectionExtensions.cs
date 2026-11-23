@@ -1,4 +1,4 @@
-using Bootstrapper.ApiKeys;
+﻿using Bootstrapper.ApiKeys;
 using Bootstrapper.Authentication;
 using Bootstrapper.Copilot;
 using Bootstrapper.Deployment;
@@ -637,6 +637,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.EnsureCurrentPeriodsCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.EnsureCurrentPeriodsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.OpenNextPeriodCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.OpenNextPeriodHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.ListPeriodsQuery, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.ListPeriodsHandler>();
@@ -4576,3 +4579,4 @@ public static class QepServiceCollectionExtensions
         policy.RequireClaim(QepClaimTypes.Permission, permissions);
     }
 }
+

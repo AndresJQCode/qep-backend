@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using Modules.Payroll.Application;
 using static Modules.Payroll.IntegrationTests.PayrollApiHarness;
@@ -134,6 +134,95 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
 
         Assert.Equal((HttpStatusCode)422, response.StatusCode);
         Assert.Equal("payroll.company.inactive", CodeOf(await JsonOfAsync(response)));
+    }
+
+    private static Task<HttpResponseMessage> OpenNextAsync(HttpClient client, PayrollTenant tenant, Guid companyId) =>
+        client.PostAsync($"{CompanyUrl(tenant, companyId)}/periods/open-next", null, Ct);
+
+    private static async Task<JsonElement> OpenedNextAsync(PayrollTenant tenant, Guid companyId)
+    {
+        var response = await OpenNextAsync(tenant.Payroll, tenant, companyId);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        return await JsonOfAsync(response);
+    }
+
+    [Fact]
+    public async Task OpeningNextOpensTheFollowingHalfAndRespondsTheList()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        _fixture.Clock.UtcNow = new DateTimeOffset(2026, 11, 10, 15, 0, 0, TimeSpan.Zero);
+        var ensured = await EnsuredAsync(tenant, setup.Company.Id);
+        Assert.Equal("2026-11-16", ensured.GetProperty("nextPeriodStartsOn").GetString());
+
+        var list = await OpenedNextAsync(tenant, setup.Company.Id);
+
+        Assert.Equal(["2026-11-16", "2026-11-01"], StartDates(list));
+        Assert.Equal(JsonValueKind.Null, list.GetProperty("nextPeriodStartsOn").ValueKind);
+    }
+
+    [Fact]
+    public async Task OpeningNextWithoutPeriodsInASecondHalfOpensNextMonth()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        _fixture.Clock.UtcNow = new DateTimeOffset(2026, 11, 22, 15, 0, 0, TimeSpan.Zero);
+
+        var list = await OpenedNextAsync(tenant, setup.Company.Id);
+
+        Assert.Equal(["2026-12-01"], StartDates(list));
+    }
+
+    [Fact]
+    public async Task OpeningNextTwiceIsIdempotent()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        _fixture.Clock.UtcNow = new DateTimeOffset(2026, 11, 10, 15, 0, 0, TimeSpan.Zero);
+
+        var first = await OpenedNextAsync(tenant, setup.Company.Id);
+        var second = await OpenedNextAsync(tenant, setup.Company.Id);
+
+        Assert.Equal(StartDates(first), StartDates(second));
+        Assert.Equal(FirstPeriodId(first), FirstPeriodId(second));
+    }
+
+    [Fact]
+    public async Task OpeningNextOnAnInactiveCompanyIs422()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        await DeactivateCompanyAsync(tenant.Admin, tenant.Id, setup.Company.Id);
+
+        var response = await OpenNextAsync(tenant.Payroll, tenant, setup.Company.Id);
+
+        Assert.Equal((HttpStatusCode)422, response.StatusCode);
+        Assert.Equal("payroll.company.inactive", CodeOf(await JsonOfAsync(response)));
+    }
+
+    [Fact]
+    public async Task OpeningNextWithoutPeriodManageIs403()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        using var readOnly = tenant.Client(PayrollPermissions.PeriodRead);
+
+        var response = await OpenNextAsync(readOnly, tenant, setup.Company.Id);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TheListCarriesNextPeriodStartsOn()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        _fixture.Clock.UtcNow = new DateTimeOffset(2026, 11, 10, 15, 0, 0, TimeSpan.Zero);
+        await EnsuredAsync(tenant, setup.Company.Id);
+
+        var listed = await tenant.Payroll.GetAsync($"{CompanyUrl(tenant, setup.Company.Id)}/periods", Ct);
+
+        Assert.Contains("\"nextPeriodStartsOn\":\"2026-11-16\"", await listed.Content.ReadAsStringAsync(Ct));
     }
 
     [Fact]
@@ -311,3 +400,4 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
         Assert.Equal(1, detail.GetProperty("period").GetProperty("employeeCount").GetInt32());
     }
 }
+

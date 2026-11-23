@@ -1,4 +1,4 @@
-namespace Modules.Payroll.Application;
+﻿namespace Modules.Payroll.Application;
 
 // DTO de respuesta (contrato HTTP, «DTOs»). Los enums viajan como el nombre exacto del miembro, en texto; los opcionales van
 // siempre presentes como null. Los del período llegan con la Tarea 9, los de capturas y recurrentes con la 10.
@@ -142,11 +142,13 @@ public sealed record PayrollPeriodDetailDto(
     IReadOnlyList<BlockedEmployeeDto> Blocked,
     IReadOnlyList<PeriodEventDto> History);
 
+/// <param name="NextPeriodStartsOn">Inicio de la quincena siguiente a la actual mientras no exista; nulo si ya existe.</param>
 /// <param name="FirstPeriodStartsOn">Sólo sin períodos y con hoy en una segunda quincena (R-13): el día 1 del mes siguiente.</param>
 public sealed record PayrollPeriodListDto(
     PayrollCompanyDto Company,
     IReadOnlyList<PayrollPeriodDto> Items,
-    DateOnly? FirstPeriodStartsOn);
+    DateOnly? FirstPeriodStartsOn,
+    DateOnly? NextPeriodStartsOn);
 
 // --- Capturas, recurrentes y rastro (Tarea 10, pre-flight M-14) ---
 
@@ -205,3 +207,4 @@ public sealed record PayrollEmployeeDetailDto(
     EmployeeInputsDto Inputs,
     IReadOnlyList<RecurringConceptDto> Recurring,
     EmployeeResultDto? Result);
+

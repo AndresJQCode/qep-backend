@@ -1,4 +1,4 @@
-using BuildingBlocks.Application;
+﻿using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -38,6 +38,13 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/companies/{companyId:guid}/periods/open-next", OpenNextAsync)
+              .RequireAuthorization(PayrollPermissions.PeriodManage)
+              .Produces<PayrollPeriodListDto>()
+              .ProducesProblem(StatusCodes.Status403Forbidden)
+              .ProducesProblem(StatusCodes.Status404NotFound)
+              .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/companies/{companyId:guid}/periods", ListPeriodsAsync)
             .RequireAuthorization(PayrollPermissions.PeriodRead)
@@ -313,6 +320,10 @@ public static class PayrollEndpoints
         Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new EnsureCurrentPeriodsCommand(tenantId, companyId), cancellationToken));
 
+    private static async Task<IResult> OpenNextAsync(
+        Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new OpenNextPeriodCommand(tenantId, companyId), cancellationToken));
+
     private static async Task<IResult> ListPeriodsAsync(
         Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListPeriodsQuery(tenantId, companyId), cancellationToken));
@@ -430,3 +441,4 @@ public static class PayrollEndpoints
     // El If-Match llega crudo al caso de uso, que lo exige ya autorizado: parsearlo acá daría 428 a quien opera en otro tenant.
     private static string? IfMatchOf(HttpContext httpContext) => httpContext.Request.Headers.IfMatch.ToString();
 }
+
