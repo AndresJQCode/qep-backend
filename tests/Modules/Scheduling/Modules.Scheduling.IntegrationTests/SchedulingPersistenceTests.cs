@@ -227,8 +227,7 @@ public sealed class SchedulingPersistenceTests
         var closure = Closure.Create(ClosureId.New(), Tenant, seed.Location.Id, seed.Resource.Id, Start, Start.AddHours(4), "Congreso", Now);
         var rules = SchedulingSettings.Create(Tenant, Now);
         var connection = Guid.CreateVersion7();
-        var template = Guid.CreateVersion7();
-        rules.Update(ConfirmationMode.Manual, 60, 90, 12, true, 48, connection, template, Now.AddMinutes(1));
+        rules.Update(ConfirmationMode.Manual, 60, 90, 12, true, 48, connection, Now.AddMinutes(1));
         await using (var context = database.CreateContext())
         {
             context.Closures.Add(closure);
@@ -243,7 +242,7 @@ public sealed class SchedulingPersistenceTests
         Assert.Equal((seed.Resource.Id, "Congreso", Start.AddHours(4)), (loadedClosure.ResourceId, loadedClosure.Reason, loadedClosure.EndsAt));
         Assert.Equal((ConfirmationMode.Manual, 60, 90, 12, true, 48), (loadedRules.ConfirmationMode, loadedRules.MinNoticeMinutes,
             loadedRules.HorizonDays, loadedRules.ClientCancelCutoffHours, loadedRules.ReminderEnabled, loadedRules.ReminderOffsetHours));
-        Assert.Equal((connection, template), (loadedRules.ReminderConnectionId, loadedRules.ReminderTemplateId));
+        Assert.Equal(connection, loadedRules.ReminderConnectionId);
     }
 
     [Fact]

@@ -60,7 +60,6 @@ public sealed record ReminderMessage(
     Guid AppointmentId,
     string IdempotencyKey,
     Guid ConnectionId,
-    Guid? TemplateId,
     Guid SentByMemberId,
     Guid CustomerId,
     string CustomerName,
@@ -101,4 +100,22 @@ public sealed record ReminderRecipient(
 public interface ISchedulingReminderRecipients
 {
     Task<ReminderRecipient?> FindAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+}
+
+/// <summary>El estado de «no hay plantilla de recordatorio» (spec 2026-11-23 §2): lo que responde el puerto sin fila o sin Mensajería.</summary>
+public static class ReminderTemplateStates
+{
+    public const string MissingStatus = "Missing";
+
+    public static ReminderTemplateStateDto Missing { get; } = new(MissingStatus, null);
+}
+
+/// <summary>
+/// Puerto hacia Mensajería para los ajustes (spec 2026-11-23 §2): el estado de la plantilla de recordatorio de la conexión guardada. Devuelve
+/// el estado de Meta tal cual (<c>APPROVED</c>, <c>PENDING</c>, <c>REJECTED</c>…) y su motivo, o <see cref="ReminderTemplateStates.Missing"/>
+/// si la conexión no tiene la fila o el tenant no tiene el módulo de Mensajería. El adaptador vive en Bootstrapper.
+/// </summary>
+public interface ISchedulingReminderTemplateStatus
+{
+    Task<ReminderTemplateStateDto> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

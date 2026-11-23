@@ -14,4 +14,11 @@ internal sealed class AppointmentReminderTemplateReadiness(MessagingDbContext db
                 && template.Kind == MessageTemplateKind.AppointmentReminder && template.Status == MessageTemplateStatuses.Approved)
             .Select(template => new ApprovedTemplate(template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson))
             .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<AppointmentReminderTemplateStatus?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.AsNoTracking()
+            .Where(template => template.TenantId == tenantId && template.ConnectionId == connectionId
+                && template.Kind == MessageTemplateKind.AppointmentReminder)
+            .Select(template => new AppointmentReminderTemplateStatus(template.Status, template.StatusReason))
+            .FirstOrDefaultAsync(cancellationToken);
 }

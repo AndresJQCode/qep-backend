@@ -1443,6 +1443,7 @@ public sealed class CompositionRootTests
         using var scope = provider.CreateScope();
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.IAppointmentReminderSender>());
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.ISchedulingReminderRecipients>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Application.ISchedulingReminderTemplateStatus>());
     }
 
     /// <summary>

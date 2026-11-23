@@ -141,11 +141,18 @@ public interface ITaskNoticeTemplateReadiness
 
 /// <summary>Agenda: la señal de la plantilla del recordatorio de cita, hermana de <see cref="IWholesaleInvitationNoticeReadiness"/>. Devuelve la
 /// fila <c>AppointmentReminder</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen el envío del recordatorio
-/// (<c>IAppointmentReminderOutbound</c>) y su adaptador de la Agenda.</summary>
+/// (<c>IAppointmentReminderOutbound</c>) y su adaptador de la Agenda. <c>FindStatusAsync</c> devuelve el estado de Meta de esa fila
+/// (aprobada o no), o <c>null</c> si la conexión no la tiene: lo lee el adaptador de los ajustes de la Agenda.</summary>
 public interface IAppointmentReminderReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<AppointmentReminderTemplateStatus?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
+
+/// <summary>El estado de Meta de la fila <c>AppointmentReminder</c> de una conexión, con el nombre de Meta (<c>APPROVED</c>, <c>PENDING</c>,
+/// <c>REJECTED</c>…) y su motivo, si lo hay.</summary>
+public sealed record AppointmentReminderTemplateStatus(string Status, string? StatusReason);
 
 /// <summary>Cobros recurrentes §5: la señal para el consumidor Billing, hermana de <see cref="IQuotationTemplateReadiness"/>. Devuelve la fila de ese
 /// <paramref name="kind"/> (<c>BillingReminder</c> o <c>BillingOverdue</c>) en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>. Devuelve

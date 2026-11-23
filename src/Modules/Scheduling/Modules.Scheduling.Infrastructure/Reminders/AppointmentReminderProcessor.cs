@@ -108,7 +108,7 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         await using var scope = scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
         var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow.ToUniversalTime();
-        // reminder_template_id is informative: the sender uses the approved template of the connection (plan, correction 47).
+        // The sender uses the approved template of the connection (plan, correction 47; spec 2026-11-23 §2).
         return await dbContext.Database.SqlQuery<DueRow>(
             $"""
             SELECT a.id AS "AppointmentId", a.tenant_id AS "TenantId"
@@ -306,7 +306,7 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         }
 
         var message = new ReminderMessage(
-            row.TenantId, row.AppointmentId, AppointmentReminderRules.KeyOf(row.AppointmentId, appointment.StartsAt), connectionId, settings.ReminderTemplateId, senderMemberId,
+            row.TenantId, row.AppointmentId, AppointmentReminderRules.KeyOf(row.AppointmentId, appointment.StartsAt), connectionId, senderMemberId,
             appointment.CustomerId, recipient!.Name, recipient.PhoneE164!, serviceName, resource.DisplayName, locationName, appointment.StartsAt);
         var delivery = await services.GetRequiredService<IAppointmentReminderSender>().SendAsync(message, cancellationToken);
 

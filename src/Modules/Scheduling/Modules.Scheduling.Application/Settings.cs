@@ -14,7 +14,8 @@ public sealed class GetSettingsHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     SchedulingFirstAccess firstAccess,
-    ISchedulingSettingsRepository settings)
+    ISchedulingSettingsRepository settings,
+    ISchedulingReminderTemplateStatus templateStatus)
     : IQueryHandler<GetSettingsQuery, SettingsDto>
 {
     public async Task<SettingsDto> HandleAsync(GetSettingsQuery query, CancellationToken cancellationToken)
@@ -25,8 +26,18 @@ public sealed class GetSettingsHandler(
 
         var row = await settings.FindAsync(query.TenantId, cancellationToken)
             ?? throw new InvalidOperationException("The scheduling settings row is missing after provisioning.");
-        return SchedulingComposer.Settings(row);
+        return SchedulingComposer.Settings(row, await ReminderTemplateState.ResolveAsync(templateStatus, query.TenantId, row, cancellationToken));
     }
+}
+
+/// <summary>La plantilla sólo se mira si hay una conexión guardada (el dominio la suelta con el recordatorio apagado).</summary>
+internal static class ReminderTemplateState
+{
+    public static async Task<ReminderTemplateStateDto?> ResolveAsync(
+        ISchedulingReminderTemplateStatus templateStatus, Guid tenantId, SchedulingSettings row, CancellationToken cancellationToken) =>
+        row.ReminderConnectionId is { } connectionId
+            ? await templateStatus.FindAsync(tenantId, connectionId, cancellationToken)
+            : null;
 }
 
 public sealed class UpdateSettingsHandler(
@@ -37,6 +48,7 @@ public sealed class UpdateSettingsHandler(
     ISchedulingSettingsRepository settings,
     ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
+    ISchedulingReminderTemplateStatus templateStatus,
     IValidator<SettingsRequest> validator)
     : ICommandHandler<UpdateSettingsCommand, SettingsDto>
 {
@@ -91,12 +103,7 @@ public sealed class UpdateSettingsHandler(
             changed.Add("reminderConnectionId");
         }
 
-        if (row.ReminderTemplateId != request.ReminderTemplateId)
-        {
-            changed.Add("reminderTemplateId");
-        }
-
-        // El dominio exige la conexión y la plantilla del recordatorio con su código (422); el validador ya acotó los rangos.
+        // El dominio exige la conexión del recordatorio con su código (422); el validador ya acotó los rangos.
         row.Update(
             Enum.Parse<ConfirmationMode>(request.ConfirmationMode!, ignoreCase: false),
             request.MinNoticeMinutes!.Value,
@@ -105,13 +112,12 @@ public sealed class UpdateSettingsHandler(
             request.ReminderEnabled ?? false,
             request.ReminderOffsetHours!.Value,
             request.ReminderConnectionId,
-            request.ReminderTemplateId,
             now);
         SchedulingAudit.Publish(
             auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SettingsUpdated,
             SchedulingAuditActions.Resources.Settings, command.TenantId, changed, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return SchedulingComposer.Settings(row);
+        return SchedulingComposer.Settings(row, await ReminderTemplateState.ResolveAsync(templateStatus, command.TenantId, row, cancellationToken));
     }
 }

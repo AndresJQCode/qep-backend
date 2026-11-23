@@ -57,9 +57,9 @@ public sealed class SchedulingRequestValidatorsTests
             ["confirmationMode", "minNoticeMinutes", "horizonDays", "clientCancelCutoffHours", "reminderOffsetHours"],
             FailedFields(
                 new SettingsRequestValidator(),
-                new SettingsRequest("Sometimes", 10_081, 366, 721, false, 0, null, null)));
+                new SettingsRequest("Sometimes", 10_081, 366, 721, false, 0, null)));
 
     [Fact]
     public void TheRulesAcceptTheDefaults() =>
-        new SettingsRequestValidator().ValidateAndThrow(new SettingsRequest("Automatic", 120, 30, 24, false, 24, null, null));
+        new SettingsRequestValidator().ValidateAndThrow(new SettingsRequest("Automatic", 120, 30, 24, false, 24, null));
 }

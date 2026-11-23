@@ -34,10 +34,10 @@ internal sealed class SchedulingProvisioner(SchedulingDbContext dbContext, ICloc
         await dbContext.Database.ExecuteSqlAsync($"""
             INSERT INTO scheduling.settings (
                 tenant_id, confirmation_mode, min_notice_minutes, horizon_days, client_cancel_cutoff_hours, reminder_enabled,
-                reminder_offset_hours, reminder_connection_id, reminder_template_id, version, created_at, updated_at)
+                reminder_offset_hours, reminder_connection_id, version, created_at, updated_at)
             VALUES (
                 {tenantId}, {rules.ConfirmationMode.ToString()}, {rules.MinNoticeMinutes}, {rules.HorizonDays}, {rules.ClientCancelCutoffHours},
-                {rules.ReminderEnabled}, {rules.ReminderOffsetHours}, NULL, NULL, {rules.Version}, {now}, {now})
+                {rules.ReminderEnabled}, {rules.ReminderOffsetHours}, NULL, {rules.Version}, {now}, {now})
             ON CONFLICT (tenant_id) DO NOTHING
             """, cancellationToken);
         await transaction.CommitAsync(cancellationToken);

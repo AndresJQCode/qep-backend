@@ -324,7 +324,8 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         settings.Property(value => value.ReminderOffsetHours).HasColumnName("reminder_offset_hours");
         // messaging.connections y messaging.message_templates: otro módulo, sin FK.
         settings.Property(value => value.ReminderConnectionId).HasColumnName("reminder_connection_id");
-        settings.Property(value => value.ReminderTemplateId).HasColumnName("reminder_template_id");
+        // Expand/contract (spec 2026-11-23 §2): the nullable column reminder_template_id is still in the table but no longer mapped, so pods of
+        // the previous version keep working against this schema. A later migration drops it, once no old pod reads it.
     }
 
     // --- Conversiones de las columnas compuestas ---

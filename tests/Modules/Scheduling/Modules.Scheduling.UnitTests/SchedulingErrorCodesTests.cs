@@ -36,7 +36,6 @@ public sealed class SchedulingErrorCodesTests
                 "scheduling.location.main_cannot_be_archived",
                 "scheduling.location.not_found",
                 "scheduling.reminder.connection_invalid",
-                "scheduling.reminder.template_missing",
                 "scheduling.resource.has_future_appointments",
                 "scheduling.resource.member_already_linked",
                 "scheduling.resource.not_found",

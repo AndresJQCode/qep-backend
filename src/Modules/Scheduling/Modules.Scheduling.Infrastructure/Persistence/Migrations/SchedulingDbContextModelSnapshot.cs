@@ -592,10 +592,6 @@ namespace Modules.Scheduling.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("reminder_offset_hours");
 
-                    b.Property<Guid?>("ReminderTemplateId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("reminder_template_id");
-
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");

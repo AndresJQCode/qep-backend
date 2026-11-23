@@ -37,13 +37,12 @@ public sealed class SchedulingSettingsTests
     {
         var settings = SchedulingSettings.Create(Tenant, Now);
         var connection = Guid.CreateVersion7();
-        var template = Guid.CreateVersion7();
 
-        settings.Update(ConfirmationMode.Manual, 60, 90, 12, reminderEnabled: true, 48, connection, template, Now.AddMinutes(1));
+        settings.Update(ConfirmationMode.Manual, 60, 90, 12, reminderEnabled: true, 48, connection, Now.AddMinutes(1));
 
         Assert.Equal((ConfirmationMode.Manual, 60, 90, 12, true, 48), (settings.ConfirmationMode, settings.MinNoticeMinutes,
             settings.HorizonDays, settings.ClientCancelCutoffHours, settings.ReminderEnabled, settings.ReminderOffsetHours));
-        Assert.Equal((connection, template, 2), (settings.ReminderConnectionId, settings.ReminderTemplateId, (int)settings.Version));
+        Assert.Equal((connection, 2), (settings.ReminderConnectionId, (int)settings.Version));
     }
 
     [Theory]
@@ -58,34 +57,36 @@ public sealed class SchedulingSettingsTests
         var settings = SchedulingSettings.Create(Tenant, Now);
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            settings.Update(ConfirmationMode.Automatic, minNotice, horizon, cutoff, false, reminderOffset, null, null, Now));
+            settings.Update(ConfirmationMode.Automatic, minNotice, horizon, cutoff, false, reminderOffset, null, Now));
     }
 
     [Fact]
-    public void ARemindingTenantNeedsItsConnectionAndItsTemplate()
+    public void ARemindingTenantNeedsOnlyItsConnection()
     {
         var settings = SchedulingSettings.Create(Tenant, Now);
 
         var noConnection = Assert.Throws<SchedulingDomainException>(() =>
-            settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, null, Guid.CreateVersion7(), Now));
-        var noTemplate = Assert.Throws<SchedulingDomainException>(() =>
-            settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, Guid.CreateVersion7(), null, Now));
+            settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, null, Now));
 
         Assert.Equal(SchedulingErrorCodes.ReminderConnectionInvalid, noConnection.Code);
-        Assert.Equal(SchedulingErrorCodes.ReminderTemplateMissing, noTemplate.Code);
         Assert.Equal(1, settings.Version);
+
+        var connection = Guid.CreateVersion7();
+        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, connection, Now);
+
+        Assert.True(settings.ReminderEnabled);
+        Assert.Equal(connection, settings.ReminderConnectionId);
     }
 
     [Fact]
-    public void TurningTheReminderOffDropsTheConnectionAndTheTemplate()
+    public void TurningTheReminderOffDropsTheConnection()
     {
         var settings = SchedulingSettings.Create(Tenant, Now);
-        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
+        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, true, 24, Guid.CreateVersion7(), Now);
 
-        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, false, 24, Guid.CreateVersion7(), Guid.CreateVersion7(), Now.AddMinutes(1));
+        settings.Update(ConfirmationMode.Automatic, 120, 30, 24, false, 24, Guid.CreateVersion7(), Now.AddMinutes(1));
 
         Assert.False(settings.ReminderEnabled);
         Assert.Null(settings.ReminderConnectionId);
-        Assert.Null(settings.ReminderTemplateId);
     }
 }

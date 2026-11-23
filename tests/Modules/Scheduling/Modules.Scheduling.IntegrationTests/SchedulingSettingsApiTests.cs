@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Modules.Scheduling.Application;
 using static Modules.Scheduling.IntegrationTests.SchedulingApiHarness;
 
@@ -9,7 +10,7 @@ public sealed class SchedulingSettingsApiTests(SchedulingApiWorld world) : IClas
 {
     private static object Rules(
         string mode = "Manual", int minNotice = 60, int horizon = 45, int cutoff = 12, bool reminder = false, int offset = 24,
-        Guid? connectionId = null, Guid? templateId = null) =>
+        Guid? connectionId = null) =>
         new
         {
             confirmationMode = mode,
@@ -19,7 +20,6 @@ public sealed class SchedulingSettingsApiTests(SchedulingApiWorld world) : IClas
             reminderEnabled = reminder,
             reminderOffsetHours = offset,
             reminderConnectionId = connectionId,
-            reminderTemplateId = templateId,
         };
 
     [Fact]
@@ -75,18 +75,80 @@ public sealed class SchedulingSettingsApiTests(SchedulingApiWorld world) : IClas
     }
 
     [Fact]
-    public async Task TheReminderCannotBeSwitchedOnWithoutItsConnectionAndTemplate()
+    public async Task TheReminderCannotBeSwitchedOnWithoutItsConnection()
     {
         using var tenant = await NewTenantAsync(world.Factory);
         await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
 
-        var withoutConnection = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(reminder: true, templateId: Guid.CreateVersion7()), "1");
-        var withoutTemplate = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(reminder: true, connectionId: Guid.CreateVersion7()), "1");
+        var withoutConnection = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(reminder: true), "1");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, withoutConnection.StatusCode);
         Assert.Equal("scheduling.reminder.connection_invalid", CodeOf(await JsonOfAsync(withoutConnection)));
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, withoutTemplate.StatusCode);
-        Assert.Equal("scheduling.reminder.template_missing", CodeOf(await JsonOfAsync(withoutTemplate)));
+    }
+
+    [Fact]
+    public async Task TheReminderSwitchesOnWithOnlyItsConnectionAndTheTemplateStateIsResolved()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var initial = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        var connection = Guid.CreateVersion7();
+
+        var response = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(reminder: true, connectionId: connection), "1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonOfAsync(response);
+        Assert.True(body.GetProperty("reminderEnabled").GetBoolean());
+        Assert.Equal(connection, body.GetProperty("reminderConnectionId").GetGuid());
+        Assert.False(body.TryGetProperty("reminderTemplateId", out _));
+        // No AppointmentReminder row exists for that connection, so the state is Missing.
+        var state = body.GetProperty("reminderTemplate");
+        Assert.Equal("Missing", state.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, state.GetProperty("statusReason").ValueKind);
+        var reread = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        Assert.Equal("Missing", reread.GetProperty("reminderTemplate").GetProperty("status").GetString());
+        // Without a saved connection there is nothing to look up.
+        Assert.Equal(JsonValueKind.Null, initial.GetProperty("reminderTemplate").ValueKind);
+    }
+
+    [Fact]
+    public async Task SwitchingTheReminderOffClearsTheConnectionAndTheTemplateState()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        (await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(reminder: true, connectionId: Guid.CreateVersion7()), "1"))
+            .EnsureSuccessStatusCode();
+
+        var off = await JsonOfAsync(await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(connectionId: Guid.CreateVersion7()), "2"));
+
+        Assert.False(off.GetProperty("reminderEnabled").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, off.GetProperty("reminderConnectionId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, off.GetProperty("reminderTemplate").ValueKind);
+    }
+
+    [Fact]
+    public async Task AnOldClientThatStillSendsReminderTemplateIdIsNotRejected()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        var connection = Guid.CreateVersion7();
+        var legacy = new
+        {
+            confirmationMode = "Manual",
+            minNoticeMinutes = 60,
+            horizonDays = 45,
+            clientCancelCutoffHours = 12,
+            reminderEnabled = true,
+            reminderOffsetHours = 24,
+            reminderConnectionId = connection,
+            reminderTemplateId = Guid.CreateVersion7(),
+        };
+
+        var response = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", legacy, "1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonOfAsync(response);
+        Assert.Equal(connection, body.GetProperty("reminderConnectionId").GetGuid());
+        Assert.False(body.TryGetProperty("reminderTemplateId", out _));
     }
 
     [Fact]
