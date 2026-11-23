@@ -1,4 +1,4 @@
-﻿namespace ArchitectureTests;
+namespace ArchitectureTests;
 
 /// <summary>
 /// Cómo convive un hosted service con otro pod que corre el mismo código (spec 2026-10-29, D-6, y la decisión P3 del plan
@@ -104,6 +104,8 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/ScheduledMessages/ScheduledMessageStore.cs:25-28 — FOR UPDATE SKIP LOCKED y locked_until"),
         new("Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker", WorkerClassification.Claimed,
             "Modules/ServiceContracts/Modules.ServiceContracts.Infrastructure/Reminders/TenantRunStore.cs:26 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until"),
+        new("Modules.Hr.Infrastructure.Reminders.HrMedicalExamsReminderWorker", WorkerClassification.Claimed,
+            "Modules/Hr/Modules.Hr.Infrastructure/Reminders/TenantRunStore.cs:19-30 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until; el digest de cada encargado se reclama aparte en DailyDigestStore.cs"),
         new("Modules.Scheduling.Infrastructure.Reminders.AppointmentReminderWorker", WorkerClassification.Claimed,
             "Modules/Scheduling/Modules.Scheduling.Infrastructure/Reminders/AppointmentReminderProcessor.cs (ClaimAsync) — UPDATE … RETURNING sobre scheduling.appointments con reminder_claimed_until por intento y reminder_attempts; sólo el ganador del reclamo envía, y el envío es idempotente por el clientId derivado de la cita (appointment-reminder:{id}), así que un reintento tras un envío que sí salió devuelve la misma fila de Mensajería"),
         new("Modules.Loans.Infrastructure.Generation.LoansGenerationWorker", WorkerClassification.Claimed,

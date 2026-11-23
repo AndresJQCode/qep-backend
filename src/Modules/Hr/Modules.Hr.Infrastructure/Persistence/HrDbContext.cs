@@ -54,6 +54,13 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
 
     internal DbSet<EmployeeActivityRow> Activity => Set<EmployeeActivityRow>();
 
+    // Write projection of platform.outbox_messages (ExcludeFromMigrations): Tenancy owns the table. Spec 2026-11-23 §9.2.
+    internal DbSet<HrOutboxMessage> Outbox => Set<HrOutboxMessage>();
+
+    internal DbSet<TenantRun> TenantRuns => Set<TenantRun>();
+
+    internal DbSet<DailyDigest> DailyDigests => Set<DailyDigest>();
+
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -73,6 +80,9 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         ConfigureMedicalExam(modelBuilder);
         ConfigureExitRequirement(modelBuilder);
         ConfigureActivity(modelBuilder);
+        ConfigureOutboxProjection(modelBuilder);
+        ConfigureTenantRun(modelBuilder);
+        ConfigureDailyDigest(modelBuilder);
     }
 
     // `column IN ('A','B')` para un enum guardado como texto: la base no depende de quien escribe.
@@ -452,6 +462,49 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         requirement.HasIndex(value => value.ContractId).IsUnique().HasDatabaseName("IX_exit_exam_requirements_contract_id");
         requirement.HasIndex(value => new { value.TenantId, value.EmployeeId }).HasDatabaseName("IX_exit_exam_requirements_tenant_employee");
         requirement.HasIndex(value => new { value.TenantId, value.Status }).HasDatabaseName("IX_exit_exam_requirements_tenant_status");
+    }
+
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<HrOutboxMessage>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
+    }
+
+    // Spec 2026-11-23 §9.1: the claim of the daily run of a tenant. Written and read with raw SQL by TenantRunStore.
+    private static void ConfigureTenantRun(ModelBuilder modelBuilder)
+    {
+        var run = modelBuilder.Entity<TenantRun>();
+        run.ToTable("tenant_runs", Schema);
+        run.HasKey(value => new { value.TenantId, value.RunDate });
+        run.Property(value => value.TenantId).HasColumnName("tenant_id");
+        run.Property(value => value.RunDate).HasColumnName("run_date");
+        run.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        run.Property(value => value.FinishedAt).HasColumnName("finished_at");
+    }
+
+    // One row per manager and day: its deduplication. Written and read with raw SQL by DailyDigestStore.
+    private static void ConfigureDailyDigest(ModelBuilder modelBuilder)
+    {
+        var digest = modelBuilder.Entity<DailyDigest>();
+        digest.ToTable("daily_digests", Schema, table =>
+            table.HasCheckConstraint("CK_daily_digests_status", "status IN ('Sending','Sent','Failed')"));
+        digest.HasKey(value => new { value.TenantId, value.MemberId, value.RunDate });
+        digest.Property(value => value.TenantId).HasColumnName("tenant_id");
+        digest.Property(value => value.MemberId).HasColumnName("member_id");
+        digest.Property(value => value.RunDate).HasColumnName("run_date");
+        digest.Property(value => value.Status).HasColumnName("status").HasMaxLength(16);
+        digest.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+        digest.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        digest.Property(value => value.SentAt).HasColumnName("sent_at");
     }
 
     private static void ConfigureActivity(ModelBuilder modelBuilder)

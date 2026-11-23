@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Modules.Hr.Application;
 using Modules.Hr.Application.MedicalExams;
 using Modules.Hr.Infrastructure.Excel;
 using Modules.Hr.Infrastructure.Persistence;
+using Modules.Hr.Infrastructure.Reminders;
 
 namespace Modules.Hr.Infrastructure;
 
@@ -41,6 +43,16 @@ public static class HrInfrastructureExtensions
         services.AddScoped<IEmployeeImportTemplateBuilder, ClosedXmlEmployeeImportTemplateBuilder>();
         services.AddScoped<IExcelLegalParameterImporter, ClosedXmlLegalParameterImporter>();
         services.AddScoped<ILegalParameterTemplateBuilder, ClosedXmlLegalParameterTemplateBuilder>();
+
+        // Spec 2026-11-23 §9: the daily reminder run. Options validated at start, as ServiceContractsOptions.
+        services.AddOptions<HrOptions>().Bind(configuration.GetSection(HrOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<HrOptions>, HrOptionsValidator>();
+        services.AddScoped<TenantRunStore>();
+        services.AddScoped<DailyDigestStore>();
+        services.AddScoped<MedicalExamEventPublisher>();
+        services.AddScoped<IMedicalExamEventPublisher>(provider => provider.GetRequiredService<MedicalExamEventPublisher>());
+        services.AddScoped<IHrMedicalExamsReminderProcessor, HrMedicalExamsReminderProcessor>();
+        services.AddHostedService<HrMedicalExamsReminderWorker>();
 
         return services;
     }

@@ -1059,6 +1059,47 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Hr.Infrastructure.Persistence.DailyDigest", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<DateOnly>("RunDate")
+                        .HasColumnType("date")
+                        .HasColumnName("run_date");
+
+                    b.Property<DateTimeOffset>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.HasKey("TenantId", "MemberId", "RunDate");
+
+                    b.ToTable("daily_digests", "hr", t =>
+                        {
+                            t.HasCheckConstraint("CK_daily_digests_status", "status IN ('Sending','Sent','Failed')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Hr.Infrastructure.Persistence.EmployeeActivityRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1119,6 +1160,77 @@ namespace Modules.Hr.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_employee_activity_category", "category IN ('Personal','Lifecycle','Payment','Salary','Assignment','Contract','Medical')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Hr.Infrastructure.Persistence.HrOutboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("event_name");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("outbox_messages", "platform", t =>
+                        {
+                            t.ExcludeFromMigrations();
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Hr.Infrastructure.Persistence.TenantRun", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateOnly>("RunDate")
+                        .HasColumnType("date")
+                        .HasColumnName("run_date");
+
+                    b.Property<DateTimeOffset>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.HasKey("TenantId", "RunDate");
+
+                    b.ToTable("tenant_runs", "hr");
                 });
 
             modelBuilder.Entity("Modules.Hr.Domain.AssignmentRecord", b =>

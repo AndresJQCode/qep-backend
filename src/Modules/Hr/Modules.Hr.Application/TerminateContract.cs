@@ -17,7 +17,9 @@ public sealed class TerminateContractHandler(
     ContractWrites writes,
     IValidator<TerminateRequest> validator,
     IMedicalExamRepository medicalExams,
-    IHrBusinessCalendar businessCalendar)
+    IHrBusinessCalendar businessCalendar,
+    IHrMemberDirectory members,
+    IMedicalExamEventPublisher events)
     : ICommandHandler<TerminateContractCommand, EmployeeDetailDto>
 {
     public async Task<EmployeeDetailDto> HandleAsync(TerminateContractCommand command, CancellationToken cancellationToken)
@@ -42,6 +44,17 @@ public sealed class TerminateContractHandler(
             command.TenantId, date, MedicalExamRules.ExitExamBusinessDays, cancellationToken);
         medicalExams.Add(ExitExamRequirement.Create(
             ExitExamRequirementId.New(), command.TenantId, employee.Id, contract.Id, date, dueDate, calendar.UtcNow));
+
+        // Spec 2026-11-23 §9.2: one exit-required message per manager, written before the commit and in the same transaction. No
+        // managers: the termination goes on and nothing is written. If the lookup fails the termination fails, like any other read of
+        // this handler: there is no termination without its notice.
+        var managers = await members.ListWithPermissionAsync(command.TenantId, HrPermissions.MedicalManage, cancellationToken);
+        foreach (var manager in managers)
+        {
+            events.AddExitRequired(
+                command.TenantId, manager.MemberId, employee.Id.Value, $"{employee.FirstName} {employee.LastName}", dueDate,
+                contract.Id.Value, calendar.UtcNow);
+        }
 
         return await writes.CommitAsync(
             command.TenantId,
