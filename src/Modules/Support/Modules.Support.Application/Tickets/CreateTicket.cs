@@ -303,6 +303,7 @@ public sealed class CreateTicketHandler(
     ISupportTicketNumberGenerator numbers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportIntegrationEvents integrationEvents,
     ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     SupportOpeningDelivery openingDelivery,
@@ -392,6 +393,8 @@ public sealed class CreateTicketHandler(
                 context.Clock,
                 validated.Anonymous);
             tickets.Add(ticket);
+            // Outbox row in the same transaction: the assignee hears about a ticket created for them, as with a later assignment.
+            SupportAssignmentNotices.PublishOnCreate(integrationEvents, ticket, actor, now);
             // La clave de consulta nace con el ticket, tenga o no a dónde mandarse: sólo su hash, nunca en la auditoría ni en la traza.
             access = SupportTicketAccess.Issue(ticket.Id, validated.TenantId, pinHasher.Hash(pin), now);
             accesses.Add(access);
