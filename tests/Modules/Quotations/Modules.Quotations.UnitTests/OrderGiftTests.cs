@@ -229,6 +229,35 @@ public sealed class OrderGiftTests
             Assert.True(gift.Position > order.Items.Where(item => !item.IsGift).Max(item => item.Position)));
     }
 
+    // Spec 2026-11-23: un pedido manual nace con sus regalos, también de la misma variante que se vende.
+    [Fact]
+    public void CreateManualTakesAPaidLineAndAGiftOfTheSameVariant()
+    {
+        var paid = Line(V1);
+        var withoutGift = NewOrder(paid);
+
+        var order = NewOrder(paid, Line(V1, 1m) with { IsGift = true });
+
+        Assert.Equal(2, order.Items.Count);
+        var gift = Assert.Single(order.Items, item => item.IsGift);
+        Assert.Equal(V1, gift.VariantId);
+        Assert.Equal(100m, gift.DiscountPercentage);
+        Assert.Equal(0m, gift.Subtotal);
+        Assert.Equal(1_000m, gift.UnitPrice);
+        Assert.Equal(withoutGift.Total, order.Total);
+    }
+
+    [Fact]
+    public void CreateManualRejectsTheSameVariantTwiceAsAGift()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => NewOrder(
+            Line(V1),
+            Line(V2, 1m) with { IsGift = true },
+            Line(V2, 2m) with { IsGift = true }));
+
+        Assert.Equal("order.item.duplicate_product", error.Code);
+    }
+
     [Fact]
     public void AGiftOnAWholesaleOrderIsRejected()
     {

@@ -196,7 +196,17 @@ public record CreateOrderRequest(
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
     /// <c>CashOnDelivery</c> no puede llevar comprobantes (spec 2026-10-17 §6).</summary>
-    ShippingRequest? Shipping = null);
+    ShippingRequest? Shipping = null)
+{
+    /// <summary>Los regalos del pedido (spec 2026-11-23): lista aparte de <c>Items</c>, que sigue siendo sólo las
+    /// líneas pagadas. Ausente o null es «sin regalos». Una propiedad y no un parámetro posicional, para que
+    /// <see cref="PreviewOrderRequest"/> la herede sin tocar su constructor.</summary>
+    public IReadOnlyList<OrderGiftLineRequest>? Gifts { get; init; }
+}
+
+/// <summary>Un regalo del pedido (spec 2026-11-23): variante y cantidad; el precio es el de lista y el descuento el fijo
+/// del 100 %.</summary>
+public sealed record OrderGiftLineRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>
 /// The body of <c>POST /orders/preview</c>: the manual order body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
@@ -315,6 +325,11 @@ public record SaveOrderEditsRequest(
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement OperationCityId { get; init; }
+
+    /// <summary>Los regalos del pedido pendiente (spec 2026-11-23). <b>Ausente o null conserva</b> los guardados: un
+    /// frontend viejo no los borra. Presente —también <c>[]</c>— es la lista <b>entera</b> deseada, por variante: agrega,
+    /// cambia la cantidad y quita. <c>Items</c> sigue siendo sólo las líneas pagadas.</summary>
+    public IReadOnlyList<OrderGiftLineRequest>? Gifts { get; init; }
 }
 
 /// <summary>

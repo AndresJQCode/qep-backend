@@ -19,7 +19,9 @@ internal sealed record OrderItemEdit(
     decimal? PreviousQuantity,
     decimal? Quantity,
     decimal? PreviousUnitPrice = null,
-    decimal? UnitPrice = null);
+    decimal? UnitPrice = null,
+    // Spec 2026-11-23: la edición es de una línea de regalo (OrderGiftEdits), con su propio texto y auditoría.
+    bool IsGift = false);
 
 /// <summary>
 /// Lleva las líneas del pedido a la lista deseada (spec 2026-09-17 y spec 2026-10-15 §4.5): agrega

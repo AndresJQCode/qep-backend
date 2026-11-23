@@ -37,6 +37,26 @@ public sealed class SaveOrderEditsValidatorTests
         Assert.Contains(result.Errors, error => error.PropertyName == propertyName);
     }
 
+    // Spec 2026-11-23: Gifts null conserva los guardados, vacía los quita; una variante una sola vez.
+    [Fact]
+    public void RejectsTheSameVariantTwiceAsAGift()
+    {
+        var variantId = Guid.CreateVersion7();
+        var command = Command() with { Gifts = [new OrderItemAddition(variantId, 1m), new OrderItemAddition(variantId, 2m)] };
+
+        AssertFailsOn(_save.Validate(command), "Gifts");
+    }
+
+    [Fact]
+    public void AcceptsNullGifts() => Assert.True(_save.Validate(Command() with { Gifts = null }).IsValid);
+
+    [Fact]
+    public void AcceptsAnEmptyGiftList() => Assert.True(_save.Validate(Command() with { Gifts = [] }).IsValid);
+
+    [Fact]
+    public void AcceptsAGiftOfAPaidVariant() =>
+        Assert.True(_save.Validate(Command() with { Gifts = [new OrderItemAddition(ProductId, 1m)] }).IsValid);
+
     [Fact]
     public void AcceptsACompleteEdit()
     {
