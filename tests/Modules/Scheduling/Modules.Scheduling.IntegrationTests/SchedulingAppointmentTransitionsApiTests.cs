@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Scheduling.Application;
+using Modules.Scheduling.Domain;
 using static Modules.Scheduling.IntegrationTests.SchedulingApiHarness;
 
 namespace Modules.Scheduling.IntegrationTests;
@@ -326,6 +327,52 @@ public sealed class SchedulingAppointmentTransitionsApiTests(SchedulingApiWorld 
         Assert.Equal(("Confirmed", 1), (reread.GetProperty("status").GetString(), (int)reread.GetProperty("version").GetInt64()));
         Assert.Equal(0, await AuditAsync(scene, SchedulingAuditActions.AppointmentNoShow, booked));
         Assert.Equal(0, await AuditAsync(scene, SchedulingAuditActions.AppointmentAttended, booked));
+    }
+
+    // A confirmed appointment that already started, seeded in the past (the booking API never creates one): the happy path of the two marks.
+    private async Task<(Scene Scene, JsonElement Seeded)> StartedAppointmentAsync()
+    {
+        var scene = await SceneAsync();
+        var location = await MainLocationIdAsync(scene.Tenant);
+        var id = await SeedAppointmentAsync(
+            world.Factory, scene.Tenant.IdText, location, scene.Resource, scene.Service, scene.Customer,
+            NineOClock(DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-3)), AppointmentStatus.Confirmed);
+        var seeded = await GetJsonAsync(scene.Tenant.Admin, $"{scene.Tenant.Url}/appointments/{id}");
+        return (scene, seeded);
+    }
+
+    [Fact]
+    public async Task AStartedAppointmentIsMarkedAttendedWithItsTrail()
+    {
+        var (scene, seeded) = await StartedAppointmentAsync();
+        using var owner = scene.Tenant;
+
+        var response = await PostAsync(scene.Tenant.Admin, UrlOf(scene, seeded, "attend"), null, VersionOf(seeded));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonOfAsync(response);
+        Assert.Equal("Completed", body.GetProperty("status").GetString());
+        Assert.Equal(seeded.GetProperty("version").GetInt64() + 1, body.GetProperty("version").GetInt64());
+        Assert.Equal(["Created", "Attended"], HistoryOf(body));
+        Assert.Equal(1, await AuditAsync(scene, SchedulingAuditActions.AppointmentAttended, seeded));
+        Assert.Equal(0, await AuditAsync(scene, SchedulingAuditActions.AppointmentNoShow, seeded));
+    }
+
+    [Fact]
+    public async Task AStartedAppointmentIsMarkedNoShowWithItsTrail()
+    {
+        var (scene, seeded) = await StartedAppointmentAsync();
+        using var owner = scene.Tenant;
+
+        var response = await PostAsync(scene.Tenant.Admin, UrlOf(scene, seeded, "no-show"), null, VersionOf(seeded));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonOfAsync(response);
+        Assert.Equal("NoShow", body.GetProperty("status").GetString());
+        Assert.Equal(seeded.GetProperty("version").GetInt64() + 1, body.GetProperty("version").GetInt64());
+        Assert.Equal(["Created", "NoShow"], HistoryOf(body));
+        Assert.Equal(1, await AuditAsync(scene, SchedulingAuditActions.AppointmentNoShow, seeded));
+        Assert.Equal(0, await AuditAsync(scene, SchedulingAuditActions.AppointmentAttended, seeded));
     }
 
     [Fact]
