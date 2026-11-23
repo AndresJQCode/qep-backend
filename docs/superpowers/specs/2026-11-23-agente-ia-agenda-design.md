@@ -3,9 +3,11 @@
 - **Fecha:** 2026-11-23.
 - **Módulos:** `Ai` (seis herramientas nuevas, `config.tools.scheduling`, validador, prompt, playground), `Scheduling`
   (extracción del núcleo de disponibilidad, reserva, cancelación y cambio de hora; servicio sin sesión para el agente;
-  auditoría por agente), `Bootstrapper` (adaptador del puerto de Ai, cliente de la conversación). Mensajería y Clientes
-  no cambian: se reusa lo que ya existe. Frontend en `qep-frontend` (spec aparte; el contrato está al final).
-- **Estado:** borrador para aprobación del owner. **Sin código.**
+  auditoría por agente; `by_channel` en el historial; remitente por defecto del recordatorio), `Bootstrapper` (adaptador
+  del puerto de Ai, cliente de la conversación). Mensajería y Clientes no cambian: se reusa lo que ya existe. Frontend en
+  `qep-frontend` (spec aparte; el contrato está al final).
+- **Estado:** aprobado. El owner cerró las preguntas abiertas el 2026-11-23 (D-14 a D-19). **Sin código.** Plan:
+  [`plans/2026-11-23-agente-ia-agenda-backend.md`](../plans/2026-11-23-agente-ia-agenda-backend.md).
 - **Se apoya en:** [`2026-10-29-agentes-ia-design.md`](2026-10-29-agentes-ia-design.md) (§7 playground, §8 herramientas y
   principal de servicio, D-A16, D-A30), [`2026-11-17-agente-ia-en-chatbots-design.md`](2026-11-17-agente-ia-en-chatbots-design.md)
   (modo bloque, traspasos), [`2026-11-21-agenda-citas-design.md`](2026-11-21-agenda-citas-design.md) y su plan
@@ -33,7 +35,8 @@ todo esté dentro de las reglas del tenant. Lo que se sale de las reglas termina
 
 - Que el agente confirme citas `Pending`, marque asistencia o «no asistió»: es trabajo de la secretaria.
 - Lista de espera, varios cupos por reserva, cobro o anticipo.
-- Recordatorios: ya existen (plan de la Agenda, Tarea 12); este spec no los cambia (ver P-5).
+- Recordatorios: ya existen (plan de la Agenda, Tarea 12). Este spec sólo agrega el remitente por defecto (D-18, §6.4);
+  el resto del envío no cambia.
 - Que el agente agende para otra persona que no sea el cliente de la conversación.
 - Evals nuevos del agente (`Modules.Ai.Eval`): gastan dinero real y necesitan presupuesto aprobado (regla `ai-copiloto`).
 
@@ -60,7 +63,9 @@ todo esté dentro de las reglas del tenant. Lo que se sale de las reglas termina
 | Cliente de la conversación | `Bootstrapper/ConversationCustomerResolver.cs` | Con cliente, lo devuelve; sin él y con BSUID, `IMessagingCustomerDirectory.EnsureAsync` (idempotente por BSUID) + `IConversationRepository.LinkCustomerAsync` + aviso a la bandeja. Lo comparten «Política de datos» y «Acción de CRM» |
 | Alta desde la Agenda | `Bootstrapper/SchedulingCustomerLookup.CreateAsync` | Usa `executionContext.SubjectId`: sirve a un miembro, **no** al agente |
 | Ingesta | `WebhookDeliveryProcessor` (`customers.EnsureAsync`) | Todo entrante ya asegura un cliente por BSUID; una conversación sin cliente es la excepción (falla al asegurarlo, conversación vieja) |
-| Códigos de traspaso | `AgentHandoffCodes.All`, `HandoffCauseKindParityTests`, `ConversationAutomation.IsValidCode` | Un código nuevo entra a la lista y pasa la limpieza de Mensajería |
+| Códigos de traspaso | `AgentHandoffCodes.All`, `HandoffCauseKindParityTests`, `AutomationHandoff.IsValidCode` (en `Messaging.Domain/ConversationAutomation.cs`) | Un código nuevo entra a la lista y pasa la limpieza de Mensajería |
+| Remitente del recordatorio | `AppointmentReminderProcessor.SenderOfAsync` | Miembro vinculado al recurso → último actor activo del historial → si ninguno, omite con `no_sender_member` |
+| Validación de miembros | `ISchedulingMemberDirectory.FindAsync` | Devuelve las membresías del tenant pedidas con `IsActive`; la de otro tenant no aparece |
 
 ## 3. Restricciones
 
@@ -77,24 +82,30 @@ todo esté dentro de las reglas del tenant. Lo que se sale de las reglas termina
 
 ## 4. Decisiones
 
-Las D-1 a D-8 son del owner y **no se reabren**; donde el código las complica, la nota lo dice y la pregunta va a §12.
-Las D-9 en adelante son de este spec.
+Las D-1 a D-8 y D-14 a D-19 son del owner y **no se reabren** (las D-14 a D-19 cierran las preguntas P-1 a P-6 el
+2026-11-23). Las D-9 a D-13 son de este spec.
 
 | # | Decisión | Fuente |
 | --- | --- | --- |
 | D-1 | Seis herramientas detrás de un interruptor nuevo `config.tools.scheduling` (por defecto `false`); los documentos guardados antes se siguen leyendo | owner |
 | D-2 | Reglas en el backend: sólo citas del cliente de la conversación; una cita nace con `Source = Channel` y `ConversationId`, según `confirmationMode`; cancelar usa `Source = Channel` para que rija `clientCancelCutoffHours`; sólo servicios con `bookableByChannel`; anticipación, horizonte y disponibilidad del mismo motor que el back office; sigue la regla de una herramienta que escribe por respuesta | owner |
 | D-3 | Cuando el plazo bloquea una cancelación (o cualquier `invalid_transition`), el resultado de la herramienta termina el turno con un traspaso a una persona, con el mecanismo determinista del borrador de cotización | owner |
-| D-4 | Llave de idempotencia de la reserva derivada del trabajo y de la llamada (ver la nota de §7.3 y P-1) | owner |
+| D-4 | Llave de idempotencia de la reserva derivada del trabajo y de la llamada; la forma exacta la fija D-14 | owner |
 | D-5 | Autorización: el núcleo de disponibilidad, reserva, cancelación y cambio de hora se extrae a servicios internos de Scheduling que usan los handlers (después de autorizar) y un puerto nuevo para el agente; Ai declara su puerto (patrón de `IAiCatalogSearch`) con adaptador en Bootstrapper; **no** se corren los handlers bajo un principal sintético. Capacidades nuevas en `AiServicePrincipal` | owner |
 | D-6 | Contacto sin cliente: la reserva crea el cliente con el nombre y el teléfono del contacto y lo cuelga de la conversación (ver §7.6: se hace con `ConversationCustomerResolver`) | owner |
 | D-7 | Playground: las tres que escriben se simulan como `SimulatedQuotationDraftTool` (validan, devuelven datos ficticios, no escriben); las lecturas leen datos reales, y las citas sólo del cliente de prueba si la prueba fijó uno | owner |
 | D-8 | Auditoría a nombre del agente (sin miembro), con nombre de acción claro; el historial de la cita queda con la semántica «Cliente por WhatsApp» que ya existe (`Source = Channel`, actor nulo) | owner |
 | D-9 | En cada llamada del canal real, el adaptador **relee** el cliente de la conversación (por `ConversationId`) en vez de usar el del inicio del trabajo: una reserva que crea el cliente lo deja visible para la herramienta siguiente del mismo trabajo, y una fusión en el medio no apunta a un cliente inactivo. Mismo criterio que `AutomationDataConsents` | spec |
 | D-10 | Las horas viajan **en hora local del tenant** con formato fijo `yyyy-MM-ddTHH:mm`, sin desfase, y una sola `timeZone` por resultado. La conversión a UTC la hace Scheduling con la zona de `ITenantClock`, la misma que el prompt ya muestra | spec |
-| D-11 | En el camino del agente rige `allowClientChoice` de la franja: los recursos se muestran y se aceptan sólo en los inicios cuya opción lo permite. El back office no cambia (plan, corrección 17). Confirmar en P-3 | spec |
+| D-11 | En el camino del agente rige `allowClientChoice` de la franja: los recursos se muestran y se aceptan sólo en los inicios cuya opción lo permite. El back office no cambia (plan, corrección 17). Confirmada por D-16 | spec |
 | D-12 | Repetir una cancelación ya hecha o un cambio a la misma hora en el **mismo** trabajo responde éxito (`alreadyDone: true`), no `invalid_transition`: un trabajo retomado no debe traspasar por su propia escritura anterior | spec |
 | D-13 | El módulo `scheduling` apagado no quita las herramientas del modelo (el perfil no conoce los módulos); responden `scheduling_unavailable`. Publicar con `tools.scheduling` y el módulo apagado es error del validador | spec |
+| D-14 | (P-1) Llave de la reserva: `ai:{jobId:N}:book:{n}`, con `n` el ordinal de la reserva dentro del trabajo, 1 + las llamadas a `book_appointment` del mismo trabajo que ya devolvieron una cita (nueva o repetida). Una llamada que falla no consume número: así un trabajo retomado cuyo primer intento sale distinto (el modelo elige otra hora porque la primera ya no está) sigue encontrando la cita que reservó antes con `n = 1`, y el resultado `alreadyBooked: true` describe esa cita. Lo cuenta en memoria el perfil del agente, que es uno por corrida del trabajo (§7.3) | owner |
+| D-15 | (P-2) El cambio de hora por el agente respeta `clientCancelCutoffHours` (`byClient: true` en `AppointmentRescheduling`); fuera del plazo es `invalid_transition` y la herramienta traspasa con `appointment_change_blocked`. Además, mover una cita por chat exige que su servicio tenga `bookableByChannel`; si no, también `invalid_transition` con traspaso (una persona la mueve desde la agenda). Cancelar no exige `bookableByChannel` (D-2 no lo pide) | owner |
+| D-16 | (P-3) `allowClientChoice` se aplica sólo en el camino del agente, con el código nuevo `scheduling.appointment.resource_not_choosable` (422, `SchedulingDomainException`). El back office sigue igual | owner |
+| D-17 | (P-4) Columna `scheduling.appointment_events.by_channel` (`boolean NOT NULL DEFAULT false`, migración expand) expuesta como `AppointmentEventDto.ByChannel`. La ponen en `true` **sólo** las escrituras del agente (crear, cancelar, cambiar hora por `IChannelScheduling`); ninguna escritura por HTTP la pone, tampoco una con `source: Channel` (ningún cliente la manda hoy); el recordatorio tampoco. Las filas que ya existen quedan en `false`. El frontend pinta «Cliente por WhatsApp» con ella en vez de deducirlo del origen de la cita | owner |
+| D-18 | (P-5) Las reglas de la Agenda ganan `reminderSenderMemberId` (`Guid?`, id de **membresía**) en `SettingsRequest` y `SettingsDto` (este además con `reminderSenderMemberName`, el nombre ya resuelto, también de un miembro suspendido; no viaja en el request), guardado en `scheduling.settings.reminder_sender_member_id` (nullable, migración expand). Se valida contra los miembros activos del tenant con `ISchedulingMemberDirectory`; uno inexistente, de otro tenant o inactivo es 422 con el campo `reminderSenderMemberId`. Se guarda aunque el recordatorio esté apagado; sólo se usa al enviar. Remitente del recordatorio: miembro activo vinculado al recurso → último actor activo de la cita → `reminderSenderMemberId` si está activo → si no, se omite con `no_sender_member` como hoy (§6.4) | owner |
+| D-19 | (P-6) El traspaso de `appointment_change_blocked` (y de `appointment_customer_unavailable`) va al destino configurado del agente (`MemberId: null`) | owner |
 
 ## 5. Las herramientas (lo que ve el modelo)
 
@@ -185,13 +196,15 @@ borrador de cotización.
 { "timeZone": "America/Bogota",
   "appointments": [ { "appointmentId": "7f3d…", "status": "Confirmed", "startsAt": "2026-11-24T09:00",
                       "endsAt": "2026-11-24T09:30", "serviceName": "Consulta general", "resourceName": "Dra. Pérez",
-                      "locationName": "Sede principal", "canChangeByChat": true, "changeByChatUntil": "2026-11-23T09:00" } ],
+                      "locationName": "Sede principal", "canChangeByChat": true, "canRescheduleByChat": true,
+                      "changeByChatUntil": "2026-11-23T09:00" } ],
   "truncated": false }
 ```
 
 Citas `Pending` o `Confirmed` del cliente que empiezan desde ahora, por inicio, tope 10. `canChangeByChat` y
 `changeByChatUntil` (inicio menos `clientCancelCutoffHours`) los calcula el backend con `AppointmentCancellationRules`:
-el modelo no hace aritmética de plazos. Sin cliente en la conversación responde `appointments: []`, no un error (un
+el modelo no hace aritmética de plazos. `canRescheduleByChat` es `canChangeByChat` y además el servicio de la cita con
+`bookableByChannel` (D-15). Sin cliente en la conversación responde `appointments: []`, no un error (un
 contacto sin ficha no tiene citas).
 
 ### 5.5 `cancel_appointment` — capacidad `scheduling.change_own` — **escribe**
@@ -209,14 +222,15 @@ contacto sin ficha no tiene citas).
 - **Argumentos:** `appointmentId` (string), `startsAt` (string, local), `resourceId` (`["string","null"]`).
 - **Resultado:** la misma forma de `book_appointment` sin `alreadyBooked`, con `alreadyDone`.
 - Errores: los de reservar (`slot_taken`, `session_full`, `outside_rules`, `resource_not_choosable`) vuelven al modelo;
-  `appointment_change_blocked` traspasa. El cambio de hora sólo ofrece recursos de la misma sede (corrección 22c, ya en el
-  núcleo).
+  `appointment_change_blocked` traspasa: plazo vencido, cita cerrada o servicio sin `bookableByChannel` (D-15). El cambio
+  de hora sólo ofrece recursos de la misma sede (corrección 22c, ya en el núcleo).
 
 ### 5.7 Lo que cambia en el contrato común
 
 - `AgentToolNames`: las seis constantes. `Writes(name)` pasa a ser `create_quotation_draft`, `book_appointment`,
   `cancel_appointment` y `reschedule_appointment`: la regla de una escritura por respuesta las cubre sin tocar el bucle.
-- `AgentToolInvocation` gana `AgentId` y `ConversationId` (nulo en el playground); ya están en `AgentTurnContext`.
+- `AgentToolInvocation` gana `AgentId`, `ConversationId` (nulo en el playground; ya están en `AgentTurnContext`) y
+  `BookingOrdinal` (el `n` de D-14), como parámetros opcionales al final para no tocar las llamadas existentes.
 - `AiServicePrincipal.Capabilities` gana `scheduling.read`, `scheduling.read_own`, `scheduling.book_own` y
   `scheduling.change_own` (mismo estilo que `orders.read_own`; no son permisos de Authorization y no necesitan política).
 - `AgentToolErrors` gana los códigos de §8.
@@ -239,7 +253,7 @@ tocan.
 
 | Clase | Sale de | Firma (idea) |
 | --- | --- | --- |
-| `SchedulingActor` | — | Quién escribe: `HistoryMemberId` (nulo en canal) y el actor de auditoría, `Human(subjectId)` o `Agent(agentId)` |
+| `SchedulingActor` | — | Quién escribe: `HistoryMemberId` (nulo en canal), `ByChannel` (D-17: `true` sólo en `Agent`) y el actor de auditoría, `Human(subjectId, memberId)` o `Agent(agentId)` |
 | `AvailabilitySearch` | `ListAvailabilityHandler` desde `loader.LoadAsync` | `SearchAsync(tenantId, scope, service, from, to, onlyResource)` → zona + inicios con sus `SlotOption` (incluido `AllowClientChoice`). El handler lo mapea a `AvailabilityDto` como hoy |
 | `AppointmentBooking` | `BookAppointmentHandler` desde la repetición por `clientRequestId` | `BookAsync(BookingInput, scope, actor)` → `(Appointment, Replayed)`. Mantiene el doble chequeo de la llave, `bookableByChannel`, el candado, `PickFree`, `TakeSeatAsync`, el estado por `confirmationMode` y la auditoría |
 | `AppointmentCancellation` | `CancelAppointmentHandler` desde el plazo | `CancelAsync(tenantId, appointment, reason, byClient, actor)` |
@@ -251,7 +265,10 @@ tocan.
 `AiAuditRecorder.RecordByAgent`). Las acciones son las de siempre (`scheduling.appointment.created`, `…cancelled`,
 `…rescheduled`): el tipo de actor `AiAgent` es lo que dice que fue el agente (D-8).
 
-`byClient` en el cambio de hora sólo decide si rige el plazo (P-2); el handler HTTP pasa `false`, como hoy.
+`byClient` en el cambio de hora decide si rige el plazo y si se exige `bookableByChannel` (D-15); el handler HTTP pasa
+`false`, como hoy. El dominio recibe `byChannel` en `Appointment.Create`, `Cancel` y `Reschedule` (parámetro opcional,
+`false` por defecto) y lo copia a `AppointmentEvent.ByChannel` (D-17); `AppointmentComposer` lo mapea a
+`AppointmentEventDto.ByChannel`.
 
 ### 6.3 Servicio sin sesión para el agente
 
@@ -266,9 +283,13 @@ propio puerto y su adaptador en Bootstrapper llama a éste».
   `CancelAsync` (`byClient: true`), `RescheduleAsync`. Cancelar y cambiar hora cargan la cita con
   `IAppointmentRepository.FindAsync`, **sin** `If-Match`, y exigen `appointment.CustomerId == customerId`; si no, el mismo
   `scheduling.appointment.not_found` que una cita que no existe.
-- D-11: con `resourceId` pedido, la opción de ese recurso en ese inicio tiene que tener `AllowClientChoice`; si no, un
-  código propio del camino del agente (el adaptador lo lee como `resource_not_choosable`). Hoy no existe en
-  `SchedulingErrorCodes`; se agrega `scheduling.appointment.resource_not_choosable` sólo si el owner acepta D-11 (P-3).
+- D-11 y D-16: con `resourceId` pedido, la opción de ese recurso en ese inicio tiene que tener `AllowClientChoice`; si
+  no, `SchedulingErrorCodes.ResourceNotChoosable` = `scheduling.appointment.resource_not_choosable` (422; el adaptador lo
+  lee como `resource_not_choosable`). En la búsqueda, un `resourceId` que ninguna opción del rango deja elegir responde
+  el mismo código.
+- Lecturas para el playground (D-7): `CheckStartAsync` (lo que comprobaría la reserva, sin candado ni escritura: servicio
+  reservable, inicio ofrecido por el motor con ocupación, recurso elegible, y el estado que daría `confirmationMode`) y
+  `FindCustomerAppointmentAsync` (una cita del cliente con sus banderas de §5.4, o nada si no es suya).
 - Las horas entran como `DateTime` local sin zona y salen como `DateTimeOffset` en la zona del tenant (D-10). Una hora
   local que no existe en la zona (cambio de horario) es `outside_rules`.
 - Lectura nueva: `IAppointmentReadRepository.ListUpcomingByCustomerAsync(tenantId, customerId, now, take)` (sin
@@ -277,6 +298,27 @@ propio puerto y su adaptador en Bootstrapper llama a éste».
 - Lectura nueva para el editor: `GetReadinessAsync(tenantId)` → módulo prendido y cuántos servicios activos con
   `bookableByChannel` ofrece alguna franja no archivada con algún recurso activo
   (`IAvailabilityBlockRepository.ListAsync` con `ResourceScope.All`, `ServiceIds`, `ResourceIds`).
+
+### 6.4 Reglas de la Agenda: remitente por defecto del recordatorio (D-18)
+
+- **Dominio:** `SchedulingSettings.ReminderSenderMemberId` (`Guid?`). `Update` lo recibe como parámetro aparte y lo
+  guarda **siempre**, con el recordatorio prendido o apagado (a diferencia de `ReminderConnectionId`, que se suelta al
+  apagar).
+- **Contrato:** `SettingsRequest.ReminderSenderMemberId` (`Guid?`, al final) y, en `SettingsDto`,
+  `ReminderSenderMemberId` (`Guid?`) y `ReminderSenderMemberName` (`string?`). El nombre lo resuelve el backend con
+  `ISchedulingMemberDirectory.FindAsync`, como `ResourceDto.MemberName`: la pantalla no consulta Personas. Es `null` sin
+  remitente; con un remitente que después quedó suspendido **se sigue devolviendo** su nombre (el directorio devuelve
+  activos e inactivos), para que la pantalla lo nombre. El nombre no viaja en `SettingsRequest`.
+- **Validación (`UpdateSettingsHandler`):** con valor, `ISchedulingMemberDirectory.FindAsync(tenantId, [id])` tiene que
+  devolverlo con `IsActive`; si no (inexistente, de otro tenant, inactivo), `SchedulingFieldErrors.Throw(
+  "reminderSenderMemberId", "Elige un miembro activo de la organización.")` → 422 `validation.failed` con el campo. Un
+  `PUT` que deja el mismo id de un miembro que ya se suspendió también es 422: el formulario obliga a elegir otro o
+  vaciarlo. Cambiarlo agrega `reminderSenderMemberId` a los campos de la auditoría `scheduling.settings.updated`.
+- **Envío (`AppointmentReminderProcessor.SenderOfAsync`):** el valor de la fila entra **último** a la lista de
+  candidatos (después del miembro del recurso y de los actores del historial), con el mismo filtro de activos. Ninguno
+  activo sigue siendo `no_sender_member`.
+- **Persistencia:** `scheduling.settings.reminder_sender_member_id uuid NULL`, sin llave foránea (las membresías son de
+  Tenancy), en la misma migración expand que `by_channel` (§12).
 
 ## 7. Ai: puerto, herramientas y adaptador
 
@@ -304,11 +346,16 @@ Resuelve el cliente:
 el id de la llamada lo inventa el modelo y **cambia** cuando un trabajo se retoma (lease vencido, proceso caído antes de
 `ModelJob.RememberResult`), así que el reintento reservaría **otro cupo** con otra llave (regla `ai-copiloto`, «El borrador
 de cotización… no se duplica por el índice»). La llave sólo de trabajo (`ai:{jobId}`, la del borrador) no sirve tampoco:
-un cliente que pide dos citas en el mismo turno recibiría la primera dos veces. **Propuesta de este spec:**
-`ai:{jobId:N}:book:{n}`, donde `n` es el ordinal de la llamada a `book_appointment` **dentro del trabajo** (1, 2…), que el
-perfil cuenta en memoria. Un trabajo retomado vuelve a contar desde 1 y encuentra sus citas; una segunda cita del mismo
-turno lleva `n = 2`. El resultado con `alreadyBooked: true` describe la cita guardada, así el modelo nunca le confirma al
-cliente una hora distinta de la reservada. Hasta que el owner responda P-1 el plan usa esta llave.
+un cliente que pide dos citas en el mismo turno recibiría la primera dos veces. **Decisión (D-14):**
+`ai:{jobId:N}:book:{n}`, donde `n` es el ordinal de la reserva **dentro del trabajo**: `AgentProfile` (uno por corrida del
+trabajo) guarda cuántas llamadas a `book_appointment` devolvieron una cita y pasa `n = esas + 1` en
+`AgentToolInvocation.BookingOrdinal`. Un trabajo retomado vuelve a contar desde 1 y encuentra sus citas; una segunda cita
+del mismo turno lleva `n = 2`; una llamada con error no consume número. El resultado con `alreadyBooked: true` describe
+la cita guardada, así el modelo nunca le confirma al cliente una hora distinta de la reservada.
+
+**Carrera con la misma llave:** dos reservas con la misma llave sobre recursos distintos chocan en el índice único y
+`SchedulingUnitOfWork` responde `slot_taken`. En el camino del agente, `ChannelScheduling.BookAsync` busca la llave una vez
+más al recibir ese 409 y, si ya hay cita, la devuelve como repetida (`alreadyBooked: true`) en vez del error.
 
 `cancel_appointment` y `reschedule_appointment` no llevan llave: D-12 los hace seguros al repetirse (cita ya cancelada →
 `alreadyDone`; cambio a la hora que ya tiene → `alreadyDone`).
@@ -326,8 +373,8 @@ demás llamadas de la vuelta ya corrieron):
 
 | Caso | Error al modelo (queda en `ai.tool_calls`) | Código del traspaso | A quién |
 | --- | --- | --- | --- |
-| Cancelar o cambiar hora con el plazo vencido, o una cita cerrada (`invalid_transition`) | `appointment_change_blocked` | `appointment_change_blocked` | Destino configurado del agente (`MemberId: null`) |
-| Reservar sin cliente posible (`ConversationCustomer.NoUser` o `Unavailable`) | `customer_unknown` | `appointment_customer_unavailable` | Destino configurado |
+| Cancelar o cambiar hora con el plazo vencido, una cita cerrada, o cambiar la hora de una cita cuyo servicio no tiene `bookableByChannel` (`invalid_transition`, D-15) | `appointment_change_blocked` | `appointment_change_blocked` | Destino configurado del agente (`MemberId: null`, D-19) |
+| Reservar sin cliente posible (`ConversationCustomer.NoUser` o `Unavailable`) o con el cliente inactivo | `customer_unknown` | `appointment_customer_unavailable` | Destino configurado (D-19) |
 
 El evento del hilo los muestra con `HandoffCauseKind.AgentRequested` y el código, como `quotation_customer_not_ready`.
 
@@ -386,12 +433,13 @@ El adaptador traduce; el modelo sólo ve el código corto. `ai.tool_calls.error_
 | `ResourceConflictException` `scheduling.appointment.slot_taken` | `slot_taken` | No | Vuelve a consultar disponibilidad |
 | `ResourceConflictException` `scheduling.appointment.session_full` | `session_full` | No | Igual |
 | `scheduling.appointment.outside_rules` (inicio que las reglas no ofrecen, servicio no reservable por canal, hora local inexistente) | `outside_rules` | No | Igual |
-| `scheduling.appointment.invalid_transition` (plazo, cita cerrada) | `appointment_change_blocked` | **Sí** (§7.5) | — |
+| `scheduling.appointment.invalid_transition` (plazo, cita cerrada, servicio sin `bookableByChannel` al cambiar hora) | `appointment_change_blocked` | **Sí** (§7.5) | — |
 | `scheduling.appointment.before_start` | `tool_failed` | No | No es alcanzable por estas herramientas (sólo asistencia y «no asistió»); se traduce a falla genérica por defensa |
 | `scheduling.appointment.not_found`, cita de otro cliente | `appointment_not_found` | No | Relee `list_my_appointments` |
 | `scheduling.service.not_found`, archivado o sin `bookableByChannel` (`ValidationException` del campo `serviceId`) | `service_not_found` | No | Relee `list_bookable_services` |
 | `scheduling.resource.not_found` o archivado | `resource_not_choosable` | No | Reintenta sin recurso |
-| `scheduling.appointment.resource_not_choosable` (si P-3 se acepta) | `resource_not_choosable` | No | Igual |
+| `scheduling.appointment.resource_not_choosable` (D-16) | `resource_not_choosable` | No | Igual |
+| `ResourceConflictException` `slot_taken` por la llave repetida (índice `IX_appointments_client_request`) | — (se devuelve la cita con `alreadyBooked: true`, §7.3) | No | — |
 | Cliente inactivo (`ValidationException` del campo `customerId`) | `customer_unknown` | **Sí** (`appointment_customer_unavailable`) | — |
 | Sin cliente posible (resolvedor) | `customer_unknown` | **Sí** (book) / No, lista vacía (list) / `appointment_not_found` (cancel, reschedule) | — |
 | `RequestConcurrencyException` al guardar | `appointment_changed` | No | Relee y reintenta una vez |
@@ -424,7 +472,7 @@ diálogo de servicio del frontend (`service-dialog.tsx`).
 
 ### 9.3 Editor
 
-`AgentEditorDto` gana `Scheduling` (`AgentSchedulingReadinessDto`, siempre presente desde este backend): ver §13.
+`AgentEditorDto` gana `Scheduling` (`AgentSchedulingReadinessDto`, siempre presente desde este backend): ver §14.
 
 ### 9.4 Exportar e importar
 
@@ -435,84 +483,87 @@ panel de problemas muestra `scheduling_module_disabled`. `ImportAgentValidator` 
 ### 9.5 Actividad del día
 
 `AgentTodayDto` gana `Appointments`: reservas que el agente hizo hoy (llamadas `book_appointment` con `ok` y
-`alreadyBooked: false`, sin las del playground), calco de `QuotationDrafts` en `AgentActivityReader`.
+`alreadyBooked: false`, sin las del playground), calco de `QuotationDrafts` en `AgentActivityReader`. La repetición se
+descarta en la consulta con `result_json` que contiene `"alreadyBooked":false` (el resultado lo serializa
+`AgentToolJson`, sin espacios).
 
 ## 10. Historial y auditoría (D-8)
 
-- **Cita creada por el agente:** `Source = Channel`, `ConversationId`, historial `Created` con actor nulo → la tarjeta
-  del frontend ya pinta «Cliente por WhatsApp» (`appointment-history.tsx`: sólo `Created` y `Cancelled` de una cita
-  `Channel` con actor nulo).
-- **Cancelación por el agente de una cita `Channel`:** actor nulo → «Cliente por WhatsApp». Bien.
-- **Lo que no queda bien con el código de hoy:** (a) un **cambio de hora** por el agente sale con actor nulo y el frontend lo
-  pinta «Sistema»; (b) cancelar o cambiar la hora de una cita que nació en **back office** (`Source = BackOffice`) también
-  sale «Sistema», porque la regla del frontend mira el origen de la cita, no el del evento. Ver P-4.
+- **Cita creada por el agente:** `Source = Channel`, `ConversationId`, historial `Created` con actor nulo y
+  `byChannel: true`.
+- **Cancelación o cambio de hora por el agente:** actor nulo y `byChannel: true`, también sobre una cita que nació en back
+  office.
+- **Por qué la columna (D-17):** hoy el frontend deduce «Cliente por WhatsApp» del origen de la cita y sólo para `Created`
+  y `Cancelled` (`appointment-history.tsx`); un cambio de hora por chat, o cualquier cambio por chat sobre una cita de back
+  office, salía «Sistema». Con `byChannel` lo dice el evento. Las filas viejas quedan en `false`; las escrituras por HTTP
+  (back office, y las que declaran `source: Channel`) y las del recordatorio nunca la ponen.
 - **Auditoría:** `AuditActorType.AiAgent`, actor = id del agente, acciones `scheduling.appointment.created|cancelled|
   rescheduled`, `source = "scheduling"`, campos cambiados por nombre (nunca valores). En la misma transacción del cambio,
   como hoy.
 
 ## 11. Pruebas (TDD, RED antes que GREEN, con el presupuesto del workspace)
 
-Bloques de implementación sugeridos (cada tarea con su commit, una revisión por bloque):
+Bloques de implementación (cada tarea con su commit, una revisión por bloque; el detalle está en el plan):
 
-1. **Scheduling, extracción (refactor sin cambio de comportamiento).** RED: no aplica a lo que se mueve; la red son
+1. **Scheduling.** (a) Extracción (refactor sin cambio de comportamiento): RED no aplica a lo que se mueve; la red son
    `SchedulingBookingApiTests`, `SchedulingAvailabilityApiTests`, `SchedulingAppointmentTransitionsApiTests` y
-   `SchedulingAuditApiTests`, corridas **una vez al final del bloque**, por clase, con `-- xUnit.MaxParallelThreads=4`.
-2. **Scheduling, servicio del agente.** RED por compilación (`IChannelScheduling` no existe). Integración nueva
-   `SchedulingChannelServiceTests` (harness de `SchedulingApiHarness`), iterando con
-   `--filter "FullyQualifiedName~<Prueba>"`: nace `Pending`/`Confirmed` según el modo con `Source = Channel` y
-   `ConversationId`; la misma llave en paralelo da una sola cita; sin `bookableByChannel` es `outside_rules`; la auditoría
-   lleva `AiAgent` y el id del agente; la cita de otro cliente es `not_found`; el plazo bloquea la cancelación; repetir la
-   cancelación es `alreadyDone`; `allowClientChoice` (si P-3); `ListUpcomingByCustomerAsync` no trae canceladas ni pasadas;
+   `SchedulingAuditApiTests`, corridas **una vez al final del bloque**. (b) `by_channel` (D-17): unitarias de dominio en
+   `AppointmentTests` (`Create`/`Cancel`/`Reschedule` con y sin `byChannel`; el recordatorio siempre `false`) y una de API
+   que comprueba `history[].byChannel == false` en una escritura de back office. (c) Remitente por defecto (D-18):
+   `SchedulingSettingsTests` (se guarda con el recordatorio apagado), `SchedulingSettingsApiTests` (ida y vuelta con el
+   nombre resuelto, el nombre de un miembro suspendido se sigue devolviendo, 422 con el campo para uno inactivo, de otro
+   tenant o inexistente, `null` lo borra) y `AppointmentReminderWorkerTests` (sin miembro del recurso ni actor sale con el
+   remitente por defecto; el del recurso le gana; uno suspendido sigue en `no_sender_member`). (d) Servicio del agente: RED
+   por compilación (`IChannelScheduling` no existe); integración nueva `SchedulingChannelServiceTests` (harness de
+   `SchedulingApiHarness`), iterando con `--filter "FullyQualifiedName~<Prueba>"`: nace `Pending`/`Confirmed` según el modo
+   con `Source = Channel`, `ConversationId` y `byChannel`; la misma llave en paralelo da una sola cita y las dos respuestas la
+   describen; sin `bookableByChannel` es `outside_rules`; la auditoría lleva `AiAgent` y el id del agente; la cita de otro
+   cliente es `not_found`; el plazo bloquea la cancelación y el cambio de hora; mover una cita de un servicio sin
+   `bookableByChannel` es `invalid_transition`; repetir la cancelación o el cambio a la misma hora es `alreadyDone`;
+   `allowClientChoice` en la reserva y en la búsqueda; `ListUpcomingByCustomerAsync` no trae canceladas ni pasadas;
    módulo apagado.
-3. **Ai.** Unitarias (`Modules.Ai.UnitTests`, sin contenedores): validación de argumentos de las seis; `IsOfferedTo` real
-   y simulada; `Writes` incluye las tres; llave `ai:{jobId}:book:{n}` (dos reservas del mismo trabajo, trabajo retomado);
-   traspaso por `appointment_change_blocked` y por cliente; simuladas que no llaman al puerto de escritura; `AgentTools` sin
-   la clave se lee `false`; `AgentConfigValidatorTests` con los dos códigos; `AgentExportTests`; `AgentPromptBuilderTests`
-   (la sección sólo con la herramienta, el `system` idéntico entre llamadas); conteo de herramientas y uniones `strict`
-   dentro de los topes de Anthropic.
-4. **Bootstrapper.** `Bootstrapper.UnitTests`: `AiSchedulingTests` (traducción de cada fila de §8, cliente releído por
-   conversación, prueba sin conversación usa el cliente de la prueba) y `HandoffCauseKindParityTests` con los dos códigos
-   nuevos. `ArchitectureTests`: `AiLayerTests` y `SchedulingLayerTests` sin cambios de reglas (deben seguir verdes).
+2. **Ai y Bootstrapper.** Unitarias (`Modules.Ai.UnitTests`, sin contenedores): validación de argumentos de las seis;
+   `IsOfferedTo` real y simulada; `Writes` incluye las tres; llave `ai:{jobId:N}:book:{n}` (dos reservas del mismo trabajo,
+   trabajo retomado, una llamada fallida no consume número); traspaso por `appointment_change_blocked` y por cliente;
+   simuladas que no llaman al puerto de escritura; `AgentTools` sin la clave se lee `false`; `AgentConfigValidatorTests`
+   con los dos códigos; `AgentExportTests`; `AgentPromptBuilderTests` (la sección sólo con la herramienta, el `system`
+   idéntico entre llamadas); conteo de herramientas y uniones `strict` dentro de los topes de Anthropic.
+   `Bootstrapper.UnitTests`: `AiSchedulingTests` (traducción de cada fila de §8, cliente releído por conversación, prueba
+   sin conversación usa el cliente de la prueba) y `HandoffCauseKindParityTests` con los dos códigos nuevos.
+   `Modules.Ai.IntegrationTests`: `AgentActivityApiTests` cuenta las reservas de hoy sin las repetidas.
+   `ArchitectureTests`: `AiLayerTests` y `SchedulingLayerTests` sin cambios de reglas (deben seguir verdes).
 
-Antes de mergear a `develop`: la suite de los proyectos tocados (`Modules.Scheduling.*`, `Modules.Ai.UnitTests`,
-`Modules.Ai.IntegrationTests` sólo si se tocó persistencia de Ai, `Bootstrapper.UnitTests`, `ArchitectureTests`), uno a la
-vez, mirando antes que no haya otro `testhost` corriendo. No se corre el eval sin presupuesto del owner.
+Antes de mergear a `develop`: la suite de los proyectos tocados (`Modules.Scheduling.UnitTests`,
+`Modules.Scheduling.IntegrationTests`, `Modules.Ai.UnitTests`, `Modules.Ai.IntegrationTests`, `Bootstrapper.UnitTests`,
+`ArchitectureTests`, y `Modules.Messaging.IntegrationTests` y `Modules.Customers.IntegrationTests` por el resolvedor que se
+reusa), uno a la vez, mirando antes que no haya otro `testhost` corriendo. No se corre el eval sin presupuesto del owner.
 
 ## 12. Despliegue
 
-- **Sin migraciones** salvo que P-4 elija la columna nueva del historial (expand: `ADD COLUMN … DEFAULT false`, compatible).
+- **Una migración de Scheduling, sólo expand** (`AddAppointmentEventByChannelAndReminderSender`):
+  `appointment_events.by_channel boolean NOT NULL DEFAULT false` (D-17) y `settings.reminder_sender_member_id uuid NULL`
+  (D-18). Pods viejos durante el rollout: no conocen las columnas; un evento que escriben toma el `DEFAULT false` (correcto:
+  no son escrituras del agente) y la fila de reglas que guardan conserva el remitente porque EF sólo actualiza las columnas
+  que conoce. No hay contract: nada se borra ni se renombra.
 - **Orden:** backend primero. Hasta que el frontend muestre el interruptor nadie lo prende, así que el backend nuevo no
-  cambia nada en producción.
-- **Riesgo de frontend viejo:** una pestaña vieja del editor que guarde el borrador manda `tools` sin `scheduling` y lo
-  apaga sin aviso (el `PUT` reemplaza el documento). Mitigación: el frontend del interruptor se despliega antes de
-  anunciar la función; no hace falta contrato expand/contract en el backend.
-- **Rollback:** revertir el código. Un `config` con `"scheduling": true` lo ignora el código viejo (propiedad desconocida,
-  `JsonSerializerDefaults.Web` no la rechaza). Las citas creadas por el agente quedan como citas de canal normales.
-- **Códigos de traspaso nuevos:** se guardan en el evento del hilo por la limpieza de `ConversationAutomation`; el
-  frontend necesita su texto (§13), si no muestra el código crudo.
+  cambia nada en producción. El campo `byChannel` y el remitente aparecen en las respuestas desde el primer pod nuevo; un
+  frontend viejo los ignora.
+- **Riesgo de frontend viejo (dos casos, misma mitigación):** (a) una pestaña vieja del editor de agentes que guarde el
+  borrador manda `tools` sin `scheduling` y lo apaga (el `PUT` reemplaza el documento); (b) una pestaña vieja de las
+  reglas de la Agenda que guarde manda `SettingsRequest` sin `reminderSenderMemberId` y lo borra (un `Guid?` ausente se lee
+  `null`). Mitigación: el frontend se despliega antes de anunciar las funciones; no hace falta contrato expand/contract en
+  el backend.
+- **Rollback:** revertir el código; las columnas quedan (expand). Un `config` con `"scheduling": true` lo ignora el código
+  viejo (propiedad desconocida, `JsonSerializerDefaults.Web` no la rechaza). Las citas creadas por el agente quedan como
+  citas de canal normales.
+- **Códigos de traspaso nuevos:** se guardan en el evento del hilo por la limpieza de `AutomationHandoff`; el frontend
+  necesita su texto (§14), si no muestra el código crudo.
+- **`docs/estado.md`** se actualiza en `develop` al mergear, no en la rama.
 
-## 13. Preguntas abiertas para el owner
+## 13. Preguntas cerradas
 
-- **P-1. Llave de idempotencia (D-4).** «Trabajo + id de la llamada» duplica la cita cuando un trabajo se retoma (el id de
-  la llamada cambia; es el hallazgo 1 de la revisión final de agentes, D-A16). **Recomendación:** `ai:{jobId}:book:{n}`,
-  `n` el ordinal de la reserva dentro del trabajo (§7.3).
-- **P-2. Plazo del cliente al cambiar la hora.** El código sólo aplica `clientCancelCutoffHours` a la cancelación; mover una
-  cita de mañana a la semana que viene libera el cupo de mañana igual que cancelarla. **Recomendación:** el cambio de hora
-  por el agente respeta el mismo plazo (`byClient: true` en `AppointmentRescheduling`) y, si bloquea, traspasa con
-  `appointment_change_blocked`; también exigir `bookableByChannel` del servicio de la cita para moverla por chat.
-- **P-3. `allowClientChoice` (D-11).** El plan dejó la bandera sin aplicar (corrección 17). **Recomendación:** aplicarla
-  sólo en el camino del agente, con el código `scheduling.appointment.resource_not_choosable`; el back office sigue igual.
-- **P-4. «Cliente por WhatsApp» en el historial (D-8).** Hoy el frontend lo deduce de `appointment.source` y sólo para
-  `Created` y `Cancelled`; un cambio de hora por chat y cualquier cambio por chat sobre una cita de back office se pintan
-  «Sistema». **Recomendación:** columna `appointment_events.by_channel` (expand, `false` por defecto) expuesta como
-  `AppointmentEventDto.ByChannel`, y el frontend pinta «Cliente por WhatsApp» con ella en vez de deducirlo.
-- **P-5. Recordatorio de citas del agente.** Una cita de canal confirmada sobre un recurso sin miembro vinculado nunca se
-  recuerda (`no_sender_member`, plan corrección 34, decisión pendiente desde el 2026-11-22). Con el agente estas citas
-  serán las más comunes. **Recomendación:** resolver primero `reminderSenderMemberId` en las reglas de la Agenda.
-- **P-6. A quién va el traspaso de `appointment_change_blocked`.** El spec usa el destino configurado del agente.
-  Alternativa: el miembro vinculado al recurso de la cita, si está activo y puede responder conversaciones (como P-4b manda
-  el borrador a su asesora). **Recomendación:** destino configurado, por simple; cambiarlo si la secretaria es quien debe
-  verlo.
+El owner las cerró el 2026-11-23: P-1 → D-14, P-2 → D-15, P-3 → D-16, P-4 → D-17, P-5 → D-18 (con el alcance ampliado
+al remitente por defecto y su nombre en `SettingsDto`), P-6 → D-19. No queda ninguna abierta.
 
 ## 14. Contrato para el frontend
 
@@ -550,5 +601,29 @@ spec del frontend.
 
 **Actividad del día:** `AgentTodayDto.appointments` (entero; ausente ⇒ backend viejo, no mostrar).
 
-**Cita** (pantallas de la Agenda): una cita del agente llega con `source: "Channel"` y `conversationId` con valor; si P-4
-se acepta, `history[].byChannel`.
+**Cita** (pantallas de la Agenda): una cita del agente llega con `source: "Channel"` y `conversationId` con valor. Cada
+entrada del historial trae `byChannel` (D-17):
+
+```json
+{ "history": [ { "action": "Rescheduled", "at": "2026-11-23T14:05:00+00:00", "actorName": null, "detail": null,
+                 "byChannel": true } ] }
+```
+
+`byChannel: true` ⇒ «Cliente por WhatsApp» (también para `Rescheduled` y sobre una cita de back office). Ausente ⇒
+backend viejo: seguir deduciendo como hoy.
+
+**Reglas de la Agenda** (`GET` y `PUT /api/v1/tenants/{tenantId}/scheduling/settings`, D-18):
+
+```json
+{ "reminderEnabled": true, "reminderConnectionId": "…", "reminderSenderMemberId": "3c1f…",
+  "reminderSenderMemberName": "Laura Gómez", "version": 7 }
+```
+
+- `SettingsDto.reminderSenderMemberId` (`string|null`): la membresía que firma el recordatorio cuando la cita no tiene
+  miembro del recurso ni actor activo. `SettingsDto.reminderSenderMemberName` (`string|null`): su nombre ya resuelto;
+  `null` sin remitente. Se devuelve aunque el miembro esté suspendido.
+- `SettingsRequest.reminderSenderMemberId` (`string|null`): se manda **siempre** (ausente se lee `null` y lo borra). El
+  nombre no se manda.
+- 422 `validation.failed` con `errors.reminderSenderMemberId` si el miembro no existe en el tenant o no está activo.
+- Se puede guardar con el recordatorio apagado.
+- Ausente en el `GET` ⇒ backend viejo: no mostrar el campo.
