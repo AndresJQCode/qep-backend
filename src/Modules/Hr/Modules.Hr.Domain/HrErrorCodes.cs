@@ -63,6 +63,36 @@ public static class HrErrorCodes
     public const string ImportTooManyRows = "hr.import.too_many_rows";
     public const string ImportRowsInvalid = "hr.import.rows_invalid";
 
+    // Consola de parámetros legales del operador (spec 2026-11-22). `in_use` es 409 y `key_unknown` es 404, pero NO están en
+    // `Conflicts`: salen como ResourceConflictException y ResourceNotFoundException directamente. El resto es 422.
+    public const string LegalParameterInUse = "hr.legal_parameter.in_use";
+    public const string LegalParameterValueInvalid = "hr.legal_parameter.value_invalid";
+    public const string LegalParameterDateInvalid = "hr.legal_parameter.date_invalid";
+    public const string LegalParameterLastRow = "hr.legal_parameter.last_row";
+    public const string LegalParameterKeyUnknown = "hr.legal_parameter.key_unknown";
+
+    // 422, carga de parámetros legales por Excel: errores de archivo, el aviso de la vista previa y los errores por fila.
+    public const string LegalParameterImportFileRequired = "hr.legal_parameter.import.file_required";
+    public const string LegalParameterImportExtensionInvalid = "hr.legal_parameter.import.extension_invalid";
+    public const string LegalParameterImportTooLarge = "hr.legal_parameter.import.too_large";
+    public const string LegalParameterImportUnreadable = "hr.legal_parameter.import.unreadable";
+    public const string LegalParameterImportHeaderMismatch = "hr.legal_parameter.import.header_mismatch";
+    public const string LegalParameterImportEmpty = "hr.legal_parameter.import.empty";
+    public const string LegalParameterImportTooManyRows = "hr.legal_parameter.import.too_many_rows";
+    public const string LegalParameterImportRowsInvalid = "hr.legal_parameter.import.rows_invalid";
+    public const string LegalParameterImportNextYearMissing = "hr.legal_parameter.import.next_year_missing";
+
+    /// <summary>Los códigos de fila de la carga por Excel de parámetros legales: viajan en el análisis, nunca como excepción.</summary>
+    public static class LegalParameterImportRow
+    {
+        public const string KeyUnknown = "hr.legal_parameter.import.row.key_unknown";
+        public const string DateInvalid = "hr.legal_parameter.import.row.date_invalid";
+        public const string ValueInvalid = "hr.legal_parameter.import.row.value_invalid";
+        public const string BracketsInvalid = "hr.legal_parameter.import.row.brackets_invalid";
+        public const string Duplicated = "hr.legal_parameter.import.row.duplicated";
+        public const string InUse = "hr.legal_parameter.import.row.in_use";
+    }
+
     /// <summary>
     /// Los códigos de fila de la importación (<c>hr.import.row.*</c>): errores por fila y el aviso <c>below_minimum</c>. Viajan en
     /// <c>EmployeeImportRowIssueDto</c>, nunca como excepción.
