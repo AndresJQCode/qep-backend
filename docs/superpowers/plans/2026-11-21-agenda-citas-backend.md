@@ -244,6 +244,43 @@ Tarea 12 (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suit
     (integración, contra una base migrada), `SchedulingReminderSenderTests` y `SchedulingReminderRecipientsTests` (Bootstrapper) y
     `TheContainerValidatesAndBuildsTheSchedulingReminderWorker` (arquitectura). Los nombres del plan son los de `AppointmentReminderWorkerTests`.
 
+Revisión final de la rama (2026-11-22; ninguna de sus pruebas se corrió: el owner corre las suites al final):
+
+41. **Crear un bloqueo y archivar un recurso o un servicio toman el candado de reserva.** Comprobaban «¿hay citas vigentes?» sin transacción ni
+    `FOR UPDATE`, así que una reserva podía colarse entre la comprobación y la escritura. Ahora corren en `BeginTransactionAsync` y toman
+    `LockResourcesAsync` (en orden de id, como la reserva) **antes** de comprobar: el bloqueo de un recurso, el de ese recurso; el de una sede sin
+    recurso, **todos** los recursos de la sede (archivados incluidos: sus citas siguen contando); archivar un recurso, ese recurso; archivar un
+    servicio, **todos los recursos del tenant**, porque un servicio se ofrece por franjas que nombran recursos y una franja puede editarse para
+    ofrecerlo en otro mientras corre el archivo (es poco frecuente y un tenant tiene pocos recursos). Reservar y reprogramar **releen** franjas,
+    bloqueos y recursos archivados *después* de tomar el candado (`AvailabilityLoader.LoadForStartAsync` otra vez): sin eso, un bloqueo confirmado
+    mientras la reserva calculaba sus candidatas no se veía. Pruebas de carrera escritas (no corridas): bloqueo vs reserva (6 horas a la vez),
+    archivar recurso vs reservar, y borrar cliente vs reservar.
+42. **Archivar algo ya archivado no audita ni recorre franjas.** Sedes, recursos, servicios y franjas devuelven la entidad tal cual (misma versión,
+    misma respuesta 200) sin fila de auditoría. Además, reactivar una sesión publicada audita siempre `isActive` (la entrada ya no queda vacía cuando
+    no cambió el fin ni el cupo). `UpdateResource` y `UpdateSettings` **no** cambian: allí la lista vacía significa «no cambió nada».
+43. **El guardado de citas toma `CustomerReferenceLock`.** `SchedulingUnitOfWork.SaveChangesAsync` pasa por `CustomerReferenceWrites.SaveHoldingAsync`
+    (calco de Support) con `CustomerReferenceSource(typeof(Appointment), nameof(Appointment.CustomerId), "customerId")`. La Agenda no tiene un código
+    `not_found` de cliente (el contrato no lo nombra): el cliente que el borrado se llevó en la carrera responde el mismo 422 `validation.failed` con
+    `errors.customerId` que la reserva da por un cliente inexistente. La reserva ya corre en READ COMMITTED dentro de su transacción. Sólo las citas
+    **nuevas** o con `CustomerId` modificado toman el candado: el recordatorio y las transiciones no lo piden.
+44. **El barredor de recordatorios no se atasca con tenants apagados.** El lote era `LIMIT 50 ORDER BY starts_at` de todos los tenants y las filas de
+    uno sin `scheduling` o `messaging` se saltaban sin reclamarse: volvían a ocupar el lote en cada pasada. Ahora `ListDueAsync` consulta los módulos
+    de cada tenant del lote y, si alguno está apagado, vuelve a leer el lote **excluyéndolo** en la consulta (`tenant_id <> ALL(...)`); cada vuelta
+    excluye al menos un tenant más, así que termina. Lo apagado sigue sin reclamarse. Un tenant cuyos módulos no se pueden leer se deja fuera de esa pasada.
+45. **El último intento ya no queda en limbo ni mal registrado.** Si el envío salió y guardar falla en el intento 3 (excepción o
+    `DbUpdateConcurrencyException`), la pasada relee la cita en un ámbito nuevo y repite la evaluación una vez (la llave de idempotencia hace que
+    Mensajería devuelva el mismo mensaje); si eso también falla, un mensaje que sí salió se marca con un `UPDATE` de `reminder_sent_at` (sin línea de
+    historial) y uno que no salió se omite con `send_failed:unexpected_error`. Antes, un envío entregado quedaba como `unexpected_error`, y un conflicto
+    de concurrencia en el intento 3 dejaba la cita con `attempts=3` sin marca ni motivo para siempre.
+46. **Anotar el recordatorio no sube `version`.** `RecordReminderSent` y `RecordReminderSkipped` usan `touch: false`: son escrituras del sistema y una
+    pestaña abierta con la cita no debe recibir un 412 por ellas. La línea de historial se conserva.
+47. **`reminder_template_id` queda informativo.** Se exige al prender el recordatorio (422 `template_missing`) y se guarda, pero el barredor ya no lo pide
+    en la consulta ni lo usa: el envío usa la plantilla aprobada de la conexión (corrección 37). `ReminderMessage.TemplateId` pasó a `Guid?`.
+48. **Pruebas añadidas sin correr.** `AStartedAppointmentIsMarkedAttendedWithItsTrail` y `…NoShowWithItsTrail` (estado, historial, auditoría y `version + 1`
+    sobre una cita sembrada en el pasado), archivar dos veces una sede, recurso, servicio y franja (misma versión, una sola fila de auditoría), los campos
+    auditados al reactivar una sesión, y la prueba de la misma `clientRequestId` en paralelo ahora exige cinco 201 con un solo id. Sin migraciones nuevas
+    (por eso tampoco hubo que usar `dotnet-ef`; el aviso 10.0.11 vs 10.0.13 de la corrección 20 sigue en pie).
+
 ## Global Constraints
 
 - **Rama.** El trabajo va en la rama de la sesión, `claude/trusting-archimedes-uk0ksk` (la que asigna el entorno; el `develop` local está
