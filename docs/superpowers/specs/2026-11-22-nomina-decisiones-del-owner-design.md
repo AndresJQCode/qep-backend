@@ -99,9 +99,10 @@ exonera; DIAN, Concepto 007196/2025).
 compuestos) y las horas propias son `OvertimeInput`, que van a `OT_m` y **nunca** entran en esa base. Una comisión o cualquier
 ingreso salarial capturado o recurrente (`SI_m`) sí cuenta, con la base `SalaryAndSalaryIncome`. Se agrega una prueba que lo fija.
 
-**Decisión del implementador.** La base del tope sigue siendo la de la configuración de la empresa. Con `SalaryOnly` (el valor
-por defecto, `CompanyPayrollSettings.DefaultsFor`) una comisión **no** cuenta; la decisión del owner se cumple tal cual con
-`SalaryAndSalaryIncome`. No se fuerza la base: ver «Pendiente del owner».
+**Decisión del owner (2026-11-22, opción A).** La base del tope sigue siendo la de la configuración de la empresa, pero el valor
+por defecto (`CompanyPayrollSettings.DefaultsFor`) pasa de `SalaryOnly` a `SalaryAndSalaryIncome`: así una comisión cuenta sin
+que nadie toque la configuración. `SalaryOnly` se conserva como opción: pagar el auxilio en más casos favorece al trabajador y no
+viola la ley. No hay empresas en producción, así que nada guardado cambia.
 
 **Decisión del implementador: el aviso va en la nota de la línea, no en un indicador nuevo.** El motor ya modela avisos de dos
 formas: indicadores del resultado (`EmployeeLiquidation.FinalSettlementPending`, `NegativeNet`, que son columnas de
@@ -317,11 +318,8 @@ El frontend tendrá su propio plan.
 Rutas, permisos, DTOs, códigos de error, `ApiExceptionHandler`, esquema y migraciones de Payroll y de Hr, la siembra de valores
 legales, la importación por Excel, el Excel «Resumen de nómina» y el rendimiento de las listas.
 
-## Pendiente del owner
+## Resuelto con el owner (2026-11-22)
 
-1. **Base del tope del auxilio por defecto.** La decisión 2 dice que una comisión salarial cuenta para el tope. Eso pasa con la
-   base `SalaryAndSalaryIncome`; con `SalaryOnly`, que es la opción por defecto de toda empresa (`CompanyPayrollSettings.DefaultsFor`),
-   sólo cuenta el salario. ¿Se mantiene `SalaryOnly` como valor por defecto y como opción, o el valor por defecto pasa a
-   `SalaryAndSalaryIncome`?
-2. **Aviso de año faltante para los tramos del FSP.** El spec de parámetros legales deja los tramos sin `nextYearMissing` ni
-   `currentYearMissing` porque no eran anuales; con la decisión 6 lo son. ¿El aviso cubre también el conjunto `SolidarityFund`?
+1. **Base del tope del auxilio por defecto:** opción A, `SalaryAndSalaryIncome` por defecto y `SalaryOnly` como opción (Tarea B5b).
+2. **Aviso de año faltante para los tramos del FSP:** sí lo cubre, con la misma regla que las claves (decisión de la sesión,
+   por coherencia con la decisión 6). Se implementa en el spec de parámetros legales, no en este cambio.

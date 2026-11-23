@@ -974,6 +974,20 @@ tocadas (`PayrollInputsApiTests`, `PayrollSettingsApiTests`) corren una vez al f
   `AnInactiveCompanyWithSavedSettingsIsListed` y `AnInactiveCompanyWithPeriodsIsListed`.
 - [ ] **Step 6: Commit** — `fix(payroll): keep an inactive company's payroll settings read-only`
 
+### Task B5b: El tope del auxilio cuenta los ingresos salariales por defecto (decisión 2, owner 2026-11-22: opción A)
+
+**Files:** `src/Modules/Payroll/Modules.Payroll.Domain/CompanyPayrollSettings.cs` (`DefaultsFor`), su prueba unitaria.
+
+`SalaryOnly` se conserva como opción (pagar el auxilio en más casos favorece al trabajador). Sólo cambia el valor por defecto.
+
+- [ ] **Step 1: RED.** Prueba unitaria `DefaultsCountSalaryIncomeTowardTheTransportCap` (en el archivo de pruebas del dominio de
+  settings que exista; si no hay, `tests/Modules/Payroll/Modules.Payroll.UnitTests/CompanyPayrollSettingsTests.cs`):
+  `CompanyPayrollSettings.DefaultsFor().TransportCapBase` es `TransportCapBase.SalaryAndSalaryIncome`. Run filtrado. Expected: falla.
+- [ ] **Step 2: GREEN.** `DefaultsFor()` → `new(TransportFrequency.Biweekly, TransportCapBase.SalaryAndSalaryIncome, OvertimeBase.SalaryOnly, Exonerated: true)`.
+  Run la unitaria de Payroll completa (no integración): las goldens fijan sus propios settings en `EngineTestData.cs:87` y no
+  cambian. Si alguna integración de settings lee el valor por defecto (`GetPayrollSettings`), correrla filtrada por nombre.
+- [ ] **Step 3: Commit** — `fix(payroll): count salary income toward the transport cap by default`
+
 ### Task B6: Verificación final
 
 **Files:** ninguno nuevo; sólo lo que la verificación obligue a corregir.
