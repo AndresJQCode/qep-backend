@@ -83,4 +83,19 @@ public sealed class TaskNoticeEscalationTests
         Assert.Equal(TaskNoticeEscalationStatus.Email, row.Status);
         Assert.Equal(Now, row.CompletedAt);
     }
+
+    [Fact]
+    public void FailEndsTheRowWithItsReason()
+    {
+        var row = NewRow();
+        row.Claim(Now.AddMinutes(2));
+
+        row.Fail(TaskNoticeSkipReasons.AttemptsExhausted, Now);
+
+        Assert.Equal(TaskNoticeEscalationStatus.Failed, row.Status);
+        Assert.Equal(TaskNoticeSkipReasons.AttemptsExhausted, row.SkipReason);
+        Assert.Null(row.ClaimedUntil);
+        Assert.Equal(Now, row.CompletedAt);
+        Assert.Throws<InvalidOperationException>(() => row.Fail("again", Now));
+    }
 }

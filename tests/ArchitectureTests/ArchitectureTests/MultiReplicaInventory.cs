@@ -124,6 +124,8 @@ public static class MultiReplicaInventory
             "Modules/Ai/Modules.Ai.Infrastructure/Persistence/AiRunPersistence.cs:64-75 — FOR UPDATE SKIP LOCKED y lease_until (LeaseMinutes, mayor que el tope de 120 s del trabajo)"),
         // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.TaskNotices.TaskNoticeEscalationWorker", WorkerClassification.Claimed,
+            "Modules/Notifications/Modules.Notifications.Infrastructure/TaskNotices/TaskNoticeEscalationProcessor.cs:89-92 — FOR UPDATE SKIP LOCKED + claimed_until de 2 min; el WhatsApp es idempotente por ClientId (el id de la escalada)"),
 
         // --- AdvisoryLock. ---
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyTokenRefreshWorker", WorkerClassification.AdvisoryLock,

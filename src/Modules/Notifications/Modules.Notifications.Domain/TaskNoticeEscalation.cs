@@ -104,6 +104,18 @@ public sealed class TaskNoticeEscalation
         CompletedAt = now;
     }
 
+    /// <summary>The row cannot be worked any more (for example, it was claimed too many times without finishing); <paramref name="reason"/>
+    /// goes to <c>skip_reason</c> so the cause is still readable next to the <c>Failed</c> status.</summary>
+    public void Fail(string reason, DateTimeOffset now)
+    {
+        EnsurePending();
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        Status = TaskNoticeEscalationStatus.Failed;
+        SkipReason = reason;
+        ClaimedUntil = null;
+        CompletedAt = now;
+    }
+
     public void RecordAttempt(string channel, string result, DateTimeOffset at)
     {
         EnsurePending();

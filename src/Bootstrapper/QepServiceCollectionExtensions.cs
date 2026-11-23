@@ -2053,6 +2053,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Notifications.Application.IInAppNotificationNames, InAppNotificationNames>();
         // Spec 2026-11-22 D-1: the task notice worker asks whether the member has QEP open (the app hub's presence).
         services.AddScoped<Modules.Notifications.Application.ITaskNoticePresence, TaskNoticePresence>();
+        // Task-notices spec 2026-11-22 §5.4: the escalation reads the ticket (Support), the recipient (Tenancy, HR, Identity) and sends
+        // the WhatsApp template (Messaging) only through these narrow ports.
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeState, TaskNoticeState>();
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeRecipients, TaskNoticeRecipients>();
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeWhatsApp, TaskNoticeWhatsAppSender>();
         services.AddScoped<
             IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
             Modules.Notifications.Application.ListInAppNotificationsHandler>();
