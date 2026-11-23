@@ -162,6 +162,20 @@ public sealed class TransportAllowanceRuleTests
         Assert.Equal("Se paga en la segunda quincena", transport.Line.Trace.Note);
     }
 
+    // Monthly pays in the last half worked: with the contract ending on the 10th there is no second half for this employee.
+    [Fact]
+    public void MonthlyPaysWhatItAccruedWhenTheContractEndsInTheFirstHalf()
+    {
+        var input = EngineTestData.Input(FirstHalf) with { ContractEndedOn = new DateOnly(2026, 11, 10) };
+        input = input with { Settings = input.Settings with { TransportFrequency = TransportFrequency.Monthly } };
+
+        var transport = EngineTestData.Earnings(input).Transport;
+
+        // 249 095 / 30 x 10 = 83 031.67 -> 83 032
+        Assert.Equal(83_032m, transport.Line.Amount);
+        Assert.Equal("El contrato termina en esta quincena: se paga lo causado del mes", transport.Line.Trace.Note);
+    }
+
     [Fact]
     public void MonthlyPaysTheWholeMonthInTheSecond()
     {

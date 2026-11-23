@@ -45,9 +45,16 @@ public static class TransportAllowanceRule
 
         // Monthly pays in the second half but accumulates the first half's raw too, so a mid-month switch of the frequency neither
         // pays the first half twice nor drops it: both frequencies settle as round(accumulated raw) - what was already paid.
+        // Monthly pays in the last half worked: the second, or the first when the contract ends inside it (decision 3).
         if (input.Settings.TransportFrequency == TransportFrequency.Monthly && input.Period.Half == PayrollHalf.First)
         {
-            return new TransportOutcome(Line(0m, "Se paga en la segunda quincena"), raw);
+            if (!worked.FinalSettlementPending)
+            {
+                return new TransportOutcome(Line(0m, "Se paga en la segunda quincena"), raw);
+            }
+
+            var settled = Math.Max(0m, PayrollRounding.ToPeso(input.Prior.TransportRaw + raw) - paidBefore);
+            return new TransportOutcome(Line(settled, "El contrato termina en esta quincena: se paga lo causado del mes"), raw);
         }
 
         var amount = Math.Max(0m, PayrollRounding.ToPeso(input.Prior.TransportRaw + raw) - paidBefore);
