@@ -27,6 +27,7 @@ public static class HrEndpoints
         MapFiles(group);
         MapEmployees(group);
         MapContracts(group);
+        group.MapMedicalExams();
 
         return endpoints;
     }

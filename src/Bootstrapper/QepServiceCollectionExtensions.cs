@@ -536,6 +536,24 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.MedicalExams.SetPositionExamFrequencyCommand, Modules.Hr.Application.PositionDto>,
             Modules.Hr.Application.MedicalExams.SetPositionExamFrequencyHandler>();
+        // Exámenes médicos (spec 2026-11-23): lo que comparten las lecturas y escrituras, y un handler por ruta.
+        services.AddScoped<Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsComposer>();
+        services.AddScoped<Modules.Hr.Application.MedicalExams.MedicalExamWrites>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.MedicalExams.GetEmployeeMedicalExamsQuery, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.GetEmployeeMedicalExamsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.RecordMedicalExamCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.RecordMedicalExamHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.UpdateMedicalExamCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.UpdateMedicalExamHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.DeleteMedicalExamCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.DeleteMedicalExamHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.MarkExitNotAttendedCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.MarkExitNotAttendedHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.ArchiveSettingCommand, object>,
             Modules.Hr.Application.ArchiveSettingHandler>();

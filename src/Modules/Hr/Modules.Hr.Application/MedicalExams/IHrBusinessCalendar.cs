@@ -11,4 +11,11 @@ public interface IHrBusinessCalendar
     /// holidays when the tenant regional country is <c>CO</c>.
     /// </summary>
     Task<DateOnly> AddBusinessDaysAsync(Guid tenantId, DateOnly from, int days, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The business days strictly after <paramref name="from"/> up to and including <paramref name="through"/>, by the same calendar as
+    /// <see cref="AddBusinessDaysAsync"/>; 0 when <paramref name="through"/> is not after <paramref name="from"/>. It is what
+    /// <c>businessDaysLeft</c> counts, so the screen never counts days in the browser.
+    /// </summary>
+    Task<int> CountBusinessDaysAsync(Guid tenantId, DateOnly from, DateOnly through, CancellationToken cancellationToken);
 }

@@ -34,6 +34,25 @@ public sealed class HrBusinessCalendarSourceTests
     }
 
     [Fact]
+    public async Task CountBusinessDaysCountsAfterTheStartUpToAndIncludingTheEnd()
+    {
+        var tenant = Guid.CreateVersion7();
+        var colombia = new HrBusinessCalendarSource(new Directory("CO"));
+        var unitedStates = new HrBusinessCalendarSource(new Directory("US"));
+        var monday = new DateOnly(2026, 11, 23);
+
+        // Friday 11-13 to Tuesday 11-17: Monday 11-16 is a Colombian holiday, so Colombia counts only the Tuesday.
+        Assert.Equal(1, await colombia.CountBusinessDaysAsync(tenant, Friday, new DateOnly(2026, 11, 17), CancellationToken.None));
+        Assert.Equal(2, await unitedStates.CountBusinessDaysAsync(tenant, Friday, new DateOnly(2026, 11, 17), CancellationToken.None));
+        // The same day, and an end before the start, have nothing left.
+        Assert.Equal(0, await colombia.CountBusinessDaysAsync(tenant, monday, monday, CancellationToken.None));
+        Assert.Equal(0, await colombia.CountBusinessDaysAsync(tenant, monday, Friday, CancellationToken.None));
+        // Round trip with AddBusinessDays.
+        var due = await colombia.AddBusinessDaysAsync(tenant, Friday, 5, CancellationToken.None);
+        Assert.Equal(5, await colombia.CountBusinessDaysAsync(tenant, Friday, due, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task AddBusinessDaysFailsForATenantWithoutRegionalSettings()
     {
         var calendar = new HrBusinessCalendarSource(new Directory(null));

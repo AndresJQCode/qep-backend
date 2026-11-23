@@ -8,5 +8,16 @@ namespace Modules.Hr.Application.MedicalExams;
 /// </summary>
 public interface IMedicalExamRepository
 {
+    /// <summary>All the exams of the employee, tracked, in no particular order.</summary>
+    Task<IReadOnlyList<MedicalExam>> ListExamsAsync(Guid tenantId, EmployeeId employeeId, CancellationToken cancellationToken);
+
+    /// <summary>All the exit requirements of the employee, tracked, in no particular order.</summary>
+    Task<IReadOnlyList<ExitExamRequirement>> ListRequirementsAsync(
+        Guid tenantId, EmployeeId employeeId, CancellationToken cancellationToken);
+
+    void Add(MedicalExam exam);
+
+    void Remove(MedicalExam exam);
+
     void Add(ExitExamRequirement requirement);
 }

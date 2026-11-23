@@ -13,11 +13,29 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class HrBusinessCalendarSource(ITenantDirectory tenants) : IHrBusinessCalendar
 {
-    public async Task<DateOnly> AddBusinessDaysAsync(Guid tenantId, DateOnly from, int days, CancellationToken cancellationToken)
+    public async Task<DateOnly> AddBusinessDaysAsync(Guid tenantId, DateOnly from, int days, CancellationToken cancellationToken) =>
+        SupportBusinessDays.Add(await CalendarAsync(tenantId, cancellationToken), from, days);
+
+    public async Task<int> CountBusinessDaysAsync(Guid tenantId, DateOnly from, DateOnly through, CancellationToken cancellationToken)
+    {
+        var calendar = await CalendarAsync(tenantId, cancellationToken);
+        var count = 0;
+        for (var day = from.AddDays(1); day <= through; day = day.AddDays(1))
+        {
+            if (calendar.IsBusinessDay(day))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private async Task<SupportBusinessCalendar> CalendarAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var regional = await tenants.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken)
             ?? throw new InvalidOperationException($"Tenant '{tenantId}' has no regional settings.");
 
-        return SupportBusinessDays.Add(SupportBusinessCalendar.From(regional.Country), from, days);
+        return SupportBusinessCalendar.From(regional.Country);
     }
 }

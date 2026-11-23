@@ -62,7 +62,10 @@ public sealed class ExitExamRequirement
 
         if (notifiedOn > today)
         {
-            throw new HrDomainException(HrErrorCodes.MedicalExamFutureDate, "The notice date cannot be in the future.");
+            throw new HrDomainException(
+                HrErrorCodes.MedicalExamFutureDate,
+                "The notice date cannot be in the future.",
+                new Dictionary<string, string[]> { ["notifiedOn"] = ["La fecha del aviso no puede ser futura."] });
         }
 
         Status = ExitExamStatus.NotAttended;

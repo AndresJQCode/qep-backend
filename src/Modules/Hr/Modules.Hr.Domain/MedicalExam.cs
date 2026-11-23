@@ -91,7 +91,10 @@ public sealed class MedicalExam
     {
         if (examDate > today)
         {
-            throw new HrDomainException(HrErrorCodes.MedicalExamFutureDate, "The exam date cannot be in the future.");
+            throw new HrDomainException(
+                HrErrorCodes.MedicalExamFutureDate,
+                "The exam date cannot be in the future.",
+                new Dictionary<string, string[]> { ["examDate"] = ["La fecha del examen no puede ser futura."] });
         }
 
         var cleanRestrictions = Clean(restrictions);
@@ -99,7 +102,11 @@ public sealed class MedicalExam
         {
             throw new HrDomainException(
                 HrErrorCodes.MedicalExamRestrictionsUntilInvalid,
-                "The restrictions end date needs restrictions and cannot be before the exam date.");
+                "The restrictions end date needs restrictions and cannot be before the exam date.",
+                new Dictionary<string, string[]>
+                {
+                    ["restrictionsUntil"] = ["La fecha solo aplica si hay restricciones y no puede ser anterior a la del examen."],
+                });
         }
 
         Type = type;
