@@ -184,6 +184,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyConnection.cs:19-35 — el multiplexer de Valkey de cada pod"),
         new("Bootstrapper.Valkey.Presence.PresenceHeartbeatWorker", WorkerClassification.PerPod,
             "Bootstrapper/Valkey/Presence/PresenceHeartbeatWorker.cs:33-56 — late los conectados a su pod (ZADD idempotente); sólo con Valkey:Areas:Presence"),
+        new("Bootstrapper.Valkey.Presence.AppPresenceHeartbeatWorker", WorkerClassification.PerPod,
+            "Bootstrapper/Valkey/Presence/AppPresenceHeartbeatWorker.cs:33-62 — late los miembros conectados al AppHub de su pod (ZADD idempotente en qep:rt:online:{tenant}); sólo con Valkey:Areas:Presence"),
         new("Bootstrapper.Realtime.RealtimeEventsListener", WorkerClassification.PerPod,
             "Bootstrapper/Realtime/RealtimeEventsListener.cs:107 — LISTEN qep_realtime por pod para las conexiones del hub global de ese pod (plan 2026-11-15, N7)"),
         new("Bootstrapper.Realtime.RealtimePresenceSweeper", WorkerClassification.PerPod,

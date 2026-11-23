@@ -17,6 +17,10 @@ internal static class ValkeyKeys
     /// <summary>Spec 2026-11-15 §5.3: who is composing on one topic of the app hub (a sorted set per connection).</summary>
     public static RedisKey RealtimePresence(Guid tenantId, string topic) => $"{Prefix}rt:presence:{tenantId:D}:{topic}";
 
+    /// <summary>Spec 2026-11-22 D-1: the members of one tenant that have QEP open (the app hub), as a sorted set scored by heartbeat time.
+    /// Not <see cref="Presence"/>: that one is the inbox's «Conectados».</summary>
+    public static RedisKey AppOnline(Guid tenantId) => $"{Prefix}rt:online:{tenantId:D}";
+
     public static RedisKey RateLimit(string policy, string partition, long windowStartUnixSeconds) =>
         $"{Prefix}rl:{policy}:{partition}:{windowStartUnixSeconds}".ToLowerInvariant();
 
