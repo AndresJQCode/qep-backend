@@ -120,6 +120,12 @@ public sealed class SupportThreadRulesTests
 
         public void PublishTaskAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt) =>
             throw new NotSupportedException("Not part of this rule.");
+
+        public void PublishTicketAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt) =>
+            throw new NotSupportedException("Not part of this rule.");
+
+        public void PublishAssigneeReleased(SupportTicket ticket, Guid formerAssigneeMemberId, string reason, DateTimeOffset occurredAt) =>
+            throw new NotSupportedException("Not part of this rule.");
     }
 
     private sealed class RecordingAudit : ISupportAuditPublisher
