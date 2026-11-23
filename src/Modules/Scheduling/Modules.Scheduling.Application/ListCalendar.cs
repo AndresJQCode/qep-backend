@@ -134,8 +134,7 @@ public sealed class ListCalendarHandler(
                         .Select(window => new TimeWindowDto(window.Start, window.End))],
                     [.. loaded.Closures
                         .Where(closure => closure.StartsAt < loaded.RangeEnd
-                            && closure.AppliesTo(resource.Id)
-                            && (closure.ResourceId is not null || closure.LocationId == resource.LocationId))
+                            && closure.AppliesTo(resource.Id, resource.LocationId))
                         .Select(closure => new CalendarClosureDto(closure.Id.Value, closure.StartsAt, closure.EndsAt, closure.Reason))],
                     [.. drawn.Select(row =>
                     {

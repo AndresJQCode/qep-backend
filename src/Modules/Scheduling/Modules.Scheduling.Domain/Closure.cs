@@ -51,7 +51,10 @@ public sealed class Closure : VersionedEntity
         return closure;
     }
 
-    public bool AppliesTo(ResourceId resourceId) => ResourceId is null || ResourceId == resourceId;
+    /// <summary>Un bloqueo con recurso cierra sólo ese recurso; uno sin recurso cierra los recursos de su sede y de ninguna otra. No existe un
+    /// bloqueo de todo el tenant: <see cref="LocationId"/> siempre está.</summary>
+    public bool AppliesTo(ResourceId resourceId, LocationId resourceLocation) =>
+        ResourceId is { } own ? own == resourceId : LocationId == resourceLocation;
 
     /// <summary>Dos rangos que sólo se tocan en un extremo no se solapan.</summary>
     public bool Overlaps(DateTimeOffset start, DateTimeOffset end) => StartsAt < end && start < EndsAt;

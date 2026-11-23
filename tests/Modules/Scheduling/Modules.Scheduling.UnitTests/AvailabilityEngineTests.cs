@@ -71,13 +71,14 @@ public sealed class AvailabilityEngineTests
         DateOnly? from = null,
         DateOnly? to = null,
         ResourceId? onlyResource = null,
-        IReadOnlySet<ResourceId>? offered = null) =>
+        IReadOnlySet<ResourceId>? offered = null,
+        IReadOnlyDictionary<ResourceId, LocationId>? offeredAt = null) =>
         new(
             service,
             blocks,
             closures ?? [],
             sessions ?? [],
-            offered ?? new HashSet<ResourceId> { Perez, Mora, Silva },
+            offeredAt ?? (offered ?? new HashSet<ResourceId> { Perez, Mora, Silva }).ToDictionary(resource => resource, _ => Location),
             rules ?? Rules(),
             holidays ?? new HashSet<DateOnly>(),
             Bogota,
@@ -177,6 +178,21 @@ public sealed class AvailabilityEngineTests
         var slots = AvailabilityEngine.Compute(Query(service, [block], closures: [closure]));
 
         Assert.DoesNotContain(slots, slot => slot.StartsAt < Local(Monday, 9));
+    }
+
+    [Fact]
+    public void AWholeLocationClosureLeavesTheResourcesOfAnotherLocationFree()
+    {
+        var service = Cleaning();
+        var block = WeeklyBlock(service, 480, 600, 1, null, true, 1, Perez, Mora);
+        var otherLocation = LocationId.New();
+        var closure = Closure.Create(ClosureId.New(), Tenant, Location, null, Local(Monday, 8), Local(Monday, 9), null, LongBefore);
+        var at = new Dictionary<ResourceId, LocationId> { [Perez] = Location, [Mora] = otherLocation };
+
+        var slots = AvailabilityEngine.Compute(Query(service, [block], closures: [closure], offeredAt: at));
+
+        var eight = slots.Single(slot => slot.StartsAt == Local(Monday, 8));
+        Assert.Equal([Mora], eight.Options.Select(option => option.ResourceId));
     }
 
     [Fact]

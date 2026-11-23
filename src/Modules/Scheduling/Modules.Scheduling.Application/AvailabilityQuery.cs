@@ -4,7 +4,8 @@ namespace Modules.Scheduling.Application;
 
 /// <summary>
 /// Todo lo que el motor necesita para calcular los espacios libres de un servicio, ya leído: el motor no accede a datos. Los recursos
-/// ofrecidos (<paramref name="OfferedResources"/>) son los activos y dentro del alcance de quien pregunta; <paramref name="OnlyResource"/> es
+/// ofrecidos (<paramref name="OfferedResources"/>, con la sede de cada uno: un bloqueo de sede cierra sólo los de esa sede) son los activos y
+/// dentro del alcance de quien pregunta; <paramref name="OnlyResource"/> es
 /// el recurso que el cliente eligió, si eligió. Las fechas son días del calendario del tenant y <paramref name="Now"/> es un instante.
 /// Con <paramref name="IgnoreOccupancy"/> el motor responde sólo «¿ofrecen las reglas este inicio?»: conserva franjas, cierres, festivos,
 /// anticipación y horizonte, y deja de descontar lo que ocupan las sesiones (una llena, o una publicada que el tenant quitó, cuenta como
@@ -15,7 +16,7 @@ public sealed record AvailabilityQuery(
     IReadOnlyList<AvailabilityBlock> Blocks,
     IReadOnlyList<Closure> Closures,
     IReadOnlyList<Session> Sessions,
-    IReadOnlySet<ResourceId> OfferedResources,
+    IReadOnlyDictionary<ResourceId, LocationId> OfferedResources,
     SchedulingSettings Rules,
     IReadOnlySet<DateOnly> Holidays,
     TimeZoneInfo TimeZone,

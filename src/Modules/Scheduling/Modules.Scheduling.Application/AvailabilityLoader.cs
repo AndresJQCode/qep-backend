@@ -83,7 +83,7 @@ public sealed record LoadedAvailability(
             Blocks,
             Closures,
             sessions,
-            OfferedResources.Select(resource => resource.Id).ToHashSet(),
+            OfferedResources.ToDictionary(resource => resource.Id, resource => resource.LocationId),
             Rules,
             Holidays,
             Calendar.TimeZone,

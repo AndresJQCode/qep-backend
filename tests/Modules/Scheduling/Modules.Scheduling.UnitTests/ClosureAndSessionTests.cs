@@ -17,12 +17,15 @@ public sealed class ClosureAndSessionTests
     public void AClosureWithoutResourceClosesTheWholeLocationAndOneWithAResourceOnlyThatOne()
     {
         var perez = ResourceId.New();
-        var wholeLocation = Closure.Create(ClosureId.New(), Tenant, LocationId.New(), null, Start, Start.AddHours(4), "Festivo", Now);
-        var onlyPerez = Closure.Create(ClosureId.New(), Tenant, LocationId.New(), perez, Start, Start.AddHours(4), "Congreso", Now);
+        var north = LocationId.New();
+        var south = LocationId.New();
+        var wholeLocation = Closure.Create(ClosureId.New(), Tenant, north, null, Start, Start.AddHours(4), "Festivo", Now);
+        var onlyPerez = Closure.Create(ClosureId.New(), Tenant, north, perez, Start, Start.AddHours(4), "Congreso", Now);
 
-        Assert.True(wholeLocation.AppliesTo(ResourceId.New()));
-        Assert.True(onlyPerez.AppliesTo(perez));
-        Assert.False(onlyPerez.AppliesTo(ResourceId.New()));
+        Assert.True(wholeLocation.AppliesTo(ResourceId.New(), north));
+        Assert.False(wholeLocation.AppliesTo(ResourceId.New(), south));
+        Assert.True(onlyPerez.AppliesTo(perez, north));
+        Assert.False(onlyPerez.AppliesTo(ResourceId.New(), north));
     }
 
     [Fact]

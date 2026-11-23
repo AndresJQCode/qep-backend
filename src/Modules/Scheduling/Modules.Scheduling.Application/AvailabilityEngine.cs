@@ -27,7 +27,7 @@ public static class AvailabilityEngine
         foreach (var block in query.Blocks.Where(block => !block.Archived && block.ServiceIds.Contains(query.Service.Id)))
         {
             var resources = block.ResourceIds
-                .Where(resource => query.OfferedResources.Contains(resource)
+                .Where(resource => query.OfferedResources.ContainsKey(resource)
                     && (query.OnlyResource is null || query.OnlyResource == resource))
                 .ToArray();
             if (resources.Length == 0)
@@ -143,7 +143,8 @@ public static class AvailabilityEngine
     }
 
     private static bool IsClosed(AvailabilityQuery query, ResourceId resource, DateTimeOffset start, DateTimeOffset end) =>
-        query.Closures.Any(closure => closure.AppliesTo(resource) && closure.Overlaps(start, end));
+        query.OfferedResources.TryGetValue(resource, out var location)
+        && query.Closures.Any(closure => closure.AppliesTo(resource, location) && closure.Overlaps(start, end));
 
     /// <summary>Minutos locales de un día del tenant a un instante en UTC (Npgsql sólo escribe <c>timestamptz</c> con offset cero). Un rango
     /// que termina a las 24:00 cae en la medianoche siguiente.</summary>
