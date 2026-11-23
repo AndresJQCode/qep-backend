@@ -200,6 +200,33 @@ public sealed class AgentPromptBuilderTests
 
     private static AiRunLimits Limits() => new(16_000, TimeSpan.FromSeconds(120), 6, 8, 30, null);
 
+    // Spec 2026-11-23 §7.8: la sección de la Agenda es fija y sólo existe con la herramienta prendida.
+    [Fact]
+    public void TheSchedulingSectionAppearsOnlyWithTheTool()
+    {
+        var withTool = Config() with { Tools = new AgentTools(false, false, false, Scheduling: true) };
+
+        Assert.Contains(AgentPromptBuilder.SchedulingSection, Build(Input() with { Config = withTool }).SystemPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("## Agenda", Build(Input()).SystemPrompt, StringComparison.Ordinal);
+        Assert.StartsWith("## Agenda", AgentPromptBuilder.SchedulingSection, StringComparison.Ordinal);
+        Assert.Contains("check_availability", AgentPromptBuilder.SchedulingSection, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheSystemPromptIsStableAcrossCallsWithScheduling()
+    {
+        var config = Config() with { Tools = new AgentTools(false, false, false, Scheduling: true) };
+        var first = Build(Input() with { Config = config });
+        var later = Build(Input() with
+        {
+            Config = config,
+            Calendar = new TenantCalendar(Calendar.UtcNow.AddHours(7), Calendar.TimeZone),
+        });
+
+        Assert.Equal(first.SystemPrompt, later.SystemPrompt);
+        Assert.NotEqual(first.VolatileContext, later.VolatileContext);
+    }
+
     private static AgentConfig Config() =>
         AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")) with { Instructions = "Atiende la tienda." };
 
