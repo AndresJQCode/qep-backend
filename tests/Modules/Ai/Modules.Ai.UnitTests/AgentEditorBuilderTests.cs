@@ -211,6 +211,7 @@ public sealed class AgentEditorBuilderTests
         public Task<AiSchedulingResult<AiAppointmentWrite>> BookAsync(AiSchedulingCaller caller, Guid serviceId, DateTime localStartsAt, Guid? resourceId, string? note, string clientRequestId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<AiSchedulingResult<AiStartPreview>> PreviewBookingAsync(AiSchedulingCaller caller, Guid serviceId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<AiSchedulingResult<AiReschedulePreview>> PreviewRescheduleAsync(AiSchedulingCaller caller, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<AiSchedulingResult<AiAppointments>> ListMyAppointmentsAsync(AiSchedulingCaller caller, CancellationToken cancellationToken) => throw new NotSupportedException();
 

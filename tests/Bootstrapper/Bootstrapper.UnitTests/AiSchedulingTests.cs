@@ -169,6 +169,16 @@ public sealed class AiSchedulingTests
     }
 
     [Fact]
+    public async Task PreviewRescheduleChecksTheMoveForTheConversationCustomer()
+    {
+        var result = await Adapter().PreviewRescheduleAsync(Caller(ConversationId), AppointmentId, Start, null, Ct);
+
+        Assert.False(result.Value!.AlreadyDone);
+        Assert.Equal((CustomerA, AppointmentId), _channel.LastRescheduleCheck);
+        Assert.Equal(0, _channel.WriteCalls);
+    }
+
+    [Fact]
     public async Task CancelWithoutCustomerIsNotFound()
     {
         _row = Row(customerId: null);
@@ -177,9 +187,11 @@ public sealed class AiSchedulingTests
         var cancel = await adapter.CancelAsync(Caller(ConversationId), AppointmentId, null, Ct);
         var move = await adapter.RescheduleAsync(Caller(ConversationId), AppointmentId, Start, null, Ct);
         var find = await adapter.FindMyAppointmentAsync(Caller(ConversationId), AppointmentId, Ct);
+        var preview = await adapter.PreviewRescheduleAsync(Caller(ConversationId), AppointmentId, Start, null, Ct);
 
-        Assert.All([cancel.ErrorCode, move.ErrorCode, find.ErrorCode], code => Assert.Equal("appointment_not_found", code));
+        Assert.All([cancel.ErrorCode, move.ErrorCode, find.ErrorCode, preview.ErrorCode], code => Assert.Equal("appointment_not_found", code));
         Assert.Equal(0, _channel.WriteCalls);
+        Assert.Null(_channel.LastRescheduleCheck);
     }
 
     [Fact]
