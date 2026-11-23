@@ -144,7 +144,10 @@ public sealed class Appointment : VersionedEntity
         Record(AppointmentAction.NoShow, actorMemberId, null, now);
     }
 
-    /// <summary>Cambia de sesión (y con ella de recurso y de hora) conservando el id y el estado. Application ya validó la nueva sesión.</summary>
+    /// <summary>
+    /// Cambia de sesión (y con ella de recurso y de hora) conservando el id y el estado. Application ya validó la nueva sesión. Limpia todo el
+    /// estado del recordatorio (enviado, omitido, intentos, reclamo y último error): la nueva hora se avisa de nuevo (plan, corrección 49).
+    /// </summary>
     public void Reschedule(
         ResourceId resourceId, SessionId sessionId, DateTimeOffset startsAt, DateTimeOffset endsAt, Guid? actorMemberId, DateTimeOffset now)
     {
@@ -155,6 +158,11 @@ public sealed class Appointment : VersionedEntity
         SessionId = sessionId;
         StartsAt = startsAt;
         EndsAt = endsAt;
+        ReminderSentAt = null;
+        ReminderSkippedReason = null;
+        ReminderAttempts = 0;
+        ReminderClaimedUntil = null;
+        ReminderLastError = null;
         Record(AppointmentAction.Rescheduled, actorMemberId, null, now);
     }
 

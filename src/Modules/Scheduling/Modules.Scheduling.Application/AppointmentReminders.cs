@@ -16,8 +16,12 @@ public static class AppointmentReminderRules
     /// otro pod lo reclame; el <c>clientId</c> idempotente evita el doble envío si lo hiciera.</summary>
     public static readonly IReadOnlyList<TimeSpan> Leases = [TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(30)];
 
-    /// <summary>La llave de idempotencia del envío (plan, Tarea 12): el mismo valor siempre para la misma cita.</summary>
-    public static string KeyOf(Guid appointmentId) => $"appointment-reminder:{appointmentId:D}";
+    /// <summary>
+    /// La llave de idempotencia del envío (plan, Tarea 12 y corrección 49): el mismo valor para la misma cita <b>a la misma hora</b>. Lleva el
+    /// inicio en ticks UTC (estable, sin zona) porque reprogramar la cita limpia su recordatorio y la nueva hora debe avisarse de nuevo: con la
+    /// llave de antes, Mensajería deduplicaría ese segundo envío contra el primero.
+    /// </summary>
+    public static string KeyOf(Guid appointmentId, DateTimeOffset startsAt) => $"appointment-reminder:{appointmentId:D}:{startsAt.UtcTicks}";
 
     /// <summary>Una dirección que WhatsApp acepta: E.164 con «+», de 8 a 15 dígitos y sin ceros a la izquierda. Customers ya guarda
     /// <c>phone_e164</c> normalizado; esto sólo cierra el paso a lo que no lo está.</summary>

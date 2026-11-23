@@ -232,7 +232,7 @@ public sealed class AppointmentReminderWorkerTests
         await h.PassAsync();
 
         var message = Assert.Single(h.Sender.Messages);
-        Assert.Equal(AppointmentReminderRules.KeyOf(h.AppointmentId.Value), message.IdempotencyKey);
+        Assert.Equal(AppointmentReminderRules.KeyOf(h.AppointmentId.Value, Start), message.IdempotencyKey);
         Assert.Equal(
             (Tenant, Connection, Template, h.MemberId, h.CustomerId, "Ana Pérez", "+573001234567"),
             (message.TenantId, message.ConnectionId, message.TemplateId, message.SentByMemberId, message.CustomerId, message.CustomerName, message.PhoneE164));
@@ -341,6 +341,34 @@ public sealed class AppointmentReminderWorkerTests
 
         Assert.Single(h.Sender.Messages);
         Assert.Null((await h.LoadAsync()).ReminderSentAt);
+    }
+
+    // Plan, correction 49: rescheduling clears the reminder and the new time is reminded again, with a key Messaging does not deduplicate.
+    [Fact]
+    public async Task ARescheduledAppointmentIsRemindedAgainForTheNewTimeWithANewKey()
+    {
+        await using var h = await Harness.StartAsync();
+        await h.PassAsync();
+        Assert.NotNull((await h.LoadAsync()).ReminderSentAt);
+
+        var newStart = Start.AddDays(2);
+        await using (var context = h.NewContext())
+        {
+            var appointment = await context.Appointments.Include(value => value.Events).SingleAsync(Ct);
+            appointment.Reschedule(appointment.ResourceId, appointment.SessionId, newStart, newStart.AddMinutes(30), h.MemberId, h.Clock.UtcNow);
+            await context.SaveChangesAsync(Ct);
+        }
+
+        Assert.Null((await h.LoadAsync()).ReminderSentAt);
+        await h.PassAsync();
+        Assert.Single(h.Sender.Messages);
+        h.Clock.UtcNow = newStart.AddHours(-20);
+        await h.PassAsync();
+
+        Assert.Equal(2, h.Sender.Messages.Count);
+        Assert.Equal(AppointmentReminderRules.KeyOf(h.AppointmentId.Value, newStart), h.Sender.Messages[1].IdempotencyKey);
+        Assert.NotEqual(h.Sender.Messages[0].IdempotencyKey, h.Sender.Messages[1].IdempotencyKey);
+        Assert.NotNull((await h.LoadAsync()).ReminderSentAt);
     }
 
     [Fact]

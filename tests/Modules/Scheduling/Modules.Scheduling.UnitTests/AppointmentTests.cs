@@ -135,6 +135,27 @@ public sealed class AppointmentTests
     }
 
     [Fact]
+    public void RescheduleClearsTheWholeReminderStateSoTheNewTimeIsRemindedAgain()
+    {
+        var sent = NewAppointment(AppointmentStatus.Confirmed);
+        sent.RecordReminderSent(Created.AddHours(1));
+        var skipped = NewAppointment(AppointmentStatus.Confirmed);
+        skipped.RecordReminderSkipped("no_phone", Created.AddHours(1));
+
+        foreach (var appointment in new[] { sent, skipped })
+        {
+            appointment.Reschedule(ResourceId.New(), SessionId.New(), Start.AddDays(2), Start.AddDays(2).AddMinutes(30), Actor, Created.AddHours(2));
+
+            Assert.Null(appointment.ReminderSentAt);
+            Assert.Null(appointment.ReminderSkippedReason);
+            Assert.Null(appointment.ReminderClaimedUntil);
+            Assert.Null(appointment.ReminderLastError);
+            Assert.Equal(0, appointment.ReminderAttempts);
+            Assert.Equal(AppointmentAction.Rescheduled, appointment.Events[^1].Action);
+        }
+    }
+
+    [Fact]
     public void ARescheduleToABackwardsRangeIsRejected() =>
         Assert.Throws<ArgumentException>(() =>
             NewAppointment().Reschedule(ResourceId.New(), SessionId.New(), Start, Start.AddMinutes(-10), Actor, Created));

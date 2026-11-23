@@ -9,8 +9,21 @@ public sealed class AppointmentReminderRulesTests
     public void TheIdempotencyKeyIsTheOneOfTheContract()
     {
         var id = Guid.Parse("0192a7d0-0000-7000-8000-000000000001");
+        var startsAt = new DateTimeOffset(2026, 11, 24, 15, 0, 0, TimeSpan.Zero);
 
-        Assert.Equal("appointment-reminder:0192a7d0-0000-7000-8000-000000000001", AppointmentReminderRules.KeyOf(id));
+        Assert.Equal(
+            $"appointment-reminder:0192a7d0-0000-7000-8000-000000000001:{startsAt.UtcTicks}", AppointmentReminderRules.KeyOf(id, startsAt));
+    }
+
+    // Plan, correction 49: a rescheduled appointment is reminded again, so the key (and the client id derived from it) must change with the time.
+    [Fact]
+    public void TheKeyChangesWithTheStartAndNotWithTheOffsetItIsExpressedIn()
+    {
+        var id = Guid.NewGuid();
+        var startsAt = new DateTimeOffset(2026, 11, 24, 15, 0, 0, TimeSpan.Zero);
+
+        Assert.NotEqual(AppointmentReminderRules.KeyOf(id, startsAt), AppointmentReminderRules.KeyOf(id, startsAt.AddHours(1)));
+        Assert.Equal(AppointmentReminderRules.KeyOf(id, startsAt), AppointmentReminderRules.KeyOf(id, startsAt.ToOffset(TimeSpan.FromHours(-5))));
     }
 
     [Fact]

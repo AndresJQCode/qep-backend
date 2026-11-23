@@ -306,7 +306,7 @@ internal sealed partial class AppointmentReminderProcessor(IServiceScopeFactory 
         }
 
         var message = new ReminderMessage(
-            row.TenantId, row.AppointmentId, AppointmentReminderRules.KeyOf(row.AppointmentId), connectionId, settings.ReminderTemplateId, senderMemberId,
+            row.TenantId, row.AppointmentId, AppointmentReminderRules.KeyOf(row.AppointmentId, appointment.StartsAt), connectionId, settings.ReminderTemplateId, senderMemberId,
             appointment.CustomerId, recipient!.Name, recipient.PhoneE164!, serviceName, resource.DisplayName, locationName, appointment.StartsAt);
         var delivery = await services.GetRequiredService<IAppointmentReminderSender>().SendAsync(message, cancellationToken);
 

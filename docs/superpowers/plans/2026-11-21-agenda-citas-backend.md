@@ -280,6 +280,13 @@ Revisión final de la rama (2026-11-22; ninguna de sus pruebas se corrió: el ow
     sobre una cita sembrada en el pasado), archivar dos veces una sede, recurso, servicio y franja (misma versión, una sola fila de auditoría), los campos
     auditados al reactivar una sesión, y la prueba de la misma `clientRequestId` en paralelo ahora exige cinco 201 con un solo id. Sin migraciones nuevas
     (por eso tampoco hubo que usar `dotnet-ef`; el aviso 10.0.11 vs 10.0.13 de la corrección 20 sigue en pie).
+49. **Reprogramar re-recuerda con la nueva fecha (decisión del owner, opción B).** `Appointment.Reschedule` limpia `ReminderSentAt`,
+    `ReminderSkippedReason`, `ReminderAttempts`, `ReminderClaimedUntil` y `ReminderLastError`: una cita que ya había recibido (u omitido) su
+    recordatorio vuelve a la cola del barredor con la hora nueva. Motivo: el aviso de la hora vieja deja de ser cierto. La llave de envío pasó a
+    `AppointmentReminderRules.KeyOf(appointmentId, startsAt)` = `appointment-reminder:{id:D}:{startsAt.UtcTicks}`; sin la hora en la llave, el
+    `clientId` derivado habría sido el mismo y Mensajería habría deduplicado el segundo envío contra el primero. La consulta de vencidos y el
+    `UPDATE … RETURNING` del reclamo no cambian (leen las columnas ya limpias); el historial `Rescheduled` se conserva y el `ReminderSent` previo
+    queda como rastro. Límite: reprogramar a un instante igual al anterior produce la misma llave (Mensajería deduplica; es el comportamiento correcto).
 
 ## Global Constraints
 

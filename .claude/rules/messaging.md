@@ -180,8 +180,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   de Mayorista), con cliente: abre la conversación por teléfono y la cuelga del cliente de la cita; un cliente borrado devuelve
   `messaging.customer.not_found`, no una excepción. (2) La fila de `messages` exige un autor y la elige la Agenda, no Mensajería: el miembro del recurso
   y, sin él o inactivo, quien tocó la cita por última vez; sin ninguno activo la cita se omite con `no_sender_member`. (3) El `clientId` es un `Guid`
-  derivado (SHA-256) de la llave `appointment-reminder:{id}` (`SchedulingReminderSender.ClientIdOf`): si el mensaje salió y marcar la cita falló, el
-  reintento devuelve la misma fila. Las variables son `nombre_cliente`, `servicio`, `fecha_hora` (zona del tenant, hora en 24 h, `es-CO`), `recurso` y
+  derivado (SHA-256) de la llave `appointment-reminder:{id}:{starts_at UTC ticks}` (`AppointmentReminderRules.KeyOf`, `SchedulingReminderSender.ClientIdOf`): si el
+  mensaje salió y marcar la cita falló, el reintento devuelve la misma fila; reprogramar cambia la hora, por tanto la llave, y la cita se avisa de nuevo. Las variables son `nombre_cliente`, `servicio`, `fecha_hora` (zona del tenant, hora en 24 h, `es-CO`), `recurso` y
   `sede`, más las cuatro fijas; `nombre_cliente` repite a la fija `nombre_contacto`, y si se renombra una clave hay que cambiar plantilla, definición y
   adaptador en el mismo despliegue. El consentimiento (PD-7) no se pide: se omite con `consent_revoked` si la última fila de `customers.data_consents`
   del cliente es una revocación (también una `Medium = Other`) y con `marketing_opt_out` si la ficha lo tiene; no hay baja automática por texto libre.
