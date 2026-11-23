@@ -143,10 +143,13 @@ public sealed class AppointmentTests
     public void TheReminderIsRecordedOnceAndOnlyForAnOpenAppointment()
     {
         var appointment = NewAppointment();
+        var version = appointment.Version;
 
         appointment.RecordReminderSent(Created.AddHours(1));
 
         Assert.Equal(Created.AddHours(1), appointment.ReminderSentAt);
+        // A system write: an open tab holding this appointment must not get a 412 because the sweeper noted the reminder.
+        Assert.Equal(version, appointment.Version);
         Assert.Equal(AppointmentAction.ReminderSent, appointment.Events[^1].Action);
         Assert.Throws<InvalidOperationException>(() => appointment.RecordReminderSent(Created.AddHours(2)));
 
@@ -159,9 +162,11 @@ public sealed class AppointmentTests
     public void ASkippedReminderIsFinalAndLeavesItsReasonInTheHistory()
     {
         var appointment = NewAppointment();
+        var version = appointment.Version;
 
         appointment.RecordReminderSkipped("no_phone", Created.AddHours(1));
 
+        Assert.Equal(version, appointment.Version);
         Assert.Equal("no_phone", appointment.ReminderSkippedReason);
         Assert.Null(appointment.ReminderSentAt);
         var entry = appointment.Events[^1];

@@ -158,14 +158,18 @@ public sealed class Appointment : VersionedEntity
         Record(AppointmentAction.Rescheduled, actorMemberId, null, now);
     }
 
-    /// <summary>El recordatorio sale una sola vez y sólo para una cita confirmada: si salió ya (o se omitió), es un error de quien reintenta.</summary>
+    /// <summary>
+    /// El recordatorio sale una sola vez y sólo para una cita confirmada: si salió ya (o se omitió), es un error de quien reintenta. Es una
+    /// escritura del sistema y no sube <see cref="VersionedEntity.Version"/> (<c>touch: false</c>): una pestaña abierta con la cita no debe
+    /// recibir un 412 porque el barredor anotó el aviso.
+    /// </summary>
     public void RecordReminderSent(DateTimeOffset now)
     {
         RequireStatus(AppointmentStatus.Confirmed);
         RequireReminderPending();
         ReminderSentAt = now;
         ReminderLastError = null;
-        Record(AppointmentAction.ReminderSent, null, null, now);
+        Record(AppointmentAction.ReminderSent, null, null, now, touch: false);
     }
 
     /// <summary>
@@ -182,7 +186,7 @@ public sealed class Appointment : VersionedEntity
         }
 
         ReminderSkippedReason = reason.Trim();
-        Record(AppointmentAction.ReminderSkipped, null, ReminderSkippedReason, now);
+        Record(AppointmentAction.ReminderSkipped, null, ReminderSkippedReason, now, touch: false);
     }
 
     private void RequireReminderPending()
