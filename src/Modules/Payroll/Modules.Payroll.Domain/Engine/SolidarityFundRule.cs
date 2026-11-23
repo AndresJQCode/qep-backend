@@ -13,7 +13,7 @@ public static class SolidarityFundRule
         // The first half has no month yet, so the bracket comes from the salary, capped like the IBC (B-1).
         var multiple = input.Period.Half == PayrollHalf.First
             ? Math.Min(salaryInForce, legal.IbcCapSmmlv.Value * legal.Smmlv.Value) / legal.Smmlv.Value
-            : ibc.IbcMonth / legal.Smmlv.Value;
+            : ibc.SocialSecurityIbc / legal.Smmlv.Value;
         var rate = legal.SolidarityRate(multiple);
         var prior = input.Prior.SolidarityFund;
 
@@ -22,11 +22,11 @@ public static class SolidarityFundRule
             return null;
         }
 
-        var amount = (rate is { } value ? PayrollRounding.CeilingToHundred(ibc.IbcMonth * value) : 0m) - prior;
+        var amount = (rate is { } value ? PayrollRounding.CeilingToHundred(ibc.SocialSecurityIbc * value) : 0m) - prior;
         var legalValues = new List<LegalValue> { legal.Smmlv, legal.IbcCapSmmlv };
         var inputs = new List<TraceInput>
         {
-            new("IBC del mes", ibc.IbcMonth),
+            new("IBC del mes", ibc.SocialSecurityIbc),
             new("Salarios mínimos del tramo", multiple),
             new("Retenido en la primera quincena", prior),
         };

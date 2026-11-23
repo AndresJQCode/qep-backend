@@ -63,7 +63,7 @@
       { "code": "solidarity_fund", "amount": 375500 },
       { "code": "health_employer", "amount": 1595700 },
       { "code": "pension_employer", "amount": 2252800 },
-      { "code": "arl", "amount": 130500 },
+      { "code": "arl", "amount": 98000 },
       { "code": "compensation_fund", "amount": 1000000 },
       { "code": "icbf", "amount": 750000 },
       { "code": "sena", "amount": 500000 },
@@ -73,7 +73,7 @@
       { "code": "vacation", "amount": 1042500 }
     ],
     "net": 23122500,
-    "employerCost": 36686500
+    "employerCost": 36654000
   },
   "notes": [
     "prior = acumulados de la primera quincena (ibc-cap-and-top-bracket-first) escritos a mano en `input.prior`",
@@ -87,11 +87,11 @@
     "exonerado = false (empresa exonerada = true; ingreso salarial del mes 50 000 000 ≥ 17 509 050)",
     "health_employer = techo100(43 772 625 × 0,085) − 2125000 = 1 595 700",
     "pension_employer = techo100(43 772 625 × 0.12) − 3000000 = 2 252 800",
-    "arl = techo100(50000000 × 0.00522 = 261000) − 130500 = 130 500",
+    "arl = techo100(43772625 × 0.00522 = 228493.10) − 130500 = 98 000",
     "compensation_fund = techo100(50000000 × 0,04) − 1000000 = 1 000 000",
     "icbf = techo100(50000000 × 0,03) − 750000 = 750 000",
     "sena = techo100(50000000 × 0,02) − 500000 = 500 000",
     "provisiones: base = 25000000 + 0 + 0 + 0 = 25000000; severance = round(2082500) = 2 082 500; severance_interest = round(250000) = 250 000; premium = 2 082 500; vacation = round((25000000 + 0) × 0,0417 = 1042500) = 1 042 500",
-    "totalEarned = 25000000 + 0 + 0 + 0 + 0 = 25000000; totalDeductions = 1877500; net = 23122500; employerCost = 25000000 + aportes 6229000 + provisiones 5457500 = 36686500"
+    "totalEarned = 25000000 + 0 + 0 + 0 + 0 = 25000000; totalDeductions = 1877500; net = 23122500; employerCost = 25000000 + aportes 6196500 + provisiones 5457500 = 36654000"
   ]
 }
