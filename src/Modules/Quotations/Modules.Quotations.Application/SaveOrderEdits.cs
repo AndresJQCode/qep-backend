@@ -143,9 +143,14 @@ public sealed class SaveOrderEditsHandler(
         var copies = new PaymentProofCopies(paymentProofPublisher);
         try
         {
-            var itemEdits = await OrderItemEdits.ApplyAsync(
+            var paidItemEdits = await OrderItemEdits.ApplyAsync(
                 order, command.Items, pricingLookup, costLookup, wholesalePricing, command.TenantId, updatedBy, now, command.IsRetail,
                 cancellationToken);
+            // Spec 2026-11-23: los regalos van después de las pagadas y sólo si el cuerpo los trae (null no toca nada). Sus
+            // ediciones se suman a las de las líneas: «nada cambió», el historial y las fotos de producto las ven igual.
+            var giftEdits = await OrderGiftEdits.ApplyAsync(
+                order, command.Gifts, pricingLookup, costLookup, command.TenantId, updatedBy, now, cancellationToken);
+            IReadOnlyList<OrderItemEdit> itemEdits = [.. paidItemEdits, .. giftEdits];
 
             foreach (var proofId in removedProofIds)
             {
@@ -438,8 +443,9 @@ public sealed class SaveOrderEditsHandler(
     {
         // El nombre de un producto que se quitó se resuelve contra el catálogo: la línea ya no está
         // para decirlo.
+        // Los regalos quitados no se buscan: su edición ya trae el nombre de la foto de la línea.
         var removedVariantIds = edits
-            .Where(edit => edit.Kind == OrderItemEditKind.Removed)
+            .Where(edit => edit.Kind == OrderItemEditKind.Removed && !edit.IsGift)
             .Select(edit => edit.VariantId)
             .ToArray();
         var removedProducts = removedVariantIds.Length == 0
@@ -450,7 +456,23 @@ public sealed class SaveOrderEditsHandler(
         {
             string summary;
             string action;
-            if (edit.Kind == OrderItemEditKind.Added)
+            if (edit.IsGift)
+            {
+                (summary, action) = edit.Kind switch
+                {
+                    OrderItemEditKind.Added => (
+                        OrderChangeSummary.GiftAdded(edit.ProductName!, edit.Quantity!.Value, format),
+                        "quotation.order.gift_added"),
+                    OrderItemEditKind.QuantityChanged => (
+                        OrderChangeSummary.GiftQuantityChanged(
+                            edit.ProductName!, edit.PreviousQuantity!.Value, edit.Quantity!.Value, format),
+                        "quotation.order.gift_updated"),
+                    _ => (
+                        OrderChangeSummary.GiftRemoved(edit.ProductName ?? "un producto"),
+                        "quotation.order.gift_removed"),
+                };
+            }
+            else if (edit.Kind == OrderItemEditKind.Added)
             {
                 summary = OrderChangeSummary.ItemAdded(edit.ProductName!, edit.Quantity!.Value, format);
                 action = "quotation.order.item_added";
