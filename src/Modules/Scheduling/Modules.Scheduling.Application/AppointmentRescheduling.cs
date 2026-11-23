@@ -50,7 +50,9 @@ public sealed class AppointmentRescheduling(
 
     /// <param name="byClient">Rige el plazo del cliente y exige <c>bookableByChannel</c> (D-15): lo pide el agente.</param>
     /// <param name="requireClientChoice">El recurso pedido tiene que ser uno que la franja deja elegir al cliente (D-16).</param>
-    public async Task RescheduleAsync(
+    /// <returns><c>false</c> when, under the lock, the appointment turned out to be at that start already (somebody moved it there between the
+    /// read and the lock): nothing was written. The HTTP handler checks the same thing before calling, so it never sees <c>false</c>.</returns>
+    public async Task<bool> RescheduleAsync(
         Guid tenantId,
         Appointment appointment,
         ResourceScope scope,
@@ -82,6 +84,14 @@ public sealed class AppointmentRescheduling(
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await appointments.LockResourcesAsync(tenantId, [.. candidates, appointment.ResourceId], cancellationToken);
 
+        // Read before the lock, so read again: a cancel or a move that committed in between is visible only now.
+        await appointments.RefreshAsync(appointment, cancellationToken);
+        EnsureOpen(appointment);
+        if (appointment.StartsAt == startsAt && (resourceId is null || resourceId == appointment.ResourceId))
+        {
+            return false;
+        }
+
         // Same reason as in booking: closures committed while the candidates were computed are visible only after the lock.
         loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
         var oldSession = await sessions.FindAsync(tenantId, appointment.SessionId, cancellationToken)
@@ -107,5 +117,6 @@ public sealed class AppointmentRescheduling(
             appointment.Id.Value, changedFields, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 }

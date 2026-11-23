@@ -46,7 +46,7 @@ public sealed class AppointmentBooking(
         if (clientRequestId is not null
             && await appointments.FindByClientRequestAsync(tenantId, clientRequestId, cancellationToken) is { } repeated)
         {
-            return Replay(scope, repeated);
+            return Replay(scope, input.CustomerId, repeated);
         }
 
         var service = (await services.FindManyAsync(tenantId, [new ServiceId(input.ServiceId)], cancellationToken)).SingleOrDefault();
@@ -93,7 +93,7 @@ public sealed class AppointmentBooking(
         if (clientRequestId is not null
             && await appointments.FindByClientRequestAsync(tenantId, clientRequestId, cancellationToken) is { } concurrent)
         {
-            return Replay(scope, concurrent);
+            return Replay(scope, input.CustomerId, concurrent);
         }
 
         // Closures, blocks and archived resources are read again under the lock: a closure created while this request was computing its
@@ -142,9 +142,26 @@ public sealed class AppointmentBooking(
         return new BookingOutcome(appointment, Replayed: false);
     }
 
-    // A repeat answers with the appointment already booked, for whoever may see it: another member's agenda stays out of reach.
-    private static BookingOutcome Replay(ResourceScope scope, Appointment appointment) =>
-        scope.Includes(appointment.ResourceId.Value)
+    // A repeat answers with the appointment already booked, for whoever may see it: another member's agenda stays out of reach, and so does
+    // another customer's appointment (the key identifies a booking, not who may read it).
+    private static BookingOutcome Replay(ResourceScope scope, Guid customerId, Appointment appointment)
+    {
+        EnsureSameCustomer(appointment, customerId);
+        return scope.Includes(appointment.ResourceId.Value)
             ? new BookingOutcome(appointment, Replayed: true)
             : throw SchedulingAuthorization.Denied();
+    }
+
+    /// <summary>
+    /// A key already used for another customer's appointment is a conflict on the key and says nothing of the stored appointment: replaying it
+    /// would describe somebody else's booking to this caller. The same customer with other arguments still gets the stored one, which is the
+    /// truth to tell (D-14).
+    /// </summary>
+    internal static void EnsureSameCustomer(Appointment stored, Guid customerId)
+    {
+        if (stored.CustomerId != customerId)
+        {
+            SchedulingFieldErrors.Throw("clientRequestId", "Esa llave de idempotencia ya se usó para otra reserva.");
+        }
+    }
 }

@@ -295,6 +295,9 @@ public sealed class ChannelScheduling(
                 throw;
             }
 
+            // The key is a booking's identity, not a customer's: an appointment of somebody else is never described to this caller.
+            AppointmentBooking.EnsureSameCustomer(stored, booking.CustomerId);
+
             return new ChannelWriteResult(await DescribeOneAsync(tenantId, stored, calendar, cancellationToken), AlreadyDone: true);
         }
 
@@ -314,7 +317,24 @@ public sealed class ChannelScheduling(
             return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: true);
         }
 
-        await cancellation.CancelAsync(tenantId, appointment, reason, byClient: true, SchedulingActor.Agent(agentId), cancellationToken);
+        try
+        {
+            await cancellation.CancelAsync(tenantId, appointment, reason, byClient: true, SchedulingActor.Agent(agentId), cancellationToken);
+        }
+        catch (Exception error) when (error is RequestConcurrencyException or SchedulingDomainException { Code: SchedulingErrorCodes.InvalidTransition })
+        {
+            // The status was read before the lock. The core reads it again under the lock, so a cancel that landed in between answers
+            // invalid_transition (or, if the save itself lost its version, a concurrency error). If what the other writer did is the goal
+            // (D-12) the job succeeded; anything else goes up as it came.
+            var fresh = await appointments.FindFreshAsync(tenantId, appointment.Id, cancellationToken);
+            if (fresh is { Status: AppointmentStatus.Cancelled } && fresh.CustomerId == customerId)
+            {
+                return new ChannelWriteResult(await DescribeOneAsync(tenantId, fresh, calendar, cancellationToken), AlreadyDone: true);
+            }
+
+            throw;
+        }
+
         return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: false);
     }
 
@@ -340,10 +360,30 @@ public sealed class ChannelScheduling(
             return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: true);
         }
 
-        await rescheduling.RescheduleAsync(
-            tenantId, appointment, ResourceScope.All, requested, startsAt, SchedulingActor.Agent(agentId),
-            byClient: true, requireClientChoice: true, cancellationToken);
-        return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: false);
+        bool moved;
+        try
+        {
+            moved = await rescheduling.RescheduleAsync(
+                tenantId, appointment, ResourceScope.All, requested, startsAt, SchedulingActor.Agent(agentId),
+                byClient: true, requireClientChoice: true, cancellationToken);
+        }
+        catch (RequestConcurrencyException)
+        {
+            // Same as cancelling: the only concurrent write that counts as done is the very move that was asked for.
+            var fresh = await appointments.FindFreshAsync(tenantId, appointment.Id, cancellationToken);
+            if (fresh is { Status: AppointmentStatus.Pending or AppointmentStatus.Confirmed }
+                && fresh.CustomerId == customerId
+                && fresh.StartsAt == startsAt
+                && (requested is null || requested == fresh.ResourceId))
+            {
+                return new ChannelWriteResult(await DescribeOneAsync(tenantId, fresh, calendar, cancellationToken), AlreadyDone: true);
+            }
+
+            throw;
+        }
+
+        // Under the lock the appointment may already be at that start (somebody moved it there first): nothing was written.
+        return new ChannelWriteResult(await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken), AlreadyDone: !moved);
     }
 
     // Another customer's appointment is the same 404 as one that does not exist: the id never confirms who owns it.

@@ -269,6 +269,16 @@ internal sealed class AppointmentRepository(SchedulingDbContext dbContext) : IAp
             .Include(appointment => appointment.Events)
             .SingleOrDefaultAsync(appointment => appointment.TenantId == tenantId && appointment.Id == id, cancellationToken);
 
+    public Task RefreshAsync(Appointment appointment, CancellationToken cancellationToken) =>
+        dbContext.Entry(appointment).ReloadAsync(cancellationToken);
+
+    public Task<Appointment?> FindFreshAsync(Guid tenantId, AppointmentId id, CancellationToken cancellationToken)
+    {
+        // The failed save left the entity with the change that lost: reading through the tracker would hand it back as if it had won.
+        dbContext.ChangeTracker.Clear();
+        return FindAsync(tenantId, id, cancellationToken);
+    }
+
     public Task<Appointment?> FindByClientRequestAsync(Guid tenantId, string clientRequestId, CancellationToken cancellationToken) =>
         dbContext.Appointments
             .Include(appointment => appointment.Events)

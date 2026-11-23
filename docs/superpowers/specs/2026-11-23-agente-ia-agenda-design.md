@@ -317,6 +317,21 @@ propio puerto y su adaptador en Bootstrapper llama a éste».
 - **Envío (`AppointmentReminderProcessor.SenderOfAsync`):** el valor de la fila entra **último** a la lista de
   candidatos (después del miembro del recurso y de los actores del historial), con el mismo filtro de activos. Ninguno
   activo sigue siendo `no_sender_member`.
+- **Reglas de la revisión del Bloque 1 (2026-11-23).**
+  1. **Cancelar y cambiar hora son seguros ante una carrera (D-12).** El estado de la cita se lee antes del candado, así que el núcleo la
+     relee **bajo** el candado (`IAppointmentRepository.RefreshAsync`): una cita que otra petición cerró devuelve `invalid_transition` en
+     vez de liberar un cupo ya libre (`InvalidOperationException`, o un descuento doble). `ChannelScheduling` lee la cita otra vez
+     (`FindFreshAsync`) y responde `alreadyDone` si lo que se escribió en medio es justo lo pedido (cita ya cancelada; cita ya en ese
+     inicio, `AppointmentRescheduling` devuelve `false` sin escribir); cualquier otra cosa sube como vino. Una pérdida de versión al
+     guardar (`RequestConcurrencyException`) sigue el mismo camino y, si no es lo pedido, el adaptador la lee como `appointment_changed`.
+     Un cambio de hora o una cancelación sobre una cita que otro ya movió se aplican a la cita tal como está ahora.
+  2. **Una llave repetida nunca describe la cita de otro cliente.** Con la llave ya usada, si `CustomerId` de la cita guardada no es el de
+     la reserva (también en el camino de `slot_taken` por la carrera de la llave) es un 422 `validation.failed` con el campo
+     `clientRequestId`, sin datos de la cita guardada; el adaptador de Ai lo lee como `scheduling_unavailable`. El mismo cliente con otro
+     servicio u hora sigue recibiendo la cita guardada (`alreadyBooked: true`): es la verdad que el modelo debe leer.
+  3. **`reminderSenderMemberId` en el `PUT`.** El formulario manda las reglas enteras: `null` (o el campo ausente) **borra** el
+     remitente, así que el cliente tiene que devolverlo tal como lo leyó. Un id igual al guardado no se valida otra vez (un remitente
+     suspendido después de guardarlo no bloquea editar otra regla); un id distinto sí tiene que ser un miembro activo.
 - **Persistencia:** `scheduling.settings.reminder_sender_member_id uuid NULL`, sin llave foránea (las membresías son de
   Tenancy), en la misma migración expand que `by_channel` (§12).
 

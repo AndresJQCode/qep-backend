@@ -55,6 +55,11 @@ public sealed record ClosureRequest(Guid? LocationId, Guid? ResourceId, DateTime
 /// <summary>Publicar una sesión de una franja <c>PublishedSessions</c>: el recurso, el servicio y el inicio, que debe caer en la ventana de la franja.</summary>
 public sealed record PublishSessionRequest(Guid? BlockId, Guid? ResourceId, Guid? ServiceId, DateTimeOffset? StartsAt);
 
+/// <summary>
+/// The whole rules form: a <c>PUT</c> replaces every field, so the clients must echo <see cref="ReminderSenderMemberId"/> as they read it
+/// — <c>null</c> (or the field left out) <b>clears</b> the default sender. An id equal to the stored one is not validated again: a sender
+/// who was suspended after it was saved must not block an unrelated edit; a changed id must be an active member.
+/// </summary>
 public sealed record SettingsRequest(
     string? ConfirmationMode,
     int? MinNoticeMinutes,

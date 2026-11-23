@@ -83,6 +83,7 @@ public sealed class AiSchedulingTests
             (new ResourceNotFoundException(SchedulingErrorCodes.AppointmentNotFound, "x"), "appointment_not_found", null),
             (new ResourceNotFoundException(SchedulingErrorCodes.ServiceNotFound, "x"), "service_not_found", null),
             (new ResourceNotFoundException(SchedulingErrorCodes.ResourceNotFound, "x"), "resource_not_choosable", null),
+            (new ValidationException([new ValidationFailure("clientRequestId", "x")]), "scheduling_unavailable", null),
             (new ValidationException([new ValidationFailure("serviceId", "x")]), "service_not_found", null),
             (new ValidationException([new ValidationFailure("resourceId", "x")]), "resource_not_choosable", null),
             (new ValidationException([new ValidationFailure("customerId", "x")]), "customer_unknown", "appointment_customer_unavailable"),

@@ -128,7 +128,8 @@ public sealed class UpdateSettingsHandler(
         }
 
         // Se valida antes de tocar la fila: un remitente inexistente, de otro tenant o suspendido es un error del campo, no del recordatorio.
-        if (request.ReminderSenderMemberId is { } senderId)
+        // Only a changed id is checked: the stored one may have been suspended since, and the form still sends it back untouched.
+        if (request.ReminderSenderMemberId is { } senderId && senderId != row.ReminderSenderMemberId)
         {
             var found = await members.FindAsync(command.TenantId, [senderId], cancellationToken);
             if (!found.Any(member => member.MemberId == senderId && member.IsActive))

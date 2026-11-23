@@ -284,4 +284,39 @@ public sealed class SchedulingSettingsApiTests(SchedulingApiWorld world) : IClas
             world.Factory, tenant.IdText, SchedulingAuditActions.SettingsUpdated, SchedulingAuditActions.Resources.Settings, tenant.Id);
         Assert.Contains("reminderSenderMemberId", Assert.Single(trail));
     }
+
+    // Block 1 review: a sender that was suspended after it was saved must not block an unrelated edit of the rules; only a *changed* id is
+    // validated. Otherwise the whole form is stuck on a field the person did not touch.
+    [Fact]
+    public async Task ASuspendedSenderDoesNotBlockAnUnrelatedEdit()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (memberId, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        (await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: memberId), "1")).EnsureSuccessStatusCode();
+        await SuspendAsync(tenant.IdText, memberId);
+
+        var response = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: memberId, cutoff: 6), "2");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await JsonOfAsync(response);
+        Assert.Equal((6, memberId), (body.GetProperty("clientCancelCutoffHours").GetInt32(), body.GetProperty("reminderSenderMemberId").GetGuid()));
+    }
+
+    [Fact]
+    public async Task ChangingToAnotherSuspendedSenderIsStill422()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (first, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        var (second, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "luis@example.com", "Luis Mora");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        (await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: first), "1")).EnsureSuccessStatusCode();
+        await SuspendAsync(tenant.IdText, first);
+        await SuspendAsync(tenant.IdText, second);
+
+        var response = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: second), "2");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.True(HasError(await JsonOfAsync(response), "reminderSenderMemberId"));
+    }
 }

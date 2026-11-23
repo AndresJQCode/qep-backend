@@ -38,6 +38,10 @@ public sealed class AppointmentCancellation(
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await appointments.LockResourcesAsync(tenantId, [appointment.ResourceId], cancellationToken);
 
+        // The appointment was read before the lock: whoever held it may have cancelled or moved it. Read it again so a closed one answers
+        // invalid_transition below instead of releasing a seat that is already free.
+        await appointments.RefreshAsync(appointment, cancellationToken);
+
         var session = await sessions.FindAsync(tenantId, appointment.SessionId, cancellationToken)
             ?? throw new InvalidOperationException($"The session of appointment '{appointment.Id.Value}' does not exist.");
         // The domain rejects an appointment that is already closed before the seat is released.

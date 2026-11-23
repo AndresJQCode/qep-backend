@@ -229,6 +229,10 @@ internal sealed class AiScheduling(IChannelScheduling channel, IConversationQuer
             case ResourceNotFoundException { Code: SchedulingErrorCodes.ResourceNotFound }:
                 code = AgentToolErrors.ResourceNotChoosable;
                 return true;
+            case ValidationException validation when FieldOf(validation, "clientRequestId"):
+                // The key belongs to another customer's booking: nothing of it goes to the model.
+                code = AgentToolErrors.SchedulingUnavailable;
+                return true;
             case ValidationException validation when FieldOf(validation, "serviceId"):
                 code = AgentToolErrors.ServiceNotFound;
                 return true;
