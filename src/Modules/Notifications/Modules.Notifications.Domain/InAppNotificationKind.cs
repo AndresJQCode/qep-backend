@@ -15,4 +15,6 @@ public enum InAppNotificationKind
     ServiceChargesOverdue,
     SupportTaskAssigned,
     SupportTicketAssigned,
+    HrMedicalExamsDue,
+    HrExitExamRequired,
 }
