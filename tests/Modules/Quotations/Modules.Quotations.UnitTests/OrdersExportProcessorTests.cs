@@ -139,7 +139,9 @@ public sealed class OrdersExportProcessorTests
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(90_000m, cells[ValorUnitIndex].Number);
         Assert.Null(cells[ValorUnitIndex].Text);
-        Assert.Equal(35_700m, cells[DescuentoIndex].Number);
+        Assert.Equal(30_000m, cells[DescuentoIndex].Number);
+        // La celda se lee junto a la base sin IVA: Cantidad × Valor Unit + Descuento = bruto sin IVA.
+        Assert.Equal(300_000m, 3m * cells[ValorUnitIndex].Number!.Value + cells[DescuentoIndex].Number!.Value);
     }
 
     private const int ValorUnitIndex = 3;

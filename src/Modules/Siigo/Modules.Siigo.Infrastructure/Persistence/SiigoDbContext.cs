@@ -79,6 +79,12 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         settings.Property(value => value.SendToDian).HasColumnName("send_to_dian").HasDefaultValue(false);
         settings.Property(value => value.SendMail).HasColumnName("send_mail").HasDefaultValue(false);
         settings.Property(value => value.FreightSeparateInvoice).HasColumnName("freight_separate_invoice").HasDefaultValue(false);
+        settings.Property(value => value.PriceMode)
+            .HasColumnName("price_mode")
+            .HasConversion<string>()
+            .HasMaxLength(24)
+            .IsRequired()
+            .HasDefaultValue(SiigoPriceMode.BaseWithDiscount);
         settings.Property(value => value.FreightProductCode)
             .HasColumnName("freight_product_code")
             .HasMaxLength(SiigoSettings.FreightProductCodeMaxLength);
