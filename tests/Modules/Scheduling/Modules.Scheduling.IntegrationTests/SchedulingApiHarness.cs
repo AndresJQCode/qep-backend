@@ -58,7 +58,7 @@ internal static class SchedulingApiHarness
     /// <summary>Un tenant nuevo con la Agenda prendida, su propio id y un cliente con todos los permisos de la Agenda.</summary>
     public static async Task<SchedulingTenant> NewTenantAsync(QepApiFactory factory, string name = "Consultorio Andino")
     {
-        var idText = $"01900000-0000-7000-8000-0000000000{Interlocked.Increment(ref _tenantCounter):x2}";
+        var idText = $"01900000-0000-7000-8000-{Interlocked.Increment(ref _tenantCounter):x12}";
         await SeedTenantAsync(factory, idText, name);
         return new SchedulingTenant(factory, idText, CreateClient(factory, SubjectId, idText, AllPermissions));
     }
@@ -72,7 +72,7 @@ internal static class SchedulingApiHarness
         var now = DateTimeOffset.UtcNow;
         tenancy.Tenants.Add(Tenant.Create(
             id,
-            $"scheduling-api-{tenantId[^2..]}",
+            $"scheduling-api-{tenantId[^6..]}",
             displayName,
             "es-CO",
             "America/Bogota",
