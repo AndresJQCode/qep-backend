@@ -1,6 +1,10 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Scheduling.Application;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using static Modules.Scheduling.IntegrationTests.SchedulingApiHarness;
 
 namespace Modules.Scheduling.IntegrationTests;
@@ -10,7 +14,7 @@ public sealed class SchedulingSettingsApiTests(SchedulingApiWorld world) : IClas
 {
     private static object Rules(
         string mode = "Manual", int minNotice = 60, int horizon = 45, int cutoff = 12, bool reminder = false, int offset = 24,
-        Guid? connectionId = null) =>
+        Guid? connectionId = null, Guid? senderId = null) =>
         new
         {
             confirmationMode = mode,
@@ -20,7 +24,20 @@ public sealed class SchedulingSettingsApiTests(SchedulingApiWorld world) : IClas
             reminderEnabled = reminder,
             reminderOffsetHours = offset,
             reminderConnectionId = connectionId,
+            reminderSenderMemberId = senderId,
         };
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private async Task SuspendAsync(string tenantId, Guid memberId)
+    {
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenant = await tenancy.Tenants.SingleAsync(value => value.Id == new TenantId(Guid.Parse(tenantId)), Ct);
+        var membership = await tenancy.Memberships.SingleAsync(value => value.Id == new MembershipId(memberId), Ct);
+        membership.Suspend(tenant, DateTimeOffset.UtcNow);
+        await tenancy.SaveChangesAsync(Ct);
+    }
 
     [Fact]
     public async Task TheRulesAreEditedWithIfMatch()
@@ -164,5 +181,107 @@ public sealed class SchedulingSettingsApiTests(SchedulingApiWorld world) : IClas
         Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
         var unchanged = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
         Assert.Equal("Automatic", unchanged.GetProperty("confirmationMode").GetString());
+    }
+
+    [Fact]
+    public async Task ReminderSenderRoundTripsWithItsName()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (memberId, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+
+        var response = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: memberId), "1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var reread = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        Assert.Equal(memberId, reread.GetProperty("reminderSenderMemberId").GetGuid());
+        Assert.Equal("Ana Gómez", reread.GetProperty("reminderSenderMemberName").GetString());
+    }
+
+    [Fact]
+    public async Task ReminderSenderIsStoredWithTheReminderOff()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (memberId, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+
+        var body = await JsonOfAsync(await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(reminder: false, senderId: memberId), "1"));
+
+        Assert.False(body.GetProperty("reminderEnabled").GetBoolean());
+        Assert.Equal(memberId, body.GetProperty("reminderSenderMemberId").GetGuid());
+    }
+
+    [Fact]
+    public async Task ASuspendedSenderIsStillNamed()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (memberId, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        (await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: memberId), "1")).EnsureSuccessStatusCode();
+
+        await SuspendAsync(tenant.IdText, memberId);
+
+        var reread = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        Assert.Equal(memberId, reread.GetProperty("reminderSenderMemberId").GetGuid());
+        Assert.Equal("Ana Gómez", reread.GetProperty("reminderSenderMemberName").GetString());
+    }
+
+    [Fact]
+    public async Task AnInactiveSenderIs422WithItsField()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (memberId, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        await SuspendAsync(tenant.IdText, memberId);
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+
+        var response = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: memberId), "1");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await JsonOfAsync(response);
+        Assert.Equal("validation.failed", CodeOf(problem));
+        Assert.True(HasError(problem, "reminderSenderMemberId"));
+    }
+
+    [Fact]
+    public async Task ASenderFromAnotherTenantIs422WithItsField()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        using var other = await NewTenantAsync(world.Factory, "Otra clínica");
+        var (foreignMember, _) = await SeedMemberAsync(world.Factory, other.IdText, "luis@example.com", "Luis Mora");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+
+        var response = await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: foreignMember), "1");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.True(HasError(await JsonOfAsync(response), "reminderSenderMemberId"));
+    }
+
+    [Fact]
+    public async Task NullClearsTheSender()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (memberId, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        (await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: memberId), "1")).EnsureSuccessStatusCode();
+
+        (await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(), "2")).EnsureSuccessStatusCode();
+
+        var reread = await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+        Assert.Equal(JsonValueKind.Null, reread.GetProperty("reminderSenderMemberId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reread.GetProperty("reminderSenderMemberName").ValueKind);
+    }
+
+    [Fact]
+    public async Task ChangingTheSenderIsAudited()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var (memberId, _) = await SeedMemberAsync(world.Factory, tenant.IdText, "ana@example.com", "Ana Gómez");
+        await GetJsonAsync(tenant.Admin, $"{tenant.Url}/settings");
+
+        (await PutAsync(tenant.Admin, $"{tenant.Url}/settings", Rules(senderId: memberId), "1")).EnsureSuccessStatusCode();
+
+        var trail = await ReadAuditFieldsAsync(
+            world.Factory, tenant.IdText, SchedulingAuditActions.SettingsUpdated, SchedulingAuditActions.Resources.Settings, tenant.Id);
+        Assert.Contains("reminderSenderMemberId", Assert.Single(trail));
     }
 }

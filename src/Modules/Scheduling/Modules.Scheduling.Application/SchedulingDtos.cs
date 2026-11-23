@@ -56,6 +56,8 @@ public sealed record PublishedSessionDto(
     long Version);
 
 /// <param name="ConfirmationMode">El nombre del enum: <c>Automatic</c> o <c>Manual</c>.</param>
+/// <param name="ReminderSenderMemberName">El nombre ya resuelto del remitente por defecto (D-18): la pantalla no consulta Personas para nombrarlo.
+/// Un remitente que después quedó suspendido sigue nombrado, para que la pantalla lo muestre y pida elegir otro. Nulo sin remitente.</param>
 public sealed record SettingsDto(
     string ConfirmationMode,
     int MinNoticeMinutes,
@@ -64,6 +66,8 @@ public sealed record SettingsDto(
     bool ReminderEnabled,
     int ReminderOffsetHours,
     Guid? ReminderConnectionId,
+    Guid? ReminderSenderMemberId,
+    string? ReminderSenderMemberName,
     ReminderTemplateStateDto? ReminderTemplate,
     long Version);
 

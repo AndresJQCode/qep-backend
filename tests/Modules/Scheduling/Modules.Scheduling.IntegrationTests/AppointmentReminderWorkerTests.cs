@@ -102,9 +102,10 @@ public sealed class AppointmentReminderWorkerTests
         private readonly SchedulingDatabase _database;
         private ServiceProvider _provider = null!;
 
-        private Harness(SchedulingDatabase database, Guid memberId, AppointmentId appointmentId, Guid customerId)
+        private Harness(SchedulingDatabase database, Guid memberId, AppointmentId appointmentId, Guid customerId, Guid? defaultSenderId)
         {
             _database = database;
+            DefaultSenderId = defaultSenderId;
             MemberId = memberId;
             AppointmentId = appointmentId;
             CustomerId = customerId;
@@ -122,16 +123,22 @@ public sealed class AppointmentReminderWorkerTests
 
         public Guid MemberId { get; }
 
+        /// <summary>The tenant's default sender (<c>reminderSenderMemberId</c>), when the harness was started with one.</summary>
+        public Guid? DefaultSenderId { get; }
+
         public Guid CustomerId { get; }
 
         public AppointmentId AppointmentId { get; }
 
         /// <param name="resourceMember">Con <c>true</c> el miembro está vinculado al recurso; con <c>false</c> sólo aparece como quien creó la cita.</param>
-        public static async Task<Harness> StartAsync(bool resourceMember = true)
+        /// <param name="historyActor">Con <c>false</c> (y sin miembro en el recurso) la cita no tiene actor humano: nace por el canal.</param>
+        /// <param name="defaultSender">Con <c>true</c> las reglas llevan un remitente por defecto, que queda activo salvo que la prueba lo quite.</param>
+        public static async Task<Harness> StartAsync(bool resourceMember = true, bool historyActor = true, bool defaultSender = false)
         {
             var database = await SchedulingDatabase.StartAsync();
             var memberId = Guid.CreateVersion7();
             var customerId = Guid.CreateVersion7();
+            Guid? defaultSenderId = defaultSender ? Guid.CreateVersion7() : null;
             var now = Start.AddDays(-5);
 
             await using var context = database.CreateContext();
@@ -140,15 +147,15 @@ public sealed class AppointmentReminderWorkerTests
             var service = Service.Create(ServiceId.New(), Tenant, "Consulta general", 30, 0, true, now);
             var session = Session.Create(SessionId.New(), Tenant, resource.Id, service.Id, Start, Start.AddMinutes(30), 0, 1, false, now);
             var settings = SchedulingSettings.Create(Tenant, now);
-            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, null, now);
+            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, defaultSenderId, now);
             var appointment = Appointment.Create(
                 AppointmentId.New(), Tenant, location.Id, resource.Id, service.Id, customerId, session.Id, blockId: null, Start,
                 Start.AddMinutes(30), AppointmentStatus.Confirmed, AppointmentSource.BackOffice, conversationId: null, note: null,
-                resourceMember ? null : memberId, now);
+                resourceMember || !historyActor ? null : memberId, now);
             context.AddRange(location, resource, service, session, settings, appointment);
             await context.SaveChangesAsync(Ct);
 
-            var harness = new Harness(database, memberId, appointment.Id, customerId);
+            var harness = new Harness(database, memberId, appointment.Id, customerId, defaultSenderId);
             harness.Wire();
             return harness;
         }
@@ -164,6 +171,11 @@ public sealed class AppointmentReminderWorkerTests
             services.AddSingleton<ISchedulingMemberDirectory>(Members);
             _provider = services.BuildServiceProvider();
             Members.Active.Add(MemberId);
+            if (DefaultSenderId is { } defaultSender)
+            {
+                Members.Active.Add(defaultSender);
+            }
+
             Recipients.Recipient = new ReminderRecipient(CustomerId, "Ana Pérez", "+573001234567", IsActive: true, ConsentRevoked: false, MarketingOptOut: false);
             // Faltan 20 h: dentro de la ventana de 24 h.
             Clock.UtcNow = Start.AddHours(-20);
@@ -512,6 +524,40 @@ public sealed class AppointmentReminderWorkerTests
     {
         await using var h = await Harness.StartAsync();
         h.Members.Active.Clear();
+
+        await h.PassAsync();
+
+        Assert.Empty(h.Sender.Messages);
+        Assert.Equal("no_sender_member", (await h.LoadAsync()).ReminderSkippedReason);
+    }
+
+    // D-18: el remitente por defecto de las reglas entra último a los candidatos.
+    [Fact]
+    public async Task WithoutResourceMemberOrActorTheDefaultSenderSends()
+    {
+        await using var h = await Harness.StartAsync(resourceMember: false, historyActor: false, defaultSender: true);
+
+        await h.PassAsync();
+
+        Assert.Equal(h.DefaultSenderId, Assert.Single(h.Sender.Messages).SentByMemberId);
+        Assert.Null((await h.LoadAsync()).ReminderSkippedReason);
+    }
+
+    [Fact]
+    public async Task TheResourceMemberWinsOverTheDefaultSender()
+    {
+        await using var h = await Harness.StartAsync(defaultSender: true);
+
+        await h.PassAsync();
+
+        Assert.Equal(h.MemberId, Assert.Single(h.Sender.Messages).SentByMemberId);
+    }
+
+    [Fact]
+    public async Task ASuspendedDefaultSenderStillSkipsWithNoSenderMember()
+    {
+        await using var h = await Harness.StartAsync(resourceMember: false, historyActor: false, defaultSender: true);
+        h.Members.Active.Remove(h.DefaultSenderId!.Value);
 
         await h.PassAsync();
 

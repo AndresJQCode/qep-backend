@@ -15,7 +15,8 @@ public sealed class GetSettingsHandler(
     ITenantModules tenantModules,
     SchedulingFirstAccess firstAccess,
     ISchedulingSettingsRepository settings,
-    ISchedulingReminderTemplateStatus templateStatus)
+    ISchedulingReminderTemplateStatus templateStatus,
+    ISchedulingMemberDirectory members)
     : IQueryHandler<GetSettingsQuery, SettingsDto>
 {
     public async Task<SettingsDto> HandleAsync(GetSettingsQuery query, CancellationToken cancellationToken)
@@ -26,7 +27,29 @@ public sealed class GetSettingsHandler(
 
         var row = await settings.FindAsync(query.TenantId, cancellationToken)
             ?? throw new InvalidOperationException("The scheduling settings row is missing after provisioning.");
-        return SchedulingComposer.Settings(row, await ReminderTemplateState.ResolveAsync(templateStatus, query.TenantId, row, cancellationToken));
+        return SchedulingComposer.Settings(
+            row,
+            await ReminderTemplateState.ResolveAsync(templateStatus, query.TenantId, row, cancellationToken),
+            await ReminderSenderName.ResolveAsync(members, query.TenantId, row, cancellationToken));
+    }
+}
+
+/// <summary>
+/// El nombre del remitente por defecto, resuelto por el directorio de miembros. Devuelve el nombre aunque la membresía ya no esté activa: la
+/// pantalla tiene que poder nombrar al remitente que quedó suspendido para pedir que elijan otro. Nulo sin remitente o si el directorio no lo conoce.
+/// </summary>
+internal static class ReminderSenderName
+{
+    public static async Task<string?> ResolveAsync(
+        ISchedulingMemberDirectory members, Guid tenantId, SchedulingSettings row, CancellationToken cancellationToken)
+    {
+        if (row.ReminderSenderMemberId is not { } senderId)
+        {
+            return null;
+        }
+
+        var found = await members.FindAsync(tenantId, [senderId], cancellationToken);
+        return found.FirstOrDefault(member => member.MemberId == senderId)?.DisplayName;
     }
 }
 
@@ -49,6 +72,7 @@ public sealed class UpdateSettingsHandler(
     ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     ISchedulingReminderTemplateStatus templateStatus,
+    ISchedulingMemberDirectory members,
     IValidator<SettingsRequest> validator)
     : ICommandHandler<UpdateSettingsCommand, SettingsDto>
 {
@@ -103,6 +127,21 @@ public sealed class UpdateSettingsHandler(
             changed.Add("reminderConnectionId");
         }
 
+        // Se valida antes de tocar la fila: un remitente inexistente, de otro tenant o suspendido es un error del campo, no del recordatorio.
+        if (request.ReminderSenderMemberId is { } senderId)
+        {
+            var found = await members.FindAsync(command.TenantId, [senderId], cancellationToken);
+            if (!found.Any(member => member.MemberId == senderId && member.IsActive))
+            {
+                SchedulingFieldErrors.Throw("reminderSenderMemberId", "Elige un miembro activo de la organización.");
+            }
+        }
+
+        if (row.ReminderSenderMemberId != request.ReminderSenderMemberId)
+        {
+            changed.Add("reminderSenderMemberId");
+        }
+
         // El dominio exige la conexión del recordatorio con su código (422); el validador ya acotó los rangos.
         row.Update(
             Enum.Parse<ConfirmationMode>(request.ConfirmationMode!, ignoreCase: false),
@@ -112,13 +151,16 @@ public sealed class UpdateSettingsHandler(
             request.ReminderEnabled ?? false,
             request.ReminderOffsetHours!.Value,
             request.ReminderConnectionId,
-            row.ReminderSenderMemberId,
+            request.ReminderSenderMemberId,
             now);
         SchedulingAudit.Publish(
             auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SettingsUpdated,
             SchedulingAuditActions.Resources.Settings, command.TenantId, changed, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return SchedulingComposer.Settings(row, await ReminderTemplateState.ResolveAsync(templateStatus, command.TenantId, row, cancellationToken));
+        return SchedulingComposer.Settings(
+            row,
+            await ReminderTemplateState.ResolveAsync(templateStatus, command.TenantId, row, cancellationToken),
+            await ReminderSenderName.ResolveAsync(members, command.TenantId, row, cancellationToken));
     }
 }

@@ -62,4 +62,5 @@ public sealed record SettingsRequest(
     int? ClientCancelCutoffHours,
     bool? ReminderEnabled,
     int? ReminderOffsetHours,
-    Guid? ReminderConnectionId);
+    Guid? ReminderConnectionId,
+    Guid? ReminderSenderMemberId);
