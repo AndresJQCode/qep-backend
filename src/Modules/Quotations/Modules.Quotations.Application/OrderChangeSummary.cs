@@ -54,6 +54,10 @@ public static class OrderChangeSummary
 
     public static string GiftRemoved(string productName) => Trim($"Quitó el regalo {productName}.");
 
+    /// <summary>Spec 2026-11-23: «Editar pedido» cambia la cantidad de un regalo sin quitarlo y volverlo a agregar.</summary>
+    public static string GiftQuantityChanged(string productName, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió la cantidad del regalo {productName}: {format.Number(from)} → {format.Number(to)}.");
+
     public static string RetailChanged(bool isRetail) => isRetail
         ? "Marcó el pedido como detal: ninguna línea recibe descuento."
         : "Quitó el detal: las líneas vuelven a su descuento por escala.";
