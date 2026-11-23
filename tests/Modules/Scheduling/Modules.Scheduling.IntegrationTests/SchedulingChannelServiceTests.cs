@@ -670,6 +670,115 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
         Assert.Equal("Confirmed", (await ReadAppointmentAsync(scene, id)).GetProperty("status").GetString());
     }
 
+    // Final review W2: the job shares one DbContext across its writes. A write that fails must not leave its entities tracked, or the
+    // next write of the same job flushes them again.
+    private static int TrackedEntries(AsyncServiceScope scope) =>
+        scope.ServiceProvider.GetRequiredService<Modules.Scheduling.Infrastructure.Persistence.SchedulingDbContext>().ChangeTracker.Entries().Count();
+
+    [Fact]
+    public async Task AFailedChannelCancelLeavesNothingTracked()
+    {
+        var scene = await BookSceneAsync();
+        using var owner = scene.Tenant;
+        var (scope, id) = await StaleCopyAsync(scene, "discard-cancel");
+        await using var _ = scope;
+        await HumanMovesAsync(scene, id, 10);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => scope.ServiceProvider.GetRequiredService<IChannelScheduling>()
+            .CancelAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, null, Ct));
+
+        Assert.Equal(0, TrackedEntries(scope));
+    }
+
+    [Fact]
+    public async Task AFailedChannelRescheduleLeavesNothingTracked()
+    {
+        var scene = await BookSceneAsync();
+        using var owner = scene.Tenant;
+        var (scope, id) = await StaleCopyAsync(scene, "discard-move");
+        await using var _ = scope;
+        await HumanMovesAsync(scene, id, 11);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => scope.ServiceProvider.GetRequiredService<IChannelScheduling>()
+            .RescheduleAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, At(scene, 10), null, Ct));
+
+        Assert.Equal(0, TrackedEntries(scope));
+    }
+
+    [Fact]
+    public async Task AFailedChannelBookLeavesNothingTracked()
+    {
+        var scene = await BookSceneAsync();
+        using var owner = scene.Tenant;
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        var channel = scope.ServiceProvider.GetRequiredService<IChannelScheduling>();
+        await channel.BookAsync(Booking(scene, At(scene, 9), "discard-book-1", scene.Resource), Ct);
+
+        // The same slot of the same resource under another key: the second booking fails, and the first one's entities are not its business.
+        await Assert.ThrowsAnyAsync<Exception>(() => channel.BookAsync(Booking(scene, At(scene, 9), "discard-book-2", scene.Resource), Ct));
+
+        Assert.Equal(0, TrackedEntries(scope));
+    }
+
+    // Final review W3: the human path passes the If-Match version down. A write that lands between the load and the lock without moving the
+    // appointment (a confirmation) must still answer 412; the channel path has no If-Match and tolerates it.
+    private async Task<(AsyncServiceScope Scope, Guid Id, long LoadedVersion)> LoadedPendingAsync(BookScene scene, string key)
+    {
+        await SetRulesAsync(scene.Tenant, "Manual");
+        var booked = await WithServiceAsync(channel => channel.BookAsync(Booking(scene, At(scene, 9), key), Ct));
+        var id = booked.Appointment.AppointmentId;
+        var scope = world.Factory.Services.CreateAsyncScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IAppointmentRepository>().FindAsync(scene.Tenant.Id, new AppointmentId(id), Ct);
+        var current = await ReadAppointmentAsync(scene, id);
+        (await PostAsync(scene.Tenant.Admin, $"{scene.Tenant.Url}/appointments/{id}/confirm", null, VersionOf(current))).EnsureSuccessStatusCode();
+        return (scope, id, loaded!.Version);
+    }
+
+    [Fact]
+    public async Task AHumanCancelWithAStaleVersionAfterAConfirmationIsAConcurrencyConflict()
+    {
+        var scene = await BookSceneAsync();
+        using var owner = scene.Tenant;
+        var (scope, id, loadedVersion) = await LoadedPendingAsync(scene, "stale-human-cancel");
+        await using var _ = scope;
+        var appointment = (await scope.ServiceProvider.GetRequiredService<IAppointmentRepository>().FindAsync(scene.Tenant.Id, new AppointmentId(id), Ct))!;
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => scope.ServiceProvider.GetRequiredService<AppointmentCancellation>()
+            .CancelAsync(scene.Tenant.Id, appointment, null, byClient: false, SchedulingActor.Human(Guid.CreateVersion7(), null), loadedVersion, Ct));
+
+        Assert.Equal("Confirmed", (await ReadAppointmentAsync(scene, id)).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task AChannelCancelToleratesAConfirmationBetweenTheReadAndTheLock()
+    {
+        var scene = await BookSceneAsync();
+        using var owner = scene.Tenant;
+        var (scope, id, _) = await LoadedPendingAsync(scene, "stale-channel-cancel");
+        await using var __ = scope;
+
+        var result = await scope.ServiceProvider.GetRequiredService<IChannelScheduling>()
+            .CancelAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, null, Ct);
+
+        Assert.False(result.AlreadyDone);
+        Assert.Equal("Cancelled", (await ReadAppointmentAsync(scene, id)).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task AHumanRescheduleWithAStaleVersionAfterAConfirmationIsAConcurrencyConflict()
+    {
+        var scene = await BookSceneAsync();
+        using var owner = scene.Tenant;
+        var (scope, id, loadedVersion) = await LoadedPendingAsync(scene, "stale-human-move");
+        await using var _ = scope;
+        var appointment = (await scope.ServiceProvider.GetRequiredService<IAppointmentRepository>().FindAsync(scene.Tenant.Id, new AppointmentId(id), Ct))!;
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => scope.ServiceProvider.GetRequiredService<AppointmentRescheduling>()
+            .RescheduleAsync(
+                scene.Tenant.Id, appointment, ResourceScope.All, null, new DateTimeOffset(At(scene, 10), TimeSpan.FromHours(-5)),
+                SchedulingActor.Human(Guid.CreateVersion7(), null), byClient: false, requireClientChoice: false, loadedVersion, Ct));
+    }
+
     // Block 1 review: a replay answers with the stored appointment, so it must be this customer's. Another customer's key is a conflict that
     // names nothing of the stored one.
     [Fact]

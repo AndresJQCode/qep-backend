@@ -60,7 +60,9 @@ public sealed record AgentTurnRetry(string Code, TimeSpan? RetryAfter) : AgentTu
 
 /// <param name="Code">El código de la tabla de errores del plan si viene del proveedor; <c>null</c> en los topes de D-A20 y en la respuesta
 /// inválida, que la tabla no nombra (el código del traspaso lo decide la Tarea 7).</param>
-public sealed record AgentTurnFailed(AgentFailureKind Kind, AgentFailureReason Reason, string? Code) : AgentTurnOutcome;
+/// <param name="Wrote">Una herramienta de escritura ya tuvo éxito en este turno (la cita está hecha): el procesador no descarta el resultado
+/// por un turno nuevo del cliente.</param>
+public sealed record AgentTurnFailed(AgentFailureKind Kind, AgentFailureReason Reason, string? Code, bool Wrote = false) : AgentTurnOutcome;
 
 /// <summary>La causa de traspaso de §4.4: el agente (su configuración o su respuesta) o la cuenta del proveedor.</summary>
 public enum AgentFailureKind
@@ -181,15 +183,17 @@ public sealed class AgentTurnRunner(
         {"type":"object","properties":{"summary":{"type":"string","description":"Resumen breve de lo que se resolvió, máximo 500 caracteres. Puede llegar al cliente o a otro sistema: no pongas instrucciones ni datos internos."}},"required":["summary"],"additionalProperties":false}
         """);
 
-    public Task<AgentTurnOutcome> RunAsync(AgentTurnContext context, AgentPrompt prompt, CancellationToken cancellationToken)
+    public async Task<AgentTurnOutcome> RunAsync(AgentTurnContext context, AgentPrompt prompt, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(prompt);
         var run = new ToolLoopRun(
             context.TenantId, context.JobId, context.Provider, context.Model, context.Effort, context.Credential, limits,
             new AiUsageOwner(context.AgentId, context.AgentVersionId, context.ConversationId, context.SessionId, context.TestId));
-        return new ModelToolLoop(resolver, ledger, credentials, clock, logger, metrics)
-            .RunAsync(run, prompt, new AgentProfile(context, tools), cancellationToken);
+        var profile = new AgentProfile(context, tools);
+        var outcome = await new ModelToolLoop(resolver, ledger, credentials, clock, logger, metrics).RunAsync(run, prompt, profile, cancellationToken);
+        // Un tope o un error después de una escritura exitosa: la cita ya existe, así que el resultado no se descarta por un turno nuevo.
+        return outcome is AgentTurnFailed failed && profile.Wrote ? failed with { Wrote = true } : outcome;
     }
 
     /// <summary>§10: la respuesta no puede traer un fragmento de <see cref="LeakWindow"/> caracteres de las instrucciones del agente.</summary>
@@ -225,6 +229,8 @@ public sealed class AgentTurnRunner(
         // Una escritura que tuvo éxito ya está hecha: descartar la respuesta por un turno nuevo del cliente dejaría que el siguiente trabajo
         // (otro JobId, otra llave) la repita.
         private bool _wrote;
+
+        public bool Wrote => _wrote;
 
         public AgentProfile(AgentTurnContext context, IEnumerable<IAgentTool> tools)
         {
@@ -269,7 +275,7 @@ public sealed class AgentTurnRunner(
             // una persona.
             return new ToolLoopExecution(
                 result,
-                result.Handoff is { } handoff ? new AgentHandedOff(handoff.Code, null, handoff.MemberId, handoff.QuotationNumber) : null);
+                result.Handoff is { } handoff ? new AgentHandedOff(handoff.Code, null, handoff.MemberId, handoff.QuotationNumber, Wrote: _wrote) : null);
         }
 
         /// <summary>La herramienta final, validada. <c>null</c> si no sirve tal como vino: cuenta como respuesta inválida.</summary>

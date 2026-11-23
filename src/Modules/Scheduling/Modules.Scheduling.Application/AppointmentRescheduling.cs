@@ -62,6 +62,7 @@ public sealed class AppointmentRescheduling(
         SchedulingActor actor,
         bool byClient,
         bool requireClientChoice,
+        long? expectedVersion,
         CancellationToken cancellationToken)
     {
         EnsureOpen(appointment);
@@ -88,6 +89,7 @@ public sealed class AppointmentRescheduling(
 
         // Read before the lock, so read again: a cancel or a move that committed in between is visible only now.
         await appointments.RefreshAsync(appointment, cancellationToken);
+        AppointmentCancellation.EnsureNotChanged(appointment, expectedVersion);
         EnsureOpen(appointment);
         if (appointment.StartsAt == startsAt && (resourceId is null || resourceId == appointment.ResourceId))
         {

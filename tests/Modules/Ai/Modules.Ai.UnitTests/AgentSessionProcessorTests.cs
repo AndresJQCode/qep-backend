@@ -436,6 +436,26 @@ public sealed class AgentSessionProcessorTests
         Assert.Equal((ModelJobStatus.Done, 0), (job.Status, session.SupersededInRow));
     }
 
+    // Revisión final W1: un traspaso de herramienta o un fallo después de una escritura exitosa tampoco se descartan.
+    [Theory]
+    [InlineData("""{"type":"handed_off","reason":"appointment_change_blocked","wrote":true}""", 1)]
+    [InlineData("""{"type":"failed","kind":0,"failureReason":2,"wrote":true}""", 1)]
+    [InlineData("""{"type":"failed","kind":0,"failureReason":2}""", 0)]
+    public async Task AToolHandoffOrFailureAfterAWriteIsNeverSuperseded(string stored, int handedOff)
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = HeldJob(session, stored);
+        world.Sessions.Turns.Add(session.AppendTurn(AgentTurnRoleKind.Customer, Guid.CreateVersion7(), null, [], false, Now));
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        // Sin "wrote" (un resultado guardado antes de este campo) se lee false: se descarta como siempre.
+        Assert.Equal(handedOff == 0, job.Status == ModelJobStatus.Discarded);
+    }
+
     // Lo contrario: sin escritura, el mismo turno nuevo sí descarta (la prueba de arriba no pasa por no mirar el turno).
     [Fact]
     public async Task AReplyWithoutAWriteIsStillSuperseded()

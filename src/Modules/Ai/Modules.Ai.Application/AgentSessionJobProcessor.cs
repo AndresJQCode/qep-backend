@@ -292,7 +292,7 @@ public sealed partial class AgentSessionJobProcessor(
 
         // El borrador de cotización o la cita ya están escritos: descartar la respuesta dejaría que el siguiente trabajo (otro JobId, otra llave)
         // creara otro borrador o reservara de nuevo.
-        var wrote = outcome is AgentReplied { Wrote: true } or AgentHandedOff { Wrote: true } or AgentHandedOff { Reason: AgentHandoffCodes.QuotationDraftCreated };
+        var wrote = outcome is AgentReplied { Wrote: true } or AgentHandedOff { Wrote: true } or AgentTurnFailed { Wrote: true } or AgentHandedOff { Reason: AgentHandoffCodes.QuotationDraftCreated };
         if (!wrote && session.CanSupersede && await sessions.HasCustomerTurnAfterAsync(session.Id, job.UpToSeq, cancellationToken))
         {
             session.RecordSuperseded(now);
@@ -504,7 +504,7 @@ public sealed partial class AgentSessionJobProcessor(
                 AgentHandedOff handedOff => new StoredOutcome(
                     "handed_off", null, null, handedOff.Reason, handedOff.Note, null, null, null, null, handedOff.MemberId, handedOff.QuotationNumber, handedOff.Wrote),
                 AgentTurnRetry retry => new StoredOutcome("retry", null, null, null, null, null, null, retry.Code, retry.RetryAfter?.TotalSeconds),
-                AgentTurnFailed failed => new StoredOutcome("failed", null, null, null, null, failed.Kind, failed.Reason, failed.Code, null),
+                AgentTurnFailed failed => new StoredOutcome("failed", null, null, null, null, failed.Kind, failed.Reason, failed.Code, null, Wrote: failed.Wrote),
                 _ => throw new InvalidOperationException($"Unknown outcome {outcome.GetType().Name}."),
             },
             Json);
@@ -519,7 +519,7 @@ public sealed partial class AgentSessionJobProcessor(
                 "handed_off" => new AgentHandedOff(stored.Reason ?? AgentHandoffReasons.All[0], stored.Note, stored.MemberId, stored.QuotationNumber, stored.Wrote),
                 "retry" => new AgentTurnRetry(stored.Code ?? AiModelErrorCodes.ProviderUnavailable,
                     stored.RetryAfterSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null),
-                _ => new AgentTurnFailed(stored.Kind ?? AgentFailureKind.AgentFailed, stored.FailureReason ?? AgentFailureReason.ProviderError, stored.Code),
+                _ => new AgentTurnFailed(stored.Kind ?? AgentFailureKind.AgentFailed, stored.FailureReason ?? AgentFailureReason.ProviderError, stored.Code, stored.Wrote),
             };
         }
     }
