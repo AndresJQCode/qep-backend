@@ -115,6 +115,12 @@ public sealed class ArchiveLocationHandler(
         var location = await locations.FindAsync(command.TenantId, new LocationId(command.LocationId), cancellationToken)
             ?? throw SchedulingNotFound.Location(command.LocationId);
 
+        // Archiving twice answers the same location and changes (and audits) nothing.
+        if (location.Archived)
+        {
+            return SchedulingComposer.Location(location);
+        }
+
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         location.Archive(now);
         SchedulingAudit.Publish(

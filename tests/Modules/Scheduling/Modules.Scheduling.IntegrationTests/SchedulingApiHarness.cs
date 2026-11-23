@@ -187,6 +187,25 @@ internal static class SchedulingApiHarness
             .SingleAsync(Ct);
     }
 
+    /// <summary>The <c>changed_fields</c> column of the audit entries of one action on one resource, as raw JSON text, oldest first.</summary>
+    public static async Task<IReadOnlyList<string>> ReadAuditFieldsAsync(
+        QepApiFactory factory, string tenantId, string action, string resourceType, Guid resourceId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SchedulingDbContext>();
+        var tenant = Guid.Parse(tenantId);
+        var id = resourceId.ToString();
+        return await db.Database
+            .SqlQuery<string>(
+                $"""
+                SELECT changed_fields::text AS "Value" FROM audit.entries
+                WHERE tenant_id = {tenant} AND action = {action} AND resource_type = {resourceType} AND resource_id = {id}
+                  AND source = 'scheduling'
+                ORDER BY occurred_at
+                """)
+            .ToListAsync(Ct);
+    }
+
     public static string CodeOf(JsonElement problem) => problem.GetProperty("code").GetString()!;
 
     public static bool HasError(JsonElement problem, string key) =>

@@ -172,6 +172,10 @@ public sealed class SchedulingAuditApiTests(SchedulingApiWorld world) : IClassFi
         Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.SessionDeactivated, SchedulingAuditActions.Resources.Session, id));
         Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.SessionReactivated, SchedulingAuditActions.Resources.Session, id));
         Assert.Equal(0, await CountAsync(tenant, SchedulingAuditActions.SessionRemoved, SchedulingAuditActions.Resources.Session, id));
+        // The block and the service did not change, yet the entry is not empty: the row came back to life.
+        var fields = Assert.Single(await ReadAuditFieldsAsync(
+            world.Factory, tenant.IdText, SchedulingAuditActions.SessionReactivated, SchedulingAuditActions.Resources.Session, id));
+        Assert.Contains("isActive", fields, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -195,6 +199,64 @@ public sealed class SchedulingAuditApiTests(SchedulingApiWorld world) : IClassFi
         Assert.Equal(0, await CountAsync(tenant, SchedulingAuditActions.BlockArchived, SchedulingAuditActions.Resources.Block, shared));
         Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.BlockUpdated, SchedulingAuditActions.Resources.Block, onlyFirst));
         Assert.Equal(1, await CountAsync(tenant, SchedulingAuditActions.BlockArchived, SchedulingAuditActions.Resources.Block, onlyFirst));
+    }
+
+    // Archiving something already archived answers the same entity (same version) and audits nothing: no change happened.
+    private async Task AssertSecondArchiveIsSilentAsync(
+        SchedulingTenant tenant, string url, string action, string resourceType, Guid id)
+    {
+        var first = await tenant.Admin.PostAsync($"{url}/archive", null, Ct);
+        var second = await tenant.Admin.PostAsync($"{url}/archive", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var firstBody = await JsonOfAsync(first);
+        var secondBody = await JsonOfAsync(second);
+        Assert.True(secondBody.GetProperty("archived").GetBoolean());
+        Assert.Equal(firstBody.GetProperty("version").GetRawText(), secondBody.GetProperty("version").GetRawText());
+        Assert.Equal(1, await CountAsync(tenant, action, resourceType, id));
+    }
+
+    [Fact]
+    public async Task ArchivingALocationTwiceAuditsItOnce()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var id = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/locations", new { name = "Sede Norte" })).GetProperty("id").GetGuid();
+
+        await AssertSecondArchiveIsSilentAsync(
+            tenant, $"{tenant.Url}/locations/{id}", SchedulingAuditActions.LocationArchived, SchedulingAuditActions.Resources.Location, id);
+    }
+
+    [Fact]
+    public async Task ArchivingAResourceTwiceAuditsItOnce()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var id = await CreateResourceAsync(tenant, "Dra. Torres");
+
+        await AssertSecondArchiveIsSilentAsync(
+            tenant, $"{tenant.Url}/resources/{id}", SchedulingAuditActions.ResourceArchived, SchedulingAuditActions.Resources.Resource, id);
+    }
+
+    [Fact]
+    public async Task ArchivingAServiceTwiceAuditsItOnce()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var id = await CreateServiceAsync(tenant);
+
+        await AssertSecondArchiveIsSilentAsync(
+            tenant, $"{tenant.Url}/services/{id}", SchedulingAuditActions.ServiceArchived, SchedulingAuditActions.Resources.Service, id);
+    }
+
+    [Fact]
+    public async Task ArchivingABlockTwiceAuditsItOnce()
+    {
+        using var tenant = await NewTenantAsync(world.Factory);
+        var resource = await CreateResourceAsync(tenant, "Dra. Torres");
+        var service = await CreateServiceAsync(tenant);
+        var id = (await CreatedAsync(tenant.Admin, $"{tenant.Url}/blocks", WeeklyBlockBody([resource], [service]))).GetProperty("id").GetGuid();
+
+        await AssertSecondArchiveIsSilentAsync(
+            tenant, $"{tenant.Url}/blocks/{id}", SchedulingAuditActions.BlockArchived, SchedulingAuditActions.Resources.Block, id);
     }
 
     [Fact]

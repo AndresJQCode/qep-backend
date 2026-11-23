@@ -112,8 +112,9 @@ public sealed class PublishSessionHandler(
         }
         else
         {
-            // A reactivation lists what the row took from the current service and block, not the key it already had.
-            var reactivated = new List<string>();
+            // A reactivation always changes isActive, then lists what the row took from the current service and block (not the key it
+            // already had): the entry is never empty, even when the end and the capacity are the same as before.
+            var reactivated = new List<string> { "isActive" };
             if (session.EndsAt != endsAt || session.OccupiesUntil != endsAt.AddMinutes(service.BufferMinutes))
             {
                 reactivated.Add("endsAt");

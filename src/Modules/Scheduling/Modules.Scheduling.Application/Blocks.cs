@@ -301,6 +301,12 @@ public sealed class ArchiveBlockHandler(
             ?? throw SchedulingNotFound.Block(command.BlockId);
         BlockInput.EnsureInScope(await scopeResolver.ResolveAsync(command.TenantId, cancellationToken), block.ResourceIds);
 
+        // Archiving twice answers the same block and changes (and audits) nothing.
+        if (block.Archived)
+        {
+            return SchedulingComposer.Block(block);
+        }
+
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
         block.Archive(now);
         SchedulingAudit.Publish(
