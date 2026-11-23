@@ -34,6 +34,8 @@ public static class HrInfrastructureExtensions
         services.AddScoped<IHrMemberPhones, HrMemberPhones>();
         services.AddScoped<IExcelEmployeeImporter, ClosedXmlEmployeeImporter>();
         services.AddScoped<IEmployeeImportTemplateBuilder, ClosedXmlEmployeeImportTemplateBuilder>();
+        services.AddScoped<IExcelLegalParameterImporter, ClosedXmlLegalParameterImporter>();
+        services.AddScoped<ILegalParameterTemplateBuilder, ClosedXmlLegalParameterTemplateBuilder>();
 
         return services;
     }
