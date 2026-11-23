@@ -53,6 +53,14 @@ public static class HrErrorCodes
     public const string FileInvalid = "hr.file.invalid";
     public const string FileRejected = "hr.file.rejected";
 
+    // Exámenes médicos ocupacionales (spec 2026-11-23 §7.3). `not_found` es 404 y está en HrNotFound; el resto es 422, ninguno es conflicto.
+    public const string MedicalExamNotFound = "hr.medical_exam.not_found";
+    public const string MedicalExamDuplicate = "hr.medical_exam.duplicate";
+    public const string MedicalExamFutureDate = "hr.medical_exam.future_date";
+    public const string MedicalExamRestrictionsUntilInvalid = "hr.medical_exam.restrictions_until_invalid";
+    public const string MedicalExamNoPendingExit = "hr.medical_exam.no_pending_exit";
+    public const string ExamFrequencyInvalid = "hr.settings.exam_frequency_invalid";
+
     // 422, importación por Excel (Tarea 10): errores de archivo y confirmación.
     public const string ImportFileRequired = "hr.import.file_required";
     public const string ImportExtensionInvalid = "hr.import.extension_invalid";
