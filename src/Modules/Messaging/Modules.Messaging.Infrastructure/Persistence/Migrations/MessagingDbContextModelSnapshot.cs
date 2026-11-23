@@ -932,13 +932,17 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("kind = 'SupportSurvey'");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_task_notice")
+                        .IsUnique()
+                        .HasFilter("kind = 'TaskNotice'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_wholesale_invitation_notice")
                         .IsUnique()
                         .HasFilter("kind = 'WholesaleInvitationNotice'");
 
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')");
                         });
                 });
 

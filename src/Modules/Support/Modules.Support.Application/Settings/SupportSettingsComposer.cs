@@ -14,7 +14,8 @@ namespace Modules.Support.Application;
 public sealed class SupportSettingsComposer(
     ISupportMemberDirectory members,
     IBusinessHoursProvider businessHours,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    ISupportTaskNoticeChannels taskNoticeChannels)
 {
     internal const string ScheduleChosen = "Chosen";
     internal const string ScheduleDefault = "Default";
@@ -53,7 +54,18 @@ public sealed class SupportSettingsComposer(
                 .ToArray(),
             recipients.Count(recipient => recipient.CanReceive));
 
-        return SupportDtoMapping.ToDto(settings, unassignedAlert);
+        // The stored connection is shown as it is, listed or not: one that was paused or lost its template is not erased by a read.
+        var taskNotice = new SupportTaskNoticeDto(
+            settings.TaskNoticeConnectionId,
+            (await taskNoticeChannels.ListAsync(tenantId, cancellationToken))
+                .OrderBy(connection => connection.Name, StringComparer.InvariantCultureIgnoreCase)
+                .ThenBy(connection => connection.ConnectionId)
+                .Select(connection => new SupportTaskNoticeConnectionDto(
+                    connection.ConnectionId, connection.Name, connection.PhoneNumber, connection.TemplateStatus))
+                .ToArray(),
+            taskNoticeChannels.EscalationAfterMinutes);
+
+        return SupportDtoMapping.ToDto(settings, unassignedAlert, taskNotice);
     }
 
     // The schedule that rules today and why, the way IBusinessHoursProvider resolves it: the chosen one if it still exists, else the

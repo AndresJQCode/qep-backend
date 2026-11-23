@@ -196,6 +196,14 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateMemberProfileCommand, MembershipListItemDto>,
             UpdateMemberProfileHandler>();
+        // Notice phone (spec 2026-11-22 section 5.5): the caller's own membership. The validator enters with
+        // AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            IQueryHandler<GetMyMembershipQuery, MyMembershipDto>,
+            GetMyMembershipHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateMyPhoneCommand, MyMembershipDto>,
+            UpdateMyPhoneHandler>();
         services.AddScoped<
             ICommandHandler<CreateUploadSessionCommand, UploadSessionDto>,
             CreateUploadSessionHandler>();
@@ -1763,6 +1771,9 @@ public static class QepServiceCollectionExtensions
         // Mayorista: la plantilla del aviso de invitación de distribuidor, calcada de la «Aviso de respuesta».
         services.AddScoped<ICommandHandler<ProvisionWholesaleInvitationNoticeTemplateCommand, ManagedTemplateDto>, ProvisionWholesaleInvitationNoticeTemplateHandler>();
         services.AddScoped<IQueryHandler<GetWholesaleInvitationNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetWholesaleInvitationNoticeTemplateDraftHandler>();
+        // Support task notices: the assignment notice template, sibling of the wholesale invitation notice.
+        services.AddScoped<ICommandHandler<ProvisionTaskNoticeTemplateCommand, ManagedTemplateDto>, ProvisionTaskNoticeTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetTaskNoticeTemplateDraftQuery, SystemTemplateDraftDto>, GetTaskNoticeTemplateDraftHandler>();
         // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista.
         services.AddScoped<ICommandHandler<ProvisionAppointmentReminderTemplateCommand, ManagedTemplateDto>, ProvisionAppointmentReminderTemplateHandler>();
         services.AddScoped<IQueryHandler<GetAppointmentReminderTemplateDraftQuery, SystemTemplateDraftDto>, GetAppointmentReminderTemplateDraftHandler>();
@@ -2211,6 +2222,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-11-22: la campana de avisos. Los nombres se resuelven al leer, con la regla de Mensajería.
         services.AddScoped<Modules.Notifications.Application.IInAppNotificationNames, InAppNotificationNames>();
+        // Spec 2026-11-22 D-1: the task notice worker asks whether the member has QEP open (the app hub's presence).
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticePresence, TaskNoticePresence>();
+        // Task-notices spec 2026-11-22 §5.4: the escalation reads the ticket (Support), the recipient (Tenancy, HR, Identity) and sends
+        // the WhatsApp template (Messaging) only through these narrow ports.
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeState, TaskNoticeState>();
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeRecipients, TaskNoticeRecipients>();
+        services.AddScoped<Modules.Notifications.Application.ITaskNoticeWhatsApp, TaskNoticeWhatsAppSender>();
         services.AddScoped<
             IQueryHandler<Modules.Notifications.Application.ListInAppNotificationsQuery, Modules.Notifications.Application.InAppNotificationPageDto>,
             Modules.Notifications.Application.ListInAppNotificationsHandler>();
@@ -2223,6 +2241,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Notifications.Application.MarkAllNotificationsReadCommand, Modules.Notifications.Application.MarkAllReadResultDto>,
             Modules.Notifications.Application.MarkAllNotificationsReadHandler>();
+        // Task-notices spec D-2: abrir un ticket lee sus avisos de asignación. El validador lo registra el escaneo de abajo.
+        services.AddScoped<
+            ICommandHandler<Modules.Notifications.Application.MarkResourceNotificationsReadCommand, Modules.Notifications.Application.MarkResourceReadResultDto>,
+            Modules.Notifications.Application.MarkResourceNotificationsReadHandler>();
         services.AddValidatorsFromAssemblyContaining<Modules.Notifications.Application.ListInAppNotificationsValidator>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
@@ -2442,6 +2464,8 @@ public static class QepServiceCollectionExtensions
         // calendario es lunes a viernes, con los festivos de Colombia (que viven en Mensajería) si el tenant es de allá [owner 2026-11-15].
         services.AddScoped<Modules.Support.Application.ISupportCustomerLookup, SupportCustomerLookup>();
         services.AddScoped<Modules.Support.Application.ISupportMemberDirectory, SupportMemberDirectory>();
+        // Task-notices spec 2026-11-22 §5.4: the WhatsApp connections (Integrations) and the state of the TaskNotice template (Messaging).
+        services.AddScoped<Modules.Support.Application.ISupportTaskNoticeChannels, SupportTaskNoticeChannels>();
         // Spec 2026-11-15 §9.3 (plan L30): the company that answers on the public portal is a Companies company, like IPosCompanyLookup.
         services.AddScoped<Modules.Support.Application.ISupportOrganizationDirectory, SupportOrganizationDirectory>();
         // Fase 4a (plan G8): el «quién soy» de IsMe; null fuera de una sesión.

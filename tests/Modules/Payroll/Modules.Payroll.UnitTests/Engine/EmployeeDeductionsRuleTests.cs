@@ -10,8 +10,8 @@ public sealed class EmployeeDeductionsRuleTests
         WorkedDays = 15,
         SalaryRaw = 875_452.5m,
         Salary = 875_453m,
-        HealthEmployee = 35_100m,
-        PensionEmployee = 35_100m,
+        HealthEmployee = 35_018m,
+        PensionEmployee = 35_018m,
     };
 
     private static IReadOnlyList<PayrollLine> Deductions(EngineInput input)
@@ -28,7 +28,7 @@ public sealed class EmployeeDeductionsRuleTests
 
         Assert.Equal(["health_employee", "pension_employee"], lines.Select(line => line.Code));
         Assert.All(lines, line => Assert.Equal(PayrollLineGroup.Deduction, line.Group));
-        Assert.All(lines, line => Assert.Equal(35_100m, line.Amount));
+        Assert.All(lines, line => Assert.Equal(35_018m, line.Amount));
     }
 
     [Fact]
@@ -38,7 +38,7 @@ public sealed class EmployeeDeductionsRuleTests
 
         var lines = Deductions(input);
 
-        Assert.All(lines, line => Assert.Equal(35_000m, line.Amount));
+        Assert.All(lines, line => Assert.Equal(35_018m, line.Amount));
     }
 
     [Fact]
@@ -48,8 +48,8 @@ public sealed class EmployeeDeductionsRuleTests
 
         var health = Deductions(input)[0];
 
-        // 1 750 905 x 0.04 = 70 036.2 -> 70 100 for the month, not two halves rounded one by one.
-        Assert.Equal(70_100m, health.Amount + 35_100m);
+        // 1 750 905 x 0.04 = 70 036.2 -> 70 036 for the month, to the peso: the hundred is rounded on the PILA, not on the employee.
+        Assert.Equal(70_036m, health.Amount + 35_018m);
         Assert.Contains(health.Trace.LegalValues, value => value.Key == "HealthEmployeeRate");
     }
 }

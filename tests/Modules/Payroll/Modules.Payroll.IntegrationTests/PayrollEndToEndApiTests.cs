@@ -43,7 +43,7 @@ public sealed class PayrollEndToEndApiTests : IClassFixture<PayrollApiFixture>
     private static List<JsonElement> LinesOf(JsonElement employeeDetail) =>
         employeeDetail.GetProperty("result").GetProperty("lines").EnumerateArray().ToList();
 
-    private static decimal Ceil100(decimal value) => Math.Ceiling(value / 100m) * 100m;
+    private static decimal ToPeso(decimal value) => Math.Round(value, 0, MidpointRounding.AwayFromZero);
 
     private static async Task<Guid> OpenAsync(PayrollTenant tenant, Guid companyId, string half)
     {
@@ -110,7 +110,7 @@ public sealed class PayrollEndToEndApiTests : IClassFixture<PayrollApiFixture>
                 .Sum(line => line.GetProperty("amount").GetDecimal());
             var monthlyIbc = salary + constitutive;
             Assert.Equal(
-                Ceil100(monthlyIbc * 0.04m),
+                ToPeso(monthlyIbc * 0.04m),
                 AmountOf(inFirst, "health_employee") + AmountOf(inSecond, "health_employee"));
         }
 

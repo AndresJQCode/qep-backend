@@ -14,6 +14,8 @@ internal sealed class SupportIntegrationEvents(SupportDbContext dbContext) : ISu
     internal const string CustomerRepliedEvent = "support.ticket.customer-replied.v1";
     internal const string UnassignedAlertEvent = "support.ticket.unassigned-alert.v1";
     internal const string TaskAssignedEvent = "support.ticket.task-assigned.v1";
+    internal const string TicketAssignedEvent = "support.ticket.assigned.v1";
+    internal const string AssigneeReleasedEvent = "support.ticket.assignee-released.v1";
 
     public void PublishCustomerReplied(SupportTicket ticket, DateTimeOffset occurredAt)
     {
@@ -63,15 +65,43 @@ internal sealed class SupportIntegrationEvents(SupportDbContext dbContext) : ISu
             });
     }
 
-    public void PublishTaskAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt)
+    public void PublishTaskAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt) =>
+        AddAssigned(TaskAssignedEvent, ticket, assignedByMemberId, occurredAt);
+
+    public void PublishTicketAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt) =>
+        AddAssigned(TicketAssignedEvent, ticket, assignedByMemberId, occurredAt);
+
+    public void PublishAssigneeReleased(SupportTicket ticket, Guid formerAssigneeMemberId, string reason, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        // Task-notices spec 2026-11-22 §5.2: exactly these six camelCase names are the contract. isInternal lets the consumer tell a
+        // task from a customer ticket without reading Support.
+        Add(
+            AssigneeReleasedEvent,
+            ticket,
+            occurredAt,
+            new
+            {
+                ticketId = ticket.Id.Value,
+                tenantId = ticket.TenantId,
+                ticketNumber = SupportTicketNumber.Format(ticket.Number),
+                formerAssigneeMemberId,
+                reason,
+                isInternal = ticket.IsInternal,
+            });
+    }
+
+    // Internal-tasks spec 2026-11-22 §6 D-3: exactly these five camelCase names are the contract of both assignment events.
+    private void AddAssigned(string eventName, SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(ticket);
         var assignee = ticket.AssigneeMemberId
-            ?? throw new ArgumentException("A task-assigned event needs an assignee.", nameof(ticket));
+            ?? throw new ArgumentException("An assignment event needs an assignee.", nameof(ticket));
 
-        // Internal-tasks spec 2026-11-22 §6 D-3: exactly these five camelCase names are the contract.
         Add(
-            TaskAssignedEvent,
+            eventName,
             ticket,
             occurredAt,
             new

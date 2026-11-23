@@ -56,6 +56,13 @@ internal sealed class InAppNotificationRepository(NotificationsDbContext dbConte
         return entry;
     }
 
+    public Task<int> MarkReadByResourceAsync(
+        Guid tenantId, Guid memberId, InAppNotificationKind kind, Guid resourceId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        dbContext.InAppNotifications
+            .Where(entry => entry.TenantId == tenantId && entry.MemberId == memberId
+                && entry.Kind == kind && entry.ResourceId == resourceId && entry.ReadAt == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(entry => entry.ReadAt, now), cancellationToken);
+
     public Task MarkAllReadAsync(Guid tenantId, Guid memberId, DateTimeOffset? upTo, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var unread = dbContext.InAppNotifications

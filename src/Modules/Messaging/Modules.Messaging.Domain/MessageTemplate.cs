@@ -37,6 +37,9 @@ public enum MessageTemplateKind
 
     /// <summary>Agenda: el recordatorio de una cita por WhatsApp, sólo cuerpo (se guarda por nombre: va al final).</summary>
     AppointmentReminder,
+    /// <summary>Support task notices: the WhatsApp notice that a ticket or internal task was assigned to a member, body only (stored by name:
+    /// it goes at the end).</summary>
+    TaskNotice,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -139,6 +142,11 @@ public static partial class MessageTemplateName
 
     public const string InvoicePrefix = "qep_factura_";
 
+    /// <summary>Support task notices: <c>qep_tarea_asignada</c> and its versions (<c>qep_tarea_asignada_v2</c>…).</summary>
+    public const string TaskNoticeName = "qep_tarea_asignada";
+
+    public const string TaskNoticePrefix = "qep_tarea_asignada_";
+
     /// <summary>Agenda: <c>qep_agenda_recordatorio</c> y sus versiones (<c>qep_agenda_recordatorio_v2</c>…).</summary>
     public const string AppointmentReminderName = "qep_agenda_recordatorio";
 
@@ -161,6 +169,8 @@ public static partial class MessageTemplateName
             || name.StartsWith(WholesaleInvitationNoticePrefix, StringComparison.Ordinal)
             || string.Equals(name, InvoiceName, StringComparison.Ordinal)
             || name.StartsWith(InvoicePrefix, StringComparison.Ordinal)
+            || string.Equals(name, TaskNoticeName, StringComparison.Ordinal)
+            || name.StartsWith(TaskNoticePrefix, StringComparison.Ordinal)
             || string.Equals(name, AppointmentReminderName, StringComparison.Ordinal)
             || name.StartsWith(AppointmentReminderPrefix, StringComparison.Ordinal));
 
@@ -447,6 +457,18 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.WholesaleInvitationNotice;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Support task notices: the same as <see cref="AdoptAsWholesaleInvitationNotice"/> for a <c>qep_tarea_asignada</c> created in Meta's console.</summary>
+    public void AdoptAsTaskNotice(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateTaskNoticeConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.TaskNotice;
         UpdatedAt = now;
     }
 

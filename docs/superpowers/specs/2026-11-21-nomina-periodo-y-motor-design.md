@@ -167,8 +167,10 @@ inactiva solo. Pueden activarse y desactivarse.
 
 ## Cálculo
 
-Todo se redondea como manda la ley: el **IBC siempre hacia arriba al peso**, y **cada aporte o deducción de seguridad
-social hacia arriba al siguiente múltiplo de 100** (nunca al más cercano). Cada línea del resultado lleva su rastro:
+Todo se redondea como manda la ley: el **IBC siempre hacia arriba al peso**, y **cada aporte del empleador y el fondo de
+solidaridad hacia arriba al siguiente múltiplo de 100** (nunca al más cercano). **Salud y pensión del trabajador se descuentan
+al peso** (mitad hacia arriba), como Siigo: la centena del Decreto 1990/2016 es de la cotización en la PILA, que asume el
+empleador, no del descuento de nómina (decisión del owner, 2026-11-23; motor 2026.11.4). Cada línea del resultado lleva su rastro:
 concepto, fórmula simbólica, datos de entrada, resultado, valor legal usado y su base legal («Ver cálculos»).
 
 **Días.** El mes es de 30 días. Una quincena completa trabajada son **15 días**, también la segunda de un mes de 31 días o de

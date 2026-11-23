@@ -50,7 +50,8 @@ public sealed class TenantAccessVersionBumpTests
         var f = new Fixture();
         var handler = new UpdateMemberRolesHandler(
             f.Memberships, f.Tenants, f.Users, new NoManagerRoles(), new KnownRoles(), f.UnitOfWork, f.Context,
-            new RecordingAuditRecorder(), new NullOutbox(), new FixedClock(Now), new UpdateMemberRolesValidator(), f.Version);
+            new RecordingAuditRecorder(), new NullOutbox(), new FixedClock(Now), new UpdateMemberRolesValidator(), f.Version,
+            new MembershipPhoneReader(new NoHrPhones()));
 
         await handler.HandleAsync(
             new UpdateMemberRolesCommand(f.Tenant.Id, f.Member.Id, ["seller"], f.Member.Version, "corr"), Ct);
@@ -64,7 +65,7 @@ public sealed class TenantAccessVersionBumpTests
         var f = new Fixture();
         var handler = new SuspendMemberHandler(
             f.Memberships, f.Tenants, f.Users, new NoManagerRoles(), f.UnitOfWork, f.Context, new RecordingAuditRecorder(),
-            new NullOutbox(), new FixedClock(Now), f.Version);
+            new NullOutbox(), new FixedClock(Now), f.Version, new MembershipPhoneReader(new NoHrPhones()));
 
         await handler.HandleAsync(new SuspendMemberCommand(f.Tenant.Id, f.Member.Id, "corr"), Ct);
 
@@ -77,7 +78,7 @@ public sealed class TenantAccessVersionBumpTests
         var f = new Fixture();
         var handler = new RemoveMemberHandler(
             f.Memberships, f.Tenants, f.Users, new NoManagerRoles(), f.UnitOfWork, f.Context, new RecordingAuditRecorder(),
-            new NullOutbox(), new FixedClock(Now), f.Version);
+            new NullOutbox(), new FixedClock(Now), f.Version, new MembershipPhoneReader(new NoHrPhones()));
 
         await handler.HandleAsync(new RemoveMemberCommand(f.Tenant.Id, f.Member.Id, "corr"), Ct);
 
@@ -92,7 +93,7 @@ public sealed class TenantAccessVersionBumpTests
         f.Member.PullDomainEvents();
         var handler = new ReactivateMemberHandler(
             f.Memberships, f.Tenants, f.Users, f.UnitOfWork, f.Context, new RecordingAuditRecorder(), new NullOutbox(),
-            new FixedClock(Now), f.Version);
+            new FixedClock(Now), f.Version, new MembershipPhoneReader(new NoHrPhones()));
 
         await handler.HandleAsync(new ReactivateMemberCommand(f.Tenant.Id, f.Member.Id, "corr"), Ct);
 

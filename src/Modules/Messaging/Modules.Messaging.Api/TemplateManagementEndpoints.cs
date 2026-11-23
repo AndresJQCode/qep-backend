@@ -103,6 +103,14 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Support task notices: the assignment notice template (optional body, body only, no module gate).
+        group.MapPost("/task-notice", ProvisionTaskNoticeAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<ProvisionTaskNoticeTemplateRequest>(isOptional: true, "application/json")
+            .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Agenda: la plantilla del recordatorio de cita, calcada de la del aviso de Mayorista (cuerpo opcional, sin encabezado ni gate de módulo).
         group.MapPost("/appointment-reminder", ProvisionAppointmentReminderAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
@@ -157,6 +165,12 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapGet("/wholesale-invitation-notice/draft", GetWholesaleInvitationNoticeDraftAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<SystemTemplateDraftDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/task-notice/draft", GetTaskNoticeDraftAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
             .Produces<SystemTemplateDraftDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -271,6 +285,13 @@ internal static class TemplateManagementEndpoints
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
             await dispatcher.SendAsync(new ProvisionWholesaleInvitationNoticeTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
 
+    private static async Task<IResult> ProvisionTaskNoticeAsync(
+        Guid tenantId, Guid connectionId, ProvisionTaskNoticeTemplateRequest? request, IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Created(
+            $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
+            await dispatcher.SendAsync(new ProvisionTaskNoticeTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
+
     private static async Task<IResult> ProvisionAppointmentReminderAsync(
         Guid tenantId, Guid connectionId, ProvisionAppointmentReminderTemplateRequest? request, IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
@@ -307,6 +328,10 @@ internal static class TemplateManagementEndpoints
     private static async Task<IResult> GetWholesaleInvitationNoticeDraftAsync(
         Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new GetWholesaleInvitationNoticeTemplateDraftQuery(tenantId, connectionId), cancellationToken));
+
+    private static async Task<IResult> GetTaskNoticeDraftAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetTaskNoticeTemplateDraftQuery(tenantId, connectionId), cancellationToken));
 
     private static async Task<IResult> GetAppointmentReminderDraftAsync(
         Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -362,6 +387,9 @@ public sealed record ProvisionSupportSurveyTemplateRequest(string? Body);
 
 /// <summary>Mayorista: el cuerpo editado de la plantilla del aviso de invitación de distribuidor, o nada para el texto base.</summary>
 public sealed record ProvisionWholesaleInvitationNoticeTemplateRequest(string? Body);
+
+/// <summary>Support task notices: the edited body of the assignment notice template, or nothing for the base text.</summary>
+public sealed record ProvisionTaskNoticeTemplateRequest(string? Body);
 
 /// <summary>Agenda: el cuerpo editado de la plantilla del recordatorio de cita, o nada para el texto base.</summary>
 public sealed record ProvisionAppointmentReminderTemplateRequest(string? Body);

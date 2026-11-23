@@ -26,6 +26,16 @@ internal static class InAppNotificationMapper
         var conversationIds = new HashSet<Guid>();
         for (var index = 0; index < entries.Count; index++)
         {
+            if (IsTaskAssigned(entries[index].Kind))
+            {
+                if (GuidOf(stored[index], "actorMemberId") is { } assigner)
+                {
+                    actorIds.Add(assigner);
+                }
+
+                continue;
+            }
+
             if (entries[index].Kind != InAppNotificationKind.ConversationAssigned)
             {
                 continue;
@@ -89,6 +99,12 @@ internal static class InAppNotificationMapper
                     ? JsonSerializer.SerializeToElement(contact)
                     : Null;
                 break;
+            case InAppNotificationKind.SupportTaskAssigned or InAppNotificationKind.SupportTicketAssigned:
+                // Names are never stored; a member who is gone simply has no name.
+                data["actorName"] = GuidOf(stored, "actorMemberId") is { } assigner && actorNames.TryGetValue(assigner, out var assignerName)
+                    ? JsonSerializer.SerializeToElement(assignerName)
+                    : Null;
+                break;
             case InAppNotificationKind.ExportReady when !IsStillValid(stored, now):
                 data["downloadUrl"] = Null;
                 break;
@@ -107,6 +123,7 @@ internal static class InAppNotificationMapper
         InAppNotificationKind.SupportTicketUnassigned => ["ticketId", "ticketNumber", "thresholdHours"],
         InAppNotificationKind.WholesaleOrderPendingApproval => ["orderId", "orderNumber", "resolution"],
         InAppNotificationKind.ServiceChargesOverdue => ["overdueCount", "runDate"],
+        InAppNotificationKind.SupportTaskAssigned or InAppNotificationKind.SupportTicketAssigned => ["ticketId", "ticketNumber", "resolution"],
         _ => [],
     };
 
@@ -116,6 +133,9 @@ internal static class InAppNotificationMapper
         && expiresAt.ValueKind == JsonValueKind.String
         && DateTimeOffset.TryParse(expiresAt.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var at)
         && at > now;
+
+    private static bool IsTaskAssigned(InAppNotificationKind kind) =>
+        kind is InAppNotificationKind.SupportTaskAssigned or InAppNotificationKind.SupportTicketAssigned;
 
     private static bool IsTransferred(JsonElement stored) =>
         stored.TryGetProperty("reason", out var reason) && reason.ValueKind == JsonValueKind.String && reason.GetString() == "Transferred";

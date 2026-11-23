@@ -35,4 +35,28 @@ public interface ISupportIntegrationEvents
     /// cuando se la asigna a sí mismo).
     /// </summary>
     void PublishTaskAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// <c>support.ticket.assigned.v1</c> (task-notices spec 2026-11-22 §5.2, D-7): a <b>customer</b> ticket passed to
+    /// <paramref name="ticket"/>.AssigneeMemberId, assigned by <paramref name="assignedByMemberId"/>. The payload is the same as
+    /// <c>task-assigned</c> (<c>ticketId</c>, <c>tenantId</c>, <c>ticketNumber</c>, <c>assigneeMemberId</c>, <c>assignedByMemberId</c>);
+    /// tasks keep their own event. The caller decides if it applies (never when assigning to oneself or leaving it unassigned).
+    /// </summary>
+    void PublishTicketAssigned(SupportTicket ticket, Guid assignedByMemberId, DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// <c>support.ticket.assignee-released.v1</c> (spec 2026-11-22 §5.2, D-7): <paramref name="formerAssigneeMemberId"/> stopped being the
+    /// assignee, for tasks and customer tickets alike. <paramref name="reason"/> is one of <see cref="SupportAssigneeReleaseReasons"/>.
+    /// Payload camelCase: <c>ticketId</c>, <c>tenantId</c>, <c>ticketNumber</c>, <c>formerAssigneeMemberId</c>, <c>reason</c>,
+    /// <c>isInternal</c>.
+    /// </summary>
+    void PublishAssigneeReleased(SupportTicket ticket, Guid formerAssigneeMemberId, string reason, DateTimeOffset occurredAt);
+}
+
+/// <summary>The <c>reason</c> of <c>support.ticket.assignee-released.v1</c>: a contract with its consumers, never renamed.</summary>
+public static class SupportAssigneeReleaseReasons
+{
+    public const string Reassigned = "Reassigned";
+    public const string Resolved = "Resolved";
+    public const string Closed = "Closed";
 }

@@ -40,6 +40,8 @@ public interface IMessageTemplateRepository
     /// <summary>Mayorista: la única fila <c>WholesaleInvitationNotice</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindWholesaleInvitationNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Support task notices: the only <c>TaskNotice</c> row of the connection, tracked, or <c>null</c>.</summary>
+    Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
     /// <summary>Agenda: la única fila <c>AppointmentReminder</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindAppointmentReminderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -125,6 +127,16 @@ public interface ISupportSurveyTemplateReadiness
 public interface IWholesaleInvitationNoticeReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Support task notices: the readiness signal of the task notice template, sibling of <see cref="IWholesaleInvitationNoticeReadiness"/>.
+/// <c>FindApprovedAsync</c> returns the <c>TaskNotice</c> row when it is <c>APPROVED</c> on that connection, or <c>null</c>;
+/// <c>FindStatusAsync</c> returns Meta's raw status of that row, or <c>null</c> when there is none.</summary>
+public interface ITaskNoticeTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<string?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
 
 /// <summary>Agenda: la señal de la plantilla del recordatorio de cita, hermana de <see cref="IWholesaleInvitationNoticeReadiness"/>. Devuelve la

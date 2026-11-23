@@ -24,6 +24,8 @@ public sealed class MembershipPhoneTests
     [InlineData("+57 300 123 4567")]
     [InlineData("+1234567")]
     [InlineData("+1234567890123456")]
+    // Arabic-Indic digits: .NET's \d matches any Unicode decimal digit, and WhatsApp cannot dial them.
+    [InlineData("+57٣٠٠١٢٣٤٥٦٧")]
     public void NormalizeRejectsWhatIsNotE164(string value)
     {
         var error = Assert.Throws<TenantDomainException>(() => MemberPhone.Normalize(value));

@@ -13,4 +13,6 @@ public enum InAppNotificationKind
     SupportTicketUnassigned,
     WholesaleOrderPendingApproval,
     ServiceChargesOverdue,
+    SupportTaskAssigned,
+    SupportTicketAssigned,
 }

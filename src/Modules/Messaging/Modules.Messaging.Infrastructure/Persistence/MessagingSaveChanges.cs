@@ -155,6 +155,16 @@ internal static class MessagingSaveChanges
                 MessagingErrorCodes.TemplateWholesaleInvitationNoticeExists, "This connection already has its wholesale invitation notice template.",
                 exception);
         }
+        // Support task notices: the same for the assignment notice template.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateTaskNoticeIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateTaskNoticeExists, "This connection already has its task notice template.", exception);
+        }
+
         // Agenda: lo mismo para la plantilla del recordatorio de cita.
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

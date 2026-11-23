@@ -521,6 +521,9 @@ public sealed class SupportDbContext(DbContextOptions<SupportDbContext> options)
             .HasDefaultValueSql("'{}'::uuid[]");
         settings.Property(value => value.UnassignedAlertScheduleId).HasColumnName("unassigned_alert_schedule_id");
         settings.Property(value => value.UnassignedAlertEnabledAt).HasColumnName("unassigned_alert_enabled_at");
+        // Task-notices spec 2026-11-22 §5.4. Nullable and without default (the provisioner INSERT does not name it): expand-only. No foreign
+        // key: the connection is Integrations data, and one that was paused or deleted is read as «not listed», never as an error.
+        settings.Property(value => value.TaskNoticeConnectionId).HasColumnName("task_notice_connection_id");
         // A read of the four columns above as one value, not a column.
         settings.Ignore(value => value.UnassignedAlert);
         settings.Property<DateTimeOffset>("CreatedAt").HasColumnName("created_at");

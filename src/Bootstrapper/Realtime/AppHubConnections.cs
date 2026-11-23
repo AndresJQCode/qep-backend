@@ -100,6 +100,29 @@ internal sealed class AppHubConnections
         return subscribers;
     }
 
+    /// <summary>Spec 2026-11-22 D-1: whether the member has at least one connection on this pod. A closed tab is removed from the registry
+    /// before the hub announces it, so another open tab keeps this true.</summary>
+    public bool HasMember(Guid tenantId, Guid memberId)
+    {
+        foreach (var entry in _connections.Values)
+        {
+            if (entry.TenantId == tenantId && entry.MemberId == memberId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The distinct members connected to this pod, by tenant: what the shared presence heartbeat rewrites.</summary>
+    public IReadOnlyDictionary<Guid, IReadOnlyList<Guid>> Snapshot() =>
+        _connections.Values
+            .GroupBy(entry => entry.TenantId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<Guid>)group.Select(entry => entry.MemberId).Distinct().ToList());
+
     private sealed record Entry(Guid TenantId, Guid MemberId)
     {
         public HashSet<string> Topics { get; } = new(StringComparer.Ordinal);

@@ -20,8 +20,8 @@ public sealed class PayrollEngineTests
                 ("salary", 875_453m),
                 ("transport_allowance", 124_548m),
                 ("ibc", 875_453m),
-                ("health_employee", 35_100m),
-                ("pension_employee", 35_100m),
+                ("health_employee", 35_018m),
+                ("pension_employee", 35_018m),
                 ("health_employer", 0m),
                 ("pension_employer", 105_100m),
                 ("arl", 4_600m),
@@ -37,9 +37,9 @@ public sealed class PayrollEngineTests
         Assert.Equal(15, result.WorkedDays);
         Assert.False(result.FinalSettlementPending);
         Assert.False(result.NegativeNet);
-        Assert.Equal(929_801m, result.Summary.Net);
+        Assert.Equal(929_965m, result.Summary.Net);
         Assert.Equal(1_357_907m, result.Summary.EmployerCost);
-        Assert.Equal("2026.11.3", result.EngineVersion);
+        Assert.Equal("2026.11.4", result.EngineVersion);
         Assert.Equal(PayrollEngine.Version, result.EngineVersion);
     }
 
@@ -170,8 +170,8 @@ public sealed class PayrollEngineTests
                 ("salary", 875_452m),
                 ("transport_allowance", 124_547m),
                 ("ibc", 1_750_905m),
-                ("health_employee", 35_000m),
-                ("pension_employee", 35_000m),
+                ("health_employee", 35_018m),
+                ("pension_employee", 35_018m),
                 ("health_employer", 0m),
                 ("pension_employer", 105_100m),
                 ("arl", 4_600m),

@@ -166,6 +166,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Soporte fase 4b: una fila <c>SupportSurvey</c> por conexión.</summary>
     public const string MessageTemplateSupportSurveyIndex = "UX_message_templates_support_survey";
 
+    /// <summary>Support task notices: one <c>TaskNotice</c> row per connection.</summary>
+    public const string MessageTemplateTaskNoticeIndex = "UX_message_templates_task_notice";
+
     /// <summary>Mayorista: una fila <c>WholesaleInvitationNotice</c> por conexión.</summary>
     public const string MessageTemplateWholesaleInvitationNoticeIndex = "UX_message_templates_wholesale_invitation_notice";
 
@@ -824,7 +827,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.ToTable("message_templates", Schema, table =>
             table.HasCheckConstraint(
                 "CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply',"
-                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder')"));
+                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -865,6 +868,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Mayorista: el aviso de invitación de distribuidor, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateWholesaleInvitationNoticeIndex).IsUnique()
             .HasFilter("kind = 'WholesaleInvitationNotice'");
+        // Support task notices: the assignment notice, same rule.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateTaskNoticeIndex).IsUnique()
+            .HasFilter("kind = 'TaskNotice'");
         // Agenda: el recordatorio de cita, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateAppointmentReminderIndex).IsUnique()
             .HasFilter("kind = 'AppointmentReminder'");

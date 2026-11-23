@@ -36,6 +36,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IInvoiceTemplateOutbound, InvoiceTemplateOutbound>();
         // Mayorista: el aviso por WhatsApp de una invitación de distribuidor, por el mismo núcleo que la plantilla de cobro.
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
+        // Support task notices: the assignment notice, through the same core as the wholesale invitation notice.
+        services.AddScoped<ITaskNoticeOutbound, TaskNoticeOutbound>();
         // Agenda: el recordatorio de una cita por WhatsApp, por el mismo núcleo.
         services.AddScoped<IAppointmentReminderOutbound, AppointmentReminderOutbound>();
         // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
@@ -151,6 +153,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ISupportSurveyTemplateReadiness, SupportSurveyTemplateReadiness>();
         // Mayorista: la del aviso de invitación de distribuidor, para las conexiones que Mayorista ofrece y el envío del aviso.
         services.AddScoped<IWholesaleInvitationNoticeReadiness, WholesaleInvitationNoticeTemplateReadiness>();
+        // Support task notices: the readiness of the assignment notice template (the escalation worker and /settings/support read it).
+        services.AddScoped<ITaskNoticeTemplateReadiness, TaskNoticeTemplateReadiness>();
         // Agenda: la del recordatorio de cita, para su envío.
         services.AddScoped<IAppointmentReminderReadiness, AppointmentReminderTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.

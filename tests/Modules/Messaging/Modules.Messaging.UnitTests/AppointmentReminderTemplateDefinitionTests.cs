@@ -173,7 +173,7 @@ public sealed class AppointmentReminderTemplateDefinitionTests
 
     [Fact]
     public void TheKindIsStoredByNameAtTheEnd() =>
-        Assert.Equal(MessageTemplateKind.AppointmentReminder, Enum.GetValues<MessageTemplateKind>().Last());
+        Assert.Equal(MessageTemplateKind.AppointmentReminder, Enum.GetValues<MessageTemplateKind>()[^2]);
 
     // La columna `kind` es varchar(32): el nombre del tipo nuevo tiene que caber.
     [Fact]
