@@ -112,6 +112,7 @@ public sealed class UpdateSettingsHandler(
             request.ReminderEnabled ?? false,
             request.ReminderOffsetHours!.Value,
             request.ReminderConnectionId,
+            row.ReminderSenderMemberId,
             now);
         SchedulingAudit.Publish(
             auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.SettingsUpdated,

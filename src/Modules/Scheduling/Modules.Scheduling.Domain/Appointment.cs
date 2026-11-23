@@ -84,7 +84,8 @@ public sealed class Appointment : VersionedEntity
         string? note,
         Guid? actorMemberId,
         DateTimeOffset now,
-        string? clientRequestId = null)
+        string? clientRequestId = null,
+        bool byChannel = false)
     {
         if (initialStatus is not (AppointmentStatus.Pending or AppointmentStatus.Confirmed))
         {
@@ -111,7 +112,7 @@ public sealed class Appointment : VersionedEntity
             ClientRequestId = string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim(),
         };
         appointment.Initialize(tenantId, now);
-        appointment.Record(AppointmentAction.Created, actorMemberId, null, now, touch: false);
+        appointment.Record(AppointmentAction.Created, actorMemberId, null, now, touch: false, byChannel: byChannel);
         return appointment;
     }
 
@@ -122,12 +123,12 @@ public sealed class Appointment : VersionedEntity
         Record(AppointmentAction.Confirmed, actorMemberId, null, now);
     }
 
-    public void Cancel(string? reason, Guid? actorMemberId, DateTimeOffset now)
+    public void Cancel(string? reason, Guid? actorMemberId, DateTimeOffset now, bool byChannel = false)
     {
         RequireStatus(AppointmentStatus.Pending, AppointmentStatus.Confirmed);
         Status = AppointmentStatus.Cancelled;
         CancelReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
-        Record(AppointmentAction.Cancelled, actorMemberId, CancelReason, now);
+        Record(AppointmentAction.Cancelled, actorMemberId, CancelReason, now, byChannel: byChannel);
     }
 
     public void MarkAttended(Guid? actorMemberId, DateTimeOffset now)
@@ -149,7 +150,8 @@ public sealed class Appointment : VersionedEntity
     /// estado del recordatorio (enviado, omitido, intentos, reclamo y último error): la nueva hora se avisa de nuevo (plan, corrección 49).
     /// </summary>
     public void Reschedule(
-        ResourceId resourceId, SessionId sessionId, DateTimeOffset startsAt, DateTimeOffset endsAt, Guid? actorMemberId, DateTimeOffset now)
+        ResourceId resourceId, SessionId sessionId, DateTimeOffset startsAt, DateTimeOffset endsAt, Guid? actorMemberId, DateTimeOffset now,
+        bool byChannel = false)
     {
         RequireRange(startsAt, endsAt);
         RequireStatus(AppointmentStatus.Pending, AppointmentStatus.Confirmed);
@@ -163,7 +165,7 @@ public sealed class Appointment : VersionedEntity
         ReminderAttempts = 0;
         ReminderClaimedUntil = null;
         ReminderLastError = null;
-        Record(AppointmentAction.Rescheduled, actorMemberId, null, now);
+        Record(AppointmentAction.Rescheduled, actorMemberId, null, now, byChannel: byChannel);
     }
 
     /// <summary>
@@ -237,9 +239,10 @@ public sealed class Appointment : VersionedEntity
         }
     }
 
-    private void Record(AppointmentAction action, Guid? actorMemberId, string? detail, DateTimeOffset now, bool touch = true)
+    private void Record(
+        AppointmentAction action, Guid? actorMemberId, string? detail, DateTimeOffset now, bool touch = true, bool byChannel = false)
     {
-        _events.Add(AppointmentEvent.Create(Id, action, actorMemberId, detail, now));
+        _events.Add(AppointmentEvent.Create(Id, action, actorMemberId, detail, now, byChannel));
         if (touch)
         {
             Touch(now);

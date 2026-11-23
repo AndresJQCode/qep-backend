@@ -299,6 +299,8 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         entry.Property(value => value.At).HasColumnName("at");
         entry.Property(value => value.ActorMemberId).HasColumnName("actor_member_id");
         entry.Property(value => value.Detail).HasColumnName("detail").HasMaxLength(500);
+        // Expand (spec 2026-11-23 D-17): el default cubre las filas que ya existen y a los pods de la versión anterior, que no la escriben.
+        entry.Property(value => value.ByChannel).HasColumnName("by_channel").HasDefaultValue(false);
         entry.HasIndex(value => new { value.AppointmentId, value.At }).HasDatabaseName("IX_appointment_events_appointment_at");
     }
 
@@ -324,6 +326,8 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         settings.Property(value => value.ReminderOffsetHours).HasColumnName("reminder_offset_hours");
         // messaging.connections y messaging.message_templates: otro módulo, sin FK.
         settings.Property(value => value.ReminderConnectionId).HasColumnName("reminder_connection_id");
+        // Tenancy.memberships: otro módulo, sin FK. Nullable: los pods anteriores no la escriben (expand).
+        settings.Property(value => value.ReminderSenderMemberId).HasColumnName("reminder_sender_member_id");
         // Expand/contract (spec 2026-11-23 §2): the nullable column reminder_template_id is still in the table but no longer mapped, so pods of
         // the previous version keep working against this schema. A later migration drops it, once no old pod reads it.
     }

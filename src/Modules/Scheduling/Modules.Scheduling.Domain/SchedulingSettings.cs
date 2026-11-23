@@ -24,6 +24,12 @@ public sealed class SchedulingSettings : VersionedEntity
 
     public Guid? ReminderConnectionId { get; private set; }
 
+    /// <summary>
+    /// Id de membresía del remitente por defecto del recordatorio (D-18): entra último a los candidatos cuando ni el recurso ni el historial dan uno
+    /// activo. A diferencia de <see cref="ReminderConnectionId"/>, se conserva con el recordatorio apagado: sólo se usa al enviar.
+    /// </summary>
+    public Guid? ReminderSenderMemberId { get; private set; }
+
     public static SchedulingSettings Create(Guid tenantId, DateTimeOffset now)
     {
         var settings = new SchedulingSettings
@@ -47,6 +53,7 @@ public sealed class SchedulingSettings : VersionedEntity
         bool reminderEnabled,
         int reminderOffsetHours,
         Guid? reminderConnectionId,
+        Guid? reminderSenderMemberId,
         DateTimeOffset now)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(minNoticeMinutes, 0);
@@ -71,6 +78,7 @@ public sealed class SchedulingSettings : VersionedEntity
         ReminderEnabled = reminderEnabled;
         ReminderOffsetHours = reminderOffsetHours;
         ReminderConnectionId = reminderEnabled ? reminderConnectionId : null;
+        ReminderSenderMemberId = reminderSenderMemberId;
         Touch(now);
     }
 }

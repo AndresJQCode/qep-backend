@@ -140,7 +140,7 @@ public sealed class AppointmentReminderWorkerTests
             var service = Service.Create(ServiceId.New(), Tenant, "Consulta general", 30, 0, true, now);
             var session = Session.Create(SessionId.New(), Tenant, resource.Id, service.Id, Start, Start.AddMinutes(30), 0, 1, false, now);
             var settings = SchedulingSettings.Create(Tenant, now);
-            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, now);
+            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, null, now);
             var appointment = Appointment.Create(
                 AppointmentId.New(), Tenant, location.Id, resource.Id, service.Id, customerId, session.Id, blockId: null, Start,
                 Start.AddMinutes(30), AppointmentStatus.Confirmed, AppointmentSource.BackOffice, conversationId: null, note: null,
@@ -193,7 +193,7 @@ public sealed class AppointmentReminderWorkerTests
             var resource = Resource.Create(ResourceId.New(), tenantId, location.Id, "Sala 1", null, now);
             var service = Service.Create(ServiceId.New(), tenantId, "Control", 5, 0, true, now);
             var settings = SchedulingSettings.Create(tenantId, now);
-            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, now);
+            settings.Update(ConfirmationMode.Automatic, 60, 30, 12, reminderEnabled: true, 24, Connection, null, now);
             context.AddRange(location, resource, service, settings);
             for (var index = 0; index < count; index++)
             {
