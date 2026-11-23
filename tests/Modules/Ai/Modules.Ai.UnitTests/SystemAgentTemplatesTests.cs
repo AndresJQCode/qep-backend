@@ -103,6 +103,22 @@ public sealed class SystemAgentTemplatesTests
     }
 
     [Fact]
+    public void MissingModulesAreTheRequiredOnesThatAreOff()
+    {
+        var template = Catalog.Find("asistente-de-citas")!;
+
+        Assert.Empty(AgentTemplateModules.Missing(template, null));
+        Assert.Equal(
+            [TenantModuleKeys.Scheduling],
+            AgentTemplateModules.Missing(template, TenantModuleSet.FromStored([TenantModuleKeys.Customers])));
+        Assert.Empty(AgentTemplateModules.Missing(template, TenantModuleSet.FromStored([TenantModuleKeys.Customers, TenantModuleKeys.Scheduling])));
+        // Sin customers, scheduling no es efectiva (depende de él): sigue faltando.
+        Assert.Equal(
+            [TenantModuleKeys.Scheduling],
+            AgentTemplateModules.Missing(template, TenantModuleSet.FromStored([TenantModuleKeys.Scheduling])));
+    }
+
+    [Fact]
     public void AValidFileLoadsWithItsModulesAndItsConfig()
     {
         var catalog = new SystemAgentTemplateCatalog([File(Valid())]);

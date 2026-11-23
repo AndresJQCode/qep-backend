@@ -31,6 +31,12 @@ public static class AiEndpoints
             .Produces<IReadOnlyList<AiConnectionDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // Spec 2026-11-23 §4: la galería de plantillas del sistema. En el grupo y no bajo /agents: una plantilla no es un agente.
+        group.MapGet("/agent-templates", ListAgentTemplatesAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Produces<IReadOnlyList<AgentTemplateDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         // Spec §5 y plan 2026-11-12 Tarea 9: el historial de sesiones y la actividad del agente en una conversación. Lectura con
         // ai.agent.read; si la actividad también la ve todo asesor de la conversación es DECISIÓN-PENDIENTE P-10.
         group.MapGet("/sessions", ListSessionsAsync)
@@ -355,6 +361,9 @@ public static class AiEndpoints
 
     private static async Task<IResult> ListConnectionsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAiConnectionsQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> ListAgentTemplatesAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListAgentTemplatesQuery(tenantId), cancellationToken));
 
     // Plan 2026-11-17 A5: from y to son días del tenant (yyyy-MM-dd), los dos inclusivos; cursor es el nextCursor de la página anterior.
     private static async Task<IResult> ListSessionsAsync(
