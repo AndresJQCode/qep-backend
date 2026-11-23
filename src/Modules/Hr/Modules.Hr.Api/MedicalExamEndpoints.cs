@@ -56,6 +56,27 @@ internal static class MedicalExamEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Import (spec 2026-11-23 §8): the exam history from Excel. Antiforgery is off as in the employee import: the CSRF is stopped by
+        // X-Qep-Client, not by the form token. The routes are literal and do not clash with `/medical-exams/overview`.
+        group.MapGet("/medical-exams/import/template", GetImportTemplateAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/medical-exams/import/preview", PreviewImportAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
+            .Produces<MedicalExamImportPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
+        group.MapPost("/medical-exams/import", ImportAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
+            .Produces<MedicalExamImportResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
         group.MapPost("/medical-exams/upload-session", OpenUploadSessionAsync)
             .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
             .Accepts<HrUploadSessionRequest>("application/json")
@@ -135,6 +156,35 @@ internal static class MedicalExamEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new DeleteMedicalExamCommand(tenantId, employeeId, examId, IfMatchOf(httpContext)), cancellationToken));
+
+    private const string ExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    private static async Task<IResult> GetImportTemplateAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var template = await dispatcher.QueryAsync(new GetMedicalExamImportTemplateQuery(tenantId), cancellationToken);
+
+        return Results.File(template.Content, ExcelContentType, template.FileName);
+    }
+
+    // IFormFile nullable: without a file the handler answers 422 hr.import.file_required and not a binding 400.
+    private static async Task<IResult> PreviewImportAsync(
+        Guid tenantId, IFormFile? file, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+
+        return Results.Ok(await dispatcher.SendAsync(
+            new PreviewMedicalExamImportCommand(tenantId, file?.FileName ?? string.Empty, file?.Length ?? 0, content), cancellationToken));
+    }
+
+    private static async Task<IResult> ImportAsync(
+        Guid tenantId, IFormFile? file, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+
+        return Results.Ok(await dispatcher.SendAsync(
+            new ImportMedicalExamsCommand(tenantId, file?.FileName ?? string.Empty, file?.Length ?? 0, content), cancellationToken));
+    }
 
     // An absent field is an invalid file: the handler rejects it with hr.file.invalid, never a binding 400.
     private static async Task<IResult> OpenUploadSessionAsync(

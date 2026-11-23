@@ -545,6 +545,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Hr.Application.MedicalExams.GetMedicalExamOverviewQuery, Modules.Hr.Application.MedicalExams.MedicalExamOverviewDto>,
             Modules.Hr.Application.MedicalExams.GetMedicalExamOverviewHandler>();
+        services.AddScoped<Modules.Hr.Application.MedicalExams.MedicalExamImportAnalyzer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.MedicalExams.GetMedicalExamImportTemplateQuery, Modules.Hr.Application.MedicalExams.MedicalExamImportTemplateFile>,
+            Modules.Hr.Application.MedicalExams.GetMedicalExamImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.PreviewMedicalExamImportCommand, Modules.Hr.Application.MedicalExams.MedicalExamImportPreviewDto>,
+            Modules.Hr.Application.MedicalExams.PreviewMedicalExamImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.ImportMedicalExamsCommand, Modules.Hr.Application.MedicalExams.MedicalExamImportResultDto>,
+            Modules.Hr.Application.MedicalExams.ImportMedicalExamsHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Hr.Application.MedicalExams.OpenMedicalExamUploadSessionCommand, Modules.Hr.Application.HrUploadSessionDto>,
             Modules.Hr.Application.MedicalExams.OpenMedicalExamUploadSessionHandler>();

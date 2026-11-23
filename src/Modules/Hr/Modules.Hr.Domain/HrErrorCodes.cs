@@ -159,6 +159,24 @@ public static class HrErrorCodes
         public const string BelowMinimum = "hr.import.row.below_minimum";
     }
 
+    /// <summary>
+    /// Row codes of the medical exam history import (<c>hr.medical_exam.import.row.*</c>, spec 2026-11-23 §8): they travel in the
+    /// analysis, never as an exception. The file-level errors reuse the <c>hr.import.*</c> codes of the employee import.
+    /// </summary>
+    public static class MedicalExamImportRow
+    {
+        public const string DocumentTypeInvalid = "hr.medical_exam.import.row.document_type_invalid";
+        public const string DocumentNumberRequired = "hr.medical_exam.import.row.document_number_required";
+        public const string EmployeeNotFound = "hr.medical_exam.import.row.employee_not_found";
+        public const string ExamTypeInvalid = "hr.medical_exam.import.row.exam_type_invalid";
+        public const string ExamDateInvalid = "hr.medical_exam.import.row.exam_date_invalid";
+        public const string ExamDateInFuture = "hr.medical_exam.import.row.exam_date_in_future";
+        public const string RestrictionsUntilInvalid = "hr.medical_exam.import.row.restrictions_until_invalid";
+        public const string TextTooLong = "hr.medical_exam.import.row.text_too_long";
+        public const string Duplicate = "hr.medical_exam.import.row.duplicate";
+        public const string DuplicatedInFile = "hr.medical_exam.import.row.duplicated_in_file";
+    }
+
     /// <summary>Los seis que se responden 409 (<c>ResourceConflictException</c>): el resto de los de dominio es 422.</summary>
     public static readonly IReadOnlySet<string> Conflicts = new HashSet<string>(StringComparer.Ordinal)
     {
