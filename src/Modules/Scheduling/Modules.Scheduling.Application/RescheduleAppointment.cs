@@ -59,6 +59,8 @@ public sealed class RescheduleAppointmentHandler(
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await appointments.LockResourcesAsync(tenantId, [.. candidates, appointment.ResourceId], cancellationToken);
 
+        // Same reason as in booking: closures committed while the candidates were computed are visible only after the lock.
+        loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
         var oldSession = await sessions.FindAsync(tenantId, appointment.SessionId, cancellationToken)
             ?? throw new InvalidOperationException($"The session of appointment '{appointment.Id.Value}' does not exist.");
         // The seat the appointment holds is about to be released: if it is the only one of an ad-hoc session, that session leaves and

@@ -54,6 +54,7 @@ public sealed class CreateClosureHandler(
     ILocationRepository locations,
     IResourceRepository resources,
     IClosureRepository closures,
+    IAppointmentRepository appointments,
     ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     IValidator<ClosureRequest> validator)
@@ -80,6 +81,19 @@ public sealed class CreateClosureHandler(
         // Npgsql sólo escribe instantes con offset cero.
         var startsAt = request.StartsAt!.Value.ToUniversalTime();
         var endsAt = request.EndsAt!.Value.ToUniversalTime();
+
+        // Same lock bookings take (in id order), held until the commit: a booking that is already inside finishes first and is seen by the
+        // check below, one that arrives later re-reads the closures once it holds the lock and finds this one. A closure of a whole
+        // location locks every resource of that location, archived ones included (their appointments still count).
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        var lockIds = resourceId is { } single
+            ? new[] { single }
+            : (await resources.ListAsync(command.TenantId, ResourceScope.All, cancellationToken))
+                .Where(resource => resource.LocationId == locationId)
+                .Select(resource => resource.Id)
+                .ToArray();
+        await appointments.LockResourcesAsync(command.TenantId, lockIds, cancellationToken);
+
         if (await closures.HasActiveAppointmentsAsync(command.TenantId, locationId, resourceId, startsAt, endsAt, cancellationToken))
         {
             // Nada se mueve en silencio (spec D-12): quien bloquea decide qué hacer con las citas antes.
@@ -95,6 +109,7 @@ public sealed class CreateClosureHandler(
             auditPublisher, executionContext, command.TenantId, SchedulingAuditActions.ClosureCreated,
             SchedulingAuditActions.Resources.Closure, closure.Id.Value, ["resourceId", "startsAt", "endsAt", "reason"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return SchedulingComposer.Closure(closure);
     }

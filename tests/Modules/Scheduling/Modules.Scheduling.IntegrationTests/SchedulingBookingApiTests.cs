@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Scheduling.Application;
 using static Modules.Scheduling.IntegrationTests.SchedulingApiHarness;
@@ -140,6 +141,74 @@ public sealed class SchedulingBookingApiTests(SchedulingApiWorld world) : IClass
         Assert.Equal(5, (await CountAppointmentsAsync(world.Factory, scene.Resource)).Appointments);
     }
 
+    // Written, not run (owner's order: the suites run at the end). A closure and a booking for the same half hour at once: both take the
+    // resource lock, so one of them goes first and the other sees it. Never an appointment inside a closure.
+    [Fact]
+    public async Task AClosureAndABookingOfTheSameStartNeverBothLand()
+    {
+        var scene = await SceneAsync();
+        using var owner = scene.Tenant;
+        var starts = Enumerable.Range(0, 6).Select(index => NineOClock(scene.Day).AddMinutes(30 * index)).ToArray();
+
+        var pairs = await Task.WhenAll(starts.Select(async start =>
+        {
+            var closing = scene.Tenant.Admin.PostAsJsonAsync(
+                $"{scene.Tenant.Url}/closures",
+                new { resourceId = scene.Resource, startsAt = start, endsAt = start.AddMinutes(30), reason = "Carrera" },
+                TestContext.Current.CancellationToken);
+            var booking = BookAsync(scene, start, scene.Resource);
+            return (Closure: await closing, Booking: await booking);
+        }));
+
+        foreach (var (closure, booking) in pairs)
+        {
+            var closed = closure.StatusCode == HttpStatusCode.Created;
+            var booked = booking.StatusCode == HttpStatusCode.Created;
+            Assert.False(closed && booked, "A closure and an appointment landed on the same start.");
+            if (!closed)
+            {
+                Assert.Equal(HttpStatusCode.UnprocessableEntity, closure.StatusCode);
+                Assert.Equal("scheduling.closure.overlaps_appointments", CodeOf(await JsonOfAsync(closure)));
+            }
+
+            if (!booked)
+            {
+                Assert.Equal(HttpStatusCode.Conflict, booking.StatusCode);
+                Assert.Equal("scheduling.appointment.slot_taken", CodeOf(await JsonOfAsync(booking)));
+            }
+        }
+
+        var closures = (await GetJsonAsync(scene.Tenant.Admin, $"{scene.Tenant.Url}/closures")).GetArrayLength();
+        var appointments = (await CountAppointmentsAsync(world.Factory, scene.Resource)).Appointments;
+        Assert.Equal(starts.Length, closures + appointments);
+    }
+
+    // Written, not run. Archiving a resource and booking it at once: the archive refuses when the booking got the lock first, and the
+    // booking is refused when the archive did. Never an archived resource holding a future appointment.
+    [Fact]
+    public async Task ArchivingAResourceAndBookingItNeverBothLand()
+    {
+        var scene = await SceneAsync();
+        using var owner = scene.Tenant;
+
+        var archiving = scene.Tenant.Admin.PostAsync(
+            $"{scene.Tenant.Url}/resources/{scene.Resource}/archive", null, TestContext.Current.CancellationToken);
+        var booking = BookAsync(scene, NineOClock(scene.Day), scene.Resource);
+        var archived = await archiving;
+        var booked = await booking;
+
+        var archivedOk = archived.StatusCode == HttpStatusCode.OK;
+        var bookedOk = booked.StatusCode == HttpStatusCode.Created;
+        Assert.False(archivedOk && bookedOk, "A resource was archived with a future appointment on it.");
+        if (!archivedOk)
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, archived.StatusCode);
+            Assert.Equal("scheduling.resource.has_future_appointments", CodeOf(await JsonOfAsync(archived)));
+        }
+
+        Assert.Equal(bookedOk ? 1 : 0, (await CountAppointmentsAsync(world.Factory, scene.Resource)).Appointments);
+    }
+
     [Fact]
     public async Task AStartThatIsNotAValidStartIs422OutsideRules()
     {
@@ -190,9 +259,12 @@ public sealed class SchedulingBookingApiTests(SchedulingApiWorld world) : IClass
         var responses = await Task.WhenAll(
             Enumerable.Range(0, 5).Select(_ => BookAsync(scene, NineOClock(scene.Day), scene.Resource, clientRequestId: "wa-2002")));
 
+        // On one resource the lock serializes the five: the first books, the other four meet its appointment once they hold the lock and
+        // answer it. Every response is a 201 (a 409 here would mean a repeat was refused; the index race of two resources does not apply).
         var ids = new HashSet<Guid>();
-        foreach (var response in responses.Where(response => response.StatusCode == HttpStatusCode.Created))
+        foreach (var response in responses)
         {
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
             ids.Add((await JsonOfAsync(response)).GetProperty("id").GetGuid());
         }
 

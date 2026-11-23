@@ -100,6 +100,9 @@ public sealed class BookAppointmentHandler(
             return await ReplayAsync(tenantId, scope, concurrent, cancellationToken);
         }
 
+        // Closures, blocks and archived resources are read again under the lock: a closure created while this request was computing its
+        // candidates holds the same lock and has committed by now (its own appointment check ran before this booking existed).
+        loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
         var fresh = await loader.SessionsAsync(tenantId, loaded, candidates, onlyActive: true, cancellationToken);
         var option = AppointmentStarts.PickFree(loaded, service, fresh, startsAt, candidates, preferred: null);
 

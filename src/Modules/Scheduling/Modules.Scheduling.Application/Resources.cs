@@ -202,6 +202,7 @@ public sealed class ArchiveResourceHandler(
     ITenantClock tenantClock,
     IResourceRepository resources,
     IAvailabilityBlockRepository blocks,
+    IAppointmentRepository appointments,
     ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork,
     SchedulingComposer composer)
@@ -216,8 +217,19 @@ public sealed class ArchiveResourceHandler(
         var resource = await resources.FindAsync(command.TenantId, new ResourceId(command.ResourceId), cancellationToken)
             ?? throw SchedulingNotFound.Resource(command.ResourceId);
 
+        // Archiving twice answers the same resource and changes (and audits) nothing.
+        if (resource.Archived)
+        {
+            return await composer.ResourceAsync(command.TenantId, resource, cancellationToken);
+        }
+
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
-        if (!resource.Archived && await resources.HasFutureAppointmentsAsync(command.TenantId, resource.Id, now, cancellationToken))
+
+        // The resource's row lock is the one bookings take: a booking already inside commits before the check below, and one that arrives
+        // later re-reads the resource as archived once it holds the lock.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        await appointments.LockResourcesAsync(command.TenantId, [resource.Id], cancellationToken);
+        if (await resources.HasFutureAppointmentsAsync(command.TenantId, resource.Id, now, cancellationToken))
         {
             throw new SchedulingDomainException(
                 SchedulingErrorCodes.ResourceHasFutureAppointments,
@@ -231,6 +243,7 @@ public sealed class ArchiveResourceHandler(
         await BlockDetachment.DetachResourceAsync(
             blocks, auditPublisher, executionContext, command.TenantId, resource.Id, now, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return await composer.ResourceAsync(command.TenantId, resource, cancellationToken);
     }

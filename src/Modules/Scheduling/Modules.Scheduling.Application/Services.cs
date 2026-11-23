@@ -130,6 +130,8 @@ public sealed class ArchiveServiceHandler(
     ITenantModules tenantModules,
     ITenantClock tenantClock,
     IServiceRepository services,
+    IResourceRepository resources,
+    IAppointmentRepository appointments,
     IAvailabilityBlockRepository blocks,
     ISchedulingAuditPublisher auditPublisher,
     ISchedulingUnitOfWork unitOfWork)
@@ -144,8 +146,24 @@ public sealed class ArchiveServiceHandler(
         var service = await services.FindAsync(command.TenantId, new ServiceId(command.ServiceId), cancellationToken)
             ?? throw SchedulingNotFound.Service(command.ServiceId);
 
+        // Archiving twice answers the same service and changes (and audits) nothing.
+        if (service.Archived)
+        {
+            return SchedulingComposer.Service(service);
+        }
+
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
-        if (!service.Archived && await services.HasFutureAppointmentsAsync(command.TenantId, service.Id, now, cancellationToken))
+
+        // A service is offered through blocks, which name resources: the minimum that serializes with every booking of this service is the
+        // lock of the resources that offer it, and a block can be edited to offer it elsewhere while this runs. So it takes the lock of every
+        // resource of the tenant (archived ones included, their appointments still count), in id order like bookings do. Archiving a service
+        // is rare and a tenant has few resources.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        var resourceIds = (await resources.ListAsync(command.TenantId, ResourceScope.All, cancellationToken))
+            .Select(resource => resource.Id)
+            .ToArray();
+        await appointments.LockResourcesAsync(command.TenantId, resourceIds, cancellationToken);
+        if (await services.HasFutureAppointmentsAsync(command.TenantId, service.Id, now, cancellationToken))
         {
             throw new SchedulingDomainException(
                 SchedulingErrorCodes.ServiceInUse,
@@ -159,6 +177,7 @@ public sealed class ArchiveServiceHandler(
         await BlockDetachment.DetachServiceAsync(
             blocks, auditPublisher, executionContext, command.TenantId, service.Id, now, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return SchedulingComposer.Service(service);
     }
