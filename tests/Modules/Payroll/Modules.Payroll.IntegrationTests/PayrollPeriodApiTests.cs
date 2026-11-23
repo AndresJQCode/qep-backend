@@ -159,7 +159,7 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
 
         Assert.Equal(["2026-11-16", "2026-11-01"], StartDates(list));
         Assert.Equal(list.GetProperty("items")[1].GetProperty("id").GetGuid(), list.GetProperty("currentPeriodId").GetGuid());
-        Assert.Equal(JsonValueKind.Null, list.GetProperty("nextPeriodStartsOn").ValueKind);
+        Assert.Equal("2026-12-01", list.GetProperty("nextPeriodStartsOn").GetString());
     }
 
     [Fact]
@@ -176,17 +176,21 @@ public sealed class PayrollPeriodApiTests : IClassFixture<PayrollApiFixture>
     }
 
     [Fact]
-    public async Task OpeningNextTwiceIsIdempotent()
+    public async Task OpeningNextOpensBothHalvesOfNextMonthAndStopsThere()
     {
         using var tenant = await NewTenantAsync(_fixture);
         var setup = await SeedSetupAsync(tenant);
-        _fixture.Clock.UtcNow = new DateTimeOffset(2026, 11, 10, 15, 0, 0, TimeSpan.Zero);
+        _fixture.Clock.UtcNow = new DateTimeOffset(2026, 11, 22, 15, 0, 0, TimeSpan.Zero);
 
         var first = await OpenedNextAsync(tenant, setup.Company.Id);
+        Assert.Equal("2026-12-16", first.GetProperty("nextPeriodStartsOn").GetString());
         var second = await OpenedNextAsync(tenant, setup.Company.Id);
+        var third = await OpenedNextAsync(tenant, setup.Company.Id);
 
-        Assert.Equal(StartDates(first), StartDates(second));
-        Assert.Equal(FirstPeriodId(first), FirstPeriodId(second));
+        Assert.Equal(["2026-12-16", "2026-12-01"], StartDates(second));
+        Assert.Equal(JsonValueKind.Null, second.GetProperty("nextPeriodStartsOn").ValueKind);
+        Assert.Equal(StartDates(second), StartDates(third));
+        Assert.Equal(FirstPeriodId(second), FirstPeriodId(third));
     }
 
     [Fact]

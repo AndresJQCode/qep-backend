@@ -34,8 +34,22 @@ public sealed class PeriodPlanOpenNextTests
             [D(2026, 11, 16)], Starts(PeriodPlan.MissingThroughNext(Existing(D(2026, 11, 1)), D(2026, 11, 10))));
 
     [Fact]
-    public void ExistingTargetOpensNothing() =>
-        Assert.Empty(PeriodPlan.MissingThroughNext(Existing(D(2026, 11, 1), D(2026, 11, 16)), D(2026, 11, 10)));
+    public void EachCallOpensOneMoreAhead() =>
+        Assert.Equal(
+            [D(2026, 12, 1)],
+            Starts(PeriodPlan.MissingThroughNext(Existing(D(2026, 11, 1), D(2026, 11, 16)), D(2026, 11, 10))));
+
+    [Fact]
+    public void BothHalvesOfNextMonthCanBeOpenedFromASecondHalf() =>
+        Assert.Equal([D(2026, 12, 16)], Starts(PeriodPlan.MissingThroughNext(Existing(D(2026, 12, 1)), D(2026, 11, 22))));
+
+    [Fact]
+    public void NothingOpensBeyondTheEndOfNextMonth()
+    {
+        Assert.Empty(PeriodPlan.MissingThroughNext(Existing(D(2026, 12, 1), D(2026, 12, 16)), D(2026, 11, 22)));
+        Assert.Empty(PeriodPlan.MissingThroughNext(
+            Existing(D(2026, 11, 1), D(2026, 11, 16), D(2026, 12, 1), D(2026, 12, 16)), D(2026, 11, 10)));
+    }
 
     [Fact]
     public void ExistingBehindCurrentFillsTheGapThroughTheTarget() =>
@@ -57,8 +71,16 @@ public sealed class PeriodPlanOpenNextTests
         Assert.Equal(D(2026, 11, 16), PeriodPlan.NextPeriodStartsOn(Existing(D(2026, 11, 1)), D(2026, 11, 10)));
 
     [Fact]
-    public void NextPeriodStartsOnIsNullWhenTheTargetExists() =>
-        Assert.Null(PeriodPlan.NextPeriodStartsOn(Existing(D(2026, 11, 1), D(2026, 11, 16)), D(2026, 11, 10)));
+    public void NextPeriodStartsOnFollowsTheLastPeriodOpenedAhead() =>
+        Assert.Equal(D(2026, 12, 1), PeriodPlan.NextPeriodStartsOn(Existing(D(2026, 11, 1), D(2026, 11, 16)), D(2026, 11, 10)));
+
+    [Fact]
+    public void NextPeriodStartsOnIsNullAtTheEndOfNextMonth() =>
+        Assert.Null(PeriodPlan.NextPeriodStartsOn(Existing(D(2026, 12, 1), D(2026, 12, 16)), D(2026, 11, 22)));
+
+    [Fact]
+    public void NextPeriodStartsOnFillsAGapWithTheHalfAfterToday() =>
+        Assert.Equal(D(2026, 12, 16), PeriodPlan.NextPeriodStartsOn(Existing(D(2026, 11, 1)), D(2026, 12, 3)));
 
     [Fact]
     public void NextPeriodStartsOnWithoutPeriodsIsTheTarget() =>
