@@ -151,7 +151,7 @@ public sealed class PayrollSettingsApiTests : IClassFixture<PayrollApiFixture>
 
         Assert.Equal(0, settings.GetProperty("version").GetInt64());
         Assert.Equal("Biweekly", settings.GetProperty("transportFrequency").GetString());
-        Assert.Equal("SalaryOnly", settings.GetProperty("transportCapBase").GetString());
+        Assert.Equal("SalaryAndSalaryIncome", settings.GetProperty("transportCapBase").GetString());
         Assert.Equal("SalaryOnly", settings.GetProperty("overtimeBase").GetString());
         Assert.True(settings.GetProperty("exonerated").GetBoolean());
         Assert.False(settings.GetProperty("dualControl").GetBoolean());
