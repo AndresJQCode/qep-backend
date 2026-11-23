@@ -1,7 +1,12 @@
 namespace Modules.Payroll.Domain.Engine;
 
-/// <summary><paramref name="SalaryEarningsMonth"/> is <c>SalDev_m</c>: salary + overtime + salary incomes of the month, the base of ARL and parafiscals (R-4).</summary>
-public sealed record IbcOutcome(decimal IbcMonth, decimal SalaryEarningsMonth, PayrollLine Line);
+/// <summary>
+/// Las dos bases del mes (decisión del owner 1, 2026-11-22). <paramref name="SocialSecurityIbc"/> es el IBC de seguridad social:
+/// devengo salarial más el exceso no salarial sobre el 40 %, con piso por días y tope de 25 SMMLV; base de salud, pensión, FSP y
+/// ARL. <paramref name="ParafiscalBase"/> es <c>SalDev_m</c> (salario, horas e ingresos salariales del mes) sin la regla del 40 %
+/// ni piso ni tope; base de caja, ICBF y SENA.
+/// </summary>
+public sealed record IbcOutcome(decimal SocialSecurityIbc, decimal ParafiscalBase, PayrollLine Line);
 
 /// <summary>Paso 7: el ingreso base de cotización del mes, con la regla del 40 %, el piso por días y el tope de 25 SMMLV.</summary>
 public static class IbcRule

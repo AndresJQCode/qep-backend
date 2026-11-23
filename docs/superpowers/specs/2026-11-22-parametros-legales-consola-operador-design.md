@@ -46,8 +46,9 @@ dejarlos fijos en el código.
   vigente sea de un año anterior al del periodo (`PayrollLegalValues.cs:29`). `IsYearly` excluye `SundaySurchargeRate`,
   `WeeklyHours` y `ConnectivityAllowanceSince`, pero el chequeo sólo corre sobre las claves que `LegalValueSet` lee con `Get(...)`
   (`PayrollLegalValues.cs:48-81`), y `IntegralSalaryFloor` no está entre ellas: **nómina exige 26 claves escalares por año**, no 27.
-  `IntegralSalaryFloor` lo usa sólo Hr (`SalaryRules`), que no caduca la tabla (D-8). **Los tramos `SolidarityFund` no son
-  anuales para nómina:** sólo faltan si no hay ningún conjunto vigente (`PayrollLegalValues.cs:38-42`); el de 2026 sirve para 2027.
+  `IntegralSalaryFloor` lo usa sólo Hr (`SalaryRules`), que no caduca la tabla (D-8). **Los tramos `SolidarityFund` también son anuales para nómina** (decisión del owner 6,
+  2026-11-22; spec `2026-11-22-nomina-decisiones-del-owner-design.md`): faltan si el conjunto vigente es de un año anterior al del
+  periodo. ❓ Si el aviso `nextYearMissing`/`currentYearMissing` los cubre lo decide el owner.
   *(Corregido en la revisión: decía «27 claves escalares más los tramos, 28 cada enero».)* Qué cubre el aviso de «falta el año
   siguiente» es decisión del owner (ver «Pendiente del owner»).
 - La foto del periodo (`LegalValueSet`) incluye los tramos de solidaridad y la fecha con que se resolvió
@@ -163,7 +164,8 @@ Base `/api/v1/tenants/{tenantId}/operator/legal-parameters`, mismo estilo que un
   enero resuelve con su `StartDate` (el día 1), que sólo se cubre con una fila de ese día. Las tres no anuales no lo llevan.
   *Revisión:* las claves que nómina exige cada año son 26, no 27, y los tramos no son anuales para nómina (ver «Restricciones»);
   **decidido por el owner (2026-11-22):** el aviso cubre esas 26 más `IntegralSalaryFloor` (27 claves, las que el DTO marca
-  `yearly: true`), y los tramos `SolidarityFund` no llevan aviso.
+  `yearly: true`), y los tramos `SolidarityFund` no llevan aviso. ❓ **Reabierto (2026-11-22):** esa decisión partía de que los
+  tramos no eran anuales; con la decisión 6 de nómina lo son y un enero sin conjunto del año no liquida.
   **Decidido por el owner (2026-11-22):** `nextYearMissing` se prende **desde el 1 de diciembre** (no los 12 meses; el de UVT usa el
   24) y se agrega `currentYearMissing`, **siempre activo**, verdadero cuando una clave anual no tiene fila vigente del año en curso
   (lo que hace fallar la nómina de enero). Cada uno trae su conteo, que calcula el backend.
@@ -399,7 +401,8 @@ Backend primero (migración de `legal_parameter_changes` y columnas), luego fron
 1. ~~Alcance de `nextYearMissing`~~ **Decidido (2026-11-22): las 26 que nómina exige más `IntegralSalaryFloor` = 27 claves;
    los tramos sin aviso.** Planteamiento original: nómina exige 26 claves por año, no 27, y no exige tramos anuales. ¿El aviso cubre las 26,
    también `IntegralSalaryFloor` (anual de hecho, deriva del SMMLV) y/o los tramos? *Recomendación:* 26 + `IntegralSalaryFloor`;
-   tramos sin aviso.
+   tramos sin aviso. ❓ **Reabierto (2026-11-22)** para los tramos: la premisa («no exige tramos anuales») cambió con la
+   decisión 6 de nómina (spec `2026-11-22-nomina-decisiones-del-owner-design.md`).
 2. ~~Desde cuándo se prende y el año en curso~~ **Decidido (2026-11-22):** `nextYearMissing` desde el 1 de diciembre, y
    `currentYearMissing` siempre activo, que es el que hace fallar la nómina de enero.
 3. ~~Vigencia retroactiva sobre una nómina calculada~~ **Decidido (2026-11-22): se rechaza con `in_use`.** De las nóminas
@@ -415,8 +418,8 @@ Backend primero (migración de `legal_parameter_changes` y columnas), luego fron
 
 Revisión contra el código de `develop`. Cada cambio está marcado en su sección:
 
-- «Restricciones»: nómina exige 26 claves por año (`IntegralSalaryFloor` no está en `LegalValueSet`) y los tramos no son anuales
-  (`PayrollLegalValues.cs:29,38-42`). Agregados: `nextYearMissing` de UVT sólo desde el 24/12 y handlers de operador sin módulo `hr`.
+- «Restricciones»: nómina exige 26 claves por año (`IntegralSalaryFloor` no está en `LegalValueSet`) y los tramos no eran anuales
+  (`PayrollLegalValues.cs:29,38-42`; desde la decisión 6 de nómina, 2026-11-22, sí lo son). Agregados: `nextYearMissing` de UVT sólo desde el 24/12 y handlers de operador sin módulo `hr`.
 - «Caché»: el decorador no puede ir en `AddQepValkey` (lo pisa `AddHrInfrastructure`, registrado después); falta el puerto de
   versión en Hr.Application; los cuatro lugares de un área nueva; el riesgo del TTL.
 - «Uso»: puerto de lectura en Payroll.Application; verificación de `legal_values_date` por quincena; hueco de la vigencia retroactiva.

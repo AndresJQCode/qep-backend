@@ -28,6 +28,21 @@ public sealed class ConceptCatalogTests
     private static PayrollConcept Custom(Guid companyId, ConceptKind kind, string name, bool? constitutive = null, decimal? multiplier = null) =>
         PayrollConcept.Create(PayrollConceptId.New(), Tenant, companyId, kind, name, constitutive, multiplier, Now);
 
+    // Archived at 03:00 UTC of the 16th = 22:00 of the 15th in Bogotá: archived on the 15th, so it is gone from the 16th on.
+    [Fact]
+    public async Task ArchivedBeforeCountsTheTenantDay()
+    {
+        var repository = new FakeConceptRepository();
+        var bonus = Custom(Company, ConceptKind.Income, "Bono", constitutive: false);
+        bonus.Archive(new DateTimeOffset(2026, 11, 16, 3, 0, 0, TimeSpan.Zero));
+        repository.Add(bonus);
+        var catalog = await new ConceptCatalog(repository).LoadAsync(Tenant, Company, TestContext.Current.CancellationToken);
+        static DateOnly Bogota(DateTimeOffset instant) => DateOnly.FromDateTime(instant.ToOffset(TimeSpan.FromHours(-5)).DateTime);
+
+        Assert.Contains(bonus.Id.Value, catalog.ArchivedBefore(new DateOnly(2026, 11, 16), Bogota));
+        Assert.DoesNotContain(bonus.Id.Value, catalog.ArchivedBefore(new DateOnly(2026, 11, 1), Bogota));
+    }
+
     [Fact]
     public async Task SystemConceptsAreAlwaysThere()
     {

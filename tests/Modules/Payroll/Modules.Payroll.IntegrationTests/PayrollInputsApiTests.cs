@@ -234,6 +234,42 @@ public sealed class PayrollInputsApiTests : IClassFixture<PayrollApiFixture>
     }
 
     [Fact]
+    public async Task AnArchivedConceptAlreadyCapturedCanBeSavedAgain()
+    {
+        var scene = await NewSceneAsync(_fixture);
+        var concept = await CreatedAsync(
+            scene.Tenant.Payroll, $"{scene.Tenant.Url}/companies/{scene.Setup.Company.Id}/concepts",
+            new { kind = "Income", name = "Bono viejo", defaultSalaryConstitutive = (bool?)null, multiplier = (decimal?)null });
+        var conceptId = concept.GetProperty("id").GetGuid();
+        var saved = await PutInputsAsync(
+            scene, InputsBody(incomes: [new { conceptId, amount = 1_000m, salaryConstitutive = false }]), $"\"{await VersionOfAsync(scene)}\"");
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var archive = await scene.Tenant.Payroll.PostAsync(
+            $"{scene.Tenant.Url}/companies/{scene.Setup.Company.Id}/concepts/{conceptId}/archive", null, Ct);
+        Assert.Equal(HttpStatusCode.OK, archive.StatusCode);
+
+        // The same line, with another amount: it was already there, so it is kept.
+        var again = await PutInputsAsync(
+            scene, InputsBody(incomes: [new { conceptId, amount = 2_000m, salaryConstitutive = false }]), $"\"{await VersionOfAsync(scene)}\"");
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+
+        // A second line of it is new: rejected on its own field.
+        var extra = await PutInputsAsync(
+            scene,
+            InputsBody(incomes:
+            [
+                new { conceptId, amount = 2_000m, salaryConstitutive = false },
+                new { conceptId, amount = 500m, salaryConstitutive = false },
+            ]),
+            $"\"{await VersionOfAsync(scene)}\"");
+        Assert.Equal((HttpStatusCode)422, extra.StatusCode);
+        var problem = await JsonOfAsync(extra);
+        Assert.True(HasError(problem, "incomes[1].conceptId"));
+        Assert.False(HasError(problem, "incomes[0].conceptId"));
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
     public async Task ACustomConceptOfAnotherCompanyIs422()
     {
         var scene = await NewSceneAsync(_fixture);
