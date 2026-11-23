@@ -39,6 +39,13 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapPost("/companies/{companyId:guid}/periods/open-next", OpenNextAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces<PayrollPeriodListDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/companies/{companyId:guid}/periods", ListPeriodsAsync)
             .RequireAuthorization(PayrollPermissions.PeriodRead)
             .Produces<PayrollPeriodListDto>()
@@ -312,6 +319,10 @@ public static class PayrollEndpoints
     private static async Task<IResult> EnsureCurrentAsync(
         Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new EnsureCurrentPeriodsCommand(tenantId, companyId), cancellationToken));
+
+    private static async Task<IResult> OpenNextAsync(
+        Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new OpenNextPeriodCommand(tenantId, companyId), cancellationToken));
 
     private static async Task<IResult> ListPeriodsAsync(
         Guid tenantId, Guid companyId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

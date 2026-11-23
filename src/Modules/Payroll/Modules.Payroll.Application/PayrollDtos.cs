@@ -142,11 +142,15 @@ public sealed record PayrollPeriodDetailDto(
     IReadOnlyList<BlockedEmployeeDto> Blocked,
     IReadOnlyList<PeriodEventDto> History);
 
+/// <param name="CurrentPeriodId">El período que contiene el día del tenant; nulo si no existe. La pantalla aterriza en él, no en uno abierto por adelantado.</param>
+/// <param name="NextPeriodStartsOn">Inicio de la quincena siguiente a la actual mientras no exista; nulo si ya existe.</param>
 /// <param name="FirstPeriodStartsOn">Sólo sin períodos y con hoy en una segunda quincena (R-13): el día 1 del mes siguiente.</param>
 public sealed record PayrollPeriodListDto(
     PayrollCompanyDto Company,
     IReadOnlyList<PayrollPeriodDto> Items,
-    DateOnly? FirstPeriodStartsOn);
+    DateOnly? FirstPeriodStartsOn,
+    DateOnly? NextPeriodStartsOn,
+    Guid? CurrentPeriodId);
 
 // --- Capturas, recurrentes y rastro (Tarea 10, pre-flight M-14) ---
 

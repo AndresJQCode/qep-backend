@@ -641,6 +641,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Payroll.Application.EnsureCurrentPeriodsCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.EnsureCurrentPeriodsHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.OpenNextPeriodCommand, Modules.Payroll.Application.PayrollPeriodListDto>,
+            Modules.Payroll.Application.OpenNextPeriodHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.ListPeriodsQuery, Modules.Payroll.Application.PayrollPeriodListDto>,
             Modules.Payroll.Application.ListPeriodsHandler>();
         services.AddScoped<
