@@ -56,6 +56,27 @@ internal static class MedicalExamEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        group.MapPost("/medical-exams/upload-session", OpenUploadSessionAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
+            .Accepts<HrUploadSessionRequest>("application/json")
+            .Produces<HrUploadSessionDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut($"{Exams}/{{examId:guid}}/document", SetDocumentAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
+            .Accepts<MedicalExamDocumentRequest>("application/json")
+            .Produces<EmployeeMedicalExamsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet($"{Exams}/{{examId:guid}}/document", GetDocumentAsync)
+            .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalRead)
+            .Produces<HrDownloadUrlDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         group.MapPost("/employees/{employeeId:guid}/exit-exam/not-attended", MarkNotAttendedAsync)
             .RequireAuthorization(HrPermissions.EmployeeRead, HrPermissions.MedicalManage)
             .Accepts<NotAttendedRequest>("application/json")
@@ -114,6 +135,28 @@ internal static class MedicalExamEndpoints
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new DeleteMedicalExamCommand(tenantId, employeeId, examId, IfMatchOf(httpContext)), cancellationToken));
+
+    // An absent field is an invalid file: the handler rejects it with hr.file.invalid, never a binding 400.
+    private static async Task<IResult> OpenUploadSessionAsync(
+        Guid tenantId, HrUploadSessionRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new OpenMedicalExamUploadSessionCommand(
+                tenantId, request.FileName ?? string.Empty, request.MimeType ?? string.Empty, request.SizeBytes ?? 0),
+            cancellationToken));
+
+    private static async Task<IResult> SetDocumentAsync(
+        Guid tenantId,
+        Guid employeeId,
+        Guid examId,
+        MedicalExamDocumentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new SetMedicalExamDocumentCommand(tenantId, employeeId, examId, request.FileId), cancellationToken));
+
+    private static async Task<IResult> GetDocumentAsync(
+        Guid tenantId, Guid employeeId, Guid examId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetMedicalExamDocumentQuery(tenantId, employeeId, examId), cancellationToken));
 
     private static async Task<IResult> MarkNotAttendedAsync(
         Guid tenantId, Guid employeeId, NotAttendedRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
