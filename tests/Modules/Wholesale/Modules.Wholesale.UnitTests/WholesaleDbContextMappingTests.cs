@@ -95,6 +95,25 @@ public sealed class WholesaleDbContextMappingTests
             index.Properties.Select(property => property.Name));
     }
 
+    // Ciudad y dirección del distribuidor: tres columnas nullable (la empresa que nace al aceptar).
+    [Fact]
+    public void TheDistributorCityAndAddressColumnsAreNullableWithTheirLengths()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var distributors = context.Model.FindEntityType(typeof(Distributor))!;
+
+        var cityId = distributors.FindProperty(nameof(Distributor.CityId))!;
+        Assert.Equal(("city_id", typeof(Guid?), true), (cityId.GetColumnName(), cityId.ClrType, cityId.IsNullable));
+
+        var cityName = distributors.FindProperty(nameof(Distributor.CityName))!;
+        Assert.Equal(("city_name", (int?)120, true), (cityName.GetColumnName(), cityName.GetMaxLength(), cityName.IsNullable));
+        Assert.Equal(Distributor.CityNameMaxLength, cityName.GetMaxLength());
+
+        var address = distributors.FindProperty(nameof(Distributor.Address))!;
+        Assert.Equal(("address", (int?)200, true), (address.GetColumnName(), address.GetMaxLength(), address.IsNullable));
+        Assert.Equal(Distributor.AddressMaxLength, address.GetMaxLength());
+    }
+
     // Spec 2026-11-18 (aviso por WhatsApp): el destino del aviso en el distribuidor y su estado en la invitación, todo
     // nullable salvo la generación, que arranca en 0 para las filas existentes.
     [Fact]

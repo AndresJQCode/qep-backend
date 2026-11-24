@@ -36,6 +36,52 @@ public sealed class DistributorTests
         Assert.Equal(1, distributor.Version);
     }
 
+    // Ciudad y dirección del distribuidor: el dominio sólo recorta y convierte vacío en null.
+    [Fact]
+    public void InviteKeepsCityAndAddressTrimmed()
+    {
+        var cityId = Guid.CreateVersion7();
+
+        var distributor = InviteAt("CO", cityId, "  Madrid ", " Calle 1 ");
+
+        Assert.Equal((cityId, "Madrid", "Calle 1"), (distributor.CityId, distributor.CityName, distributor.Address));
+    }
+
+    [Fact]
+    public void InviteTurnsBlankCityNameAndAddressIntoNull()
+    {
+        var distributor = InviteAt("CO", null, "   ", "");
+
+        Assert.Null(distributor.CityName);
+        Assert.Null(distributor.Address);
+    }
+
+    [Fact]
+    public void InviteTreatsAnEmptyCityIdAsNull()
+    {
+        var distributor = InviteAt("CO", Guid.Empty, null, null);
+
+        Assert.Null(distributor.CityId);
+    }
+
+    [Theory]
+    [InlineData("CO", true, null, true)]
+    [InlineData("CO", false, "Medellín", false)]
+    [InlineData("ES", false, "Madrid", true)]
+    [InlineData("ES", false, null, false)]
+    public void HasCompanyCityFollowsTheCountry(string country, bool withCityId, string? cityName, bool expected)
+    {
+        var distributor = InviteAt(country, withCityId ? Guid.CreateVersion7() : null, cityName, null);
+
+        Assert.Equal(expected, distributor.HasCompanyCity);
+    }
+
+    private static Distributor InviteAt(string country, Guid? cityId, string? cityName, string? address) =>
+        Distributor.Invite(
+            Tenant, "ana@distri.co", "Distribuciones Norte SAS", country, "NIT", "900123456", "Ana Pérez", PriceListId.New(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Hash1, Guid.CreateVersion7(), null, null, Now,
+            cityId, cityName, address);
+
     private const string Phone = "+573001234567";
     private static readonly Guid Connection = Guid.CreateVersion7();
 

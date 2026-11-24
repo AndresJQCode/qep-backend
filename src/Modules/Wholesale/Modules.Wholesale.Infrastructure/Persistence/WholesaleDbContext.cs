@@ -165,6 +165,10 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
         // Spec 2026-11-18: el destino del aviso por WhatsApp; la conexión es referencia blanda a Integrations.
         distributor.Property(value => value.Phone).HasColumnName("phone").HasMaxLength(Distributor.PhoneMaxLength);
         distributor.Property(value => value.WhatsAppConnectionId).HasColumnName("whatsapp_connection_id");
+        // Ciudad y dirección con las que nace la empresa del distribuidor al aceptar; la ciudad es referencia blanda a Geography.
+        distributor.Property(value => value.CityId).HasColumnName("city_id");
+        distributor.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(Distributor.CityNameMaxLength);
+        distributor.Property(value => value.Address).HasColumnName("address").HasMaxLength(Distributor.AddressMaxLength);
 
         distributor.HasOne<PriceList>()
             .WithMany()
