@@ -547,6 +547,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-24 — Commit en `develop` (`d5bd6014c`, sin push) **la tanda de facturación de Siigo ya no programa reintentos** (owner). Cada
+  pedido se manda una vez: sin respuesta de Siigo o sin conexión queda fallido con su motivo, y uno cortado por la caída del proceso falla sin
+  volver a llamar. La factura que no se sabe si salió sigue `Pending` (se reanuda a mano desde el pedido; a las 24 h, `Unknown`). Sin migración.
+  Unitarias de Siigo (324) en verde; integración filtrada (4) en verde, la clase completa sin correr.
+
 - 2026-11-24 — Commit en `develop` (`1d7ad3b8d` y `8dc1c83e5`, sin push) **caída de un servicio de Siigo con su propio código** (sin spec;
   owner). `documents_service`, `payment_types_service`, `general_service`, `service_unavailable` y `request_timeout` llegan como HTTP 400:
   la factura queda `Rejected` con `siigo.invoice.siigo_service`, una lectura responde 502 con ese código y el sellado, 503
