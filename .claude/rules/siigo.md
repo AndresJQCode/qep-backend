@@ -55,6 +55,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   quedar un centavo abajo y `invalid_total_payments` rechaza. `SiigoInvoiceBuilder` dimensiona los pagos con ese total (`computedOrderTotal`) y no con
   el de QEP; un saldo de hasta un peso (`Tolerance`) es redondeo y se suma al último comprobante en vez de salir como un segundo pago a crédito, y un
   comprobante que pasa por no más de un peso se recorta. Nada de esto lee el total del error de Siigo: sigue vigente la regla de arriba.
+  **La retención por ítem sigue la misma regla** (2026-11-24): ReteFuente viaja en los `taxes` de cada ítem y Siigo la redondea ítem por ítem, mientras
+  QEP la saca sobre la base entera; en un pedido real de 8 líneas la diferencia fue de 2 centavos (QEP 20.595.927,31 contra 20.595.927,33 de Siigo) y
+  Siigo rechazó con `invalid_total_payments`. `RetentionRoundingDelta` recalcula la retención por ítem con el porcentaje del pedido
+  (`SiigoWithholdingInput.Percentage`) y corrige los pagos sólo si la diferencia es de redondeo (hasta `Tolerance`); más que eso es otra base u otro
+  porcentaje y se deja rechazar a la vista. ReteICA va en la factura y no se corrige: no se conoce cómo la redondea Siigo.
 - **El PDF de la factura no se guarda: se pide a Siigo en cada descarga** (`GET …/siigo-invoice/{invoiceId}/pdf`, `GetSiigoInvoicePdfHandler`).
   Mismo permiso que generar (`siigo.invoice.issue`: de fábrica `admin` y `billing`), así que un rol con ese permiso también lo ve. Siigo lo
   entrega como `{"base64": "…"}` (campo tomado de la documentación del SDK, no probado contra una cuenta real: si falla, mirar ese campo
