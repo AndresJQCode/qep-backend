@@ -658,6 +658,43 @@ public sealed class PayrollVacationsApiTests : IClassFixture<PayrollApiFixture>
     }
 
     [Fact]
+    public async Task ThePeriodDetailListsTheVacations()
+    {
+        var scene = await NewSceneAsync();
+        await CreateAsync(scene, QepBody("2026-12-14", "2026-12-24"));
+
+        var detail = await OkAsync(await scene.Tenant.Payroll.GetAsync(scene.PeriodUrl, Ct));
+
+        // Two of the eleven payroll days fall in this quincena (the 14th and the 15th); the dates are those of the vacation.
+        var vacation = Single(detail.GetProperty("vacations"));
+        Assert.Equal(scene.EmployeeId, vacation.GetProperty("employeeId").GetGuid());
+        Assert.Equal("Ana Pérez", vacation.GetProperty("fullName").GetString());
+        Assert.Equal(("2026-12-14", "2026-12-24", 2), (
+            vacation.GetProperty("startDate").GetString(), vacation.GetProperty("endDate").GetString(), vacation.GetProperty("days").GetInt32()));
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
+    public async Task TheEmployeeDetailCarriesThemAndTheRowItsDays()
+    {
+        var scene = await NewSceneAsync();
+        await CreateAsync(scene, QepBody("2026-12-14", "2026-12-24"));
+        var before = await OkAsync(await scene.Tenant.Payroll.GetAsync($"{scene.PeriodUrl}/employees/{scene.EmployeeId}", Ct));
+        Assert.Equal(JsonValueKind.Null, before.GetProperty("employee").GetProperty("vacationDays").ValueKind);
+        await LiquidatedAsync(scene);
+
+        var detail = await OkAsync(await scene.Tenant.Payroll.GetAsync($"{scene.PeriodUrl}/employees/{scene.EmployeeId}", Ct));
+
+        var employee = detail.GetProperty("employee");
+        Assert.Equal((2, 13), (employee.GetProperty("vacationDays").GetInt32(), employee.GetProperty("workedDays").GetInt32()));
+        // 3 000 000 ÷ 30 × 11 payroll days of the whole vacation, paid in advance in this quincena.
+        Assert.Equal(1_100_000m, detail.GetProperty("result").GetProperty("summary").GetProperty("vacationPay").GetDecimal());
+        var vacation = Single(detail.GetProperty("vacations"));
+        Assert.Equal("Liquidated", vacation.GetProperty("paidIn").GetProperty("status").GetString());
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
     public async Task WritingNeedsReadAndManage()
     {
         var scene = await NewSceneAsync();

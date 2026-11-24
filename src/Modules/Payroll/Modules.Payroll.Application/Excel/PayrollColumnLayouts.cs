@@ -28,7 +28,7 @@ public sealed record PayrollColumnLayout(string Key, string SheetName, IReadOnly
 
 public static class PayrollColumnLayouts
 {
-    /// <summary>El «Resumen de nómina» inicial (spec, «Excel»): una fila por empleado y las 29 columnas del contrato HTTP.</summary>
+    /// <summary>El «Resumen de nómina» inicial (spec, «Excel»): una fila por empleado y las 31 columnas del contrato HTTP.</summary>
     public static PayrollColumnLayout Summary { get; } = new(
         "summary",
         "Resumen",
@@ -39,7 +39,9 @@ public static class PayrollColumnLayouts
             Text("Cargo", row => row.Position),
             Text("Centro de trabajo", row => row.Workplace),
             new PayrollColumn("Días", PayrollColumnFormat.Integer, row => row.WorkedDays, null),
+            new PayrollColumn("Días de vacaciones", PayrollColumnFormat.Integer, row => row.VacationDays, null),
             Money("Salario", summary => summary.Salary),
+            Money("Vacaciones disfrutadas", summary => summary.VacationPay),
             Money("Auxilio", summary => summary.TransportAllowance),
             Money("Horas extras y recargos", summary => summary.Overtime),
             Money("Otros ingresos salariales", summary => summary.OtherSalaryIncome),
