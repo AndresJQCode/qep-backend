@@ -57,7 +57,11 @@ mayorista ya sabía.
   (`created = false`) la empresa se crea **sólo si ese tenant no tiene ninguna** (activa o inactiva), por
   `ICompanyProvisioning.EnsureFirstCompanyAsync`, bajo el mismo candado; si ya tenía alguna, no se escribe nada.
 - No se tocan el registro público de tenants ni `RegisterOwnerTenantAsync`.
-- No se copian al cliente la ciudad, la dirección ni el contacto: `RegisterCustomerData` no los admite. Decisión pendiente del owner.
+- ~~No se copian al cliente la ciudad, la dirección ni el contacto: `RegisterCustomerData` no los admite. Decisión pendiente del owner.~~
+  **Decisión del owner 2026-11-24: ciudad, dirección y contacto sí se copian al cliente.** Con teléfono y ciudad el cliente nace
+  completo (`CreateCompleteAsync`, con ciudad y dirección); el contacto es la etiqueta de la dirección principal de la libreta
+  (`CompleteCustomerData.AddressLabel`; sólo con ciudad colombiana y calle). Sin teléfono o si Customers rechaza la ficha completa,
+  cae al incompleto de antes. Un cliente existente por documento no se actualiza.
 - No se crean cuentas bancarias ni retenciones, y no se cambia `ChargesVat` (queda en `true`, el valor por defecto de Companies).
 - No se agrega edición de los datos del distribuidor mientras está invitado (`ChangeTerms` sólo cambia lista, asesor y empresa
   facturadora). Un error en ciudad o dirección se corrige borrando la invitación y creando otra.
@@ -174,7 +178,7 @@ mayorista ya sabía.
 
 ## Decisiones pendientes del owner
 
-1. ¿Se amplía `RegisterCustomerData` para copiar también ciudad, dirección y contacto al cliente?
+1. ~~¿Se amplía `RegisterCustomerData` para copiar también ciudad, dirección y contacto al cliente?~~ Resuelta el 2026-11-24: sí, ver la nota de arriba.
 2. ¿Se permite editar los datos del distribuidor (ciudad, dirección, razón social) mientras está invitado?
 3. ~~¿Aceptar vinculando un tenant existente crea la empresa?~~ Resuelta por el owner (2026-11-24): sólo si el tenant no tiene ninguna.
 4. ¿Backend y frontend se despliegan juntos, o se abre una ventana con la ciudad opcional al invitar (las invitaciones sin ciudad

@@ -69,8 +69,16 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   distribuidor. Lo que Companies rechaza (`ValidationException`, `CompaniesDomainException`) sale tal cual; no se traga.
   Al invitar, la ciudad colombiana se valida contra Geography (`wholesale.distributor.city_not_found`) justamente para que esto
   no pase.
-- **El cliente del mayorista nace con el celular del aviso** (`Distributor.Phone`, E.164, puede ser `null`): el puerto
-  `EnsureCustomerAsync` lleva `phone`. Un cliente que ya existía por documento no se actualiza.
+- **El cliente del mayorista nace con el celular, la ciudad, la dirección y el contacto del distribuidor** (decisión del owner,
+  2026-11-24): el puerto `EnsureCustomerAsync` lleva `phone`, `cityId`/`cityName`, `address` y `contactName`. Con teléfono (Customers
+  lo exige, `CustomerWriteRules`) y ciudad, el adaptador crea la **ficha completa** por `ICustomerProvisioning.CreateCompleteAsync`
+  (CUC, domicilio, ciudad, origen `wholesale`, actor = quien invitó). `Customer` no tiene persona de contacto: el nombre del contacto
+  va como `CompleteCustomerData.AddressLabel`, la etiqueta (`Name`) de la dirección principal de la libreta. Esa fila sólo existe con
+  ciudad colombiana y calle (`ToFirstAddress`): un distribuidor de afuera o sin dirección no guarda el contacto, y está bien. **Sin
+  teléfono, o si Customers rechaza la completa** (`ValidationException`, ciudad inexistente, política del tenant), el adaptador cae a
+  `CreateFromRegisterAsync` (ficha incompleta: nombre, documento, teléfono, correo, país) y la aceptación no se rompe; antes de
+  caer limpia el `ChangeTracker` para no dejar entidades `Added`. Un cliente que ya existía por documento se reutiliza y no se
+  actualiza.
 - **El aviso de WhatsApp de la invitación es un evento aparte, y desde el spec 2026-11-19 lleva el token**: invitar y
   «Reenviar» escriben `wholesale.distributor-invitation-link.v1` (token sólo en el payload del outbox). El viejo
   `wholesale.distributor-invitation-notice.v1`, sin token, ya no se escribe: el procesador sólo lo drena. El mensaje de WhatsApp

@@ -2591,7 +2591,9 @@ prueba el buzón, y el correo no tiene que ser el invitado.
   `LinkTenant`) crea además la **empresa del distribuidor** con su razón social, documento, ciudad y dirección, idempotente por
   tipo y número exactos (una invitación sin la ciudad que su país exige acepta sin empresa); vincular un tenant existente la crea sólo si ese
   tenant no tiene ninguna empresa. En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista (con el celular del
-  aviso, si lo hay) y deja la relación `Active`; si el correo de la cuenta no es el del distribuidor, lo reemplaza en el mismo guardado y avisa a los dos
+  aviso, la ciudad, la dirección y el contacto del distribuidor: con teléfono y ciudad nace completo, y el contacto es la etiqueta
+  de su dirección principal si hay ciudad colombiana y calle; sin teléfono, o si Customers rechaza la ficha completa, nace incompleto
+  como antes) y deja la relación `Active`; si el correo de la cuenta no es el del distribuidor, lo reemplaza en el mismo guardado y avisa a los dos
   correos. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
 - Errores: `404 wholesale.invitation.not_found`, `410 wholesale.invitation.expired`, `409 wholesale.invitation.already_accepted`,
   `.unavailable` (el mayorista no está activo, apagó `wholesale` o su empresa facturadora no sirve) y

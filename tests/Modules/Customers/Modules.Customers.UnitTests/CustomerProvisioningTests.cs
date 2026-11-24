@@ -161,6 +161,32 @@ public sealed class CustomerProvisioningTests
         Assert.Equal(CityId, Assert.Single(customer.Addresses).CityId);
     }
 
+    // Decisión del owner 2026-11-24 (opción B): el nombre del contacto del distribuidor es la etiqueta de la dirección principal.
+    [Fact]
+    public async Task CreateCompleteUsesTheAddressLabelAsTheNameOfTheFirstAddress()
+    {
+        var bed = NewBed();
+
+        await bed.Provisioning.CreateCompleteAsync(
+            Tenant, Buyer() with { AddressLabel = "María Gómez" }, TestContext.Current.CancellationToken);
+
+        var customer = Assert.Single(bed.Customers.Added);
+        var address = Assert.Single(customer.Addresses);
+        Assert.Equal("María Gómez", address.Name);
+        Assert.Equal("Laura Pérez", customer.Name);
+        Assert.Equal("Calle 10 # 45-12", address.Address);
+    }
+
+    [Fact]
+    public async Task CreateCompleteWithoutAddressLabelNamesTheFirstAddressAfterTheCustomer()
+    {
+        var bed = NewBed();
+
+        await bed.Provisioning.CreateCompleteAsync(Tenant, Buyer(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Laura Pérez", Assert.Single(bed.Customers.Added.Single().Addresses).Name);
+    }
+
     [Fact]
     public async Task CreateCompleteInvalidDataFailsBeforeIssuingCuc()
     {

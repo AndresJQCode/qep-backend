@@ -347,7 +347,9 @@ public interface IWholesaleSupplierLinker
 
 /// <summary>
 /// El cliente del distribuidor en el tenant del mayorista (D-7); adaptador sobre Customers. Idempotente por documento: si ya
-/// existe se reutiliza. Devuelve el id del cliente.
+/// existe se reutiliza, sin actualizarlo. Devuelve el id del cliente. Ciudad, dirección y nombre del contacto del distribuidor
+/// también van al cliente (decisión del owner, 2026-11-24): la ciudad y la dirección a la ficha, el contacto como etiqueta de la
+/// dirección principal de la libreta.
 /// </summary>
 public interface IWholesaleCustomerProvisioning
 {
@@ -360,6 +362,10 @@ public interface IWholesaleCustomerProvisioning
         string identificationNumber,
         string email,
         string? phone,
+        Guid? cityId,
+        string? cityName,
+        string? address,
+        string contactName,
         CancellationToken cancellationToken);
 }
 

@@ -251,6 +251,18 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal("+573001234567", Assert.Single(_customers.Calls).Phone);
     }
 
+    // Decisión del owner 2026-11-24: la ciudad, la dirección y el contacto del distribuidor también van al cliente.
+    [Fact]
+    public async Task TheCustomerGetsTheCityAddressAndContactOfTheDistributor()
+    {
+        await AcceptAsync(new NewTenantChoice(NewTenantData));
+
+        var customer = Assert.Single(_customers.Calls);
+        Assert.Equal(
+            (_world.MedellinId, (string?)null, "Calle 10 # 40-20", "Ana Pérez"),
+            (customer.CityId, customer.CityName, customer.Address, customer.ContactName));
+    }
+
     [Fact]
     public async Task LinkTenantEnablesOnlyTheMissingModules()
     {
