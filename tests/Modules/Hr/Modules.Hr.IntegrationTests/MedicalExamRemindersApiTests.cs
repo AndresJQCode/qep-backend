@@ -230,6 +230,46 @@ public sealed class MedicalExamRemindersApiTests : IClassFixture<HrApiFixture>
         Assert.Equal(1, await CountAsync("SELECT count(*) FROM hr.exit_exam_requirements WHERE tenant_id = @tenant", tenant));
     }
 
+    private static Task<HttpResponseMessage> RecordExitAsync(HrTenant tenant, JsonElement detail, string date) =>
+        tenant.Hr.PostAsJsonAsync(
+            $"{EmployeeUrl(tenant, detail)}/medical-exams",
+            new { type = "Exit", examDate = date, provider = (string?)null, restrictions = (string?)null, recommendations = (string?)null, restrictionsUntil = (string?)null },
+            Ct);
+
+    // An exit exam recorded before the termination counts when it is dated on or after it: the requirement is born closed and nobody
+    // is told to get an exam that already exists.
+    [Fact]
+    public async Task TerminateWithAnExitExamOnOrAfterTheDateClosesTheRequirementAndPublishesNothing()
+    {
+        var (tenant, setup, _, _) = await SeedAsync(employees: false);
+        using var _ = tenant;
+        var detail = await HireAsync(tenant, HireBody(setup, documentNumber: "6100000009"));
+        Assert.Equal(HttpStatusCode.OK, (await RecordExitAsync(tenant, detail, "2026-11-15")).StatusCode);
+
+        var response = await TerminateAsync(tenant, detail, "2026-11-10");
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        Assert.Empty(await EventsAsync(tenant, ExitEvent));
+        Assert.Equal(1, await CountAsync("SELECT count(*) FROM hr.exit_exam_requirements WHERE tenant_id = @tenant AND status = 'Done' AND exam_id IS NOT NULL", tenant));
+        var exams = await JsonOfAsync(await tenant.Hr.GetAsync($"{EmployeeUrl(tenant, detail)}/medical-exams", Ct));
+        Assert.Equal("Done", exams.GetProperty("exitRequirement").GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, exams.GetProperty("status").ValueKind);
+    }
+
+    [Fact]
+    public async Task TerminateWithAnExitExamBeforeTheDateKeepsItPendingAndPublishes()
+    {
+        var (tenant, setup, _, _) = await SeedAsync(employees: false);
+        using var _ = tenant;
+        var detail = await HireAsync(tenant, HireBody(setup, documentNumber: "6100000009"));
+        Assert.Equal(HttpStatusCode.OK, (await RecordExitAsync(tenant, detail, "2026-11-05")).StatusCode);
+
+        var response = await TerminateAsync(tenant, detail, "2026-11-10");
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        Assert.Equal(2, (await EventsAsync(tenant, ExitEvent)).Count);
+        Assert.Equal(1, await CountAsync("SELECT count(*) FROM hr.exit_exam_requirements WHERE tenant_id = @tenant AND status = 'Pending' AND exam_id IS NULL", tenant));
+    }
     [Fact]
     public async Task TerminateWithNoManagersStillSucceedsWithoutMessages()
     {
