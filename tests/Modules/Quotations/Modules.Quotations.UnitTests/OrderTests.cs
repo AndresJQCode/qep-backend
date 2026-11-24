@@ -413,6 +413,16 @@ public sealed class OrderTests
     }
 
     [Fact]
+    public void FromQuotationCopiesTheShippingPostalCode()
+    {
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), null,
+            ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+
+        Assert.Equal("050021", order.Shipping!.PostalCode);
+    }
+
+    [Fact]
     public void FromQuotationInheritsTheQuotationNotesWhenTheRequestOmitsThem()
     {
         var order = Order.FromQuotation(
@@ -447,6 +457,7 @@ public sealed class OrderTests
                 Address = "Cl 1",
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
+                PostalCode = "050021",
             }),
             Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
