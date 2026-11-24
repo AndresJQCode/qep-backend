@@ -32,6 +32,7 @@ public static class PayrollInfrastructureExtensions
         services.AddScoped<IPayrollCalculatedPeriods, PayrollCalculatedPeriods>();
         services.AddScoped<IPayrollResultStore, PayrollResultStore>();
         services.AddScoped<IRecurringConceptRepository, RecurringConceptRepository>();
+        services.AddScoped<IVacationRepository, VacationRepository>();
         services.AddScoped<IExcelInputsImporter, ClosedXmlInputsImporter>();
         services.AddScoped<IInputsImportTemplateBuilder, ClosedXmlInputsImportTemplateBuilder>();
         services.AddScoped<IPayrollWorkbookBuilder, ClosedXmlPayrollWorkbookBuilder>();

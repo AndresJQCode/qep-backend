@@ -46,6 +46,11 @@ internal sealed class EmployeeResultRow
 
     public string RecurringAppliedJson { get; set; } = "{}";
 
+    public int VacationDays { get; set; }
+
+    /// <summary>What the paying quincena froze for the following ones; <c>[]</c> when the result has no vacation to photograph.</summary>
+    public string VacationPhotosJson { get; set; } = "[]";
+
     public static EmployeeResultRow From(PayrollPeriodId periodId, EmployeeResult result)
     {
         var row = new EmployeeResultRow { Id = Guid.CreateVersion7(), PeriodId = periodId };
@@ -71,6 +76,8 @@ internal sealed class EmployeeResultRow
         SummaryJson = JsonSerializer.Serialize(liquidation.Summary, PayrollJson.Options);
         MonthJson = JsonSerializer.Serialize(liquidation.Month, PayrollJson.Options);
         RecurringAppliedJson = JsonSerializer.Serialize(result.RecurringApplied, PayrollJson.Options);
+        VacationDays = liquidation.VacationDays;
+        VacationPhotosJson = JsonSerializer.Serialize(liquidation.VacationPhotos, PayrollJson.Options);
     }
 
     public EmployeeResult ToResult() => new(
@@ -89,8 +96,8 @@ internal sealed class EmployeeResultRow
             JsonSerializer.Deserialize<PayrollSummary>(SummaryJson, PayrollJson.Options)!,
             JsonSerializer.Deserialize<MonthAccumulators>(MonthJson, PayrollJson.Options)!,
             EngineVersion,
-            0,
-            []),
+            VacationDays,
+            JsonSerializer.Deserialize<List<VacationPhoto>>(VacationPhotosJson, PayrollJson.Options)!),
         Fingerprint,
         ParseApplied(RecurringAppliedJson));
 

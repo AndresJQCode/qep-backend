@@ -10,6 +10,7 @@ internal sealed class PayrollUnitOfWork(PayrollDbContext dbContext) : IPayrollUn
     private const string ConceptNameIndex = "IX_concepts_tenant_company_kind_normalized_name";
     private const string CompanySettingsIndex = "IX_company_settings_tenant_company";
     private const string PeriodStartIndex = "IX_periods_tenant_company_start";
+    private const string VacationOverlapConstraint = "EX_vacations_no_overlap";
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -46,6 +47,12 @@ internal sealed class PayrollUnitOfWork(PayrollDbContext dbContext) : IPayrollUn
         {
             throw new ResourceConflictException(
                 PayrollErrorCodes.PeriodAlreadyExists, "That payroll period already exists.", exception);
+        }
+        // Dos registros que se solapan a la vez: la validación del handler no ve el insert concurrente y la restricción EXCLUDE sí.
+        catch (DbUpdateException exception) when (UniqueViolation.IsExclusion(exception, VacationOverlapConstraint))
+        {
+            throw new ResourceConflictException(
+                PayrollErrorCodes.VacationOverlap, "Se cruzan con otras vacaciones de este empleado.", exception);
         }
     }
 }
