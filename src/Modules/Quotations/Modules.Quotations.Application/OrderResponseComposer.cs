@@ -215,7 +215,8 @@ public static class OrderResponses
                     party.Id, party.Role, party.Name, party.IdentificationNumber, party.Phone, party.Email,
                     party.Address, party.DepartmentId, party.CityId, party.PersonType, party.IdentificationType,
                     party.Country, party.CityName,
-                    QuotationResponseComposer.ToRegionDto(party.RegionId, regionsById ?? EmptyRegions)))
+                    QuotationResponseComposer.ToRegionDto(party.RegionId, regionsById ?? EmptyRegions),
+                    party.PostalCode))
                 .ToArray(),
             order.ConvertedAt,
             order.ConvertedBy,
