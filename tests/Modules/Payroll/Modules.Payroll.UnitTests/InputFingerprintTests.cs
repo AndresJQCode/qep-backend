@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Modules.Payroll.Application;
+using Modules.Payroll.Domain;
 using Modules.Payroll.Domain.Engine;
 using Modules.Payroll.UnitTests.Engine;
 
@@ -60,6 +61,39 @@ public sealed class InputFingerprintTests
         var scaled = input with { Salaries = [new SalarySegmentSource(new DateOnly(2025, 1, 1), 1_750_905.00m, false)] };
 
         Assert.Equal(InputFingerprint.Of(input), InputFingerprint.Of(scaled));
+    }
+
+    // Decision 4: a name is a label, not an input. Renaming a concept or a workplace never makes a period «sourceChanged».
+    [Fact]
+    public void RenamingAConceptOrAWorkplaceDoesNotChangeIt()
+    {
+        var conceptId = Guid.Parse("01900000-0000-7000-8000-0000000000f1");
+        var recurringId = Guid.Parse("01900000-0000-7000-8000-0000000000f2");
+        EngineInput With(string concept, string workplace) => EngineTestData.Input(Day) with
+        {
+            Workplace = new WorkplaceInfo(workplace, ArlClass.I, HighRiskPension: false),
+            Overtime = [new OvertimeInput(conceptId, concept, 2m, null, 1.4m)],
+            Incomes = [new IncomeInput(conceptId, concept, 100_000m, true)],
+            Deductions = [new DeductionInput(conceptId, concept, 20_000m)],
+            Recurring = [new RecurringInput(recurringId, concept, ConceptKind.Income, RecurringMode.Fixed, 50_000m, false, null)],
+        };
+
+        Assert.Equal(InputFingerprint.Of(With("Bono", "Sede principal")), InputFingerprint.Of(With("Bono de ventas", "Bodega norte")));
+    }
+
+    // Characterization: the nature of a concept still counts.
+    [Fact]
+    public void TheNatureOfAConceptStillChangesIt()
+    {
+        var input = EngineTestData.Input(Day) with
+        {
+            Incomes = [EngineTestData.Income(SystemConceptKey.OtherIncome, 100_000m, true)],
+        };
+        var notSalary = input with { Incomes = [input.Incomes[0] with { SalaryConstitutive = false }] };
+        var otherConcept = input with { Incomes = [input.Incomes[0] with { ConceptId = Guid.NewGuid() }] };
+
+        Assert.NotEqual(InputFingerprint.Of(input), InputFingerprint.Of(notSalary));
+        Assert.NotEqual(InputFingerprint.Of(input), InputFingerprint.Of(otherConcept));
     }
 
     [Fact]

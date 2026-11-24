@@ -295,6 +295,23 @@ public sealed class AuthSessionApiTests
         Assert.Equal("OnCustomerSave", tenant.GetProperty("personTypeRequirement").GetString());
     }
 
+    // Spec 2026-11-22 (i18n): la SPA elige el diccionario antes de la primera pintura, así que el
+    // idioma efectivo de cada tenant viaja en la sesión. Quien no eligió uno ve el del tenant.
+    [Fact]
+    public async Task SessionCarriesTheEffectiveLanguageOfEachTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+
+        var before = await LoginAndGetSeededTenantAsync(factory);
+        await StoreLanguageAsync(factory, "es-ES");
+        var after = await LoginAndGetSeededTenantAsync(factory);
+
+        Assert.Equal("es-419", before.GetProperty("language").GetString());
+        Assert.Equal("es-ES", after.GetProperty("language").GetString());
+    }
+
     // El requisito guardado se publica tal cual en cualquier país.
     [Fact]
     public async Task ANonColombianTenantPublishesTheStoredRequirement()
@@ -430,6 +447,18 @@ public sealed class AuthSessionApiTests
         tenant.UpdateSettings(
             tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
             tenant.DefaultCurrency, tenant.NumberFormat, country, requirement, DateTimeOffset.UtcNow);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task StoreLanguageAsync(QepApiFactory factory, string language)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenant = dbContext.Tenants.Single();
+        tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, tenant.Country, tenant.PersonTypeRequirement,
+            DateTimeOffset.UtcNow, language: language);
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 

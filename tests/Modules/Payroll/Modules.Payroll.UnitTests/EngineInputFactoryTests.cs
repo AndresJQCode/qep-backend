@@ -83,7 +83,8 @@ public sealed class EngineInputFactoryTests
         ConceptCatalogSnapshot catalog,
         IReadOnlyList<PeriodInput>? inputs = null,
         IReadOnlyList<RecurringConcept>? recurring = null,
-        IReadOnlyDictionary<Guid, decimal>? applied = null) =>
+        IReadOnlyDictionary<Guid, decimal>? applied = null,
+        IReadOnlySet<Guid>? retired = null) =>
         EngineInputFactory.Build(
             employee,
             PayrollEligibility.Evaluate(employee, Period.Start, Period.End, EngineTestData.Smmlv),
@@ -94,7 +95,21 @@ public sealed class EngineInputFactoryTests
             inputs ?? [],
             recurring ?? [],
             applied ?? new Dictionary<Guid, decimal>(),
+            retired ?? new HashSet<Guid>(),
             MonthAccumulators.Empty);
+
+    [Fact]
+    public async Task ARecurringOfARetiredConceptIsLeftOut()
+    {
+        var bonus = PayrollConcept.Create(PayrollConceptId.New(), Tenant, Company, ConceptKind.Income, "Bono", false, null, Now);
+        var catalog = await CatalogAsync(bonus);
+        var kept = Recurring(OtherIncome);
+        var retired = Recurring(bonus.Id.Value);
+
+        var input = Build(Employee(), catalog, recurring: [kept, retired], retired: new HashSet<Guid> { bonus.Id.Value });
+
+        Assert.Equal([kept.Id.Value], input.Recurring.Select(item => item.RecurringId));
+    }
 
     [Fact]
     public async Task CapturesBecomeEngineLinesInOrder()

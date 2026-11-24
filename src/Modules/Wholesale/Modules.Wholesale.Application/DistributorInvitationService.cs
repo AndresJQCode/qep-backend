@@ -228,9 +228,11 @@ public sealed class DistributorInvitationService(
         switch (choice)
         {
             case NewTenantChoice newTenant:
+                // Spec 2026-11-22: el tenant nuevo nace con el país del distribuidor guardado, nunca con uno del cuerpo del accept.
+                var tenantData = newTenant.Data with { Country = distributor.Country };
                 try
                 {
-                    await registration.EnsureRegistrableAsync(newTenant.Data, cancellationToken);
+                    await registration.EnsureRegistrableAsync(tenantData, cancellationToken);
                 }
                 catch (TenantDomainException)
                 {
@@ -245,7 +247,7 @@ public sealed class DistributorInvitationService(
                 }
 
                 await registration.RegisterInvitedTenantAsync(
-                    new TenantId(reserved), userId, newTenant.Data, WholesaleModuleSets.InvitedDistributor, correlationId,
+                    new TenantId(reserved), userId, tenantData, WholesaleModuleSets.InvitedDistributor, correlationId,
                     cancellationToken);
                 return (reserved, true, WholesaleModuleSets.InvitedDistributor);
 

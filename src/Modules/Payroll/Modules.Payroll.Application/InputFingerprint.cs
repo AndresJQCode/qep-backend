@@ -9,17 +9,30 @@ namespace Modules.Payroll.Application;
 
 /// <summary>
 /// La huella (R-16): SHA-256 en hexadecimal minúscula de lo que el motor lee de un empleado, sin la foto legal (que queda fija
-/// aunque Hr cambie). Si lo que hay hoy en Hr, las capturas o la configuración da otra huella que la guardada al liquidar, el
+/// aunque Hr cambie) ni los nombres de conceptos y centros de trabajo (son etiquetas, no insumos). Si lo que hay hoy en Hr, las capturas o la configuración da otra huella que la guardada al liquidar, el
 /// período trae <c>sourceChanged</c>. Los decimales se normalizan: <c>100</c> y <c>100.00</c> son la misma huella.
 /// </summary>
 public static class InputFingerprint
 {
+    // Decision 4 (2026-11-22): names are labels. Ids, hours, amounts, caps and the nature of each concept (kind, system key,
+    // multiplier, mode, salary-constitutive) stay in; the concept and workplace names leave.
+    private static readonly string[] ListsWithConceptNames = ["overtime", "incomes", "deductions", "recurring"];
+
     public static string Of(EngineInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
 
         var node = JsonSerializer.SerializeToNode(input, PayrollJson.Options)!.AsObject();
         node.Remove("legal");
+        foreach (var list in ListsWithConceptNames)
+        {
+            foreach (var item in node[list]!.AsArray())
+            {
+                item!.AsObject().Remove("conceptName");
+            }
+        }
+
+        node["workplace"]!.AsObject().Remove("name");
         return Hash(Canonical(node));
     }
 

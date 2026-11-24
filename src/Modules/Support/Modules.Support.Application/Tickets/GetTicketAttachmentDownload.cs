@@ -15,8 +15,7 @@ public sealed record GetTicketAttachmentDownloadCommand(Guid TenantId, Guid Tick
 /// </summary>
 public sealed class GetTicketAttachmentDownloadHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketAttachmentRepository attachments,
     ISupportAttachmentStorage storage,
     ISupportAuditPublisher auditPublisher,
@@ -29,10 +28,10 @@ public sealed class GetTicketAttachmentDownloadHandler(
     public async Task<SupportAttachmentDownloadDto> HandleAsync(
         GetTicketAttachmentDownloadCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, command.TenantId, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
 
         var ticketId = new SupportTicketId(command.TicketId);
-        _ = await tickets.FindAsync(command.TenantId, ticketId, cancellationToken) ?? throw SupportNotFound.Ticket(command.TicketId);
+        _ = await scope.ViewAsync(command.TenantId, command.TicketId, cancellationToken);
         var attachment = await attachments.FindAsync(command.TenantId, ticketId, command.AttachmentId, cancellationToken)
             ?? throw new ResourceNotFoundException(
                 SupportErrorCodes.AttachmentNotFound, $"Attachment '{command.AttachmentId}' was not found in this ticket.");

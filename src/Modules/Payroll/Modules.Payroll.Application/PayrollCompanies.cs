@@ -13,6 +13,18 @@ public sealed class PayrollCompanies(IPayrollHrDirectory directory)
         await directory.FindCompanyAsync(tenantId, companyId, cancellationToken)
             ?? throw PayrollNotFound.Company(companyId);
 
+    /// <summary>
+    /// Una empresa inactiva se lee pero no se cambia: no abre quincenas ni guarda configuración (decisión del owner 10, 2026-11-22).
+    /// </summary>
+    public static void EnsureActive(PayrollCompanyRef company, string message)
+    {
+        ArgumentNullException.ThrowIfNull(company);
+        if (!company.IsActive)
+        {
+            throw new PayrollDomainException(PayrollErrorCodes.CompanyInactive, message);
+        }
+    }
+
     public static PayrollCompanyDto ToDto(PayrollCompanyRef company) =>
         new(company.Id, company.Name, company.TaxId, company.IsActive);
 }

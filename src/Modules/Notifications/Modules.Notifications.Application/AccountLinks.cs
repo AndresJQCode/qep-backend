@@ -24,5 +24,8 @@ public static class AccountLinks
     public static string WholesaleInvitation(string appBaseUrl, string token) =>
         $"{Trim(appBaseUrl)}/wholesale-invitations/{Uri.EscapeDataString(token)}";
 
+    /// <summary>The detail of a support ticket or task in the SPA, for the email of an escalated assignment.</summary>
+    public static string SupportTask(string appBaseUrl, Guid ticketId) => $"{Trim(appBaseUrl)}/support/{ticketId:D}";
+
     private static string Trim(string appBaseUrl) => appBaseUrl.TrimEnd('/');
 }

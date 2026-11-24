@@ -178,8 +178,7 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
             PermissionsOf(catalog, "admin", "pos."));
         Assert.Equal(
             ["pos.register.operate", "pos.sale.create", "pos.sale.customer", "pos.sale.read"],
-            catalog.Roles.Single(role => role.Role == "cashier").Permissions
-                .Order(StringComparer.Ordinal).ToArray());
+            PermissionsOf(catalog, "cashier", "pos."));
         Assert.Empty(PermissionsOf(catalog, "advisor", "pos."));
         Assert.Empty(PermissionsOf(catalog, "billing", "pos."));
     }

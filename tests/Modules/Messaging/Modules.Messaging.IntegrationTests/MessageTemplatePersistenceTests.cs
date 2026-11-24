@@ -222,6 +222,39 @@ public sealed class MessageTemplatePersistenceTests
         });
     }
 
+    // Spec 2026-11-21: la misma regla para la plantilla de factura, por UX_message_templates_invoice → invoice_exists.
+    [Fact]
+    public async Task ASecondInvoiceTemplateInTheSameConnectionIs422InvoiceExistsByIndexName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Invoice(f.TenantId, f.ConnectionId, "1", "qep_factura"));
+            // Una Order en la misma conexión no choca con la Invoice.
+            repository.Add(Order(f.TenantId, f.ConnectionId, "2", "qep_pedido"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        });
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Invoice(f.TenantId, f.ConnectionId, "3", "qep_factura_v2"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        }));
+
+        Assert.Equal(MessagingErrorCodes.TemplateInvoiceExists, exception.Code);
+        await InScopeAsync(f.Factory, async (repository, _) =>
+        {
+            var invoice = await repository.FindInvoiceAsync(f.TenantId, f.ConnectionId, Ct);
+            Assert.Equal("qep_factura", invoice!.Name);
+            return 0;
+        });
+    }
+
+    private static MessageTemplate Invoice(Guid tenantId, Guid connectionId, string metaId, string name) =>
+        MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "NAMED", "PENDING", "[]", MessageTemplateKind.Invoice, null, Now);
+
     private static MessageTemplate Order(Guid tenantId, Guid connectionId, string metaId, string name) =>
         MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "NAMED", "PENDING", "[]", MessageTemplateKind.Order, null, Now);
 

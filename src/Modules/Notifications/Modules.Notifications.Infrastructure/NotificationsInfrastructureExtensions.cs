@@ -4,8 +4,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Notifications.Application;
 using Modules.Notifications.Infrastructure.Channels;
+using Modules.Notifications.Infrastructure.InApp;
 using Modules.Notifications.Infrastructure.Messaging;
 using Modules.Notifications.Infrastructure.Persistence;
+using Modules.Notifications.Infrastructure.TaskNotices;
 
 namespace Modules.Notifications.Infrastructure;
 
@@ -68,7 +70,19 @@ public static class NotificationsInfrastructureExtensions
         // La exportación asíncrona de Quotations (spec 2026-09-12, D12): una definición por evento.
         services.AddSingleton<OutboxDeliveryWorker, QuotationsExportReadyDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, QuotationsExportFailedDeliveryWorker>();
+        // Spec 2026-11-22 §12: the bell's consumers, drained by the same loop. One definition per source.
+        services.AddSingleton<InAppOutboxConsumer, ExportsInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, ConversationsInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, WholesaleInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, BillingInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, SupportInAppConsumer>();
+        services.AddSingleton<InAppOutboxConsumer, HrInAppConsumer>();
+        services.AddScoped<IInAppNotificationRepository, InAppNotificationRepository>();
         services.AddHostedService<NotificationsDeliveryWorker>();
+        services.AddHostedService<InAppNotificationRetentionWorker>();
+        // Task-notices spec 2026-11-22 §5.4: the escalation of unread assignments, a pass a minute; ports implemented in Bootstrapper.
+        services.AddScoped<TaskNoticeEscalationProcessor>();
+        services.AddHostedService<TaskNoticeEscalationWorker>();
 
         return services;
     }

@@ -1,5 +1,6 @@
 using Modules.Payroll.Domain;
 using Modules.Payroll.Domain.Engine;
+using Modules.Tenancy.Application;
 
 namespace Modules.Payroll.Application;
 
@@ -28,7 +29,8 @@ public sealed class LiquidationPlanner(
     IRecurringConceptRepository recurring,
     RecurringAccumulation accumulation,
     IPayrollResultStore results,
-    IPayrollPeriodRepository periods)
+    IPayrollPeriodRepository periods,
+    ITenantClock tenantClock)
 {
     public async Task<LiquidationPlan> PlanAsync(PayrollPeriod period, CancellationToken cancellationToken)
     {
@@ -37,6 +39,11 @@ public sealed class LiquidationPlanner(
         var saved = await settings.FindAsync(period.TenantId, period.CompanyId, cancellationToken);
         var engineSettings = saved?.ToEngine() ?? CompanyPayrollSettings.DefaultsFor();
         var concepts = await catalog.LoadAsync(period.TenantId, period.CompanyId, cancellationToken);
+
+        // An archived concept's recurring stop the period after the archive day, counted in the tenant's day (decision 5).
+        var calendar = await tenantClock.GetAsync(period.TenantId, cancellationToken);
+        var retired = concepts.ArchivedBefore(
+            period.StartDate, instant => DateOnly.FromDateTime(calendar.ToLocal(instant).DateTime));
 
         // The photo of the first liquidation never changes; before it exists the values are the ones in force on the start date.
         var legal = PayrollResultMapper.ParseLegal(period.LegalValuesJson)
@@ -84,7 +91,7 @@ public sealed class LiquidationPlanner(
             var prior = firstHalfResults.GetValueOrDefault(employee.EmployeeId)?.Liquidation.Month ?? MonthAccumulators.Empty;
 
             var input = EngineInputFactory.Build(
-                employee, eligibility, info, engineSettings, legal, concepts, captured, own, applied, prior);
+                employee, eligibility, info, engineSettings, legal, concepts, captured, own, applied, retired, prior);
             liquidable.Add(new PlannedEmployee(employee, eligibility, input, InputFingerprint.Of(input)));
         }
 

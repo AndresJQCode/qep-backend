@@ -22,6 +22,80 @@ namespace Modules.Notifications.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Modules.Notifications.Domain.InAppNotification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("data");
+
+                    b.Property<string>("DedupeKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("dedupe_key");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<DateTimeOffset?>("ReadAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("read_at");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<Guid?>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<Guid?>("SourceMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("source_message_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_in_app_notifications_created");
+
+                    b.HasIndex("TenantId", "MemberId")
+                        .HasDatabaseName("IX_in_app_notifications_member_unread")
+                        .HasFilter("read_at IS NULL");
+
+                    b.HasIndex("TenantId", "Kind", "ResourceId")
+                        .HasDatabaseName("IX_in_app_notifications_resource");
+
+                    b.HasIndex("TenantId", "MemberId", "DedupeKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_in_app_notifications_member_dedupe");
+
+                    b.HasIndex("TenantId", "MemberId", "CreatedAt", "Id")
+                        .IsDescending(false, false, true, true)
+                        .HasDatabaseName("IX_in_app_notifications_member_created");
+
+                    b.ToTable("in_app_notifications", "notifications");
+                });
+
             modelBuilder.Entity("Modules.Notifications.Domain.Notification", b =>
                 {
                     b.Property<Guid>("Id")
@@ -78,6 +152,84 @@ namespace Modules.Notifications.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "RecipientId");
 
                     b.ToTable("notifications", "notifications");
+                });
+
+            modelBuilder.Entity("Modules.Notifications.Domain.TaskNoticeEscalation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AssignedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_by_member_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("ChannelAttemptsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("channel_attempts")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("DueAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("due_at");
+
+                    b.Property<Guid>("InAppNotificationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("in_app_notification_id");
+
+                    b.Property<Guid>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<string>("SkipReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("skip_reason");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TicketId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ticket_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InAppNotificationId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_task_notice_escalations_notification");
+
+                    b.HasIndex("Status", "DueAt")
+                        .HasDatabaseName("IX_task_notice_escalations_due");
+
+                    b.ToTable("task_notice_escalations", "notifications");
                 });
 
             modelBuilder.Entity("Modules.Notifications.Infrastructure.Persistence.NotificationInboxMessage", b =>
@@ -137,6 +289,15 @@ namespace Modules.Notifications.Infrastructure.Persistence.Migrations
                         {
                             t.ExcludeFromMigrations();
                         });
+                });
+
+            modelBuilder.Entity("Modules.Notifications.Domain.TaskNoticeEscalation", b =>
+                {
+                    b.HasOne("Modules.Notifications.Domain.InAppNotification", null)
+                        .WithMany()
+                        .HasForeignKey("InAppNotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

@@ -38,6 +38,10 @@ public sealed class SupportTicketType
 
     public bool IsActive { get; private set; }
 
+    /// <summary>Spec 2026-11-22: el tipo de las tareas internas. Uno por tenant, sin término, sin publicar y siempre activo; no se
+    /// edita ni se borra (<see cref="SupportErrorCodes.InternalTypeLocked"/>), sólo se mueve.</summary>
+    public bool IsInternal { get; private set; }
+
     public int Position { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -80,6 +84,16 @@ public sealed class SupportTicketType
         };
     }
 
+    /// <summary>El tipo de las tareas internas: sin término ni respuesta formal, sin publicar, activo y bloqueado.</summary>
+    public static SupportTicketType CreateInternal(SupportTicketTypeId id, Guid tenantId, int position, DateTimeOffset now)
+    {
+        var type = Create(
+            id, tenantId, SupportTicketTypeDefaults.InternalTaskName, termBusinessDays: null, termIsLegal: false,
+            requiresFormalResponse: false, isPublished: false, position, now);
+        type.IsInternal = true;
+        return type;
+    }
+
     /// <summary>Reemplaza el tipo entero: <paramref name="formalNextStep"/> en null borra el «siguiente paso». Con los mismos valores
     /// no cambia nada ni sube la versión.</summary>
     public void Update(
@@ -92,6 +106,19 @@ public sealed class SupportTicketType
         string? formalNextStep,
         DateTimeOffset now)
     {
+        if (IsInternal)
+        {
+            // Se compara antes de normalizar: con sus propios valores no hace nada; cualquier diferencia se rechaza.
+            if (name == Name && termBusinessDays == TermBusinessDays && termIsLegal == TermIsLegal &&
+                requiresFormalResponse == RequiresFormalResponse && isPublished == IsPublished && isActive == IsActive &&
+                formalNextStep == FormalNextStep)
+            {
+                return;
+            }
+
+            throw new SupportDomainException(SupportErrorCodes.InternalTypeLocked, "The internal ticket type cannot be edited.");
+        }
+
         var normalized = NormalizeName(name);
         EnsureTerm(termBusinessDays, termIsLegal);
         var nextStep = SupportFormalNextStep.Normalize(formalNextStep);

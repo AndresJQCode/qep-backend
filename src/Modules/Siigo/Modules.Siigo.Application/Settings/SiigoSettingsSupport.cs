@@ -144,7 +144,8 @@ internal static class SiigoSettingsSupport
                 settings.SendToDian,
                 settings.SendMail,
                 settings.FreightSeparateInvoice,
-                settings.FreightProductCode),
+                settings.FreightProductCode,
+                settings.PriceMode.ToString()),
             new SiigoTaxesDto(vat, withholdingLinks),
             new SiigoPaymentsDto(
                 accountLinks,

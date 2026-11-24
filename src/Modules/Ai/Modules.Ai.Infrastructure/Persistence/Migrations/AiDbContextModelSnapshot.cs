@@ -59,6 +59,11 @@ namespace Modules.Ai.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("published_version_id");
 
+                    b.Property<string>("SourceTemplateId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("source_template_id");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .ValueGeneratedOnAdd()

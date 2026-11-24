@@ -143,6 +143,15 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        // Spec 2026-11-21: manda el PDF de esa factura al WhatsApp del cliente del pedido. Mismo permiso que generarla; 204 sin cuerpo.
+        invoice.MapPost("/{invoiceId:guid}/send-whatsapp", SendInvoiceWhatsAppAsync)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         invoice.MapPost("/", IssueInvoiceAsync)
             .Produces<IReadOnlyList<SiigoInvoiceDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -248,6 +257,13 @@ public static class SiigoEndpoints
         return Results.File(pdf.Content, "application/pdf", pdf.FileName);
     }
 
+    private static async Task<IResult> SendInvoiceWhatsAppAsync(
+        Guid tenantId, Guid orderId, Guid invoiceId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new SendSiigoInvoiceWhatsAppCommand(tenantId, orderId, invoiceId), cancellationToken);
+        return Results.NoContent();
+    }
+
     // El cuerpo es opcional: sin él se usa la propuesta de pagos de la cuenta de cobro.
     private static async Task<IResult> IssueInvoiceAsync(
         Guid tenantId, Guid orderId, SiigoIssueInvoiceRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -345,6 +361,7 @@ public static class SiigoEndpoints
                     request.SendMail ?? false,
                     request.FreightSeparateInvoice ?? false,
                     request.FreightProductCode,
+                    request.PriceMode,
                     RequireVersion(httpContext)),
                 cancellationToken));
 
@@ -454,7 +471,7 @@ public sealed record SiigoProductLinkRequest(string? SiigoProductId, string? Cod
 /// <summary>El cuerpo de <c>PUT …/company</c>. Opcional en el binding: una empresa que falta es un 422 con <c>errors</c>.</summary>
 public sealed record SiigoCompanyRequest(Guid? CompanyId);
 
-/// <summary>El cuerpo de <c>PUT …/document</c>. Los interruptores ausentes valen <c>false</c>, como de fábrica. Un <c>sellerId</c> (frontend
+/// <summary>El cuerpo de <c>PUT …/document</c>. Los interruptores ausentes valen <c>false</c>, como de fábrica; un <c>priceMode</c> ausente conserva el guardado. Un <c>sellerId</c> (frontend
 /// anterior a la spec 2026-11-20) se ignora: el vendedor es el asesor de cada pedido.</summary>
 public sealed record SiigoDocumentRequest(
     string? DocumentTypeId,
@@ -463,7 +480,8 @@ public sealed record SiigoDocumentRequest(
     bool? SendToDian,
     bool? SendMail,
     bool? FreightSeparateInvoice,
-    string? FreightProductCode);
+    string? FreightProductCode,
+    string? PriceMode);
 
 public sealed record SiigoVatLinkRequest(int? TaxPercentage, string? SiigoTaxId);
 

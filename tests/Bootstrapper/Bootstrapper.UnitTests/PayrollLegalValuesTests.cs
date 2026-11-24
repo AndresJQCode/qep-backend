@@ -201,10 +201,35 @@ public sealed class PayrollLegalValuesTests
             values.Add(new(row.Key, new DateOnly(2027, 1, 1), row.Value));
         }
 
-        var set = await Adapter(values).ResolveAsync(new DateOnly(2027, 1, 14), Ct);
+        var brackets = SeededBrackets();
+        brackets.AddRange(SeededBrackets()
+            .Where(bracket => bracket.EffectiveFrom == Y2026)
+            .Select(bracket => new LegalParameterBracket(
+                LegalBracketKey.SolidarityFund, new DateOnly(2027, 1, 1), bracket.LowerBound, bracket.UpperBound, bracket.Rate)));
+
+        var set = await Adapter(values, brackets).ResolveAsync(new DateOnly(2027, 1, 14), Ct);
 
         Assert.Equal(0.90m, set.SundaySurchargeRate.Value);
         Assert.Equal(42m, set.WeeklyHours.Value);
         Assert.Equal(new DateOnly(2025, 6, 25), set.ConnectivityAllowanceSince);
         Assert.Equal(new DateOnly(2027, 1, 1), set.Smmlv.EffectiveFrom);
-    }}
+    }
+
+    // Decision 6: the brackets are yearly like the scalar keys. 2027 has every scalar row but only the 2026 bracket set.
+    [Fact]
+    public async Task ABracketSetFromAnEarlierYearIsLegalParameterMissing()
+    {
+        var values = SeededValues();
+        foreach (var row in values.Where(value => value.EffectiveFrom == Y2026).ToList())
+        {
+            values.Add(new(row.Key, new DateOnly(2027, 1, 1), row.Value));
+        }
+
+        var exception = await Assert.ThrowsAsync<PayrollDomainException>(() =>
+            Adapter(values).ResolveAsync(new DateOnly(2027, 1, 14), Ct));
+
+        Assert.Equal("payroll.legal_parameter.missing", exception.Code);
+        Assert.Contains("SolidarityFund", exception.Message);
+        Assert.DoesNotContain("Smmlv", exception.Message);
+    }
+}

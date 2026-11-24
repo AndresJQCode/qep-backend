@@ -11,6 +11,9 @@ namespace Modules.Support.Application;
 /// (<paramref name="SearchCustomerIds"/>), unidos por O. <paramref name="Priorities"/> deja esos niveles. El orden es por recibido,
 /// el más reciente primero; con <paramref name="ByPriority"/>, primero <c>Urgent</c>, <c>High</c>, <c>Medium</c>, <c>Low</c> y dentro de
 /// cada nivel por recibido (spec 2026-11-15 §5.3). El id desempata siempre, así la paginación es estable.
+/// <paramref name="Kind"/> separa externos de tareas (por defecto externos, como la bandeja de siempre).
+/// <paramref name="ParticipantMemberId"/> deja sólo los tickets que esa membresía creó o tiene asignados, en la consulta (spec
+/// 2026-11-22 §5.3, §5.6); <paramref name="CreatedByMemberId"/> deja los que creó.
 /// </summary>
 public sealed record SupportTicketFilter(
     Guid TenantId,
@@ -27,7 +30,10 @@ public sealed record SupportTicketFilter(
     int Page,
     int PageSize,
     IReadOnlyCollection<SupportTicketPriority>? Priorities = null,
-    bool ByPriority = false);
+    bool ByPriority = false,
+    SupportTicketKind Kind = SupportTicketKind.External,
+    Guid? ParticipantMemberId = null,
+    Guid? CreatedByMemberId = null);
 
 public sealed record SupportTicketPage(IReadOnlyList<SupportTicket> Items, int Total);
 

@@ -54,6 +54,10 @@ public static class OrderChangeSummary
 
     public static string GiftRemoved(string productName) => Trim($"Quitó el regalo {productName}.");
 
+    /// <summary>Spec 2026-11-23: «Editar pedido» cambia la cantidad de un regalo sin quitarlo y volverlo a agregar.</summary>
+    public static string GiftQuantityChanged(string productName, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió la cantidad del regalo {productName}: {format.Number(from)} → {format.Number(to)}.");
+
     public static string RetailChanged(bool isRetail) => isRetail
         ? "Marcó el pedido como detal: ninguna línea recibe descuento."
         : "Quitó el detal: las líneas vuelven a su descuento por escala.";
@@ -167,6 +171,14 @@ public static class OrderChangeSummary
         Trim($"Anulado con el pedido ya preparado: {reason}. Hay un paquete despachado que recuperar.");
 
     public static string Invoiced() => "Marcado como facturado.";
+
+    /// <summary>La factura la emitió un proveedor externo: el historial dice cuál y con qué número, en vez del genérico
+    /// «Marcado como facturado.» de la marca manual.</summary>
+    public static string InvoicedExternally(string provider, string number) =>
+        Trim($"Facturado en {ProviderDisplayName(provider)}, factura {number}.");
+
+    private static string ProviderDisplayName(string provider) =>
+        string.Equals(provider, "siigo", StringComparison.OrdinalIgnoreCase) ? "Siigo" : provider;
 
     public static string InvoicingReverted() => "Se revirtió la facturación.";
 

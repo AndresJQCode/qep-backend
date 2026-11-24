@@ -175,5 +175,21 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   manda en la misma llamada que el leído (`status: "read"` + `typing_indicator`), así que el contacto ve el chulo azul aunque en QEP la
   conversación siga sin leer. No es un bug: `POST …/typing` no toca `unread_count`, y no hay que «arreglar» la diferencia. Instagram no
   tiene ese efecto: `typing_on` va solo.
+- **El recordatorio de cita de la Agenda es una plantilla del sistema más (`AppointmentReminder`, `qep_agenda_recordatorio`, plan 2026-11-21 Tarea 12)**, y su
+  envío tiene tres reglas que no se ven en la plantilla. (1) Sale por `AppointmentReminderOutbound` (el mismo `PlainTemplateOutbound` del cobro y el aviso
+  de Mayorista), con cliente: abre la conversación por teléfono y la cuelga del cliente de la cita; un cliente borrado devuelve
+  `messaging.customer.not_found`, no una excepción. (2) La fila de `messages` exige un autor y la elige la Agenda, no Mensajería: el miembro del recurso
+  y, sin él o inactivo, quien tocó la cita por última vez; sin ninguno activo la cita se omite con `no_sender_member`. (3) El `clientId` es un `Guid`
+  derivado (SHA-256) de la llave `appointment-reminder:{id}:{starts_at UTC ticks}` (`AppointmentReminderRules.KeyOf`, `SchedulingReminderSender.ClientIdOf`): si el
+  mensaje salió y marcar la cita falló, el reintento devuelve la misma fila; reprogramar cambia la hora, por tanto la llave, y la cita se avisa de nuevo. Las variables son `nombre_cliente`, `servicio`, `fecha_hora` (zona del tenant, hora en 24 h, `es-CO`), `recurso` y
+  `sede`, más las cuatro fijas; `nombre_cliente` repite a la fija `nombre_contacto`, y si se renombra una clave hay que cambiar plantilla, definición y
+  adaptador en el mismo despliegue. El consentimiento (PD-7) no se pide: se omite con `consent_revoked` si la última fila de `customers.data_consents`
+  del cliente es una revocación (también una `Medium = Other`) y con `marketing_opt_out` si la ficha lo tiene; no hay baja automática por texto libre.
 - **El presupuesto de envío de campañas se queda en Postgres** (`messaging.connection_send_budgets`, decisión del owner 2026-11-13).
   D-6 del spec de Valkey no se construyó: no hay adaptador de Valkey para el cubo.
+- **Un formato nuevo de `OutboundMediaPolicy` tiene cuatro dueños más: el sniffer, la tabla de Storage del chatbot, la paridad del chatbot y el cliente de Meta** (2026-11-22). `OutboundMediaFormat` +
+  `OutboundMediaSniffer.Detect` (la extensión sin firma ni sniffer se rechaza) y, si el formato también lo manda el bot, `FileUploadPolicy.ChatbotMediaTypes`: sin esa fila
+  `ChatbotMediaPolicyParityTests` se pone roja. El sticker (`.webp`, kind `Sticker`) es la excepción: Meta lo recibe con `type: sticker`, sin `caption`, y
+  `ChatbotMediaPolicy` lo devuelve como `null` porque `ChatbotMediaKinds` no tiene ese tipo. Su tope depende de si está animado (100 KB estático, 500 KB animado), así que la tabla
+  trae el mayor y `OutboundMediaPreparer` mide el estático al leer. `IsAudio` y `IsSticker` son los únicos que rechazan `caption`: no los fundas en `!AcceptsCaption`, o un sticker
+  devolvería el error «Los audios se envían sin texto».

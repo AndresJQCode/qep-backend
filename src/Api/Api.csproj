@@ -22,6 +22,8 @@
     <ProjectReference Include="..\Modules\Hr\Modules.Hr.Infrastructure\Modules.Hr.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Api\Modules.Payroll.Api.csproj" />
     <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Infrastructure\Modules.Payroll.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Api\Modules.Scheduling.Api.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Infrastructure\Modules.Scheduling.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Api\Modules.Loans.Api.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Purchases\Modules.Purchases.Api\Modules.Purchases.Api.csproj" />
@@ -57,6 +59,7 @@
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Api\Modules.Geography.Api.csproj" />
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Infrastructure\Modules.Geography.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Api\Modules.Notifications.Api.csproj" />
     <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Platform\Modules.Platform.Api\Modules.Platform.Api.csproj" />
     <ProjectReference Include="..\Modules\Platform\Modules.Platform.Infrastructure\Modules.Platform.Infrastructure.csproj" />

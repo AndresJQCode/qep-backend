@@ -32,6 +32,35 @@ public sealed class SiigoSettingsTests
     }
 
     [Fact]
+    public void APriceModeCreatedByDefaultIsBaseWithDiscount()
+    {
+        Assert.Equal(SiigoPriceMode.BaseWithDiscount, NewSettings().PriceMode);
+    }
+
+    [Fact]
+    public void UpdateDocumentKeepsThePriceModeWhenItIsNull()
+    {
+        var settings = NewSettings();
+        settings.UpdateDocument(Document() with { PriceMode = SiigoPriceMode.DiscountedPrice });
+
+        settings.UpdateDocument(Document() with { PriceMode = null });
+
+        Assert.Equal(SiigoPriceMode.DiscountedPrice, settings.PriceMode);
+    }
+
+    [Fact]
+    public void UpdateDocumentChangesThePriceMode()
+    {
+        var settings = NewSettings();
+        var before = settings.Version;
+
+        settings.UpdateDocument(Document() with { PriceMode = SiigoPriceMode.DiscountedPrice });
+
+        Assert.Equal(SiigoPriceMode.DiscountedPrice, settings.PriceMode);
+        Assert.Equal(before + 1, settings.Version);
+    }
+
+    [Fact]
     public void EveryWriteBumpsTheVersion()
     {
         var settings = NewSettings();

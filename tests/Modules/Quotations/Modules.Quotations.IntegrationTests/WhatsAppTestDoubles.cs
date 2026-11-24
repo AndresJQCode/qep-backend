@@ -97,6 +97,10 @@ public sealed class RecordingWhatsAppSender : IWhatsAppSender
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
         Record(channel, message.OrderNumber, message.NumberFormat, message.ToPhone, message.FullName, message.CustomerId, "order");
 
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken) =>
+        Record(channel, message.InvoiceNumber, message.NumberFormat, message.ToPhone, message.FullName, message.CustomerId, "invoice");
+
     // Como WhatsAppSenderRouter (el que corre de verdad): sin teléfono el envío nunca empezó, con el código del documento.
     private Task Record(
         WhatsAppChannel channel, string documentNumber, string? numberFormat, string? toPhone, string fullName, Guid? customerId, string prefix)

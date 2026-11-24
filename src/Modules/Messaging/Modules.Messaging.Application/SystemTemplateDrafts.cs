@@ -111,6 +111,30 @@ public sealed class GetOrderTemplateDraftHandler(
     }
 }
 
+/// <summary>Spec 2026-11-21, <c>GET …/template-management/invoice/draft</c>: el borrador de la plantilla de factura de la conexión.</summary>
+public sealed record GetInvoiceTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetInvoiceTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetInvoiceTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetInvoiceTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindInvoiceAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(query.TenantId, query.ConnectionId, InvoiceTemplateDefinition.Name, InvoiceTemplateDefinition.Language, cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(current, external, InvoiceTemplateDefinition.BaseBody, SystemTemplateVariables.Invoice, InvoiceTemplateDefinition.IsAdoptable);
+    }
+}
+
 /// <summary>Soporte fase 2, <c>GET …/template-management/support-reply/draft</c>: el borrador de la plantilla «Aviso de respuesta» de la conexión.</summary>
 public sealed record GetSupportReplyTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
 
@@ -219,6 +243,61 @@ public sealed class GetWholesaleInvitationNoticeTemplateDraftHandler(
         return SystemTemplateDrafts.For(
             current, external, WholesaleInvitationNoticeTemplateDefinition.BaseBody, SystemTemplateVariables.WholesaleInvitationNotice,
             WholesaleInvitationNoticeTemplateDefinition.IsAdoptable);
+    }
+}
+
+/// <summary>Support task notices, <c>GET …/template-management/task-notice/draft</c>: the draft of the assignment notice template.</summary>
+public sealed record GetTaskNoticeTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetTaskNoticeTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetTaskNoticeTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetTaskNoticeTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindTaskNoticeAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(
+                query.TenantId, query.ConnectionId, TaskNoticeTemplateDefinition.Name, TaskNoticeTemplateDefinition.Language, cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(
+            current, external, TaskNoticeTemplateDefinition.BaseBody, SystemTemplateVariables.TaskNotice, TaskNoticeTemplateDefinition.IsAdoptable);
+    }
+}
+
+/// <summary>Agenda, <c>GET …/template-management/appointment-reminder/draft</c>: el borrador de la plantilla del recordatorio de cita de la
+/// conexión.</summary>
+public sealed record GetAppointmentReminderTemplateDraftQuery(Guid TenantId, Guid ConnectionId) : IQuery<SystemTemplateDraftDto>;
+
+public sealed class GetAppointmentReminderTemplateDraftHandler(
+    IMessageTemplateRepository repository,
+    IMessagingConnectionDirectory connections,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetAppointmentReminderTemplateDraftQuery, SystemTemplateDraftDto>
+{
+    public async Task<SystemTemplateDraftDto> HandleAsync(GetAppointmentReminderTemplateDraftQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        _ = await connections.ResolveTemplateSourceAsync(query.TenantId, query.ConnectionId, cancellationToken)
+            ?? throw TemplateManagementSupport.ConnectionUnavailable();
+        var current = await repository.FindAppointmentReminderAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var external = current is null
+            ? await repository.FindByNameAsync(
+                query.TenantId, query.ConnectionId, AppointmentReminderTemplateDefinition.Name, AppointmentReminderTemplateDefinition.Language,
+                cancellationToken)
+            : null;
+        return SystemTemplateDrafts.For(
+            current, external, AppointmentReminderTemplateDefinition.BaseBody, SystemTemplateVariables.AppointmentReminder,
+            AppointmentReminderTemplateDefinition.IsAdoptable);
     }
 }
 

@@ -24,6 +24,12 @@ internal static class SupportTicketRules
         ISupportTicketTypeRepository types, Guid tenantId, Guid typeId, CancellationToken cancellationToken)
     {
         var type = await types.FindAsync(tenantId, new SupportTicketTypeId(typeId), cancellationToken);
+        // El tipo interno sólo lo toma una tarea por POST /tasks: ninguna otra entrada lo ofrece (spec 2026-11-22, D11).
+        if (type is { IsInternal: true })
+        {
+            throw new SupportDomainException(SupportErrorCodes.InternalTypeLocked, "The internal ticket type only takes tasks.");
+        }
+
         if (type is not { IsActive: true })
         {
             throw new SupportDomainException(SupportErrorCodes.TicketTypeUnavailable, "The ticket type does not exist or is inactive.");
@@ -67,6 +73,20 @@ internal static class SupportTicketRules
         {
             throw new SupportDomainException(
                 SupportErrorCodes.AssigneeInvalid, "The assignee must be an active member who can manage support tickets.");
+        }
+    }
+
+    /// <summary>Spec 2026-11-22: el responsable de una tarea es una membresía activa con <c>support.task.use</c> o
+    /// <c>support.ticket.manage</c>: el mismo conjunto que ofrece <c>GET /tasks/assignees</c>. Un externo sigue con
+    /// <see cref="EnsureAssigneeAsync"/>.</summary>
+    public static async Task EnsureTaskAssigneeAsync(
+        ISupportMemberDirectory members, Guid tenantId, Guid assigneeMemberId, CancellationToken cancellationToken)
+    {
+        var found = await members.FindAsync(tenantId, [assigneeMemberId], cancellationToken);
+        if (found.Count == 0 || !found[0].IsActive || !(found[0].CanUseTasks || found[0].CanManage))
+        {
+            throw new SupportDomainException(
+                SupportErrorCodes.AssigneeInvalid, "The assignee must be an active member who can use internal tasks.");
         }
     }
 

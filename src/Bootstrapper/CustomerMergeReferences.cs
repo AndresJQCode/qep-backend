@@ -6,7 +6,7 @@ using Modules.Customers.Infrastructure.Persistence;
 namespace Bootstrapper;
 
 /// <summary>
-/// Adapta Quotations, Pos, Pipeline, Messaging, ServiceContracts, Loans, Support, Ai y Shopify al puerto <see cref="ICustomerMergeReferences"/> de Customers
+/// Adapta Quotations, Pos, Pipeline, Messaging, ServiceContracts, Loans, Support, Ai, Scheduling y Shopify al puerto <see cref="ICustomerMergeReferences"/> de Customers
 /// (spec 2026-10-24 §4). Vive en el composition root por la misma razón que <see cref="CatalogVariantUsageChecker"/>:
 /// Customers no referencia los otros módulos (<c>CustomersLayerTests</c>) y el acoplamiento entre esquemas se cablea acá.
 ///
@@ -163,6 +163,13 @@ internal sealed class CustomerMergeReferences(CustomersDbContext customers) : IC
         // conversación, que ya se movió arriba.
         await database.ExecuteSqlAsync($"""
             UPDATE ai.tests SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // Agenda (plan 2026-11-21, Tarea 11 y PD-6): las citas del fusionado, en cualquier estado, pasan al que queda, sin subir la
+        // versión (F15): una cita abierta en otra pestaña no da 412 por la fusión. Es la salida de quien tiene un cliente duplicado con
+        // citas, porque borrar a ese cliente está bloqueado.
+        await database.ExecuteSqlAsync($"""
+            UPDATE scheduling.appointments SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
             """, cancellationToken);
 
         await database.ExecuteSqlAsync($"""

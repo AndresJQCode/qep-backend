@@ -31,6 +31,11 @@ internal sealed class MessageTemplateRepository(MessagingDbContext dbContext) : 
             template => template.TenantId == tenantId && template.ConnectionId == connectionId && template.Kind == MessageTemplateKind.Order,
             cancellationToken);
 
+    public Task<MessageTemplate?> FindInvoiceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.FirstOrDefaultAsync(
+            template => template.TenantId == tenantId && template.ConnectionId == connectionId && template.Kind == MessageTemplateKind.Invoice,
+            cancellationToken);
+
     public Task<MessageTemplate?> FindSupportReplyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         dbContext.MessageTemplates.FirstOrDefaultAsync(
             template => template.TenantId == tenantId && template.ConnectionId == connectionId && template.Kind == MessageTemplateKind.SupportReply,
@@ -51,6 +56,17 @@ internal sealed class MessageTemplateRepository(MessagingDbContext dbContext) : 
         dbContext.MessageTemplates.FirstOrDefaultAsync(
             template => template.TenantId == tenantId && template.ConnectionId == connectionId
                 && template.Kind == MessageTemplateKind.WholesaleInvitationNotice,
+            cancellationToken);
+
+    public Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.FirstOrDefaultAsync(
+            template => template.TenantId == tenantId && template.ConnectionId == connectionId && template.Kind == MessageTemplateKind.TaskNotice,
+            cancellationToken);
+
+    public Task<MessageTemplate?> FindAppointmentReminderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.FirstOrDefaultAsync(
+            template => template.TenantId == tenantId && template.ConnectionId == connectionId
+                && template.Kind == MessageTemplateKind.AppointmentReminder,
             cancellationToken);
 
     public async Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)

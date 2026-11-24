@@ -10,6 +10,7 @@ internal enum ValkeyArea
     SendBudget,
     Doorbells,
     ApiKeyTouch,
+    LegalParameters,
 }
 
 internal static class ValkeyAreas
@@ -24,6 +25,7 @@ internal static class ValkeyAreas
         ValkeyArea.SendBudget => "send_budget",
         ValkeyArea.Doorbells => "doorbells",
         ValkeyArea.ApiKeyTouch => "api_key_touch",
+        ValkeyArea.LegalParameters => "legal_parameters",
         _ => throw new ArgumentOutOfRangeException(nameof(area), area, null),
     };
 
@@ -36,6 +38,7 @@ internal static class ValkeyAreas
         ValkeyArea.SendBudget => areas.SendBudget,
         ValkeyArea.Doorbells => areas.Doorbells,
         ValkeyArea.ApiKeyTouch => areas.ApiKeyTouch,
+        ValkeyArea.LegalParameters => areas.LegalParameters,
         _ => throw new ArgumentOutOfRangeException(nameof(area), area, null),
     };
 }

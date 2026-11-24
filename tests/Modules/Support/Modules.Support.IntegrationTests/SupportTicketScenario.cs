@@ -114,7 +114,8 @@ internal sealed class SupportTicketScenario
     public static Guid Id(JsonElement ticket) => ticket.GetProperty("id").GetGuid();
 
     /// <summary>Fase 2: abre un ticket desde una conversación por la API y exige el 201.</summary>
-    public async Task<JsonElement> CreateFromConversationAsync(Guid conversation, string subject = "Pedido sin llegar")
+    public async Task<JsonElement> CreateFromConversationAsync(
+        Guid conversation, string subject = "Pedido sin llegar", Guid? assignee = null)
     {
         var response = await Client.PostAsJsonAsync(
             $"{Url}/conversations/{conversation}/tickets",
@@ -123,6 +124,7 @@ internal sealed class SupportTicketScenario
                 ticketTypeId = await TypeIdAsync("Petición general"),
                 subject,
                 description = "El pedido de la semana pasada no ha llegado.",
+                assigneeMemberId = assignee,
             },
             Ct);
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));

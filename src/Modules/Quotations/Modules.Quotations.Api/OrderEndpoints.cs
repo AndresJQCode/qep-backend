@@ -162,22 +162,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Spec 2026-11-21: el regalo entra y sale por su propia ruta, no por la lista del PUT.
-        collection.MapPost("/{orderId:guid}/gifts", AddOrderGiftAsync)
-            .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<AddOrderGiftRequest>("application/json")
-            .Produces<OrderDetailResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        collection.MapDelete("/{orderId:guid}/gifts/{itemId:guid}", RemoveOrderGiftAsync)
-            .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Produces<OrderDetailResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         // Spec 2026-11-15 §4: el asesor cambia o quita la cuenta de comprador de un pedido de la tienda, con If-Match
         // como la edición del pedido.
         collection.MapPut("/{orderId:guid}/buyer-account", SetOrderBuyerAccountAsync)
@@ -436,7 +420,7 @@ public static class OrderEndpoints
             new CreateOrderCommand(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping, ToGiftAdditions(request.Gifts)),
             cancellationToken);
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
@@ -454,10 +438,14 @@ public static class OrderEndpoints
             new PreviewOrderQuery(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentProofs, request.Shipping, request.BillingCompanyId),
+                request.PaymentProofs, request.Shipping, request.BillingCompanyId, ToGiftAdditions(request.Gifts)),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
+
+    // Spec 2026-11-23: los regalos son variante y cantidad. Se conserva el null: al editar es «no los toques», al crear «sin regalos».
+    private static OrderItemAddition[]? ToGiftAdditions(IReadOnlyList<OrderGiftLineRequest>? gifts) =>
+        gifts?.Select(gift => new OrderItemAddition(gift.VariantId, gift.Quantity)).ToArray();
 
     private static OrderItemAddition[] ToAdditions(IReadOnlyList<OrderEditItemRequest>? items) =>
         (items ?? [])
@@ -477,34 +465,6 @@ public static class OrderEndpoints
             .ToArray();
         var detail = await dispatcher.SendAsync(
             new AddOrderItemsCommand(tenantId, orderId, toAdd),
-            cancellationToken);
-        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
-    }
-
-    private static async Task<IResult> AddOrderGiftAsync(
-        Guid tenantId,
-        Guid orderId,
-        AddOrderGiftRequest request,
-        IRequestDispatcher dispatcher,
-        IOrderResponseComposer composer,
-        CancellationToken cancellationToken)
-    {
-        var detail = await dispatcher.SendAsync(
-            new AddOrderGiftCommand(tenantId, orderId, request.VariantId, request.Quantity),
-            cancellationToken);
-        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
-    }
-
-    private static async Task<IResult> RemoveOrderGiftAsync(
-        Guid tenantId,
-        Guid orderId,
-        Guid itemId,
-        IRequestDispatcher dispatcher,
-        IOrderResponseComposer composer,
-        CancellationToken cancellationToken)
-    {
-        var detail = await dispatcher.SendAsync(
-            new RemoveOrderGiftCommand(tenantId, orderId, itemId),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
@@ -531,7 +491,7 @@ public static class OrderEndpoints
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
                 request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes, request.OrderDate),
+                request.ClearedWithholdingTypes, request.OrderDate, ToGiftAdditions(request.Gifts)),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
@@ -590,7 +550,8 @@ public static class OrderEndpoints
                 tenantId, orderId, items, proofs, request.Notes, request.GlobalScaleFloor, request.IsRetail,
                 request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes, request.OrderDate, request.BillingCompanyId),
+                request.ClearedWithholdingTypes, request.OrderDate, request.BillingCompanyId,
+                ToGiftAdditions(request.Gifts)),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

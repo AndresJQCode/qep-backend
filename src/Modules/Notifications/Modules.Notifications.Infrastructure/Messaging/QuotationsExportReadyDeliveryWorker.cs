@@ -34,13 +34,14 @@ internal sealed class QuotationsExportReadyDeliveryWorker(
 
         // El vencimiento se muestra en la hora del tenant del export (spec 2026-09-17, punto 8b).
         var format = await ResolveEmailFormatAsync(context, export.TenantId, stoppingToken);
+        var language = await ResolveLanguageAsync(context, export.TenantId, export.SubjectId, stoppingToken);
         string recipient = email;
         await SendAsync(
             context,
             notification,
             () => QuotationsExportReadyEmailTemplate.Render(
                 recipient, export.Kind, export.DownloadUrl, export.FileName, export.RowCount, export.ExpiresAt,
-                format),
+                format, language),
             stoppingToken);
         return notification;
     }

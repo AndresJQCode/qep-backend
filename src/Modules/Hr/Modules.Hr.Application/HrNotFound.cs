@@ -34,6 +34,9 @@ internal static class HrNotFound
     public static ResourceNotFoundException Position(Guid id) =>
         new(HrErrorCodes.PositionNotFound, $"Position '{id}' was not found.");
 
+    public static ResourceNotFoundException MedicalExam(Guid id) =>
+        new(HrErrorCodes.MedicalExamNotFound, $"Medical exam '{id}' was not found.");
+
     public static ResourceNotFoundException File(Guid id) =>
         new(HrErrorCodes.FileNotFound, $"File '{id}' was not found.");
 }

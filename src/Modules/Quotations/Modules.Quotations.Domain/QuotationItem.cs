@@ -105,10 +105,12 @@ public sealed class QuotationItem
     /// </summary>
     public QuotationDiscountOrigin DiscountOrigin { get; private set; }
 
+    /// <summary>El descuento de la línea en base sin IVA, como <see cref="Subtotal"/> (spec 2026-11-23):
+    /// bruto sin IVA − DiscountAmount = Subtotal.</summary>
     public decimal DiscountAmount { get; private set; }
 
-    /// <summary>La base sin IVA de la línea: lo cobrado (Quantity × UnitPrice − DiscountAmount,
-    /// que viene con IVA incluido) menos el <see cref="TaxAmount"/> contenido en ese monto.
+    /// <summary>La base sin IVA de la línea: lo cobrado (Quantity × UnitPrice con IVA incluido, menos el
+    /// descuento) menos el <see cref="TaxAmount"/> contenido en ese monto.
     /// </summary>
     public decimal Subtotal { get; private set; }
 
@@ -357,7 +359,8 @@ public sealed class QuotationItem
         // quotation.item.* siguen aquí.
         var amounts = VatIncludedLine.Compute(
             quantity, unitPrice, discountPercentage, taxPercentage, rounding);
-        DiscountAmount = amounts.DiscountAmount;
+        // Sin IVA, como Subtotal (spec 2026-11-23): bruto sin IVA − descuento = Subtotal.
+        DiscountAmount = amounts.DiscountAmountWithoutTax;
         TaxAmount = amounts.TaxAmount;
         Subtotal = amounts.Subtotal;
         UpdatedAt = occurredAt;

@@ -133,3 +133,27 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   en `model_jobs.result` hasta su commit); nunca en logs, auditoría ni `tool_calls`. La auditoría (`ai.copilot.settings_updated`,
   `ai.copilot.thread_deleted`) es de metadatos: `IAiAuditRecorder.RecordCopilot` no tiene parámetro de texto libre. Borrar un hilo
   guarda su auditoría en la misma transacción del borrado (`CopilotRepository.DeleteThreadAsync`). Lo amarra `CopilotNoLeakTests`.
+
+- **Agente que agenda (spec 2026-11-23, plan `2026-11-23-agente-ia-agenda-backend`): `IChannelScheduling` es el único camino sin sesión a la Agenda.**
+  Ai declara `IAiScheduling` y `Bootstrapper/AiScheduling.cs` lo traduce a `IChannelScheduling`; Ai no referencia Scheduling, Messaging ni Customers
+  (`AiLayerTests`, `SchedulingLayerTests`). El tenant y el cliente salen del contexto del trabajo (`ConversationCustomerResolver` relee el cliente en
+  cada llamada), nunca de un argumento del modelo. Una cita de otro cliente es `appointment_not_found`, igual que una inexistente.
+- **La llave de reserva es `ai:{jobId:N}:book:{n}` y el ordinal `n` no cuenta fallas** (D-14). `AgentTurnRunner.AgentProfile` suma sólo las
+  reservas que devolvieron cita: si el modelo reintenta tras un `slot_taken` la llave sigue siendo la misma y un trabajo retomado (perfil nuevo,
+  cuenta desde 1) encuentra su cita (`alreadyBooked`) aunque pida otra hora. Contar fallas haría que el reintento reservara dos veces. Una
+  segunda escritura en la misma respuesta del modelo vuelve `one_write_per_response` y no consume ordinal.
+- **Una escritura de la Agenda que tuvo éxito no se descarta por un turno nuevo del cliente.** `AgentReplied.Wrote` y `AgentHandedOff.Wrote`
+  (guardados en `StoredOutcome`) lo dicen, y `AgentSessionJobProcessor.CommitAsync` los trata como el borrador de cotización: sin eso la
+  respuesta se pierde, la cita queda hecha y el siguiente trabajo (otro `JobId`, otra llave) reserva de nuevo.
+- **Las herramientas simuladas del playground no escriben nunca.** Sólo leen por IAiScheduling (SimulatedBook/Cancel/RescheduleAppointmentTool): el resultado es inventado con la misma forma y sus ids llevan el prefijo de SimulatedSchedulingIds; una cita ajena que pidan es `appointment_not_found` sin tocar nada.
+- **`appointment_events.by_channel` es sólo del agente** (D-17): `SchedulingActor.ByChannel` lo pone el actor del agente, ninguna escritura
+  por HTTP lo marca. Los traspasos `appointment_change_blocked` y `appointment_customer_unavailable` van al destino configurado del agente
+  (persona o sin asignar); en modo bloque `AgentBlockReturn.For` los trata como `NoAnswer` con su código de motivo, no como `Human`.
+- **El núcleo de Scheduling relee la cita después del candado (`RefreshAsync`) y vuelve a decidir.** Plazo del cliente, candado del recurso y
+  filtro de la misma sede se calculan con la lectura de antes del candado; si tras `RefreshAsync` cambió `ResourceId`, `StartsAt` o
+  `LocationId`, `AppointmentCancellation` y `AppointmentRescheduling` lanzan `RequestConcurrencyException` y quien llama relee
+  (`ChannelScheduling` lo traduce a «ya hecho» sólo si lo que otro escribió es justo lo pedido). Excepción: un cambio de hora que ya está en
+  el inicio pedido devuelve `false` (nada que escribir). Un camino nuevo que decida antes del candado repite esta comprobación.
+- **`ai.tool_calls.arguments` y `result` son `jsonb`: normalizan los espacios.** Para contar o filtrar por lo que devolvió una herramienta
+  (`AgentActivityReader`, reservas del día) se pregunta por contención (`@>`), nunca por el texto del resultado: un `LIKE` o `Contains` sobre
+  el JSON depende de espacios y orden que Postgres reescribe.

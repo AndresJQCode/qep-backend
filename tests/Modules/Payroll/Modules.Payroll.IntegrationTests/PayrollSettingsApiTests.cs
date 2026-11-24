@@ -151,7 +151,7 @@ public sealed class PayrollSettingsApiTests : IClassFixture<PayrollApiFixture>
 
         Assert.Equal(0, settings.GetProperty("version").GetInt64());
         Assert.Equal("Biweekly", settings.GetProperty("transportFrequency").GetString());
-        Assert.Equal("SalaryOnly", settings.GetProperty("transportCapBase").GetString());
+        Assert.Equal("SalaryAndSalaryIncome", settings.GetProperty("transportCapBase").GetString());
         Assert.Equal("SalaryOnly", settings.GetProperty("overtimeBase").GetString());
         Assert.True(settings.GetProperty("exonerated").GetBoolean());
         Assert.False(settings.GetProperty("dualControl").GetBoolean());
@@ -435,4 +435,23 @@ public sealed class PayrollSettingsApiTests : IClassFixture<PayrollApiFixture>
         var listed = Assert.Single(companies.EnumerateArray());
         Assert.Equal(company.Id, listed.GetProperty("id").GetGuid());
         Assert.False(listed.GetProperty("isActive").GetBoolean());
-    }}
+    }
+    // Decision 10: an inactive company's settings are read, never changed.
+    [Fact]
+    public async Task AnInactiveCompanyReadsButCannotSaveItsSettings()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var company = await CreateCompanyAsync(tenant.Admin, tenant.Id, "Comercializadora QEP S.A.S.");
+        var first = await PutAsync(tenant.Payroll, SettingsUrl(tenant, company.Id), SettingsBody(), "\"0\"");
+        Assert.Equal(System.Net.HttpStatusCode.OK, first.StatusCode);
+        await DeactivateCompanyAsync(tenant.Admin, tenant.Id, company.Id);
+
+        var saved = await PutAsync(tenant.Payroll, SettingsUrl(tenant, company.Id), SettingsBody(), "\"1\"");
+        var read = await GetJsonAsync(tenant.Payroll, SettingsUrl(tenant, company.Id));
+
+        Assert.Equal((System.Net.HttpStatusCode)422, saved.StatusCode);
+        Assert.Equal("payroll.company.inactive", CodeOf(await JsonOfAsync(saved)));
+        Assert.Equal(1, read.GetProperty("version").GetInt64());
+        Assert.False(read.GetProperty("company").GetProperty("isActive").GetBoolean());
+    }
+}

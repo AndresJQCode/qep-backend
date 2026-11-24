@@ -1,7 +1,8 @@
 namespace Modules.Messaging.Application;
 
-/// <summary>Formatos de adjunto que el asesor puede enviar (decisión del owner 2026-10-12; video y audio, spec 2026-10-20). webp queda
-/// fuera: Meta lo trata como sticker. Qué canal acepta cada uno y hasta cuánto, en <see cref="OutboundMediaPolicy"/>.</summary>
+/// <summary>Formatos de adjunto que el asesor puede enviar (decisión del owner 2026-10-12; video y audio, spec 2026-10-20; PowerPoint,
+/// texto y sticker, 2026-11-22). Es todo lo que la Cloud API de WhatsApp admite. Meta trata el webp como sticker, no como imagen: sale
+/// con <c>type: "sticker"</c>. Qué canal acepta cada uno y hasta cuánto, en <see cref="OutboundMediaPolicy"/>.</summary>
 public enum OutboundMediaFormat
 {
     Jpeg,
@@ -18,6 +19,10 @@ public enum OutboundMediaFormat
     Aac,
     Amr,
     Ogg,
+    Ppt,
+    Pptx,
+    Txt,
+    Webp,
 }
 
 /// <summary>
@@ -31,6 +36,11 @@ public enum OutboundMediaFormat
 /// <c>#!AMR\n</c> o <c>#!AMR-WB\n</c>; .ogg = OGG con <c>OpusHead</c> en la primera página (<see cref="OggOpusSniffer"/>). La
 /// extensión decide entre firmas que se solapan. No mira el códec (D9): un MP4 HEVC pasa y, si Meta lo rechaza, el mensaje queda
 /// <c>Failed</c> con el motivo de Meta.</para>
+/// <para>2026-11-22: .ppt comparte la firma OLE con .doc/.xls y .pptx la del zip con .docx/.xlsx (mismo riesgo aceptado). .txt no tiene
+/// firma: se acepta UTF-8 válido sin bytes de control (salvo tabulación y saltos de línea), lo que deja fuera un binario renombrado y el
+/// UTF-16. Como el sniffer sólo ve <see cref="HeaderLength"/> bytes, un carácter multibyte cortado en el límite no invalida el texto.
+/// .webp = contenedor RIFF/WEBP con un primer chunk VP8, VP8L o VP8X; <see cref="IsAnimatedWebp"/> separa el sticker animado del
+/// estático, que tienen topes distintos en Meta.</para>
 /// </summary>
 public static class OutboundMediaSniffer
 {
@@ -67,6 +77,10 @@ public static class OutboundMediaSniffer
             ".xls" when header.StartsWith(OleSignature) => OutboundMediaFormat.Xls,
             ".docx" when header.StartsWith(ZipSignature) => OutboundMediaFormat.Docx,
             ".xlsx" when header.StartsWith(ZipSignature) => OutboundMediaFormat.Xlsx,
+            ".ppt" when header.StartsWith(OleSignature) => OutboundMediaFormat.Ppt,
+            ".pptx" when header.StartsWith(ZipSignature) => OutboundMediaFormat.Pptx,
+            ".txt" when IsPlainUtf8Text(header) => OutboundMediaFormat.Txt,
+            ".webp" when IsWebp(header) => OutboundMediaFormat.Webp,
             ".mp4" when BrandOf(header) is { } brand && IsMp4VideoBrand(brand) => OutboundMediaFormat.Mp4,
             ".3gp" when BrandOf(header) is { } brand && brand.StartsWith("3gp", StringComparison.Ordinal) => OutboundMediaFormat.ThreeGp,
             ".m4a" when BrandOf(header) is { } brand && IsM4aBrand(brand) => OutboundMediaFormat.M4a,
@@ -76,6 +90,55 @@ public static class OutboundMediaSniffer
             ".ogg" when OggOpusSniffer.IsOggOpus(header) => OutboundMediaFormat.Ogg,
             _ => null,
         };
+    }
+
+    /// <summary><c>true</c> si es un WebP extendido (chunk <c>VP8X</c>) con la bandera de animación (bit 1 de las banderas, byte 20).
+    /// Un VP8 o VP8L simple nunca está animado.</summary>
+    public static bool IsAnimatedWebp(ReadOnlySpan<byte> header) =>
+        IsWebp(header) && header.Slice(12, 4).SequenceEqual("VP8X"u8) && header.Length > 20 && (header[20] & 0x02) != 0;
+
+    // RIFF (0-3), tamaño (4-7), WEBP (8-11) y el primer chunk (12-15): VP8 (con espacio), VP8L o VP8X.
+    private static bool IsWebp(ReadOnlySpan<byte> header) =>
+        header.Length >= 16
+        && header[..4].SequenceEqual("RIFF"u8)
+        && header.Slice(8, 4).SequenceEqual("WEBP"u8)
+        && (header.Slice(12, 4).SequenceEqual("VP8 "u8) || header.Slice(12, 4).SequenceEqual("VP8L"u8) || header.Slice(12, 4).SequenceEqual("VP8X"u8));
+
+    private static bool IsPlainUtf8Text(ReadOnlySpan<byte> header)
+    {
+        if (header.IsEmpty)
+        {
+            return false;
+        }
+
+        foreach (var value in header)
+        {
+            if ((value < 0x20 && value is not (0x09 or 0x0A or 0x0D)) || value == 0x7F)
+            {
+                return false;
+            }
+        }
+
+        if (System.Text.Unicode.Utf8.IsValid(header))
+        {
+            return true;
+        }
+
+        // El archivo sigue más allá de lo leído: un carácter de hasta 4 bytes pudo quedar cortado en el límite.
+        if (header.Length < HeaderLength)
+        {
+            return false;
+        }
+
+        for (var cut = 1; cut <= 3; cut++)
+        {
+            if (System.Text.Unicode.Utf8.IsValid(header[..^cut]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>La marca mayor de la caja <c>ftyp</c>, que en un MP4 bien formado es la primera.</summary>

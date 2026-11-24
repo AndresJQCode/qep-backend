@@ -62,6 +62,24 @@ internal static class SiigoInvoiceSupport
                 $"The Siigo connection cannot be used right now ({resolution.UnavailableReason}).");
     }
 
+    /// <summary>
+    /// La fila de ese pedido y tenant que tiene PDF en Siigo (<see cref="SiigoInvoice.HasPdf"/>), o 404 <c>siigo.invoice.not_found</c>:
+    /// otro pedido, otro tenant, rechazada, pendiente o resuelta a mano sin id son lo mismo, y nunca se llama a Siigo.
+    /// </summary>
+    public static async Task<SiigoInvoice> FindWithPdfAsync(
+        ISiigoInvoiceRepository invoices, Guid tenantId, Guid orderId, Guid invoiceId, CancellationToken cancellationToken) =>
+        (await invoices.ListByOrderAsync(tenantId, orderId, cancellationToken))
+            .FirstOrDefault(value => value.Id == invoiceId && value.HasPdf)
+        ?? throw new ResourceNotFoundException(SiigoErrorCodes.InvoiceNotFound, "The order has no Siigo invoice with a PDF under that id.");
+
+    /// <summary>El PDF de la fila, pedido a Siigo con las credenciales de su conexión. Lo comparten la descarga y el envío por WhatsApp.</summary>
+    public static async Task<byte[]> LoadPdfAsync(
+        ISiigoConnectionDirectory connections, ISiigoApi api, SiigoInvoice row, CancellationToken cancellationToken)
+    {
+        var credentials = await CredentialsAsync(connections, row.TenantId, row.ConnectionId, cancellationToken);
+        return await api.GetInvoicePdfAsync(credentials, row.SiigoInvoiceId!, cancellationToken);
+    }
+
     public static SiigoInvoiceKind ParseKind(string? kind) =>
         string.IsNullOrWhiteSpace(kind) ? SiigoInvoiceKind.Order : Enum.Parse<SiigoInvoiceKind>(kind, ignoreCase: true);
 

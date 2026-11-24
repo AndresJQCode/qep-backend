@@ -16,6 +16,16 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   tópico, como `SupportRealtimeAuthorizer`; el hub no conoce a nadie. Mensajería sigue en su `MessagingHub`. El tópico de un ticket se
   acepta sólo en la forma exacta que escribe `SupportRealtimeTopics.Ticket` (Guid `D` en minúsculas): otra forma del mismo id sería otro
   grupo y otra sala de presencia.
+- **El aviso de «ticket sin asignar» mide tiempo continuo, en horas hábiles del tenant, y no toca el ticket** (spec 2026-11-22 §7, D-14 a D-16).
+  `SupportTicket.UnassignedSince` lo mantiene el dominio: se pone al **entrar** en «sin responsable y en `New`/`Open`/`WaitingInternal`» (alta sin
+  responsable, `Assign(null)`, un `ChangeStatus` hacia un estado que cuenta, incluido el que hace `ReopenIfWaiting`) y se borra al asignarse o al salir;
+  entre dos estados que cuentan no cambia. Por eso un ticket que esperó días al cliente y vuelve a `Open` empieza de cero y no avisa en el acto. Un
+  `UPDATE` o un alta por SQL crudo que no pase por el dominio deja `unassigned_since` en null: el worker (`SupportUnassignedAlertWorker`) lo sana con
+  un `UPDATE` que no toca `version`. El reloj arranca en `max(unassigned_since, unassigned_alert_enabled_at)`, así que prender el aviso no dispara
+  por tickets viejos; las horas las cuenta `IBusinessHoursProvider` (contrato de BuildingBlocks que implementa Mensajería, no un puerto `ISupport*`:
+  desvío deliberado, D-14). El reclamo es `INSERT … ON CONFLICT DO NOTHING` sobre `support.unassigned_alerts (ticket_id, unassigned_since)` en la misma
+  transacción que el evento: un aviso por ticket y por tramo, y una fila con `recipient_count = 0` es «no había a quién avisar» y no se reintenta.
+  Un destinatario que ya no gestiona tickets se salta al avisar; el `GET` de los ajustes lo dice (`canReceive`).
 - **Los avisos de Soporte por el hub se llaman a mano, después del commit** (plan N13): cada handler de escritura y
   `SupportThreadFollower` llaman `ISupportRealtime.TicketChangedAsync` con `CancellationToken.None`, no el unit of work, porque varias
   escrituras confirman con `ISupportTransaction`. Una escritura nueva que no lo llame deja la pantalla sin avisar, sin error. La fusión y

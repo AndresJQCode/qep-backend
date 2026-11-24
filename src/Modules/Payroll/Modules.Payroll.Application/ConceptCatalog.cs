@@ -19,6 +19,7 @@ public sealed class ConceptCatalogSnapshot
     private readonly IReadOnlyDictionary<Guid, ResolvedConcept> _byId;
     private readonly IReadOnlyDictionary<string, ResolvedConcept> _activeByFoldedName;
     private readonly IReadOnlyList<PayrollConceptDto> _dtos;
+    private readonly IReadOnlyDictionary<Guid, DateTimeOffset> _archivedAt;
 
     internal ConceptCatalogSnapshot(IReadOnlyList<PayrollConcept> own)
     {
@@ -31,6 +32,7 @@ public sealed class ConceptCatalogSnapshot
 
         var byId = new Dictionary<Guid, ResolvedConcept>();
         var dtos = new List<PayrollConceptDto>(system.Count + ordered.Count);
+        var archivedAt = new Dictionary<Guid, DateTimeOffset>();
         foreach (var concept in system)
         {
             byId[concept.Id] = new ResolvedConcept(
@@ -45,6 +47,10 @@ public sealed class ConceptCatalogSnapshot
             byId[concept.Id.Value] = new ResolvedConcept(
                 concept.Id.Value, concept.Kind, concept.Name, false, null, concept.DefaultSalaryConstitutive, concept.Multiplier, concept.Archived);
             dtos.Add(ToDto(concept));
+            if (concept.ArchivedAt is { } archived)
+            {
+                archivedAt[concept.Id.Value] = archived;
+            }
         }
 
         // The importation matches a name without case or accents among the active concepts; on a clash between kinds the system one
@@ -58,6 +64,18 @@ public sealed class ConceptCatalogSnapshot
         _byId = byId;
         _activeByFoldedName = byName;
         _dtos = dtos;
+        _archivedAt = archivedAt;
+    }
+
+    /// <summary>
+    /// Los conceptos propios archivados antes de <paramref name="periodStart"/>, contando el día del tenant (decisión del owner 5):
+    /// un recurrente de un concepto archivado deja de aplicar desde la quincena siguiente al día del archivo. La quincena en la que
+    /// se archivó lo conserva, así un período ya liquidado no cambia de huella. Los del sistema no se archivan.
+    /// </summary>
+    public IReadOnlySet<Guid> ArchivedBefore(DateOnly periodStart, Func<DateTimeOffset, DateOnly> tenantDay)
+    {
+        ArgumentNullException.ThrowIfNull(tenantDay);
+        return _archivedAt.Where(entry => tenantDay(entry.Value) < periodStart).Select(entry => entry.Key).ToHashSet();
     }
 
     /// <summary>Del sistema o propio de esa empresa; nulo si no existe (un concepto de otra empresa tampoco).</summary>

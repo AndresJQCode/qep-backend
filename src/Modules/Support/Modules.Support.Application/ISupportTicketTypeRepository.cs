@@ -4,8 +4,12 @@ namespace Modules.Support.Application;
 
 public interface ISupportTicketTypeRepository
 {
-    /// <summary>Todos los tipos del tenant por <c>Position</c>, con tracking.</summary>
+    /// <summary>Los tipos externos del tenant por <c>Position</c>, con tracking. <b>Excluye el interno</b> (spec 2026-11-22): ajustes,
+    /// reordenar, el reporte y el formulario público sólo ven los ocho; el interno se pide con <see cref="FindInternalAsync"/>.</summary>
     Task<IReadOnlyList<SupportTicketType>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>El tipo interno del tenant (uno solo), con tracking, o null si todavía no se sembró.</summary>
+    Task<SupportTicketType?> FindInternalAsync(Guid tenantId, CancellationToken cancellationToken);
 
     Task<SupportTicketType?> FindAsync(Guid tenantId, SupportTicketTypeId id, CancellationToken cancellationToken);
 

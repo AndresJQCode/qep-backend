@@ -890,6 +890,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Status" }, "IX_message_templates_status");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_appointment_reminder")
+                        .IsUnique()
+                        .HasFilter("kind = 'AppointmentReminder'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Kind" }, "UX_message_templates_billing")
                         .IsUnique()
                         .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
@@ -897,6 +901,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "HeaderImageFileId" }, "UX_message_templates_header_image")
                         .IsUnique()
                         .HasFilter("header_image_file_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_invoice")
+                        .IsUnique()
+                        .HasFilter("kind = 'Invoice'");
 
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "MetaTemplateId" }, "UX_message_templates_meta_id")
                         .IsUnique();
@@ -924,13 +932,17 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("kind = 'SupportSurvey'");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_task_notice")
+                        .IsUnique()
+                        .HasFilter("kind = 'TaskNotice'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_wholesale_invitation_notice")
                         .IsUnique()
                         .HasFilter("kind = 'WholesaleInvitationNotice'");
 
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')");
                         });
                 });
 

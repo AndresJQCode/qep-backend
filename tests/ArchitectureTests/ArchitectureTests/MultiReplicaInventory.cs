@@ -1,4 +1,4 @@
-﻿namespace ArchitectureTests;
+namespace ArchitectureTests;
 
 /// <summary>
 /// Cómo convive un hosted service con otro pod que corre el mismo código (spec 2026-10-29, D-6, y la decisión P3 del plan
@@ -104,6 +104,10 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/ScheduledMessages/ScheduledMessageStore.cs:25-28 — FOR UPDATE SKIP LOCKED y locked_until"),
         new("Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker", WorkerClassification.Claimed,
             "Modules/ServiceContracts/Modules.ServiceContracts.Infrastructure/Reminders/TenantRunStore.cs:26 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until"),
+        new("Modules.Hr.Infrastructure.Reminders.HrMedicalExamsReminderWorker", WorkerClassification.Claimed,
+            "Modules/Hr/Modules.Hr.Infrastructure/Reminders/TenantRunStore.cs:19-30 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until; el digest de cada encargado se reclama aparte en DailyDigestStore.cs"),
+        new("Modules.Scheduling.Infrastructure.Reminders.AppointmentReminderWorker", WorkerClassification.Claimed,
+            "Modules/Scheduling/Modules.Scheduling.Infrastructure/Reminders/AppointmentReminderProcessor.cs (ClaimAsync) — UPDATE … RETURNING sobre scheduling.appointments con reminder_claimed_until por intento y reminder_attempts; sólo el ganador del reclamo envía, y el envío es idempotente por el clientId derivado de la cita (appointment-reminder:{id}), así que un reintento tras un envío que sí salió devuelve la misma fila de Mensajería"),
         new("Modules.Loans.Infrastructure.Generation.LoansGenerationWorker", WorkerClassification.Claimed,
             "Modules/Loans/Modules.Loans.Infrastructure/Generation/TenantRunStore.cs:24-27 — reclamo por (tenant, día) con claimed_until"),
         new("Modules.Buyers.Infrastructure.Signup.BuyerSignupRequestedWorker", WorkerClassification.Claimed,
@@ -124,6 +128,8 @@ public static class MultiReplicaInventory
             "Modules/Ai/Modules.Ai.Infrastructure/Persistence/AiRunPersistence.cs:64-75 — FOR UPDATE SKIP LOCKED y lease_until (LeaseMinutes, mayor que el tope de 120 s del trabajo)"),
         // Un solo hosted drena en secuencia los trece consumidores de correo (spec 2026-11-13, D-7); cada uno reclama igual que antes.
         new("Modules.Notifications.Infrastructure.Messaging.NotificationsDeliveryWorker", WorkerClassification.Claimed, OutboxDelivery),
+        new("Modules.Notifications.Infrastructure.TaskNotices.TaskNoticeEscalationWorker", WorkerClassification.Claimed,
+            "Modules/Notifications/Modules.Notifications.Infrastructure/TaskNotices/TaskNoticeEscalationProcessor.cs:89-92 — FOR UPDATE SKIP LOCKED + claimed_until de 2 min; el WhatsApp es idempotente por ClientId (el id de la escalada)"),
 
         // --- AdvisoryLock. ---
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyTokenRefreshWorker", WorkerClassification.AdvisoryLock,
@@ -146,10 +152,16 @@ public static class MultiReplicaInventory
             "Modules/Buyers/Modules.Buyers.Infrastructure/BuyerHousekeepingWorker.cs:134-180 — DELETE por corte"),
         new("Modules.Integrations.Infrastructure.Shopify.ShopifyInstallSweeper", WorkerClassification.Idempotent,
             "Modules/Integrations/Modules.Integrations.Infrastructure/Shopify/ShopifyInstallSweeper.cs:86 — DELETE por corte"),
+        new("Modules.Notifications.Infrastructure.InApp.InAppNotificationRetentionWorker", WorkerClassification.Idempotent,
+            "Modules/Notifications/Modules.Notifications.Infrastructure/InApp/InAppNotificationRetentionWorker.cs:68-87 (PurgeAsync) — DELETE por corte en lotes y UPDATE que sólo toca las filas que aún guardan el enlace; repetirlos no encuentra nada"),
         new("Modules.ApiAccess.Infrastructure.ApiKeyRequestPurgeWorker", WorkerClassification.Idempotent,
             "Modules/ApiAccess/Modules.ApiAccess.Infrastructure/ApiKeyRequestPurgeWorker.cs:61 — DELETE por corte"),
+        new("Modules.Support.Infrastructure.SupportUnassignedAlertWorker", WorkerClassification.Idempotent,
+            "Modules/Support/Modules.Support.Infrastructure/Persistence/SupportUnassignedAlertStore.cs:75-94 (TryClaimAsync) y :26-36 (HealAsync) — el reclamo es un INSERT … ON CONFLICT (ticket_id, unassigned_since) DO NOTHING en la misma transacción que el evento del outbox: dos réplicas sobre el mismo ticket y el mismo tramo, la segunda inserta cero filas y no publica; la sanación de unassigned_since (HealAsync) son dos UPDATE idempotentes (sella las sin asignar con null, limpia las asignadas con marca) que no tocan version"),
         new("Modules.Support.Infrastructure.SupportThreadFollowWorker", WorkerClassification.Idempotent,
             "Modules/Support/Modules.Support.Infrastructure/SupportThreadFollowWorker.cs:9-13 — idempotente por índices (IX_ticket_messages_ticket_message, PK_unclassified_messages); el segundo pod choca y no duplica"),
+        new("Bootstrapper.Valkey.LegalParameters.LegalParameterCacheStartupBump", WorkerClassification.Idempotent,
+            "Bootstrapper/Valkey/LegalParameters/LegalParameterCacheStartupBump.cs — sube qep:legalparams:ver una vez al arrancar, sólo con Valkey:Areas:LegalParameters; cada pod que arranca invalida una vez más y el INCR no daña a otro pod"),
 
         // --- Noisy: el segundo choca con el inbox o con Version y sólo deja log o un tick perdido. ---
         new("Modules.Support.Infrastructure.SupportAutoCloseWorker", WorkerClassification.Noisy,
@@ -180,6 +192,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyConnection.cs:19-35 — el multiplexer de Valkey de cada pod"),
         new("Bootstrapper.Valkey.Presence.PresenceHeartbeatWorker", WorkerClassification.PerPod,
             "Bootstrapper/Valkey/Presence/PresenceHeartbeatWorker.cs:33-56 — late los conectados a su pod (ZADD idempotente); sólo con Valkey:Areas:Presence"),
+        new("Bootstrapper.Valkey.Presence.AppPresenceHeartbeatWorker", WorkerClassification.PerPod,
+            "Bootstrapper/Valkey/Presence/AppPresenceHeartbeatWorker.cs:33-62 — late los miembros conectados al AppHub de su pod (ZADD idempotente en qep:rt:online:{tenant}); sólo con Valkey:Areas:Presence"),
         new("Bootstrapper.Realtime.RealtimeEventsListener", WorkerClassification.PerPod,
             "Bootstrapper/Realtime/RealtimeEventsListener.cs:107 — LISTEN qep_realtime por pod para las conexiones del hub global de ese pod (plan 2026-11-15, N7)"),
         new("Bootstrapper.Realtime.RealtimePresenceSweeper", WorkerClassification.PerPod,
@@ -208,6 +222,8 @@ public static class MultiReplicaInventory
         new("Bootstrapper.Valkey.Sessions.MemorySessionCache", StateClassification.SharedWithLocalFallback,
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:107-114 — con Valkey:Areas:Sessions la entrada y la marca de revocación viven en qep:sess:*; apagada, en este MemoryCache"),
 
+        new("Bootstrapper.Valkey.LegalParameters.MemoryLegalParameterCache", StateClassification.PerPodByDesign,
+            "Bootstrapper/Valkey/LegalParameters/LegalParameterCacheRegistration.cs:37-41 — con Valkey:Areas:LegalParameters la tabla vive en qep:legalparams:{ver}; apagada, copia del pod con TTL de 60 s (decisión del spec 2026-11-22, «Caché»): el pod que escribe se invalida al instante y los demás sirven la tabla vieja a lo sumo 60 s, así que el área no es prerrequisito de más de una réplica"),
         new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
             "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
         new("Api.WebTelemetryMetrics", StateClassification.PerPodByDesign,
@@ -224,6 +240,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Realtime/AppHubConnections.cs:12 — las conexiones del hub global de este pod con sus tópicos; cada pod entrega sólo a las suyas y el aviso cruza pods por NOTIFY qep_realtime"),
         new("Bootstrapper.Realtime.AppHubDispatcher", StateClassification.PerPodByDesign,
             "Bootstrapper/Realtime/AppHubDispatcher.cs:16 — la última foto de presencia que este pod entregó a sus conexiones, para que su barrido note un vencimiento"),
+        new("Bootstrapper.Realtime.AppHubMessagingAlertSink", StateClassification.PerPodByDesign,
+            "Bootstrapper/Realtime/AppHubMessagingAlertSink.cs:19,50-55 — IMemoryCache de 30 s (DecisionTtl) con la decisión «módulo prendido y puede leer conversaciones» por tenant+miembro; el aviso lleva sólo ids, así que un cambio de permiso tarda hasta 30 s en llegar a la campana y no expone nada; el retraso ya existe con un pod"),
         new("Modules.Messaging.Infrastructure.Webhook.WebhookRouting", StateClassification.PerPodByDesign,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/WebhookRouting.cs:12 — IMemoryCache de 60 s; el retraso de un minuto ya existe con un pod"),
         new("Modules.Automations.Infrastructure.Engine.AutomationsModuleStatus", StateClassification.PerPodByDesign,
@@ -238,6 +256,8 @@ public static class MultiReplicaInventory
             "Modules/Authorization/Modules.Authorization.Application/RoleCatalog.cs:72 — tabla inmutable armada del código; igual en cada pod"),
         new("Modules.Automations.Infrastructure.Seed.SystemTemplateCatalog", StateClassification.PerPodByDesign,
             "Modules/Automations/Modules.Automations.Infrastructure/Seed/SystemTemplateCatalog.cs:45 — plantillas embebidas leídas al arrancar; igual en cada pod"),
+        new("Modules.Ai.Infrastructure.Seed.SystemAgentTemplateCatalog", StateClassification.PerPodByDesign,
+            "Modules/Ai/Modules.Ai.Infrastructure/Seed/SystemAgentTemplateCatalog.cs:29 — plantillas embebidas leídas al arrancar; igual en cada pod"),
         new("Modules.Siigo.Infrastructure.Api.SiigoTokenCache", StateClassification.PerPodByDesign,
             "Modules/Siigo/Modules.Siigo.Infrastructure/Api/SiigoTokenCache.cs:17 — caché de token por pod; un token de más por réplica no tiene efecto (Siigo acepta varios vivos y un 401 lo renueva)"),
         new("Modules.Siigo.Infrastructure.Api.SiigoApiClient", StateClassification.PerPodByDesign,
@@ -287,6 +307,10 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/MessagingInfrastructureExtensions.cs:147 — reenvía al singleton concreto"),
         new("Modules.Notifications.Application.IEmailChannel", "Modules.Notifications.Infrastructure.Channels.InfobipEmailChannel",
             "Modules/Notifications/Modules.Notifications.Infrastructure/NotificationsInfrastructureExtensions.cs:71 — sólo con Notifications:EmailProvider = infobip"),
+        new("BuildingBlocks.Application.Realtime.IRealtimePublisher", "Bootstrapper.Realtime.PgRealtimePublisher",
+            "Bootstrapper/Realtime/AppRealtimeExtensions.cs:23 — reenvía al singleton PgRealtimePublisher, sin estado (abre una conexión del pool por aviso)"),
+        new("BuildingBlocks.Application.Realtime.IRealtimeMemberPublisher", "Bootstrapper.Realtime.PgRealtimePublisher",
+            "Bootstrapper/Realtime/AppRealtimeExtensions.cs:24 — reenvía al mismo singleton PgRealtimePublisher, sin estado"),
         new("Modules.Quotations.Application.IQuotationPdfRenderer", "Modules.Quotations.Infrastructure.Pdf.QCodePdfRenderer",
             "Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:95"),
         new("Modules.Quotations.Application.IZenviaWhatsAppSender", "Modules.Quotations.Infrastructure.Whatsapp.ZenviaWhatsAppSender",

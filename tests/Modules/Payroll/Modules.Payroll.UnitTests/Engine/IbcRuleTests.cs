@@ -24,8 +24,8 @@ public sealed class IbcRuleTests
 
         var outcome = Ibc(input);
 
-        Assert.Equal(1_275_000m, outcome.SalaryEarningsMonth);
-        Assert.Equal(1_275_000m, outcome.IbcMonth);
+        Assert.Equal(1_275_000m, outcome.ParafiscalBase);
+        Assert.Equal(1_275_000m, outcome.SocialSecurityIbc);
         Assert.Equal("ibc", outcome.Line.Code);
         Assert.Equal(PayrollLineGroup.Info, outcome.Line.Group);
         Assert.Equal(1_275_000m, outcome.Line.Amount);
@@ -41,8 +41,8 @@ public sealed class IbcRuleTests
 
         var outcome = Ibc(input);
 
-        Assert.Equal(1_200_000m, outcome.IbcMonth);
-        Assert.Equal(1_000_000m, outcome.SalaryEarningsMonth);
+        Assert.Equal(1_200_000m, outcome.SocialSecurityIbc);
+        Assert.Equal(1_000_000m, outcome.ParafiscalBase);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class IbcRuleTests
             Incomes = [EngineTestData.Income(SystemConceptKey.OtherIncome, 800_000m, false)],
         };
 
-        Assert.Equal(1_200_000m, Ibc(input).IbcMonth);
+        Assert.Equal(1_200_000m, Ibc(input).SocialSecurityIbc);
     }
 
     [Fact]
@@ -64,8 +64,8 @@ public sealed class IbcRuleTests
 
         var outcome = Ibc(input);
 
-        Assert.Equal(600_000m, outcome.SalaryEarningsMonth);
-        Assert.Equal(875_453m, outcome.IbcMonth);
+        Assert.Equal(600_000m, outcome.ParafiscalBase);
+        Assert.Equal(875_453m, outcome.SocialSecurityIbc);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class IbcRuleTests
             Prior = MonthAccumulators.Empty with { WorkedDays = 15, SalaryRaw = 25_000_000m, Salary = 25_000_000m },
         };
 
-        Assert.Equal(43_772_625m, Ibc(input).IbcMonth);
+        Assert.Equal(43_772_625m, Ibc(input).SocialSecurityIbc);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public sealed class IbcRuleTests
         };
 
         // total 2 000 001 x 0.6 = 1 200 000.6
-        Assert.Equal(1_200_001m, Ibc(input).IbcMonth);
+        Assert.Equal(1_200_001m, Ibc(input).SocialSecurityIbc);
     }
 
     [Fact]
@@ -100,7 +100,7 @@ public sealed class IbcRuleTests
         var outcome = Ibc(input);
 
         Assert.Equal(124_548m, chain.Transport.Line.Amount);
-        Assert.Equal(875_453m, outcome.IbcMonth);
+        Assert.Equal(875_453m, outcome.SocialSecurityIbc);
     }
 
     [Fact]

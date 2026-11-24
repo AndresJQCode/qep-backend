@@ -110,6 +110,15 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateOrderExists, "This connection already has its order template.", exception);
         }
+        // Spec 2026-11-21: lo mismo para la plantilla de factura.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateInvoiceIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateInvoiceExists, "This connection already has its invoice template.", exception);
+        }
         // Soporte fase 2: lo mismo para la plantilla «Aviso de respuesta».
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&
@@ -144,6 +153,26 @@ internal static class MessagingSaveChanges
         {
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateWholesaleInvitationNoticeExists, "This connection already has its wholesale invitation notice template.",
+                exception);
+        }
+        // Support task notices: the same for the assignment notice template.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateTaskNoticeIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateTaskNoticeExists, "This connection already has its task notice template.", exception);
+        }
+
+        // Agenda: lo mismo para la plantilla del recordatorio de cita.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateAppointmentReminderIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateAppointmentReminderExists, "This connection already has its appointment reminder template.",
                 exception);
         }
         // Spec 2026-11-09: un programado activo por conversación y un clientId por conversación. Los dos son 409 ya_existe: el handler de

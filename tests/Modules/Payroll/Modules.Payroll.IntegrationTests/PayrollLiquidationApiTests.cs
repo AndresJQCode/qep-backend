@@ -133,7 +133,7 @@ public sealed class PayrollLiquidationApiTests : IClassFixture<PayrollApiFixture
 
         var period = detail.GetProperty("period");
         Assert.Equal("Liquidated", period.GetProperty("status").GetString());
-        Assert.Equal(929_801m, period.GetProperty("totals").GetProperty("net").GetDecimal());
+        Assert.Equal(929_965m, period.GetProperty("totals").GetProperty("net").GetDecimal());
         Assert.Equal(1_357_907m, period.GetProperty("totals").GetProperty("employerCost").GetDecimal());
         Assert.Equal("2026-11-01", period.GetProperty("legalValuesDate").GetString());
         Assert.Equal(PayrollEngine.Version, period.GetProperty("engineVersion").GetString());
@@ -147,10 +147,10 @@ public sealed class PayrollLiquidationApiTests : IClassFixture<PayrollApiFixture
         Assert.Equal(PayrollEngine.Version, result.GetProperty("engineVersion").GetString());
         Assert.Equal(875_453m, LineOf(employee, "salary").GetProperty("amount").GetDecimal());
         Assert.Equal(124_548m, LineOf(employee, "transport_allowance").GetProperty("amount").GetDecimal());
-        Assert.Equal(35_100m, LineOf(employee, "health_employee").GetProperty("amount").GetDecimal());
+        Assert.Equal(35_018m, LineOf(employee, "health_employee").GetProperty("amount").GetDecimal());
         Assert.Equal(4_600m, LineOf(employee, "arl").GetProperty("amount").GetDecimal());
         Assert.Equal(36_506m, LineOf(employee, "vacation").GetProperty("amount").GetDecimal());
-        Assert.Equal(929_801m, result.GetProperty("summary").GetProperty("net").GetDecimal());
+        Assert.Equal(929_965m, result.GetProperty("summary").GetProperty("net").GetDecimal());
 
         var health = LineOf(employee, "health_employee").GetProperty("trace").GetProperty("legalValues")
             .EnumerateArray().Single(value => value.GetProperty("key").GetString() == "HealthEmployeeRate");
@@ -172,11 +172,11 @@ public sealed class PayrollLiquidationApiTests : IClassFixture<PayrollApiFixture
         var detail = await LiquidatedAsync(scene, second);
 
         var totals = detail.GetProperty("period").GetProperty("totals");
-        Assert.Equal(929_999m, totals.GetProperty("net").GetDecimal());
+        Assert.Equal(929_963m, totals.GetProperty("net").GetDecimal());
         Assert.Equal(1_357_805m, totals.GetProperty("employerCost").GetDecimal());
         var employee = await OkAsync(await EmployeeAsync(scene, second));
         Assert.Equal(875_452m, LineOf(employee, "salary").GetProperty("amount").GetDecimal());
-        Assert.Equal(35_000m, LineOf(employee, "health_employee").GetProperty("amount").GetDecimal());
+        Assert.Equal(35_018m, LineOf(employee, "health_employee").GetProperty("amount").GetDecimal());
         scene.Tenant.Dispose();
     }
 

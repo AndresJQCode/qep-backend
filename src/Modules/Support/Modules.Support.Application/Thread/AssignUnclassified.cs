@@ -33,8 +33,7 @@ public sealed class AssignUnclassifiedValidator : AbstractValidator<AssignUnclas
 /// </summary>
 public sealed class AssignUnclassifiedHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
+    SupportTicketScope scope,
     ISupportConversationDirectory conversations,
     ISupportTicketRepository tickets,
     ISupportTicketMessageRepository links,
@@ -42,6 +41,7 @@ public sealed class AssignUnclassifiedHandler(
     ISupportMemberDirectory members,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportIntegrationEvents integrationEvents,
     ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     IValidator<AssignUnclassifiedCommand> validator)
@@ -51,16 +51,15 @@ public sealed class AssignUnclassifiedHandler(
 
     public async Task<SupportUnclassifiedDto> HandleAsync(AssignUnclassifiedCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
-        var actor = await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
-            ?? throw SupportAuthorization.Denied();
+        // La ruta exige manage; FindManagedAsync lo vuelve a exigir. Un ticket inexistente o interno es candidato inválido (422), no 404.
+        var access = await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
+        var actor = access.MemberId ?? throw SupportAuthorization.Denied();
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var conversation = await SupportConversationRules.EnsureConversationAsync(
             conversations, command.TenantId, command.ConversationId, cancellationToken);
         var row = await UnclassifiedRules.EnsurePendingAsync(unclassified, command.TenantId, conversation.Id, command.MessageId, cancellationToken);
 
-        var ticket = await tickets.FindAsync(command.TenantId, new SupportTicketId(command.TicketId), cancellationToken);
+        var ticket = await scope.FindManagedAsync(command.TenantId, command.TicketId, cancellationToken);
         if (ticket is null || ticket.ConversationId != conversation.Id || !ticket.CoversInbound(row.OccurredAt))
         {
             throw new SupportDomainException(
@@ -87,7 +86,7 @@ public sealed class AssignUnclassifiedHandler(
         }
 
         ticket.RecordMessageEvent(SupportTicketEventKind.MessageClassified, row.MessageId, actor, now);
-        SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher);
+        SupportThreadRules.ReopenIfWaiting(ticket, context, auditPublisher, integrationEvents, actor);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

@@ -87,13 +87,24 @@ internal sealed class StubUserDirectory(IReadOnlyDictionary<Guid, string> emails
         throw new NotSupportedException();
 }
 
-internal sealed class RosterReadExecutionContext(TenantId tenantId) : IExecutionContext
+internal sealed class RosterReadExecutionContext(TenantId tenantId, params string[] extraPermissions) : IExecutionContext
 {
     public Guid SubjectId { get; } = Guid.CreateVersion7();
 
     public TenantId TenantId { get; } = tenantId;
 
-    public bool HasPermission(string permission) => permission == TenancyPermissions.AdvisorshipRead;
+    public bool HasPermission(string permission) =>
+        permission == TenancyPermissions.AdvisorshipRead || extraPermissions.Contains(permission);
+}
+
+/// <summary>The HR fallback with nothing to lend: handlers that only need the reader to exist.</summary>
+internal sealed class NoHrPhones : IMemberPhoneDirectory
+{
+    public Task<IReadOnlyDictionary<Guid, string>> FindHrPhonesAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> memberIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 }
 
 /// <summary>

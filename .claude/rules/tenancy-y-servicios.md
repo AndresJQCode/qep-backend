@@ -49,3 +49,17 @@ tenancy.membership.role_unavailable`, y el catálogo lo marca `assignable: false
   `ApiScopeDefinition` en DI (la constante vive en el módulo dueño) y sus rutas cuelgan del grupo de `ExternalApiEndpoints`, que fija
   el esquema `ApiKey`; una ruta externa fuera de ese grupo no recibe ese esquema. Los `code` `external.*` son contrato público con
   los integradores: no se renombran.
+- **Un tenant nace con la moneda de su país y con compra mínima de 1 unidad** (owner, 2026-11-23). `Tenant.Create` con país toma
+  `TenantCurrencies.ForCountry` (CO → COP, eurozona → EUR, el resto → USD); sin país (el signup público no lo trae) queda la de la
+  columna, COP. Después del commit, `TenantRegistrationService` llama `INewTenantProvisioning` (signup e invitación, sólo si el alta
+  crea el tenant) y `QuotationsNewTenantProvisioning` guarda 1 unidad y ningún monto mínimo. **No es atómico con el alta:** si falla,
+  el tenant queda con el por defecto de Quotations (6 unidades, 500.000 COP / 200 USD). Un tenant viejo sin fila no se toca.
+- **El idioma (`es-419`/`es-ES`) se resuelve en un solo lugar: `SupportedLanguages.Effective(elegido, delTenant)`** (spec
+  2026-11-22, i18n). Lo usan `/auth/preferences`, `/auth/me` y los correos (`OutboxDeliveryWorker.ResolveLanguageAsync`); un camino
+  nuevo que arme la regla a mano puede decir en el correo otro idioma que en la pantalla, sin error. El idioma **no** es el formato
+  regional: no lo derives de `DefaultCulture` (`es-CO`) ni cambies separadores con él. La preferencia guarda `null` («el del
+  tenant»), nunca una copia del idioma del tenant. El glosario de España del backend («presupuesto», «número de caso», «comercial»;
+  `QuotationsExportKindText`, `SupportOpeningEmailTemplate`, `QuotationsExportProcessor`, `QuotationPdfFileName` y `quotation.typ`)
+  tiene que coincidir con el diccionario `es-ES` del frontend: si cambia uno, cambian los dos. Y el idioma entra a la huella del PDF
+  **sólo** cuando no es `es-419` (`QuotationPdfSectionsBuilder.Fingerprint`): hacerlo siempre cambia la huella de todos los PDF
+  guardados y el siguiente export los regenera a todos.

@@ -17,6 +17,8 @@ public static class MessagingRealtimeExtensions
     {
         services.AddSignalR();
         services.AddSingleton<IMessagingEventSink, MessagingHubEventSink>();
+        // Spec 2026-11-22 §9.2: who may subscribe to the alert topic of the app hub (the hub itself is Bootstrapper's).
+        services.AddMessagingRealtimeAuthorizer();
         return services;
     }
 

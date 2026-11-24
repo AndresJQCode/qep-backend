@@ -24,6 +24,33 @@ namespace Modules.Support.IntegrationTests;
 /// </summary>
 internal static class SupportPublicHarness
 {
+    /// <summary>
+    /// Puts the tenant's internal ticket type in an otherwise-visible state (published and active). The CHECK
+    /// <c>CK_ticket_types_internal</c> is the first line of defense and forbids exactly that; the explicit <c>IsInternal: false</c> filter of
+    /// the public paths is the second, and these tests pin the second. The host database is shared by the whole class, so the caller must
+    /// restore the constraint in a <c>finally</c> with <see cref="RestoreInternalTypeConstraintAsync"/>.
+    /// </summary>
+    public static async Task MakeInternalTypeVisibleAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await SupportMessagingSeed.ExecuteAsync(factory, "ALTER TABLE support.ticket_types DROP CONSTRAINT IF EXISTS \"CK_ticket_types_internal\"");
+        await SupportMessagingSeed.ExecuteAsync(
+            factory, "UPDATE support.ticket_types SET is_published = true, is_active = true WHERE tenant_id = @tenant AND is_internal",
+            ("tenant", tenantId));
+    }
+
+    /// <summary>Undoes <see cref="MakeInternalTypeVisibleAsync"/>: the flags go back to what the CHECK allows and the CHECK is re-added with
+    /// the exact definition of the migration 20261122183828_AddSupportInternalTasks.</summary>
+    public static async Task RestoreInternalTypeConstraintAsync(QepApiFactory factory)
+    {
+        await SupportMessagingSeed.ExecuteAsync(
+            factory, "UPDATE support.ticket_types SET is_published = false, is_active = true WHERE is_internal");
+        await SupportMessagingSeed.ExecuteAsync(
+            factory,
+            """
+            ALTER TABLE support.ticket_types ADD CONSTRAINT "CK_ticket_types_internal" CHECK (NOT is_internal OR (term_business_days IS NULL AND NOT term_is_legal AND NOT requires_formal_response AND NOT is_published AND is_active))
+            """);
+    }
+
     public const string SupportOrigin = "https://soporte.example.com";
 
     public const string ConsoleOrigin = "https://console.example.com";

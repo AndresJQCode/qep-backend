@@ -48,29 +48,27 @@ public sealed class OpenNoteAttachmentValidator : AbstractValidator<OpenNoteAtta
 }
 
 /// <summary>
-/// Opening an upload for a note (spec 2026-11-15 §5.4, plan N19). Order: authorization (<c>support.ticket.manage</c>) → active
-/// membership (403) → validator → ticket (404) → closed ticket (422 <c>support.note.ticket_closed</c>) → Storage's member-less upload
+/// Opening an upload for a note (spec 2026-11-15 §5.4, plan N19). Order: access (<c>support.ticket.manage</c> or <c>support.task.use</c>) →
+/// validator → the ticket scope (active membership 403, ticket 404) → closed ticket (422 <c>support.note.ticket_closed</c>) → Storage's member-less upload
 /// with the owner of (ticket, caller). A declaration Storage refuses after the validator passed is 422 <c>support.note.file_invalid</c>.
 /// </summary>
 public sealed class OpenNoteAttachmentHandler(
-    IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportAttachmentStorage storage,
     IValidator<OpenNoteAttachmentCommand> validator)
     : ICommandHandler<OpenNoteAttachmentCommand, SupportNoteAttachmentSessionDto>
 {
     public async Task<SupportNoteAttachmentSessionDto> HandleAsync(OpenNoteAttachmentCommand command, CancellationToken cancellationToken)
     {
-        var (ticket, actor) = await SupportNoteAttachmentRules.EnsureWritableAsync(
-            executionContext, tenantModules, membershipDirectory, tickets, command.TenantId, command.TicketId,
-            () => validator.ValidateAndThrowAsync(command, cancellationToken), cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, expectedVersion: null, cancellationToken);
+        SupportNoteAttachmentRules.EnsureOpen(ticket);
         try
         {
             var upload = await storage.OpenAsync(
                 command.TenantId,
-                SupportNoteUploads.OwnerKey(ticket, actor),
+                SupportNoteUploads.OwnerKey(ticket.Id, actor),
                 command.Name!.Trim(),
                 SupportPublicAttachmentRules.NormalizeMimeType(command.MimeType!),
                 command.SizeBytes!.Value,
@@ -90,29 +88,13 @@ internal static class SupportNoteAttachmentRules
     public static SupportDomainException FileInvalid() =>
         new(SupportErrorCodes.NoteFileInvalid, "The note file is not valid.");
 
-    /// <summary>The order every note write shares: authorization → active membership (403) → <paramref name="validate"/> → ticket
-    /// (404) → closed ticket (422). Returns the ticket's id and the caller's membership.</summary>
-    public static async Task<(SupportTicketId Ticket, Guid Actor)> EnsureWritableAsync(
-        IExecutionContext executionContext,
-        ITenantModules tenantModules,
-        IMembershipDirectory membershipDirectory,
-        ISupportTicketRepository tickets,
-        Guid tenantId,
-        Guid ticketId,
-        Func<Task> validate,
-        CancellationToken cancellationToken)
+    /// <summary>Plan N19: a closed ticket takes no new uploads (422 <c>support.note.ticket_closed</c>). The rest of the order every note
+    /// write shares (access, validator, active membership, ticket, participant) is <see cref="SupportTicketScope.ActAsync"/>'s.</summary>
+    public static void EnsureOpen(SupportTicket ticket)
     {
-        await SupportAuthorization.EnsureAsync(executionContext, tenantModules, tenantId, SupportPermissions.Manage, cancellationToken);
-        var actor = await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, tenantId, cancellationToken)
-            ?? throw SupportAuthorization.Denied();
-        await validate();
-        var ticket = await tickets.FindAsync(tenantId, new SupportTicketId(ticketId), cancellationToken)
-            ?? throw SupportNotFound.Ticket(ticketId);
         if (ticket.Status is SupportTicketStatus.Closed)
         {
             throw AddTicketNoteHandler.Closed();
         }
-
-        return (ticket.Id, actor);
     }
 }

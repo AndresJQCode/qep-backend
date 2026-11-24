@@ -167,8 +167,10 @@ inactiva solo. Pueden activarse y desactivarse.
 
 ## Cálculo
 
-Todo se redondea como manda la ley: el **IBC siempre hacia arriba al peso**, y **cada aporte o deducción de seguridad
-social hacia arriba al siguiente múltiplo de 100** (nunca al más cercano). Cada línea del resultado lleva su rastro:
+Todo se redondea como manda la ley: el **IBC siempre hacia arriba al peso**, y **cada aporte del empleador y el fondo de
+solidaridad hacia arriba al siguiente múltiplo de 100** (nunca al más cercano). **Salud y pensión del trabajador se descuentan
+al peso** (mitad hacia arriba), como Siigo: la centena del Decreto 1990/2016 es de la cotización en la PILA, que asume el
+empleador, no del descuento de nómina (decisión del owner, 2026-11-23; motor 2026.11.4). Cada línea del resultado lleva su rastro:
 concepto, fórmula simbólica, datos de entrada, resultado, valor legal usado y su base legal («Ver cálculos»).
 
 **Días.** El mes es de 30 días. Una quincena completa trabajada son **15 días**, también la segunda de un mes de 31 días o de
@@ -190,7 +192,11 @@ igual que la segunda. Ejemplo: salario 3.000.000 y una comisión salarial de 500
 3.500.000, que es menos de 2 SMMLV de 2026 (3.501.810) ⇒ conserva el auxilio.
 
 **Auxilio de transporte.** Se concede solo si el ingreso salarial del mes (según la base configurada) es **hasta 2 SMMLV**, y
-se quita solo cuando lo supera. Se paga según la frecuencia configurada, proporcional a los días. Si el salario vigente es de
+se quita solo cuando lo supera. Se paga según la frecuencia configurada, proporcional a los días. La primera quincena es
+provisional y la segunda consolida el mes: si el mes supera el tope, la segunda paga 0 y no descuenta lo ya pagado (CST art.
+149); si el mes queda por debajo, paga el mes completo menos lo pagado. Las horas extras y los recargos no cuentan para el tope.
+Con frecuencia mensual, si el contrato termina en la primera quincena, el auxilio se paga en ella. (Decisiones del owner 2 y 3,
+2026-11-22.) Si el salario vigente es de
 teletrabajador, el **auxilio de conectividad lo reemplaza** (nunca los dos), por el **mismo valor** que el de transporte
 (Ley 2121/2021, a confirmar con el caso real): ver «Llamadas y pendientes».
 
@@ -214,9 +220,11 @@ sobró. Las deducciones recurrentes y puntuales se restan; **no puede quedar un 
 aprobación).
 
 **Aportes del empleador.** Salud 8,5 %, pensión 12 % (22 % en un centro de alto riesgo: el 26 % total menos el 4 % del empleado), caja 4 %, ICBF 3 %, SENA 2 %, y ARL
-por la clase del **centro de trabajo** del empleado (no incluye auxilio ni no salariales). **Exoneración:** si la empresa es
+por la clase del **centro de trabajo**, sobre el IBC de seguridad social; caja, ICBF y SENA sobre el devengo salarial del mes,
+sin la regla del 40 % (decisión del owner 1, 2026-11-22). **Exoneración:** si la empresa es
 exonerada y el devengo salarial del empleado es menor de 10 SMMLV, no se pagan salud del empleador, ICBF ni SENA; la caja
-siempre se paga.
+siempre se paga. La segunda quincena la decide sobre el mes; si el mes queda exonerado, devuelve lo aportado en la primera del
+lado del empleador (decisión del owner 2).
 
 **Provisiones del período.** Cesantías 8,33 %, prima 8,33 %, vacaciones 4,17 % e intereses a las cesantías 1 %, cada una sobre
 su base legal (cesantías y prima incluyen el auxilio de transporte; vacaciones no), proporcionales al período.

@@ -116,7 +116,7 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
 | `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
-| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`, `LegalParameters`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
 | `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
@@ -554,6 +554,33 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Regiones y ciudades por país
+
+El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. La región (departamento,
+provincia) **sólo sirve para filtrar ciudades: no se guarda**. Colombia guarda `CityId`; el resto de países
+guarda el nombre de la ciudad como texto (`CityName`).
+
+| Ruta | Respuesta |
+| --- | --- |
+| `GET /api/v1/countries` | `[{ code, name, regionKind }]`: el catálogo de países por nombre. `regionKind` es `Department` (`CO`), `Province` (`ES`) o `null` si el país no tiene catálogo de regiones: ahí la pantalla cae al texto libre. |
+| `GET /api/v1/countries/{country}/regions` | `[{ id, code, name }]` por nombre. País sin catálogo: `200 []`. |
+| `GET /api/v1/countries/{country}/regions/{regionId}/cities` | `[{ id, code, name }]` por nombre. Región que no es de ese país: `404 geography.region.not_found`. |
+
+- **Colombia** sale de DIVIPOLA (`departments`, `cities`): los `id` son los mismos que sirven `/api/v1/departments`
+  y `/api/v1/cities`, que no cambian.
+- **Los demás países** salen de `geography.regions` y `geography.region_cities`, que `RegionSeeder` siembra desde
+  `Seed/Data/<país>-regions.json` y `<país>-cities.json`. Un arranque normal no lee esas tablas: compara el SHA-256
+  de los dos archivos con el de `geography.seed_state` y, si coincide, termina. Sólo si cambió (primer arranque, o un
+  archivo nuevo) parsea, valida y aplica el país en una transacción con `INSERT … ON CONFLICT` sobre `unnest`, sin
+  cargar filas ni usar el change tracker. Si cambias la **lógica** del importador y no los archivos, sube
+  `RegionSeedHash.SeederVersion`, o las bases que ya coinciden no se enterarán. Hoy sólo España: 52 provincias y 8.132
+  municipios de la «Relación de municipios y sus códigos por provincias» del INE (1 de enero de 2025; el artículo
+  invertido del INE, «Rozas de Madrid, Las», se guarda como se conoce: «Las Rozas de Madrid»,
+  `https://www.ine.es/daco/daco42/codmun/diccionario25.xlsx`). El código del municipio es `CPRO` + `CMUN`.
+- **Un país nuevo** son sus dos JSON, una entrada en `RegionSeeder.EmbeddedSources` y otra en `CountryCatalogs.All`
+  (una prueba unitaria falla si una de las dos listas se queda atrás).
+  Esto no toca `Customer`, Coordinadora, Siigo ni los sinónimos: ninguna ciudad de afuera entra a `geography.cities`.
+
 ## Nombres de ciudad de Coordinadora
 
 Las ciudades de `geography` son los municipios del DANE (`localities.json`), y se importan en cada
@@ -796,7 +823,7 @@ fórmula de la línea es **una sola** para todas las monedas y todos los tenants
 lista     = R(precio de lista)
 unitario  = R(lista × (1 − descuento/100))
 línea     = Round2(cantidad × unitario)               // lo que se cobra, IVA adentro
-descuento = Round2(cantidad × lista) − línea
+descuento = Round2(cantidad × lista) − línea          // con IVA: lo guarda el POS
 IVA       = Round2(línea × tasa / (100 + tasa))       // sólo COP discrimina IVA
 base      = línea − IVA
 ```
@@ -806,6 +833,15 @@ aleja de cero), `Up` (hacia arriba) o `Down` (hacia abajo). Los decimales van de
 catálogo de monedas (COP 0, USD 2, EUR 2). **Por defecto**, una moneda sin configurar usa
 `(decimales del catálogo, Nearest)`: para COP es exactamente lo de antes. Ejemplo de aceptación: USD
 `(2, Up)`, 13,19 con 15 % da unitario 11,22; con 10 unidades, línea 112,20 y descuento 19,70.
+
+**El descuento de cotizaciones y pedidos se guarda sin IVA**, igual que el subtotal de la línea. Con
+`bruto = Round2(cantidad × lista cobrada)` y `t` la tasa de IVA de la línea:
+
+```
+descuento = (bruto − Round2(bruto × t / (100 + t))) − base     // base = Subtotal de la línea, sin IVA
+```
+
+El POS conserva el descuento con IVA de la fórmula de arriba.
 
 La regla aplica sólo al precio con IVA incluido. Los valores sin IVA (los que lee el Excel del ERP),
 los totales del encabezado y los del POS siguen a 2 decimales, al más cercano.
@@ -1359,7 +1395,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)) | `messaging.template.manage` |
+| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)); `appointment-reminder` (`POST`, cuerpo opcional `{ body }`) y `appointment-reminder/draft` (`GET`), la plantilla `qep_agenda_recordatorio` del recordatorio de cita de la Agenda | `messaging.template.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -1506,6 +1542,28 @@ Respuesta:
 ```
 
 Formatos de fecha admitidos: `yyyy-MM-dd`, `dd/MM/yyyy` y `MM/dd/yyyy`.
+
+#### Idioma del producto (`es-419` / `es-ES`)
+
+Spec: [2026-11-22 i18n](docs/superpowers/specs/2026-11-22-i18n-espanol-espana-y-latinoamerica-design.md). El idioma no es el
+formato regional: `defaultCulture`, `numberFormat` y `dateFormat` no cambian con él. El catálogo es
+`SupportedLanguages` (`BuildingBlocks.Domain.Localization`), y el diccionario de cada idioma lo tiene el frontend.
+
+| Dónde | Campo | Qué es |
+| ----- | ----- | ------ |
+| `GET`/`PUT /tenants/{tenantId}/settings` | `language` | El idioma del tenant, para quien no eligió uno: `es-419` (por defecto) o `es-ES`. Si el `PUT` no lo trae, se conserva; un valor fuera del catálogo responde `422 tenancy.settings.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `language` | Lo que eligió la persona en este tenant, o `null` para seguir al tenant. En el `PUT`: ausente o `null` conserva, `""` vuelve al del tenant, y un valor fuera del catálogo responde `422 identity.preference.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `effectiveLanguage` | El diccionario que tiene que cargar la pantalla: el elegido, si no el del tenant. |
+| `/auth/me`, `POST /auth/session` | `activeTenants[].language` | El idioma **efectivo** de la persona en cada tenant, disponible antes de la primera pintura. |
+| `POST /auth/register-tenant`, `POST /auth/password/register-tenant` | `language` | Opcional; ausente o `""` es `es-419`. |
+
+Los correos ya están en español neutro con tuteo, y solo cambian los términos que en España se dicen distinto: «cotización»
+es «presupuesto» (correos de exportación, en el idioma efectivo de quien exportó) y «radicado» es «número de caso» (correo de apertura
+de Soporte, en el idioma del tenant). El parámetro `radicado` del enlace de consulta no se traduce.
+
+El PDF de cotización y de pedido y el Excel de cotizaciones van en el idioma del tenant: en `es-ES` dicen «Presupuesto» y
+«Comercial», y los archivos se llaman `Presupuesto-N.pdf` y `presupuestos-….xlsx`. Pasar un tenant a `es-ES` regenera sus PDF guardados
+en el siguiente export, porque el idioma entra a la huella; el despliegue no regenera ninguno.
 
 ### Invitación de memberships
 
@@ -2964,8 +3022,9 @@ pasar sin límite. El limitador de concurrencia del webhook se queda en memoria 
 [§ Verificación](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#verificación); acá va sólo lo que el código fijó.
 Lo hace el owner, un área por commit
 (`chore(k8s): enable valkey <area> area`, el flag en `"true"` en `k8s/prod-configMap.yaml`). Después de `Presence` y
-`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
-`Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
+`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells`,
+`Valkey__Areas__ApiKeyTouch` y `Valkey__Areas__LegalParameters` (la tabla de valores legales de Hr, spec 2026-11-22: contador
+`qep:legalparams:ver` y tabla en `qep:legalparams:{ver}` con TTL de 1 h; apagada, copia del pod de 60 s). Con el área prendida, una migración o un SQL manual sobre `hr.legal_parameters*` no sube la versión: hace falta `INCR qep:legalparams:ver` (o un reinicio, que la sube al arrancar) para verlo antes de que venza la hora. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
 (`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
 
 **Con `Sessions` y `Permissions` apagadas hay caché igual, pero por pod** (2026-11-17). Antes, apagada el área era «cada request
@@ -3008,6 +3067,7 @@ kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-con
 | `Permissions` | `permissions`   | `increase(...[1h])` = 0          | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente     |
 | `Doorbells`   | `doorbells`     | `increase(...[1h])` = 0          | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
 | `ApiKeyTouch` | `api_key_touch` | `increase(...[1h])` = 0          | Sin comportamiento visible: el contador es la verificación                                               |
+| `LegalParameters` | `legal_parameters` | `increase(...[1h])` = 0     | Cambia un valor legal desde la consola del operador y léelo desde otra réplica: el valor nuevo se ve al instante |
 
 Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
 el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
@@ -3635,7 +3695,7 @@ sobrescribe la misma clave.
 `messaging/staging/{tenantId}/{conversationId}/{memberId}/{uploadId}{ext}`). Después `POST …/messages/media` con
 `{ uploadId, clientId, fileName, caption?, replyTo? }` confirma: revisa tamaño y firma binaria, comprime la imagen, la
 sube a Meta y envía; responde 201 cuando Meta contesta. Imagen jpeg/png hasta 25 MB, recomprimida siempre a JPEG q80 con
-el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls o xlsx hasta 100 MB. `caption`
+el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls, xlsx, ppt, pptx o txt hasta 100 MB. `caption`
 opcional hasta 1024. Mismas reglas que el texto: ventana, asignado, autoasignación, cita e idempotencia por `clientId`; un
 `Failed` conserva el staging para el reintento. Errores 422: `messaging.media.upload_not_found`, `too_large`,
 `unsupported_format` e `invalid_image`.
@@ -3654,10 +3714,17 @@ bytes de cabecera):
 | Audio | `.aac` → `audio/aac` | 16 MB | 25 MB | ADTS (`FF F1`/`FF F9`) |
 | Audio | `.amr` → `audio/amr` | 16 MB | — | `#!AMR\n` o `#!AMR-WB\n` |
 | Audio | `.ogg` → `audio/ogg` | 16 MB | — | `OggS` con `OpusHead` (Vorbis no) |
+| Documento | `.ppt` → `application/vnd.ms-powerpoint` | 100 MB | — | OLE (`D0CF11E0A1B11AE1`, como `.doc`/`.xls`) |
+| Documento | `.pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation` | 100 MB | — | zip (`PK`, como `.docx`/`.xlsx`) |
+| Documento | `.txt` → `text/plain` | 100 MB | — | UTF-8 válido sin bytes de control (sin firma; deja fuera binarios y UTF-16) |
+| Sticker | `.webp` → `image/webp` | 100 KB estático, 500 KB animado | — | `RIFF`…`WEBP` con chunk `VP8 `, `VP8L` o `VP8X` |
 
 **La tabla está en borrador hasta las verificaciones V-1..V-3 con Meta real** (las corre el owner; ver el spec): lo que Meta
 no acepte se quita de `OutboundMediaPolicy` y de esta tabla. No hay transcodificación ni `ffmpeg`: `.mov`, `.webm`, `.avi`,
-`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. El video sale con `type: video` y su `caption`; el audio,
+`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. **Sticker** (2026-11-22): Meta sólo admite WebP como sticker, no como
+imagen, así que `.webp` sale con `type: sticker`, sin `caption` (422 `validation.failed` en `caption`), sin recomprimir y sólo por WhatsApp.
+El tope depende del contenido: 500 KB si el chunk `VP8X` trae la bandera de animación y 100 KB si no, y por eso el estático se mide al
+leer el archivo (`media_too_large` al confirmar, no al pedir la sesión). El chatbot no lo manda: su flujo no tiene ese tipo. El video sale con `type: video` y su `caption`; el audio,
 con `type: audio` **sin** `voice` (la nota de voz sigue con `voice: true`) y **sin texto**: un `caption` con un audio es 422
 `validation.failed` en `caption`. El multipart a Meta lleva `video{ext}` o `audio{ext}`; el nombre real queda en
 `message_media.file_name` y viaja en `media.fileName`, que en un audio adjunto **no es nulo** y en una nota de voz sí: así
@@ -5408,9 +5475,44 @@ pagos sin llamar a Siigo.
 - Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
   Un pedido facturado en Siigo no se revierte con QEP (`422 order.order.invoiced_externally`): revertir es una nota crédito.
 
+**Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
+`POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
+`204`) manda el PDF de **una** factura al WhatsApp del cliente del pedido. Es el mismo PDF de la descarga (se pide a Siigo en cada envío y
+viaja en memoria: Siigo no la guarda; el envío por Meta deja una copia privada en el hilo de Mensajería, ver más abajo). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
+siigo.invoice.not_found` sin llamar a Siigo ni al canal; sin permiso o con el tenant de otra ruta es `403`, nunca `404`. El envío lo hace
+Quotations (`IInvoiceWhatsAppDelivery`; Siigo sólo ve el puerto `ISiigoInvoiceWhatsApp`), así que el canal se resuelve como en el pedido
+y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `no_phone` (el
+cliente del pedido no tiene teléfono; Quotations lo mira dentro del envío, así que el PDF ya se pidió a Siigo) y `send_failed`, más
+`order.order.client_not_found` (el cliente del pedido no existe en el tenant); todos son errores de dominio `422`. `channel_unavailable` y `channel_already_set` no pueden
+salir acá: el envío nunca pide un canal concreto. No
+hay deduplicación: dos clics son dos mensajes y dos entradas de auditoría `siigo.invoice.whatsapp_sent` (sin teléfono, URL ni contenido).
+
+`GET …/siigo-invoice` suma `canSendWhatsApp` a cada fila: la fila tiene PDF **y** hoy se podría entregar (el canal se resuelve igual que en
+el envío y el cliente tiene teléfono). Se calcula una vez por petición, y si ninguna fila tiene PDF no se consulta. **Limitación conocida:**
+un tenant con dos o más canales aptos para facturas y sin elección guardada (la elección se guarda al mandar una cotización o un pedido y
+escoger canal) recibe `canSendWhatsApp = false` hasta que elija uno; mandar una factura nunca guarda la elección.
+
+**Plantilla `Invoice`.** Cada canal necesita su plantilla de factura; sin ella no cuenta como canal para una factura.
+
+- **Meta:** se crea desde QEP con `POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/invoice`
+  (permiso `messaging.template.manage`) y espera la aprobación de Meta. El PDF viaja como encabezado de la plantilla.
+- **Zenvia:** crea la plantilla en Zenvia con las variables **exactamente** `fullname`, `invoice_number` y `total` y el encabezado
+  `documentUrl`, y pon su id en `invoiceTemplateId` de **cada** conexión de Zenvia (Integrations). Zenvia descarga el documento por URL.
+
+**Copia pública (sólo Zenvia).** Para Zenvia el PDF se copia al bucket público bajo `invoices/{guid}.pdf`, con una clave aleatoria que no
+lleva tenant, pedido ni número de factura (la URL queda abierta a quien la tenga). Por Meta Quotations no publica ninguna copia, pero el envío deja una copia **privada** del adjunto en el hilo de la conversación de Mensajería (por tenant y con la retención de cualquier adjunto saliente, como en cotizaciones y pedidos); no es pública. Sin bucket
+público el envío falla, sin caer a una URL firmada. La copia expira con una regla de lifecycle que se crea **a mano** en Cloudflare, y es
+parte del despliegue:
+
+```powershell
+npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1
+npx wrangler r2 bucket lifecycle list <bucket-publico>   # para verificarla
+```
+
 **Seguridad.** La clave de acceso y el token de Siigo no salen a logs, auditoría ni respuestas; `request_json` (con el documento y
 la dirección del cliente) no lo devuelve ningún `GET`, y `error_detail` guarda los códigos de Siigo, no sus mensajes (salvo el
-total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
+total esperado). El PDF, la URL pública y el teléfono del envío por WhatsApp tampoco salen a logs, `siigo.call_failures`, auditoría ni
+respuestas. Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
 
 **Despliegue.**
 
@@ -5421,6 +5523,14 @@ total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
    Integrations borra las conexiones `siigo` con sus secretos, y `siigo.invoices` es el registro de un documento legal.
 3. Prende el módulo al tenant desde la consola de operador, crea la conexión, recorre el asistente y deja «Enviar a la DIAN»
    apagado en las primeras facturas.
+
+**Despliegue del envío por WhatsApp**, en este orden:
+
+1. Migración de Messaging (el tipo de plantilla `Invoice`).
+2. Crea y aprueba la plantilla `Invoice` en Meta (`template-management/invoice`) y en Zenvia, y pon `invoiceTemplateId` en cada conexión
+   de Zenvia.
+3. Regla de lifecycle de `invoices/` en el bucket público (comando de arriba).
+4. Backend y después frontend (spec aparte en `qep-frontend`).
 
 **Lo que se mira en las primeras facturas reales** (no hay empresa de pruebas: se resuelve con ellas, y con el interruptor
 apagado ninguna puede salir mal sin que se vea):

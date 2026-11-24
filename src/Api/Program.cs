@@ -15,6 +15,7 @@ using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
 using Modules.Ai.Api;
 using Modules.Ai.Infrastructure;
+using Modules.Notifications.Api;
 using Modules.ApiAccess.Api;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
@@ -34,6 +35,8 @@ using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
 using Modules.Hr.Api;
 using Modules.Hr.Infrastructure;
+using Modules.Scheduling.Api;
+using Modules.Scheduling.Infrastructure;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Api;
 using Modules.Integrations.Infrastructure;
@@ -369,6 +372,8 @@ app.MapGeographyEndpoints();
 app.MapCityOperatorEndpoints();
 // Spec 2026-11-10: la consola de la unidad tributaria del operador.
 app.MapTaxUnitOperatorEndpoints();
+// Spec 2026-11-22: la consola de valores legales de nómina del operador.
+app.MapLegalParameterOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
@@ -421,8 +426,11 @@ app.MapLoansEndpoints();
 // Spec 2026-11-20: recursos humanos (empleados, contratos y su configuración).
 app.MapHrEndpoints();
 app.MapPayrollEndpoints();
+app.MapSchedulingEndpoints();
 // Spec 2026-11-14: soporte (tickets y PQRSF).
 app.MapSupportEndpoints();
+// Spec 2026-11-22: la campana de avisos de cada miembro.
+app.MapNotificationEndpoints();
 // Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
 app.MapStoreEndpoints();
 // Tienda pública: sin sesión ni CSRF, con la clave del storefront y limitadores por IP del visitante.
@@ -544,6 +552,11 @@ await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) 
     // Payroll (spec 2026-11-21): after Audit (writes audit.entries) and after Companies (payroll.periods and payroll.company_settings
     // have FKs to companies.companies). Hr is read through ports only.
     await services.InitializePayrollDatabaseAsync(
+        cancellationToken);
+
+    // Scheduling (spec 2026-11-21): sin llaves foráneas a otros módulos (clientes, miembros, conversaciones y plantillas son referencias
+    // blandas), pero detrás de Hr por orden de despliegue; crea btree_gist para la restricción de exclusión de las sesiones.
+    await services.InitializeSchedulingDatabaseAsync(
         cancellationToken);
 
     // Support (spec 2026-11-14): después de Audit (escribe en audit.entries) y de Companies: support.form_versions lleva una FK real a

@@ -3,6 +3,7 @@ paths:
   - "src/Modules/Siigo/**"
   - "tests/Modules/Siigo/**"
   - "src/Bootstrapper/SiigoOpenInvoiceCheck.cs"
+  - "src/Bootstrapper/SiigoInvoiceWhatsApp.cs"
 ---
 
 # Siigo (facturación de pedidos)
@@ -10,6 +11,8 @@ paths:
 Reglas de `qep-backend` que no se deducen leyendo el código. Se cargan solas al leer o editar un
 archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAUDE.md`](../../CLAUDE.md).
 
+- **`siigo.settings.price_mode` decide cómo viaja el precio del ítem:** `BaseWithDiscount` (de fábrica) manda el precio de lista y `discount`; `DiscountedPrice`
+  manda el precio ya descontado (`Subtotal / cantidad`) y `discount: 0`. El total no cambia entre modos, y un `priceMode` ausente en el `PUT …/document` conserva el guardado.
 - **`siigo.invoices` es el registro de un documento legal: no tiene purga y su `Down` no se corre.** Una fila `Created` o
   `Stamped` es una factura que existe en Siigo; borrarla aquí no la borra allá y deja el pedido sin rastro de ella.
 - **«Enviar a la DIAN» (`send_to_dian`) nace apagado y prenderlo lo decide quien configura.** No hay empresa de pruebas de Siigo:
@@ -57,6 +60,16 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   entrega como `{"base64": "…"}` (campo tomado de la documentación del SDK, no probado contra una cuenta real: si falla, mirar ese campo
   primero). Sólo lo tiene una fila con id de Siigo y `Created`, `Stamped` o `StampRejected` (`SiigoInvoice.HasPdf`, que viaja como `hasPdf`);
   una resuelta a mano no tiene id y no se puede pedir.
+
+- **Siigo nunca guarda el PDF de una factura ni lo loguea, y enviarla por WhatsApp es de Quotations** (spec 2026-11-21).
+  `POST …/siigo-invoice/{invoiceId}/send-whatsapp` (`SendSiigoInvoiceWhatsAppHandler`) pide el PDF a Siigo por el mismo camino de la descarga
+  (`SiigoInvoiceSupport.LoadPdfAsync`), lo entrega por el puerto `ISiigoInvoiceWhatsApp` y audita `siigo.invoice.whatsapp_sent` sólo si el
+  envío salió. El canal, el teléfono y la plantilla los resuelve `IInvoiceWhatsAppDelivery` (Quotations; adaptador `SiigoInvoiceWhatsApp`, Bootstrapper):
+  **`WhatsAppChannelSelection` es `internal` de Quotations y no se reimplementa en Siigo**, y `canSendWhatsApp` de la lista sale de ese mismo
+  `CanSendAsync` (dos canales sin elección guardada → `false`). Ni el PDF, ni la URL pública, ni el teléfono entran a logs, `call_failures`,
+  auditoría ni respuestas (`SiigoNoLeakTests`). La copia pública de Zenvia vive en `invoices/` del bucket público con clave aleatoria y su
+  lifecycle de 1 día **se crea a mano** (`npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1`):
+  sin esa regla las copias se quedan para siempre abiertas a quien tenga la URL. Por Meta Quotations no publica copia, pero Mensajería deja una copia **privada** del adjunto en el hilo (por tenant, misma retención que cualquier adjunto saliente); sólo Zenvia necesita la copia pública. Mandar una factura no recuerda la elección de canal del tenant.
 
 - **La facturación masiva es una tanda con worker, no un bucle en el request** (`siigo.invoice_batches` e `invoice_batch_items`,
   `SiigoInvoiceBatchWorker`). Cada pedido de la tanda lo factura el mismo `IssueSiigoInvoiceHandler` de siempre, así que el candado por

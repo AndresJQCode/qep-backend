@@ -457,6 +457,7 @@ internal sealed record SentTemplate(MessagingSender Sender, SendTarget Target, T
 
 internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid, bool Voice = true);
 
+internal sealed record SentSticker(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid);
 internal sealed record SentVideo(MessagingSender Sender, SendTarget Target, string MediaId, string? Caption, string CallbackData, string? ContextWamid);
 
 internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
@@ -537,6 +538,18 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
     }
 
     public List<SentVideo> VideoSends { get; } = [];
+
+    public List<SentSticker> StickerSends { get; } = [];
+
+    /// <summary>Como <see cref="SendImageAsync"/>, sin caption: un sticker no lo lleva.</summary>
+    public Task<SendResult> SendStickerAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        StickerSends.Add(new SentSticker(sender, target, mediaId, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
 
     public Task<SendResult> SendInteractiveAsync(
         MessagingSender sender, SendTarget target, InteractiveSend send, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>

@@ -71,6 +71,7 @@ public static class PermissionVocabulary
         ["Siigo"] = "Siigo",
         ["Recursos humanos"] = "Recursos humanos",
         ["Nómina"] = "Nómina",
+        ["Agenda"] = "Agenda",
         ["Tienda"] = "Tienda",
         ["uncategorized"] = "Sin categoría",
     };

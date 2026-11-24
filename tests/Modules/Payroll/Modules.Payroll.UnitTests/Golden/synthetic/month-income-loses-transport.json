@@ -48,8 +48,8 @@
       { "code": "transport_allowance", "amount": 0 },
       { "code": "income:00000000-0000-0000-0002-000000000001:0", "amount": 501811 },
       { "code": "ibc", "amount": 2001811 },
-      { "code": "health_employee", "amount": 80100 },
-      { "code": "pension_employee", "amount": 80100 },
+      { "code": "health_employee", "amount": 80072 },
+      { "code": "pension_employee", "amount": 80072 },
       { "code": "health_employer", "amount": 0 },
       { "code": "pension_employer", "amount": 240300 },
       { "code": "arl", "amount": 10500 },
@@ -61,7 +61,7 @@
       { "code": "premium", "amount": 166751 },
       { "code": "vacation", "amount": 83476 }
     ],
-    "net": 1841611,
+    "net": 1841667,
     "employerCost": 2769707
   },
   "notes": [
@@ -70,8 +70,8 @@
     "income:0 Comisiones = round(501811) = 501 811 (salarial)",
     "transport_allowance = 0: ingreso para el tope 3 501 811 > 3 501 810 (2 × SMMLV)",
     "SalDev_m = 0 + 1500000 + 0 + 501811 = 2001811; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(2001811) = 2 001 811",
-    "health_employee = techo100(2 001 811 × 0,04 = 80072.44) − 0 = 80 100",
-    "pension_employee = techo100(2 001 811 × 0,04) − 0 = 80 100",
+    "health_employee = al peso(2 001 811 × 0,04 = 80072.44) − 0 = 80 072",
+    "pension_employee = al peso(2 001 811 × 0,04) − 0 = 80 072",
     "solidarity_fund: ≈1.7134 SMMLV < 4 y sin retención previa ⇒ sin línea",
     "exonerado = true (empresa exonerada = true; ingreso salarial del mes 3 501 811 < 17 509 050)",
     "health_employer = 0 (exonerado)",

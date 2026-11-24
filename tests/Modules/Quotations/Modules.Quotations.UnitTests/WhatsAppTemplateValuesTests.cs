@@ -19,6 +19,14 @@ public sealed class WhatsAppTemplateValuesTests
         Assert.Equal("30 de septiembre de 2026", WhatsAppTemplateValues.ValidUntil(new DateOnly(2026, 9, 30)));
 
     [Fact]
+    public void InvoiceDocumentFileNameCarriesTheInvoiceNumber() =>
+        Assert.Equal("Factura-FV-1-123.pdf", WhatsAppTemplateValues.InvoiceDocumentFileName("FV-1-123"));
+
+    [Fact]
     public void DocumentFileNameCarriesTheQuotationNumber() =>
         Assert.Equal("Cotizacion-COT-000123.pdf", WhatsAppTemplateValues.DocumentFileName("COT-000123"));
+
+    [Fact]
+    public void InSpainTheDocumentIsABudget() =>
+        Assert.Equal("Presupuesto-COT-000123.pdf", WhatsAppTemplateValues.DocumentFileName("COT-000123", "es-ES"));
 }

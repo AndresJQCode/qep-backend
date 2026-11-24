@@ -88,6 +88,20 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal(("ES", "NIF"), (Assert.Single(_customers.Calls).Country, _customers.Calls[0].IdentificationType));
     }
 
+    // Spec 2026-11-22: el país del tenant nuevo es el del distribuidor guardado, nunca el que traiga el Data del choice.
+    [Fact]
+    public async Task NewTenantIsCheckedAndRegisteredWithTheDistributorCountry()
+    {
+        var token = InvitationTokens.Generate();
+        _world.SeedInvited("B12345678", tokenHash: InvitationTokens.HashOf(token), identificationType: "NIF", country: "ES");
+
+        await Service().AcceptAsync(
+            token, _user, "ana@distri.co", new NewTenantChoice(NewTenantData with { Country = "FR" }), "trace-accept", Ct);
+
+        Assert.Equal("ES", Assert.Single(_tenancy.Registered).Data.Country);
+        Assert.Equal("ES", Assert.Single(_tenancy.Checked).Country);
+    }
+
     [Fact]
     public async Task NewTenantCreatesTheReservedTenantSupplierAndCustomerAndActivates()
     {
@@ -95,9 +109,10 @@ public sealed class DistributorInvitationServiceTests
 
         var reserved = _invitation.Invitation.ReservedTenantId;
         var registered = Assert.Single(_tenancy.Registered);
-        Assert.Equal((reserved, _user, NewTenantData), (registered.TenantId, registered.Owner, registered.Data));
+        var expectedData = NewTenantData with { Country = "CO" };
+        Assert.Equal((reserved, _user, expectedData), (registered.TenantId, registered.Owner, registered.Data));
         Assert.Equal(WholesaleModuleSets.InvitedDistributor, registered.Modules);
-        Assert.Equal([NewTenantData], _tenancy.Checked);
+        Assert.Equal([expectedData], _tenancy.Checked);
         var supplier = Assert.Single(_suppliers.Calls);
         Assert.Equal((reserved, _world.Tenant, "Mayorista Central", _world.Company, _user),
             (supplier.DistributorTenantId, supplier.WholesalerTenantId, supplier.WholesalerName, supplier.Company, supplier.Actor));
@@ -109,7 +124,7 @@ public sealed class DistributorInvitationServiceTests
             (DistributorStatus.Active, (Guid?)reserved, (Guid?)_customers.CustomerId, (Guid?)_user),
             (_invitation.Status, _invitation.DistributorTenantId, _invitation.CustomerId, _invitation.Invitation.AcceptedByUserId));
         Assert.Equal((reserved, "Distri Norte", true), (result.TenantId, result.TenantName, result.Created));
-        Assert.Equal(["catalog", "customers", "companies", "quotations", "orders", "reporting", "suppliers", "purchases"], result.EnabledModules);
+        Assert.Equal(["catalog", "suppliers", "purchases"], result.EnabledModules);
         var audit = Assert.Single(_world.Audit.Entries);
         Assert.Equal((_world.Tenant, _user, "wholesale.distributor.accepted", "distributor"),
             (audit.TenantId, audit.ActorId, audit.Action, audit.ResourceType));

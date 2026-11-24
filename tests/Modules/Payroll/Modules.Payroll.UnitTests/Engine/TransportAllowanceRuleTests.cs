@@ -54,8 +54,69 @@ public sealed class TransportAllowanceRuleTests
         var transport = EngineTestData.Earnings(input).Transport;
 
         Assert.Equal(0m, transport.Line.Amount);
-        Assert.Equal(0m, transport.Raw);
+        Assert.Equal(124_547.5m, transport.Raw);
         Assert.Equal("El ingreso del mes supera 2 SMMLV", transport.Line.Trace.Note);
+    }
+
+    // Decision 2 + CST art. 149: the month went over the cap in the second half; what the first paid is never deducted.
+    [Fact]
+    public void TheSecondHalfNeverClawsBackWhatTheFirstPaid()
+    {
+        var input = WithCommissions(WithCapBase(EngineTestData.Input(SecondHalf, 3_000_000m), TransportCapBase.SalaryAndSalaryIncome), 600_000m) with
+        {
+            Prior = MonthAccumulators.Empty with
+            {
+                WorkedDays = 15, SalaryRaw = 1_500_000m, Salary = 1_500_000m, TransportRaw = 124_547.5m, Transport = 124_548m,
+            },
+        };
+
+        var transport = EngineTestData.Earnings(input).Transport;
+
+        Assert.Equal(0m, transport.Line.Amount);
+        Assert.Equal(
+            "El ingreso del mes supera 2 SMMLV: lo pagado en la primera quincena no se descuenta (CST art. 149)",
+            transport.Line.Trace.Note);
+        Assert.Contains(transport.Line.Trace.Inputs, item => item.Name == "Pagado en la primera quincena" && Equals(item.Value, 124_548m));
+    }
+
+    // First half over the cap (3 600 000), salary down to 3 000 000 on the 16th: the month qualifies and pays all 30 days.
+    [Fact]
+    public void AMonthThatEndsUnderTheCapPaysTheFirstHalfToo()
+    {
+        SalarySegmentSource[] salaries =
+        [
+            new(new DateOnly(2025, 1, 1), 3_600_000m, Teleworker: false),
+            new(new DateOnly(2026, 11, 16), 3_000_000m, Teleworker: false),
+        ];
+        var first = EngineTestData.Earnings(EngineTestData.Input(FirstHalf, 3_600_000m)).Transport;
+        var second = EngineTestData.Input(SecondHalf) with
+        {
+            Salaries = salaries,
+            Prior = MonthAccumulators.Empty with { WorkedDays = 15, TransportRaw = first.Raw, Transport = first.Line.Amount },
+        };
+
+        Assert.Equal(0m, first.Line.Amount);
+        Assert.Equal(249_095m, EngineTestData.Earnings(second).Transport.Line.Amount);
+    }
+
+    // Characterization: overtime and surcharges never count against the cap.
+    [Fact]
+    public void OvertimeAndSurchargesNeverCountAgainstTheCap()
+    {
+        var input = WithCapBase(EngineTestData.Input(FirstHalf, 3_000_000m), TransportCapBase.SalaryAndSalaryIncome) with
+        {
+            Overtime =
+            [
+                EngineTestData.Overtime(SystemConceptKey.SundaySurcharge, 40m),
+                EngineTestData.Overtime(SystemConceptKey.ExtraDay, 20m),
+            ],
+        };
+
+        var chain = EngineTestData.Earnings(input);
+
+        Assert.True(chain.Month.MonthSalaryIncome > 3_501_810m);
+        Assert.Equal(3_000_000m, chain.Month.TransportCapIncome);
+        Assert.Equal(124_548m, chain.Transport.Line.Amount);
     }
 
     [Fact]
@@ -99,6 +160,20 @@ public sealed class TransportAllowanceRuleTests
 
         Assert.Equal(0m, transport.Line.Amount);
         Assert.Equal("Se paga en la segunda quincena", transport.Line.Trace.Note);
+    }
+
+    // Monthly pays in the last half worked: with the contract ending on the 10th there is no second half for this employee.
+    [Fact]
+    public void MonthlyPaysWhatItAccruedWhenTheContractEndsInTheFirstHalf()
+    {
+        var input = EngineTestData.Input(FirstHalf) with { ContractEndedOn = new DateOnly(2026, 11, 10) };
+        input = input with { Settings = input.Settings with { TransportFrequency = TransportFrequency.Monthly } };
+
+        var transport = EngineTestData.Earnings(input).Transport;
+
+        // 249 095 / 30 x 10 = 83 031.67 -> 83 032
+        Assert.Equal(83_032m, transport.Line.Amount);
+        Assert.Equal("El contrato termina en esta quincena: se paga lo causado del mes", transport.Line.Trace.Note);
     }
 
     [Fact]
