@@ -176,4 +176,63 @@ public sealed class PayrollEligibilityTests
         Assert.Equal(new DateOnly(2026, 11, 9), result.LastCoveredDay);
         Assert.Equal(2_500_000m, result.SalaryAtEnd!.Amount);
     }
+
+    private static Vacation VacationOn(DateOnly start, DateOnly end) => Vacation.Create(
+        VacationId.New(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), VacationOrigin.Qep, start, end, 5, end.AddDays(1), null, [],
+        new DateTimeOffset(2026, 11, 23, 15, 0, 0, TimeSpan.Zero));
+
+    [Fact]
+    public void AVacationAfterTheContractEndBlocks()
+    {
+        var contract = Contract(endedOn: new DateOnly(2026, 11, 12));
+        var result = Evaluate(Employee(contracts: contract));
+
+        var blocked = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 20))]);
+
+        Assert.Equal(EligibilityStatus.Blocked, blocked.Status);
+        Assert.Equal([BlockerReason.VacationOutsideContract], blocked.Blockers);
+        Assert.Same(contract, blocked.Contract);
+    }
+
+    [Fact]
+    public void AVacationBeforeTheContractStartBlocks()
+    {
+        var result = Evaluate(Employee(contracts: Contract(startDate: new DateOnly(2026, 11, 8))));
+
+        var blocked = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 10))]);
+
+        Assert.Equal([BlockerReason.VacationOutsideContract], blocked.Blockers);
+    }
+
+    [Fact]
+    public void AVacationInsideTheContractChangesNothing()
+    {
+        var result = Evaluate(Employee(contracts: Contract(endedOn: new DateOnly(2026, 11, 12))));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 12))]);
+
+        Assert.Equal(result, same);
+        Assert.Equal(result, PayrollEligibility.WithVacations(result, []));
+    }
+
+    [Fact]
+    public void TheVacationBlockerJoinsTheOthers()
+    {
+        var result = Evaluate(Employee(contracts: Contract(endedOn: new DateOnly(2026, 11, 12), assignments: [])));
+
+        var blocked = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 20))]);
+
+        Assert.Equal([BlockerReason.MissingWorkplace, BlockerReason.VacationOutsideContract], blocked.Blockers);
+    }
+
+    [Fact]
+    public void AnExcludedEmployeeIsReturnedAsIs()
+    {
+        var result = Evaluate(Employee(subtype: "Apprentice"));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 20))]);
+
+        Assert.Same(result, same);
+        Assert.Equal(EligibilityStatus.Excluded, same.Status);
+    }
 }

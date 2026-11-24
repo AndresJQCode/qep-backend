@@ -58,4 +58,34 @@ public sealed class VacationDaysRuleTests
         Assert.Equal(VacationDaysOutcome.None, outcome);
         Assert.Empty(outcome.Ranges);
     }
+
+    [Fact]
+    public void TheRangeIsCutAtTheDaysTheContractCovers()
+    {
+        // Only the range that cuts a salary segment is limited to the covered days: the counted days are what the planner trims.
+        var input = EngineTestData.Input(new DateOnly(2026, 12, 16), 3_000_000m) with
+        {
+            ContractEndedOn = new DateOnly(2026, 12, 20),
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2026, 12, 20), paidHere: false)],
+        };
+
+        var outcome = Compute(input);
+
+        Assert.Equal([new DateRange(new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 20))], outcome.Ranges);
+        Assert.Equal(5, outcome.Days);
+    }
+
+    [Fact]
+    public void TheRangeStartsAtTheContractStart()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 12, 1), 3_000_000m) with
+        {
+            ContractStart = new DateOnly(2026, 12, 10),
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 5), new DateOnly(2026, 12, 14), paidHere: false)],
+        };
+
+        var outcome = Compute(input);
+
+        Assert.Equal([new DateRange(new DateOnly(2026, 12, 10), new DateOnly(2026, 12, 14))], outcome.Ranges);
+    }
 }

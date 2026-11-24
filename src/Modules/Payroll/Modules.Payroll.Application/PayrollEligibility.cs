@@ -115,6 +115,33 @@ public static class PayrollEligibility
             lastCovered);
     }
 
+    /// <summary>
+    /// A vacation that starts before the contract or ends after it leaves days outside it (Hr shortened the contract after the
+    /// vacation was registered): the employee is blocked until the vacation is corrected. An excluded employee is returned as is.
+    /// </summary>
+    public static EligibilityResult WithVacations(EligibilityResult result, IEnumerable<Vacation> employeeVacations)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(employeeVacations);
+        if (result.Status == EligibilityStatus.Excluded || result.Contract is not { } contract)
+        {
+            return result;
+        }
+
+        var outside = employeeVacations.Any(vacation =>
+            vacation.StartDate < contract.StartDate || (contract.EndedOn is { } ended && vacation.EndDate > ended));
+        if (!outside)
+        {
+            return result;
+        }
+
+        return result with
+        {
+            Status = EligibilityStatus.Blocked,
+            Blockers = [.. result.Blockers, BlockerReason.VacationOutsideContract],
+        };
+    }
+
     private static EligibilityResult Excluded(ExclusionReason reason, HrContractSource? contract) =>
         new(EligibilityStatus.Excluded, reason, [], contract, null, null, null);
 }

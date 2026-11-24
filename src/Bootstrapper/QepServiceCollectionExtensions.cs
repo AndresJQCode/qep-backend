@@ -715,6 +715,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.ToggleRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
             Modules.Payroll.Application.ToggleRecurringConceptHandler>();
+        services.AddScoped<Modules.Payroll.Application.VacationInputBuilder>();
         services.AddScoped<Modules.Payroll.Application.LiquidationPlanner>();
         services.AddScoped<Modules.Payroll.Application.PeriodApprovals>();
         services.AddScoped<

@@ -124,4 +124,24 @@ public sealed class VacationAdvanceRuleTests
         Assert.Empty(outcome.Lines);
         Assert.Empty(outcome.Photos);
     }
+
+    [Fact]
+    public void TwoVacationsOfTheSameQuincenaShareTheNetOfIt()
+    {
+        // One inside the quincena (advances nothing) and one that leaves it: both are photographed, and the net is spent once.
+        var inside = EngineTestData.Vacation(new DateOnly(2027, 1, 4), new DateOnly(2027, 1, 5), paidHere: true);
+        var leaving = EngineTestData.Vacation(new DateOnly(2027, 1, 12), new DateOnly(2027, 2, 1), paidHere: true);
+        var input = EngineTestData.Input(January, 3_000_000m) with { Vacations = [inside, leaving] };
+
+        var outcome = VacationAdvanceRule.Compute(input, 100_000m);
+
+        Assert.Equal([inside.VacationId, leaving.VacationId], outcome.Photos.Select(photo => photo.VacationId));
+        Assert.Empty(outcome.Photos[0].Months);
+        Assert.Equal(60_000m, Amount(outcome, "health_employee_vacation_advance"));
+        Assert.Equal(40_000m, Amount(outcome, "pension_employee_vacation_advance"));
+        Assert.Equal(
+            [new VacationMonthAdvance(new DateOnly(2027, 1, 1), 1_500_000m, 60_000m, 40_000m, 0m),
+             new VacationMonthAdvance(new DateOnly(2027, 2, 1), 100_000m, 0m, 0m, 0m)],
+            outcome.Photos[1].Months);
+    }
 }

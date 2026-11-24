@@ -15,7 +15,8 @@ public sealed class PeriodComposer(
     PayrollCompanies companies,
     ConceptCatalog catalog,
     RecurringConceptComposer recurring,
-    PeriodApprovals approvals)
+    PeriodApprovals approvals,
+    IVacationRepository vacations)
 {
     private sealed record View(
         IReadOnlyList<PayrollEmployeeRowDto> Rows,
@@ -123,6 +124,9 @@ public sealed class PeriodComposer(
         var employees = await hr.ListEmployeesAsync(
             period.TenantId, period.CompanyId, period.StartDate, period.EndDate, cancellationToken);
         var storedByEmployee = stored.ToDictionary(result => result.EmployeeId);
+        var vacationsByEmployee = (await vacations.ListOverlappingAsync(
+                period.TenantId, period.CompanyId, new DateOnly(period.StartDate.Year, period.StartDate.Month, 1), period.EndDate, cancellationToken))
+            .ToLookup(item => item.EmployeeId);
 
         var rows = new List<PayrollEmployeeRowDto>(employees.Count);
         var excluded = new List<ExcludedEmployeeDto>();
@@ -130,7 +134,8 @@ public sealed class PeriodComposer(
         foreach (var employee in employees)
         {
             var fullName = FullNameOf(employee.FirstName, employee.LastName);
-            var eligibility = PayrollEligibility.Evaluate(employee, period.StartDate, period.EndDate, smmlv);
+            var eligibility = PayrollEligibility.WithVacations(
+                PayrollEligibility.Evaluate(employee, period.StartDate, period.EndDate, smmlv), vacationsByEmployee[employee.EmployeeId]);
             if (eligibility.Status == EligibilityStatus.Excluded)
             {
                 excluded.Add(new ExcludedEmployeeDto(
