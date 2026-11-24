@@ -588,6 +588,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
   de Siigo, Quotations y Pos en verde sobre el merge; integración sin correr salvo `SiigoNoLeakTests`. El selector
   («Enviar el descuento aparte», paso «Documento») se mergeó a `develop` de `qep-frontend` (`641b41e7`, sin push, 2026-11-23). Decisiones del owner abiertas: ver «Decisiones del owner pendientes».
 
+- 2026-11-24 — Mergeado a `develop` (`d264be2a0`, `--no-ff`, sin push) **retención por ítem de Siigo en los pagos**
+  (`fix/siigo-retencion-por-linea`, sin spec: arreglo chico). ReteFuente viaja en los `taxes` de cada ítem y Siigo la redondea ítem por ítem,
+  QEP sobre la base entera: un pedido real de 8 líneas dio 20.595.927,31 contra 20.595.927,33 y Siigo rechazó con `invalid_total_payments`.
+  `SiigoWithholdingInput.Percentage` llega al armador, que corrige los pagos sólo si la diferencia es de redondeo (hasta un peso). Unitarias de
+  Siigo (311), Quotations (2.437) en verde; Bootstrapper con 1 falla preexistente de Agenda
+  (`SchedulingReminderRecipientsTests.ACustomerWithoutAPhoneComesBackWithoutIt`, falla igual en `develop` limpio); integración sin correr. **Sin
+  probar contra Siigo real.** Abiertos: el `tax_base` de un obsequio va con 6 decimales y Siigo lo rechazó con `invalid_amount`
+  (`items[n].tax_base`) en una prueba local; ReteICA no se corrige.
+
 - 2026-11-23 — Mergeado a `develop` (`02e59790c`, `--no-ff`, sin push) **parámetros legales de RRHH y nómina desde la consola
   del operador, backend** (`feature/legal-parameters-console`; spec `2026-11-22-parametros-legales-consola-operador-design.md`,
   corregido contra el código en la rama). Tres bloques con revisión cada uno, revisión fuerte de la rama y su tanda de
