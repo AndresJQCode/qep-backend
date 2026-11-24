@@ -60,7 +60,8 @@ public static class EngineInputFactory
             Incomes(mine, concepts),
             Deductions(mine, concepts),
             RecurringOf(employee.EmployeeId, recurring, appliedBefore, retiredConcepts, concepts),
-            prior);
+            prior,
+            []);
     }
 
     private static List<OvertimeInput> Overtime(List<PeriodInput> inputs, ConceptCatalogSnapshot concepts) => inputs

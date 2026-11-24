@@ -9,4 +9,6 @@ public sealed record EmployeeLiquidation(
     IReadOnlyList<PayrollLine> Lines,
     PayrollSummary Summary,
     MonthAccumulators Month,
-    string EngineVersion);
+    string EngineVersion,
+    int VacationDays,
+    IReadOnlyList<VacationPhoto> VacationPhotos);

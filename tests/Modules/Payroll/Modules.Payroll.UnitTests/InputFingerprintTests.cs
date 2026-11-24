@@ -21,6 +21,29 @@ public sealed class InputFingerprintTests
         Assert.Matches(new Regex("^[0-9a-f]{64}$"), first);
     }
 
+    // Review focus 1: the fingerprint saved by every period liquidated before vacations existed must still match, or all of them
+    // would light up «sourceChanged». The literal was taken from the code before EngineInput gained Vacations.
+    [Fact]
+    public void NoVacationsKeepsTodaysFingerprint()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 11, 1), 2_500_000m);
+
+        Assert.Empty(input.Vacations);
+        Assert.Equal("125cf020cd4c40255e43dd04984d08a9dc7c1f2eb8884a6f0dc46c5738d258d4", InputFingerprint.Of(input));
+    }
+
+    [Fact]
+    public void AVacationChangesIt()
+    {
+        var input = EngineTestData.Input(Day);
+        var withVacation = input with
+        {
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 11, 12), new DateOnly(2026, 11, 20), paidHere: true)],
+        };
+
+        Assert.NotEqual(InputFingerprint.Of(input), InputFingerprint.Of(withVacation));
+    }
+
     [Fact]
     public void TheLegalSnapshotDoesNotChangeIt()
     {

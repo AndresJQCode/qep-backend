@@ -88,7 +88,9 @@ internal sealed class EmployeeResultRow
             JsonSerializer.Deserialize<List<PayrollLine>>(LinesJson, PayrollJson.Options)!,
             JsonSerializer.Deserialize<PayrollSummary>(SummaryJson, PayrollJson.Options)!,
             JsonSerializer.Deserialize<MonthAccumulators>(MonthJson, PayrollJson.Options)!,
-            EngineVersion),
+            EngineVersion,
+            0,
+            []),
         Fingerprint,
         ParseApplied(RecurringAppliedJson));
 

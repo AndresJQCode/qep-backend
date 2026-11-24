@@ -20,7 +20,10 @@ public static class SalaryRule
     private const string Formula =
         "redondeo al peso(Σ salario mensual ÷ 30 × días de cada tramo, acumulado del mes) − lo pagado en la primera quincena";
 
-    public static SalaryOutcome Compute(EngineInput input, WorkedDays worked)
+    public static SalaryOutcome Compute(EngineInput input, WorkedDays worked) =>
+        Compute(input, worked, VacationDaysOutcome.None);
+
+    public static SalaryOutcome Compute(EngineInput input, WorkedDays worked, VacationDaysOutcome vacations)
     {
         var records = input.Salaries.OrderBy(record => record.EffectiveDate).ToList();
         if (records.Count == 0 || worked.Days <= 0)
@@ -45,14 +48,18 @@ public static class SalaryRule
             }
         }
 
+        // Vacation days are paid by the vacation line, so the segments are cut on the days actually worked.
+        var workedPieces = pieces.SelectMany(piece => CutOut(piece, vacations.Ranges)).ToList();
+        var workedDays = worked.Days - vacations.Days;
+
         // Each segment counts its real days and the last one absorbs the difference, so the segments always add up to the worked days.
-        var segments = new List<SalarySegment>(pieces.Count);
+        var segments = new List<SalarySegment>(workedPieces.Count);
         var assigned = 0;
-        for (var index = 0; index < pieces.Count; index++)
+        for (var index = 0; index < workedPieces.Count; index++)
         {
-            var piece = pieces[index];
-            var days = index == pieces.Count - 1
-                ? Math.Max(0, worked.Days - assigned)
+            var piece = workedPieces[index];
+            var days = index == workedPieces.Count - 1
+                ? Math.Max(0, workedDays - assigned)
                 : piece.To.DayNumber - piece.From.DayNumber + 1;
             assigned += days;
             segments.Add(new SalarySegment(piece.From, piece.To, days, piece.Source.MonthlyAmount));
@@ -63,7 +70,12 @@ public static class SalaryRule
         var amount = PayrollRounding.ToPeso(input.Prior.SalaryRaw + raw) - input.Prior.Salary;
 
         var last = pieces[^1].Source;
-        var inputs = new List<TraceInput> { new("Días trabajados", worked.Days) };
+        var inputs = new List<TraceInput> { new("Días trabajados", workedDays) };
+        if (vacations.Days > 0)
+        {
+            inputs.Add(new TraceInput("Días de vacaciones", vacations.Days));
+        }
+
         inputs.AddRange(segments.Select((segment, position) => new TraceInput($"Tramo {position + 1}", segment)));
         inputs.Add(new TraceInput("Salario bruto acumulado de la primera quincena", input.Prior.SalaryRaw));
         inputs.Add(new TraceInput("Salario pagado en la primera quincena", input.Prior.Salary));
@@ -76,5 +88,31 @@ public static class SalaryRule
             null,
             new LineTrace(Formula, inputs, [], null));
         return new SalaryOutcome(line, raw, last.MonthlyAmount, last.Teleworker, last.EffectiveDate, segments);
+    }
+
+    private static IEnumerable<(DateOnly From, DateOnly To, SalarySegmentSource Source)> CutOut(
+        (DateOnly From, DateOnly To, SalarySegmentSource Source) piece,
+        IReadOnlyList<DateRange> ranges)
+    {
+        var from = piece.From;
+        foreach (var range in ranges)
+        {
+            if (range.To < from || range.From > piece.To)
+            {
+                continue;
+            }
+
+            if (range.From > from)
+            {
+                yield return (from, range.From.AddDays(-1), piece.Source);
+            }
+
+            from = range.To.AddDays(1);
+        }
+
+        if (from <= piece.To)
+        {
+            yield return (from, piece.To, piece.Source);
+        }
     }
 }

@@ -44,6 +44,23 @@ public sealed class PayrollEngineTests
     }
 
     [Fact]
+    public void WorkedDaysExcludeVacationDays()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 12, 16), 3_000_000m) with
+        {
+            Prior = MonthAccumulators.Empty with { WorkedDays = 13 },
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), paidHere: false)],
+        };
+
+        var result = PayrollEngine.Liquidate(input);
+
+        Assert.Equal(0, result.WorkedDays);
+        Assert.Equal(15, result.VacationDays);
+        Assert.Equal(13, result.Month.WorkedDays);
+        Assert.Equal(0m, Amount(result, "salary"));
+    }
+
+    [Fact]
     public void TheSummaryIsDerivedFromTheLines()
     {
         var input = EngineTestData.Input(new DateOnly(2026, 8, 1), 2_100_000m) with

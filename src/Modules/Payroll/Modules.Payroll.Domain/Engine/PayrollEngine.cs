@@ -14,7 +14,8 @@ public static class PayrollEngine
         var prior = input.Prior;
 
         var worked = WorkedDaysRule.Compute(input.Period, input.ContractStart, input.ContractEndedOn);
-        var salary = SalaryRule.Compute(input, worked);
+        var vacations = VacationDaysRule.Compute(input, worked);
+        var salary = SalaryRule.Compute(input, worked, vacations);
         var incomes = IncomeRule.Compute(input);
         var recurring = RecurringConceptRule.Compute(input, worked);
         var salaryIncome = incomes.SalaryIncome + recurring.SalaryIncome;
@@ -23,7 +24,7 @@ public static class PayrollEngine
         // Overtime is computed before the month income because the month adds it; its base only needs the salary income.
         var overtime = OvertimeRule.Compute(input, salary.SalaryInForce, prior.SalaryIncome + salaryIncome);
         var month = MonthIncomeRule.Compute(input, salary.SalaryInForce, salaryIncome, overtime.Total, nonSalaryIncome);
-        var transport = TransportAllowanceRule.Compute(input, worked, salary, month);
+        var transport = TransportAllowanceRule.Compute(input, worked, salary, month, vacations);
 
         var ibc = IbcRule.Compute(input, worked, salary.Line.Amount, month);
         var employeeDeductions = EmployeeDeductionsRule.Compute(input, ibc);
@@ -51,8 +52,9 @@ public static class PayrollEngine
         lines.AddRange(provisions);
 
         var summary = PayrollSummary.From(lines);
+        var workedDays = worked.Days - vacations.Days;
         var accumulators = new MonthAccumulators(
-            prior.WorkedDays + worked.Days,
+            prior.WorkedDays + workedDays,
             prior.SalaryRaw + salary.Raw,
             prior.Salary + salary.Line.Amount,
             prior.TransportRaw + transport.Raw,
@@ -72,12 +74,14 @@ public static class PayrollEngine
 
         return new EmployeeLiquidation(
             input.EmployeeId,
-            worked.Days,
+            workedDays,
             worked.FinalSettlementPending,
             summary.Net < 0m,
             lines,
             summary,
             accumulators,
-            Version);
+            Version,
+            vacations.Days,
+            []);
     }
 }

@@ -94,8 +94,36 @@ internal static class EngineTestData
             [],
             [],
             [],
-            MonthAccumulators.Empty);
+            MonthAccumulators.Empty,
+            Vacations: []);
     }
+
+    /// <summary>
+    /// Unas vacaciones del empleado de prueba: 15 días hábiles, salario registrado desde 2025-01-01 y el IBC anterior tecleado.
+    /// <paramref name="paidHere"/> dice si la quincena que se prueba es la que las paga.
+    /// </summary>
+    public static VacationInput Vacation(
+        DateOnly start,
+        DateOnly end,
+        bool paidHere,
+        decimal salary = 3_000_000m,
+        decimal previousIbc = 3_000_000m,
+        VacationOrigin origin = VacationOrigin.Qep,
+        decimal? monthPay = null,
+        VacationAdvance? advance = null) =>
+        new(
+            Guid.NewGuid(),
+            origin,
+            start,
+            end,
+            15,
+            paidHere,
+            salary,
+            new DateOnly(2025, 1, 1),
+            previousIbc,
+            VacationIbcSource.Typed,
+            monthPay,
+            advance ?? VacationAdvance.Zero);
 
     public static OvertimeInput Overtime(SystemConceptKey key, decimal hours)
     {
@@ -113,20 +141,22 @@ internal static class EngineTestData
     public static EarningsChain Earnings(EngineInput input)
     {
         var worked = WorkedDaysRule.Compute(input.Period, input.ContractStart, input.ContractEndedOn);
-        var salary = SalaryRule.Compute(input, worked);
+        var vacations = VacationDaysRule.Compute(input, worked);
+        var salary = SalaryRule.Compute(input, worked, vacations);
         var incomes = IncomeRule.Compute(input);
         var recurring = RecurringConceptRule.Compute(input, worked);
         var salaryIncome = incomes.SalaryIncome + recurring.SalaryIncome;
         var nonSalaryIncome = incomes.NonSalaryIncome + recurring.NonSalaryIncome;
         var overtime = OvertimeRule.Compute(input, salary.SalaryInForce, input.Prior.SalaryIncome + salaryIncome);
         var month = MonthIncomeRule.Compute(input, salary.SalaryInForce, salaryIncome, overtime.Total, nonSalaryIncome);
-        var transport = TransportAllowanceRule.Compute(input, worked, salary, month);
-        return new EarningsChain(worked, salary, incomes, recurring, overtime, month, transport, salaryIncome, nonSalaryIncome);
+        var transport = TransportAllowanceRule.Compute(input, worked, salary, month, vacations);
+        return new EarningsChain(worked, vacations, salary, incomes, recurring, overtime, month, transport, salaryIncome, nonSalaryIncome);
     }
 }
 
 internal sealed record EarningsChain(
     WorkedDays Worked,
+    VacationDaysOutcome Vacations,
     SalaryOutcome Salary,
     IncomeOutcome Incomes,
     RecurringOutcome Recurring,

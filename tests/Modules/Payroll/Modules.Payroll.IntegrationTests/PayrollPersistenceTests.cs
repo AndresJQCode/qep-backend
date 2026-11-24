@@ -98,7 +98,7 @@ public sealed class PayrollPersistenceTests : IClassFixture<PayrollPersistenceTe
                 new LineTrace("techo100(IBC × 4 %)", [], [], "Exonerado")),
         ];
         var liquidation = new EmployeeLiquidation(
-            employeeId, 15, true, false, lines, PayrollSummary.From(lines), MonthAccumulators.Empty with { WorkedDays = 15 }, "2026.11.1");
+            employeeId, 15, true, false, lines, PayrollSummary.From(lines), MonthAccumulators.Empty with { WorkedDays = 15 }, "2026.11.1", 0, []);
         return new EmployeeResult(
             employeeId, "CC", "1020304050", name, "Analista", "Bodega - Principal", liquidation, "fp-" + name,
             new Dictionary<Guid, decimal> { [Commissions] = 100_000m });
