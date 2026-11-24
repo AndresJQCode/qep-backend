@@ -114,6 +114,11 @@ internal static class SiigoInvoiceSupport
             return SiigoErrorCodes.InvoiceTotalsMismatch;
         }
 
+        if (SiigoApiErrors.IsServiceUnavailable(errors))
+        {
+            return SiigoErrorCodes.InvoiceSiigoService;
+        }
+
         return errors.Any(error => string.Equals(error.Code, SiigoApiErrors.CredentialsRejected, StringComparison.Ordinal))
             ? SiigoErrorCodes.ConnectionUnavailable
             : "siigo.invoice.rejected";

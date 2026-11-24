@@ -14,6 +14,23 @@ public static partial class SiigoApiErrors
     /// el total que esperaba.</summary>
     public const string InvalidTotalPayments = "invalid_total_payments";
 
+    /// <summary>Los códigos con que Siigo avisa que un servicio suyo no está disponible (catálogo «Manejo de errores» de su documentación).
+    /// Llegan en un <b>400</b>, no en un 5xx, pero no dicen nada del dato enviado: es una caída de Siigo y se reintenta en unos minutos.
+    /// <c>unhandled_error</c> no entra: es un fallo sin clasificar y puede ser del dato.</summary>
+    private static readonly HashSet<string> ServiceCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "documents_service",
+        "payment_types_service",
+        "general_service",
+        "service_unavailable",
+        "request_timeout",
+    };
+
+    /// <summary>Si <b>todos</b> los errores son de servicio de Siigo. Uno solo de otro tipo (un dato rechazado) manda: el tenant tiene algo
+    /// que corregir y no se le dice que espere.</summary>
+    public static bool IsServiceUnavailable(IReadOnlyList<SiigoError> errors) =>
+        errors.Count > 0 && errors.All(error => ServiceCodes.Contains(error.Code));
+
     /// <summary>De a cuántos productos pide Siigo cada página del auto-vínculo.</summary>
     public const int ProductsPageSize = 100;
 

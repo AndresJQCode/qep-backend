@@ -80,6 +80,10 @@ public static class SiigoErrorCodes
     /// <summary>Siigo falló (5xx) o no se pudo llamar por algo que el tenant no puede corregir (configuración del servidor).</summary>
     public const string InvoiceUnavailable = "siigo.invoice.unavailable";
 
+    /// <summary>Siigo contestó un error de servicio (<c>documents_service</c>, <c>general_service</c>…): la factura no salió por una caída de
+    /// Siigo, no por la plataforma ni por los datos del pedido. Reintenta en unos minutos.</summary>
+    public const string InvoiceSiigoService = "siigo.invoice.siigo_service";
+
     /// <summary>404: la falla de llamada a Siigo que se pide no existe en el tenant (o ya expiró a los 7 días).</summary>
     public const string CallFailureNotFound = "siigo.call_failure.not_found";
 

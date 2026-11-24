@@ -61,6 +61,9 @@ public sealed class StampSiigoInvoiceHandler(
             case SiigoStampOutcome.Rejected rejected when rejected.Errors.Any(error => error.Code == SiigoApiErrors.CredentialsRejected):
                 // La clave de acceso ya no sirve: no es un rechazo de la DIAN, es la conexión.
                 throw new ResourceConflictException(SiigoErrorCodes.ConnectionUnavailable, "Siigo rejected the credentials of the connection.");
+            case SiigoStampOutcome.Rejected rejected when SiigoApiErrors.IsServiceUnavailable(rejected.Errors):
+                // Un servicio de Siigo caído no es un rechazo de la DIAN: la factura sigue Created y se reintenta.
+                throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, "Siigo service is unavailable; try sending the invoice to the DIAN again.");
             case SiigoStampOutcome.Rejected rejected:
                 var errors = rejected.Errors.Count > 0
                     ? rejected.Errors

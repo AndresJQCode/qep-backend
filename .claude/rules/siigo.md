@@ -27,6 +27,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`error_detail` guarda los códigos de error de Siigo, no sus mensajes.** Siigo repite en el mensaje los valores que rechaza
   (documento, dirección, nombre del cliente) y la fila se guarda y se devuelve en el `GET`. La excepción es `invalid_total_payments`,
   cuyo mensaje es el total esperado. Lo amarra `SiigoNoLeakTests` (precedente: encontró que el mensaje se guardaba completo).
+- **Los errores de servicio de Siigo llegan como un 400, no como un 5xx** (catálogo «Manejo de errores» de su documentación; ejemplo real:
+  `{"Status":400,"Errors":[{"Code":"documents_service","Message":"Your request could not be completed…"}]}`). `documents_service`,
+  `payment_types_service`, `general_service`, `service_unavailable` y `request_timeout` son una caída de Siigo, no un dato mal enviado
+  (`SiigoApiErrors.IsServiceUnavailable`: sólo si **todos** los errores son de esos; uno de otro tipo manda). La factura queda `Rejected` con
+  `error_code = siigo.invoice.siigo_service` (la pantalla debe decir que es un problema de Siigo, no de la plataforma, y que reintente en unos
+  minutos); al sellar, es un 503 `siigo.unavailable` y la factura sigue `Created`. `unhandled_error` **no** entra: es un fallo sin clasificar.
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
