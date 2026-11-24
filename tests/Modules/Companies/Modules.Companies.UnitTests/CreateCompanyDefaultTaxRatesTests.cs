@@ -208,38 +208,6 @@ public sealed class CreateCompanyDefaultTaxRatesTests
         }
     }
 
-    private sealed class InMemoryCompanyRepository : ICompanyRepository
-    {
-        public List<Company> Companies { get; } = [];
-
-        public Task<IReadOnlyList<Company>> SearchAsync(
-            Guid tenantId,
-            string? search,
-            string? name,
-            string? taxId,
-            CompanyStatusFilter? status,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Company>>(Companies.Where(company => company.TenantId == tenantId).ToList());
-
-        public Task<Company?> FindAsync(Guid tenantId, CompanyId companyId, CancellationToken cancellationToken) =>
-            Task.FromResult(Companies.SingleOrDefault(company => company.TenantId == tenantId && company.Id == companyId));
-
-        public Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlySet<string>>(new HashSet<string>());
-
-        public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
-            Task.FromResult(false);
-
-        public void Add(Company company) => Companies.Add(company);
-
-        public void Remove(Company company) => Companies.Remove(company);
-    }
-
-    private sealed class NoOpUnitOfWork : ICompaniesUnitOfWork
-    {
-        public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => Task.FromResult(1);
-    }
-
     private sealed class NoOpAuditPublisher : ICompaniesAuditPublisher
     {
         public void Publish(
