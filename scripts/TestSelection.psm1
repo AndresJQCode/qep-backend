@@ -7,13 +7,17 @@ $script:CrossCuttingWarning = "Cambio transversal: conviene la corrida completa 
 $script:ClassPattern = '(?m)^(?:public|internal)\s+(?<mods>(?:(?:sealed|abstract|partial|static)\s+)*)class\s+(?<name>\w+)' +
     '(?:<[^>\r\n]*>)?(?:\s*\((?>[^()]+|\((?<p>)|\)(?<-p>))*(?(p)(?!))\))?(?:\s*:\s*(?<base>\w+))?'
 
+# Todo tipo de primer nivel: marca dónde termina cada clase y qué apoyo declara un archivo.
+$script:TypePattern = '(?m)^(?:public|internal)\s+(?:(?:sealed|abstract|partial|static|readonly)\s+)*' +
+    '(?:record(?:\s+(?:class|struct))?|class|struct|interface|enum)\s+(?<name>\w+)'
+
 function Get-ClassMap([hashtable]$Sources, [string]$ProjectDir) {
     $classes = @{}
     foreach ($path in $Sources.Keys) {
         $normalized = $path -replace '\\', '/'
         if (-not $normalized.StartsWith("$ProjectDir/")) { continue }
         $content = [string]$Sources[$path]
-        $hasFacts = $content -match '\[(Fact|Theory)\b'
+        $starts = @([regex]::Matches($content, $script:TypePattern) | ForEach-Object { $_.Index })
         foreach ($m in [regex]::Matches($content, $script:ClassPattern)) {
             $name = $m.Groups["name"].Value
             if (-not $classes.ContainsKey($name)) {
@@ -21,7 +25,10 @@ function Get-ClassMap([hashtable]$Sources, [string]$ProjectDir) {
             }
             $class = $classes[$name]
             if ($m.Groups["mods"].Value -match '\babstract\b') { $class.Abstract = $true }
-            if ($hasFacts) { $class.HasFacts = $true }
+            # Sólo cuentan las pruebas dentro de esta clase: un archivo puede declarar además un doble o un host.
+            $end = $content.Length
+            foreach ($start in $starts) { if ($start -gt $m.Index) { $end = $start; break } }
+            if ($content.Substring($m.Index, $end - $m.Index) -match '\[(Fact|Theory)\b') { $class.HasFacts = $true }
             if ($m.Groups["base"].Success) { $class.Base = $m.Groups["base"].Value }
             $class.Files += $normalized
         }
@@ -47,6 +54,20 @@ function Test-IsTestClass($Classes, [string]$Name) {
         if ($Classes[$Name].HasFacts) { return $true }
         $seen += $Name
         $Name = $Classes[$Name].Base
+    }
+    return $false
+}
+
+# ¿El archivo declara un tipo sin pruebas (propias ni en derivadas) que otro archivo del proyecto usa?
+function Test-DeclaresSharedSupport($Classes, [hashtable]$Sources, [string]$ProjectDir, [string]$File) {
+    if (-not $Sources.ContainsKey($File)) { return $false }
+    foreach ($m in [regex]::Matches([string]$Sources[$File], $script:TypePattern)) {
+        $name = $m.Groups["name"].Value
+        if ($Classes.ContainsKey($name) -and
+            (Get-WithDescendants $Classes $name | Where-Object { Test-IsTestClass $Classes $_ })) { continue }
+        foreach ($other in $Sources.Keys) {
+            if ($other -ne $File -and $other.StartsWith("$ProjectDir/") -and $Sources[$other] -cmatch "\b$name\b") { return $true }
+        }
     }
     return $false
 }
@@ -90,11 +111,11 @@ function Get-TestPlan {
             $declared = @($classes.Keys | Where-Object { $classes[$_].Files -contains $file })
             $targets = @($declared | ForEach-Object { Get-WithDescendants $classes $_ } |
                 Where-Object { -not $classes[$_].Abstract -and (Test-IsTestClass $classes $_) })
-            if ($targets) {
-                $selected += $targets
-            }
-            elseif ($file -notlike "*/packages.lock.json" -and ($file -notlike "*.cs" -or $TestSources.ContainsKey($file))) {
-                # Un .cs que ya no está en TestSources se borró: no hay nada que inferir ni que avisar.
+            $selected += $targets
+            # Un .cs que ya no está en TestSources se borró: no hay nada que inferir ni que avisar.
+            $unresolved = -not $targets -and $file -notlike "*/packages.lock.json" -and
+                ($file -notlike "*.cs" -or $TestSources.ContainsKey($file))
+            if ($unresolved -or (Test-DeclaresSharedSupport $classes $TestSources $dir $file)) {
                 [void]$warnings.Add("Apoyo de pruebas cambiado, sus clases no se infieren: $file")
             }
         }

@@ -66,6 +66,22 @@ Assert-Equal "migraciones en dos modulos" $true ($p.Warnings -contains "Cambio t
 $p = Plan @("src/Modules/Catalog/I/Persistence/Migrations/a.cs")
 Assert-Equal "migraciones en un modulo" $false ($p.Warnings -contains "Cambio transversal: conviene la corrida completa antes de seguir")
 
+$sources["$dir/SyncTests.cs"] = "public sealed class SyncTests`n{`n    [Fact]`n    public void C() { }`n}`n`npublic sealed class FakeAdmin`n{`n}"
+$sources["$dir/PushTests.cs"] = "public sealed class PushTests`n{`n    private readonly FakeAdmin _admin = new();`n    private SeedRow? _row;`n`n    [Fact]`n    public void D() { }`n}"
+$sources["$dir/SeedTests.cs"] = "public sealed class SeedTests`n{`n    [Fact]`n    public void E() { }`n}`n`ninternal sealed record SeedRow(int Id);"
+$sources["$dir/LocalTests.cs"] = "public sealed class LocalTests`n{`n    [Fact]`n    public void F() { }`n}`n`ninternal sealed class LocalDouble`n{`n}"
+
+$p = Plan @("$dir/SyncTests.cs")
+Assert-Equal "helper compartido: no entra al filtro" "FullyQualifiedName~.SyncTests." (FilterOf $p)
+Assert-Equal "helper compartido: aviso" "Apoyo de pruebas cambiado, sus clases no se infieren: $dir/SyncTests.cs" ($p.Warnings -join ";")
+
+$p = Plan @("$dir/SeedTests.cs")
+Assert-Equal "record compartido: aviso" "Apoyo de pruebas cambiado, sus clases no se infieren: $dir/SeedTests.cs" ($p.Warnings -join ";")
+
+$p = Plan @("$dir/LocalTests.cs")
+Assert-Equal "helper local: no entra al filtro" "FullyQualifiedName~.LocalTests." (FilterOf $p)
+Assert-Equal "helper local: sin aviso" 0 @($p.Warnings).Count
+
 $ok = [pscustomobject]@{ Total = 3; Passed = 3; Failed = 0 }
 Assert-Equal "paso verde" $true (Test-StepPassed -Result $ok -ExitCode 0)
 Assert-Equal "sin trx" $false (Test-StepPassed -Result $null -ExitCode 0)
