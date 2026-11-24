@@ -8,8 +8,7 @@ namespace Modules.Quotations.Application;
 /// regalo por variante, y puede coincidir con una línea pagada. Mismo orden que las líneas pagadas: altas, cambios, bajas.
 /// <para><c>desired == null</c> no toca nada: un frontend viejo no manda <c>gifts</c> y no debe borrar los guardados. Una
 /// lista vacía los quita todos.</para>
-/// <para>Un regalo nuevo toma el precio de lista del catálogo con <c>isRetail: true</c> (sin escalas, como
-/// <c>AddOrderGift</c>); cambiar la cantidad no lee el catálogo ni reprecia: el precio y la tasa quedan los guardados y el
+/// <para>Un regalo nuevo toma el precio de lista del catálogo con <c>isRetail: true</c> (sin escalas); cambiar la cantidad no lee el catálogo ni reprecia: el precio y la tasa quedan los guardados y el
 /// descuento sigue en 100 %.</para>
 /// </summary>
 internal static class OrderGiftEdits

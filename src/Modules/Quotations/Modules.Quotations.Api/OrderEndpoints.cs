@@ -162,22 +162,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Spec 2026-11-21: el regalo entra y sale por su propia ruta, no por la lista del PUT.
-        collection.MapPost("/{orderId:guid}/gifts", AddOrderGiftAsync)
-            .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Accepts<AddOrderGiftRequest>("application/json")
-            .Produces<OrderDetailResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        collection.MapDelete("/{orderId:guid}/gifts/{itemId:guid}", RemoveOrderGiftAsync)
-            .RequireAuthorization(OrdersPermissions.OrderManage)
-            .Produces<OrderDetailResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         // Spec 2026-11-15 §4: el asesor cambia o quita la cuenta de comprador de un pedido de la tienda, con If-Match
         // como la edición del pedido.
         collection.MapPut("/{orderId:guid}/buyer-account", SetOrderBuyerAccountAsync)
@@ -481,34 +465,6 @@ public static class OrderEndpoints
             .ToArray();
         var detail = await dispatcher.SendAsync(
             new AddOrderItemsCommand(tenantId, orderId, toAdd),
-            cancellationToken);
-        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
-    }
-
-    private static async Task<IResult> AddOrderGiftAsync(
-        Guid tenantId,
-        Guid orderId,
-        AddOrderGiftRequest request,
-        IRequestDispatcher dispatcher,
-        IOrderResponseComposer composer,
-        CancellationToken cancellationToken)
-    {
-        var detail = await dispatcher.SendAsync(
-            new AddOrderGiftCommand(tenantId, orderId, request.VariantId, request.Quantity),
-            cancellationToken);
-        return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
-    }
-
-    private static async Task<IResult> RemoveOrderGiftAsync(
-        Guid tenantId,
-        Guid orderId,
-        Guid itemId,
-        IRequestDispatcher dispatcher,
-        IOrderResponseComposer composer,
-        CancellationToken cancellationToken)
-    {
-        var detail = await dispatcher.SendAsync(
-            new RemoveOrderGiftCommand(tenantId, orderId, itemId),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
