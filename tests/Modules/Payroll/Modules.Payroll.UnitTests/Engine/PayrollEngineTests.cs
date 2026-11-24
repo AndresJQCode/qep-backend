@@ -81,6 +81,69 @@ public sealed class PayrollEngineTests
         Assert.Equal(2_200_000m, PayrollSummary.Sum([result.Summary]).VacationPay);
     }
 
+    // Review focus 3 and spec «Tope por neto en la posterior»: no earning, so the worker lines never go below a net of 0.
+    [Fact]
+    public void NoEarningsCapsTheWorkerLines()
+    {
+        var second = EngineTestData.Input(new DateOnly(2026, 12, 16), 3_000_000m) with
+        {
+            Prior = MonthAccumulators.Empty with { WorkedDays = 15, SalaryRaw = 1_500_000m, Salary = 1_500_000m },
+            Vacations =
+            [
+                EngineTestData.Vacation(
+                    new DateOnly(2026, 12, 16), new DateOnly(2027, 1, 5), paidHere: false,
+                    previousIbc: 1_750_905m, advance: new VacationAdvance(89_054m, 89_054m, 0m)),
+            ],
+        };
+        var first = EngineTestData.Input(new DateOnly(2026, 12, 1), 3_000_000m) with
+        {
+            Vacations =
+            [
+                EngineTestData.Vacation(new DateOnly(2026, 11, 20), new DateOnly(2026, 12, 20), paidHere: false, previousIbc: 1_750_905m),
+            ],
+        };
+
+        var secondResult = PayrollEngine.Liquidate(second);
+        var firstResult = PayrollEngine.Liquidate(first);
+
+        foreach (var code in new[] { "health_employee", "pension_employee" })
+        {
+            var line = secondResult.Lines.Single(item => item.Code == code);
+            Assert.Equal(0m, line.Amount);
+            Assert.Equal("Sin devengo en esta quincena: 5964 pesos no se retienen (decisión del owner)", line.Trace.Note);
+
+            var early = firstResult.Lines.Single(item => item.Code == code);
+            Assert.Equal(0m, early.Amount);
+            Assert.Equal("Sin devengo en esta quincena: lo que falta se retiene en la segunda quincena del mes", early.Trace.Note);
+        }
+
+        Assert.Equal(0m, secondResult.Summary.Net);
+        Assert.Equal(0m, firstResult.Summary.Net);
+        Assert.Equal(0m, secondResult.Month.HealthEmployee);
+    }
+
+    [Fact]
+    public void AdvanceLinesStayOutOfTheMonthAccumulators()
+    {
+        var input = EngineTestData.Input(new DateOnly(2027, 1, 1), 3_000_000m) with
+        {
+            Vacations = [EngineTestData.Vacation(new DateOnly(2027, 1, 12), new DateOnly(2027, 2, 1), paidHere: true)],
+        };
+
+        var result = PayrollEngine.Liquidate(input);
+
+        Assert.Equal(
+            ["health_employee", "pension_employee", "health_employee_vacation_advance", "pension_employee_vacation_advance"],
+            result.Lines.Where(line => line.Group == PayrollLineGroup.Deduction).Select(line => line.Code));
+        Assert.Equal(60_000m, result.Month.HealthEmployee);
+        Assert.Equal(60_000m, result.Month.PensionEmployee);
+        Assert.Equal(124_000m, result.Summary.HealthEmployee);
+        Assert.Equal(124_000m, result.Summary.PensionEmployee);
+        Assert.Equal(248_000m, result.Summary.TotalDeductions);
+        var photo = Assert.Single(result.VacationPhotos);
+        Assert.Equal(input.Vacations[0].VacationId, photo.VacationId);
+    }
+
     [Fact]
     public void TheSummaryIsDerivedFromTheLines()
     {

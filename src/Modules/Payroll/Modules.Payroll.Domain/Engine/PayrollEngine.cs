@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Modules.Payroll.Domain.Engine;
 
 /// <summary>
@@ -28,8 +30,12 @@ public static class PayrollEngine
         var vacationPay = VacationPayRule.Compute(input);
 
         var ibc = IbcRule.Compute(input, worked, vacations, salary.Line.Amount, month);
-        var employeeDeductions = EmployeeDeductionsRule.Compute(input, ibc);
-        var solidarity = SolidarityFundRule.Compute(input, salary.SalaryInForce, ibc);
+        var workerLines = new List<PayrollLine>(EmployeeDeductionsRule.Compute(input, ibc, vacations));
+        if (SolidarityFundRule.Compute(input, salary.SalaryInForce, ibc, vacations) is { } solidarity)
+        {
+            workerLines.Add(solidarity);
+        }
+
         var otherDeductions = DeductionRule.Compute(input);
         var employer = EmployerContributionsRule.Compute(input, ibc, month);
         var provisions = ProvisionsRule.Compute(
@@ -45,12 +51,17 @@ public static class PayrollEngine
         lines.AddRange(recurring.IncomeLines);
         lines.Add(ibc.Line);
         lines.AddRange(recurring.DeductionLines);
-        lines.AddRange(employeeDeductions);
-        if (solidarity is not null)
-        {
-            lines.Add(solidarity);
-        }
 
+        // The advance can only withhold what the net leaves, so it is computed after every other deduction.
+        var earned = lines.Where(line => line.Group == PayrollLineGroup.Earning).Sum(line => line.Amount);
+        var capped = CapWithoutEarnings(workerLines, lines, input.Period.Half, vacations.Days);
+        var deducted = lines.Where(line => line.Group == PayrollLineGroup.Deduction).Sum(line => line.Amount)
+            + capped.Sum(line => line.Amount)
+            + otherDeductions.Sum(line => line.Amount);
+        var advance = VacationAdvanceRule.Compute(input, Math.Max(0m, earned - deducted));
+
+        lines.AddRange(capped);
+        lines.AddRange(advance.Lines);
         lines.AddRange(otherDeductions);
         lines.AddRange(employer);
         lines.AddRange(provisions);
@@ -66,9 +77,10 @@ public static class PayrollEngine
             month.OvertimeMonth,
             month.SalaryIncomeMonth,
             month.NonSalaryIncomeMonth,
-            prior.HealthEmployee + summary.HealthEmployee,
-            prior.PensionEmployee + summary.PensionEmployee,
-            prior.SolidarityFund + summary.SolidarityFund,
+            // Only the regular lines: an advance is for the days of another quincena or month, not part of this month's withholding.
+            prior.HealthEmployee + Of(lines, "health_employee"),
+            prior.PensionEmployee + Of(lines, "pension_employee"),
+            prior.SolidarityFund + Of(lines, "solidarity_fund"),
             prior.HealthEmployer + summary.HealthEmployer,
             prior.PensionEmployer + summary.PensionEmployer,
             prior.Arl + summary.Arl,
@@ -86,6 +98,40 @@ public static class PayrollEngine
             accumulators,
             Version,
             vacations.Days,
-            []);
+            advance.Photos);
+    }
+
+    private static decimal Of(IEnumerable<PayrollLine> lines, string code) =>
+        lines.Where(line => line.Code == code).Sum(line => line.Amount);
+
+    // Spec «Tope por neto en la posterior»: a quincena with vacation days and no earning at all cannot leave a negative net, so
+    // the worker's social security lines go to 0. The first half leaves it to the second; the second half does not withhold it.
+    private static IReadOnlyList<PayrollLine> CapWithoutEarnings(
+        IReadOnlyList<PayrollLine> workerLines,
+        IReadOnlyList<PayrollLine> lines,
+        PayrollHalf half,
+        int vacationDays)
+    {
+        if (vacationDays == 0 || lines.Any(line => line.Group == PayrollLineGroup.Earning && line.Amount != 0m))
+        {
+            return workerLines;
+        }
+
+        return workerLines.Select(line =>
+        {
+            if (line.Amount <= 0m)
+            {
+                return line;
+            }
+
+            var note = half == PayrollHalf.First
+                ? "Sin devengo en esta quincena: lo que falta se retiene en la segunda quincena del mes"
+                : $"Sin devengo en esta quincena: {line.Amount.ToString("F0", CultureInfo.InvariantCulture)} pesos no se retienen (decisión del owner)";
+            return line with
+            {
+                Amount = 0m,
+                Trace = line.Trace with { Note = line.Trace.Note is null ? note : $"{line.Trace.Note}; {note}" },
+            };
+        }).ToList();
     }
 }

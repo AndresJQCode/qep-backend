@@ -12,6 +12,54 @@ public sealed class SolidarityFundRuleTests
         return SolidarityFundRule.Compute(input, chain.Salary.SalaryInForce, ibc);
     }
 
+    private static PayrollLine? FundWithAdvance(EngineInput input, decimal advance)
+    {
+        var chain = EngineTestData.Earnings(input);
+        var ibc = IbcRule.Compute(input, chain.Worked, chain.Vacations, chain.Salary.Line.Amount, chain.Month);
+        var vacations = VacationDaysOutcome.None with { MonthAdvance = new VacationAdvance(0m, 0m, advance) };
+        return SolidarityFundRule.Compute(input, chain.Salary.SalaryInForce, ibc, vacations);
+    }
+
+    private static EngineInput SecondHalfOfAHighSalary(decimal salary, decimal withheldBefore) =>
+        EngineTestData.Input(new DateOnly(2026, 11, 16), salary) with
+        {
+            Prior = MonthAccumulators.Empty with
+            {
+                WorkedDays = 15,
+                SalaryRaw = salary / 2,
+                Salary = salary / 2,
+                SolidarityFund = withheldBefore,
+            },
+        };
+
+    [Fact]
+    public void TheMonthAdvanceIsSubtracted()
+    {
+        var line = FundWithAdvance(SecondHalfOfAHighSalary(7_500_000m, 37_500m), 37_500m);
+
+        Assert.NotNull(line);
+        Assert.Equal(0m, line.Amount);
+        Assert.Contains(line.Trace.Inputs, item => item.Name == "Anticipo de vacaciones del mes" && Equals(item.Value, 37_500m));
+    }
+
+    [Fact]
+    public void TheAdvanceNeverTurnsTheLineIntoARefund()
+    {
+        var line = FundWithAdvance(SecondHalfOfAHighSalary(7_500_000m, 37_500m), 100_000m);
+
+        Assert.NotNull(line);
+        Assert.Equal(0m, line.Amount);
+    }
+
+    [Fact]
+    public void AnAdvanceKeepsTheLineEvenWithoutABracket()
+    {
+        var line = FundWithAdvance(EngineTestData.Input(new DateOnly(2026, 11, 16)), 1_000m);
+
+        Assert.NotNull(line);
+        Assert.Equal(0m, line.Amount);
+    }
+
     [Fact]
     public void BelowFourMinimumsThereIsNone() =>
         Assert.Null(Fund(EngineTestData.Input(new DateOnly(2026, 11, 1))));

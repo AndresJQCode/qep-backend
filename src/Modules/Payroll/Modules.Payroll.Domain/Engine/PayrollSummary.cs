@@ -45,9 +45,10 @@ public sealed record PayrollSummary(
         var nonSalaryIncome = earnings.Where(line => IsCaptured(line) && line.SalaryConstitutive != true).Sum(line => line.Amount);
         var totalEarned = salary + vacationPay + transport + overtime + salaryIncome + nonSalaryIncome;
 
-        var health = Of("health_employee");
-        var pension = Of("pension_employee");
-        var fund = Of("solidarity_fund");
+        // What the colilla withholds: the regular lines plus the advance withheld for the vacation days of other quincenas.
+        var health = Of("health_employee") + Of(VacationAdvanceRule.HealthCode);
+        var pension = Of("pension_employee") + Of(VacationAdvanceRule.PensionCode);
+        var fund = Of("solidarity_fund") + Of(VacationAdvanceRule.SolidarityFundCode);
         var otherDeductions = lines
             .Where(line => line.Group == PayrollLineGroup.Deduction && IsOther(line.Code))
             .Sum(line => line.Amount);
