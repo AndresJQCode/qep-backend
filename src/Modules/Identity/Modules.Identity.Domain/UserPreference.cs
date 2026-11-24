@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using BuildingBlocks.Domain.Localization;
 
 namespace Modules.Identity.Domain;
 
@@ -40,7 +41,8 @@ public sealed class UserPreference
         string colorScheme,
         ThemeMode mode,
         bool messageSound,
-        DateTimeOffset updatedAt)
+        DateTimeOffset updatedAt,
+        string? language)
     {
         UserId = userId;
         TenantId = tenantId;
@@ -48,6 +50,7 @@ public sealed class UserPreference
         Mode = mode;
         MessageSound = messageSound;
         UpdatedAt = updatedAt;
+        Language = language;
     }
 
     public UserId UserId { get; private set; }
@@ -68,6 +71,15 @@ public sealed class UserPreference
     public DateTimeOffset UpdatedAt { get; private set; }
 
     /// <summary>
+    /// Spec 2026-11-22 (i18n): el idioma en que esta persona quiere el producto en este tenant, o
+    /// <c>null</c> para seguir el del tenant. Se guarda el <c>null</c> y no una copia del idioma del
+    /// tenant, para que cambiar el del tenant alcance a quien nunca eligió. Identity no ve Tenancy:
+    /// el efectivo lo resuelve quien ve los dos (<c>AuthPreferenceEndpoints</c>, <c>SessionEstablisher</c>,
+    /// Notifications).
+    /// </summary>
+    public string? Language { get; private set; }
+
+    /// <summary>
     /// La preferencia que ve quien nunca eligió. No se persiste al leerla: una lectura no
     /// escribe, y no tener preferencia es un estado normal, no una fila faltante.
     /// </summary>
@@ -75,7 +87,7 @@ public sealed class UserPreference
         UserId userId,
         Guid tenantId,
         DateTimeOffset updatedAt) =>
-        new(userId, tenantId, DefaultColorScheme, ThemeMode.Light, messageSound: true, updatedAt);
+        new(userId, tenantId, DefaultColorScheme, ThemeMode.Light, messageSound: true, updatedAt, language: null);
 
     public static UserPreference Create(
         UserId userId,
@@ -83,28 +95,49 @@ public sealed class UserPreference
         string colorScheme,
         string mode,
         bool messageSound,
-        DateTimeOffset updatedAt) =>
+        DateTimeOffset updatedAt,
+        string? language = null) =>
         new(
             userId,
             tenantId,
             NormalizeColorScheme(colorScheme),
             ParseMode(mode),
             messageSound,
-            updatedAt);
+            updatedAt,
+            NormalizeLanguage(language));
 
     /// <summary>
-    /// Reemplaza los tres ejes de una vez. Valida antes de tocar nada: una preferencia
-    /// rechazada no puede quedar a medias, con el esquema nuevo y el modo viejo.
+    /// Reemplaza los cuatro ejes de una vez. Valida antes de tocar nada: una preferencia
+    /// rechazada no puede quedar a medias, con el esquema nuevo y el modo viejo. El idioma no es
+    /// opcional a propósito: un llamador que lo olvide borraría en silencio el que la persona eligió.
     /// </summary>
-    public void Change(string colorScheme, string mode, bool messageSound, DateTimeOffset updatedAt)
+    public void Change(string colorScheme, string mode, bool messageSound, DateTimeOffset updatedAt, string? language)
     {
         var normalizedScheme = NormalizeColorScheme(colorScheme);
         var parsedMode = ParseMode(mode);
+        var normalizedLanguage = NormalizeLanguage(language);
 
         ColorScheme = normalizedScheme;
         Mode = parsedMode;
         MessageSound = messageSound;
+        Language = normalizedLanguage;
         UpdatedAt = updatedAt;
+    }
+
+    /// <summary><c>null</c> es «el del tenant»; cualquier otro valor tiene que estar en
+    /// <see cref="SupportedLanguages"/>.</summary>
+    public static string? NormalizeLanguage(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        return SupportedLanguages.TryNormalize(value, out var language)
+            ? language
+            : throw new IdentityDomainException(
+                "identity.preference.language.invalid",
+                $"Language must be one of: {string.Join(", ", SupportedLanguages.All)}.");
     }
 
     public static string NormalizeColorScheme(string value)

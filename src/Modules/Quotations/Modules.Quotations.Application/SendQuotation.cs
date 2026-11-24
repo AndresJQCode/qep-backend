@@ -172,6 +172,7 @@ public sealed class SendQuotationHandler(
                     DocumentUrl: documentUrl,
                     NumberFormat: regional?.NumberFormat,
                     DocumentStorageKey: pdf.StorageKey,
+                    Language: regional?.Language,
                     SentByMemberId: sentBy.Value.Value,
                     // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha. El del contacto
                     // sí: cae en la conversación de esa persona.

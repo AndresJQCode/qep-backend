@@ -1541,6 +1541,28 @@ Respuesta:
 
 Formatos de fecha admitidos: `yyyy-MM-dd`, `dd/MM/yyyy` y `MM/dd/yyyy`.
 
+#### Idioma del producto (`es-419` / `es-ES`)
+
+Spec: [2026-11-22 i18n](docs/superpowers/specs/2026-11-22-i18n-espanol-espana-y-latinoamerica-design.md). El idioma no es el
+formato regional: `defaultCulture`, `numberFormat` y `dateFormat` no cambian con él. El catálogo es
+`SupportedLanguages` (`BuildingBlocks.Domain.Localization`), y el diccionario de cada idioma lo tiene el frontend.
+
+| Dónde | Campo | Qué es |
+| ----- | ----- | ------ |
+| `GET`/`PUT /tenants/{tenantId}/settings` | `language` | El idioma del tenant, para quien no eligió uno: `es-419` (por defecto) o `es-ES`. Si el `PUT` no lo trae, se conserva; un valor fuera del catálogo responde `422 tenancy.settings.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `language` | Lo que eligió la persona en este tenant, o `null` para seguir al tenant. En el `PUT`: ausente o `null` conserva, `""` vuelve al del tenant, y un valor fuera del catálogo responde `422 identity.preference.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `effectiveLanguage` | El diccionario que tiene que cargar la pantalla: el elegido, si no el del tenant. |
+| `/auth/me`, `POST /auth/session` | `activeTenants[].language` | El idioma **efectivo** de la persona en cada tenant, disponible antes de la primera pintura. |
+| `POST /auth/register-tenant`, `POST /auth/password/register-tenant` | `language` | Opcional; ausente o `""` es `es-419`. |
+
+Los correos ya están en español neutro con tuteo, y solo cambian los términos que en España se dicen distinto: «cotización»
+es «presupuesto» (correos de exportación, en el idioma efectivo de quien exportó) y «radicado» es «número de caso» (correo de apertura
+de Soporte, en el idioma del tenant). El parámetro `radicado` del enlace de consulta no se traduce.
+
+El PDF de cotización y de pedido y el Excel de cotizaciones van en el idioma del tenant: en `es-ES` dicen «Presupuesto» y
+«Comercial», y los archivos se llaman `Presupuesto-N.pdf` y `presupuestos-….xlsx`. Pasar un tenant a `es-ES` regenera sus PDF guardados
+en el siguiente export, porque el idioma entra a la huella; el despliegue no regenera ninguno.
+
 ### Invitación de memberships
 
 | Método | Ruta                                     | Permiso                     |

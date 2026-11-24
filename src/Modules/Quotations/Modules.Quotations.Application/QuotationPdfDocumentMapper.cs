@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Localization;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -27,7 +28,11 @@ public static class QuotationPdfDocumentMapper
     /// se imprime en su día, no en el de UTC (spec 2026-09-17, punto 7). El <paramref name="numberFormat"/>
     /// es el del tenant y sólo decide los separadores (spec 2026-10-23, D-R1).</summary>
     public static QuotationPdfDocument From(
-        QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
+        QuotationResponse quotation,
+        TenantCalendar calendar,
+        QuotationPdfLogo? logo,
+        string? numberFormat = null,
+        string? language = null)
     {
         var currency = Currencies.Get(quotation.Currency);
         var (thousands, decimals) = RegionalNumberFormat.Separators(numberFormat);
@@ -67,7 +72,8 @@ public static class QuotationPdfDocumentMapper
             quotation.FreightTaxAmount,
             quotation.Shipping.CashOnDelivery,
             ThousandsSeparator: thousands,
-            DecimalSeparator: decimals);
+            DecimalSeparator: decimals,
+            Language: SupportedLanguages.OrDefault(language));
     }
 
     /// <summary>
@@ -80,7 +86,11 @@ public static class QuotationPdfDocumentMapper
     /// no vence, y la plantilla omite el renglón con <see cref="QuotationPdfKind.Order"/>.
     /// </summary>
     public static QuotationPdfDocument FromOrder(
-        OrderDetailResponse order, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
+        OrderDetailResponse order,
+        TenantCalendar calendar,
+        QuotationPdfLogo? logo,
+        string? numberFormat = null,
+        string? language = null)
     {
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(calendar);
@@ -127,7 +137,8 @@ public static class QuotationPdfDocumentMapper
             header.Shipping.CashOnDelivery,
             QuotationPdfKind.Order,
             thousands,
-            decimals);
+            decimals,
+            Language: SupportedLanguages.OrDefault(language));
     }
 
     /// <summary>Las respuestas ya traen sólo las que aplicaron (<c>AppliedWithholdings</c>), en su orden: una fila

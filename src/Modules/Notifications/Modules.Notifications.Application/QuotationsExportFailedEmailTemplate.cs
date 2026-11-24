@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Localization;
+
 namespace Modules.Notifications.Application;
 
 /// <summary>
@@ -9,9 +11,10 @@ public static class QuotationsExportFailedEmailTemplate
 {
     public const string TemplateRef = "quotations.export-failed.v1";
 
-    public static EmailMessage Render(string recipientAddress, string kind)
+    public static EmailMessage Render(
+        string recipientAddress, string kind, string language = SupportedLanguages.Default)
     {
-        var names = QuotationsExportKindText.Of(kind);
+        var names = QuotationsExportKindText.Of(kind, language);
         var subject = $"No pudimos generar tu exportación de {names.Plural}";
         var sentence = $"No pudimos generar tu exportación de {names.Plural}. Intenta de nuevo.";
 

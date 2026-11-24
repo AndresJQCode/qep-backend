@@ -261,7 +261,8 @@ public static partial class PasswordAuthEndpoints
                 request.Slug,
                 request.DefaultCulture,
                 request.TimeZone,
-                request.DateFormat),
+                request.DateFormat,
+                request.Language),
             cancellationToken);
 
         var correlationId = httpContext.TraceIdentifier;
@@ -280,7 +281,8 @@ public static partial class PasswordAuthEndpoints
                     request.Slug,
                     request.DefaultCulture,
                     request.TimeZone,
-                    request.DateFormat),
+                    request.DateFormat,
+                    request.Language),
                 correlationId,
                 cancellationToken);
         }
@@ -335,7 +337,9 @@ public sealed record RegisterTenantWithPasswordRequest(
     string Slug,
     string? DefaultCulture = null,
     string? TimeZone = null,
-    string? DateFormat = null);
+    string? DateFormat = null,
+    // Spec 2026-11-22 (i18n): es-419 | es-ES; ausente o vacío es es-419.
+    string? Language = null);
 
 public sealed record VerifyEmailRequest(string Token);
 
