@@ -6628,6 +6628,32 @@ dotnet build --no-restore
 dotnet test --no-build
 ```
 
+### Correr todas las pruebas y sacar el reporte de fallas
+
+`dotnet test` sobre toda la solución en paralelo no sirve en Windows: cada clase de integración levanta un
+Postgres con Testcontainers y se agotan puertos y memoria. Usa el script, que corre **un proyecto a la vez**:
+
+```powershell
+.\scripts\run-all-tests.ps1                          # todo: unitarias primero, luego integración
+.\scripts\run-all-tests.ps1 -Kind Unit               # sólo unitarias (no necesita Docker)
+.\scripts\run-all-tests.ps1 -Filter Quotations       # sólo los proyectos cuya ruta contenga el texto
+.\scripts\run-all-tests.ps1 -Filter Quotations -NoBuild -MaxThreads 2
+```
+
+Antes de correrlo:
+
+- **Docker Desktop debe estar corriendo** (`docker info` responde). Sin daemon, todas las pruebas de integración
+  fallan por conexión y el resumen de `dotnet test` muestra miles de "errores" aunque el build esté limpio.
+- No debe haber `Api.exe` ni `testhost` vivos; el script se detiene si los encuentra. El build host de C# Dev Kit
+  (`dotnet.exe` de VS Code) no estorba.
+- `Modules.Ai.Eval` queda fuera: es la evaluación con IA real y se corre aparte (ver su sección).
+
+Salida, en `TestResults/` (ignorada por git y borrada en cada corrida):
+
+- `report.md`: tabla por proyecto (total, pasan, fallan, segundos), las causas de falla más repetidas y la lista de
+  pruebas que fallan por proyecto.
+- `<proyecto>/<proyecto>.trx`: el detalle completo. Ábrelo con `Get-Content -LiteralPath` (los nombres llevan corchetes).
+
 La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones
 repetidas, concurrencia con `ETag`, escritura de auditoría/Outbox e idempotencia
