@@ -67,11 +67,9 @@ public abstract record SiigoBatchItemOutcome
     /// <summary>El pedido no estaba en condiciones: no listo, ya facturado, anulado, sin pagar… No se llamó a Siigo para crear nada.</summary>
     public sealed record Skipped(string ErrorCode, IReadOnlyList<string> Missing) : SiigoBatchItemOutcome;
 
-    /// <summary>Siigo la rechazó, o quien la pidió ya no puede facturar: no se reintenta.</summary>
+    /// <summary>Siigo la rechazó o no respondió, la conexión no sirve, o quien la pidió ya no puede facturar. No se programa un reintento
+    /// (owner, 2026-11-24).</summary>
     public sealed record Failed(string ErrorCode) : SiigoBatchItemOutcome;
-
-    /// <summary>Siigo no respondió o la conexión no sirve ahora: se reintenta más tarde con la misma fila y la misma clave.</summary>
-    public sealed record Retry(string ErrorCode) : SiigoBatchItemOutcome;
 }
 
 /// <summary>

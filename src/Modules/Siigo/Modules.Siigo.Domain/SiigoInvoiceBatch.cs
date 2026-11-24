@@ -72,8 +72,9 @@ public sealed class SiigoInvoiceBatch
 /// (<c>siigo.*</c> y los de <c>SiigoMissing</c>), nunca el texto de Siigo ni datos del cliente.</summary>
 public sealed class SiigoInvoiceBatchItem
 {
-    /// <summary>Cuántas veces se reclama un pedido antes de darlo por fallido cuando Siigo no responde o la conexión no sirve.</summary>
-    public const int MaxAttempts = 5;
+    /// <summary>Cuántas veces se manda un pedido: una (owner, 2026-11-24). No se programan reintentos para después: con Siigo caído la
+    /// factura se puede crear directamente allá, y un envío posterior la duplicaría.</summary>
+    public const int MaxAttempts = 1;
 
     public const int ErrorCodeMaxLength = 100;
     public const int MissingCodesMaxLength = 500;
@@ -104,7 +105,7 @@ public sealed class SiigoInvoiceBatchItem
 
     public int Attempts { get; private set; }
 
-    /// <summary>No antes de esta hora se vuelve a reclamar (la espera de un reintento).</summary>
+    /// <summary>No antes de esta hora se reclama.</summary>
     public DateTimeOffset AvailableAt { get; private set; }
 
     /// <summary>Hasta cuándo es de un worker. Vencido, el pedido vuelve a reclamarse.</summary>
@@ -169,28 +170,6 @@ public sealed class SiigoInvoiceBatchItem
 
         Status = SiigoInvoiceBatchItemStatus.Failed;
         Settle(errorCode, [], now);
-    }
-
-    /// <summary>Siigo no respondió o la conexión no sirve ahora: vuelve a <c>Pending</c>, no antes de <paramref name="availableAt"/>. Si ya
-    /// gastó <see cref="MaxAttempts"/>, es un fallo.</summary>
-    public void Retry(string errorCode, DateTimeOffset availableAt, DateTimeOffset now)
-    {
-        if (IsSettled)
-        {
-            return;
-        }
-
-        if (Attempts >= MaxAttempts)
-        {
-            MarkFailed(errorCode, now);
-            return;
-        }
-
-        Status = SiigoInvoiceBatchItemStatus.Pending;
-        ErrorCode = Cap(errorCode, ErrorCodeMaxLength);
-        AvailableAt = availableAt;
-        LeaseUntil = null;
-        UpdatedAt = now;
     }
 
     private void Settle(string? errorCode, IReadOnlyList<string> missingCodes, DateTimeOffset now)

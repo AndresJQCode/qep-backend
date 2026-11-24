@@ -93,7 +93,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   pedido; si ya no tiene `siigo.invoice.issue`, el pedido falla con `siigo.invoice_batch.forbidden` y no se llama a Siigo. Es, junto al
   copiloto, el único que instala ese contexto (`CompositionRootTests`). El reclamo es un `UPDATE … SKIP LOCKED` de un pedido (lease de 5 min;
   más de 5 reclamos y se da por fallido). Un pedido que no está en condiciones sale `Skipped` con su código (y, si es `not_ready`, los códigos
-  de lo que falta); Siigo sin responder o la conexión caída reintenta (`Retry`) con espera creciente; el resto de la tanda sigue. El timbre
+  de lo que falta); **no se programan reintentos** (owner, 2026-11-24): Siigo sin responder o la conexión caída dejan el pedido fallido con
+  su motivo, y uno cuyo lease vence con el proceso muerto falla sin llamar a Siigo (`MaxAttempts` = 1). La fila de la factura que no se
+  sabe si salió sigue `Pending`: la reanuda una persona desde el pedido (mismos bytes y clave) y a las 24 h pasa a `Unknown` para resolverla.
+  El resto de la tanda sigue. El timbre
   sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre calla y sólo queda la
   red de seguridad de 30 s. Tope de 50 pedidos por tanda.
 

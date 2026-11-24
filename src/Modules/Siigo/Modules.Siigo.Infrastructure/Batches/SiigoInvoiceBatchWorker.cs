@@ -17,9 +17,10 @@ namespace Modules.Siigo.Infrastructure.Batches;
 /// vencido por el mismo reclamo; varias réplicas pueden correrlo a la vez y cada pedido tiene un solo ganador. A diferencia de las
 /// campañas, <b>un pedido por vez por réplica</b>: cada factura son varias llamadas a Siigo y su cuenta bloquea al 80 % de fallidas.
 /// Ninguna transacción queda abierta mientras se llama a Siigo: el reclamo es una sentencia sola, la factura la crea el handler de siempre
-/// (con su candado por pedido y su clave de idempotencia, así que repetir un pedido no duplica) y el resultado se guarda aparte.
-/// Un pedido cuyo lease vence con el proceso muerto vuelve a reclamarse; al pasar de <see cref="SiigoInvoiceBatchItem.MaxAttempts"/> reclamos
-/// se da por fallido. Lo que pasa con un pedido es un resultado (<see cref="SiigoBatchItemOutcome"/>), nunca una excepción que frene la tanda.
+/// (con su candado por pedido y su clave de idempotencia) y el resultado se guarda aparte.
+/// Cada pedido se manda una sola vez (<see cref="SiigoInvoiceBatchItem.MaxAttempts"/>): no se programan reintentos, y uno cuyo lease vence
+/// con el proceso muerto se da por fallido sin llamar a Siigo. Lo que pasa con un pedido es un resultado
+/// (<see cref="SiigoBatchItemOutcome"/>), nunca una excepción que frene la tanda.
 /// </summary>
 internal sealed partial class SiigoInvoiceBatchWorker(
     IQueueDoorbell doorbell,
@@ -34,7 +35,7 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Siigo invoice batch tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Invoicing batch item {ItemId} threw; it is retried when its lease expires.")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "Invoicing batch item {ItemId} threw; it is failed when its lease expires.")]
     private static partial void LogItemThrew(ILogger logger, Exception exception, Guid itemId);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -64,8 +65,8 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     }
 
     /// <summary>Una pasada (internal para las pruebas): procesa pedidos mientras haya uno listo, hasta gastar un intervalo. Devuelve el
-    /// próximo vencimiento conocido: <c>null</c> si no queda nada pendiente, cero si se cortó por tiempo, o lo que falta para el pedido
-    /// que espera su reintento.</summary>
+    /// próximo vencimiento conocido: <c>null</c> si no queda nada pendiente, cero si se cortó por tiempo, o lo que falta para el próximo
+    /// pedido disponible.</summary>
     internal async Task<TimeSpan?> DrainAsync(CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
@@ -106,7 +107,7 @@ internal sealed partial class SiigoInvoiceBatchWorker(
         }
         catch (Exception exception)
         {
-            // El lease vence y el pedido vuelve a reclamarse: la factura que quedara a medias la reanuda el handler con la misma clave.
+            // El lease vence, el pedido vuelve a reclamarse y se da por fallido sin llamar a Siigo otra vez.
             LogItemThrew(logger, exception, claim.ItemId);
         }
 
@@ -153,7 +154,8 @@ internal sealed partial class SiigoInvoiceBatchWorker(
 
             if (claim.Attempts > SiigoInvoiceBatchItem.MaxAttempts)
             {
-                // Reclamado más veces de las que se permiten (el proceso murió en cada una): no se vuelve a intentar.
+                // Ya se reclamó una vez y no quedó resultado (el proceso murió a mitad del envío): no se vuelve a mandar. La fila de la
+                // factura, si alcanzó a quedar, sigue Pending y una persona la reanuda desde el pedido con la misma clave.
                 await SettleAsync(scope, batch, claim.ItemId, new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.Unavailable), cancellationToken);
                 return;
             }
@@ -194,9 +196,6 @@ internal sealed partial class SiigoInvoiceBatchWorker(
                 break;
             case SiigoBatchItemOutcome.Failed failed:
                 item.MarkFailed(failed.ErrorCode, now);
-                break;
-            case SiigoBatchItemOutcome.Retry retry:
-                item.Retry(retry.ErrorCode, now + TimeSpan.FromMinutes(Math.Min(item.Attempts, SiigoInvoiceBatchItem.MaxAttempts)), now);
                 break;
             default:
                 throw new InvalidOperationException("Unknown batch item outcome.");
