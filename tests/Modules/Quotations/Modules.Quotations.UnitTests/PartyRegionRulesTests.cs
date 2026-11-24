@@ -71,4 +71,32 @@ public sealed class PartyRegionRulesTests
         await PartyRegionRules.EnsureAsync(
             Geography(), Party("CO", Madrid), "Parties.Billing", TestContext.Current.CancellationToken);
     }
+
+    // The aggregate discards the shipping of a store pickup and the billing of a final consumer, so a
+    // bad region left on those parts must not fail the save (nor reach geography).
+    [Fact]
+    public async Task TheShippingOfAStorePickupIsNotChecked()
+    {
+        var geography = Geography();
+
+        await PartyRegionRules.EnsureAsync(
+            geography,
+            new QuotationParties(null, Party("FR", Madrid), IsStorePickup: true),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, geography.FindRegionsCalls);
+    }
+
+    [Fact]
+    public async Task TheBillingOfAFinalConsumerIsNotChecked()
+    {
+        var geography = Geography();
+
+        await PartyRegionRules.EnsureAsync(
+            geography,
+            new QuotationParties(Party("FR", Madrid), null, BillsToFinalConsumer: true),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, geography.FindRegionsCalls);
+    }
 }
