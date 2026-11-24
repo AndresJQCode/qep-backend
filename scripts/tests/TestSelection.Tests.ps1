@@ -47,6 +47,9 @@ $p = Plan @("$dir/CatalogTestDatabase.cs")
 Assert-Equal "harness: sin paso" "" (FilterOf $p)
 Assert-Equal "harness: aviso" $true (($p.Warnings -join ";") -like "*Apoyo de pruebas cambiado*CatalogTestDatabase.cs*")
 
+$p = Plan @("$dir/packages.lock.json")
+Assert-Equal "lock file: sin aviso" 0 @($p.Warnings).Count
+
 $p = Plan @("$dir/BorradaTests.cs")
 Assert-Equal "borrado: sin paso" "" (FilterOf $p)
 
@@ -62,6 +65,28 @@ Assert-Equal "migraciones en dos modulos" $true ($p.Warnings -contains "Cambio t
 
 $p = Plan @("src/Modules/Catalog/I/Persistence/Migrations/a.cs")
 Assert-Equal "migraciones en un modulo" $false ($p.Warnings -contains "Cambio transversal: conviene la corrida completa antes de seguir")
+
+$ok = [pscustomobject]@{ Total = 3; Passed = 3; Failed = 0 }
+Assert-Equal "paso verde" $true (Test-StepPassed -Result $ok -ExitCode 0)
+Assert-Equal "sin trx" $false (Test-StepPassed -Result $null -ExitCode 0)
+Assert-Equal "cero pruebas" $false (Test-StepPassed -Result ([pscustomobject]@{ Total = 0; Passed = 0; Failed = 0 }) -ExitCode 0)
+Assert-Equal "con fallas" $false (Test-StepPassed -Result ([pscustomobject]@{ Total = 3; Passed = 2; Failed = 1 }) -ExitCode 1)
+Assert-Equal "exit distinto de cero" $false (Test-StepPassed -Result $ok -ExitCode 1)
+
+$tmp = Join-Path $env:TEMP ("trx-" + [guid]::NewGuid())
+New-Item -ItemType Directory $tmp | Out-Null
+Assert-Equal "directorio sin trx" $true ($null -eq (Read-TrxResult -Directory $tmp))
+@'
+<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results><UnitTestResult testName="N.C.Falla" outcome="Failed"><Output><ErrorInfo><Message>boom
+detalle</Message></ErrorInfo></Output></UnitTestResult></Results>
+  <ResultSummary><Counters total="2" passed="1" failed="1" /></ResultSummary>
+</TestRun>
+'@ | Set-Content -LiteralPath (Join-Path $tmp "a.trx") -Encoding utf8
+$r = Read-TrxResult -Directory $tmp
+Assert-Equal "trx: conteos" "2,1,1" "$($r.Total),$($r.Passed),$($r.Failed)"
+Assert-Equal "trx: falla" "N.C.Falla|boom" "$($r.Failures[0].Test)|$($r.Failures[0].Message)"
+Remove-Item -LiteralPath $tmp -Recurse -Force
 
 if ($script:failed) { Write-Host "$($script:failed) fallas"; exit 1 }
 Write-Host "OK" -ForegroundColor Green

@@ -93,7 +93,7 @@ function Get-TestPlan {
             if ($targets) {
                 $selected += $targets
             }
-            elseif ($file -notlike "*.cs" -or $TestSources.ContainsKey($file)) {
+            elseif ($file -notlike "*/packages.lock.json" -and ($file -notlike "*.cs" -or $TestSources.ContainsKey($file))) {
                 # Un .cs que ya no está en TestSources se borró: no hay nada que inferir ni que avisar.
                 [void]$warnings.Add("Apoyo de pruebas cambiado, sus clases no se infieren: $file")
             }
@@ -119,4 +119,25 @@ function Get-TestPlan {
     return [pscustomobject]@{ Steps = @($steps); Warnings = [string[]]@($warnings) }
 }
 
-Export-ModuleMember -Function Get-TestPlan
+# Lee el .trx de una carpeta de resultados; $null si no hay ninguno.
+function Read-TrxResult {
+    param([Parameter(Mandatory)][string]$Directory)
+
+    $trx = Get-ChildItem -LiteralPath $Directory -Filter *.trx -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $trx) { return $null }
+    [xml]$x = Get-Content -LiteralPath $trx.FullName -Raw -Encoding UTF8
+    $c = $x.TestRun.ResultSummary.Counters
+    $failures = @($x.TestRun.Results.UnitTestResult | Where-Object outcome -eq "Failed" | ForEach-Object {
+        [pscustomobject]@{ Test = $_.testName; Message = ("$($_.Output.ErrorInfo.Message)".Trim() -split "`r?`n")[0] }
+    })
+    return [pscustomobject]@{ Total = [int]$c.total; Passed = [int]$c.passed; Failed = [int]$c.failed; Failures = $failures }
+}
+
+# Un paso sólo está verde si ejecutó pruebas: un filtro que no coincide con nada no prueba nada.
+function Test-StepPassed {
+    param($Result, [int]$ExitCode)
+
+    return [bool]($null -ne $Result -and $Result.Total -gt 0 -and $Result.Failed -eq 0 -and $ExitCode -eq 0)
+}
+
+Export-ModuleMember -Function Get-TestPlan, Read-TrxResult, Test-StepPassed
