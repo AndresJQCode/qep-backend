@@ -556,9 +556,20 @@ que se despliega desde `main`:
 
 ## Regiones y ciudades por país
 
-El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. La región (departamento,
-provincia) **sólo sirve para filtrar ciudades: no se guarda**. Colombia guarda `CityId`; el resto de países
-guarda el nombre de la ciudad como texto (`CityName`).
+El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. Colombia guarda `CityId` y deriva su
+departamento de la ciudad (nunca guarda una región). El resto de países guarda el nombre de la ciudad como texto
+(`CityName`) y, **si el país tiene catálogo de regiones distinto de Colombia (hoy sólo España), también la región**: una
+referencia blanda `region_id` a `geography.regions`, sin llave foránea entre esquemas.
+
+- **Qué entidades la guardan:** el domicilio y las direcciones del cliente, la empresa facturadora, el proveedor y las
+  partes de facturación y entrega de cotizaciones y pedidos (la copia al convertir también la lleva).
+- **Escritura:** `regionId` opcional junto con `country` y `cityName`. Con Colombia (o sin país) es `422`; una región
+  inexistente, de otro país o un id de departamento colombiano es `422 <módulo>.<entidad>.region_invalid`. Un `PUT` sin
+  `regionId` la borra, igual que `cityName`.
+- **Lectura:** el detalle responde `region: { id, name } | null`; las listas y los Excel no cambian. La vista del cliente
+  dentro de la cotización y el pedido (`client`, `client.addresses[*]`) también la trae.
+- **Datos existentes:** ninguna fila se migra; las anteriores quedan con `region_id = null`.
+- El selector sigue leyendo el catálogo de abajo: la región elegida filtra las ciudades y ahora además viaja al guardar.
 
 | Ruta | Respuesta |
 | --- | --- |

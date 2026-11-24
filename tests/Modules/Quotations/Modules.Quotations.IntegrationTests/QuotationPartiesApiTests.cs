@@ -308,4 +308,22 @@ public sealed class QuotationPartiesApiTests(SharedQuotationsHost sharedHost) : 
         var problem = await response.Content.ReadFromJsonAsync<Problem>(TestContext.Current.CancellationToken);
         Assert.Equal("quotations.party.region_invalid", problem!.Code);
     }
+
+    [Fact]
+    public async Task QuoteClientCarriesCustomerRegion()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var madrid = await MadridRegionIdAsync(client);
+        var customerId = await CreateForeignCustomerWithRegionAsync(client, tenantId, madrid);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var fetched = await client.GetFromJsonAsync<JsonElement>(
+            QuotationUrl(tenantId, created.Id), TestContext.Current.CancellationToken);
+
+        var region = fetched.GetProperty("client").GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
 }

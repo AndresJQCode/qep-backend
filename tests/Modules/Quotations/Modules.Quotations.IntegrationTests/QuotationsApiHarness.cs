@@ -553,6 +553,36 @@ internal static class QuotationsApiHarness
         return regions.EnumerateArray().First().GetProperty("id").GetGuid();
     }
 
+    /// <summary>Un cliente de España con su provincia, creado por <c>POST /customers</c> como lo haría la pantalla: país, ciudad
+    /// escrita y <c>regionId</c>. Es el que lee el cliente embebido de la cotización.</summary>
+    public static async Task<Guid> CreateForeignCustomerWithRegionAsync(
+        HttpClient client, Guid tenantId, Guid regionId)
+    {
+        var classificationId = await CreateClassificationAsync(client, tenantId);
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers",
+            new
+            {
+                name = "Verde Esencial S.L.",
+                identificationType = "NIF",
+                identificationNumber = $"B-{Random.Shared.Next(10000000, 99999999)}",
+                phone = "+34 910 000 000",
+                email = "compras@verde.es",
+                address = "Calle Gran Via 28",
+                country = "ES",
+                cityName = "Madrid",
+                regionId,
+                classificationId,
+                vatSurplus = false
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CustomerResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body.Id;
+    }
+
     /// <summary>El alta exige teléfono (<c>CustomerWriteRules</c>): un contacto sin teléfono sólo existe por datos que no pasaron
     /// por el alta, así que la prueba le borra el teléfono por SQL.</summary>
     public static async Task ClearCustomerPhoneAsync(string connectionString, Guid customerId)

@@ -287,11 +287,13 @@ public sealed class QuotationResponseComposer(
                         address.DepartmentId,
                         address.DepartmentName,
                         address.IsPrincipal,
-                        address.Country))
+                        address.Country,
+                        address.Region))
                     .ToArray(),
                 customer.Country,
                 customer.PersonType,
-                customer.IdentificationType);
+                customer.IdentificationType,
+                customer.Region);
 
     // La variante puede no existir más (se borró): la línea conserva lo que la cotización
     // congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único que este lado

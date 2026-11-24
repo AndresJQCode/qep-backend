@@ -718,7 +718,9 @@ public sealed record QuotationClientResponse(
     /// <summary>"Natural" o "Juridica", tal como está en la ficha del cliente. Null si no lo tiene.</summary>
     string? PersonType = null,
     /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) de la ficha del cliente. Null si no lo tiene.</summary>
-    string? IdentificationType = null);
+    string? IdentificationType = null,
+    /// <summary>The region of a foreign customer, resolved to its name; null when it has none (provincia guardada).</summary>
+    QuotationRegionDto? Region = null);
 
 public sealed record QuotationClientAddressResponse(
     Guid Id,
@@ -731,7 +733,9 @@ public sealed record QuotationClientAddressResponse(
     string? DepartmentName,
     bool IsPrincipal,
     /// <summary>ISO alfa-2 de la dirección. Fuera de Colombia no hay ids de DIVIPOLA y la ciudad es el texto.</summary>
-    string Country = "CO");
+    string Country = "CO",
+    /// <summary>The region of a foreign address, resolved to its name; null when it has none.</summary>
+    QuotationRegionDto? Region = null);
 
 /// <summary>
 /// La escala viaja con su restricción, no sólo con su descuento: es lo único con lo que el
