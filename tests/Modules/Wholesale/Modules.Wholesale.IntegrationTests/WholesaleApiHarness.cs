@@ -390,6 +390,10 @@ internal static class WholesaleApiHarness
                 priceListId,
                 advisorId = tenant.MemberId,
                 billingCompanyId,
+                // La ciudad que el país exige: el id de Geography en Colombia, el texto afuera.
+                cityId = country == "CO" ? await MedellinAsync(client) : (Guid?)null,
+                cityName = country == "CO" ? null : "Madrid",
+                address = "Calle 10 # 40-20",
             },
             Ct);
         await EnsureSuccessAsync(response);
@@ -441,7 +445,7 @@ internal static class WholesaleApiHarness
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>
         await response.Content.ReadAsStringAsync(Ct);
 
-    private static async Task<Guid> MedellinAsync(HttpClient client)
+    public static async Task<Guid> MedellinAsync(HttpClient client)
     {
         Guid? first = null;
         var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];

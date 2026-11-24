@@ -198,7 +198,10 @@ public static class WholesaleEndpoints
                 request.BillingCompanyId,
                 httpContext.TraceIdentifier,
                 request.Phone,
-                request.WhatsAppConnectionId),
+                request.WhatsAppConnectionId,
+                request.CityId,
+                request.CityName,
+                request.Address),
             cancellationToken);
 
         return Results.Created($"/api/v1/tenants/{tenantId}/wholesale/distributors/{distributor.Id}", distributor);
@@ -281,7 +284,9 @@ public sealed record PriceListPreviewRequest(
     IReadOnlyList<PriceListExclusionInput>? Exclusions = null);
 
 /// <summary>Invitar a un distribuidor: sus datos y lo que el mayorista elige para la relación. Con <c>Phone</c> sale también
-/// el aviso por WhatsApp (spec 2026-11-18) por <c>WhatsAppConnectionId</c>, o por la única conexión lista si no viene.</summary>
+/// el aviso por WhatsApp (spec 2026-11-18) por <c>WhatsAppConnectionId</c>, o por la única conexión lista si no viene.
+/// <c>CityId</c> (obligatoria con <c>Country = "CO"</c>) o <c>CityName</c> (con cualquier otro país) y <c>Address</c> (opcional)
+/// son con lo que nace la empresa del distribuidor cuando acepta.</summary>
 public sealed record DistributorInviteRequest(
     string Email,
     string BusinessName,
@@ -293,7 +298,10 @@ public sealed record DistributorInviteRequest(
     Guid AdvisorId,
     Guid BillingCompanyId,
     string? Phone = null,
-    Guid? WhatsAppConnectionId = null);
+    Guid? WhatsAppConnectionId = null,
+    Guid? CityId = null,
+    string? CityName = null,
+    string? Address = null);
 
 /// <summary>Lo que se edita de una relación en cualquier estado; los datos del distribuidor no cambian. <c>Phone</c> y
 /// <c>WhatsAppConnectionId</c> sólo cuentan mientras está invitada, y <c>Phone</c> ausente o <c>null</c> los borra.</summary>

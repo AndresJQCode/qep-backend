@@ -126,14 +126,14 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
         await using (var scope = Factory.Services.CreateAsyncScope())
         {
             first = await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", "NIT", "900123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", "NIT", "900123456", "ana@distri.co", null, Ct);
         }
 
         Guid second;
         await using (var scope = Factory.Services.CreateAsyncScope())
         {
             second = await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", "NIT", "900123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", "NIT", "900123456", "ana@distri.co", null, Ct);
         }
 
         Assert.Equal(first, second);
@@ -156,7 +156,7 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
         {
             await using var scope = Factory.Services.CreateAsyncScope();
             return await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", type, "123456", "ana@distri.co", Ct);
+                tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", type, "123456", "ana@distri.co", null, Ct);
         }
 
         var ce = await EnsureAsync("CE");
@@ -182,7 +182,7 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
 
         await using var scope = Factory.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
-            tenant.TenantId, tenant.SubjectId, "Distri Madrid SL", "ES", "NIF", "B12345678", "ana@distri.es", Ct);
+            tenant.TenantId, tenant.SubjectId, "Distri Madrid SL", "ES", "NIF", "B12345678", "ana@distri.es", null, Ct);
 
         var rows = await WholesaleApiHarness.RowsAsync<string>(
             Factory,
@@ -191,6 +191,53 @@ public sealed class WholesaleAdaptersTests(SharedWholesaleHost host) : IClassFix
             WHERE tenant_id = {tenant.TenantId} AND identification_number = 'B12345678'
             """);
         Assert.Equal(["ES"], rows);
+    }
+
+    // Spec 2026-11-23 §4: el cliente del mayorista nace con el celular del aviso del distribuidor.
+    [Fact]
+    public async Task TheCustomerIsBornWithThePhone()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+
+        await using var scope = Factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IWholesaleCustomerProvisioning>().EnsureCustomerAsync(
+            tenant.TenantId, tenant.SubjectId, "Distribuciones Norte SAS", "CO", "NIT", "900123456", "ana@distri.co",
+            "+573001234567", Ct);
+
+        var rows = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""
+            SELECT phone_e164 AS "Value" FROM customers.customers
+            WHERE tenant_id = {tenant.TenantId} AND identification_number = '900123456'
+            """);
+        Assert.Equal(["+573001234567"], rows);
+    }
+
+    // Spec 2026-11-23 §2-3: dos llamadas con el mismo borrador dejan una sola empresa y devuelven la misma.
+    [Fact]
+    public async Task TheCompanyAdapterCreatesOnceAndReuses()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var medellin = await WholesaleApiHarness.MedellinAsync(manager);
+        var draft = new WholesaleCompanyDraft(
+            "Distribuciones Norte SAS", "CO", "NIT", "900123456", medellin, null, "Calle 10 # 40-20", "ana@distri.co", null);
+
+        var ids = new List<Guid>();
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            ids.Add(await scope.ServiceProvider.GetRequiredService<IWholesaleCompanyProvisioning>()
+                .EnsureCompanyAsync(tenant.TenantId, tenant.SubjectId, draft, Ct));
+        }
+
+        Assert.Equal(ids[0], ids[1]);
+        var count = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM companies.companies WHERE tenant_id = {tenant.TenantId}
+            """);
+        Assert.Equal(1, count[0]);
     }
 
     // D-8: la primera vez crea el proveedor vinculado; la segunda devuelve el mismo, sin otro.

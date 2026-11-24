@@ -40,6 +40,7 @@ public static class WholesaleErrorCodes
     public const string DistributorAdvisorInvalid = "wholesale.distributor.advisor_invalid";
 
     public const string DistributorCompanyInvalid = "wholesale.distributor.company_invalid";
+    public const string DistributorCityNotFound = "wholesale.distributor.city_not_found";
 
     // Spec 2026-11-18 (aviso por WhatsApp): con teléfono y varias conexiones listas sin elegir una; y sin ninguna lista, o
     // con una elegida que no lo está.

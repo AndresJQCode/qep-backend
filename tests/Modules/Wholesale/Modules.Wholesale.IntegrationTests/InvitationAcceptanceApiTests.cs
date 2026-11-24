@@ -630,8 +630,105 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
             SELECT count(*)::int AS "Value" FROM customers.customers
             WHERE tenant_id = {wholesaler.TenantId} AND identification_number = '901222333'
             """);
-        Assert.Equal((1, 1, 1), (tenants[0], suppliers[0], customers[0]));
+        // Spec 2026-11-23 §2: el candado por tenant deja una sola empresa aunque las dos pestañas lleguen juntas al paso.
+        var companies = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""SELECT count(*)::int AS "Value" FROM companies.companies WHERE tenant_id = {accepted[0]!.TenantId}""");
+        Assert.Equal((1, 1, 1, 1), (tenants[0], suppliers[0], customers[0], companies[0]));
     }
+
+    // Spec 2026-11-23 §3: la empresa nace en el tenant nuevo con lo que escribió el mayorista, y el IVA colombiano se siembra
+    // (cubre el riesgo del QuotationsDbContext del scope: la siembra de tasas corre después del commit de Companies).
+    [Fact]
+    public async Task NewTenantCreatesTheCompanyAndSeedsTheColombianVat()
+    {
+        var (wholesaler, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
+        var medellin = await WholesaleApiHarness.MedellinAsync(manager);
+
+        var response = await AcceptNewTenantAsync(userId, token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
+        var company = Assert.Single(await WholesaleApiHarness.RowsAsync<CompanyRow>(
+            Factory,
+            $"""
+            SELECT name AS "Name", tax_id AS "TaxId", city_id AS "CityId", address AS "Address"
+            FROM companies.companies WHERE tenant_id = {accepted.TenantId}
+            """));
+        Assert.Equal(
+            (WholesaleApiHarness.DefaultBusinessName, "900123456", medellin, "Calle 10 # 40-20"),
+            (company.Name, company.TaxId, company.CityId, company.Address));
+        var vat = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM catalog.tax_rates
+            WHERE tenant_id = {accepted.TenantId} AND percentage = 19
+            """);
+        Assert.True(vat[0] >= 1, "The Colombian VAT was not seeded for the new tenant.");
+    }
+
+    // Spec 2026-11-23 §3 (idempotencia): repetir el accept es la misma respuesta de siempre y no duplica la empresa.
+    [Fact]
+    public async Task ARetriedAcceptDoesNotDuplicateTheCompany()
+    {
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        var first = (await (await AcceptNewTenantAsync(userId, token)).Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
+
+        var again = await AcceptNewTenantAsync(userId, token);
+
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        var companies = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""SELECT count(*)::int AS "Value" FROM companies.companies WHERE tenant_id = {first.TenantId}""");
+        Assert.Equal(1, companies[0]);
+    }
+
+    // Review Focus 3: la API ya no deja invitar sin ciudad, así que la fila de antes de la migración se simula quitándola.
+    [Fact]
+    public async Task AnOldInvitationWithoutCityAcceptsWithoutACompany()
+    {
+        var (_, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        await WholesaleApiHarness.ExecuteAsync(
+            Factory,
+            $"UPDATE wholesale.distributors SET city_id = NULL, address = NULL WHERE id = {distributor.Id}");
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+
+        var response = await AcceptNewTenantAsync(userId, token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var accepted = (await response.Content.ReadFromJsonAsync<AcceptedInvitationDto>(Ct))!;
+        Assert.True(accepted.Created);
+        var companies = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""SELECT count(*)::int AS "Value" FROM companies.companies WHERE tenant_id = {accepted.TenantId}""");
+        Assert.Equal(0, companies[0]);
+    }
+
+    // Spec 2026-11-23 §4: el cliente del mayorista nace con el celular del aviso. Invitar con celular exige una conexión de
+    // WhatsApp (otro host), así que el celular que ya normalizó invitar se deja directo en la fila.
+    [Fact]
+    public async Task TheWholesalerCustomerIsBornWithThePhone()
+    {
+        var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), "901333444");
+        await WholesaleApiHarness.ExecuteAsync(
+            Factory, $"UPDATE wholesale.distributors SET phone = '+573001234567' WHERE id = {distributor.Id}");
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+
+        (await AcceptNewTenantAsync(userId, token)).EnsureSuccessStatusCode();
+
+        var phones = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""
+            SELECT phone_e164 AS "Value" FROM customers.customers
+            WHERE tenant_id = {wholesaler.TenantId} AND identification_number = '901333444'
+            """);
+        Assert.Equal(["+573001234567"], phones);
+    }
+
+    private sealed record CompanyRow(string Name, string TaxId, Guid CityId, string Address);
 
     // Spec 2026-11-19 §3b, foco 3: dos distribuidores con la misma razón social reciben la misma sugerencia; el que pierde la
     // reserva del slug reintenta con una sugerencia nueva. Host propio: el doble de las sugerencias es global.

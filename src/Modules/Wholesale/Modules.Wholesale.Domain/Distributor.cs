@@ -84,10 +84,33 @@ public sealed class Distributor
     /// <summary>El número de WhatsApp del mayorista que manda el aviso; sólo existe junto a <see cref="Phone"/>.</summary>
     public Guid? WhatsAppConnectionId { get; private set; }
 
+    /// <summary>La ciudad de Geography del distribuidor colombiano; con ella nace su empresa al aceptar. <c>null</c> en
+    /// invitaciones de antes de la migración o de otro país.</summary>
+    public Guid? CityId { get; private set; }
+
+    /// <summary>La ciudad escrita a mano cuando el país no es Colombia.</summary>
+    public string? CityName { get; private set; }
+
+    public string? Address { get; private set; }
+
+    /// <summary>
+    /// La ciudad que pide el país para crear su empresa: <see cref="CityId"/> en «CO», <see cref="CityName"/> afuera. Sin ella,
+    /// aceptar no crea la empresa (invitaciones anteriores a la migración).
+    /// </summary>
+    public bool HasCompanyCity => Country == ColombiaCode ? CityId is not null : CityName is not null;
+
     public DistributorInvitation Invitation { get; private set; }
 
     /// <summary>E.164: «+» y hasta 15 dígitos.</summary>
     public const int PhoneMaxLength = 16;
+
+    /// <summary>Igual a <c>Company.CityNameMaxLength</c> (Wholesale no referencia Companies).</summary>
+    public const int CityNameMaxLength = 120;
+
+    /// <summary>Igual a <c>CompanyContactInfo.AddressMaxLength</c> (Wholesale no referencia Companies).</summary>
+    public const int AddressMaxLength = 200;
+
+    private const string ColombiaCode = "CO";
 
     public static Distributor Invite(
         Guid tenantId,
@@ -105,7 +128,10 @@ public sealed class Distributor
         Guid reservedTenantId,
         string? phone,
         Guid? whatsAppConnectionId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Guid? cityId = null,
+        string? cityName = null,
+        string? address = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
         ArgumentException.ThrowIfNullOrWhiteSpace(businessName);
@@ -141,7 +167,10 @@ public sealed class Distributor
             Version = 1,
             Phone = noticePhone,
             WhatsAppConnectionId = noticeConnection,
-            Invitation = DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
+            CityId = cityId == Guid.Empty ? null : cityId,
+            CityName = NullIfBlank(cityName),
+            Address = NullIfBlank(address),
+            Invitation =DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
         };
     }
 
@@ -313,6 +342,8 @@ public sealed class Distributor
         DistributorStatus.Blocked => [DistributorAction.Edit, DistributorAction.Unblock],
         _ => [],
     };
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 

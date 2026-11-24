@@ -32,6 +32,7 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
                 priceListId = list.Id,
                 advisorId = tenant.MemberId,
                 billingCompanyId = company,
+                cityId = await WholesaleApiHarness.MedellinAsync(manager),
             },
             Ct);
 
@@ -73,6 +74,8 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
                 priceListId = list.Id,
                 advisorId = tenant.MemberId,
                 billingCompanyId = company,
+                cityId = await WholesaleApiHarness.MedellinAsync(manager),
+                address = "Calle 10 # 40-20",
             },
             Ct);
 
@@ -104,6 +107,72 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         // Spec 2026-11-19 §1, foco 5: el token sólo viaja dentro del link, y es el mismo que va al correo.
         Assert.EndsWith($"/wholesale-invitations/{Uri.EscapeDataString(token)}", detail.InvitationUrl, StringComparison.Ordinal);
     }
+
+    // Review Focus 5: la ciudad inexistente se rechaza al invitar, no cuando el distribuidor intenta aceptar.
+    [Fact]
+    public async Task InviteWithAnUnknownCityIs422CityNotFound()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
+        var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
+
+        var response = await PostInviteAsync(manager, tenant, list.Id, company, cityId: Guid.NewGuid());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("wholesale.distributor.city_not_found", await WholesaleApiHarness.BodyAsync(response), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InviteWithoutTheCityIs422OnCityId()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
+        var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
+
+        var response = await PostInviteAsync(manager, tenant, list.Id, company, cityId: null);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityId", await WholesaleApiHarness.BodyAsync(response), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheDetailCarriesCityAndAddress()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
+        var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
+        var (invited, _) = await WholesaleApiHarness.InviteAsync(Factory, manager, tenant, list.Id, company);
+
+        var response = await manager.GetAsync($"{WholesaleApiHarness.DistributorsUrl(tenant.TenantId)}/{invited.Id}", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = (await response.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
+        Assert.StartsWith("Medell", detail.City!.Name, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(detail.City.Id);
+        Assert.Equal("Calle 10 # 40-20", detail.Address);
+    }
+
+    private static async Task<HttpResponseMessage> PostInviteAsync(
+        HttpClient manager, WholesaleTestTenant tenant, Guid priceListId, Guid billingCompanyId, Guid? cityId) =>
+        await manager.PostAsJsonAsync(
+            WholesaleApiHarness.DistributorsUrl(tenant.TenantId),
+            new
+            {
+                email = "ana@distri.co",
+                businessName = "Distribuciones Norte SAS",
+                country = "CO",
+                identificationType = "NIT",
+                identificationNumber = "900123456",
+                contactName = "Ana Pérez",
+                priceListId,
+                advisorId = tenant.MemberId,
+                billingCompanyId,
+                cityId,
+            },
+            Ct);
 
     // Spec 2026-11-19 §1: «Copiar» rota el token y devuelve la URL una vez; el link anterior responde 404. No escribe eventos.
     [Fact]

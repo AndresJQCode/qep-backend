@@ -36,6 +36,42 @@ public sealed class DistributorHandlersTests
         Assert.Equal(1, _world.UnitOfWork.Saves);
     }
 
+    // Review Focus 5: una ciudad que no existe se rechaza al invitar, no cuando el distribuidor intenta aceptar.
+    [Fact]
+    public async Task InviteWithAnUnknownCityIsCityNotFound()
+    {
+        var command = _world.InviteCommand() with { CityId = Guid.CreateVersion7() };
+
+        var error = await Assert.ThrowsAsync<WholesaleDomainException>(() => _world.InviteHandler().HandleAsync(command, Ct));
+
+        Assert.Equal("wholesale.distributor.city_not_found", error.Code);
+        Assert.Empty(_world.Distributors.Distributors);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task InviteSavesCityAndAddress()
+    {
+        await _world.InviteHandler().HandleAsync(_world.InviteCommand() with { Address = " Calle 10 # 40-20 " }, Ct);
+
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.Equal((_world.MedellinId, "Calle 10 # 40-20"), (stored.CityId, stored.Address));
+        var audit = Assert.Single(_world.Audit.Entries);
+        Assert.Contains("cityId", audit.ChangedFields);
+        Assert.Contains("cityName", audit.ChangedFields);
+        Assert.Contains("address", audit.ChangedFields);
+    }
+
+    [Fact]
+    public async Task InviteOutsideColombiaDoesNotLookUpTheCity()
+    {
+        await _world.InviteHandler().HandleAsync(_world.InviteCommand(country: "ES", identificationType: "NIF"), Ct);
+
+        Assert.Empty(_world.Cities.Calls);
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.Equal((null, "Madrid"), (stored.CityId, stored.CityName));
+    }
+
     [Fact]
     public async Task InviteWithAnUnknownPriceListIs404()
     {

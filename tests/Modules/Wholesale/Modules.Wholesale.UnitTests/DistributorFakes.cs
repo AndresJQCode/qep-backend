@@ -213,6 +213,27 @@ internal sealed class FakeCompanyLookup : IWholesaleCompanyLookup
         Task.FromResult<IReadOnlyList<WholesaleCompanyRef>>(Companies.Where(company => company.IsActive).ToList());
 }
 
+/// <summary>Geografía en memoria: sólo las ciudades que se siembran existen; <c>Calls</c> anota cada búsqueda.</summary>
+internal sealed class FakeCityLookup : IWholesaleCityLookup
+{
+    public Dictionary<Guid, string> Cities { get; } = [];
+
+    public List<Guid> Calls { get; } = [];
+
+    public Guid Add(string name)
+    {
+        var id = Guid.CreateVersion7();
+        Cities[id] = name;
+        return id;
+    }
+
+    public Task<WholesaleCityRef?> FindAsync(Guid cityId, CancellationToken cancellationToken)
+    {
+        Calls.Add(cityId);
+        return Task.FromResult(Cities.TryGetValue(cityId, out var name) ? new WholesaleCityRef(cityId, name) : null);
+    }
+}
+
 internal sealed class FakeMemberDirectory : IWholesaleMemberDirectory
 {
     public List<WholesaleMember> Active { get; } = [];
@@ -491,9 +512,34 @@ internal sealed class FakeSupplierLinker : IWholesaleSupplierLinker
     }
 }
 
+internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
+{
+    public List<(Guid Tenant, Guid Actor, WholesaleCompanyDraft Draft)> Calls { get; } = [];
+
+    public Guid CompanyId { get; } = Guid.CreateVersion7();
+
+    /// <summary>Lo que Companies rechazaría (un <c>ValidationException</c>, por ejemplo).</summary>
+    public Exception? Fail { get; set; }
+
+    public Task<Guid> EnsureCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken)
+    {
+        if (Fail is { } failure)
+        {
+            throw failure;
+        }
+
+        Calls.Add((distributorTenantId, actorUserId, draft));
+        return Task.FromResult(CompanyId);
+    }
+}
+
 internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
 {
-    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email)> Calls { get; } = [];
+    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email, string? Phone)> Calls { get; } = [];
 
     public Guid CustomerId { get; } = Guid.CreateVersion7();
 
@@ -508,6 +554,7 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
         string identificationType,
         string identificationNumber,
         string email,
+        string? phone,
         CancellationToken cancellationToken)
     {
         if (FailTimes > 0)
@@ -516,7 +563,7 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
             throw new InvalidOperationException("Customers is down.");
         }
 
-        Calls.Add((wholesalerTenantId, actorUserId, businessName, country, identificationType, identificationNumber, email));
+        Calls.Add((wholesalerTenantId, actorUserId, businessName, country, identificationType, identificationNumber, email, phone));
         return Task.FromResult(CustomerId);
     }
 }

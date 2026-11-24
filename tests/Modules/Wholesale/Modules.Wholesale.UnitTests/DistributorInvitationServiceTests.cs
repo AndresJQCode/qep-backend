@@ -25,6 +25,7 @@ public sealed class DistributorInvitationServiceTests
     private readonly FakeTenancy _tenancy = new();
     private readonly FakeSupplierLinker _suppliers = new();
     private readonly FakeCustomerProvisioning _customers = new();
+    private readonly FakeCompanyProvisioning _companies = new();
     private readonly Guid _user = Guid.CreateVersion7();
     private readonly string _token = InvitationTokens.Generate();
     private readonly Distributor _invitation;
@@ -32,7 +33,9 @@ public sealed class DistributorInvitationServiceTests
     public DistributorInvitationServiceTests()
     {
         _tenancy.AddTenant(_world.Tenant, "Mayorista Central", Guid.CreateVersion7(), TenantStatus.Active, WholesalerModules);
-        _invitation = _world.SeedInvited(tokenHash: InvitationTokens.HashOf(_token));
+        // Con la ciudad y la dirección que el mayorista escribió al invitar: sin ellas no hay empresa que crear.
+        _invitation = _world.SeedInvited(
+            tokenHash: InvitationTokens.HashOf(_token), cityId: _world.MedellinId, address: "Calle 10 # 40-20");
     }
 
     private static CancellationToken Ct => DistributorWorld.Ct;
@@ -48,9 +51,11 @@ public sealed class DistributorInvitationServiceTests
         _world.Companies,
         _suppliers,
         _customers,
+        _companies,
         _world.UnitOfWork,
         _world.Audit,
-        _world.Events);
+        _world.Events,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<DistributorInvitationService>.Instance);
 
     private Task<AcceptedInvitationDto> AcceptAsync(AcceptInvitationChoice choice, string? email = "ana@distri.co", Guid? user = null) =>
         Service().AcceptAsync(_token, user ?? _user, email, choice, "trace-accept", Ct);
@@ -60,6 +65,7 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal(0, _tenancy.Writes);
         Assert.Empty(_suppliers.Calls);
         Assert.Empty(_customers.Calls);
+        Assert.Empty(_companies.Calls);
         Assert.Equal(0, _world.UnitOfWork.Saves);
         Assert.Empty(_world.Audit.Entries);
         Assert.Equal(DistributorStatus.Invited, _invitation.Status);
@@ -129,6 +135,103 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal((_world.Tenant, _user, "wholesale.distributor.accepted", "distributor"),
             (audit.TenantId, audit.ActorId, audit.Action, audit.ResourceType));
         Assert.Equal(1, _world.UnitOfWork.Saves);
+    }
+
+    // Spec 2026-11-23 §3: al aceptar sobre el tenant reservado nace la empresa del distribuidor, con lo que escribió el mayorista.
+    [Fact]
+    public async Task NewTenantCreatesTheCompanyInTheReservedTenantWithTheDistributorData()
+    {
+        await AcceptAsync(new NewTenantChoice(NewTenantData));
+
+        var call = Assert.Single(_companies.Calls);
+        Assert.Equal((_invitation.Invitation.ReservedTenantId, _user), (call.Tenant, call.Actor));
+        Assert.Equal(
+            new WholesaleCompanyDraft(
+                "Distribuciones 900123456", "CO", "NIT", "900123456", _world.MedellinId, null, "Calle 10 # 40-20", "ana@distri.co", null),
+            call.Draft);
+    }
+
+    // El correo de la empresa es el de la cuenta que acepta y el celular es el del aviso por WhatsApp.
+    [Fact]
+    public async Task TheCompanyGetsTheAccountEmailAndTheNoticePhone()
+    {
+        var token = InvitationTokens.Generate();
+        _world.SeedInvited(
+            "800555111", tokenHash: InvitationTokens.HashOf(token), phone: "+573001234567",
+            whatsAppConnectionId: Guid.CreateVersion7(), cityId: _world.MedellinId);
+
+        await Service().AcceptAsync(token, _user, "otra@cuenta.co", new NewTenantChoice(NewTenantData), "trace-accept", Ct);
+
+        var draft = Assert.Single(_companies.Calls).Draft;
+        Assert.Equal(("otra@cuenta.co", "+573001234567"), (draft.Email, draft.Phone));
+    }
+
+    // Spec 2026-11-23, no objetivos: vincular un tenant que ya existe no crea empresa, ese tenant ya tiene las suyas.
+    [Fact]
+    public async Task LinkTenantOnAnExistingTenantDoesNotCreateACompany()
+    {
+        var mine = _tenancy.AddTenant("Mi Tienda", _user, TenantStatus.Active, TenantModuleKeys.Catalog);
+
+        await AcceptAsync(new LinkTenantChoice(mine));
+
+        Assert.Empty(_companies.Calls);
+    }
+
+    // Review Focus 1 (D-17): el primer intento NewTenant falló al crear la empresa; el reintento llega con cuerpo LinkTenant sobre
+    // el tenant reservado, que ya existe, y la empresa se crea igual.
+    [Fact]
+    public async Task ARetryOverTheReservedTenantCreatesTheCompanyEvenWithALinkBody()
+    {
+        var reserved = _invitation.Invitation.ReservedTenantId;
+        _tenancy.AddTenant(reserved, "Distri Norte", _user, TenantStatus.Active, [.. WholesaleModuleSets.InvitedDistributor]);
+        var other = _tenancy.AddTenant("Otra Mía", _user, TenantStatus.Active, TenantModuleKeys.Catalog);
+
+        await AcceptAsync(new LinkTenantChoice(other));
+
+        Assert.Equal(reserved, Assert.Single(_companies.Calls).Tenant);
+    }
+
+    // Review Focus 3: una fila de antes de la migración no tiene ciudad; acepta igual, sin empresa y sin error.
+    [Fact]
+    public async Task AnInvitationWithoutTheCityItsCountryNeedsAcceptsWithoutACompany()
+    {
+        var token = InvitationTokens.Generate();
+        var old = _world.SeedInvited("800777222", tokenHash: InvitationTokens.HashOf(token), cityId: null);
+
+        await Service().AcceptAsync(token, _user, "ana@distri.co", new NewTenantChoice(NewTenantData), "trace-accept", Ct);
+
+        Assert.Empty(_companies.Calls);
+        Assert.Equal(DistributorStatus.Active, old.Status);
+        Assert.Single(_customers.Calls);
+    }
+
+    // Lo que Companies rechaza sale tal cual y no deja nada a medias: ni proveedor, ni cliente, ni commit. La invitación sigue
+    // pendiente y el reintento termina sobre el tenant reservado (D-17).
+    [Fact]
+    public async Task ACompanyFailureLeavesTheInvitationPendingAndNothingElseWritten()
+    {
+        _companies.Fail = new FluentValidation.ValidationException("The city is required.");
+
+        await Assert.ThrowsAsync<FluentValidation.ValidationException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+
+        Assert.Empty(_suppliers.Calls);
+        Assert.Empty(_customers.Calls);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+        Assert.Equal(DistributorStatus.Invited, _invitation.Status);
+    }
+
+    // Spec 2026-11-23 §4: el cliente del mayorista nace con el celular del aviso, si lo hay.
+    [Fact]
+    public async Task TheCustomerGetsTheNoticePhone()
+    {
+        var token = InvitationTokens.Generate();
+        _world.SeedInvited(
+            "800555111", tokenHash: InvitationTokens.HashOf(token), phone: "+573001234567",
+            whatsAppConnectionId: Guid.CreateVersion7(), cityId: _world.MedellinId);
+
+        await Service().AcceptAsync(token, _user, "ana@distri.co", new NewTenantChoice(NewTenantData), "trace-accept", Ct);
+
+        Assert.Equal("+573001234567", Assert.Single(_customers.Calls).Phone);
     }
 
     [Fact]

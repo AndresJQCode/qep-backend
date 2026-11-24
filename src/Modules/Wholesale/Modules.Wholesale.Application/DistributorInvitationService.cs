@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Wholesale.Domain;
@@ -34,16 +35,18 @@ public interface IDistributorInvitationService
 }
 
 /// <summary>
-/// La aceptación son pasos idempotentes sin transacción común (D-3): tenant (con el id reservado), módulos, proveedor en el
-/// distribuidor, cliente en el mayorista y, al final, el commit de <c>wholesale</c> que consume la invitación. Un fallo a mitad
+/// La aceptación son pasos idempotentes sin transacción común (D-3): tenant (con el id reservado), módulos, empresa y proveedor
+/// en el distribuidor, cliente en el mayorista y, al final, el commit de <c>wholesale</c> que consume la invitación. Un fallo a mitad
 /// deja la invitación pendiente y el reintento termina sobre el mismo tenant.
 /// <para>Orden fijo: 1) invitación por hash (404); 2-3) ya aceptada: mismo usuario → el resultado otra vez (D-16, ruling W9),
 /// otro → 409; vencida → 410; 4) mayorista <c>Active</c> con <c>wholesale</c> prendido (409 <c>unavailable</c>); 5) destino;
-/// 6) proveedor; 7) cliente; 8) correo de la cuenta, activar, auditar y guardar. Spec 2026-11-19: el link identifica la
+/// 6) empresa del distribuidor en el tenant reservado, sólo si <c>created</c> (también en un reintento D-17 con cuerpo
+/// <c>LinkTenant</c>, que no cambia que el tenant sea el reservado) y la invitación trae la ciudad que su país exige; 7) proveedor;
+/// 8) cliente; 9) correo de la cuenta, activar, auditar y guardar. Spec 2026-11-19: el link identifica la
 /// invitación y el correo ya no es una llave; <c>userEmail</c> es el de la cuenta que acepta y, si es otro, reemplaza al
 /// invitado en el mismo guardado.</para>
 /// </summary>
-public sealed class DistributorInvitationService(
+public sealed partial class DistributorInvitationService(
     IClock clock,
     IDistributorRepository distributors,
     ITenantDirectory tenantDirectory,
@@ -54,9 +57,11 @@ public sealed class DistributorInvitationService(
     IWholesaleCompanyLookup companies,
     IWholesaleSupplierLinker supplierLinker,
     IWholesaleCustomerProvisioning customerProvisioning,
+    IWholesaleCompanyProvisioning companyProvisioning,
     IWholesaleUnitOfWork unitOfWork,
     IWholesaleAuditPublisher auditPublisher,
-    IWholesaleEventPublisher eventPublisher)
+    IWholesaleEventPublisher eventPublisher,
+    ILogger<DistributorInvitationService> logger)
     : IDistributorInvitationService
 {
     public const string SameTenantReason = "same_tenant";
@@ -160,8 +165,40 @@ public sealed class DistributorInvitationService(
         var (target, created, enabled) = await ResolveTargetAsync(
             distributor, userId, wholesalerName, choice, correlationId, cancellationToken);
 
-        // 6-7: idempotentes; un reintento devuelve el mismo proveedor y el mismo cliente. El cliente nace con el correo que queda
-        // en el distribuidor (el de la cuenta, si vino), no con el que se va a reemplazar.
+        // El correo que queda en el distribuidor (el de la cuenta, si vino), no el que se va a reemplazar: lo usan la empresa y el
+        // cliente.
+        var email = string.IsNullOrWhiteSpace(userEmail) ? distributor.Email : userEmail.Trim().ToLowerInvariant();
+
+        // 6: la empresa del distribuidor en su tenant nuevo (spec 2026-11-23 §3). La condición es `created` y no el modo del cuerpo:
+        // en un reintento D-17 el tenant reservado ya existe y el cuerpo puede ser LinkTenant, y la empresa tiene que nacer igual.
+        // Vincular un tenant que ya existía (`created = false`) no crea ninguna: ese tenant ya tiene las suyas. Una invitación de
+        // antes de la migración no trae la ciudad que su país exige: acepta sin empresa, no se rompe una invitación viva.
+        if (created)
+        {
+            if (distributor.HasCompanyCity)
+            {
+                await companyProvisioning.EnsureCompanyAsync(
+                    target,
+                    userId,
+                    new WholesaleCompanyDraft(
+                        distributor.BusinessName,
+                        distributor.Country,
+                        distributor.IdentificationType,
+                        distributor.IdentificationNumber,
+                        distributor.CityId,
+                        distributor.CityName,
+                        distributor.Address,
+                        email,
+                        distributor.Phone),
+                    cancellationToken);
+            }
+            else
+            {
+                LogCompanySkippedWithoutCity(distributor.Id.Value);
+            }
+        }
+
+        // 7-8: idempotentes; un reintento devuelve el mismo proveedor y el mismo cliente.
         await supplierLinker.EnsureLinkedSupplierAsync(
             target, distributor.TenantId, wholesalerName, company, userId, cancellationToken);
         var customerId = await customerProvisioning.EnsureCustomerAsync(
@@ -171,10 +208,11 @@ public sealed class DistributorInvitationService(
             distributor.Country,
             distributor.IdentificationType,
             distributor.IdentificationNumber,
-            string.IsNullOrWhiteSpace(userEmail) ? distributor.Email : userEmail.Trim().ToLowerInvariant(),
+            email,
+            distributor.Phone,
             cancellationToken);
 
-        // 8: el correo de la cuenta, la activación, sus auditorías y el evento van en el mismo guardado (spec 2026-11-19 §6): si
+        // 9: el correo de la cuenta, la activación, sus auditorías y el evento van en el mismo guardado (spec 2026-11-19 §6): si
         // el commit falla no cambia nada.
         ReplaceEmail(distributor, userId, userEmail, correlationId, now);
         distributor.Accept(userId, target, customerId, now);
@@ -201,6 +239,12 @@ public sealed class DistributorInvitationService(
         return new AcceptedInvitationDto(
             target, tenantName ?? DistributorComposer.UnknownName, created, enabled.Select(key => key.Value).ToList());
     }
+
+    // Sólo el id del distribuidor: nada de su razón social, su documento ni su correo en el log.
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Distributor {DistributorId} accepted without a company: the invitation has no city for its country.")]
+    private partial void LogCompanySkippedWithoutCity(Guid distributorId);
 
     private async Task<(Guid Target, bool Created, IReadOnlyList<TenantModuleKey> Enabled)> ResolveTargetAsync(
         Distributor distributor,

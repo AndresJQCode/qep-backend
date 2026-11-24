@@ -60,6 +60,10 @@ internal static class WholesaleConflicts
         new(WholesaleErrorCodes.DistributorCompanyInvalid,
             "La empresa no existe, está inactiva o su documento no sirve para el proveedor del distribuidor.");
 
+    /// <summary>La ciudad que el mayorista eligió para un distribuidor colombiano no existe en Geography.</summary>
+    public static WholesaleDomainException CityNotFound() =>
+        new(WholesaleErrorCodes.DistributorCityNotFound, "La ciudad no existe.");
+
     /// <summary>Spec 2026-11-18: con teléfono, varias conexiones listas para el aviso y ninguna elegida.</summary>
     public static WholesaleDomainException WhatsAppConnectionRequired() =>
         new(WholesaleErrorCodes.DistributorWhatsAppConnectionRequired,

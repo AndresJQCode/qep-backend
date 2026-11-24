@@ -101,6 +101,11 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("activated_at");
 
+                    b.Property<string>("Address")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("address");
+
                     b.Property<Guid>("AdvisorMemberId")
                         .HasColumnType("uuid")
                         .HasColumnName("advisor_member_id");
@@ -114,6 +119,15 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)")
                         .HasColumnName("business_name");
+
+                    b.Property<Guid?>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
 
                     b.Property<string>("ContactName")
                         .IsRequired()

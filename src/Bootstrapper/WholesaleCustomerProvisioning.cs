@@ -25,6 +25,7 @@ internal sealed class WholesaleCustomerProvisioning(ICustomerProvisioning custom
         string identificationType,
         string identificationNumber,
         string email,
+        string? phone,
         CancellationToken cancellationToken)
     {
         try
@@ -32,7 +33,7 @@ internal sealed class WholesaleCustomerProvisioning(ICustomerProvisioning custom
             var registered = await customers.CreateFromRegisterAsync(
                 wholesalerTenantId,
                 actorUserId,
-                new RegisterCustomerData(businessName, identificationType, identificationNumber, null, email, country),
+                new RegisterCustomerData(businessName, identificationType, identificationNumber, phone, email, country),
                 Source,
                 cancellationToken);
             return registered.Id;

@@ -15,6 +15,7 @@ public sealed class DistributorComposer(
     IWholesalePriceLists priceLists,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
+    IWholesaleCityLookup cities,
     IWholesaleTenantDirectory tenants,
     IWholesaleWhatsAppConnections whatsAppConnections)
 {
@@ -30,6 +31,7 @@ public sealed class DistributorComposer(
         var company = await companies.FindAsync(distributor.TenantId, distributor.BillingCompanyId, cancellationToken);
         var tenantNames = await TenantNamesAsync([distributor], cancellationToken);
         var notice = await NoticeOfAsync(distributor, cancellationToken);
+        var city = await CityOfAsync(distributor, cancellationToken);
         var now = clock.UtcNow;
         var invitation = distributor.Invitation;
 
@@ -53,7 +55,9 @@ public sealed class DistributorComposer(
                 invitation.SentAt, invitation.ExpiresAt, IsExpired(distributor, now), invitation.AcceptedAt, notice),
             distributor.CreatedAt,
             distributor.ActivatedAt,
-            AllowedActions(distributor));
+            AllowedActions(distributor),
+            City: city,
+            Address: distributor.Address);
     }
 
     public async Task<IReadOnlyList<DistributorSummaryDto>> SummariesAsync(
@@ -116,6 +120,18 @@ public sealed class DistributorComposer(
 
         var label = await whatsAppConnections.FindLabelAsync(distributor.TenantId, connectionId, cancellationToken);
         return new DistributorWhatsAppNoticeDto(status.ToString(), distributor.Invitation.NoticeFailureCode, label ?? UnknownName);
+    }
+
+    // La ciudad resuelta de Colombia, o la escrita afuera; nula en una invitación anterior a la migración.
+    private async Task<DistributorCityDto?> CityOfAsync(Distributor distributor, CancellationToken cancellationToken)
+    {
+        if (distributor.CityId is { } cityId)
+        {
+            var city = await cities.FindAsync(cityId, cancellationToken);
+            return new DistributorCityDto(cityId, city?.Name ?? UnknownName);
+        }
+
+        return distributor.CityName is { } cityName ? new DistributorCityDto(null, cityName) : null;
     }
 
     private static bool IsExpired(Distributor distributor, DateTimeOffset now) =>

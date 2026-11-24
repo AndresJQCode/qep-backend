@@ -65,6 +65,12 @@ public sealed record DistributorSummaryDto(
     DateTimeOffset CreatedAt);
 
 /// <summary>
+/// La ciudad del distribuidor, con el nombre ya resuelto. <c>Id</c> es el de Geography en Colombia y <c>null</c> afuera, donde
+/// la ciudad es el texto que escribió el mayorista.
+/// </summary>
+public sealed record DistributorCityDto(Guid? Id, string Name);
+
+/// <summary>
 /// El distribuidor completo para su pantalla (BFF). <c>AllowedActions</c> ya cruza estado y permiso (en minúscula y en el orden
 /// del contrato: <c>edit</c>, <c>resend</c>, <c>delete</c>, <c>block</c>, <c>unblock</c>); sin
 /// <c>wholesale.distributor.manage</c> llega vacío. <c>Phone</c> es el celular del aviso en E.164, o <c>null</c> (spec
@@ -72,6 +78,9 @@ public sealed record DistributorSummaryDto(
 /// <para><c>InvitationUrl</c> (spec 2026-11-19 §1) es el link para «Copiar» y sólo viene en la respuesta de invitar (el mismo
 /// token del correo) y en la de rotar el link: la base guarda el hash, así que es la única vez que existe. En cualquier otra
 /// respuesta es <c>null</c> y el frontend tiene que rotar para volver a tenerlo; sin este campo no habría cómo copiarlo.</para>
+/// <para><c>City</c> trae el nombre ya resuelto (BFF: la pantalla de detalle lo pinta sin conocer Geography) y es <c>null</c>
+/// en una invitación anterior a la migración; <c>Address</c> es opcional. El resumen de la lista no los lleva: la grilla no los
+/// muestra y resolverlos por fila sería una consulta más por página.</para>
 /// </summary>
 public sealed record DistributorDetailDto(
     Guid Id,
@@ -93,7 +102,9 @@ public sealed record DistributorDetailDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset? ActivatedAt,
     IReadOnlyList<string> AllowedActions,
-    string? InvitationUrl = null)
+    string? InvitationUrl = null,
+    DistributorCityDto? City = null,
+    string? Address = null)
 {
     /// <summary>
     /// El <c>ToString</c> generado imprimiría <c>InvitationUrl</c>, que lleva el token plano: un log o un mensaje de aserción

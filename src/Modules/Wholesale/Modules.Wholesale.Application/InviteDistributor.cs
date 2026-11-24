@@ -18,11 +18,14 @@ public sealed record InviteDistributorCommand(
     Guid BillingCompanyId,
     string CorrelationId,
     string? Phone = null,
-    Guid? WhatsAppConnectionId = null)
+    Guid? WhatsAppConnectionId = null,
+    Guid? CityId = null,
+    string? CityName = null,
+    string? Address = null)
     : ICommand<DistributorDetailDto>;
 
 /// <summary>
-/// Invita a un distribuidor. Orden: 403 → 422 de validación → 404 lista → 422 asesor → 422 empresa → 409 documento → 422
+/// Invita a un distribuidor. Orden: 403 → 422 de validación → 404 lista → 422 asesor → 422 empresa → 422 ciudad → 409 documento → 422
 /// <c>Phone</c> → 422 conexión. El token plano se genera acá y sólo viaja en el evento hacia el correo; en la base queda su
 /// SHA-256 (D-1). El id del tenant que nacerá si acepta creando uno se reserva ya (D-17). Con teléfono (spec 2026-11-18) sale
 /// además, en el mismo commit, el evento del aviso por WhatsApp (<c>wholesale.distributor-invitation-link.v1</c>, spec
@@ -37,6 +40,7 @@ public sealed class InviteDistributorHandler(
     IDistributorRepository distributors,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
+    IWholesaleCityLookup cities,
     ITenantDirectory tenants,
     IWholesalePhoneNormalizer phones,
     IWholesaleWhatsAppConnections whatsAppConnections,
@@ -51,7 +55,7 @@ public sealed class InviteDistributorHandler(
 {
     // Lo que la auditoría nombra: nunca el token ni su hash, ni el teléfono (sólo si hubo aviso, D-8).
     private static readonly string[] WrittenFields =
-        ["email", "businessName", "country", "identificationType", "identificationNumber", "contactName", "priceListId", "advisorId", "billingCompanyId"];
+        ["email", "businessName", "country", "identificationType", "identificationNumber", "contactName", "priceListId", "advisorId", "billingCompanyId", "cityId", "cityName", "address"];
 
     public async Task<DistributorDetailDto> HandleAsync(InviteDistributorCommand command, CancellationToken cancellationToken)
     {
@@ -60,6 +64,15 @@ public sealed class InviteDistributorHandler(
         await DistributorTerms.EnsureValidAsync(
             priceLists, members, companies, command.TenantId, command.PriceListId, command.AdvisorId, command.BillingCompanyId,
             cancellationToken);
+
+        // Sólo en Colombia la ciudad es una fila de Geography. Sin esta verificación un CityId inexistente pasaría la invitación
+        // y después haría fallar cada aceptación con companies.company.city_not_found.
+        if (string.Equals(command.Country.Trim(), "CO", StringComparison.OrdinalIgnoreCase)
+            && await cities.FindAsync(command.CityId!.Value, cancellationToken) is null)
+        {
+            throw WholesaleConflicts.CityNotFound();
+        }
+
         if (await distributors.IdentificationExistsAsync(
                 command.TenantId, command.IdentificationType.Trim().ToUpperInvariant(), command.IdentificationNumber.Trim(), cancellationToken))
         {
@@ -90,7 +103,10 @@ public sealed class InviteDistributorHandler(
             Guid.CreateVersion7(),
             phone,
             connectionId,
-            now);
+            now,
+            command.CityId,
+            command.CityName,
+            command.Address);
         distributors.Add(distributor);
         auditPublisher.Publish(
             command.TenantId,
