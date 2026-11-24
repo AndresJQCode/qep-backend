@@ -119,7 +119,10 @@ public sealed class QuotationPartyTests
     {
         var quotation = NewQuotation(null, Foreign() with
         {
-            Country = null, CityName = null, DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+            Country = null,
+            CityName = null,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
             PostalCode = "050021",
         });
 
@@ -153,7 +156,9 @@ public sealed class QuotationPartyTests
     {
         var quotation = NewQuotation(Foreign() with
         {
-            IdentificationNumber = "X1234567L", IdentificationType = PartyIdentificationType.Nie, PostalCode = postalCode,
+            IdentificationNumber = "X1234567L",
+            IdentificationType = PartyIdentificationType.Nie,
+            PostalCode = postalCode,
         });
 
         Assert.Null(quotation.Billing!.PostalCode);
