@@ -172,6 +172,7 @@ public sealed class DistributorInvitationService(
             distributor.IdentificationType,
             distributor.IdentificationNumber,
             string.IsNullOrWhiteSpace(userEmail) ? distributor.Email : userEmail.Trim().ToLowerInvariant(),
+            distributor.Phone,
             cancellationToken);
 
         // 8: el correo de la cuenta, la activación, sus auditorías y el evento van en el mismo guardado (spec 2026-11-19 §6): si

@@ -353,5 +353,34 @@ public interface IWholesaleCustomerProvisioning
         string identificationType,
         string identificationNumber,
         string email,
+        string? phone,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Los datos de la empresa del distribuidor tal como los escribió el mayorista al invitar. Wholesale no conoce
+/// <c>Companies</c>: el adaptador de Bootstrapper los traduce.
+/// </summary>
+public sealed record WholesaleCompanyDraft(
+    string Name,
+    string Country,
+    string DocumentType,
+    string TaxId,
+    Guid? CityId,
+    string? CityName,
+    string? Address,
+    string? Email,
+    string? Phone);
+
+/// <summary>
+/// La empresa del distribuidor en su tenant nuevo (spec 2026-11-23 §3); adaptador sobre Companies. Idempotente por tipo y
+/// número de documento exactos: un reintento devuelve la misma empresa. Las excepciones de Companies salen tal cual.
+/// </summary>
+public interface IWholesaleCompanyProvisioning
+{
+    Task<Guid> EnsureCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
         CancellationToken cancellationToken);
 }
