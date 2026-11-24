@@ -54,9 +54,22 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **El cliente del mayorista nace en el paso 7 con el correo de la cuenta**, antes del commit final que reemplaza el del
   distribuidor (`DistributorInvitationService`). Es idempotente por documento: en un reintento, un cliente que ya existe con ese
   documento se reutiliza y **no** se actualiza (tampoco su correo).
-- **`NewTenant` no lee nombre ni slug del cuerpo** (spec 2026-11-19 §3b): el nombre es la razón social del distribuidor y el slug
-  lo sugiere `ITenantSlugSuggestions`. Si una carrera se lo gana (`tenancy.slug.taken`), el endpoint reintenta hasta 3 veces,
+- **`NewTenant` sí lee nombre y slug del cuerpo** (`WholesaleInvitationEndpoints.cs:323-327`; la regla anterior decía lo
+  contrario y el código manda): el nombre es el `displayName` del cuerpo y, si no viene, la razón social del distribuidor; el slug
+  es el del cuerpo y, si no viene, el que sugiere `ITenantSlugSuggestions` (spec 2026-11-19 §3b). El país **no** sale del cuerpo:
+  es el del distribuidor. Si una carrera se lo gana (`tenancy.slug.taken`), el endpoint reintenta hasta 3 veces,
   cada vez en un scope nuevo: el DbContext de Tenancy del intento fallido se queda con el tenant reservado sin guardar.
+- **La empresa del distribuidor nace en el accept, sólo si `created`** (spec 2026-11-23): también en un reintento D-17 con
+  cuerpo `LinkTenant`, porque el tenant reservado ya existe y es el destino aunque el cuerpo pida otro. Vincular un tenant que ya
+  existía (`created = false`) no crea ninguna. Es idempotente por tipo y número de documento **exactos** (no `ILIKE`; reutiliza
+  también una inactiva) bajo `CompanyProvisioningLock`, y va entre el tenant y el proveedor: un fallo deja la invitación
+  pendiente y el reintento termina sobre el tenant reservado. Una invitación sin la ciudad que su país exige (`CityId` en `CO`,
+  `CityName` afuera: las filas de antes de la migración) acepta **sin empresa** y sin error, y deja un `Information` con el id del
+  distribuidor. Lo que Companies rechaza (`ValidationException`, `CompaniesDomainException`) sale tal cual; no se traga.
+  Al invitar, la ciudad colombiana se valida contra Geography (`wholesale.distributor.city_not_found`) justamente para que esto
+  no pase.
+- **El cliente del mayorista nace con el celular del aviso** (`Distributor.Phone`, E.164, puede ser `null`): el puerto
+  `EnsureCustomerAsync` lleva `phone`. Un cliente que ya existía por documento no se actualiza.
 - **El aviso de WhatsApp de la invitación es un evento aparte, y desde el spec 2026-11-19 lleva el token**: invitar y
   «Reenviar» escriben `wholesale.distributor-invitation-link.v1` (token sólo en el payload del outbox). El viejo
   `wholesale.distributor-invitation-notice.v1`, sin token, ya no se escribe: el procesador sólo lo drena. El mensaje de WhatsApp
