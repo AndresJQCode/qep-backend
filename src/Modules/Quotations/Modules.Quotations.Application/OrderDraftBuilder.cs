@@ -169,7 +169,7 @@ public sealed class OrderDraftBuilder(
         return (header, input.Parties.ToDomain(), lines);
     }
 
-    /// <summary>Los regalos del cuerpo (spec 2026-11-23), preciados como <c>AddOrderGift</c>: <c>isRetail: true</c> salta las
+    /// <summary>Los regalos del cuerpo (spec 2026-11-23), preciados a precio de lista: <c>isRetail: true</c> salta las
     /// escalas a propósito, porque el regalo va a precio de lista y su descuento es el fijo del 100 %. Aparte de
     /// <see cref="PriceLinesAsync"/>, que también usa la tienda pública.</summary>
     private async Task<List<OrderLineInput>> PriceGiftLinesAsync(
