@@ -63,8 +63,10 @@ public sealed class EmployeeMedicalExamsComposer(IHrSettingsRepository settings,
     {
         var pending = requirement.Status == ExitExamStatus.Pending;
         var overdue = pending && today > requirement.DueDate;
+        // Resolved once for the request: the composer asks for a single requirement (the most recent one), and the counter is only built
+        // when it is pending and not yet overdue.
         int? left = pending
-            ? overdue ? 0 : await businessCalendar.CountBusinessDaysAsync(tenantId, today, requirement.DueDate, cancellationToken)
+            ? overdue ? 0 : (await businessCalendar.CounterAsync(tenantId, cancellationToken)).Count(today, requirement.DueDate)
             : null;
 
         return new ExitRequirementDto(

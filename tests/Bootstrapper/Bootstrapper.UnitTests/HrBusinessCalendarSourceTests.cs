@@ -4,7 +4,7 @@ using Modules.Tenancy.Domain;
 namespace Bootstrapper.UnitTests;
 
 /// <summary>
-/// Spec 2026-11-23 (medical exams) §5.5: the exit exam is due on the 5th business day strictly after the termination. Monday to
+/// Spec 2026-11-23 (medical exams) Â§5.5: the exit exam is due on the 5th business day strictly after the termination. Monday to
 /// Friday, minus the national holidays when the tenant country is Colombia (same rule as <c>SupportBusinessCalendar</c>).
 /// </summary>
 public sealed class HrBusinessCalendarSourceTests
@@ -52,6 +52,23 @@ public sealed class HrBusinessCalendarSourceTests
         Assert.Equal(5, await colombia.CountBusinessDaysAsync(tenant, Friday, due, CancellationToken.None));
     }
 
+    // One lookup of the regional settings for any number of counts: what the overview does for every ExitPending row of a page.
+    [Fact]
+    public async Task CounterResolvesTheCalendarOnceAndCountsLikeCountBusinessDays()
+    {
+        var directory = new Directory("CO");
+        var source = new HrBusinessCalendarSource(directory);
+        var tenant = Guid.CreateVersion7();
+
+        var counter = await source.CounterAsync(tenant, CancellationToken.None);
+
+        Assert.Equal(1, counter.Count(Friday, new DateOnly(2026, 11, 17)));
+        Assert.Equal(0, counter.Count(Friday, Friday));
+        var far = counter.Count(Friday, new DateOnly(2026, 11, 27));
+        Assert.Equal(1, directory.Lookups);
+        Assert.Equal(await source.CountBusinessDaysAsync(tenant, Friday, new DateOnly(2026, 11, 27), CancellationToken.None), far);
+    }
+
     [Fact]
     public async Task AddBusinessDaysFailsForATenantWithoutRegionalSettings()
     {
@@ -63,10 +80,15 @@ public sealed class HrBusinessCalendarSourceTests
 
     private sealed class Directory(string? country) : ITenantDirectory
     {
-        public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<TenantRegionalSettings?>(country is null
+        public int Lookups { get; private set; }
+
+        public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken)
+        {
+            Lookups++;
+            return Task.FromResult<TenantRegionalSettings?>(country is null
                 ? null
                 : new TenantRegionalSettings("America/Bogota", "dd/MM/yyyy", "COP", "es-CO", country));
+        }
 
         public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 

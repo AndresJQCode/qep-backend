@@ -18,4 +18,17 @@ public interface IHrBusinessCalendar
     /// <c>businessDaysLeft</c> counts, so the screen never counts days in the browser.
     /// </summary>
     Task<int> CountBusinessDaysAsync(Guid tenantId, DateOnly from, DateOnly through, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The calendar of the tenant resolved <b>once</b>: counting for every row of a page with <see cref="CountBusinessDaysAsync"/> reads
+    /// the regional settings again each time. Same rule, same results.
+    /// </summary>
+    Task<IHrBusinessDayCounter> CounterAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Counts business days of one tenant without going back to its settings.</summary>
+public interface IHrBusinessDayCounter
+{
+    /// <summary>The business days strictly after <paramref name="from"/> up to and including <paramref name="through"/>.</summary>
+    int Count(DateOnly from, DateOnly through);
 }

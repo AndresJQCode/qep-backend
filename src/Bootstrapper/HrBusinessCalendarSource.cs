@@ -16,19 +16,27 @@ internal sealed class HrBusinessCalendarSource(ITenantDirectory tenants) : IHrBu
     public async Task<DateOnly> AddBusinessDaysAsync(Guid tenantId, DateOnly from, int days, CancellationToken cancellationToken) =>
         SupportBusinessDays.Add(await CalendarAsync(tenantId, cancellationToken), from, days);
 
-    public async Task<int> CountBusinessDaysAsync(Guid tenantId, DateOnly from, DateOnly through, CancellationToken cancellationToken)
-    {
-        var calendar = await CalendarAsync(tenantId, cancellationToken);
-        var count = 0;
-        for (var day = from.AddDays(1); day <= through; day = day.AddDays(1))
-        {
-            if (calendar.IsBusinessDay(day))
-            {
-                count++;
-            }
-        }
+    public async Task<int> CountBusinessDaysAsync(Guid tenantId, DateOnly from, DateOnly through, CancellationToken cancellationToken) =>
+        new Counter(await CalendarAsync(tenantId, cancellationToken)).Count(from, through);
 
-        return count;
+    public async Task<IHrBusinessDayCounter> CounterAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        new Counter(await CalendarAsync(tenantId, cancellationToken));
+
+    private sealed class Counter(SupportBusinessCalendar calendar) : IHrBusinessDayCounter
+    {
+        public int Count(DateOnly from, DateOnly through)
+        {
+            var count = 0;
+            for (var day = from.AddDays(1); day <= through; day = day.AddDays(1))
+            {
+                if (calendar.IsBusinessDay(day))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
     }
 
     private async Task<SupportBusinessCalendar> CalendarAsync(Guid tenantId, CancellationToken cancellationToken)

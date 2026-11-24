@@ -103,11 +103,15 @@ public sealed class GetMedicalExamOverviewHandler(
         var today = (await tenantClock.GetAsync(query.TenantId, cancellationToken)).Today;
         var page = await reader.ReadAsync(query.TenantId, statuses, query.Search, today, query.Page, query.PageSize, cancellationToken);
 
+        // The calendar is resolved once per request, and only if some row needs it.
+        IHrBusinessDayCounter? counter = page.Rows.Any(row => row.Status == MedicalExamStatus.ExitPending)
+            ? await businessCalendar.CounterAsync(query.TenantId, cancellationToken)
+            : null;
         var items = new List<MedicalExamOverviewItemDto>(page.Rows.Count);
         foreach (var row in page.Rows)
         {
             int? left = row.Status == MedicalExamStatus.ExitPending && row.NextDue is { } due
-                ? due < today ? 0 : await businessCalendar.CountBusinessDaysAsync(query.TenantId, today, due, cancellationToken)
+                ? due < today ? 0 : counter!.Count(today, due)
                 : null;
             items.Add(new MedicalExamOverviewItemDto(
                 row.EmployeeId.Value,
