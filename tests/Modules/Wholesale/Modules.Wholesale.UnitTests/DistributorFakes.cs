@@ -518,6 +518,31 @@ internal sealed class FakeSupplierLinker : IWholesaleSupplierLinker
     }
 }
 
+internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
+{
+    public List<(Guid Tenant, Guid Actor, WholesaleCompanyDraft Draft)> Calls { get; } = [];
+
+    public Guid CompanyId { get; } = Guid.CreateVersion7();
+
+    /// <summary>Lo que Companies rechazaría (un <c>ValidationException</c>, por ejemplo).</summary>
+    public Exception? Fail { get; set; }
+
+    public Task<Guid> EnsureCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken)
+    {
+        if (Fail is { } failure)
+        {
+            throw failure;
+        }
+
+        Calls.Add((distributorTenantId, actorUserId, draft));
+        return Task.FromResult(CompanyId);
+    }
+}
+
 internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
 {
     public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email, string? Phone)> Calls { get; } = [];
