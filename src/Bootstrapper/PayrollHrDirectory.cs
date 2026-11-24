@@ -51,7 +51,8 @@ internal sealed class PayrollHrDirectory(
                         && contract.StartDate <= periodEnd
                         && (contract.EndedOn is null || contract.EndedOn >= periodStart))
                     .Select(contract => ToSource(contract, positions, sites, workplaces))
-                    .ToList()))
+                    .ToList(),
+                employee.RestDays.ToList()))
             .ToList();
     }
 

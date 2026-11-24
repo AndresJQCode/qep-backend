@@ -42,7 +42,8 @@ public sealed class PayrollEligibilityTests
             "1020304050",
             subtype,
             foreignExempt,
-            contracts.Length == 0 ? [Contract()] : contracts);
+            contracts.Length == 0 ? [Contract()] : contracts,
+            [DayOfWeek.Sunday]);
 
     private static EligibilityResult Evaluate(HrEmployeeSource employee) =>
         PayrollEligibility.Evaluate(employee, Start, End, Smmlv);

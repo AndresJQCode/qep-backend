@@ -65,7 +65,8 @@ public sealed class EngineInputFactoryTests
                     endedOn,
                     salaries ?? [new HrSalarySource(new DateOnly(2025, 1, 1), 2_500_000m, false)],
                     [assignment ?? Assignment()]),
-            ]);
+            ],
+            [DayOfWeek.Sunday]);
 
     private static IReadOnlyList<PeriodInput> Inputs(params PeriodInputDraft[] drafts)
     {

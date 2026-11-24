@@ -26,6 +26,7 @@ public sealed record HrContractSource(
     IReadOnlyList<HrSalarySource> Salaries,
     IReadOnlyList<HrAssignmentSource> Assignments);
 
+/// <param name="RestDays">Los días de descanso del empleado en Hr (siempre al menos uno): deciden cuáles son sus días hábiles de vacaciones.</param>
 public sealed record HrEmployeeSource(
     Guid EmployeeId,
     string FirstName,
@@ -34,7 +35,8 @@ public sealed record HrEmployeeSource(
     string DocumentNumber,
     string ContributorSubtype,
     bool ForeignPensionExempt,
-    IReadOnlyList<HrContractSource> Contracts);
+    IReadOnlyList<HrContractSource> Contracts,
+    IReadOnlyList<DayOfWeek> RestDays);
 
 /// <summary>
 /// El puerto por el que Payroll lee empresas, empleados y contratos de Hr (<c>PayrollLayerTests.NoPayrollLayerReferencesHr</c>): el
