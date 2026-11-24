@@ -98,6 +98,19 @@ public sealed class VacationAdvanceRuleTests
     }
 
     [Fact]
+    public void ATypedIbcAboveTheCapIsAdvancedOnTheCap()
+    {
+        var cap = 25m * EngineTestData.Smmlv;
+        var typed = VacationAdvanceRule.Compute(PayingInput(previousIbc: 100_000_000m), 1_000_000_000m);
+        var capped = VacationAdvanceRule.Compute(PayingInput(previousIbc: cap), 1_000_000_000m);
+
+        Assert.Equal(capped.Lines.Select(line => (line.Code, line.Amount)), typed.Lines.Select(line => (line.Code, line.Amount)));
+        Assert.Equal(capped.Photos[0].Months, typed.Photos[0].Months);
+        // What was typed is kept as typed: only the advance is computed on the cap.
+        Assert.Equal(100_000_000m, typed.Photos[0].PreviousMonthIbc);
+    }
+
+    [Fact]
     public void AVacationInsideTheQuincenaAdvancesNothing()
     {
         var input = EngineTestData.Input(January, 3_000_000m) with

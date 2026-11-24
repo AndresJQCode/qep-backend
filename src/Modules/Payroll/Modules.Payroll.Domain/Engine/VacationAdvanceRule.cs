@@ -33,13 +33,15 @@ public static class VacationAdvanceRule
         foreach (var vacation in input.Vacations.Where(item => item.PaidHere && item.Origin == VacationOrigin.Qep))
         {
             var quincenas = VacationCalendar.PayrollDays(vacation.StartDate, vacation.EndDate);
-            var fundRate = legal.SolidarityRate(vacation.PreviousMonthIbc / legal.Smmlv.Value);
+            // A typed IBC above the month cap would over-withhold what the month IBC (capped) never refunds; the photo keeps what was typed.
+            var ibc = Math.Min(vacation.PreviousMonthIbc, legal.IbcCapSmmlv.Value * legal.Smmlv.Value);
+            var fundRate = legal.SolidarityRate(ibc / legal.Smmlv.Value);
             var months = new List<VacationMonthAdvance>();
 
             // The other half of the paying month and every later month; this quincena's own days go in the regular lines.
             foreach (var month in quincenas.Where(item => item.Start != input.Period.Start).GroupBy(item => new DateOnly(item.Start.Year, item.Start.Month, 1)))
             {
-                var part = PayrollRounding.CeilingToPeso(vacation.PreviousMonthIbc * month.Sum(item => item.Days) / 30m);
+                var part = PayrollRounding.CeilingToPeso(ibc * month.Sum(item => item.Days) / 30m);
                 var healthDue = PayrollRounding.ToPeso(legal.HealthEmployeeRate.Value * part);
                 var pensionDue = PayrollRounding.ToPeso(legal.PensionEmployeeRate.Value * part);
                 var fundDue = fundRate is { } rate ? PayrollRounding.CeilingToHundred(part * rate) : 0m;
