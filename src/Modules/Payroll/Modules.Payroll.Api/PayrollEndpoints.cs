@@ -24,9 +24,44 @@ public static class PayrollEndpoints
         MapSettings(group);
         MapPeriods(group);
         MapRecurring(group);
+        MapVacations(group);
 
         return endpoints;
     }
+
+    // Vacaciones disfrutadas de un empleado. Leer es `period.read`; previsualizar y escribir, `period.read` + `period.manage`
+    // (una novedad de nómina, no la ficha del empleado). El `PUT` y el `DELETE` exigen `If-Match`; crear y previsualizar, no.
+    private static void MapVacations(RouteGroupBuilder group)
+    {
+        const string route = "/companies/{companyId:guid}/employees/{employeeId:guid}/vacations";
+
+        group.MapGet(route, ListVacationsAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodRead)
+            .Produces<IReadOnlyList<VacationDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost(route + "/preview", PreviewVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<VacationPreviewRequest>("application/json")
+            .Produces<VacationPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+    }
+
+    private static async Task<IResult> ListVacationsAsync(
+        Guid tenantId, Guid companyId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListVacationsQuery(tenantId, companyId, employeeId), cancellationToken));
+
+    private static async Task<IResult> PreviewVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        VacationPreviewRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new PreviewVacationQuery(tenantId, companyId, employeeId, request), cancellationToken));
 
     // Períodos. `ensure-current` abre las quincenas que faltan: es de quien administra (I-6) y el handler exige también `read`;
     // quien sólo lee usa `GET periods`, que no crea nada.

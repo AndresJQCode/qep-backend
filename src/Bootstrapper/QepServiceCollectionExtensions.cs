@@ -716,6 +716,14 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Payroll.Application.ToggleRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
             Modules.Payroll.Application.ToggleRecurringConceptHandler>();
         services.AddScoped<Modules.Payroll.Application.VacationInputBuilder>();
+        services.AddScoped<Modules.Payroll.Application.VacationRules>();
+        services.AddScoped<Modules.Payroll.Application.VacationComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListVacationsQuery, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.ListVacationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.PreviewVacationQuery, Modules.Payroll.Application.VacationPreviewDto>,
+            Modules.Payroll.Application.PreviewVacationHandler>();
         services.AddScoped<Modules.Payroll.Application.LiquidationPlanner>();
         services.AddScoped<Modules.Payroll.Application.PeriodApprovals>();
         services.AddScoped<

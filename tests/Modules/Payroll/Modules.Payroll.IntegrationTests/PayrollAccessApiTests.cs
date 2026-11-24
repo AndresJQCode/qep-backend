@@ -54,6 +54,8 @@ public sealed class PayrollAccessApiTests : IClassFixture<PayrollApiFixture>
         new("recurring-update", HttpMethod.Put, "/companies/{c}/employees/{e}/recurring-concepts/{r}", [Settings], []),
         new("recurring-activate", HttpMethod.Post, "/companies/{c}/employees/{e}/recurring-concepts/{r}/activate", [Settings], []),
         new("recurring-deactivate", HttpMethod.Post, "/companies/{c}/employees/{e}/recurring-concepts/{r}/deactivate", [Settings], []),
+        new("vacations-list", HttpMethod.Get, "/companies/{c}/employees/{e}/vacations", [Read], []),
+        new("vacations-preview", HttpMethod.Post, "/companies/{c}/employees/{e}/vacations/preview", [Read, Manage], []),
         new("ensure-current", HttpMethod.Post, "/companies/{c}/periods/ensure-current", [Read, Manage], []),
         new("open-next", HttpMethod.Post, "/companies/{c}/periods/open-next", [Read, Manage], []),
         new("periods-list", HttpMethod.Get, "/companies/{c}/periods", [Read], []),
