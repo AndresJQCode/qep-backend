@@ -45,7 +45,7 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
             order.Total,
             order.RetentionAmount,
             order.NetTotal,
-            [.. order.Withholdings.Select(value => new SiigoWithholdingInput(value.TaxRateId, value.Name, value.Type, value.Amount))],
+            [.. order.Withholdings.Select(value => new SiigoWithholdingInput(value.TaxRateId, value.Name, value.Type, value.Amount, value.Percentage))],
             [.. order.PaymentProofs.Select(proof => new SiigoPaymentProofInput(proof.ProofId, proof.Amount))],
             BankAccountKey.Normalize(order.BillingAccountBankName, order.BillingAccountNumber),
             order.BuyerNotes,

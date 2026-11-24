@@ -40,7 +40,7 @@ public sealed record SiigoInvoiceLineInput(
 
 /// <summary>Una retención <b>aplicada</b> del pedido (<paramref name="Type"/> es <c>Retefuente</c> o <c>ReteICA</c>; otro tipo es un
 /// faltante). Sólo viaja el vínculo: el monto lo calcula Siigo.</summary>
-public sealed record SiigoWithholdingInput(Guid TaxRateId, string Name, string Type, decimal Amount);
+public sealed record SiigoWithholdingInput(Guid TaxRateId, string Name, string Type, decimal Amount, decimal Percentage = 0m);
 
 /// <summary>Un comprobante de pago del pedido: cada uno es un pago de la factura, por su monto.</summary>
 public sealed record SiigoPaymentProofInput(Guid ProofId, decimal Amount);

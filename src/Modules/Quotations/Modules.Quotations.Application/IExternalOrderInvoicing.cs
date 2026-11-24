@@ -17,7 +17,7 @@ public sealed record ExternalInvoicingLine(
     decimal ListUnitPrice = 0m);
 
 /// <summary>Una retención <b>aplicada</b> del pedido (las que no aplicaron no viajan).</summary>
-public sealed record ExternalInvoicingWithholding(Guid TaxRateId, string Name, string Type, decimal Amount);
+public sealed record ExternalInvoicingWithholding(Guid TaxRateId, string Name, string Type, decimal Amount, decimal Percentage = 0m);
 
 /// <summary>Un comprobante de pago: cada uno es un pago de la factura.</summary>
 public sealed record ExternalInvoicingProof(Guid ProofId, decimal Amount);

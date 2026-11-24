@@ -75,7 +75,7 @@ public sealed class ExternalOrderInvoicingService(
             order.RetentionAmount,
             order.NetTotal,
             [.. order.AppliedWithholdings.Select(withholding => new ExternalInvoicingWithholding(
-                withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Amount))],
+                withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Amount, withholding.Percentage))],
             [.. order.PaymentProofs.OrderBy(proof => proof.UploadedAt).ThenBy(proof => proof.Id.Value)
                 .Select(proof => new ExternalInvoicingProof(proof.Id.Value, proof.Amount))],
             order.BillingAccount?.CompanyId,
