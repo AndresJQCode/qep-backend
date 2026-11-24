@@ -219,6 +219,27 @@ internal sealed class FakeCompanyLookup : IWholesaleCompanyLookup
         Task.FromResult<IReadOnlyList<WholesaleCompanyRef>>(Companies.Where(company => company.IsActive).ToList());
 }
 
+/// <summary>Geografía en memoria: sólo las ciudades que se siembran existen; <c>Calls</c> anota cada búsqueda.</summary>
+internal sealed class FakeCityLookup : IWholesaleCityLookup
+{
+    public Dictionary<Guid, string> Cities { get; } = [];
+
+    public List<Guid> Calls { get; } = [];
+
+    public Guid Add(string name)
+    {
+        var id = Guid.CreateVersion7();
+        Cities[id] = name;
+        return id;
+    }
+
+    public Task<WholesaleCityRef?> FindAsync(Guid cityId, CancellationToken cancellationToken)
+    {
+        Calls.Add(cityId);
+        return Task.FromResult(Cities.TryGetValue(cityId, out var name) ? new WholesaleCityRef(cityId, name) : null);
+    }
+}
+
 internal sealed class FakeMemberDirectory : IWholesaleMemberDirectory
 {
     public List<WholesaleMember> Active { get; } = [];

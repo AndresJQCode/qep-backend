@@ -290,6 +290,16 @@ public interface IWholesaleCompanyLookup
     Task<IReadOnlyList<WholesaleCompanyRef>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>Una ciudad de Geography: su id y su nombre, sin departamento (Wholesale sólo la valida y la nombra).</summary>
+public sealed record WholesaleCityRef(Guid Id, string Name);
+
+/// <summary>Las ciudades de Colombia; adaptador en Bootstrapper sobre Geography. Sirve para rechazar al invitar una ciudad
+/// que después haría fallar cada aceptación y para nombrarla en el detalle.</summary>
+public interface IWholesaleCityLookup
+{
+    Task<WholesaleCityRef?> FindAsync(Guid cityId, CancellationToken cancellationToken);
+}
+
 /// <summary>Una membresía activa con su nombre visible.</summary>
 public sealed record WholesaleMember(Guid MemberId, string Name);
 

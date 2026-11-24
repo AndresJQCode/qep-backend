@@ -317,11 +317,12 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         return new World(tenant, manager, list.Id, company, ready);
     }
 
-    private static Task<HttpResponseMessage> InviteAsync(World world, string? phone, Guid? connectionId) =>
-        world.Manager.PostAsJsonAsync(
+    private static async Task<HttpResponseMessage> InviteAsync(World world, string? phone, Guid? connectionId) =>
+        await world.Manager.PostAsJsonAsync(
             WholesaleApiHarness.DistributorsUrl(world.Tenant.TenantId),
             new
             {
+                cityId = await WholesaleApiHarness.MedellinAsync(world.Manager),
                 email = "ana@distri.co",
                 businessName = "Distribuciones Norte SAS",
                 country = "CO",

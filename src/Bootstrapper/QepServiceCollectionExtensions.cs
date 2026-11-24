@@ -2495,6 +2495,7 @@ public static class QepServiceCollectionExtensions
         // Wholesale, spec 2026-11-17: Catalog, Companies, Tenancy, Suppliers y Customers entran por puertos del módulo.
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCatalogReader, WholesaleCatalogReader>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCompanyLookup, WholesaleCompanyLookup>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCityLookup, WholesaleCityLookup>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleMemberDirectory, WholesaleMemberDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();

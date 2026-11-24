@@ -143,6 +143,7 @@ internal static class LinkedPurchasesHarness
                 priceListId = priceList.Id,
                 advisorId = wholesalerTenant.MemberId,
                 billingCompanyId = companyId,
+                cityId = await MedellinAsync(wholesaler),
             });
 
         var token = await LatestTokenAsync(factory, distributor.Id);
@@ -199,20 +200,6 @@ internal static class LinkedPurchasesHarness
     // Copia de WholesaleApiHarness.CreateCompanyAsync: NIT en Medellín (o la primera ciudad sembrada).
     private static async Task<Guid> CreateCompanyAsync(HttpClient client, Guid tenantId)
     {
-        Guid? first = null;
-        Guid? medellin = null;
-        var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];
-        foreach (var department in departments)
-        {
-            var cities = await client.GetFromJsonAsync<List<GeographyRow>>($"/api/v1/cities?departmentId={department.Id}", Ct) ?? [];
-            first ??= cities.FirstOrDefault()?.Id;
-            medellin = cities.FirstOrDefault(city => city.Name.StartsWith("Medell", StringComparison.OrdinalIgnoreCase))?.Id;
-            if (medellin is not null)
-            {
-                break;
-            }
-        }
-
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/companies",
             new
@@ -225,12 +212,31 @@ internal static class LinkedPurchasesHarness
                 phone = "3001234567",
                 email = "ventas@mayorista.co",
                 address = "Calle 10 # 40-20",
-                cityId = medellin ?? first ?? throw new InvalidOperationException("No seeded DIVIPOLA city."),
+                cityId = await MedellinAsync(client),
             },
             Ct);
         await EnsureSuccessAsync(response);
         using var document = JsonDocument.Parse(await PurchasesApiHarness.BodyAsync(response));
         return document.RootElement.GetProperty("id").GetGuid();
+    }
+
+    // Medellín, o la primera ciudad sembrada si no está.
+    private static async Task<Guid> MedellinAsync(HttpClient client)
+    {
+        Guid? first = null;
+        var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<GeographyRow>>($"/api/v1/cities?departmentId={department.Id}", Ct) ?? [];
+            first ??= cities.FirstOrDefault()?.Id;
+            var medellin = cities.FirstOrDefault(city => city.Name.StartsWith("Medell", StringComparison.OrdinalIgnoreCase));
+            if (medellin is not null)
+            {
+                return medellin.Id;
+            }
+        }
+
+        return first ?? throw new InvalidOperationException("No seeded DIVIPOLA city.");
     }
 
     private sealed record GeographyRow(Guid Id, string Name);
