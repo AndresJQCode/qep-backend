@@ -51,6 +51,9 @@ public sealed record ChannelStartCheck(
     string ResourceName,
     string LocationName);
 
+/// <summary>Lo que daría mover esa cita, sin escribir: <paramref name="AlreadyDone"/> cuando ya está a esa hora (y en ese recurso, si se pidió).</summary>
+public sealed record ChannelRescheduleCheck(ChannelStartCheck Start, bool AlreadyDone);
+
 /// <summary>Una reserva del agente: la llave de idempotencia la deriva quien llama del trabajo (D-14) y siempre viaja.</summary>
 public sealed record ChannelBooking(
     Guid TenantId,
@@ -93,6 +96,10 @@ public interface IChannelScheduling
     /// <summary>Lanza lo mismo que la reserva lanzaría, sin candado ni escritura.</summary>
     Task<ChannelStartCheck> CheckStartAsync(
         Guid tenantId, Guid serviceId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken);
+
+    /// <summary>Lo que haría <see cref="RescheduleAsync"/>, sin candado ni escritura: la vista previa del playground (D-7).</summary>
+    Task<ChannelRescheduleCheck> CheckRescheduleAsync(
+        Guid tenantId, Guid customerId, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken);
 
     /// <summary>Reserva como canal (<c>Source = Channel</c>, actor agente). Repetir la llave devuelve la cita guardada, también si dos llamadas con ella corren a la vez.</summary>
     Task<ChannelWriteResult> BookAsync(ChannelBooking booking, CancellationToken cancellationToken);
@@ -261,6 +268,41 @@ public sealed class ChannelScheduling(
             service.Name,
             offered.DisplayName,
             location?.Name ?? string.Empty);
+    }
+
+    public async Task<ChannelRescheduleCheck> CheckRescheduleAsync(
+        Guid tenantId, Guid customerId, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken)
+    {
+        await EnsureAsync(tenantId, cancellationToken);
+        var appointment = await LoadOwnAsync(tenantId, customerId, appointmentId, cancellationToken);
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        var startsAt = ToInstant(calendar, localStartsAt);
+        ResourceId? requested = resourceId is { } chosen ? new ResourceId(chosen) : null;
+
+        AppointmentRescheduling.EnsureOpen(appointment);
+        if (startsAt == appointment.StartsAt && (requested is null || requested == appointment.ResourceId))
+        {
+            var current = await DescribeOneAsync(tenantId, appointment, calendar, cancellationToken);
+            return new ChannelRescheduleCheck(
+                new ChannelStartCheck(
+                    current.Status, current.StartsAt, current.EndsAt, current.TimeZone, current.ServiceName, current.ResourceName, current.LocationName),
+                AlreadyDone: true);
+        }
+
+        var (service, loaded, option) = await rescheduling.CheckAsync(
+            tenantId, appointment, ResourceScope.All, requested, startsAt, byClient: true, requireClientChoice: true, cancellationToken);
+        var offered = loaded.OfferedResources.Single(resource => resource.Id == option.ResourceId);
+        var location = await locations.FindAsync(tenantId, offered.LocationId, cancellationToken);
+        return new ChannelRescheduleCheck(
+            new ChannelStartCheck(
+                appointment.Status.ToString(),
+                calendar.ToLocal(startsAt),
+                calendar.ToLocal(startsAt.AddMinutes(service.DurationMinutes)),
+                calendar.TimeZone.Id,
+                service.Name,
+                offered.DisplayName,
+                location?.Name ?? string.Empty),
+            AlreadyDone: false);
     }
 
     public async Task<ChannelWriteResult> BookAsync(ChannelBooking booking, CancellationToken cancellationToken)

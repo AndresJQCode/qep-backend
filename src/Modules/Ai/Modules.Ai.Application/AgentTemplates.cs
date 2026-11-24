@@ -117,7 +117,7 @@ public sealed class CreateAgentFromTemplateHandler(
         await CreateAgentHandler.EnsureNameIsFreeAsync(agents, command.TenantId, name, null, cancellationToken);
 
         var now = clock.UtcNow;
-        var agent = Agent.Create(command.TenantId, name, template.ConfigFor(ModelCatalog.DefaultFor(catalog)), by, now);
+        var agent = Agent.Create(command.TenantId, name, template.ConfigFor(ModelCatalog.DefaultFor(catalog)), by, now, sourceTemplateId: template.Id);
         agents.Add(agent);
         audit.Record(command.TenantId, executionContext.SubjectId, AiAuditActions.AgentCreated, agent.Id, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

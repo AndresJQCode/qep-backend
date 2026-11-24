@@ -67,6 +67,9 @@ public sealed record AiAppointmentWrite(AiAppointment Appointment, bool AlreadyD
 public sealed record AiStartPreview(
     string Status, DateTimeOffset StartsAt, DateTimeOffset EndsAt, string TimeZone, string ServiceName, string ResourceName, string LocationName);
 
+/// <summary>Lo que daría mover esa cita, sin escribir: la herramienta simulada del playground (D-7).</summary>
+public sealed record AiReschedulePreview(AiStartPreview Start, bool AlreadyDone);
+
 /// <summary>
 /// Spec 2026-11-23 §7.1: la Agenda sin sesión para el agente (adaptador en Bootstrapper sobre <c>IChannelScheduling</c>). Ai no referencia
 /// Scheduling, Mensajería ni Clientes: el adaptador traduce excepciones a códigos (§8) y resuelve el cliente de la conversación.
@@ -91,6 +94,9 @@ public interface IAiScheduling
 
     Task<AiSchedulingResult<AiStartPreview>> PreviewBookingAsync(
         AiSchedulingCaller caller, Guid serviceId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken);
+
+    Task<AiSchedulingResult<AiReschedulePreview>> PreviewRescheduleAsync(
+        AiSchedulingCaller caller, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken);
 
     Task<AiSchedulingResult<AiAppointments>> ListMyAppointmentsAsync(AiSchedulingCaller caller, CancellationToken cancellationToken);
 
@@ -589,7 +595,7 @@ public sealed class RescheduleAppointmentTool(IAiScheduling scheduling) : IAgent
 
 /// <summary>§7.7: <c>reschedule_appointment</c> sólo en el playground. Un id <c>PRUEBA-…</c> se da por encontrado y abierto, y no se valida el
 /// inicio: la cita simulada no guarda su servicio (decisión del plan; el spec sólo dice que se da por encontrada). Uno real se lee y su
-/// inicio nuevo se comprueba como lo haría la reserva.</summary>
+/// inicio nuevo se comprueba como lo haría el cambio de hora real (misma sede, sin contar el cupo de la propia cita), no como una reserva.</summary>
 public sealed class SimulatedRescheduleAppointmentTool(IAiScheduling scheduling) : IAgentTool
 {
     public AiToolDefinition Definition => RescheduleAppointmentArguments.Definition;
@@ -633,18 +639,18 @@ public sealed class SimulatedRescheduleAppointmentTool(IAiScheduling scheduling)
             return AgentSchedulingArguments.Blocked();
         }
 
-        var preview = await scheduling.PreviewBookingAsync(caller, appointment.ServiceId, startsAt, resourceId, cancellationToken);
+        var preview = await scheduling.PreviewRescheduleAsync(caller, appointment.AppointmentId, startsAt, resourceId, cancellationToken);
         return AgentSchedulingArguments.Map(preview, value => new Dictionary<string, object?>
         {
             ["appointmentId"] = appointment.AppointmentId,
             ["status"] = appointment.Status,
-            ["startsAt"] = AgentSchedulingFormat.Local(value.StartsAt),
-            ["endsAt"] = AgentSchedulingFormat.Local(value.EndsAt),
-            ["timeZone"] = value.TimeZone,
-            ["serviceName"] = value.ServiceName,
-            ["resourceName"] = value.ResourceName,
-            ["locationName"] = value.LocationName,
-            ["alreadyDone"] = false,
+            ["startsAt"] = AgentSchedulingFormat.Local(value.Start.StartsAt),
+            ["endsAt"] = AgentSchedulingFormat.Local(value.Start.EndsAt),
+            ["timeZone"] = value.Start.TimeZone,
+            ["serviceName"] = value.Start.ServiceName,
+            ["resourceName"] = value.Start.ResourceName,
+            ["locationName"] = value.Start.LocationName,
+            ["alreadyDone"] = value.AlreadyDone,
         });
     }
 }

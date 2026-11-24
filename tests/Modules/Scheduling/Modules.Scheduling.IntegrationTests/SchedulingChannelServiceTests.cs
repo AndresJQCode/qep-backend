@@ -26,11 +26,11 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
         return await action(scope.ServiceProvider.GetRequiredService<IChannelScheduling>());
     }
 
-    private static async Task<Guid> CreateServiceAsync(SchedulingTenant tenant, string name, bool bookableByChannel = true, int duration = 30) =>
+    private static async Task<Guid> CreateServiceAsync(SchedulingTenant tenant, string name, bool bookableByChannel = true, int duration = 30, int buffer = 0) =>
         (await CreatedAsync(
                 tenant.Admin,
                 $"{tenant.Url}/services",
-                new { name, durationMinutes = duration, bufferMinutes = 0, bookableByChannel }))
+                new { name, durationMinutes = duration, bufferMinutes = buffer, bookableByChannel }))
             .GetProperty("id").GetGuid();
 
     private static async Task CreateBlockAsync(
@@ -324,6 +324,7 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
             channel => channel.ListCustomerAppointmentsAsync(tenant.Id, id, 10, Ct),
             channel => channel.FindCustomerAppointmentAsync(tenant.Id, id, id, Ct),
             channel => channel.CheckStartAsync(tenant.Id, id, day.ToDateTime(new TimeOnly(9, 0)), null, Ct),
+            channel => channel.CheckRescheduleAsync(tenant.Id, id, id, day.ToDateTime(new TimeOnly(9, 0)), null, Ct),
         };
         foreach (var call in calls)
         {
@@ -340,12 +341,12 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
 
     private sealed record BookScene(SchedulingTenant Tenant, Guid Resource, Guid SecondResource, Guid Service, Guid Customer, DateOnly Day, Guid Agent);
 
-    private async Task<BookScene> BookSceneAsync(bool allowClientChoice = true, bool bookableByChannel = true)
+    private async Task<BookScene> BookSceneAsync(bool allowClientChoice = true, bool bookableByChannel = true, int duration = 30, int buffer = 0)
     {
         var tenant = await NewTenantAsync(world.Factory);
         var resource = await CreateResourceAsync(tenant, "Dra. Torres");
         var second = await CreateResourceAsync(tenant, "Dr. Pardo");
-        var service = await CreateServiceAsync(tenant, "Limpieza", bookableByChannel);
+        var service = await CreateServiceAsync(tenant, "Limpieza", bookableByChannel, duration, buffer);
         var day = FutureMonday();
         (await tenant.Admin.PostAsJsonAsync(
             $"{tenant.Url}/blocks",
@@ -534,7 +535,12 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
         var move = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
             WithServiceAsync(channel => channel.RescheduleAsync(scene.Tenant.Id, scene.Agent, stranger, id, At(scene, 10), null, Ct)));
 
-        Assert.Equal((SchedulingErrorCodes.AppointmentNotFound, SchedulingErrorCodes.AppointmentNotFound), (cancel.Code, move.Code));
+        var check = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            WithServiceAsync(channel => channel.CheckRescheduleAsync(scene.Tenant.Id, stranger, id, At(scene, 10), null, Ct)));
+
+        Assert.Equal(
+            (SchedulingErrorCodes.AppointmentNotFound, SchedulingErrorCodes.AppointmentNotFound, SchedulingErrorCodes.AppointmentNotFound),
+            (cancel.Code, move.Code, check.Code));
         var after = await ReadAppointmentAsync(scene, id);
         Assert.Equal(before.GetProperty("version").GetInt64(), after.GetProperty("version").GetInt64());
         Assert.Equal("Confirmed", after.GetProperty("status").GetString());
@@ -863,6 +869,53 @@ public sealed class SchedulingChannelServiceTests(SchedulingApiWorld world) : IC
 
         Assert.Equal(SchedulingErrorCodes.InvalidTransition, error.Code);
         Assert.Equal(AppointmentCancellationRules.NotMovableByChatMessage, error.Message);
+    }
+
+    [Fact]
+    public async Task CheckRescheduleIgnoresTheSeatTheAppointmentHolds()
+    {
+        // With a margin, the range of the booked 09:00 (09:00-10:00) overlaps any start before 10:00: a booking preview of that start fails.
+        var scene = await BookSceneAsync(duration: 30, buffer: 30);
+        using var owner = scene.Tenant;
+        var offered = await WithServiceAsync(channel => channel.SearchAvailabilityAsync(scene.Tenant.Id, scene.Service, scene.Day, scene.Day, scene.Resource, 50, Ct));
+        var target = offered.Slots.Select(slot => slot.StartsAt).First(start => start.TimeOfDay > TimeSpan.FromHours(9) && start.TimeOfDay < TimeSpan.FromHours(10));
+        var targetLocal = new DateTime(target.Year, target.Month, target.Day, target.Hour, target.Minute, 0);
+        var booked = await WithServiceAsync(channel => channel.BookAsync(Booking(scene, At(scene, 9), "key-check-own-seat", scene.Resource), Ct));
+        var id = booked.Appointment.AppointmentId;
+        var before = (await ReadAppointmentAsync(scene, id)).GetProperty("version").GetInt64();
+
+        // The guard: the scene does reproduce the error of the booking preview.
+        var taken = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            WithServiceAsync(channel => channel.CheckStartAsync(scene.Tenant.Id, scene.Service, targetLocal, scene.Resource, Ct)));
+        Assert.Equal(SchedulingErrorCodes.SlotTaken, taken.Code);
+
+        var check = await WithServiceAsync(channel => channel.CheckRescheduleAsync(scene.Tenant.Id, scene.Customer, id, targetLocal, scene.Resource, Ct));
+
+        Assert.False(check.AlreadyDone);
+        Assert.Equal(targetLocal.TimeOfDay, check.Start.StartsAt.TimeOfDay);
+        Assert.Equal("Confirmed", check.Start.Status);
+        Assert.Equal("Dra. Torres", check.Start.ResourceName);
+        Assert.Equal(before, (await ReadAppointmentAsync(scene, id)).GetProperty("version").GetInt64());
+
+        // Parity: the real move does the same thing.
+        var moved = await WithServiceAsync(channel => channel.RescheduleAsync(scene.Tenant.Id, scene.Agent, scene.Customer, id, targetLocal, scene.Resource, Ct));
+        Assert.False(moved.AlreadyDone);
+    }
+
+    [Fact]
+    public async Task CheckRescheduleToTheSameTimeIsAlreadyDone()
+    {
+        var scene = await BookSceneAsync();
+        using var owner = scene.Tenant;
+        var booked = await WithServiceAsync(channel => channel.BookAsync(Booking(scene, At(scene, 9), "key-check-same"), Ct));
+        var id = booked.Appointment.AppointmentId;
+        var before = (await ReadAppointmentAsync(scene, id)).GetProperty("version").GetInt64();
+
+        var check = await WithServiceAsync(channel => channel.CheckRescheduleAsync(scene.Tenant.Id, scene.Customer, id, At(scene, 9), null, Ct));
+
+        Assert.True(check.AlreadyDone);
+        Assert.Equal(9, check.Start.StartsAt.Hour);
+        Assert.Equal(before, (await ReadAppointmentAsync(scene, id)).GetProperty("version").GetInt64());
     }
 
     [Fact]

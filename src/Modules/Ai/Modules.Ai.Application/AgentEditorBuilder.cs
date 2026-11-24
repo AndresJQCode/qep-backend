@@ -12,7 +12,8 @@ public sealed class AgentEditorBuilder(
     IAiQuotationAdvisors advisors,
     IAiProviderCredentials credentials,
     IAiQuotationBillingAccounts billingAccountOptions,
-    IAiScheduling scheduling)
+    IAiScheduling scheduling,
+    ISystemAgentTemplateCatalog templates)
 {
     private const string WhatsApp = "WhatsApp";
 
@@ -122,7 +123,9 @@ public sealed class AgentEditorBuilder(
             ModelCatalog.ToDto(catalog, await credentials.DescribeAsync(agent.TenantId, cancellationToken)),
             [.. quoting.Select(member => new AiMemberDto(member.Id, member.Name))],
             billingAccounts,
-            await SchedulingReadinessAsync(agent.TenantId, cancellationToken));
+            await SchedulingReadinessAsync(agent.TenantId, cancellationToken),
+            agent.SourceTemplateId,
+            agent.SourceTemplateId is { } sourceId ? templates.Find(sourceId)?.Name : null);
     }
 
     /// <summary>§9.3: siempre se lee, con la herramienta prendida o no, para que el editor sepa si ofrecer el interruptor.</summary>
