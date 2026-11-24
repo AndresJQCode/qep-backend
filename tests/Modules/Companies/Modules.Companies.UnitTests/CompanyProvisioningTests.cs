@@ -235,6 +235,10 @@ public sealed class CompanyProvisioningTests
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, CompanyCityRef>>(
                 cityIds.Where(id => id == KnownCity).ToDictionary(id => id, _ => City));
+
+        public Task<IReadOnlyDictionary<Guid, CompanyRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, CompanyRegionRef>>(new Dictionary<Guid, CompanyRegionRef>());
     }
 
     private sealed class FixedClock : IClock
