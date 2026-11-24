@@ -289,4 +289,45 @@ public sealed class CustomerAddressesApiTests
         var item = Assert.Single(byDomicile.Items);
         Assert.Equal(customer.Id, item.Id);
     }
+
+    // El carril de la ciudad lo respalda la base: una direccion colombiana con region no entra
+    // aunque alguien se salte el dominio.
+    [Fact]
+    public async Task CheckRejectsColombiaWithRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var customer = await CreateCustomerAsync(client, city.CityId, classification.Id);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        Guid madrid;
+        await using (var select = new NpgsqlCommand(
+            "SELECT id FROM geography.regions WHERE country_code = 'ES' AND code = '28'", connection))
+        {
+            madrid = (Guid)(await select.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+        }
+
+        await using var insert = new NpgsqlCommand(
+            """
+            INSERT INTO customers.customer_addresses (
+                id, customer_id, name, address, country, city_id, city_name, region_id,
+                is_principal, created_at, updated_at)
+            VALUES (@id, @customer, 'Bodega', 'Calle 1 # 2-3', 'CO', @city, NULL, @region,
+                    false, now(), now())
+            """,
+            connection);
+        insert.Parameters.AddWithValue("id", Guid.NewGuid());
+        insert.Parameters.AddWithValue("customer", customer.Id);
+        insert.Parameters.AddWithValue("city", city.CityId);
+        insert.Parameters.AddWithValue("region", madrid);
+
+        var failure = await Assert.ThrowsAsync<PostgresException>(
+            () => insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("CK_customer_addresses_city_lane", failure.ConstraintName);
+    }
 }
