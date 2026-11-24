@@ -207,6 +207,8 @@ public sealed class SaveOrderEditsHandler(
             {
                 var regional = await tenantDirectory.GetRegionalSettingsAsync(
                     new TenantId(command.TenantId), cancellationToken);
+                await PartyRegionRules.EnsureAsync(
+                    geographyLookup, command.Billing.Party.ToDomain(), "Parties.Billing", cancellationToken);
                 billingSummary = OrderBillingEdits.Apply(
                     order, command.Billing, regional?.Country, strict: true, updatedBy, now);
                 await BillingPersonTypeRequirement.EnsureForOrderAsync(

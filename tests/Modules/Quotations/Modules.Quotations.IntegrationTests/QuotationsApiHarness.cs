@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -530,6 +531,26 @@ internal static class QuotationsApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(body);
         return body.Id;
+    }
+
+    /// <summary>El id de Madrid (código 28) en el catálogo de regiones de España que siembra Geography: la región que las
+    /// pruebas de provincia guardada mandan como <c>regionId</c>.</summary>
+    public static async Task<Guid> MadridRegionIdAsync(HttpClient client)
+    {
+        var regions = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/countries/ES/regions", TestContext.Current.CancellationToken);
+        return regions.EnumerateArray()
+            .Single(region => region.GetProperty("code").GetString() == "28")
+            .GetProperty("id").GetGuid();
+    }
+
+    /// <summary>Un id de departamento colombiano tal como lo devuelve <c>GET /countries/CO/regions</c>: el que el frontend
+    /// puede conservar al cambiar de país.</summary>
+    public static async Task<Guid> ColombianDepartmentRegionIdAsync(HttpClient client)
+    {
+        var regions = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/countries/CO/regions", TestContext.Current.CancellationToken);
+        return regions.EnumerateArray().First().GetProperty("id").GetGuid();
     }
 
     /// <summary>El alta exige teléfono (<c>CustomerWriteRules</c>): un contacto sin teléfono sólo existe por datos que no pasaron

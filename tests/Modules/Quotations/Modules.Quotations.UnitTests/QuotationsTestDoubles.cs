@@ -1490,8 +1490,15 @@ internal sealed class StubQuotationBuyerAccountLookup(params QuotationBuyerAccou
 internal sealed class StubQuotationGeographyLookup(
     IReadOnlyDictionary<Guid, string> cityNames,
     IReadOnlyDictionary<Guid, string>? coordinadoraNames = null,
-    IReadOnlyDictionary<Guid, string>? departmentNames = null) : IQuotationGeographyLookup
+    IReadOnlyDictionary<Guid, string>? departmentNames = null,
+    IReadOnlyDictionary<Guid, QuotationRegionRef>? regions = null) : IQuotationGeographyLookup
 {
+    private readonly IReadOnlyDictionary<Guid, QuotationRegionRef> _regions =
+        regions ?? new Dictionary<Guid, QuotationRegionRef>();
+
+    /// <summary>Cuántas veces se pidieron regiones: una por lote es la aserción.</summary>
+    public int FindRegionsCalls { get; private set; }
+
     private readonly IReadOnlyDictionary<Guid, string> _coordinadoraNames =
         coordinadoraNames ?? new Dictionary<Guid, string>();
 
@@ -1543,8 +1550,12 @@ internal sealed class StubQuotationGeographyLookup(
     /// <summary>La referencia de municipio sale del nombre del DANE; el departamento no le importa a ninguna prueba
     /// unitaria, así que va con el id vacío y el mismo nombre.</summary>
     public Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> FindRegionsAsync(
-        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<Guid, QuotationRegionRef>>(new Dictionary<Guid, QuotationRegionRef>());
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken)
+    {
+        FindRegionsCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationRegionRef>>(
+            regionIds.Where(_regions.ContainsKey).Distinct().ToDictionary(id => id, id => _regions[id]));
+    }
 
     public Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
