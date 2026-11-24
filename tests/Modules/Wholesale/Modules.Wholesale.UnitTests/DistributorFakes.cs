@@ -557,7 +557,7 @@ internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
 
 internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
 {
-    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email, string? Phone)> Calls { get; } = [];
+    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email, string? Phone, Guid? CityId, string? CityName, string? Address, string ContactName)> Calls { get; } = [];
 
     public Guid CustomerId { get; } = Guid.CreateVersion7();
 
@@ -573,6 +573,10 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
         string identificationNumber,
         string email,
         string? phone,
+        Guid? cityId,
+        string? cityName,
+        string? address,
+        string contactName,
         CancellationToken cancellationToken)
     {
         if (FailTimes > 0)
@@ -581,7 +585,7 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
             throw new InvalidOperationException("Customers is down.");
         }
 
-        Calls.Add((wholesalerTenantId, actorUserId, businessName, country, identificationType, identificationNumber, email, phone));
+        Calls.Add((wholesalerTenantId, actorUserId, businessName, country, identificationType, identificationNumber, email, phone, cityId, cityName, address, contactName));
         return Task.FromResult(CustomerId);
     }
 }

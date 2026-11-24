@@ -212,6 +212,10 @@ public sealed partial class DistributorInvitationService(
             distributor.IdentificationNumber,
             email,
             distributor.Phone,
+            distributor.CityId,
+            distributor.CityName,
+            distributor.Address,
+            distributor.ContactName,
             cancellationToken);
 
         // 9: el correo de la cuenta, la activación, sus auditorías y el evento van en el mismo guardado (spec 2026-11-19 §6): si

@@ -766,6 +766,46 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(["+573001234567"], phones);
     }
 
+    // Decisión del owner 2026-11-24: con teléfono, el cliente del mayorista nace completo con la ciudad y la dirección del
+    // distribuidor, y su contacto es la etiqueta de la dirección principal. Sin teléfono (la invitación no lo trae) queda incompleto.
+    [Fact]
+    public async Task TheWholesalerCustomerIsBornCompleteWithTheCityAddressAndContact()
+    {
+        var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), "901333555");
+        await WholesaleApiHarness.ExecuteAsync(
+            Factory, $"UPDATE wholesale.distributors SET phone = '+573001234567' WHERE id = {distributor.Id}");
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+
+        (await AcceptNewTenantAsync(userId, token)).EnsureSuccessStatusCode();
+
+        var labels = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""
+            SELECT a.name AS "Value" FROM customers.customer_addresses a
+            JOIN customers.customers c ON c.id = a.customer_id
+            WHERE c.tenant_id = {wholesaler.TenantId} AND c.identification_number = '901333555' AND c.completeness = 'Complete'
+              AND a.address = 'Calle 10 # 40-20' AND a.is_principal
+            """);
+        Assert.Equal(["Ana Pérez"], labels);
+    }
+
+    [Fact]
+    public async Task TheWholesalerCustomerWithoutPhoneStaysIncomplete()
+    {
+        var (wholesaler, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail(), "901333666");
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+
+        (await AcceptNewTenantAsync(userId, token)).EnsureSuccessStatusCode();
+
+        var states = await WholesaleApiHarness.RowsAsync<string>(
+            Factory,
+            $"""
+            SELECT completeness AS "Value" FROM customers.customers
+            WHERE tenant_id = {wholesaler.TenantId} AND identification_number = '901333666'
+            """);
+        Assert.Equal(["Incomplete"], states);
+    }
+
     private sealed record CompanyRow(string Name, string TaxId, Guid CityId, string Address);
 
     // Spec 2026-11-19 §3b, foco 3: dos distribuidores con la misma razón social reciben la misma sugerencia; el que pierde la
