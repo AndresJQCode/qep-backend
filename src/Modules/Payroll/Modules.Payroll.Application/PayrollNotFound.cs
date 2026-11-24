@@ -24,4 +24,7 @@ internal static class PayrollNotFound
 
     public static ResourceNotFoundException Recurring(Guid id) =>
         new(PayrollErrorCodes.RecurringNotFound, $"Recurring concept '{id}' was not found.");
+
+    public static ResourceNotFoundException Vacation(Guid id) =>
+        new(PayrollErrorCodes.VacationNotFound, $"Vacation '{id}' was not found.");
 }

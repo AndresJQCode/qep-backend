@@ -90,6 +90,7 @@ public static class PayrollLabels
         [BlockerReason.MissingSalary] = "No tiene salario vigente en la quincena",
         [BlockerReason.MissingWorkplace] = "No tiene centro de trabajo en la quincena",
         [BlockerReason.MissingRiskClass] = "Su centro de trabajo no tiene clase de riesgo",
+        [BlockerReason.VacationOutsideContract] = "Tiene vacaciones fuera de su contrato: corrígelas",
     };
 
     public static IReadOnlyDictionary<PeriodAction, string> PeriodActions { get; } = new Dictionary<PeriodAction, string>

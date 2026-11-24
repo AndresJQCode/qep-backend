@@ -6,4 +6,5 @@ public enum BlockerReason
     MissingSalary,
     MissingWorkplace,
     MissingRiskClass,
+    VacationOutsideContract,
 }
