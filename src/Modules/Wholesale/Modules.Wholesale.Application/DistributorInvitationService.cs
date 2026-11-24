@@ -40,8 +40,9 @@ public interface IDistributorInvitationService
 /// deja la invitación pendiente y el reintento termina sobre el mismo tenant.
 /// <para>Orden fijo: 1) invitación por hash (404); 2-3) ya aceptada: mismo usuario → el resultado otra vez (D-16, ruling W9),
 /// otro → 409; vencida → 410; 4) mayorista <c>Active</c> con <c>wholesale</c> prendido (409 <c>unavailable</c>); 5) destino;
-/// 6) empresa del distribuidor en el tenant reservado, sólo si <c>created</c> (también en un reintento D-17 con cuerpo
-/// <c>LinkTenant</c>, que no cambia que el tenant sea el reservado) y la invitación trae la ciudad que su país exige; 7) proveedor;
+/// 6) empresa del distribuidor: siempre si <c>created</c> (el tenant reservado, también en un reintento D-17 con cuerpo
+/// <c>LinkTenant</c>), y al vincular un tenant que ya existía sólo si no tiene ninguna; en los dos casos la invitación tiene que
+/// traer la ciudad que su país exige; 7) proveedor;
 /// 8) cliente; 9) correo de la cuenta, activar, auditar y guardar. Spec 2026-11-19: el link identifica la
 /// invitación y el correo ya no es una llave; <c>userEmail</c> es el de la cuenta que acepta y, si es otro, reemplaza al
 /// invitado en el mismo guardado.</para>
@@ -169,33 +170,34 @@ public sealed partial class DistributorInvitationService(
         // cliente.
         var email = string.IsNullOrWhiteSpace(userEmail) ? distributor.Email : userEmail.Trim().ToLowerInvariant();
 
-        // 6: la empresa del distribuidor en su tenant nuevo (spec 2026-11-23 §3). La condición es `created` y no el modo del cuerpo:
-        // en un reintento D-17 el tenant reservado ya existe y el cuerpo puede ser LinkTenant, y la empresa tiene que nacer igual.
-        // Vincular un tenant que ya existía (`created = false`) no crea ninguna: ese tenant ya tiene las suyas. Una invitación de
-        // antes de la migración no trae la ciudad que su país exige: acepta sin empresa, no se rompe una invitación viva.
-        if (created)
+        // 6: la empresa del distribuidor (spec 2026-11-23 §3; owner, 2026-11-24). Si `created`, el tenant es el que se reservó al invitar:
+        // la empresa nace siempre, también en un reintento D-17 con cuerpo LinkTenant. Si no (vinculó un tenant que ya existía), sólo
+        // nace si ese tenant no tiene ninguna empresa: Companies lo decide bajo candado. Una invitación de antes de la migración no trae
+        // la ciudad que su país exige: acepta sin empresa, no se rompe una invitación viva.
+        if (distributor.HasCompanyCity)
         {
-            if (distributor.HasCompanyCity)
+            var draft = new WholesaleCompanyDraft(
+                distributor.BusinessName,
+                distributor.Country,
+                distributor.IdentificationType,
+                distributor.IdentificationNumber,
+                distributor.CityId,
+                distributor.CityName,
+                distributor.Address,
+                email,
+                distributor.Phone);
+            if (created)
             {
-                await companyProvisioning.EnsureCompanyAsync(
-                    target,
-                    userId,
-                    new WholesaleCompanyDraft(
-                        distributor.BusinessName,
-                        distributor.Country,
-                        distributor.IdentificationType,
-                        distributor.IdentificationNumber,
-                        distributor.CityId,
-                        distributor.CityName,
-                        distributor.Address,
-                        email,
-                        distributor.Phone),
-                    cancellationToken);
+                await companyProvisioning.EnsureCompanyAsync(target, userId, draft, cancellationToken);
             }
             else
             {
-                LogCompanySkippedWithoutCity(distributor.Id.Value);
+                await companyProvisioning.EnsureFirstCompanyAsync(target, userId, draft, cancellationToken);
             }
+        }
+        else
+        {
+            LogCompanySkippedWithoutCity(distributor.Id.Value);
         }
 
         // 7-8: idempotentes; un reintento devuelve el mismo proveedor y el mismo cliente.

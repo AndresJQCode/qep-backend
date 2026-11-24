@@ -53,8 +53,9 @@ mayorista ya sabía.
 
 ## No objetivos
 
-- **Aceptar vinculando un tenant existente (`LinkTenantChoice`, `created = false`) no crea empresa:** ese tenant ya tiene las suyas y
-  una más sería duplicado. Propuesta del asistente; decisión pendiente del owner.
+- ~~Aceptar vinculando un tenant existente no crea empresa.~~ **Cambiado por el owner (2026-11-24):** al vincular un tenant existente
+  (`created = false`) la empresa se crea **sólo si ese tenant no tiene ninguna** (activa o inactiva), por
+  `ICompanyProvisioning.EnsureFirstCompanyAsync`, bajo el mismo candado; si ya tenía alguna, no se escribe nada.
 - No se tocan el registro público de tenants ni `RegisterOwnerTenantAsync`.
 - No se copian al cliente la ciudad, la dirección ni el contacto: `RegisterCustomerData` no los admite. Decisión pendiente del owner.
 - No se crean cuentas bancarias ni retenciones, y no se cambia `ChargesVat` (queda en `true`, el valor por defecto de Companies).
@@ -160,8 +161,8 @@ mayorista ya sabía.
 
 - **Unitarias de Wholesale:** validador de invitar con ciudad por país; el handler de invitar responde
   `wholesale.distributor.city_not_found` con una ciudad que el puerto no encuentra; `Distributor.Invite` guarda ciudad y dirección;
-  `AcceptAsync` con `NewTenantChoice` llama al puerto de empresa con los datos esperados, **no** lo llama con `LinkTenantChoice`
-  sobre un tenant existente, **sí** lo llama en un reintento D-17 con cuerpo `LinkTenant`; una invitación sin ciudad no llama al
+  `AcceptAsync` con `NewTenantChoice` llama al puerto de empresa con los datos esperados, llama al camino «primera empresa» con
+  `LinkTenantChoice` sobre un tenant existente (Companies decide si ya tenía), y llama a `EnsureCompanyAsync` (no al camino «primera empresa») en un reintento D-17 con cuerpo `LinkTenant`; una invitación sin ciudad no llama al
   puerto y acepta igual; el cliente recibe el teléfono.
 - **Unitarias de Companies:** `CompanyProvisioning` crea, reutiliza por documento exacto (también una inactiva), no confunde un
   documento que sólo contiene al otro, rechaza ciudad ausente en `CO` con las claves de `CompanyWriteRules`, y siembra tasas igual
@@ -175,7 +176,7 @@ mayorista ya sabía.
 
 1. ¿Se amplía `RegisterCustomerData` para copiar también ciudad, dirección y contacto al cliente?
 2. ¿Se permite editar los datos del distribuidor (ciudad, dirección, razón social) mientras está invitado?
-3. ¿Aceptar vinculando un tenant existente debería ofrecer crear la empresa, o se queda sin ella (propuesta actual)?
+3. ~~¿Aceptar vinculando un tenant existente crea la empresa?~~ Resuelta por el owner (2026-11-24): sólo si el tenant no tiene ninguna.
 4. ¿Backend y frontend se despliegan juntos, o se abre una ventana con la ciudad opcional al invitar (las invitaciones sin ciudad
    aceptarían sin empresa, como las viejas)?
 5. ¿Las invitaciones vivas sin ciudad se quedan sin empresa al aceptar (propuesta actual), o el mayorista debe re-invitar?

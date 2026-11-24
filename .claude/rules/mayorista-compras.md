@@ -59,9 +59,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   es el del cuerpo y, si no viene, el que sugiere `ITenantSlugSuggestions` (spec 2026-11-19 §3b). El país **no** sale del cuerpo:
   es el del distribuidor. Si una carrera se lo gana (`tenancy.slug.taken`), el endpoint reintenta hasta 3 veces,
   cada vez en un scope nuevo: el DbContext de Tenancy del intento fallido se queda con el tenant reservado sin guardar.
-- **La empresa del distribuidor nace en el accept, sólo si `created`** (spec 2026-11-23): también en un reintento D-17 con
-  cuerpo `LinkTenant`, porque el tenant reservado ya existe y es el destino aunque el cuerpo pida otro. Vincular un tenant que ya
-  existía (`created = false`) no crea ninguna. Es idempotente por tipo y número de documento **exactos** (no `ILIKE`; reutiliza
+- **La empresa del distribuidor nace en el accept** (spec 2026-11-23; owner, 2026-11-24). Si `created`, siempre: también en un
+  reintento D-17 con cuerpo `LinkTenant`, porque el tenant reservado ya existe y es el destino aunque el cuerpo pida otro. Vincular
+  un tenant que ya existía (`created = false`) la crea **sólo si ese tenant no tiene ninguna empresa**, activa o inactiva
+  (`ICompanyProvisioning.EnsureFirstCompanyAsync`, que mira bajo el mismo candado: dos aceptaciones a la vez no crean dos). Es idempotente por tipo y número de documento **exactos** (no `ILIKE`; reutiliza
   también una inactiva) bajo `CompanyProvisioningLock`, y va entre el tenant y el proveedor: un fallo deja la invitación
   pendiente y el reintento termina sobre el tenant reservado. Una invitación sin la ciudad que su país exige (`CityId` en `CO`,
   `CityName` afuera: las filas de antes de la migración) acepta **sin empresa** y sin error, y deja un `Information` con el id del

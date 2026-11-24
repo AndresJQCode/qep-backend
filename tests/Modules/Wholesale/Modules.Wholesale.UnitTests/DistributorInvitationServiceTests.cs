@@ -166,15 +166,32 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal(("otra@cuenta.co", "+573001234567"), (draft.Email, draft.Phone));
     }
 
-    // Spec 2026-11-23, no objetivos: vincular un tenant que ya existe no crea empresa, ese tenant ya tiene las suyas.
+    // Owner, 2026-11-24: vincular un tenant que ya existe crea la empresa sólo si ese tenant no tiene ninguna. Wholesale la pide por el
+    // camino «primera empresa» y Companies decide si el tenant ya tenía.
     [Fact]
-    public async Task LinkTenantOnAnExistingTenantDoesNotCreateACompany()
+    public async Task LinkTenantOnAnExistingTenantAsksForTheFirstCompanyOnly()
     {
         var mine = _tenancy.AddTenant("Mi Tienda", _user, TenantStatus.Active, TenantModuleKeys.Catalog);
 
         await AcceptAsync(new LinkTenantChoice(mine));
 
         Assert.Empty(_companies.Calls);
+        var call = Assert.Single(_companies.FirstCalls);
+        Assert.Equal(mine, call.Tenant);
+        Assert.Equal("CO", call.Draft.Country);
+    }
+
+    [Fact]
+    public async Task LinkTenantWithAnInvitationWithoutCityAsksForNothing()
+    {
+        var token = InvitationTokens.Generate();
+        _world.SeedInvited("800777222", tokenHash: InvitationTokens.HashOf(token), cityId: null);
+        var mine = _tenancy.AddTenant("Mi Tienda", _user, TenantStatus.Active, TenantModuleKeys.Catalog);
+
+        await Service().AcceptAsync(token, _user, "ana@distri.co", new LinkTenantChoice(mine), "trace-accept", Ct);
+
+        Assert.Empty(_companies.Calls);
+        Assert.Empty(_companies.FirstCalls);
     }
 
     // Review Focus 1 (D-17): el primer intento NewTenant falló al crear la empresa; el reintento llega con cuerpo LinkTenant sobre

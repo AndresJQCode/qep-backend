@@ -521,6 +521,24 @@ internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
     /// <summary>Lo que Companies rechazaría (un <c>ValidationException</c>, por ejemplo).</summary>
     public Exception? Fail { get; set; }
 
+    /// <summary>Las llamadas de «sólo si el tenant no tiene ninguna»; la decisión de saltarla es de Companies, no de Wholesale.</summary>
+    public List<(Guid Tenant, Guid Actor, WholesaleCompanyDraft Draft)> FirstCalls { get; } = [];
+
+    public Task<Guid?> EnsureFirstCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken)
+    {
+        if (Fail is { } failure)
+        {
+            throw failure;
+        }
+
+        FirstCalls.Add((distributorTenantId, actorUserId, draft));
+        return Task.FromResult<Guid?>(CompanyId);
+    }
+
     public Task<Guid> EnsureCompanyAsync(
         Guid distributorTenantId,
         Guid actorUserId,

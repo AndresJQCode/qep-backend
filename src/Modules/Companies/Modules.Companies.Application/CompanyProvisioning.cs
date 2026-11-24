@@ -36,6 +36,18 @@ public interface ICompanyProvisioning
         Guid actorUserId,
         ProvisionedCompanyData data,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Owner, 2026-11-24: la empresa de un tenant que ya existía (el distribuidor vinculó uno suyo) sólo se crea si **no tiene ninguna**,
+    /// activa o inactiva: ese tenant ya tiene las suyas y una más sería un duplicado. Devuelve el id de la creada, o <c>null</c> si el
+    /// tenant ya tenía alguna y no se escribió nada. Mismo candado que <see cref="EnsureCompanyAsync"/>, así que dos aceptaciones a la
+    /// vez no crean dos.
+    /// </summary>
+    Task<Guid?> EnsureFirstCompanyAsync(
+        Guid tenantId,
+        Guid actorUserId,
+        ProvisionedCompanyData data,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -66,6 +78,21 @@ public sealed class CompanyProvisioning(
         Guid tenantId,
         Guid actorUserId,
         ProvisionedCompanyData data,
+        CancellationToken cancellationToken) =>
+        (await ProvisionAsync(tenantId, actorUserId, data, onlyIfTenantHasNone: false, cancellationToken))!.Value;
+
+    public Task<Guid?> EnsureFirstCompanyAsync(
+        Guid tenantId,
+        Guid actorUserId,
+        ProvisionedCompanyData data,
+        CancellationToken cancellationToken) =>
+        ProvisionAsync(tenantId, actorUserId, data, onlyIfTenantHasNone: true, cancellationToken);
+
+    private async Task<Guid?> ProvisionAsync(
+        Guid tenantId,
+        Guid actorUserId,
+        ProvisionedCompanyData data,
+        bool onlyIfTenantHasNone,
         CancellationToken cancellationToken)
     {
         var taxId = data.TaxId.Trim();
@@ -74,6 +101,14 @@ public sealed class CompanyProvisioning(
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
             await unitOfWork.LockProvisioningAsync(tenantId, cancellationToken);
+
+            // Con el candado ya tomado, para que dos aceptaciones a la vez no lean las dos «no tiene ninguna». Sin filtro de estado:
+            // una empresa desactivada sigue siendo una empresa del tenant.
+            if (onlyIfTenantHasNone
+                && (await repository.SearchAsync(tenantId, null, null, null, null, cancellationToken)).Count > 0)
+            {
+                return null;
+            }
 
             // SearchAsync filtra con ILIKE '%x%': 900123456 también trae a 9001234567. Por eso se vuelve a filtrar en memoria con
             // igualdad exacta de tipo y número; sin eso, una empresa de otro NIT se reutilizaría como si fuera ésta. Se buscan

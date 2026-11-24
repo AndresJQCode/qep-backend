@@ -15,22 +15,28 @@ internal sealed class WholesaleCompanyProvisioning(ICompanyProvisioning companie
         Guid distributorTenantId,
         Guid actorUserId,
         WholesaleCompanyDraft draft,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        companies.EnsureCompanyAsync(distributorTenantId, actorUserId, ToData(draft), cancellationToken);
+
+    public Task<Guid?> EnsureFirstCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken) =>
+        companies.EnsureFirstCompanyAsync(distributorTenantId, actorUserId, ToData(draft), cancellationToken);
+
+    private static ProvisionedCompanyData ToData(WholesaleCompanyDraft draft)
     {
         ArgumentNullException.ThrowIfNull(draft);
-        return companies.EnsureCompanyAsync(
-            distributorTenantId,
-            actorUserId,
-            new ProvisionedCompanyData(
-                draft.Name,
-                draft.Country,
-                draft.DocumentType,
-                draft.TaxId,
-                draft.CityId,
-                draft.CityName,
-                draft.Address,
-                draft.Email,
-                draft.Phone),
-            cancellationToken);
+        return new ProvisionedCompanyData(
+            draft.Name,
+            draft.Country,
+            draft.DocumentType,
+            draft.TaxId,
+            draft.CityId,
+            draft.CityName,
+            draft.Address,
+            draft.Email,
+            draft.Phone);
     }
 }

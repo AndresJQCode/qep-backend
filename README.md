@@ -2589,8 +2589,8 @@ prueba el buzón, y el correo no tiene que ser el invitado.
   donde la sesión es owner o tiene el rol de sistema `admin` en una membresía activa; prende `catalog`, `suppliers` y
   `purchases` si faltan. Sobre el tenant reservado (el que nace de la invitación, también en un reintento con cuerpo
   `LinkTenant`) crea además la **empresa del distribuidor** con su razón social, documento, ciudad y dirección, idempotente por
-  tipo y número exactos (una invitación sin la ciudad que su país exige acepta sin empresa); vincular un tenant existente no
-  crea ninguna. En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista (con el celular del
+  tipo y número exactos (una invitación sin la ciudad que su país exige acepta sin empresa); vincular un tenant existente la crea sólo si ese
+  tenant no tiene ninguna empresa. En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista (con el celular del
   aviso, si lo hay) y deja la relación `Active`; si el correo de la cuenta no es el del distribuidor, lo reemplaza en el mismo guardado y avisa a los dos
   correos. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
 - Errores: `404 wholesale.invitation.not_found`, `410 wholesale.invitation.expired`, `409 wholesale.invitation.already_accepted`,
