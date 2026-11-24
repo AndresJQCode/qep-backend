@@ -126,7 +126,7 @@ public static class PayrollEngine
 
             var note = half == PayrollHalf.First
                 ? "Sin devengo en esta quincena: lo que falta se retiene en la segunda quincena del mes"
-                : $"Sin devengo en esta quincena: {line.Amount.ToString("F0", CultureInfo.InvariantCulture)} pesos no se retienen (decisión del owner)";
+                : $"Sin devengo en esta quincena: {line.Amount.ToString("F0", CultureInfo.InvariantCulture)} pesos que no alcanzan a descontarse en esta quincena quedan sin retener";
             return line with
             {
                 Amount = 0m,

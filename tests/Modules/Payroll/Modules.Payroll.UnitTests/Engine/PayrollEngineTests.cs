@@ -113,7 +113,7 @@ public sealed class PayrollEngineTests
         {
             var line = secondResult.Lines.Single(item => item.Code == code);
             Assert.Equal(0m, line.Amount);
-            Assert.Equal("Sin devengo en esta quincena: 5964 pesos no se retienen (decisión del owner)", line.Trace.Note);
+            Assert.Equal("Sin devengo en esta quincena: 5964 pesos que no alcanzan a descontarse en esta quincena quedan sin retener", line.Trace.Note);
 
             var early = firstResult.Lines.Single(item => item.Code == code);
             Assert.Equal(0m, early.Amount);
