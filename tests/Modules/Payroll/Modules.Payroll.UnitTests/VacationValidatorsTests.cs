@@ -43,6 +43,15 @@ public sealed class VacationValidatorsTests
     public void AValidQepRequestPasses() => Assert.Empty(FailedRequest(Qep()));
 
     [Fact]
+    public void AVacationSpansAtMost366Days()
+    {
+        var start = new DateOnly(2026, 12, 14);
+        Assert.Empty(FailedRequest(Qep(start: start, end: start.AddDays(365))));
+        Assert.Equal(["endDate"], FailedRequest(Qep(start: start, end: start.AddDays(366))));
+        Assert.Equal(["endDate"], FailedRequest(Qep(start: new DateOnly(2026, 1, 1), end: DateOnly.MaxValue)));
+    }
+
+    [Fact]
     public void AValidExternalRequestPasses() =>
         Assert.Empty(FailedRequest(External(months:
         [

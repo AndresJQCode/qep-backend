@@ -138,6 +138,30 @@ public sealed class PayrollVacationsApiTests : IClassFixture<PayrollApiFixture>
     }
 
     [Fact]
+    public async Task PreviewOfAVacationAtTheEndOfTimeDoesNotFail500()
+    {
+        var scene = await NewSceneAsync();
+
+        var response = await scene.Tenant.Payroll.PostAsJsonAsync(
+            $"{VacationsUrl(scene)}/preview", PreviewBody("Qep", "9999-12-31", "9999-12-31"), Ct);
+
+        Assert.True((int)response.StatusCode < 500, await BodyAsync(response));
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
+    public async Task PreviewRejectsAVacationLongerThan366Days()
+    {
+        var scene = await NewSceneAsync();
+
+        var problem = await PreviewRejectedAsync(scene, "Qep", "2026-12-14", "9999-12-31");
+
+        Assert.Equal("validation.failed", CodeOf(problem));
+        Assert.True(HasError(problem, "endDate"));
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
     public async Task PreviewRejectsOutsideTheContract()
     {
         var scene = await NewSceneAsync();

@@ -132,6 +132,9 @@ public sealed class VacationPreviewRequestValidator : PayrollValidator<VacationP
 
 internal static class VacationDates
 {
+    // Session decision (final review): a vacation spans at most a year, inclusive; it keeps the calendars and the date arithmetic bounded.
+    public const int MaxDays = 366;
+
     public static void Validate<T>(FluentValidation.ValidationContext<T> context, DateOnly? start, DateOnly? end)
     {
         if (start is null)
@@ -146,6 +149,10 @@ internal static class VacationDates
         else if (start is not null && end < start)
         {
             context.AddFailure("EndDate", "El último día no puede ser anterior al primero.");
+        }
+        else if (start is not null && end.Value.DayNumber - start.Value.DayNumber + 1 > MaxDays)
+        {
+            context.AddFailure("EndDate", $"Las vacaciones no pueden durar más de {MaxDays} días.");
         }
     }
 }

@@ -67,7 +67,7 @@ public sealed class VacationRules(
             }
         }
 
-        var holidaysInRange = await holidays.HolidaysAsync(start, end.AddDays(ReturnLookAheadDays), cancellationToken);
+        var holidaysInRange = await holidays.HolidaysAsync(start, (end.DayNumber > DateOnly.MaxValue.DayNumber - ReturnLookAheadDays ? DateOnly.MaxValue : end.AddDays(ReturnLookAheadDays)), cancellationToken);
         if (origin == VacationOrigin.Qep)
         {
             if (!VacationBusinessDays.IsBusinessDay(start, inRange.RestDays, holidaysInRange))
