@@ -414,10 +414,10 @@ public sealed class CustomerProvisioning(
         var cityName = colombian
             ? null
             : Keep(customer.CityName, sameCountry ? data.CityName : null);
-        // La region viaja con el CityName del cliente: solo se conserva si la ciudad que queda es la suya y el pais no cambio
-        // (una region es de un solo pais). Si la ciudad viene de la tienda, la region guardada ya no la describe.
+        // La region es dato del cliente, no de la ciudad: el dominio permite una region sin ciudad, asi que se conserva mientras el
+        // carril de ubicacion del cliente siga siendo el suyo (fuera de Colombia) y el pais no cambie (una region es de un solo
+        // pais). La ciudad de la tienda solo completa una que el cliente no tiene; nunca reemplaza la suya.
         var regionId = !colombian
-            && !string.IsNullOrWhiteSpace(customer.CityName)
             && string.Equals(customer.Country?.Trim(), country.Trim(), StringComparison.OrdinalIgnoreCase)
                 ? customer.RegionId
                 : null;

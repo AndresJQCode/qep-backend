@@ -193,6 +193,31 @@ public sealed class CustomerRegionTests
         Assert.Equal(("Madrid", MadridId), (customer.CityName, customer.RegionId));
     }
 
+    // The domain allows a region without a city: a store merge keeps the customer's own region even when the customer has no
+    // city text and the store brings one. The region is the customer's province; the store only fills the missing city.
+    [Fact]
+    public async Task StoreMergeKeepsRegionOfACustomerWithoutCityName()
+    {
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), CustomerWriteDoubles.Tenant, "Laura", "+34612345678", null, "ES", Now, new PlusNormalizer());
+        Seed(customer, nameof(Customer.RegionId), MadridId);
+        var repository = new FakeCustomerRepository { Existing = customer };
+        var provisioning = new CustomerProvisioning(
+            repository, new Classifications([]), new Geography([]), new UnitOfWork(), new RecordingAudit(), new Cucs([]),
+            new FixedClock(), new CreateCustomerValidator(), new PlusNormalizer(), new TenantDirectory());
+
+        await provisioning.CompleteFromStoreAsync(
+            CustomerWriteDoubles.Tenant,
+            customer.Id.Value,
+            new CompleteCustomerData(
+                "Laura", "NIF", "12345678Z", "+34612345678", "laura@verde.es", "Calle Mayor 1", "ES", null, "Barcelona", Classification.Id.Value),
+            Guid.CreateVersion7(),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(customer.IsComplete);
+        Assert.Equal(("Barcelona", MadridId), (customer.CityName, customer.RegionId));
+    }
+
     private static void Seed(Customer customer, string property, object value) =>
         typeof(Customer).GetProperty(property, BindingFlags.Public | BindingFlags.Instance)!.SetValue(customer, value);
 
