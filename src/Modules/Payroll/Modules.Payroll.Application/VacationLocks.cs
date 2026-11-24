@@ -36,28 +36,37 @@ public sealed class VacationLocks(IPayrollPeriodRepository periods, IPayrollResu
                 continue;
             }
 
-            var stored = await results.FindAsync(tenantId, period.Id, employeeId, cancellationToken);
-            if (stored is null)
-            {
-                continue;
-            }
-
             // What the planner would read as the vacations of this month: only those that overlap it, as the real read does.
             var inMonth = after.Where(vacation => VacationReach.IsInputOf(vacation, period.StartDate, period.EndDate)).ToList();
-            var withChange = FingerprintOf(
-                await planner.PlanAsync(period, new PlanOverrides(new VacationListOverride(employeeId, inMonth), PlanOverrides.None.Photos), cancellationToken),
-                employeeId);
-            if (withChange is null || withChange == stored.Fingerprint)
-            {
-                continue;
-            }
-
-            var today = FingerprintOf(await planner.PlanAsync(period, cancellationToken), employeeId);
-            if (withChange != today)
+            var overrides = new PlanOverrides(new VacationListOverride(employeeId, inMonth), PlanOverrides.None.Photos);
+            if (await WouldChangeAsync(period, employeeId, overrides, cancellationToken))
             {
                 throw new PayrollDomainException(PayrollErrorCodes.PeriodNotEditable, NotEditableDetail);
             }
         }
+    }
+
+    /// <summary>
+    /// Would the employee's calculation of this Approved or Closed quincena change under <paramref name="overrides"/>? Only when its
+    /// fingerprint with them differs from the stored one <b>and</b> from today's without them: Hr may have moved something since the
+    /// approval, and an unrelated change must not block every edit forever.
+    /// </summary>
+    internal async Task<bool> WouldChangeAsync(
+        PayrollPeriod period, Guid employeeId, PlanOverrides overrides, CancellationToken cancellationToken)
+    {
+        var stored = await results.FindAsync(period.TenantId, period.Id, employeeId, cancellationToken);
+        if (stored is null)
+        {
+            return false;
+        }
+
+        var withChange = FingerprintOf(await planner.PlanAsync(period, overrides, cancellationToken), employeeId);
+        if (withChange is null || withChange == stored.Fingerprint)
+        {
+            return false;
+        }
+
+        return withChange != FingerprintOf(await planner.PlanAsync(period, cancellationToken), employeeId);
     }
 
     /// <summary>

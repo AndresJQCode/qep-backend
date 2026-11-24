@@ -51,6 +51,23 @@ public sealed class VacationReachTests
             VacationReach.QuincenaStarts(Qep(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5))));
 
     [Fact]
+    public void ThePayrollDaysOfAPhotoReachTheSameQuincenasAsTheVacation()
+    {
+        // The photo of a paying quincena carries the payroll days per quincena, not the dates: the reach is the same.
+        foreach (var (start, end) in new[]
+        {
+            (new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5)),
+            (new DateOnly(2026, 12, 2), new DateOnly(2026, 12, 4)),
+            (new DateOnly(2026, 12, 17), new DateOnly(2026, 12, 20)),
+        })
+        {
+            Assert.Equal(
+                VacationReach.QuincenaStarts(Qep(start, end)),
+                VacationReach.QuincenaStarts(VacationCalendar.PayrollDays(start, end)));
+        }
+    }
+
+    [Fact]
     public void AVacationInsideTheSecondHalfOnlyReachesIt() =>
         Assert.Equal(
             [new DateOnly(2026, 12, 16)],

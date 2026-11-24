@@ -182,6 +182,22 @@ public sealed class VacationInputBuilderTests
     }
 
     [Fact]
+    public async Task PaidElsewhereNamesThePayingQuincenaButAnOverrideDoesNot()
+    {
+        // Liquidating re-reads what it just paid: an override is the photo about to be written, so there is no stored quincena to trust.
+        var vacation = Qep(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5));
+        Liquidated(new DateOnly(2026, 12, 1), ResultWith(3_000_000m, PhotoOf(vacation)));
+        var january = Period(new DateOnly(2027, 1, 1));
+
+        var stored = await BuildAsync(january, Contract(), [vacation]);
+        var overridden = await BuildAsync(
+            january, Contract(), [vacation], new Dictionary<Guid, VacationPhoto> { [vacation.Id.Value] = PhotoOf(vacation) });
+
+        Assert.Equal([new DateOnly(2026, 12, 1)], stored.PaidElsewhere);
+        Assert.Empty(overridden.PaidElsewhere);
+    }
+
+    [Fact]
     public async Task PaidElsewhereWithoutAPhotoIsUnpaid()
     {
         var vacation = Qep(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5));

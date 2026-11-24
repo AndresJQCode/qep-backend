@@ -6,7 +6,9 @@ namespace Modules.Payroll.Application;
 /// <summary>A vacation whose paying quincena has not paid it yet (spec rule 5): the following quincenas cannot be liquidated until it does.</summary>
 public sealed record UnpaidVacation(Guid EmployeeId, Guid VacationId, DateOnly PaidInStart, DateOnly PaidInEnd);
 
-public sealed record VacationPlan(IReadOnlyList<VacationInput> Inputs, IReadOnlyList<UnpaidVacation> Unpaid);
+/// <param name="PaidElsewhere">The start of each quincena whose stored photo these inputs read: a quincena that is only Liquidated must still be what it calculated.</param>
+public sealed record VacationPlan(
+    IReadOnlyList<VacationInput> Inputs, IReadOnlyList<UnpaidVacation> Unpaid, IReadOnlyList<DateOnly> PaidElsewhere);
 
 /// <summary>
 /// De las vacaciones registradas de un empleado, lo que el motor lee en una quincena (spec «Entrada del motor y huella»). Lee las
@@ -34,6 +36,7 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
 
         var inputs = new List<VacationInput>();
         var unpaid = new List<UnpaidVacation>();
+        var paidElsewhere = new List<DateOnly>();
         foreach (var vacation in vacations
             .Where(item => VacationReach.IsInputOf(item, period.StartDate, period.EndDate))
             .OrderBy(item => item.StartDate)
@@ -48,18 +51,23 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
                 continue;
             }
 
-            var (input, owed) = await BuildOneAsync(period, employee, contract, vacation, from, to, photoOverrides, cancellationToken);
+            var (input, owed, readFrom) = await BuildOneAsync(period, employee, contract, vacation, from, to, photoOverrides, cancellationToken);
             inputs.Add(input);
             if (owed is not null)
             {
                 unpaid.Add(owed);
             }
+
+            if (readFrom is { } payingStart && !paidElsewhere.Contains(payingStart))
+            {
+                paidElsewhere.Add(payingStart);
+            }
         }
 
-        return new VacationPlan(inputs, unpaid);
+        return new VacationPlan(inputs, unpaid, paidElsewhere);
     }
 
-    private async Task<(VacationInput Input, UnpaidVacation? Unpaid)> BuildOneAsync(
+    private async Task<(VacationInput Input, UnpaidVacation? Unpaid, DateOnly? ReadFrom)> BuildOneAsync(
         PayrollPeriod period,
         HrEmployeeSource employee,
         HrContractSource contract,
@@ -94,7 +102,7 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
                 external is null
                     ? VacationAdvance.Zero
                     : new VacationAdvance(external.HealthAdvance, external.PensionAdvance, external.SolidarityFundAdvance));
-            return (input, null);
+            return (input, null, null);
         }
 
         if (paidHere)
@@ -105,6 +113,7 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
                 new VacationInput(
                     vacation.Id.Value, vacation.Origin, start, end, businessDays, PaidHere: true,
                     salary.Amount, salary.EffectiveDate, ibc, source, null, VacationAdvance.Zero),
+                null,
                 null);
         }
 
@@ -115,7 +124,7 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
             var zero = new VacationInput(
                 vacation.Id.Value, vacation.Origin, start, end, businessDays, PaidHere: false,
                 0m, default, 0m, VacationIbcSource.Salary, null, VacationAdvance.Zero);
-            return (zero, new UnpaidVacation(employee.EmployeeId, vacation.Id.Value, paying.Value.Start, paying.Value.End));
+            return (zero, new UnpaidVacation(employee.EmployeeId, vacation.Id.Value, paying.Value.Start, paying.Value.End), null);
         }
 
         var month = photo.Months.FirstOrDefault(item => item.Month == monthStart);
@@ -124,7 +133,8 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
                 vacation.Id.Value, vacation.Origin, start, end, businessDays, PaidHere: false,
                 photo.SalaryAtStart, photo.SalaryRecordDate, photo.PreviousMonthIbc, photo.PreviousIbcSource, null,
                 month is null ? VacationAdvance.Zero : new VacationAdvance(month.Health, month.Pension, month.SolidarityFund)),
-            null);
+            null,
+            photoOverrides.ContainsKey(vacation.Id.Value) ? null : paying.Value.Start);
     }
 
     // «Pagada» (spec rule 5): the paying quincena is Liquidated, Approved or Closed and not Outdated, and its result of the

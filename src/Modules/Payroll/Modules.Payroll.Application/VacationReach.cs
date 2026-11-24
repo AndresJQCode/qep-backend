@@ -38,13 +38,28 @@ public static class VacationReach
     public static IReadOnlyList<DateOnly> QuincenaStarts(Vacation vacation)
     {
         ArgumentNullException.ThrowIfNull(vacation);
+        return QuincenaStarts(vacation.StartDate, vacation.EndDate);
+    }
+
+    /// <summary>
+    /// The same reach from the payroll days a photo carries (one entry per quincena the vacation touches): the quincena of the first
+    /// entry contains the start and the one of the last contains the end, which is all <see cref="IsInputOf"/> looks at.
+    /// </summary>
+    public static IReadOnlyList<DateOnly> QuincenaStarts(IReadOnlyList<VacationQuincenaDays> quincenas)
+    {
+        ArgumentNullException.ThrowIfNull(quincenas);
+        return quincenas.Count == 0 ? [] : QuincenaStarts(quincenas[0].Start, quincenas[^1].End);
+    }
+
+    private static List<DateOnly> QuincenaStarts(DateOnly start, DateOnly end)
+    {
         var starts = new List<DateOnly>();
-        for (var month = new DateOnly(vacation.StartDate.Year, vacation.StartDate.Month, 1); month <= vacation.EndDate; month = month.AddMonths(1))
+        for (var month = new DateOnly(start.Year, start.Month, 1); month <= end; month = month.AddMonths(1))
         {
             foreach (var day in new[] { month, new DateOnly(month.Year, month.Month, 16) })
             {
                 var quincena = QuincenaCalendar.Containing(day);
-                if (IsInputOf(vacation, quincena.Start, quincena.End))
+                if (start <= quincena.End && end >= new DateOnly(quincena.Start.Year, quincena.Start.Month, 1))
                 {
                     starts.Add(quincena.Start);
                 }

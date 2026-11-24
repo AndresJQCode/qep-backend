@@ -10,13 +10,15 @@ public sealed record PlannedEmployee(HrEmployeeSource Source, EligibilityResult 
 /// <param name="Legal">La foto legal del período si ya existe; si no, la que se resuelve a su fecha de inicio.</param>
 /// <param name="Fingerprint">La huella del conjunto (R-16): liquidables, excluidos y bloqueados.</param>
 /// <param name="Unpaid">Las vacaciones leídas que su quincena pagadora todavía no pagó (spec, regla 5).</param>
+/// <param name="PayingStarts">Las quincenas pagadoras cuya foto guardada leyó este plan: la regla 5 pide que una Liquidada siga al día.</param>
 public sealed record LiquidationPlan(
     LegalValueSet Legal,
     IReadOnlyList<PlannedEmployee> Liquidable,
     IReadOnlyList<ExcludedEmployeeDto> Excluded,
     IReadOnlyList<BlockedEmployeeDto> Blocked,
     string Fingerprint,
-    IReadOnlyList<UnpaidVacation> Unpaid);
+    IReadOnlyList<UnpaidVacation> Unpaid,
+    IReadOnlyList<DateOnly> PayingStarts);
 
 /// <summary>Las vacaciones de un empleado tal como quedarían tras una escritura, en lugar de las guardadas.</summary>
 public sealed record VacationListOverride(Guid EmployeeId, IReadOnlyList<Vacation> Vacations);
@@ -93,6 +95,7 @@ public sealed class LiquidationPlanner(
         var blocked = new List<BlockedEmployeeDto>();
         var reasons = new List<(Guid EmployeeId, string Reason)>();
         var unpaid = new List<UnpaidVacation>();
+        var payingStarts = new SortedSet<DateOnly>();
 
         foreach (var employee in employees)
         {
@@ -126,6 +129,7 @@ public sealed class LiquidationPlanner(
             var vacationPlan = await vacationInputs.BuildAsync(
                 period, employee, eligibility.Contract!, employeeVacations, overrides.Photos, cancellationToken);
             unpaid.AddRange(vacationPlan.Unpaid);
+            payingStarts.UnionWith(vacationPlan.PaidElsewhere);
 
             var input = EngineInputFactory.Build(
                 employee, eligibility, info, engineSettings, legal, concepts, captured, own, applied, retired, prior, vacationPlan.Inputs);
@@ -138,7 +142,8 @@ public sealed class LiquidationPlanner(
             excluded.OrderBy(entry => entry.FullName, StringComparer.CurrentCultureIgnoreCase).ThenBy(entry => entry.EmployeeId).ToList(),
             blocked,
             InputFingerprint.OfPeriod(liquidable.Select(item => (item.Source.EmployeeId, item.Fingerprint)), reasons),
-            unpaid);
+            unpaid,
+            [.. payingStarts]);
     }
 
     // The second half reads what the first one withheld and earned in the month; with no first half (or no result for an
