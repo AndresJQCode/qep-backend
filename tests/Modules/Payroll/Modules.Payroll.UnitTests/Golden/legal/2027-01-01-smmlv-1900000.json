@@ -1,4 +1,5 @@
 {
+  "description": "Valores sintéticos: supuestos de prueba con los valores de 2026 trasladados a 2027, no son cifras oficiales de 2027. El SMMLV es 1 900 000, un supuesto de prueba.",
   "resolvedAt": "2027-01-01",
   "smmlv": {
     "key": "Smmlv",

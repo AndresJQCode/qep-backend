@@ -19,7 +19,7 @@ public static class PayrollEngine
         var vacations = VacationDaysRule.Compute(input, worked);
         var salary = SalaryRule.Compute(input, worked, vacations);
         var incomes = IncomeRule.Compute(input);
-        var recurring = RecurringConceptRule.Compute(input, worked);
+        var recurring = RecurringConceptRule.Compute(input, worked, vacations);
         var salaryIncome = incomes.SalaryIncome + recurring.SalaryIncome;
         var nonSalaryIncome = incomes.NonSalaryIncome + recurring.NonSalaryIncome;
 

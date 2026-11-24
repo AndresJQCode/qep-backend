@@ -222,6 +222,7 @@ cambia la regla de la línea, no el modelo.
 
 - `SalaryRule` paga sólo los días trabajados (sin los de vacaciones). Con 0 días trabajados la línea `salary` es 0, en vez de la
   excepción de hoy («at least one covered day»). Los tramos de salario se cortan sólo sobre días trabajados.
+- Los conceptos recurrentes **proporcionales** no pagan los días de vacaciones (se prorratean por los días realmente trabajados, los mismos que usan el salario y el auxilio); los **fijos** siguen pagando: decisión del owner (2026-11-23).
 - `TransportAllowanceRule` causa por días trabajados: ningún día de vacaciones da auxilio, se pague o no por adelantado. El tope y
   la consolidación del mes (D-2, D-3) no cambian.
 - `MonthAccumulators.WorkedDays` sigue contando sólo días trabajados. Los de vacaciones del mes se calculan de las fechas de las
