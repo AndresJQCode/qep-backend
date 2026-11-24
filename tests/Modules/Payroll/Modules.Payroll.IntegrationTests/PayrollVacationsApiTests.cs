@@ -571,6 +571,47 @@ public sealed class PayrollVacationsApiTests : IClassFixture<PayrollApiFixture>
         scene.Tenant.Dispose();
     }
 
+    // A reopened quincena is editable but its liquidation is stale the same way: spec «desactualizar Liquidadas y Reabiertas».
+    private static async Task<(JsonElement Vacation, JsonElement Reopened)> ReopenedWithAVacationAsync(Scene scene)
+    {
+        var vacation = Single(await CreateAsync(scene, QepBody("2026-12-14", "2026-12-24")));
+        await LiquidatedAsync(scene);
+        await ApprovedAsync(scene);
+        await TransitionAsync(scene, "reopen", new { reason = "Corregir" });
+        var reopened = await PeriodAsync(scene);
+        Assert.Equal("Reopened", reopened.GetProperty("status").GetString());
+        Assert.False(reopened.GetProperty("outdated").GetBoolean());
+        return (vacation, reopened);
+    }
+
+    [Fact]
+    public async Task EditingAVacationOutdatesAReopenedQuincenaItReaches()
+    {
+        var scene = await NewSceneAsync();
+        var (vacation, _) = await ReopenedWithAVacationAsync(scene);
+
+        await OkAsync(await UpdateAsync(scene, vacation.GetProperty("id").GetGuid(), QepBody("2026-12-14", "2026-12-23"), Etag(vacation)));
+
+        var period = await PeriodAsync(scene);
+        Assert.True(period.GetProperty("outdated").GetBoolean());
+        Assert.Equal("Reopened", period.GetProperty("status").GetString());
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
+    public async Task DeletingAVacationOutdatesAReopenedQuincenaItReaches()
+    {
+        var scene = await NewSceneAsync();
+        var (vacation, _) = await ReopenedWithAVacationAsync(scene);
+
+        await OkAsync(await DeleteAsync(scene, vacation.GetProperty("id").GetGuid(), Etag(vacation)));
+
+        var period = await PeriodAsync(scene);
+        Assert.True(period.GetProperty("outdated").GetBoolean());
+        Assert.Equal("Reopened", period.GetProperty("status").GetString());
+        scene.Tenant.Dispose();
+    }
+
     [Fact]
     public async Task ADraftIsNotTouched()
     {
