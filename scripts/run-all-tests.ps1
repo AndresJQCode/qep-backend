@@ -27,6 +27,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+Import-Module (Join-Path $PSScriptRoot "TestSelection.psm1") -Force
 
 # Pre-requisitos: sin Docker las pruebas de integración fallan todas por conexión.
 docker info *> $null
@@ -35,6 +36,9 @@ if ($LASTEXITCODE -ne 0 -and $Kind -ne "Unit") {
 }
 $running = Get-Process Api, testhost -ErrorAction SilentlyContinue
 if ($running) { throw "Hay procesos Api/testhost corriendo (otra sesión o el API local). Espera o detenlos tú." }
+
+# Antes de compilar: es el árbol que se va a probar.
+$stamp = Get-GitStamp
 
 $out = Join-Path $root "TestResults"
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
@@ -60,20 +64,18 @@ foreach ($p in $projects) {
     dotnet test $p.FullName --no-build -nologo --logger "trx;LogFileName=$name.trx" --results-directory $dir -- xUnit.MaxParallelThreads=$MaxThreads | Out-Null
     $sw.Stop()
 
-    $trx = Get-ChildItem -LiteralPath $dir -Filter *.trx -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $trx) { $rows += [pscustomobject]@{ Project = $name; Total = "-"; Passed = "-"; Failed = "sin trx"; Secs = [int]$sw.Elapsed.TotalSeconds }; continue }
-    [xml]$x = Get-Content -LiteralPath $trx.FullName -Raw
-    $c = $x.TestRun.ResultSummary.Counters
-    $rows += [pscustomobject]@{ Project = $name; Total = [int]$c.total; Passed = [int]$c.passed; Failed = [int]$c.failed; Secs = [int]$sw.Elapsed.TotalSeconds }
-    foreach ($r in $x.TestRun.Results.UnitTestResult | Where-Object outcome -eq "Failed") {
-        $msg = "$($r.Output.ErrorInfo.Message)".Trim()
-        $first = ($msg -split "`r?`n")[0]
-        $failures += [pscustomobject]@{ Project = $name; Test = $r.testName; Message = $first }
+    $result = Read-TrxResult -Directory $dir
+    if (-not $result) { $rows += [pscustomobject]@{ Project = $name; Total = "-"; Passed = "-"; Failed = "sin trx"; Secs = [int]$sw.Elapsed.TotalSeconds }; continue }
+    $rows += [pscustomobject]@{ Project = $name; Total = $result.Total; Passed = $result.Passed; Failed = $result.Failed; Secs = [int]$sw.Elapsed.TotalSeconds }
+    foreach ($f in $result.Failures) {
+        $failures += [pscustomobject]@{ Project = $name; Test = $f.Test; Message = $f.Message }
     }
 }
 
 $sb = [Text.StringBuilder]::new()
 [void]$sb.AppendLine("# Reporte de pruebas — $(Get-Date -Format 'yyyy-MM-dd HH:mm')")
+[void]$sb.AppendLine("")
+[void]$sb.AppendLine($stamp)
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("| Proyecto | Total | Pasan | Fallan | Seg |")
 [void]$sb.AppendLine("| --- | ---: | ---: | ---: | ---: |")

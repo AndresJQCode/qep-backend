@@ -140,4 +140,12 @@ function Test-StepPassed {
     return [bool]($null -ne $Result -and $Result.Total -gt 0 -and $Result.Failed -eq 0 -and $ExitCode -eq 0)
 }
 
-Export-ModuleMember -Function Get-TestPlan, Read-TrxResult, Test-StepPassed
+# Sobre qué se corrió: un reporte en verde sólo vale para ese commit.
+function Get-GitStamp {
+    $branch = git rev-parse --abbrev-ref HEAD
+    $sha = git rev-parse --short HEAD
+    if (git status --porcelain) { $tree = "con cambios sin commitear" } else { $tree = "árbol limpio" }
+    return "Rama $branch · commit $sha · $tree"
+}
+
+Export-ModuleMember -Function Get-TestPlan, Read-TrxResult, Test-StepPassed, Get-GitStamp

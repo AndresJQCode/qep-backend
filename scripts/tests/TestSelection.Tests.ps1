@@ -88,5 +88,7 @@ Assert-Equal "trx: conteos" "2,1,1" "$($r.Total),$($r.Passed),$($r.Failed)"
 Assert-Equal "trx: falla" "N.C.Falla|boom" "$($r.Failures[0].Test)|$($r.Failures[0].Message)"
 Remove-Item -LiteralPath $tmp -Recurse -Force
 
+Assert-Equal "sello" $true ((Get-GitStamp) -match '^Rama \S+ · commit [0-9a-f]{7,} · (árbol limpio|con cambios sin commitear)$')
+
 if ($script:failed) { Write-Host "$($script:failed) fallas"; exit 1 }
 Write-Host "OK" -ForegroundColor Green

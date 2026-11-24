@@ -66,6 +66,7 @@ if ($plan.Steps | Where-Object { $_.Project -match 'IntegrationTests|Bootstrappe
     if ($dockerExit -ne 0) { throw "Docker no responde. Abre Docker Desktop y espera a que el daemon esté listo." }
 }
 
+$stamp = Get-GitStamp
 $total = [Diagnostics.Stopwatch]::StartNew()
 if (-not $NoBuild) {
     if (Get-Process Api -ErrorAction SilentlyContinue) {
@@ -103,7 +104,7 @@ foreach ($step in $plan.Steps) {
     Write-Host "   $status (total, pasan, fallan: $counts)" -ForegroundColor $color
 }
 
-$lines = @("# Pruebas de la rama, $(Get-Date -Format 'yyyy-MM-dd HH:mm')", "", "Base: $Base. Duración: $([int]$total.Elapsed.TotalSeconds) s.", "",
+$lines = @("# Pruebas de la rama, $(Get-Date -Format 'yyyy-MM-dd HH:mm')", "", $stamp, "", "Base: $Base. Duración: $([int]$total.Elapsed.TotalSeconds) s.", "",
     "| Proyecto | Estado | Total | Pasan | Fallan | Seg |", "| --- | --- | ---: | ---: | ---: | ---: |") + $rows
 if ($failures) { $lines += @("", "## Fallas", "") + $failures }
 if ($plan.Warnings) { $lines += @("", "## Avisos", "") + @($plan.Warnings | ForEach-Object { "- $_" }) }
