@@ -42,6 +42,21 @@ public sealed class ShopifyOrderPushProcessorTests
         public Task<ShopifyOrderUpdateResult> ProcessAsync(ShopifyOrderPush push) => Processor.ProcessAsync(push, Ct);
 
         public ShopifyOrderUpdate Sent => Assert.Single(Updater.Updates).Update;
+
+        /// <summary>El último snapshot de la fila, con otra dirección de envío.</summary>
+        public void Latest(ShopifyAddress address)
+        {
+            var latest = Snapshot(address: address, minutes: 5);
+            Row.ApplySnapshot(ShopifyOrderIngestion.WritePayload(latest), latest.UpdatedAt, latest.ToHeader());
+        }
+
+        /// <summary>El código postal de la parte de envío del pedido de QEP.</summary>
+        public void PartyPostalCode(string? postalCode)
+        {
+            var order = Edit.World.Writer.States[ShopifyEditTestWorld.OrderId];
+            Edit.World.Writer.States[ShopifyEditTestWorld.OrderId] =
+                order with { ShippingParty = order.ShippingParty! with { PostalCode = postalCode } };
+        }
     }
 
     // Review Focus 4: un envío de dirección no manda la nota (un BuyerNotes vacío pisaría la de Shopify) ni los atributos.
@@ -92,6 +107,53 @@ public sealed class ShopifyOrderPushProcessorTests
         await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
 
         Assert.Equal(("MEDELLÍN", "ANT"), (world.Sent.ShippingAddress!.City, world.Sent.ShippingAddress.ProvinceCode));
+    }
+
+    // Spec 2026-11-24 §5: manda el código postal de QEP, aunque el snapshot traiga otro o el departamento haya cambiado.
+    [Theory]
+    [InlineData("ANT")]
+    [InlineData("CUN")]
+    public async Task TheQepPostalCodeGoesBeforeTheSnapshotZip(string snapshotProvince)
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { ProvinceCode = snapshotProvince, Zip = "050021" });
+        world.PartyPostalCode(" 055422 ");
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        Assert.Equal("055422", world.Sent.ShippingAddress!.Zip);
+    }
+
+    // Sin el de QEP, el del último snapshot se conserva (antes cada envío lo borraba) mientras país y departamento sean los mismos.
+    [Theory]
+    [InlineData("CO", "ANT", null)]
+    [InlineData("co", "ant", "   ")]
+    [InlineData(null, "ANT", null)]
+    public async Task TheSnapshotZipIsKeptInTheSameCountryAndProvince(
+        string? snapshotCountry, string snapshotProvince, string? qepPostalCode)
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { CountryCode = snapshotCountry, ProvinceCode = snapshotProvince, Zip = "050021" });
+        world.PartyPostalCode(qepPostalCode);
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        Assert.Equal("050021", world.Sent.ShippingAddress!.Zip);
+    }
+
+    // El zip de otro departamento o de otro país sería el de otra dirección: no viaja.
+    [Theory]
+    [InlineData("CO", "CUN")]
+    [InlineData("CO", null)]
+    [InlineData("ES", "ANT")]
+    public async Task NoZipTravelsWhenTheCountryOrProvinceChanged(string snapshotCountry, string? snapshotProvince)
+    {
+        var world = new PushWorld();
+        world.Latest(Address with { CountryCode = snapshotCountry, ProvinceCode = snapshotProvince, Zip = "050021" });
+
+        await world.ProcessAsync(world.Push(ShopifyPushGroup.ShippingAddress));
+
+        Assert.Null(world.Sent.ShippingAddress!.Zip);
     }
 
     // Plan D12: MailingAddressInput no tiene «name»; el eco compara name y address1 + address2 con los de QEP.

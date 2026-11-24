@@ -47,9 +47,11 @@ public sealed record ExternalOrderResult(
     ExternalShippingParty? Shipping = null);
 
 /// <summary>La parte de envío de un pedido externo (spec 2026-10-26 §4.4). Sin documento: a quien se le entrega no
-/// se le factura. Los seis campos son los de <c>OrderParty</c>, tal como el consumidor los guarda en su huella.</summary>
+/// se le factura. Los campos son los de <c>OrderParty</c>, tal como el consumidor los guarda en su huella.
+/// <paramref name="PostalCode"/> (spec 2026-11-24) sale con la parte guardada; la corrección del asesor lo ignora y conserva el
+/// que tenga el pedido.</summary>
 public sealed record ExternalShippingParty(
-    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId);
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null);
 
 /// <summary>
 /// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa necesita de un pedido para decidir si le falta la parte de
@@ -346,7 +348,9 @@ public sealed class ExternalOrderService(
             Shipping: ToExternal(order.Shipping));
 
     private static ExternalShippingParty? ToExternal(OrderParty? party) =>
-        party is null ? null : new(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId);
+        party is null
+            ? null
+            : new(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode);
 
     private static QuotationPartyDetails ToDetails(ExternalShippingParty party) => new()
     {
@@ -356,6 +360,7 @@ public sealed class ExternalOrderService(
         Address = party.Address,
         DepartmentId = party.DepartmentId,
         CityId = party.CityId,
+        PostalCode = party.PostalCode,
     };
 
     public Task<ExternalShippingOutcome> AttachShippingAsync(
@@ -482,8 +487,11 @@ public sealed class ExternalOrderService(
             throw new RequestConcurrencyException("concurrency.conflict", "The order changed since it was loaded.");
         }
 
+        // La corrección no recibe código postal (spec 2026-11-24 §5): reescribir la parte conserva el que tenía, o cada
+        // corrección lo borraría.
         var partyChanged = correction.ShippingParty is { } party
-            && order.EditExternalShippingParty(ToDetails(party), correction.NotesLinePrefix, correction.OccurredAt);
+            && order.EditExternalShippingParty(
+                ToDetails(party) with { PostalCode = order.Shipping?.PostalCode }, correction.NotesLinePrefix, correction.OccurredAt);
         var notesChanged = correction.ReplaceBuyerNotes
             && order.UpdateExternalBuyerNotes(correction.BuyerNotes, correction.OccurredAt);
         if (!partyChanged && !notesChanged)

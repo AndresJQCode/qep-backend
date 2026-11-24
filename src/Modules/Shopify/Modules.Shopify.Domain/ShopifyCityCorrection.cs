@@ -4,9 +4,13 @@ namespace Modules.Shopify.Domain;
 /// La parte de envío de un pedido de QEP tal como la guardó Quotations (spec 2026-10-26 D-C4): es la huella con que se decide si
 /// alguien la editó después de que un sinónimo la escribiera. Vive en Domain (y no en los puertos) porque la guarda
 /// <see cref="ShopifyCityCorrection"/>, y Domain no ve Application (ShopifyLayerTests).
+/// <para><see cref="PostalCode"/> (spec 2026-11-24) lo lleva el estado del pedido para que el envío a Shopify lo mande. La huella
+/// de <c>shopify.city_corrections</c> no lo guarda, y la comparación de ediciones (<c>ShopifyOrderProjection.SameParty</c>) no lo
+/// mira: hoy ningún camino le pone un código postal a un pedido de Shopify. El que empiece a hacerlo tiene que sumarlo a esas
+/// dos.</para>
 /// </summary>
 public sealed record ShopifyShippingFingerprint(
-    string? Name, string? Phone, string? Email, string? Address, Guid DepartmentId, Guid CityId);
+    string? Name, string? Phone, string? Email, string? Address, Guid DepartmentId, Guid CityId, string? PostalCode = null);
 
 /// <summary>De dónde salió la huella (O8): la corrección en segundo plano de un sinónimo confirmado, o un pedido o cliente que casó
 /// por el sinónimo al importarse.</summary>
