@@ -594,8 +594,14 @@ facturación esté completa; cambiaría D-S7 y D-S15.
   `SiigoWithholdingInput.Percentage` llega al armador, que corrige los pagos sólo si la diferencia es de redondeo (hasta un peso). Unitarias de
   Siigo (311), Quotations (2.437) en verde; Bootstrapper con 1 falla preexistente de Agenda
   (`SchedulingReminderRecipientsTests.ACustomerWithoutAPhoneComesBackWithoutIt`, falla igual en `develop` limpio); integración sin correr. **Sin
-  probar contra Siigo real.** Abiertos: el `tax_base` de un obsequio va con 6 decimales y Siigo lo rechazó con `invalid_amount`
-  (`items[n].tax_base`) en una prueba local; ReteICA no se corrige.
+  probar contra Siigo real** (el pedido de producción sí se envió con este arreglo, según el owner). ReteICA no se corrige: la documentación
+  de Siigo dice que se aplica sobre el subtotal de la factura, como QEP, y ya han pasado facturas con ReteICA.
+
+- 2026-11-24 — Mergeado a `develop` (`68c3c15dc`, `--no-ff`, sin push) **`tax_base` del obsequio con 2 decimales**
+  (`fix/siigo-obsequio-tax-base`, sin spec). Siigo documenta `tax_base` con «máximo 11 enteros y 2 decimales» (`price` admite 6) y rechazó
+  `30168,067227` con `invalid_amount` en `items[n].tax_base`; ahora sale `30168,07`. Unitarias de Siigo (311) en verde. **Sin probar contra
+  Siigo real**, y la documentación no dice si `tax_base` es por unidad o total ni cómo se calcula el IVA del obsequio a partir de él. Se quitó
+  la referencia a `siigoapi.docs.apiary.io` (fuera de línea): la oficial es <https://developers.siigo.com/docs/siigoapi/>.
 
 - 2026-11-23 — Mergeado a `develop` (`02e59790c`, `--no-ff`, sin push) **parámetros legales de RRHH y nómina desde la consola
   del operador, backend** (`feature/legal-parameters-console`; spec `2026-11-22-parametros-legales-consola-operador-design.md`,
