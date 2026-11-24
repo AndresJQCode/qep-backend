@@ -323,7 +323,13 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
         Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyDictionary<CustomerId, Customer>> FindManyAsync(
-        Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+        Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyDictionary<CustomerId, Customer>>(customers
+            .Where(customer => customer.TenantId == tenantId && customerIds.Contains(customer.Id))
+            .ToDictionary(customer => customer.Id));
+    }
 
     public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

@@ -125,6 +125,23 @@ public sealed class OrderPartyTests
         Assert.Equal(("ES", "Madrid"), (details.Country, details.CityName));
     }
 
+    [Fact]
+    public void ToDetailsCarriesRegion()
+    {
+        var regionId = Guid.CreateVersion7();
+        var details = Party(Contact() with { Country = "ES", CityName = "Madrid", RegionId = regionId }).ToDetails();
+
+        Assert.Equal(regionId, details.RegionId);
+    }
+
+    [Fact]
+    public void EmptyRegionIdIsNoRegion()
+    {
+        var party = Party(Contact() with { Country = "ES", CityName = "Madrid", RegionId = Guid.Empty });
+
+        Assert.Null(party.RegionId);
+    }
+
     [Theory]
     [InlineData("E")]
     [InlineData("ESP")]

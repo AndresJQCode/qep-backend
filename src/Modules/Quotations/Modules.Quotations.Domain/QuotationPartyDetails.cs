@@ -41,6 +41,11 @@ public sealed record QuotationPartyDetails
     /// <summary>La ciudad como texto, sólo fuera de Colombia: no hay catálogo contra el cual validarla.</summary>
     public string? CityName { get; init; }
 
+    /// <summary>The region (province, state) of a party outside Colombia, a soft reference to
+    /// <c>geography</c> for countries with a region catalogue. Colombia derives it from the department
+    /// and city ids, so a Colombian party never carries one.</summary>
+    public Guid? RegionId { get; init; }
+
     public const string ColombiaCountryCode = "CO";
 
     public const int CountryLength = 2;
@@ -91,6 +96,13 @@ public sealed record QuotationPartyDetails
             throw LaneInvalid(
                 $"{fieldPrefix}.CityName",
                 "A Colombian party takes its city from the department and city ids, not from a city name.");
+        }
+
+        if (IsColombian && RegionId is not null && RegionId != Guid.Empty)
+        {
+            throw LaneInvalid(
+                $"{fieldPrefix}.RegionId",
+                "A Colombian party takes its region from the department, not from a region id.");
         }
 
         if (!IsColombian && (DepartmentId is not null && DepartmentId != Guid.Empty
@@ -181,7 +193,8 @@ public sealed record QuotationPartyDetails
             "quotation.party.address_too_long",
             $"The party address cannot exceed {AddressMaxLength} characters."),
         DepartmentId = NormalizeOptionalId(DepartmentId),
-        CityId = NormalizeOptionalId(CityId)
+        CityId = NormalizeOptionalId(CityId),
+        RegionId = NormalizeOptionalId(RegionId)
     };
 
     // Vacio y ausente son lo mismo para un campo opcional, mismo criterio que

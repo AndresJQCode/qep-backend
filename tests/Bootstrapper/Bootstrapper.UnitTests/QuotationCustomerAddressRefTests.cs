@@ -49,7 +49,7 @@ public sealed class QuotationCustomerAddressRefTests
         var method = typeof(QuotationCustomerLookup).GetMethod(
             "ToAddressRef", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
-        return (QuotationCustomerAddressRef)method.Invoke(null, [address, cities])!;
+        return (QuotationCustomerAddressRef)method.Invoke(null, [address, cities, new Dictionary<Guid, CustomerRegionRef>()])!;
     }
 
     [Fact]

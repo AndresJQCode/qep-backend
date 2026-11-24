@@ -320,7 +320,9 @@ public sealed record QuotationPartyDto(
     /// <summary>ISO alfa-2. Siempre viaja: una parte sin país es <c>CO</c>.</summary>
     string? Country = null,
     /// <summary>La ciudad escrita, sólo fuera de Colombia; null en Colombia.</summary>
-    string? CityName = null);
+    string? CityName = null,
+    /// <summary>The region id of a party outside Colombia; the composers resolve it to a name.</summary>
+    Guid? RegionId = null);
 
 /// <summary>La cuenta con la que se factura, tal como sale hacia el cliente HTTP. Es la copia
 /// guardada, no lo que la empresa tenga hoy.</summary>
@@ -379,7 +381,10 @@ public sealed record QuotationPartyRequest(
     /// otro país lleva <c>CityName</c> y ningún id (<c>quotations.party.city_lane_invalid</c> si se mezclan).</summary>
     string? Country = null,
     /// <summary>La ciudad como texto (≤ 120), sólo fuera de Colombia.</summary>
-    string? CityName = null);
+    string? CityName = null,
+    /// <summary>The region (province) of a party in a country with a region catalogue other than Colombia; replace
+    /// semantics, like <c>CityName</c>: omitting it clears the stored one. With Colombia it is a 422.</summary>
+    Guid? RegionId = null);
 
 /// <summary>Las dos partes de la cotización en el request. <b>Null es el caso normal</b>: "factura
 /// (o entrega) a los datos del cliente" — el switch prendido de la UI. Como
@@ -713,7 +718,9 @@ public sealed record QuotationClientResponse(
     /// <summary>"Natural" o "Juridica", tal como está en la ficha del cliente. Null si no lo tiene.</summary>
     string? PersonType = null,
     /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) de la ficha del cliente. Null si no lo tiene.</summary>
-    string? IdentificationType = null);
+    string? IdentificationType = null,
+    /// <summary>The region of a foreign customer, resolved to its name; null when it has none (provincia guardada).</summary>
+    QuotationRegionDto? Region = null);
 
 public sealed record QuotationClientAddressResponse(
     Guid Id,
@@ -726,7 +733,9 @@ public sealed record QuotationClientAddressResponse(
     string? DepartmentName,
     bool IsPrincipal,
     /// <summary>ISO alfa-2 de la dirección. Fuera de Colombia no hay ids de DIVIPOLA y la ciudad es el texto.</summary>
-    string Country = "CO");
+    string Country = "CO",
+    /// <summary>The region of a foreign address, resolved to its name; null when it has none.</summary>
+    QuotationRegionDto? Region = null);
 
 /// <summary>
 /// La escala viaja con su restricción, no sólo con su descuento: es lo único con lo que el
@@ -983,7 +992,8 @@ public sealed record QuotationPartyResponse(
     string? PersonType = null,
     string? IdentificationType = null,
     string? Country = null,
-    string? CityName = null);
+    string? CityName = null,
+    QuotationRegionDto? Region = null);
 
 public sealed record QuotationListItemResponse(
     Guid Id,

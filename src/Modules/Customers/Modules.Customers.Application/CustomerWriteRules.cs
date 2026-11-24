@@ -34,6 +34,9 @@ public interface ICustomerWriteCommand
 
     string? CityName { get; }
 
+    /// <summary>La region (provincia) del domicilio; solo para un pais con catalogo distinto de Colombia.</summary>
+    Guid? RegionId { get; }
+
     Guid? ClassificationId { get; }
 
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; en blanco es «sin tipo».</summary>
@@ -136,6 +139,15 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .MaximumLength(CustomerContactInfo.CityNameMaxLength)
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
 
+        // La region (provincia) solo existe fuera de Colombia, que deriva el departamento de la ciudad: con CO (o sin pais, que
+        // cuenta como CO) se rechaza por campo en vez de caer al dominio como un 422 sin el mapa errors. Que la region exista y
+        // sea de ese pais lo resuelve el handler contra Geography.
+        RuleFor(command => command.RegionId)
+            .Null()
+            .WithMessage("A Colombian customer takes its region from the city, not from a region id.")
+            .When(IsColombian);
+        RuleFor(command => command.RegionId).NotEqual(Guid.Empty);
+
         // El correo es opcional (CustomerContactInfo): vacio no es error, y el When() evita que un
         // correo vacio se reporte como "no es una direccion valida".
         RuleFor(command => command.Email)
@@ -143,6 +155,14 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .EmailAddress()
             .When(command => !string.IsNullOrWhiteSpace(command.Email));
     }
+
+    // Mismo criterio que CustomerAddressWriteRules.IsColombian: un pais en blanco es Colombia.
+    private static bool IsColombian(ICustomerWriteCommand command) =>
+        string.IsNullOrWhiteSpace(command.Country)
+        || string.Equals(
+            command.Country.Trim(),
+            Customer.ColombiaCountryCode,
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSupportedIdentificationType(string? value)
     {

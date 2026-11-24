@@ -36,7 +36,10 @@ internal static class CustomerMapping
         IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById,
         CustomerCompanyDto? company = null,
         int contactCount = 0,
-        IReadOnlyList<CustomerContactDto>? contacts = null)
+        IReadOnlyList<CustomerContactDto>? contacts = null,
+        // Spec 2026-11-23: las regiones de la ficha, resueltas en lote por ToDtoAsync. El listado y el Excel no las piden y
+        // pasan null, así que su región queda en null.
+        IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById = null)
     {
         var withholdingTaxRates = ToWithholdingDtos(customer, taxRatesById);
         return new CustomerDto(
@@ -69,7 +72,7 @@ internal static class CustomerMapping
             customer.Addresses
                 .OrderByDescending(address => address.IsPrincipal)
                 .ThenBy(address => address.Name)
-                .Select(address => ToAddressDto(address, citiesById))
+                .Select(address => ToAddressDto(address, citiesById, regionsById))
                 .ToArray(),
             // Derivado (spec impuestos por tipo §9.2): retiene quien tiene una Retefuente asignada. Una sola ReteICA no alcanza,
             // igual que en el cálculo de la cotización.
@@ -89,7 +92,8 @@ internal static class CustomerMapping
             ContactCount: contactCount,
             Contacts: contacts,
             WithholdingTaxRates: withholdingTaxRates,
-            WithholdingAgentCities: ToAgentCityDtos(customer, citiesById));
+            WithholdingAgentCities: ToAgentCityDtos(customer, citiesById),
+            Region: ToRegionDto(customer.RegionId, regionsById));
     }
 
     private const string RetefuenteType = "Retefuente";
@@ -143,8 +147,10 @@ internal static class CustomerMapping
     // que hace ToDtoAsync con la ciudad del domicilio (esa si es estructural).
     private static CustomerAddressDto ToAddressDto(
         CustomerAddress address,
-        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById)
     {
+        var region = ToRegionDto(address.RegionId, regionsById);
         // Una direccion de afuera no tiene fila en geography.cities: su ciudad es el texto que
         // escribieron y no hay departamento que resolver.
         if (address.CityId is not { } cityId)
@@ -159,7 +165,8 @@ internal static class CustomerMapping
                 null,
                 null,
                 address.IsPrincipal,
-                address.Country);
+                address.Country,
+                region);
         }
 
         citiesById.TryGetValue(cityId, out var city);
@@ -174,8 +181,16 @@ internal static class CustomerMapping
             city?.DepartmentId ?? Guid.Empty,
             city?.DepartmentName ?? string.Empty,
             address.IsPrincipal,
-            address.Country);
+            address.Country,
+            region);
     }
+
+    // Una region que Geography ya no devuelve se omite en vez de tirar la ficha: es una referencia blanda, sin FK entre esquemas.
+    private static CustomerRegionDto? ToRegionDto(
+        Guid? regionId, IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById) =>
+        regionId is { } id && regionsById is not null && regionsById.TryGetValue(id, out var region)
+            ? new CustomerRegionDto(region.Id, region.Name)
+            : null;
 
     /// <summary>
     /// La version de un solo cliente: resuelve su ciudad y su clasificacion y arma el DTO. Para
@@ -207,6 +222,15 @@ internal static class CustomerMapping
                 .ToArray(),
             cancellationToken);
         var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
+        // Las regiones del domicilio y de cada direccion, con una sola consulta (sin ids no se toca Geography).
+        var regionsById = await geographyLookup.FindRegionsAsync(
+            customer.Addresses
+                .Select(address => address.RegionId)
+                .Append(customer.RegionId)
+                .OfType<Guid>()
+                .Distinct()
+                .ToArray(),
+            cancellationToken);
         // Spec 2026-10-10 §6.2: un incompleto no tiene clasificación que buscar.
         var classification = customer.ClassificationId is { } classificationId
             ? await classificationRepository.FindAsync(customer.TenantId, classificationId, cancellationToken)
@@ -226,7 +250,8 @@ internal static class CustomerMapping
         var company = await ResolveCompanyAsync(customer, companyDirectory, cancellationToken);
         var (contacts, contactCount) = await ResolveContactsAsync(customer, companyDirectory, cancellationToken);
 
-        return customer.ToDto(city, classification, citiesById, tags, taxRatesById, company, contactCount, contacts);
+        return customer.ToDto(
+            city, classification, citiesById, tags, taxRatesById, company, contactCount, contacts, regionsById);
     }
 
     // Spec 2026-11-10 §4.2 (ruling P4): los contactos de una empresa viajan en toda respuesta de la ficha, no sólo en el GET, para

@@ -58,9 +58,10 @@ internal sealed class QuotationCustomerLookup(
                 .Distinct()
                 .ToArray(),
             cancellationToken);
+        var regionsById = await FindRegionsAsync([customer], cancellationToken);
         var withRetention = await RetefuenteHoldersAsync(tenantId, [customer], cancellationToken);
 
-        return ToRef(customer, citiesById, withRetention.Contains(customer.Id.Value));
+        return ToRef(customer, citiesById, regionsById, withRetention.Contains(customer.Id.Value));
     }
 
     public async Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
@@ -84,11 +85,12 @@ internal sealed class QuotationCustomerLookup(
                 .Distinct()
                 .ToArray(),
             cancellationToken);
+        var regionsById = await FindRegionsAsync(customers.Values, cancellationToken);
         var withRetention = await RetefuenteHoldersAsync(tenantId, customers.Values, cancellationToken);
 
         return customers.Values.ToDictionary(
             customer => customer.Id.Value,
-            customer => ToRef(customer, citiesById, withRetention.Contains(customer.Id.Value)));
+            customer => ToRef(customer, citiesById, regionsById, withRetention.Contains(customer.Id.Value)));
     }
 
     // WithRetention ya no es una columna del cliente: se deriva de sus tasas asignadas (spec impuestos por tipo §9,
@@ -114,6 +116,32 @@ internal sealed class QuotationCustomerLookup(
             .ToHashSet();
     }
 
+    // The regions of the domiciles and of every address book in one call (provincia guardada): none are asked for when no
+    // customer of the batch has one, which is the normal case for a Colombian tenant.
+    private async Task<IReadOnlyDictionary<Guid, CustomerRegionRef>> FindRegionsAsync(
+        IEnumerable<Customer> customers, CancellationToken cancellationToken)
+    {
+        Guid[] regionIds =
+        [
+            .. customers
+                .SelectMany(customer => customer.Addresses
+                    .Select(address => address.RegionId)
+                    .Append(customer.RegionId))
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .Distinct()
+        ];
+        return regionIds.Length == 0
+            ? new Dictionary<Guid, CustomerRegionRef>()
+            : await geographyLookup.FindRegionsAsync(regionIds, cancellationToken);
+    }
+
+    private static QuotationRegionDto? RegionOf(
+        Guid? regionId, IReadOnlyDictionary<Guid, CustomerRegionRef> regionsById) =>
+        regionId is { } id && regionsById.TryGetValue(id, out var region)
+            ? new QuotationRegionDto(region.Id, region.Name)
+            : null;
+
     // Las ciudades DIVIPOLA de la libreta: una direccion de afuera no tiene id que resolver.
     private static IEnumerable<Guid> AddressCityIds(Customer customer) =>
         customer.Addresses
@@ -126,7 +154,10 @@ internal sealed class QuotationCustomerLookup(
         customer.CityId is { } cityId ? [cityId] : [];
 
     private static QuotationCustomerRef ToRef(
-        Customer customer, IReadOnlyDictionary<Guid, CustomerCityRef> citiesById, bool withRetention)
+        Customer customer,
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyDictionary<Guid, CustomerRegionRef> regionsById,
+        bool withRetention)
     {
         CustomerCityRef? contactCity = null;
         if (customer.CityId is { } domicileCityId)
@@ -160,7 +191,7 @@ internal sealed class QuotationCustomerLookup(
             customer.Addresses
                 .OrderByDescending(address => address.IsPrincipal)
                 .ThenBy(address => address.Name)
-                .Select(address => ToAddressRef(address, citiesById))
+                .Select(address => ToAddressRef(address, citiesById, regionsById))
                 .ToArray(),
             customer.UpdatedAt,
             customer.BusinessName,
@@ -168,12 +199,14 @@ internal sealed class QuotationCustomerLookup(
             customer.IsComplete,
             customer.PersonType?.ToWireValue(),
             customer.Country,
-            customer.IdentificationType?.ToWireValue());
+            customer.IdentificationType?.ToWireValue(),
+            RegionOf(customer.RegionId, regionsById));
     }
 
     private static QuotationCustomerAddressRef ToAddressRef(
         CustomerAddress address,
-        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyDictionary<Guid, CustomerRegionRef> regionsById)
     {
         // Una direccion de afuera no tiene ciudad DIVIPOLA: viaja sin ids y la ciudad escrita va como nombre.
         CustomerCityRef? city = null;
@@ -194,7 +227,8 @@ internal sealed class QuotationCustomerLookup(
             city?.DepartmentId ?? (foreign ? null : Guid.Empty),
             city?.DepartmentName ?? (foreign ? null : string.Empty),
             address.IsPrincipal,
-            address.Country);
+            address.Country,
+            RegionOf(address.RegionId, regionsById));
     }
 
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(

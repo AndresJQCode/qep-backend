@@ -59,6 +59,13 @@ public interface ICustomerGeographyLookup
     /// </summary>
     Task<IReadOnlyCollection<Guid>> ListCityIdsByDepartmentsAsync(
         IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resuelve regiones (provincias) por id, en lote y con una sola consulta: pais al que
+    /// pertenecen y nombre. Los ids que no existen no salen. Sin ids no se consulta.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, CustomerRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -80,3 +87,6 @@ public sealed record CustomerCityRef(
 /// va a la celda.</summary>
 public sealed record CustomerDepartmentWithCitiesDto(
     Guid Id, string DivipolaCode, string Name, IReadOnlyList<string> CityNames);
+
+/// <summary>Una region de <c>Geography</c> en el vocabulario del modulo.</summary>
+public sealed record CustomerRegionRef(Guid Id, string CountryCode, string Name);

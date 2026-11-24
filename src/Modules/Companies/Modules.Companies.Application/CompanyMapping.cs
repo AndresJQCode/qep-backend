@@ -15,7 +15,8 @@ internal static class CompanyMapping
     public static CompanyDto ToDto(
         this Company company,
         CompanyCityRef? city,
-        IReadOnlyList<CompanyWithholdingTaxRateDto>? withholdingTaxRates = null) => new(
+        IReadOnlyList<CompanyWithholdingTaxRateDto>? withholdingTaxRates = null,
+        CompanyRegionRef? region = null) => new(
         company.Id.Value,
         company.Name,
         company.BankAccounts
@@ -40,7 +41,8 @@ internal static class CompanyMapping
         company.CreatedAt,
         company.UpdatedAt,
         withholdingTaxRates ?? [],
-        company.ChargesVat);
+        company.ChargesVat,
+        region is null ? null : new CompanyRegionDto(region.Id, region.Name));
 
     /// <summary>
     /// La version de una sola empresa: resuelve su ciudad y sus tasas municipales y arma el DTO. Para
@@ -63,17 +65,24 @@ internal static class CompanyMapping
         var withholdingTaxRates = await ResolveWithholdingTaxRatesAsync(
             company.WithholdingTaxRateIds, rates, geographyLookup, cancellationToken);
 
+        // Spec 2026-11-23: una región que Geography ya no devuelve se omite en vez de tirar la ficha (referencia blanda).
+        CompanyRegionRef? region = null;
+        if (company.RegionId is { } regionId)
+        {
+            (await geographyLookup.FindRegionsAsync([regionId], cancellationToken)).TryGetValue(regionId, out region);
+        }
+
         // Fuera de Colombia no hay CityId que resolver: la ciudad es texto libre en CityName.
         if (company.CityId is not { } cityId)
         {
-            return company.ToDto(null, withholdingTaxRates);
+            return company.ToDto(null, withholdingTaxRates, region);
         }
 
         var city = await geographyLookup.FindCityAsync(cityId, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"City '{company.CityId}' referenced by company '{company.Id}' was not found.");
 
-        return company.ToDto(city, withholdingTaxRates);
+        return company.ToDto(city, withholdingTaxRates, region);
     }
 
     /// <summary>

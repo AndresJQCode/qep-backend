@@ -123,7 +123,9 @@ public sealed record QuotationCustomerRef(
     /// <summary>País del cliente (ISO alfa-2). Con él se decide a qué país se factura: el del cliente, o el del tenant si no lo tiene.</summary>
     string? Country = null,
     /// <summary>Tipo del documento de la ficha (uno de los siete códigos: NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID), el tipo de <see cref="IdentificationNumber"/>.</summary>
-    string? IdentificationType = null);
+    string? IdentificationType = null,
+    /// <summary>The region of a foreign customer (provincia guardada, spec 2026-11-23); null when it has none.</summary>
+    QuotationRegionDto? Region = null);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
 /// cotizacion.</summary>
@@ -139,4 +141,6 @@ public sealed record QuotationCustomerAddressRef(
     bool IsPrincipal,
     /// <summary>ISO alfa-2. Fuera de Colombia <see cref="CityId"/> y <see cref="DepartmentId"/> son null y la ciudad
     /// es el texto de <see cref="CityName"/>.</summary>
-    string Country = "CO");
+    string Country = "CO",
+    /// <summary>The region of a foreign address; null when it has none.</summary>
+    QuotationRegionDto? Region = null);

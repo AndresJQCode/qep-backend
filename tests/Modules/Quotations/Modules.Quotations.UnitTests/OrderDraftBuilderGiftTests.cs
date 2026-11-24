@@ -52,7 +52,8 @@ public sealed class OrderDraftBuilderGiftTests
                     PersonTypeRequirement.Never)
             },
             new StubQuotationWithholdingLookup(),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
     }
 
     [Fact]

@@ -14,6 +14,12 @@ public sealed record CustomerDepartmentDto(Guid Id, string DivipolaCode, string 
 /// <summary>Una direccion del cliente. `Address` es la calle; `Name` es a quien pertenece
 /// ("Bodega Norte"). El departamento no viaja: es el de la ciudad, y el frontend ya lo resuelve
 /// contra `geography` para filtrar el combobox.</summary>
+/// <summary>
+/// La region (provincia) guardada de un domicilio de afuera de Colombia, ya resuelta: la ficha la preselecciona sin pedirle
+/// nada mas a Geography. <c>null</c> para Colombia (su departamento sale de la ciudad) y para lo que no tiene region guardada.
+/// </summary>
+public sealed record CustomerRegionDto(Guid Id, string Name);
+
 public sealed record CustomerAddressDto(
     Guid Id,
     string Name,
@@ -29,7 +35,9 @@ public sealed record CustomerAddressDto(
     string? DepartmentName,
     bool IsPrincipal,
     /// <summary>ISO-3166-1 alfa-2. Toda dirección anterior al campo es <c>CO</c>.</summary>
-    string Country = "CO");
+    string Country = "CO",
+    /// <summary>La region guardada de una direccion de afuera; <c>null</c> en Colombia o sin region.</summary>
+    CustomerRegionDto? Region = null);
 
 public sealed record CustomerAddressRequest(
     string Name,
@@ -41,7 +49,10 @@ public sealed record CustomerAddressRequest(
     /// sirve al POST y al PUT de una dirección.</summary>
     string? Country = null,
     /// <summary>La ciudad escrita a mano de una dirección de afuera; en <c>CO</c> va <c>CityId</c>.</summary>
-    string? CityName = null);
+    string? CityName = null,
+    /// <summary>La region (provincia) de una direccion de afuera con catalogo de regiones; en <c>CO</c> se rechaza. Ausente
+    /// la borra: el PUT reemplaza.</summary>
+    Guid? RegionId = null);
 
 public sealed record CustomerDto(
     Guid Id,
@@ -104,7 +115,9 @@ public sealed record CustomerDto(
     IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
     /// <summary>Spec ReteICA por empresa §9.3: los municipios donde el cliente es agente retenedor. <c>null</c> se lee como
     /// vacío; el listado no lo trae.</summary>
-    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null)
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
+    /// <summary>La region (provincia) del domicilio, resuelta. Solo el detalle la llena; el listado y el Excel dejan <c>null</c>.</summary>
+    CustomerRegionDto? Region = null)
 {
     /// <summary>Nunca <c>null</c>: un llamador que no conoce el campo recibe la lista vacía.</summary>
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
@@ -210,7 +223,9 @@ public sealed record CustomerResponse(
     /// <summary>Spec impuestos por tipo §9.2: viaja siempre, vacía si el cliente no retiene.</summary>
     IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
     /// <summary>Spec ReteICA por empresa §9.3: viaja siempre, vacía si el cliente no es agente en ningún municipio.</summary>
-    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null)
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
+    /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): sin region guardada la ficha no preselecciona nada.</summary>
+    CustomerRegionDto? Region = null)
 {
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
 
@@ -315,7 +330,10 @@ public sealed record CreateCustomerRequest(
     IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
     /// <summary>Spec 2026-11-15 «Contacto de» en el alta: la empresa de la que el cliente nace como contacto. Ausente o
     /// <c>null</c> lo crea sin empresa. Sólo en el alta: editar no lo toca, el vínculo va por <c>PUT …/company</c>.</summary>
-    Guid? CompanyId = null);
+    Guid? CompanyId = null,
+    /// <summary>La region (provincia) del domicilio de un pais con catalogo de regiones distinto de Colombia; con <c>CO</c> se
+    /// rechaza (422 con la clave <c>RegionId</c>). Ausente la deja en blanco.</summary>
+    Guid? RegionId = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,
@@ -338,7 +356,9 @@ public sealed record UpdateCustomerRequest(
     /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
     bool? WithRetention = null,
     /// <summary>Spec ReteICA por empresa §9.3: ausente o <c>null</c> conserva; una lista vacía quita.</summary>
-    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null);
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    /// <summary>Como en el alta. El PUT reemplaza: ausente borra la region guardada, igual que <c>CityName</c>.</summary>
+    Guid? RegionId = null);
 
 /// <summary>
 /// Una fila que se importo con exito: su numero de fila en el Excel (2-based; la fila 1 es la
@@ -637,7 +657,9 @@ public sealed record CustomerMergeResponse(
     int ContactCount,
     IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags,
     IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
-    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null)
+    IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
+    /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): sin region guardada la ficha no preselecciona nada.</summary>
+    CustomerRegionDto? Region = null)
 {
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
 

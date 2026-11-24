@@ -43,7 +43,8 @@ public sealed class OrderDraftBuilder(
     ITenantDefaultCurrency tenantDefaultCurrency,
     ITenantDirectory tenantDirectory,
     IQuotationWithholdingLookup withholdingLookup,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IQuotationGeographyLookup geographyLookup)
 {
     // El preview no tiene número: el handler lo borra antes de responder.
     private const string PreviewOrderNumber = "PREVIEW";
@@ -64,6 +65,7 @@ public sealed class OrderDraftBuilder(
         // Sólo al guardar: el cálculo previo corre mientras la persona escribe (spec 2026-10-26).
         var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(input.TenantId), cancellationToken);
         BillingPartyFiscalRules.EnsureConsistent(parties.Billing, regional?.Country);
+        await PartyRegionRules.EnsureAsync(geographyLookup, parties, cancellationToken);
         var shipping = await ResolveShippingAsync(input, parties, account.Currency, account.ChargesVat, cancellationToken);
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,

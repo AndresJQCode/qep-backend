@@ -59,7 +59,8 @@ public sealed class OrderDraftBuilderPersonTypeTests
                     "America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal, "CO", requirement)
             },
             new StubQuotationWithholdingLookup(),
-            new FixedTenantClock(Now));
+            new FixedTenantClock(Now),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
     }
 
     [Fact]

@@ -39,7 +39,17 @@ public interface IQuotationGeographyLookup
     /// </summary>
     Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resuelve regiones (provincias) por id, en lote y con una sola consulta: pais al que
+    /// pertenecen y nombre. Los ids que no existen no salen. Sin ids no se consulta.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken);
 }
 
 /// <summary>Un municipio con su departamento, la forma de toda referencia de municipio del spec (§9.1).</summary>
 public sealed record QuotationCityRef(Guid Id, string Name, Guid DepartmentId, string DepartmentName);
+
+/// <summary>Una region de <c>Geography</c> en el vocabulario del modulo.</summary>
+public sealed record QuotationRegionRef(Guid Id, string CountryCode, string Name);

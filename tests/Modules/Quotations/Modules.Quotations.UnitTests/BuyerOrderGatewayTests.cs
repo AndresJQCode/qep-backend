@@ -891,6 +891,10 @@ public sealed class BuyerOrderGatewayTests
         public Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
             IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken) => Call();
 
+        public Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationRegionRef>>(new Dictionary<Guid, QuotationRegionRef>());
+
         public async Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
         {
