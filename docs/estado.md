@@ -547,6 +547,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-24 — Mergeado a `develop` (fast-forward hasta `109fc1b99`, sin push) **las pruebas en dos niveles**
+  (`feature/test-tiers`; spec y plan `2026-11-24-pruebas-en-dos-niveles`; owner). Para mergear a `develop` basta
+  `scripts/test-feature.ps1` (build, `ArchitectureTests`, unitarias de los módulos tocados y sólo las clases de
+  integración cambiadas); la suite completa (`scripts/run-all-tests.ps1`) corre de noche o antes de `main`. Pruebas del
+  selector en verde. `ArchitectureTests` quedó en 322 de 324 por dos fallas que ya traía `develop`
+  (`Notifications:TaskNotice:EscalationAfterMinutes` sin documentar en `appsettings.example.json` e
+  `IAppMemberPresence` fuera de `MultiReplicaInventory`). Pendiente: `run-all-tests.ps1` sale en 0 aunque un proyecto
+  falle o no deje `.trx`; hay que leer la tabla. Falta registrar la tarea programada nocturna.
+
 - 2026-11-24 — Commit en `develop` (`d5bd6014c`, sin push) **la tanda de facturación de Siigo ya no programa reintentos** (owner). Cada
   pedido se manda una vez: sin respuesta de Siigo o sin conexión queda fallido con su motivo, y uno cortado por la caída del proceso falla sin
   volver a llamar. La factura que no se sabe si salió sigue `Pending` (se reanuda a mano desde el pedido; a las 24 h, `Unknown`). Sin migración.
