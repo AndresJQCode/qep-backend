@@ -145,6 +145,7 @@ plantilla `Order` (`qep_pedido`) y usa la misma elección de canal que la cotiza
 
 | Spec | Estado | Notas |
 | --- | --- | --- |
+| 2026-11-22 idioma español de España y Latinoamérica (i18n) | Backend construido y mergeado en `develop` (2026-11-24, merge `c99b11af7`, sin push) | Ver «Registro». `es-419`/`es-ES` por tenant y por persona; falta el frontend (diccionario `es-ES`, que tiene que coincidir con el glosario del backend) |
 | 2026-11-17 etiquetas en la importación de clientes | Backend construido y mergeado en `develop` (2026-11-17, merge `b814abcf`, sin push) | Ver «Registro». Falta el frontend (traducciones) |
 | 2026-11-17 marcar cotización como enviada por fuera de QEP | Backend construido y mergeado en `develop` (2026-11-17, merge `a004b612`, sin push) | Ver «Registro». Pruebas sin correr; falta el frontend (spec propio en `qep-frontend`), que sale después del despliegue del backend |
 | 2026-11-16 alerta de UVT al convertir cotización en pedido | Construido y mergeado en los dos repos (2026-11-16; backend `e6829716`, sin push) | Ver «Registro». Unitarias en verde; integración por clase sin correr (owner); falta navegador |
@@ -542,6 +543,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-24 — Mergeado a `develop` (`c99b11af7`, `--no-ff`, sin push) **idioma `es-419`/`es-ES` por tenant y por persona, backend** (`claude/festive-noether-ablt1w`, rama borrada tras el merge; spec `2026-11-22-i18n-espanol-espana-y-latinoamerica`). Columna `Tenant.Language` (`AddTenantLanguage`) y preferencia de persona (`AddUserPreferenceLanguage`, `null` = el del tenant); resolución única en `SupportedLanguages.Effective`; correos, PDF y Excel de cotización y enlace de soporte salen en el idioma resuelto; el idioma sólo entra a la huella del PDF cuando no es `es-419`. El alta de tenant acepta `Language`. **Conflicto resuelto** en `Tenant.cs`, `TenantRegistrationService.cs` y `ITenantRegistration.cs`: se conservaron las dos mitades (`country` de `develop` y `language` de la rama). Compila (`dotnet build src/Api`, 0 errores); pruebas sin correr. `AddTenantLanguage` queda con id anterior a otras migraciones de `develop`: EF aplica igual las pendientes.
 - 2026-11-23 — Mergeado a `develop` de `qep-frontend` (`a1e653f5`, `--no-ff`, sin push) **parámetros legales de RRHH y nómina
   desde la consola del operador, frontend** (`feature/legal-parameters-console`; spec del frontend corregido contra el contrato del
   backend). Tres bloques con revisión cada uno, revisión fuerte y su tanda de correcciones. Suite completa del frontend sobre el
