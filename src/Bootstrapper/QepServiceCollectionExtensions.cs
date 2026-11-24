@@ -718,6 +718,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Payroll.Application.VacationInputBuilder>();
         services.AddScoped<Modules.Payroll.Application.VacationRules>();
         services.AddScoped<Modules.Payroll.Application.VacationComposer>();
+        services.AddScoped<Modules.Payroll.Application.VacationLocks>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.CreateVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.CreateVacationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.UpdateVacationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.DeleteVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.DeleteVacationHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Payroll.Application.ListVacationsQuery, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
             Modules.Payroll.Application.ListVacationsHandler>();

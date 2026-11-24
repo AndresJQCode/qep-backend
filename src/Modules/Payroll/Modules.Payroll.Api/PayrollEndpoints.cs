@@ -48,7 +48,72 @@ public static class PayrollEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost(route, CreateVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<VacationRequest>("application/json")
+            .Produces<IReadOnlyList<VacationDto>>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut(route + "/{vacationId:guid}", UpdateVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<VacationRequest>("application/json")
+            .Produces<IReadOnlyList<VacationDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapDelete(route + "/{vacationId:guid}", DeleteVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces<IReadOnlyList<VacationDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
     }
+
+    private static async Task<IResult> CreateVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        VacationRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var list = await dispatcher.SendAsync(new CreateVacationCommand(tenantId, companyId, employeeId, request), cancellationToken);
+
+        return Results.Created($"/api/v1/tenants/{tenantId}/payroll/companies/{companyId}/employees/{employeeId}/vacations", list);
+    }
+
+    private static async Task<IResult> UpdateVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        Guid vacationId,
+        VacationRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateVacationCommand(tenantId, companyId, employeeId, vacationId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> DeleteVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        Guid vacationId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new DeleteVacationCommand(tenantId, companyId, employeeId, vacationId, IfMatchOf(httpContext)), cancellationToken));
 
     private static async Task<IResult> ListVacationsAsync(
         Guid tenantId, Guid companyId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
