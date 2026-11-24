@@ -13,7 +13,9 @@ namespace Bootstrapper;
 /// acoplamiento es legítimo.
 /// </summary>
 internal sealed class QuotationGeographyLookup(
-    ICityRepository cityRepository, IDepartmentRepository departmentRepository)
+    ICityRepository cityRepository,
+    IDepartmentRepository departmentRepository,
+    IRegionRepository regionRepository)
     : IQuotationGeographyLookup
 {
     public async Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
@@ -84,5 +86,21 @@ internal sealed class QuotationGeographyLookup(
         return cities
             .Where(city => city.CoordinadoraName is not null)
             .ToDictionary(city => city.Id.Value, city => city.CoordinadoraName!);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken)
+    {
+        // Sin ids no se toca el repositorio: un domicilio sin region es lo comun.
+        var distinctIds = regionIds.Distinct().Select(id => new RegionId(id)).ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return new Dictionary<Guid, QuotationRegionRef>();
+        }
+
+        var regions = await regionRepository.ListByIdsAsync(distinctIds, cancellationToken);
+        return regions.ToDictionary(
+            region => region.Id.Value,
+            region => new QuotationRegionRef(region.Id.Value, region.CountryCode, region.Name));
     }
 }

@@ -216,6 +216,10 @@ public sealed class SupplierLinkingTests
                 : null);
         }
 
+        public Task<IReadOnlyDictionary<Guid, SupplierRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, SupplierRegionRef>>(new Dictionary<Guid, SupplierRegionRef>());
+
         public Task<IReadOnlyDictionary<Guid, SupplierCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) => throw new NotSupportedException();
     }

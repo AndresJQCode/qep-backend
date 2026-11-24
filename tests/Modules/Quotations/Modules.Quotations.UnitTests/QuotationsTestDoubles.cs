@@ -1542,6 +1542,10 @@ internal sealed class StubQuotationGeographyLookup(
 
     /// <summary>La referencia de municipio sale del nombre del DANE; el departamento no le importa a ninguna prueba
     /// unitaria, así que va con el id vacío y el mismo nombre.</summary>
+    public Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, QuotationRegionRef>>(new Dictionary<Guid, QuotationRegionRef>());
+
     public Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, QuotationCityRef>>(

@@ -11,6 +11,9 @@ public interface IRegionRepository
 {
     Task<IReadOnlyList<Region>> ListByCountryAsync(string countryCode, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<Region>> ListByIdsAsync(
+        IReadOnlyCollection<RegionId> regionIds, CancellationToken cancellationToken);
+
     Task<Region?> FindAsync(RegionId regionId, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<RegionCity>> ListCitiesAsync(RegionId regionId, CancellationToken cancellationToken);

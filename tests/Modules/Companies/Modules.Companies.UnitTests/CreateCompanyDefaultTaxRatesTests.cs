@@ -256,6 +256,10 @@ public sealed class CreateCompanyDefaultTaxRatesTests
         public Task<CompanyCityRef?> FindCityAsync(Guid cityId, CancellationToken cancellationToken) =>
             Task.FromResult<CompanyCityRef?>(cityId == BogotaId ? Bogota : null);
 
+        public Task<IReadOnlyDictionary<Guid, CompanyRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, CompanyRegionRef>>(new Dictionary<Guid, CompanyRegionRef>());
+
         public Task<IReadOnlyDictionary<Guid, CompanyCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, CompanyCityRef>>(

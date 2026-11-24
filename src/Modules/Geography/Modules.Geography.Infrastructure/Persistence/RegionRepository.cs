@@ -13,6 +13,13 @@ internal sealed class RegionRepository(GeographyDbContext dbContext) : IRegionRe
             .Where(region => region.CountryCode == countryCode)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<Region>> ListByIdsAsync(
+        IReadOnlyCollection<RegionId> regionIds, CancellationToken cancellationToken) =>
+        await dbContext.Regions
+            .AsNoTracking()
+            .Where(region => regionIds.Contains(region.Id))
+            .ToArrayAsync(cancellationToken);
+
     public Task<Region?> FindAsync(RegionId regionId, CancellationToken cancellationToken) =>
         dbContext.Regions
             .AsNoTracking()
