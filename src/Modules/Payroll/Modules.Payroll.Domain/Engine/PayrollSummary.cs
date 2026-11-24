@@ -3,6 +3,7 @@ namespace Modules.Payroll.Domain.Engine;
 /// <summary>Los totales de una liquidación, con la misma forma que <c>PayrollTotalsDto</c>. Se derivan de las líneas, nunca se calculan aparte.</summary>
 public sealed record PayrollSummary(
     decimal Salary,
+    decimal VacationPay,
     decimal TransportAllowance,
     decimal Overtime,
     decimal OtherSalaryIncome,
@@ -37,11 +38,12 @@ public sealed record PayrollSummary(
 
         var earnings = lines.Where(line => line.Group == PayrollLineGroup.Earning).ToList();
         var salary = Of("salary");
+        var vacationPay = earnings.Where(line => line.Code.StartsWith(VacationPayRule.CodePrefix, StringComparison.Ordinal)).Sum(line => line.Amount);
         var transport = Of("transport_allowance") + Of("connectivity_allowance");
         var overtime = earnings.Where(line => line.Code.StartsWith("overtime:", StringComparison.Ordinal)).Sum(line => line.Amount);
         var salaryIncome = earnings.Where(line => IsCaptured(line) && line.SalaryConstitutive == true).Sum(line => line.Amount);
         var nonSalaryIncome = earnings.Where(line => IsCaptured(line) && line.SalaryConstitutive != true).Sum(line => line.Amount);
-        var totalEarned = salary + transport + overtime + salaryIncome + nonSalaryIncome;
+        var totalEarned = salary + vacationPay + transport + overtime + salaryIncome + nonSalaryIncome;
 
         var health = Of("health_employee");
         var pension = Of("pension_employee");
@@ -64,6 +66,7 @@ public sealed record PayrollSummary(
 
         return new PayrollSummary(
             salary,
+            vacationPay,
             transport,
             overtime,
             salaryIncome,
@@ -96,6 +99,7 @@ public sealed record PayrollSummary(
         var all = summaries.ToList();
         return new PayrollSummary(
             all.Sum(item => item.Salary),
+            all.Sum(item => item.VacationPay),
             all.Sum(item => item.TransportAllowance),
             all.Sum(item => item.Overtime),
             all.Sum(item => item.OtherSalaryIncome),

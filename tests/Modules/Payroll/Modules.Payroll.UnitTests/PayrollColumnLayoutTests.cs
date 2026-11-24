@@ -15,8 +15,9 @@ public sealed class PayrollColumnLayoutTests
     ];
 
     // Each field of the summary holds its position in the contract (1 to 23): a column that reads the wrong field shows at once.
+    // VacationPay (second field) has no column yet, so it stays out of the numbering.
     private static readonly PayrollSummary Numbered = new(
-        1m, 2m, 3m, 4m, 5m, 6m, 7m, 8m, 9m, 10m, 11m, 12m, 13m, 14m, 15m, 16m, 17m, 18m, 19m, 20m, 21m, 22m, 23m);
+        1m, 0m, 2m, 3m, 4m, 5m, 6m, 7m, 8m, 9m, 10m, 11m, 12m, 13m, 14m, 15m, 16m, 17m, 18m, 19m, 20m, 21m, 22m, 23m);
 
     private static PayrollWorkbookRow Row(PayrollSummary? summary = null) =>
         new("CC", "1020304050", "Ana Pérez", "Analista", "Bodega - Principal", 15, summary ?? Numbered);

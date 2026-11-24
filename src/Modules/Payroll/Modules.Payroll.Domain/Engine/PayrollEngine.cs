@@ -25,6 +25,7 @@ public static class PayrollEngine
         var overtime = OvertimeRule.Compute(input, salary.SalaryInForce, prior.SalaryIncome + salaryIncome);
         var month = MonthIncomeRule.Compute(input, salary.SalaryInForce, salaryIncome, overtime.Total, nonSalaryIncome);
         var transport = TransportAllowanceRule.Compute(input, worked, salary, month, vacations);
+        var vacationPay = VacationPayRule.Compute(input);
 
         var ibc = IbcRule.Compute(input, worked, salary.Line.Amount, month);
         var employeeDeductions = EmployeeDeductionsRule.Compute(input, ibc);
@@ -35,7 +36,9 @@ public static class PayrollEngine
 
         // Fixed order (I-11): Earning, Info, Deduction, EmployerContribution, Provision; inside a group, the contract's code table
         // (a recurring deduction sits before health_employee there).
-        var lines = new List<PayrollLine> { salary.Line, transport.Line };
+        var lines = new List<PayrollLine> { salary.Line };
+        lines.AddRange(vacationPay.Lines);
+        lines.Add(transport.Line);
         lines.AddRange(overtime.Lines);
         lines.AddRange(incomes.Lines);
         lines.AddRange(recurring.IncomeLines);

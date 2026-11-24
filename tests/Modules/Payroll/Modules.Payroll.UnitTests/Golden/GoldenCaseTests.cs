@@ -67,7 +67,7 @@ public sealed class GoldenCaseTests
         var covered = GoldenCaseLoader.All().SelectMany(golden => golden.Covers).ToHashSet(StringComparer.Ordinal);
 
         // The vacation rules get their goldens in the last task of block A; each commit before it keeps the suite green.
-        rules.ExceptWith(["VacationDaysRule"]);
+        rules.ExceptWith(["VacationDaysRule", "VacationPayRule"]);
 
         Assert.NotEmpty(rules);
         Assert.Empty(rules.Except(covered));

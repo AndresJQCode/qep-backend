@@ -61,6 +61,27 @@ public sealed class PayrollEngineTests
     }
 
     [Fact]
+    public void VacationPayIsEarnedButNotSalary()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 12, 1), 3_000_000m) with
+        {
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), paidHere: true)],
+        };
+
+        var result = PayrollEngine.Liquidate(input);
+
+        Assert.Equal(["salary", "vacation_pay"], result.Lines.Take(2).Select(line => line.Code.Split(':')[0]));
+        Assert.Equal(2_200_000m, result.Summary.VacationPay);
+        Assert.Equal(1_300_000m, result.Summary.Salary);
+        Assert.Equal(
+            result.Summary.Salary + result.Summary.VacationPay + result.Summary.TransportAllowance,
+            result.Summary.TotalEarned);
+        // The pay is neither month income nor part of the allowance cap: the allowance stays what 13 worked days earn.
+        Assert.Equal(107_941m, result.Summary.TransportAllowance);
+        Assert.Equal(2_200_000m, PayrollSummary.Sum([result.Summary]).VacationPay);
+    }
+
+    [Fact]
     public void TheSummaryIsDerivedFromTheLines()
     {
         var input = EngineTestData.Input(new DateOnly(2026, 8, 1), 2_100_000m) with
