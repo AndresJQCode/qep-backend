@@ -1580,6 +1580,7 @@ public static class QepServiceCollectionExtensions
         // distribuidor para la línea que el mayorista agrega al editar (D-5).
         services.AddScoped<IWholesaleOrderGateway, WholesaleOrderGateway>();
         services.AddScoped<IWholesaleLinePricing, QuotationsWholesaleLinePricing>();
+        services.AddScoped<Modules.Tenancy.Application.INewTenantProvisioning, QuotationsNewTenantProvisioning>();
         // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
         services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
         // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de

@@ -13,7 +13,8 @@ public sealed class TenantRegistrationService(
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
     IClock clock,
-    ITenantSlugAvailability slugAvailability)
+    ITenantSlugAvailability slugAvailability,
+    INewTenantProvisioning provisioning)
     : ITenantRegistration
 {
     private static readonly string[] AdminRoles = [Membership.AdminRole];
@@ -90,6 +91,7 @@ public sealed class TenantRegistrationService(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await provisioning.ProvisionAsync(tenant.Id, cancellationToken);
         return tenant.Id.Value;
     }
 
@@ -160,6 +162,7 @@ public sealed class TenantRegistrationService(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await scope.CommitAsync(cancellationToken);
+        await provisioning.ProvisionAsync(tenant.Id, cancellationToken);
         return true;
     }
 

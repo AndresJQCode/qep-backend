@@ -40,6 +40,8 @@ public sealed class Tenant
         if (country is not null)
         {
             Country = NormalizeCountryCode(country);
+            // Spec 2026-11-23: con país, la moneda es la de ese país. Sin país (signup) queda la de la columna.
+            DefaultCurrency = TenantCurrencies.ForCountry(Country);
         }
 
         Status = TenantStatus.Active;
