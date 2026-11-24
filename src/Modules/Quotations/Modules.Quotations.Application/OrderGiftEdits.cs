@@ -37,7 +37,8 @@ internal static class OrderGiftEdits
         var products = additions.Length == 0
             ? new Dictionary<Guid, QuotationVariantPricingRef>()
             : await QuotationProductPricingResolver.FindVariantsAsync(
-                pricingLookup, tenantId, additions.Select(line => line.VariantId), cancellationToken);
+                pricingLookup, tenantId, additions.Select(line => line.VariantId), cancellationToken,
+                QuotationPriceChannels.For(order.Source));
         var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
             costLookup, tenantId, order, additions.Select(line => line.VariantId), cancellationToken);
 
