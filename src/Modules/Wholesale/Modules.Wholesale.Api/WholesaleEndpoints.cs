@@ -8,88 +8,49 @@ using Modules.Wholesale.Domain;
 namespace Modules.Wholesale.Api;
 
 /// <summary>
-/// Las rutas del mayorista dentro de su tenant (contrato «Listas de precios» y «Distribuidores»). Tenant en la ruta, como
+/// Las rutas del mayorista dentro de su tenant (contrato «Distribuidores»; las listas están en Catalog desde el spec 2026-11-22). Tenant en la ruta, como
 /// suppliers y purchases: la política frena a quien no tiene el permiso (y, con el módulo apagado, <c>ModuleEntitlementMask</c> ya
 /// se lo quitó) y el handler (<c>WholesaleAuthorization</c>) a quien lo tiene en otro tenant. Las rutas de la invitación viven en
 /// <c>src/Api/WholesaleInvitationEndpoints.cs</c>: componen Identity y Tenancy, que este módulo no ve.
 /// </summary>
 public static class WholesaleEndpoints
 {
-    private const string PriceListResource = "price list";
-
     private const string DistributorResource = "distributor";
 
     public static IEndpointRouteBuilder MapWholesaleEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        MapPriceLists(endpoints);
+        MapPriceListPreview(endpoints);
         MapDistributors(endpoints);
 
         // Ruling W5: las categorías para elegir la visibilidad, sin exigir catalog.product.read a quien administra listas.
         endpoints.MapGet("/api/v1/tenants/{tenantId:guid}/wholesale/categories", ListCategoriesAsync)
             .WithTags("Wholesale")
-            .RequireAuthorization(WholesalePermissions.PriceListManage)
+            .RequireAuthorization(WholesalePermissions.PriceListManage, WholesalePermissions.DistributorRead)
             .Produces<WholesaleCategoriesResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
         // Spec 2026-11-20: los productos que la lista puede mostrar, para elegir cuáles ocultar; mismo permiso que las categorías.
         endpoints.MapGet("/api/v1/tenants/{tenantId:guid}/wholesale/products", ListProductsAsync)
             .WithTags("Wholesale")
-            .RequireAuthorization(WholesalePermissions.PriceListManage)
+            .RequireAuthorization(WholesalePermissions.PriceListManage, WholesalePermissions.DistributorRead)
             .Produces<WholesaleProductsResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
         return endpoints;
     }
 
-    private static void MapPriceLists(IEndpointRouteBuilder endpoints)
-    {
-        // No hay permiso de lectura aparte: todas piden wholesale.price_list.manage.
-        var group = endpoints
-            .MapGroup("/api/v1/tenants/{tenantId:guid}/wholesale/price-lists")
+    // Spec 2026-11-22: las listas viven en /catalog/price-lists. Acá queda la vista previa «así lo ve el distribuidor», que se arma
+    // con el lector del catálogo del distribuidor. Las tres rutas de Mayorista que piden el permiso de las listas
+    // (catalog.price_list.manage, que ya no exige el módulo) piden además wholesale.distributor.read: ese sí lo quita
+    // ModuleEntitlementMask con el módulo apagado, así que sin «wholesale» siguen respondiendo 403.
+    private static void MapPriceListPreview(IEndpointRouteBuilder endpoints) =>
+        endpoints.MapPost("/api/v1/tenants/{tenantId:guid}/wholesale/price-lists/preview", PreviewPriceListAsync)
             .WithTags("Wholesale")
-            .RequireAuthorization(WholesalePermissions.PriceListManage);
-
-        group.MapGet("/", ListPriceListsAsync)
-            .Produces<PriceListsResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden);
-
-        group.MapPost("/", CreatePriceListAsync)
-            .Accepts<PriceListWriteRequest>("application/json")
-            .Produces<PriceListDetailDto>(StatusCodes.Status201Created)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        // Ruta literal antes de /{priceListId:guid}. Es un POST que no escribe: la lista sin guardar (D-11).
-        group.MapPost("/preview", PreviewPriceListAsync)
+            .RequireAuthorization(WholesalePermissions.PriceListManage, WholesalePermissions.DistributorRead)
             .Accepts<PriceListPreviewRequest>("application/json")
             .Produces<PriceListPreviewDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        group.MapGet("/{priceListId:guid}", GetPriceListAsync)
-            .Produces<PriceListDetailDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound);
-
-        group.MapPut("/{priceListId:guid}", UpdatePriceListAsync)
-            .Accepts<PriceListWriteRequest>("application/json")
-            .Produces<PriceListDetailDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
-            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
-
-        group.MapDelete("/{priceListId:guid}", DeletePriceListAsync)
-            .Produces(StatusCodes.Status204NoContent)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
-            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
-    }
 
     private static void MapDistributors(IEndpointRouteBuilder endpoints)
     {
@@ -187,74 +148,14 @@ public static class WholesaleEndpoints
         Results.Ok(await dispatcher.QueryAsync(
             new ListWholesaleProductsQuery(tenantId, search, categoryId, page, pageSize), cancellationToken));
 
-    private static async Task<IResult> ListPriceListsAsync(
-        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new ListPriceListsQuery(tenantId), cancellationToken));
-
-    private static async Task<IResult> GetPriceListAsync(
-        Guid tenantId, Guid priceListId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new GetPriceListQuery(tenantId, priceListId), cancellationToken));
-
-    private static async Task<IResult> CreatePriceListAsync(
-        Guid tenantId,
-        PriceListWriteRequest request,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
-    {
-        var list = await dispatcher.SendAsync(
-            new CreatePriceListCommand(
-                tenantId, request.Name, request.DiscountPercent, request.Visibility, request.CategoryIds ?? [], request.ShowPrices, request.Exclusions),
-            cancellationToken);
-
-        return Results.Created($"/api/v1/tenants/{tenantId}/wholesale/price-lists/{list.Id}", list);
-    }
-
     private static async Task<IResult> PreviewPriceListAsync(
         Guid tenantId,
         PriceListPreviewRequest request,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
-            new PreviewPriceListCommand(tenantId, request.DiscountPercent, request.Visibility, request.CategoryIds ?? [], request.Exclusions),
+            new PreviewPriceListCommand(tenantId, request.AdjustmentPercent, request.Visibility, request.CategoryIds ?? [], request.Exclusions),
             cancellationToken));
-
-    private static async Task<IResult> UpdatePriceListAsync(
-        Guid tenantId,
-        Guid priceListId,
-        PriceListWriteRequest request,
-        HttpContext httpContext,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
-    {
-        var version = WholesaleIfMatch.RequireVersion(httpContext, PriceListResource);
-        var list = await dispatcher.SendAsync(
-            new UpdatePriceListCommand(
-                tenantId,
-                priceListId,
-                version,
-                request.Name,
-                request.DiscountPercent,
-                request.Visibility,
-                request.CategoryIds ?? [],
-                request.ShowPrices,
-                request.Exclusions),
-            cancellationToken);
-
-        return Results.Ok(list);
-    }
-
-    private static async Task<IResult> DeletePriceListAsync(
-        Guid tenantId,
-        Guid priceListId,
-        HttpContext httpContext,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
-    {
-        var version = WholesaleIfMatch.RequireVersion(httpContext, PriceListResource);
-        await dispatcher.SendAsync(new DeletePriceListCommand(tenantId, priceListId, version), cancellationToken);
-
-        return Results.NoContent();
-    }
 
     // status llega como texto: un valor fuera de los tres estados es un 422 con errors.Status, no un 400 del binding (D-22).
     private static async Task<IResult> ListDistributorsAsync(
@@ -372,18 +273,9 @@ public static class WholesaleEndpoints
     }
 }
 
-/// <summary>El cuerpo de alta y edición de una lista. <c>Visibility</c> como texto: un valor raro es 422, no 400.</summary>
-public sealed record PriceListWriteRequest(
-    string Name,
-    decimal DiscountPercent,
-    string Visibility,
-    IReadOnlyList<Guid>? CategoryIds,
-    bool? ShowPrices = null,
-    IReadOnlyList<PriceListExclusionInput>? Exclusions = null);
-
 /// <summary>La lista sin guardar para «Así lo ve el distribuidor»: los términos sin el nombre.</summary>
 public sealed record PriceListPreviewRequest(
-    decimal DiscountPercent,
+    decimal AdjustmentPercent,
     string Visibility,
     IReadOnlyList<Guid>? CategoryIds,
     IReadOnlyList<PriceListExclusionInput>? Exclusions = null);

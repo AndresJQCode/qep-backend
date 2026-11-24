@@ -2,8 +2,12 @@ using System.Text.Json.Serialization;
 
 namespace Modules.Wholesale.Application;
 
-/// <summary>La lista de precios del distribuidor con lo que la fila pinta: nombre y descuento, sin pedir la lista aparte.</summary>
-public sealed record DistributorPriceListDto(Guid Id, string Name, decimal DiscountPercent);
+/// <summary>
+/// La lista del distribuidor (spec 2026-11-22: una lista de Catalog). <c>AdjustmentPercent</c> va con signo: negativo es descuento.
+/// <c>Exists</c> en <c>false</c> dice que la lista ya no está (o el distribuidor viene de antes de la unificación): la pantalla le
+/// pide elegir una en vez de pintar un nombre que no existe.
+/// </summary>
+public sealed record DistributorPriceListDto(Guid Id, string Name, decimal AdjustmentPercent, bool Exists = true);
 
 /// <summary>El asesor con su nombre visible ya resuelto (<c>"Sin nombre"</c> si la membresía ya no está, D-15).</summary>
 public sealed record DistributorAdvisorDto(Guid MemberId, string Name);

@@ -34,15 +34,8 @@ internal static class WholesaleConflicts
         }
     }
 
-    public static ResourceConflictException PriceListNameTaken() =>
-        new(WholesaleErrorCodes.PriceListNameTaken, "Another price list already has that name.");
 
-    public static ResourceConflictException PriceListInUse() =>
-        new(WholesaleErrorCodes.PriceListInUse, "A distributor uses this price list.");
 
-    /// <summary>422: algún id no es una categoría del tenant (D-9). Es una regla de negocio sobre el cuerpo, no un conflicto.</summary>
-    public static WholesaleDomainException CategoryNotFound() =>
-        new(WholesaleErrorCodes.PriceListCategoryNotFound, "Una de las categorías no existe en el catálogo.");
 
     public static ResourceConflictException InvalidTransition() =>
         new(WholesaleErrorCodes.DistributorInvalidTransition, "The distributor status does not allow this action.");

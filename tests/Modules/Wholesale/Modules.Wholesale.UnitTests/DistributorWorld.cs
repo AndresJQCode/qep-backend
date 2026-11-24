@@ -16,7 +16,7 @@ internal sealed class DistributorWorld
             permissions.Length == 0
                 ? [WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage]
                 : permissions);
-        PriceList = PriceLists.Seed(Domain.PriceList.Create(Tenant, "Mayoristas", 15m, PriceListVisibility.AllActive, [], Now));
+        PriceList = PriceLists.Seed(Tenant, "Mayoristas", -15m);
         Advisor = Members.AddActive("Ana Mayorista");
         Company = Companies.Add("Mayorista SAS");
     }
@@ -27,7 +27,7 @@ internal sealed class DistributorWorld
 
     public FakeClock Clock { get; } = new(Now);
 
-    public FakePriceListRepository PriceLists { get; } = new();
+    public FakeWholesalePriceLists PriceLists { get; } = new();
 
     public FakeDistributorRepository Distributors { get; } = new();
 
@@ -54,7 +54,7 @@ internal sealed class DistributorWorld
 
     public FakeInvitationLinks Links { get; } = new();
 
-    public PriceList PriceList { get; }
+    public WholesalePriceList PriceList { get; }
 
     public Guid Advisor { get; }
 

@@ -126,8 +126,8 @@ internal static class LinkedPurchasesHarness
 
         var priceList = await PostAsync<PriceListDetailDto>(
             wholesaler,
-            $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists",
-            new { name = PriceListName, discountPercent = DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
+            $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists",
+            new { name = PriceListName, adjustmentPercent = -DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
         var companyId = await CreateCompanyAsync(wholesaler, wholesalerTenant.TenantId);
         var distributor = await PostAsync<DistributorDetailDto>(
             wholesaler,
@@ -292,14 +292,14 @@ internal static class LinkedPurchasesHarness
         /// <summary>El mayorista cambia el descuento de la lista del distribuidor.</summary>
         public async Task ChangeDiscountAsync(decimal discountPercent)
         {
-            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists/{priceListId}";
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists/{priceListId}";
             var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
             var response = await PurchasesApiHarness.WriteAsync(
                 wholesaler,
                 HttpMethod.Put,
                 url,
                 list.Version,
-                new { name = PriceListName, discountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
+                new { name = PriceListName, adjustmentPercent = -discountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
             await EnsureSuccessAsync(response);
         }
 
@@ -311,28 +311,28 @@ internal static class LinkedPurchasesHarness
         /// <summary>Spec 2026-11-20: la lista del distribuidor pasa a ver sólo esas categorías (y sus descendientes).</summary>
         public async Task UseCategoriesAsync(params Guid[] categoryIds)
         {
-            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists/{priceListId}";
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists/{priceListId}";
             var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
             var response = await PurchasesApiHarness.WriteAsync(
                 wholesaler,
                 HttpMethod.Put,
                 url,
                 list.Version,
-                new { name = PriceListName, discountPercent = DiscountPercent, visibility = "Categories", categoryIds });
+                new { name = PriceListName, adjustmentPercent = -DiscountPercent, visibility = "Categories", categoryIds });
             await EnsureSuccessAsync(response);
         }
 
         /// <summary>Spec 2026-11-19: el mayorista oculta (o muestra) los precios de la lista del distribuidor.</summary>
         public async Task SetShowPricesAsync(bool showPrices)
         {
-            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists/{priceListId}";
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists/{priceListId}";
             var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
             var response = await PurchasesApiHarness.WriteAsync(
                 wholesaler,
                 HttpMethod.Put,
                 url,
                 list.Version,
-                new { name = PriceListName, discountPercent = DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), showPrices });
+                new { name = PriceListName, adjustmentPercent = -DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), showPrices });
             await EnsureSuccessAsync(response);
         }
 

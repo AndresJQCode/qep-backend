@@ -13,7 +13,7 @@ public sealed record GetDistributorOptionsQuery(Guid TenantId) : IQuery<Distribu
 /// </summary>
 public sealed class GetDistributorOptionsHandler(
     IExecutionContext executionContext,
-    IPriceListRepository priceLists,
+    IWholesalePriceLists priceLists,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
     IWholesaleWhatsAppConnections whatsAppConnections,
@@ -32,7 +32,7 @@ public sealed class GetDistributorOptionsHandler(
         return new DistributorOptionsDto(
             lists
                 .OrderBy(list => list.Name, StringComparer.CurrentCultureIgnoreCase)
-                .Select(list => new DistributorPriceListDto(list.Id.Value, list.Name, list.DiscountPercent))
+                .Select(list => new DistributorPriceListDto(list.Id.Value, list.Name, list.AdjustmentPercent))
                 .ToList(),
             advisors
                 .OrderBy(member => member.Name, StringComparer.CurrentCultureIgnoreCase)

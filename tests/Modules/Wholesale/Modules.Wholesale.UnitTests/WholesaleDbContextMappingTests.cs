@@ -16,10 +16,8 @@ public sealed class WholesaleDbContextMappingTests
         using var context = new WholesaleDbContextFactory().CreateDbContext([]);
         var model = context.Model;
 
-        var priceLists = model.FindEntityType(typeof(PriceList))!;
         var distributors = model.FindEntityType(typeof(Distributor))!;
         var invitations = model.FindEntityType(typeof(DistributorInvitation))!;
-        Assert.Equal(("wholesale", "price_lists"), (priceLists.GetSchema(), priceLists.GetTableName()));
         Assert.Equal(("wholesale", "distributors"), (distributors.GetSchema(), distributors.GetTableName()));
         Assert.Equal(("wholesale", "distributor_invitations"), (invitations.GetSchema(), invitations.GetTableName()));
 
@@ -28,15 +26,14 @@ public sealed class WholesaleDbContextMappingTests
             .Where(index => index.IsUnique)
             .Select(index => index.GetDatabaseName())
             .ToHashSet();
-        Assert.Contains(WholesaleDbContext.PriceListNameIndex, unique);
         Assert.Contains(WholesaleDbContext.DistributorIdentificationIndex, unique);
         Assert.Contains(WholesaleDbContext.DistributorTenantIndex, unique);
         Assert.Contains(WholesaleDbContext.InvitationTokenHashIndex, unique);
         Assert.Contains(WholesaleDbContext.InvitationReservedTenantIndex, unique);
         Assert.Equal(
-            ["IX_price_lists_tenant_name", "IX_distributors_tenant_identification", "IX_distributors_tenant_distributor_tenant",
+            ["IX_distributors_tenant_identification", "IX_distributors_tenant_distributor_tenant",
                 "IX_distributor_invitations_token_hash", "IX_distributor_invitations_reserved_tenant"],
-            [WholesaleDbContext.PriceListNameIndex, WholesaleDbContext.DistributorIdentificationIndex,
+            [WholesaleDbContext.DistributorIdentificationIndex,
                 WholesaleDbContext.DistributorTenantIndex, WholesaleDbContext.InvitationTokenHashIndex,
                 WholesaleDbContext.InvitationReservedTenantIndex]);
 
@@ -44,22 +41,19 @@ public sealed class WholesaleDbContextMappingTests
             .Single(index => index.GetDatabaseName() == WholesaleDbContext.DistributorTenantIndex);
         Assert.Equal("distributor_tenant_id IS NOT NULL", linkedIndex.GetFilter());
 
-        var priceListForeignKey = distributors.GetForeignKeys().Single(key => key.PrincipalEntityType == priceLists);
-        Assert.Equal(DeleteBehavior.Restrict, priceListForeignKey.DeleteBehavior);
-        Assert.Equal(WholesaleDbContext.DistributorPriceListForeignKey, priceListForeignKey.GetConstraintName());
     }
 
+    // Spec 2026-11-22 (D-8): la lista vive en catalog.price_lists, otro esquema. El distribuidor guarda el id sin FK, y la tabla de
+    // listas ya no está en el modelo de Mayorista.
     [Fact]
-    public void PriceListExclusionsAreTwoUuidArrayColumns()
+    public void TheDistributorPriceListIsASoftReference()
     {
         using var context = new WholesaleDbContextFactory().CreateDbContext([]);
-        var priceLists = context.Model.FindEntityType(typeof(PriceList))!;
+        var distributors = context.Model.FindEntityType(typeof(Distributor))!;
 
-        var categories = priceLists.FindProperty("_excludedCategoryIds")!;
-        var products = priceLists.FindProperty("_excludedProductIds")!;
-
-        Assert.Equal(("excluded_category_ids", "uuid[]"), (categories.GetColumnName(), categories.GetColumnType()));
-        Assert.Equal(("excluded_product_ids", "uuid[]"), (products.GetColumnName(), products.GetColumnType()));
+        Assert.Empty(distributors.GetForeignKeys());
+        Assert.Equal("price_list_id", distributors.FindProperty(nameof(Distributor.PriceListId))!.GetColumnName());
+        Assert.DoesNotContain(context.Model.GetEntityTypes(), entity => entity.GetTableName() == "price_lists");
     }
 
     [Fact]
@@ -126,18 +120,6 @@ public sealed class WholesaleDbContextMappingTests
         Assert.Equal(("notice_failure_code", (int?)128, true),
             (failure.GetColumnName(), failure.GetMaxLength(), failure.IsNullable));
         Assert.Equal(DistributorInvitation.NoticeFailureCodeMaxLength, failure.GetMaxLength());
-    }
-
-    // Spec 2026-11-19 (mostrar precios): columna aditiva, no nula, con default true para las listas existentes.
-    [Fact]
-    public void TheShowPricesColumnIsRequiredWithADefaultOfTrue()
-    {
-        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
-        var priceLists = context.Model.FindEntityType(typeof(PriceList))!;
-
-        var showPrices = priceLists.FindProperty(nameof(PriceList.ShowPrices))!;
-        Assert.Equal(("show_prices", false, (object?)true),
-            (showPrices.GetColumnName(), showPrices.IsNullable, showPrices.GetDefaultValue()));
     }
 
     [Fact]

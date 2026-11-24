@@ -211,14 +211,14 @@ public sealed class OrderDraftBuilder(
     /// manual y la tienda pública (<see cref="StoreOrderGateway"/>), que precia antes de saber a quién se vende.</summary>
     internal async Task<List<OrderLineInput>> PriceLinesAsync(
         Guid tenantId, IReadOnlyList<OrderItemAddition> items, string currency, bool isRetail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, QuotationPriceChannel channel = QuotationPriceChannel.Quotations)
     {
         // Una lectura del catálogo con precio para todo el pedido (el preview corre mientras se escribe)
         // y la comprobación línea por línea, como el alta de una línea en la cotización: un producto
         // ausente, de otro tenant o inactivo se rechaza con el código de siempre (ResolveManyAsync deja
         // pasar el inactivo a propósito, porque sirve al cambio de moneda de líneas que ya existen).
         var pricedVariants = await QuotationProductPricingResolver.FindVariantsAsync(
-            pricingLookup, tenantId, items.Select(item => item.VariantId), cancellationToken);
+            pricingLookup, tenantId, items.Select(item => item.VariantId), cancellationToken, channel);
         var products = await productLookup.FindManyAsync(
             tenantId, items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
         var lines = new List<OrderLineInput>(items.Count);

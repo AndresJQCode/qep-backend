@@ -16,6 +16,27 @@ internal sealed class CatalogAuditPublisher(CatalogDbContext dbContext) : ICatal
         string action,
         string resourceId,
         string outcome,
+        DateTimeOffset occurredAt) =>
+        Write(tenantId, actorId, action, "product", resourceId, outcome, [], occurredAt);
+
+    public void PublishResource(
+        Guid tenantId,
+        Guid actorId,
+        string action,
+        string resourceType,
+        string resourceId,
+        IReadOnlyCollection<string> changedFields,
+        DateTimeOffset occurredAt) =>
+        Write(tenantId, actorId, action, resourceType, resourceId, "success", changedFields, occurredAt);
+
+    private void Write(
+        Guid tenantId,
+        Guid actorId,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        IReadOnlyCollection<string> changedFields,
         DateTimeOffset occurredAt)
     {
         var payload = JsonSerializer.Serialize(new AuditEventPayload(
@@ -23,10 +44,10 @@ internal sealed class CatalogAuditPublisher(CatalogDbContext dbContext) : ICatal
             actorId,
             "Human",
             action,
-            "product",
+            resourceType,
             resourceId,
             outcome,
-            [],
+            changedFields,
             "catalog",
             occurredAt));
 

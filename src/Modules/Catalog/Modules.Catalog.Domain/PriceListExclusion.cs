@@ -1,4 +1,4 @@
-namespace Modules.Wholesale.Domain;
+namespace Modules.Catalog.Domain;
 
 /// <summary>Qué es lo que una lista de precios le oculta al distribuidor. Viaja por nombre en el JSON.</summary>
 public enum PriceListExclusionKind

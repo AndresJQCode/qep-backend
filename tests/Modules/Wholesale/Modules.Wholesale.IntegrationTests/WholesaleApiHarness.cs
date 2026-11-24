@@ -37,7 +37,10 @@ internal static class WholesaleApiHarness
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static string PriceListsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/price-lists";
+    /// <summary>Spec 2026-11-22: las listas viven en Catalog; la vista previa del distribuidor sigue en Mayorista.</summary>
+    public static string PriceListsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/catalog/price-lists";
+
+    public static string PreviewUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/price-lists/preview";
 
     public static string DistributorsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/wholesale/distributors";
 
@@ -356,7 +359,7 @@ internal static class WholesaleApiHarness
         HttpClient client, Guid tenantId, string name, decimal discountPercent, string visibility = "AllActive", params Guid[] categoryIds)
     {
         var response = await client.PostAsJsonAsync(
-            PriceListsUrl(tenantId), new { name, discountPercent, visibility, categoryIds }, Ct);
+            PriceListsUrl(tenantId), new { name, adjustmentPercent = -discountPercent, visibility, categoryIds }, Ct);
         await EnsureSuccessAsync(response);
         return (await response.Content.ReadFromJsonAsync<PriceListDetailDto>(Ct))!;
     }

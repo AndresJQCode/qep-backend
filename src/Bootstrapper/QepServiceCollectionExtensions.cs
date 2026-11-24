@@ -315,6 +315,21 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ReplacePosQuickAccessCommand, IReadOnlyList<CategoryDto>>,
             ReplacePosQuickAccessHandler>();
+        // Spec 2026-11-22 (listas de precios por canal). Los validadores entran con AddValidatorsFromAssemblyContaining del módulo.
+        services.AddScoped<IQueryHandler<ListPriceListsQuery, PriceListsResponse>, ListPriceListsHandler>();
+        services.AddScoped<IQueryHandler<GetPriceListQuery, PriceListDetailDto>, GetPriceListHandler>();
+        services.AddScoped<ICommandHandler<CreatePriceListCommand, PriceListDetailDto>, CreatePriceListHandler>();
+        services.AddScoped<ICommandHandler<UpdatePriceListCommand, PriceListDetailDto>, UpdatePriceListHandler>();
+        services.AddScoped<ICommandHandler<DeletePriceListCommand, bool>, DeletePriceListHandler>();
+        services.AddScoped<
+            IQueryHandler<ListPriceListOverridesQuery, PriceListOverridesPageDto>, ListPriceListOverridesHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdatePriceListOverridesCommand, PriceListOverridesWriteDto>, UpdatePriceListOverridesHandler>();
+        services.AddScoped<IQueryHandler<GetChannelPricesQuery, ChannelPricesDto>, GetChannelPricesHandler>();
+        services.AddScoped<ICommandHandler<UpdateChannelPricesCommand, ChannelPricesDto>, UpdateChannelPricesHandler>();
+        services.AddScoped<IPriceListUsage, CatalogPriceListUsage>();
+        services.AddScoped<IPriceListPricing, PriceListPricing>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesalePriceLists, WholesalePriceLists>();
         // EMP. Los siete van aca por la misma razon que los de tasas: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
@@ -962,21 +977,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.WholesaleOrderEventApplier>();
 
         // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.
-        services.AddScoped<
-            IQueryHandler<Modules.Wholesale.Application.ListPriceListsQuery, Modules.Wholesale.Application.PriceListsResponse>,
-            Modules.Wholesale.Application.ListPriceListsHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Wholesale.Application.GetPriceListQuery, Modules.Wholesale.Application.PriceListDetailDto>,
-            Modules.Wholesale.Application.GetPriceListHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Wholesale.Application.CreatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
-            Modules.Wholesale.Application.CreatePriceListHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Wholesale.Application.UpdatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
-            Modules.Wholesale.Application.UpdatePriceListHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Wholesale.Application.DeletePriceListCommand, bool>,
-            Modules.Wholesale.Application.DeletePriceListHandler>();
+        // Spec 2026-11-22: las listas pasaron a Catalog; queda la vista previa del distribuidor.
         services.AddScoped<
             ICommandHandler<Modules.Wholesale.Application.PreviewPriceListCommand, Modules.Wholesale.Application.PriceListPreviewDto>,
             Modules.Wholesale.Application.PreviewPriceListHandler>();
@@ -1929,7 +1930,7 @@ public static class QepServiceCollectionExtensions
         // Scheduling: igual que Hr, por ensamblado (SchedulingPermissions es estática y no sirve de argumento de tipo).
         services.AddValidatorsFromAssembly(typeof(SchedulingPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
-        services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.PreviewPriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
@@ -3000,8 +3001,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-17 (compras): las órdenes de compra las administra quien administra la empresa (P-3, propuesta).
                 PurchasesPermissions.OrderRead,
                 PurchasesPermissions.OrderManage,
-                // Spec 2026-11-17 (mayorista), P-3 aprobada: listas de precios y distribuidores las administra quien administra la empresa.
-                WholesalePermissions.PriceListManage,
+                // Spec 2026-11-17 (mayorista), P-3 aprobada: distribuidores los administra quien administra la empresa. Las listas de
+                // precios son catalog.price_list.manage desde el spec 2026-11-22 (más abajo).
                 WholesalePermissions.DistributorRead,
                 WholesalePermissions.DistributorManage,
                 // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
@@ -3051,6 +3052,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-10 §5: el costo y el margen son dato comercial sensible; de fábrica sólo en admin.
                 CatalogPermissions.ProductCostRead,
                 CatalogPermissions.ProductCostManage,
+                // Spec 2026-11-22 (D-10): listas de precios por canal; las administra quien administra el catálogo.
+                CatalogPermissions.PriceListManage,
                 ReportingPermissions.MarginRead
             ]));
         services.AddSingleton(new RoleDefinition(
@@ -3355,6 +3358,17 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [ModuleKeys.Catalog])
         {
             Shape = new("catalog.product_cost", "Costos", "read"),
+        });
+        // Spec 2026-11-22 (D-10): sin [wholesale]: el POS, la tienda y las cotizaciones usan listas sin el módulo mayorista.
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.PriceListManage,
+            "Gestionar listas de precios",
+            "Permite crear, editar y borrar listas de precios, sus precios fijos y asignarlas a los canales.",
+            "Catalog",
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.price_list", "Listas de precios", "manage"),
         });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductCostManage,
@@ -4074,16 +4088,6 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-17 (mayorista): con [wholesale], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
-            WholesalePermissions.PriceListManage,
-            "Gestionar listas de precios",
-            "Permite crear, editar y borrar las listas de precios de distribuidores.",
-            "Mayorista",
-            "medium",
-            RequiredModules: [ModuleKeys.Wholesale])
-        {
-            Shape = new("wholesale.price_list", "Listas de precios", "manage"),
-        });
-        services.AddSingleton(new PermissionDefinition(
             WholesalePermissions.DistributorRead,
             "Ver distribuidores",
             "Permite ver los distribuidores, su lista de precios y su asesor.",
@@ -4580,6 +4584,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CatalogPermissions.ProductCostManage,
                 policy => AddPermissionRequirement(policy, CatalogPermissions.ProductCostManage))
+            // Spec 2026-11-22: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                CatalogPermissions.PriceListManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.PriceListManage))
             .AddPolicy(
                 CompaniesPermissions.CompanyRead,
                 policy => AddPermissionRequirement(policy, CompaniesPermissions.CompanyRead))
@@ -4855,9 +4863,6 @@ public static class QepServiceCollectionExtensions
                 PurchasesPermissions.OrderManage,
                 policy => AddPermissionRequirement(policy, PurchasesPermissions.OrderManage))
             // Spec 2026-11-17 (mayorista): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
-            .AddPolicy(
-                WholesalePermissions.PriceListManage,
-                policy => AddPermissionRequirement(policy, WholesalePermissions.PriceListManage))
             .AddPolicy(
                 WholesalePermissions.DistributorRead,
                 policy => AddPermissionRequirement(policy, WholesalePermissions.DistributorRead))

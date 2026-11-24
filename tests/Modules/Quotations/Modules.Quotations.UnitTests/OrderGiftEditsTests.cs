@@ -70,7 +70,7 @@ public sealed class OrderGiftEditsTests
     private static Task<IReadOnlyList<OrderItemEdit>> ApplyAsync(
         Order order,
         IReadOnlyCollection<OrderItemAddition>? desired,
-        StubQuotationProductPricingLookup? catalog = null,
+        IQuotationProductPricingLookup? catalog = null,
         RecordingOrderVariantCostLookup? costs = null) =>
         OrderGiftEdits.ApplyAsync(
             order, desired, catalog ?? new StubQuotationProductPricingLookup(Variant(V1, 1_000m, 0), Variant(V2, 2_000m, 0)),
@@ -94,6 +94,51 @@ public sealed class OrderGiftEditsTests
         Assert.Empty(edits);
         var gift = Assert.Single(order.Items, item => item.IsGift);
         Assert.Equal(2m, gift.Quantity);
+    }
+
+    // Spec 2026-11-22 (D-5): el regalo nuevo de un pedido de la tienda se precia con la lista del canal Store, no con la de cotizaciones.
+    [Theory]
+    [InlineData(true, QuotationPriceChannel.Store)]
+    [InlineData(false, QuotationPriceChannel.Quotations)]
+    public async Task AGiftIsPricedWithTheChannelOfTheOrderSource(bool storeOrder, QuotationPriceChannel expected)
+    {
+        var order = storeOrder
+            ? Order.CreateFromStore(
+                OrderId.New(), TenantId, "PED-2026-0050",
+                new OrderHeader(Guid.CreateVersion7(), Advisor, "COP", null, false, null, false, []),
+                QuotationParties.Empty, Account,
+                [new OrderLineInput(V1, Guid.CreateVersion7(), 10m, 1_000m, 0m, 0, new QuotationProductSnapshot("ACE", "Aceite"))],
+                null, Advisor, Now, DateOnly.FromDateTime(Now.UtcDateTime), "store-checkout:50")
+            : NewOrder();
+        var catalog = new ChannelRecordingLookup(Variant(V2, 2_000m, 0));
+
+        await ApplyAsync(order, [new OrderItemAddition(V2, 1m)], catalog);
+
+        Assert.Equal(expected, Assert.Single(catalog.Channels));
+    }
+
+    private sealed class ChannelRecordingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup
+    {
+        private readonly StubQuotationProductPricingLookup _inner = new(products);
+
+        public List<QuotationPriceChannel> Channels { get; } = [];
+
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(Guid tenantId, Guid variantId, CancellationToken cancellationToken) =>
+            _inner.FindVariantAsync(tenantId, variantId, cancellationToken);
+
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+        {
+            Channels.Add(QuotationPriceChannel.Quotations);
+            return _inner.FindManyAsync(tenantId, variantIds, cancellationToken);
+        }
+
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> variantIds, QuotationPriceChannel channel, CancellationToken cancellationToken)
+        {
+            Channels.Add(channel);
+            return _inner.FindManyAsync(tenantId, variantIds, cancellationToken);
+        }
     }
 
     [Fact]

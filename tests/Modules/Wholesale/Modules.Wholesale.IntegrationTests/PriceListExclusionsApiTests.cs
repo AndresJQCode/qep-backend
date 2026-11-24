@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Catalog.Application;
 using Modules.Wholesale.Application;
 using Modules.Wholesale.Domain;
+using PriceListExclusionInput = Modules.Catalog.Application.PriceListExclusionInput;
 
 namespace Modules.Wholesale.IntegrationTests;
 
@@ -37,7 +39,7 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
             new
             {
                 name = "Oro",
-                discountPercent = 10m,
+                adjustmentPercent = -10m,
                 visibility = "AllActive",
                 categoryIds = Array.Empty<Guid>(),
                 exclusions = new[]
@@ -63,7 +65,7 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
             WholesaleApiHarness.WithIfMatch(
                 new HttpRequestMessage(HttpMethod.Put, $"{WholesaleApiHarness.PriceListsUrl(tenant.TenantId)}/{detail.Id}")
                 {
-                    Content = JsonContent.Create(new { name = "Oro", discountPercent = 10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() }),
+                    Content = JsonContent.Create(new { name = "Oro", adjustmentPercent = -10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() }),
                 },
                 detail.Version),
             Ct);
@@ -83,7 +85,7 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
             new
             {
                 name = "Oro",
-                discountPercent = 10m,
+                adjustmentPercent = -10m,
                 visibility = "AllActive",
                 categoryIds = Array.Empty<Guid>(),
                 exclusions = new[] { new { kind = "Product", id = Guid.CreateVersion7() } },
@@ -107,10 +109,10 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
         var loose = await ProductOfAsync(await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "S-1", "Suelto", 1_000m));
 
         var response = await manager.PostAsJsonAsync(
-            $"{WholesaleApiHarness.PriceListsUrl(tenant.TenantId)}/preview",
+            WholesaleApiHarness.PreviewUrl(tenant.TenantId),
             new
             {
-                discountPercent = 10m,
+                adjustmentPercent = -10m,
                 visibility = "AllActive",
                 categoryIds = Array.Empty<Guid>(),
                 exclusions = new[] { new { kind = "Category", id = kitchen }, new { kind = "Product", id = loose } },
@@ -170,7 +172,7 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
             new
             {
                 name = "Con ocultos",
-                discountPercent = 10m,
+                adjustmentPercent = -10m,
                 visibility = "Categories",
                 categoryIds = new[] { home, tools },
                 exclusions = new[] { new { kind = "Category", id = kitchen }, new { kind = "Product", id = sawProduct } },
@@ -272,7 +274,7 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
 
         var created = await manager.PostAsJsonAsync(
             WholesaleApiHarness.PriceListsUrl(mine.TenantId),
-            new { name = "Oro", discountPercent = 10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), exclusions },
+            new { name = "Oro", adjustmentPercent = -10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), exclusions },
             Ct);
         var list = await WholesaleApiHarness.CreatePriceListAsync(manager, mine.TenantId, "Plata", 5m);
         var updated = await manager.SendAsync(
@@ -281,7 +283,11 @@ public sealed class PriceListExclusionsApiTests(SharedWholesaleHost host) : ICla
                 {
                     Content = JsonContent.Create(new
                     {
-                        name = "Plata", discountPercent = 5m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), exclusions,
+                        name = "Plata",
+                        adjustmentPercent = -5m,
+                        visibility = "AllActive",
+                        categoryIds = Array.Empty<Guid>(),
+                        exclusions,
                     }),
                 },
                 list.Version),

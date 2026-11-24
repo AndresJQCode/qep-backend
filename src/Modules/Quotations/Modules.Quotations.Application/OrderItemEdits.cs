@@ -73,7 +73,8 @@ internal static class OrderItemEdits
                 .Where(line => !current.TryGetValue(line.VariantId, out var item)
                     || (!wholesale && item.Quantity != line.Quantity))
                 .Select(line => line.VariantId),
-            cancellationToken);
+            cancellationToken,
+            QuotationPriceChannels.For(order.Source));
         var additions = desired.Where(line => !current.ContainsKey(line.VariantId)).ToArray();
         var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
             costLookup,

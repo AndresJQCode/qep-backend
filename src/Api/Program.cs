@@ -362,6 +362,7 @@ app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
 app.MapCatalogOptionEndpoints();
 app.MapCatalogCategoryEndpoints();
+app.MapCatalogPriceListEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();

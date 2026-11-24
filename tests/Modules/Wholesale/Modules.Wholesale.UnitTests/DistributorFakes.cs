@@ -73,12 +73,6 @@ internal sealed class FakeDistributorRepository : IDistributorRepository
             .GroupBy(item => item.Status)
             .ToDictionary(group => group.Key, group => group.Count()));
 
-    public Task<IReadOnlyDictionary<PriceListId, int>> CountByPriceListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<PriceListId, int>>(Distributors
-            .Where(item => item.TenantId == tenantId)
-            .GroupBy(item => item.PriceListId)
-            .ToDictionary(group => group.Key, group => group.Count()));
-
     public void Add(Distributor distributor)
     {
         Writes++;

@@ -58,11 +58,11 @@ public sealed class DistributorComposerTests
 
         Assert.Equal(3, summaries.Count);
         Assert.Equal(1, world.Members.FindNamesCalls);
-        Assert.Equal(1, world.PriceLists.FindManyCalls);
+        Assert.Equal(1, world.PriceLists.ListCalls);
         Assert.Equal(1, world.TenantNames.Calls);
         Assert.Equal(("Distri Norte", distributorTenant), (summaries[1].DistributorTenant!.Name, summaries[1].DistributorTenant!.Id));
         Assert.Null(summaries[0].DistributorTenant);
-        Assert.All(summaries, summary => Assert.Equal(("Mayoristas", 15m), (summary.PriceList.Name, summary.PriceList.DiscountPercent)));
+        Assert.All(summaries, summary => Assert.Equal(("Mayoristas", -15m), (summary.PriceList.Name, summary.PriceList.AdjustmentPercent)));
     }
 
     [Fact]
