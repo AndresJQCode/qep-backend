@@ -124,6 +124,9 @@ public sealed class LegalParameterWriterTests
         public Task<IReadOnlyList<HrMemberRef>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyList<HrMemberRef>> ListWithPermissionAsync(Guid tenantId, string permission, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<HrMemberRef?> FindBySubjectAsync(Guid tenantId, Guid subjectId, CancellationToken cancellationToken) =>
             Task.FromResult(
                 tenantId == OperatorTenant && subjectId == Operator && world.ActorName is not null
