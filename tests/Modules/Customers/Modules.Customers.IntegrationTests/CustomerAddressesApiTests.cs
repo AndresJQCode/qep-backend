@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Customers.Application;
 using Npgsql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
@@ -329,5 +330,43 @@ public sealed class CustomerAddressesApiTests
             () => insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal("CK_customer_addresses_city_lane", failure.ConstraintName);
+    }
+
+    [Fact]
+    public async Task ForeignAddressRoundTripsRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var customer = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            AddressesUrl(customer.Id),
+            new
+            {
+                name = "Sede Alcala",
+                address = "Calle Mayor 1",
+                country = "ES",
+                cityName = "Alcala de Henares",
+                regionId = madrid,
+                isPrincipal = false
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{CustomersUrl()}/{customer.Id}", TestContext.Current.CancellationToken);
+        var address = json.GetProperty("addresses").EnumerateArray()
+            .Single(item => item.GetProperty("country").GetString() == "ES");
+        Assert.Equal(madrid, address.GetProperty("region").GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", address.GetProperty("region").GetProperty("name").GetString());
+        // La de una direccion colombiana sigue en null: su departamento sale de la ciudad.
+        Assert.Contains(
+            json.GetProperty("addresses").EnumerateArray(),
+            item => item.GetProperty("country").GetString() == "CO"
+                && item.GetProperty("region").ValueKind == JsonValueKind.Null);
     }
 }

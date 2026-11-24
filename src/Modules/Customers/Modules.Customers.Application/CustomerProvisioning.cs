@@ -414,6 +414,13 @@ public sealed class CustomerProvisioning(
         var cityName = colombian
             ? null
             : Keep(customer.CityName, sameCountry ? data.CityName : null);
+        // La region viaja con el CityName del cliente: solo se conserva si la ciudad que queda es la suya y el pais no cambio
+        // (una region es de un solo pais). Si la ciudad viene de la tienda, la region guardada ya no la describe.
+        var regionId = !colombian
+            && !string.IsNullOrWhiteSpace(customer.CityName)
+            && string.Equals(customer.Country?.Trim(), country.Trim(), StringComparison.OrdinalIgnoreCase)
+                ? customer.RegionId
+                : null;
 
         return new CreateCustomerCommand(
             tenantId,
@@ -428,7 +435,8 @@ public sealed class CustomerProvisioning(
             cityId,
             cityName,
             data.ClassificationId,
-            customer.VatSurplus);
+            customer.VatSurplus,
+            RegionId: regionId);
     }
 
     private static string? Keep(string? existing, string? incoming) =>
@@ -607,7 +615,8 @@ public sealed class CustomerProvisioning(
                 Address = command.Address ?? string.Empty,
                 Country = command.Country,
                 CityId = command.CityId,
-                CityName = command.CityName
+                CityName = command.CityName,
+                RegionId = command.RegionId
             },
             CustomerMapping.ToCommercialInfo(command.ClassificationId, command.VatSurplus));
     }
