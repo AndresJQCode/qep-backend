@@ -124,7 +124,7 @@ public sealed class DistributorInvitationServiceTests
             (DistributorStatus.Active, (Guid?)reserved, (Guid?)_customers.CustomerId, (Guid?)_user),
             (_invitation.Status, _invitation.DistributorTenantId, _invitation.CustomerId, _invitation.Invitation.AcceptedByUserId));
         Assert.Equal((reserved, "Distri Norte", true), (result.TenantId, result.TenantName, result.Created));
-        Assert.Equal(["catalog", "customers", "companies", "quotations", "orders", "reporting", "suppliers", "purchases"], result.EnabledModules);
+        Assert.Equal(["catalog", "suppliers", "purchases"], result.EnabledModules);
         var audit = Assert.Single(_world.Audit.Entries);
         Assert.Equal((_world.Tenant, _user, "wholesale.distributor.accepted", "distributor"),
             (audit.TenantId, audit.ActorId, audit.Action, audit.ResourceType));

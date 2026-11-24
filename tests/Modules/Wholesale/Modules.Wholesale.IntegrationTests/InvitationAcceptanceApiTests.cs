@@ -177,7 +177,7 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
     // D-21 y Review Focus: el alta del distribuidor no lee Registration:PublicTenantSignupEnabled. Host propio: cambia la
     // configuración.
     [Fact]
-    public async Task NewTenantCreatesTheEightModulesWithoutShopifyEvenWithSignupDisabled()
+    public async Task NewTenantCreatesOnlyCatalogSuppliersAndPurchasesEvenWithSignupDisabled()
     {
         await using var database = await WholesaleApiHarness.StartDatabaseAsync();
         await using var factory = new WholesaleApiHarness.QepApiFactory(
@@ -199,7 +199,7 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
             SELECT module_key AS "Value" FROM tenancy.tenant_modules WHERE tenant_id = {accepted.TenantId} ORDER BY module_key
             """);
         Assert.Equal(
-            ["catalog", "companies", "customers", "orders", "purchases", "quotations", "reporting", "suppliers"],
+            ["catalog", "purchases", "suppliers"],
             modules);
         Assert.DoesNotContain(TenantModuleKeys.Shopify.Value, modules);
         var owner = await WholesaleApiHarness.RowsAsync<int>(
