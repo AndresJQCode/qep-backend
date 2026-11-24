@@ -3010,7 +3010,7 @@ El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Pl
 | Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
 | ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
 | `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
-| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area}` | `area`   | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch` |
+| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area,reason}` | `area`, `reason` | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
 
 La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
@@ -3058,12 +3058,17 @@ Mientras las áreas estén apagadas hay dos exposiciones que antes no existían,
 
 **El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
 producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
-el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día
+el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiquetas `area` y `reason`). En Grafana, durante el día
 que pasa entre un área y la siguiente:
 
 ```promql
-increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h])
+sum by (reason) (increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h]))
 ```
+
+Si da distinto de cero, `reason` dice por qué: `TimeoutException` apunta a latencia hacia Valkey (el tope es
+`OperationTimeoutMs`, 100 ms), `NotConnected` a una reconexión del cliente, y `RedisServerException` a un comando que la
+ACL de producción rechaza. Antes de la etiqueta los respaldos de horario laboral del 2026-11-23 (Presence 23 y RateLimiting
+11 en un pod de 18 h) no se podían atribuir. La serie vieja sin `reason` sigue en Prometheus hasta que vence su retención.
 
 tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
 secretos; nunca `get secret -o yaml` ni `-o json`):
