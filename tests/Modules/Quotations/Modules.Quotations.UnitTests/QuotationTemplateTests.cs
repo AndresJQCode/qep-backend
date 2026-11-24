@@ -450,6 +450,44 @@ public sealed partial class QuotationTemplateTests
         Assert.DoesNotContain("horas", withoutUnits, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task TheOrderTableHasItemNumberAndCodeColumns()
+    {
+        var text = await RenderedTextAsync(Complete() with
+        {
+            Kind = QuotationPdfKind.Order,
+            ValidUntil = null,
+            Items =
+            [
+                new QuotationPdfLine("Cable por metro", 2m, 35900m, 15m, 30515m, 61030m, ProductCode: "CAB-001"),
+                new QuotationPdfLine("Tornillo", 1m, 1500m, 0m, 1500m, 1500m, ProductCode: "TOR-002"),
+            ],
+        });
+
+        foreach (var expected in new[]
+        {
+            // Los rótulos del encabezado salen en mayúsculas (`rotulo`).
+            "# ITEM", "CÓDIGO", "DESCRIPCIÓN", "CANTIDAD", "VR. UNITARIO", "VR. TOTAL", "CAB-001", "TOR-002",
+        })
+        {
+            Assert.Contains(expected, text, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("VALOR CON DESCUENTO", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheQuotationTableKeepsItsColumns()
+    {
+        var text = await RenderedTextAsync(Complete() with
+        {
+            Items = [new QuotationPdfLine("Tornillo", 1m, 1500m, 0m, 1500m, 1500m, ProductCode: "TOR-002")],
+        });
+
+        Assert.DoesNotContain("TOR-002", text, StringComparison.Ordinal);
+        Assert.Contains("PRODUCTO", text, StringComparison.Ordinal);
+    }
+
     private static QuotationPdfDocument WithFractionalQuantities(QuotationPdfDocument document) =>
         document with
         {

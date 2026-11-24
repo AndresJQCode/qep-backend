@@ -180,7 +180,10 @@ public sealed record QuotationPdfLine(
     /// <summary>La unidad junto a la cantidad («horas», «servicio», «unidades»), ya en español y con el plural resuelto
     /// (spec 2026-11-18 §6). Texto plano que la plantilla imprime como cadena. Null en todas las líneas de un documento
     /// cuyas líneas son todas <c>Unit</c>: así el PDF de un tenant que no usa unidades sale idéntico al de antes.</summary>
-    string? Unit = null);
+    string? Unit = null,
+    /// <summary>Código del producto de la línea, ya resuelto por el composer. Sólo lo imprime la tabla del pedido (columna
+    /// «Código»); la de la cotización no cambia. Null si la línea no lo tiene: la celda queda vacía.</summary>
+    string? ProductCode = null);
 
 /// <summary>
 /// Puerto hacia quien sabe dibujar un PDF. La implementación vive en Infrastructure porque

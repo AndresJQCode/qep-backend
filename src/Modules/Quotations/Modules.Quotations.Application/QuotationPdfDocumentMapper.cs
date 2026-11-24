@@ -175,7 +175,8 @@ public static class QuotationPdfDocumentMapper
             item.DiscountPercentage,
             item.DiscountedUnitPrice,
             item.Subtotal + item.TaxAmount,
-            withUnit ? SalesUnitLabels.Spanish(Enum.Parse<SalesUnit>(item.SalesUnit), item.Quantity) : null);
+            withUnit ? SalesUnitLabels.Spanish(Enum.Parse<SalesUnit>(item.SalesUnit), item.Quantity) : null,
+            item.ProductCode);
 
     /// <summary>
     /// Spec 2026-11-18 §6: con todas las líneas en <c>Unit</c> ninguna lleva unidad, para que el PDF de un tenant que no
