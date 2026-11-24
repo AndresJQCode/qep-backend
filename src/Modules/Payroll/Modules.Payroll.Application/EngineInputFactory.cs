@@ -21,7 +21,8 @@ public static class EngineInputFactory
         IReadOnlyList<RecurringConcept> recurring,
         IReadOnlyDictionary<Guid, decimal> appliedBefore,
         IReadOnlySet<Guid> retiredConcepts,
-        MonthAccumulators prior)
+        MonthAccumulators prior,
+        IReadOnlyList<VacationInput> vacations)
     {
         ArgumentNullException.ThrowIfNull(employee);
         ArgumentNullException.ThrowIfNull(eligibility);
@@ -60,7 +61,8 @@ public static class EngineInputFactory
             Incomes(mine, concepts),
             Deductions(mine, concepts),
             RecurringOf(employee.EmployeeId, recurring, appliedBefore, retiredConcepts, concepts),
-            prior);
+            prior,
+            vacations);
     }
 
     private static List<OvertimeInput> Overtime(List<PeriodInput> inputs, ConceptCatalogSnapshot concepts) => inputs

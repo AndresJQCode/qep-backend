@@ -57,6 +57,7 @@ public sealed class ExportPeriodHandler(
                 result.Position,
                 result.Workplace,
                 result.Liquidation.WorkedDays,
+                result.Liquidation.VacationDays,
                 result.Liquidation.Summary))
             .ToList();
         var excluded = PeriodExcluded.Parse(period.ExcludedJson)

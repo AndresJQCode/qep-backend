@@ -29,7 +29,8 @@ public sealed record GoldenInput(
     IReadOnlyList<IncomeInput>? Incomes,
     IReadOnlyList<DeductionInput>? Deductions,
     IReadOnlyList<RecurringInput>? Recurring,
-    MonthAccumulators? Prior)
+    MonthAccumulators? Prior,
+    IReadOnlyList<VacationInput>? Vacations = null)
 {
     public EngineInput ToEngineInput(LegalValueSet legal) =>
         new(
@@ -45,7 +46,8 @@ public sealed record GoldenInput(
             Incomes ?? [],
             Deductions ?? [],
             Recurring ?? [],
-            Prior ?? MonthAccumulators.Empty);
+            Prior ?? MonthAccumulators.Empty,
+            Vacations ?? []);
 }
 
 public sealed record GoldenExpected(
@@ -54,6 +56,7 @@ public sealed record GoldenExpected(
     bool NegativeNet,
     IReadOnlyList<GoldenLine> Lines,
     decimal Net,
-    decimal EmployerCost);
+    decimal EmployerCost,
+    int? VacationDays = null);
 
 public sealed record GoldenLine(string Code, decimal Amount);

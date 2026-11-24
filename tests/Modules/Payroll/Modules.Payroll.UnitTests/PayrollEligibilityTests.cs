@@ -42,7 +42,8 @@ public sealed class PayrollEligibilityTests
             "1020304050",
             subtype,
             foreignExempt,
-            contracts.Length == 0 ? [Contract()] : contracts);
+            contracts.Length == 0 ? [Contract()] : contracts,
+            [DayOfWeek.Sunday]);
 
     private static EligibilityResult Evaluate(HrEmployeeSource employee) =>
         PayrollEligibility.Evaluate(employee, Start, End, Smmlv);
@@ -174,5 +175,85 @@ public sealed class PayrollEligibilityTests
         Assert.Equal(EligibilityStatus.Liquidable, result.Status);
         Assert.Equal(new DateOnly(2026, 11, 9), result.LastCoveredDay);
         Assert.Equal(2_500_000m, result.SalaryAtEnd!.Amount);
+    }
+
+    private static Vacation VacationOn(DateOnly start, DateOnly end) => Vacation.Create(
+        VacationId.New(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), VacationOrigin.Qep, start, end, 5, end.AddDays(1), null, [],
+        new DateTimeOffset(2026, 11, 23, 15, 0, 0, TimeSpan.Zero));
+
+    [Fact]
+    public void AVacationAfterTheContractEndBlocks()
+    {
+        var contract = Contract(endedOn: new DateOnly(2026, 11, 12));
+        var result = Evaluate(Employee(contracts: contract));
+
+        var blocked = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 20))]);
+
+        Assert.Equal(EligibilityStatus.Blocked, blocked.Status);
+        Assert.Equal([BlockerReason.VacationOutsideContract], blocked.Blockers);
+        Assert.Same(contract, blocked.Contract);
+    }
+
+    [Fact]
+    public void AVacationBeforeTheContractStartBlocks()
+    {
+        var result = Evaluate(Employee(contracts: Contract(startDate: new DateOnly(2026, 11, 8))));
+
+        var blocked = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 10))]);
+
+        Assert.Equal([BlockerReason.VacationOutsideContract], blocked.Blockers);
+    }
+
+    [Fact]
+    public void AVacationInsideTheContractChangesNothing()
+    {
+        var result = Evaluate(Employee(contracts: Contract(endedOn: new DateOnly(2026, 11, 12))));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 12))]);
+
+        Assert.Equal(result, same);
+        Assert.Equal(result, PayrollEligibility.WithVacations(result, []));
+    }
+
+    [Fact]
+    public void AVacationOfAnOlderContractDoesNotBlockTheNewOne()
+    {
+        // The old contract ended on the 9th and its vacation does not touch the new contract at all: the builder drops it.
+        var result = Evaluate(Employee(contracts: Contract(startDate: new DateOnly(2026, 11, 10))));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 6))]);
+
+        Assert.Equal(result, same);
+    }
+
+    [Fact]
+    public void AVacationAfterTheEndOfTheContractDoesNotBlock()
+    {
+        var result = Evaluate(Employee(contracts: Contract(endedOn: new DateOnly(2026, 11, 12))));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 20), new DateOnly(2026, 11, 25))]);
+
+        Assert.Equal(result, same);
+    }
+
+    [Fact]
+    public void TheVacationBlockerJoinsTheOthers()
+    {
+        var result = Evaluate(Employee(contracts: Contract(endedOn: new DateOnly(2026, 11, 12), assignments: [])));
+
+        var blocked = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 20))]);
+
+        Assert.Equal([BlockerReason.MissingWorkplace, BlockerReason.VacationOutsideContract], blocked.Blockers);
+    }
+
+    [Fact]
+    public void AnExcludedEmployeeIsReturnedAsIs()
+    {
+        var result = Evaluate(Employee(subtype: "Apprentice"));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 10), new DateOnly(2026, 11, 20))]);
+
+        Assert.Same(result, same);
+        Assert.Equal(EligibilityStatus.Excluded, same.Status);
     }
 }

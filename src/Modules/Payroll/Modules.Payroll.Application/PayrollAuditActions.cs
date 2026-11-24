@@ -22,6 +22,9 @@ public static class PayrollAuditActions
     public const string RecurringUpdated = "payroll.recurring.updated";
     public const string RecurringActivated = "payroll.recurring.activated";
     public const string RecurringDeactivated = "payroll.recurring.deactivated";
+    public const string VacationCreated = "payroll.vacation.created";
+    public const string VacationUpdated = "payroll.vacation.updated";
+    public const string VacationDeleted = "payroll.vacation.deleted";
 
     public static class Resources
     {
@@ -29,5 +32,6 @@ public static class PayrollAuditActions
         public const string Settings = "settings";
         public const string Concept = "concept";
         public const string Recurring = "recurring";
+        public const string Vacation = "vacation";
     }
 }

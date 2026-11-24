@@ -1,0 +1,139 @@
+{
+  "name": "vacation-external-november-into-december-advance",
+  "source": "synthetic",
+  "description": "Como el caso anterior, pero con lo que Siigo retuvo por adelantado para diciembre (16 000 de salud y 16 000 de pensión): se resta como término (b).",
+  "legal": "legal/2026-11-01.json",
+  "covers": [
+    "WorkedDaysRule",
+    "SalaryRule",
+    "MonthIncomeRule",
+    "TransportAllowanceRule",
+    "IbcRule",
+    "EmployeeDeductionsRule",
+    "EmployerContributionsRule",
+    "ProvisionsRule",
+    "PayrollEngine",
+    "VacationDaysRule"
+  ],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-12-01",
+      "end": "2026-12-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "vacations": [
+      {
+        "vacationId": "01900000-0000-7000-8000-000000000a08",
+        "origin": "External",
+        "startDate": "2026-11-23",
+        "endDate": "2026-12-04",
+        "businessDays": 10,
+        "paidHere": false,
+        "salaryAtStart": 3000000,
+        "salaryRecordDate": "2025-01-01",
+        "previousMonthIbc": 3000000,
+        "previousIbcSource": "Typed",
+        "monthVacationPay": null,
+        "monthAdvance": {
+          "health": 16000,
+          "pension": 16000,
+          "solidarityFund": 0
+        }
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 11,
+    "vacationDays": 4,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      {
+        "code": "salary",
+        "amount": 1100000
+      },
+      {
+        "code": "transport_allowance",
+        "amount": 91335
+      },
+      {
+        "code": "ibc",
+        "amount": 1500000
+      },
+      {
+        "code": "health_employee",
+        "amount": 44000
+      },
+      {
+        "code": "pension_employee",
+        "amount": 44000
+      },
+      {
+        "code": "health_employer",
+        "amount": 0
+      },
+      {
+        "code": "pension_employer",
+        "amount": 180000
+      },
+      {
+        "code": "arl",
+        "amount": 5800
+      },
+      {
+        "code": "compensation_fund",
+        "amount": 60000
+      },
+      {
+        "code": "icbf",
+        "amount": 0
+      },
+      {
+        "code": "sena",
+        "amount": 0
+      },
+      {
+        "code": "severance",
+        "amount": 132558
+      },
+      {
+        "code": "severance_interest",
+        "amount": 15913
+      },
+      {
+        "code": "premium",
+        "amount": 132558
+      },
+      {
+        "code": "vacation",
+        "amount": 62550
+      }
+    ],
+    "net": 1103335,
+    "employerCost": 1780714
+  },
+  "notes": [
+    "todo como el caso anterior; health_employee = 60 000 − min(16 000, 60 000) = 44 000; pension_employee = 44 000",
+    "net = 1 191 335 − 88 000 = 1 103 335; employerCost = 1 780 714 (los aportes y provisiones no cambian)"
+  ]
+}

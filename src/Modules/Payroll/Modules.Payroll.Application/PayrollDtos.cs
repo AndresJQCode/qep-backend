@@ -41,6 +41,7 @@ public sealed record ActorDto(Guid SubjectId, string DisplayName);
 /// <summary>Los totales de las filas liquidadas, o los de una sola fila (<c>PayrollEmployeeSummaryDto</c> del contrato tiene esta misma forma): los calcula el backend, nunca el navegador.</summary>
 public sealed record PayrollTotalsDto(
     decimal Salary,
+    decimal VacationPay,
     decimal TransportAllowance,
     decimal Overtime,
     decimal OtherSalaryIncome,
@@ -65,7 +66,7 @@ public sealed record PayrollTotalsDto(
     decimal EmployerCost)
 {
     public static PayrollTotalsDto From(Modules.Payroll.Domain.Engine.PayrollSummary summary) => new(
-        summary.Salary, summary.TransportAllowance, summary.Overtime, summary.OtherSalaryIncome, summary.NonSalaryIncome,
+        summary.Salary, summary.VacationPay, summary.TransportAllowance, summary.Overtime, summary.OtherSalaryIncome, summary.NonSalaryIncome,
         summary.TotalEarned, summary.HealthEmployee, summary.PensionEmployee, summary.SolidarityFund, summary.OtherDeductions,
         summary.TotalDeductions, summary.Net, summary.HealthEmployer, summary.PensionEmployer, summary.Arl,
         summary.CompensationFund, summary.Icbf, summary.Sena, summary.Severance, summary.SeveranceInterest, summary.Premium,
@@ -104,6 +105,7 @@ public sealed record PayrollPeriodDto(
     IReadOnlyList<string> ApproveBlockedBy);
 
 /// <param name="WorkedDays">Nulo hasta liquidar.</param>
+/// <param name="VacationDays">Los días de nómina de vacaciones de esta quincena, del resultado como <c>WorkedDays</c>: nulo hasta liquidar.</param>
 /// <param name="HasInputs">Tiene horas, ingresos o deducciones capturados en la quincena.</param>
 /// <param name="FinalSettlementPending">El contrato termina dentro de la quincena.</param>
 /// <param name="Summary">Nulo si no está liquidado (o entró a la quincena después de liquidar).</param>
@@ -118,7 +120,8 @@ public sealed record PayrollEmployeeRowDto(
     bool HasInputs,
     bool FinalSettlementPending,
     bool NegativeNet,
-    PayrollTotalsDto? Summary);
+    PayrollTotalsDto? Summary,
+    int? VacationDays);
 
 public sealed record ExcludedEmployeeDto(Guid EmployeeId, string DocumentType, string DocumentNumber, string FullName, string Reason);
 
@@ -135,12 +138,14 @@ public sealed record PeriodEventDto(
     string? Reason,
     bool? AbsencesConfirmed);
 
+/// <param name="Vacations">Las que tocan la quincena (la pagan o tienen días en ella), para el diálogo de liquidar: los días son los de nómina en esta quincena.</param>
 public sealed record PayrollPeriodDetailDto(
     PayrollPeriodDto Period,
     IReadOnlyList<PayrollEmployeeRowDto> Employees,
     IReadOnlyList<ExcludedEmployeeDto> Excluded,
     IReadOnlyList<BlockedEmployeeDto> Blocked,
-    IReadOnlyList<PeriodEventDto> History);
+    IReadOnlyList<PeriodEventDto> History,
+    IReadOnlyList<PeriodVacationDto> Vacations);
 
 /// <param name="CurrentPeriodId">El período que contiene el día del tenant; nulo si no existe. La pantalla aterriza en él, no en uno abierto por adelantado.</param>
 /// <param name="NextPeriodStartsOn">Inicio de la quincena siguiente a la actual mientras no exista; nulo si ya existe.</param>
@@ -203,9 +208,11 @@ public sealed record EmployeeResultDto(
     IReadOnlyList<LegalValueUseDto> LegalValues);
 
 /// <param name="Result">Nulo hasta liquidar y para un excluido.</param>
+/// <param name="Vacations">Las vacaciones del empleado que tocan la quincena: la pagan o tienen días en ella.</param>
 public sealed record PayrollEmployeeDetailDto(
     PayrollPeriodDto Period,
     PayrollEmployeeRowDto Employee,
     EmployeeInputsDto Inputs,
     IReadOnlyList<RecurringConceptDto> Recurring,
-    EmployeeResultDto? Result);
+    EmployeeResultDto? Result,
+    IReadOnlyList<VacationDto> Vacations);

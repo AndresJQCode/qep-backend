@@ -65,7 +65,8 @@ public sealed class EngineInputFactoryTests
                     endedOn,
                     salaries ?? [new HrSalarySource(new DateOnly(2025, 1, 1), 2_500_000m, false)],
                     [assignment ?? Assignment()]),
-            ]);
+            ],
+            [DayOfWeek.Sunday]);
 
     private static IReadOnlyList<PeriodInput> Inputs(params PeriodInputDraft[] drafts)
     {
@@ -84,7 +85,8 @@ public sealed class EngineInputFactoryTests
         IReadOnlyList<PeriodInput>? inputs = null,
         IReadOnlyList<RecurringConcept>? recurring = null,
         IReadOnlyDictionary<Guid, decimal>? applied = null,
-        IReadOnlySet<Guid>? retired = null) =>
+        IReadOnlySet<Guid>? retired = null,
+        IReadOnlyList<VacationInput>? vacations = null) =>
         EngineInputFactory.Build(
             employee,
             PayrollEligibility.Evaluate(employee, Period.Start, Period.End, EngineTestData.Smmlv),
@@ -96,7 +98,8 @@ public sealed class EngineInputFactoryTests
             recurring ?? [],
             applied ?? new Dictionary<Guid, decimal>(),
             retired ?? new HashSet<Guid>(),
-            MonthAccumulators.Empty);
+            MonthAccumulators.Empty,
+            vacations ?? []);
 
     [Fact]
     public async Task ARecurringOfARetiredConceptIsLeftOut()
@@ -232,5 +235,19 @@ public sealed class EngineInputFactoryTests
         Assert.Equal(new DateOnly(2026, 11, 10), input.ContractEndedOn);
         Assert.Equal(2, input.Salaries.Count);
         Assert.True(input.Salaries[1].Teleworker);
+    }
+
+    [Fact]
+    public async Task VacationsTravelInTheInput()
+    {
+        var catalog = await CatalogAsync();
+        var vacation = EngineTestData.Vacation(new DateOnly(2026, 11, 3), new DateOnly(2026, 11, 6), paidHere: true);
+
+        var withVacation = Build(Employee(), catalog, vacations: [vacation]);
+        var without = Build(Employee(), catalog);
+
+        Assert.Equal([vacation], withVacation.Vacations);
+        Assert.Empty(without.Vacations);
+        Assert.NotEqual(InputFingerprint.Of(without), InputFingerprint.Of(withVacation));
     }
 }

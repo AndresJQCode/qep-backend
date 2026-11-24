@@ -773,6 +773,26 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.ToggleRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
             Modules.Payroll.Application.ToggleRecurringConceptHandler>();
+        services.AddScoped<Modules.Payroll.Application.VacationInputBuilder>();
+        services.AddScoped<Modules.Payroll.Application.VacationRules>();
+        services.AddScoped<Modules.Payroll.Application.VacationComposer>();
+        services.AddScoped<Modules.Payroll.Application.VacationLocks>();
+        services.AddScoped<Modules.Payroll.Application.VacationPayments>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.CreateVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.CreateVacationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.UpdateVacationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.DeleteVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.DeleteVacationHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListVacationsQuery, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.ListVacationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.PreviewVacationQuery, Modules.Payroll.Application.VacationPreviewDto>,
+            Modules.Payroll.Application.PreviewVacationHandler>();
         services.AddScoped<Modules.Payroll.Application.LiquidationPlanner>();
         services.AddScoped<Modules.Payroll.Application.PeriodApprovals>();
         services.AddScoped<
@@ -2256,6 +2276,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
+        services.AddScoped<Modules.Payroll.Application.IPayrollHolidayCalendar, PayrollHolidayCalendar>();
         services.AddScoped<Modules.Payroll.Application.IPayrollMemberDirectory, PayrollMemberDirectory>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
         services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();

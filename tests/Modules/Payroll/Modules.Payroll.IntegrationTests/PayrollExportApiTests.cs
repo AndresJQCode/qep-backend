@@ -79,7 +79,7 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
     }
 
     private static int ColumnOf(IXLWorksheet sheet, string title) =>
-        Enumerable.Range(1, 29).First(column => sheet.Cell(TitleRow, column).GetString() == title);
+        Enumerable.Range(1, 31).First(column => sheet.Cell(TitleRow, column).GetString() == title);
 
     // Every cell from the titles down, joined: the «Generado» stamp lives above them and is not part of the comparison.
     private static string DumpOf(XLWorkbook workbook)
@@ -88,7 +88,7 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
         var text = new StringBuilder();
         for (var row = TitleRow; row <= sheet.LastRowUsed()!.RowNumber(); row++)
         {
-            for (var column = 1; column <= 29; column++)
+            for (var column = 1; column <= 31; column++)
             {
                 text.Append(sheet.Cell(row, column).GetString()).Append('|');
             }
@@ -131,7 +131,7 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
         Assert.Matches(@"^2026-11-10 \d{2}:\d{2}$", sheet.Cell(5, 2).GetString());
 
         Assert.Equal("Tipo de documento", sheet.Cell(TitleRow, 1).GetString());
-        Assert.Equal("Costo empresa", sheet.Cell(TitleRow, 29).GetString());
+        Assert.Equal("Costo empresa", sheet.Cell(TitleRow, 31).GetString());
         var employeeRow = TitleRow + 1;
         Assert.Equal("1020304050", sheet.Cell(employeeRow, 2).GetString());
         Assert.Equal("Ana Pérez", sheet.Cell(employeeRow, 3).GetString());
@@ -147,6 +147,36 @@ public sealed class PayrollExportApiTests : IClassFixture<PayrollApiFixture>
         Assert.Equal((double)totals.GetProperty("net").GetDecimal(), sheet.Cell(totalsRow, ColumnOf(sheet, "Neto")).GetDouble());
         Assert.Equal((double)totals.GetProperty("employerCost").GetDecimal(), sheet.Cell(totalsRow, ColumnOf(sheet, "Costo empresa")).GetDouble());
         Assert.False(sheet.Cell(totalsRow, ColumnOf(sheet, "Neto")).HasFormula);
+        scene.Tenant.Dispose();
+    }
+
+    [Fact]
+    public async Task TheExportShowsVacationDaysAndPay()
+    {
+        var scene = await NewSceneAsync(_fixture);
+        var created = await scene.Tenant.Payroll.PostAsJsonAsync(
+            $"{scene.Tenant.Url}/companies/{scene.Setup.Company.Id}/employees/{scene.EmployeeId}/vacations",
+            new { origin = "Qep", startDate = "2026-11-09", endDate = "2026-11-13" },
+            Ct);
+        Assert.True(created.StatusCode == HttpStatusCode.Created, await BodyAsync(created));
+        var detail = await LiquidateAsync(scene);
+        var summary = (await JsonOfAsync(await scene.Tenant.Payroll.GetAsync($"{scene.PeriodUrl}/employees/{scene.EmployeeId}", Ct)))
+            .GetProperty("result").GetProperty("summary");
+
+        using var workbook = await WorkbookOfAsync(await ExportAsync(scene));
+
+        // Five of the fifteen days are vacation: «Días» are the worked ones, and the vacation pay is what the engine stored.
+        var sheet = workbook.Worksheet("Resumen");
+        var employeeRow = TitleRow + 1;
+        Assert.Equal(10, sheet.Cell(employeeRow, ColumnOf(sheet, "Días")).GetDouble());
+        Assert.Equal(5, sheet.Cell(employeeRow, ColumnOf(sheet, "Días de vacaciones")).GetDouble());
+        var pay = sheet.Cell(employeeRow, ColumnOf(sheet, "Vacaciones disfrutadas"));
+        Assert.True(summary.GetProperty("vacationPay").GetDecimal() > 0m);
+        Assert.Equal((double)summary.GetProperty("vacationPay").GetDecimal(), pay.GetDouble());
+        Assert.Equal("#,##0", pay.Style.NumberFormat.Format);
+        Assert.Equal(
+            (double)detail.GetProperty("period").GetProperty("totals").GetProperty("vacationPay").GetDecimal(),
+            sheet.Cell(employeeRow + 1, ColumnOf(sheet, "Vacaciones disfrutadas")).GetDouble());
         scene.Tenant.Dispose();
     }
 

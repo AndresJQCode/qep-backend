@@ -1,7 +1,10 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
+using Modules.Payroll.Application;
 using Modules.Payroll.Domain;
 
 namespace Modules.Payroll.Infrastructure.Persistence;
@@ -26,6 +29,19 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
     private static readonly ValueConverter<RecurringConceptId, Guid> RecurringIdConverter =
         new(id => id.Value, value => new RecurringConceptId(value));
 
+    private static readonly ValueConverter<VacationId, Guid> VacationIdConverter =
+        new(id => id.Value, value => new VacationId(value));
+
+    // The typed months of an external vacation live as jsonb in the row: they are read and written whole, never queried.
+    private static readonly ValueConverter<IReadOnlyList<ExternalVacationMonth>, string> ExternalMonthsConverter = new(
+        months => JsonSerializer.Serialize(months, PayrollJson.Options),
+        json => JsonSerializer.Deserialize<List<ExternalVacationMonth>>(json, PayrollJson.Options)!);
+
+    private static readonly ValueComparer<IReadOnlyList<ExternalVacationMonth>> ExternalMonthsComparer = new(
+        (left, right) => left!.SequenceEqual(right!),
+        months => months.Aggregate(0, (hash, month) => HashCode.Combine(hash, month)),
+        months => months.ToList());
+
     public DbSet<CompanyPayrollSettings> CompanySettings => Set<CompanyPayrollSettings>();
 
     public DbSet<PayrollConcept> Concepts => Set<PayrollConcept>();
@@ -37,6 +53,8 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
     public DbSet<PeriodEvent> PeriodEvents => Set<PeriodEvent>();
 
     public DbSet<RecurringConcept> RecurringConcepts => Set<RecurringConcept>();
+
+    public DbSet<Vacation> Vacations => Set<Vacation>();
 
     internal DbSet<EmployeeResultRow> EmployeeResults => Set<EmployeeResultRow>();
 
@@ -54,6 +72,7 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         ConfigurePeriodEvent(modelBuilder);
         ConfigureEmployeeResult(modelBuilder);
         ConfigureRecurringConcept(modelBuilder);
+        ConfigureVacation(modelBuilder);
     }
 
     // `column IN ('A','B')` para un enum guardado como texto: la base no depende de quien escribe.
@@ -222,6 +241,9 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         result.Property(value => value.SummaryJson).HasColumnName("summary").HasColumnType("jsonb");
         result.Property(value => value.MonthJson).HasColumnName("month").HasColumnType("jsonb");
         result.Property(value => value.RecurringAppliedJson).HasColumnName("recurring_applied").HasColumnType("jsonb");
+        // Additive (expand/contract): a row written before vacations existed reads 0 days and no photo.
+        result.Property(value => value.VacationDays).HasColumnName("vacation_days").HasDefaultValue(0);
+        result.Property(value => value.VacationPhotosJson).HasColumnName("vacation_photos").HasColumnType("jsonb").HasDefaultValueSql("'[]'::jsonb");
         result.HasOne<PayrollPeriod>().WithMany().HasForeignKey(value => value.PeriodId).OnDelete(DeleteBehavior.Cascade);
         result.HasIndex(value => new { value.PeriodId, value.EmployeeId })
             .IsUnique()
@@ -249,5 +271,33 @@ public sealed class PayrollDbContext(DbContextOptions<PayrollDbContext> options)
         recurring.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         recurring.HasIndex(value => new { value.TenantId, value.CompanyId, value.EmployeeId })
             .HasDatabaseName("IX_recurring_concepts_tenant_company_employee");
+    }
+
+    private static void ConfigureVacation(ModelBuilder modelBuilder)
+    {
+        var vacation = modelBuilder.Entity<Vacation>();
+        vacation.ToTable("vacations", Schema, table =>
+            table.HasCheckConstraint("CK_vacations_origin", In<VacationOrigin>("origin")));
+        vacation.HasKey(value => value.Id);
+        vacation.Property(value => value.Id).HasColumnName("id").HasConversion(VacationIdConverter).ValueGeneratedNever();
+        vacation.Property(value => value.TenantId).HasColumnName("tenant_id");
+        // FK real a companies.companies, agregada a mano en la migración (R-19).
+        vacation.Property(value => value.CompanyId).HasColumnName("company_id");
+        vacation.Property(value => value.EmployeeId).HasColumnName("employee_id");
+        vacation.Property(value => value.Origin).HasColumnName("origin").HasConversion<string>().HasMaxLength(16);
+        vacation.Property(value => value.StartDate).HasColumnName("start_date");
+        vacation.Property(value => value.EndDate).HasColumnName("end_date");
+        vacation.Property(value => value.BusinessDays).HasColumnName("business_days");
+        vacation.Property(value => value.ReturnDate).HasColumnName("return_date");
+        vacation.Property(value => value.PreviousMonthIbc).HasColumnName("previous_month_ibc").HasPrecision(18, 2);
+        vacation.Property(value => value.ExternalMonths).HasColumnName("external_months").HasColumnType("jsonb")
+            .HasConversion(ExternalMonthsConverter, ExternalMonthsComparer).HasDefaultValueSql("'[]'::jsonb");
+        vacation.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        vacation.Property(value => value.CreatedAt).HasColumnName("created_at");
+        vacation.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        vacation.HasIndex(value => new { value.TenantId, value.CompanyId, value.EmployeeId, value.StartDate })
+            .HasDatabaseName("IX_vacations_tenant_company_employee_start");
+        // The EXCLUDE constraint EX_vacations_no_overlap (no two vacations of an employee share a day) is added by hand in the
+        // migration: EF does not model it.
     }
 }

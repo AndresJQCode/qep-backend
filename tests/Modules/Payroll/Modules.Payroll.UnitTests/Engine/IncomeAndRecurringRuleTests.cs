@@ -48,6 +48,40 @@ public sealed class IncomeAndRecurringRuleTests
         Assert.Equal(0m, outcome.NonSalaryIncome);
     }
 
+    // Owner ruling (2026-11-23): a proportional concept follows the days worked, so vacation days do not pay it; a fixed one does.
+    [Fact]
+    public void AProportionalRecurringDoesNotPayVacationDays()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 12, 1)) with
+        {
+            Recurring = [new RecurringInput(Guid.NewGuid(), "Bono", ConceptKind.Income, RecurringMode.Proportional, 100_000m, true, null)],
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), paidHere: false)],
+        };
+        var worked = new WorkedDays(input.Period.Start, input.Period.End, 15, false);
+
+        var withVacation = RecurringConceptRule.Compute(input, worked, VacationDaysRule.Compute(input, worked));
+        var without = RecurringConceptRule.Compute(input, worked);
+
+        Assert.Equal(86_667m, Assert.Single(withVacation.IncomeLines).Amount);
+        Assert.Contains(withVacation.IncomeLines[0].Trace.Inputs, item => item.Name == "Días trabajados" && Equals(item.Value, 13));
+        Assert.Equal(100_000m, Assert.Single(without.IncomeLines).Amount);
+    }
+
+    [Fact]
+    public void AFixedRecurringStillPaysInVacationQuincenas()
+    {
+        var input = EngineTestData.Input(new DateOnly(2026, 12, 16)) with
+        {
+            Recurring = [new RecurringInput(Guid.NewGuid(), "Auxilio", ConceptKind.Income, RecurringMode.Fixed, 100_000m, false, null)],
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), paidHere: false)],
+        };
+        var worked = new WorkedDays(input.Period.Start, input.Period.End, 15, false);
+
+        var outcome = RecurringConceptRule.Compute(input, worked, VacationDaysRule.Compute(input, worked));
+
+        Assert.Equal(100_000m, Assert.Single(outcome.IncomeLines).Amount);
+    }
+
     [Fact]
     public void ACapLimitsTheLastInstallment()
     {

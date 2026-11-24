@@ -1,8 +1,9 @@
 namespace Modules.Payroll.Domain.Engine;
 
 /// <summary>
-/// Paso 11 (R-3, R-4, R-5, R-20): las seis líneas del empleador, siempre. Salud, pensión y ARL van sobre el IBC; caja, ICBF y SENA
-/// sobre el devengo salarial del mes (sin la regla del 40 %). Exonerada, salud, ICBF y SENA salen en 0 con su nota.
+/// Paso 11 (R-3, R-4, R-5, R-20): las seis líneas del empleador, siempre. Salud y pensión van sobre el IBC; la ARL sobre el IBC sin
+/// los días de vacaciones; caja, ICBF y SENA sobre el devengo salarial del mes más el valor de las vacaciones (sin la regla del
+/// 40 %). Exonerada, salud, ICBF y SENA salen en 0 con su nota.
 /// </summary>
 public static class EmployerContributionsRule
 {
@@ -24,12 +25,13 @@ public static class EmployerContributionsRule
             ? [legal.HighRiskPensionTotalRate, legal.PensionEmployeeRate]
             : [legal.PensionEmployerRate];
         var arl = legal.ArlRate(input.Workplace.RiskClass);
+        var arlBaseName = ibc.ArlBase == ibc.SocialSecurityIbc ? "IBC del mes" : "IBC del mes sin vacaciones";
 
         return
         [
             Line("health_employer", "Salud (empleador)", "IBC del mes", ibc.SocialSecurityIbc, legal.HealthEmployerRate.Value, [legal.HealthEmployerRate, .. extra], prior.HealthEmployer, exempt),
             Line("pension_employer", "Pensión (empleador)", "IBC del mes", ibc.SocialSecurityIbc, pensionRate, pensionLegal, prior.PensionEmployer, false),
-            Line("arl", "ARL", "IBC del mes", ibc.SocialSecurityIbc, arl.Value, [arl], prior.Arl, false),
+            Line("arl", "ARL", arlBaseName, ibc.ArlBase, arl.Value, [arl], prior.Arl, false),
             Line("compensation_fund", "Caja de compensación", "Devengo salarial del mes", ibc.ParafiscalBase, legal.CompensationFundRate.Value, [legal.CompensationFundRate], prior.CompensationFund, false),
             Line("icbf", "ICBF", "Devengo salarial del mes", ibc.ParafiscalBase, legal.IcbfRate.Value, [legal.IcbfRate, .. extra], prior.Icbf, exempt),
             Line("sena", "SENA", "Devengo salarial del mes", ibc.ParafiscalBase, legal.SenaRate.Value, [legal.SenaRate, .. extra], prior.Sena, exempt),

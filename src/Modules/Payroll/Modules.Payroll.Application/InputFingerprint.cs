@@ -24,6 +24,14 @@ public static class InputFingerprint
 
         var node = JsonSerializer.SerializeToNode(input, PayrollJson.Options)!.AsObject();
         node.Remove("legal");
+
+        // An input without vacations must hash exactly as it did before EngineInput gained the list: otherwise every period
+        // liquidated at deploy time would report a false «sourceChanged».
+        if (node["vacations"] is JsonArray { Count: 0 })
+        {
+            node.Remove("vacations");
+        }
+
         foreach (var list in ListsWithConceptNames)
         {
             foreach (var item in node[list]!.AsArray())

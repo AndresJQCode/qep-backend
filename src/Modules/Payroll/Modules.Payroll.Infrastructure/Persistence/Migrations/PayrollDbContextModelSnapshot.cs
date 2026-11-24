@@ -548,6 +548,82 @@ namespace Modules.Payroll.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Payroll.Domain.Vacation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("BusinessDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("business_days");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("company_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<DateOnly>("EndDate")
+                        .HasColumnType("date")
+                        .HasColumnName("end_date");
+
+                    b.Property<string>("ExternalMonths")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("external_months")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("origin");
+
+                    b.Property<decimal?>("PreviousMonthIbc")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("previous_month_ibc");
+
+                    b.Property<DateOnly>("ReturnDate")
+                        .HasColumnType("date")
+                        .HasColumnName("return_date");
+
+                    b.Property<DateOnly>("StartDate")
+                        .HasColumnType("date")
+                        .HasColumnName("start_date");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "CompanyId", "EmployeeId", "StartDate")
+                        .HasDatabaseName("IX_vacations_tenant_company_employee_start");
+
+                    b.ToTable("vacations", "payroll", t =>
+                        {
+                            t.HasCheckConstraint("CK_vacations_origin", "origin IN ('Qep','External')");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Payroll.Infrastructure.Persistence.EmployeeResultRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -624,6 +700,19 @@ namespace Modules.Payroll.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb")
                         .HasColumnName("summary");
+
+                    b.Property<int>("VacationDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("vacation_days");
+
+                    b.Property<string>("VacationPhotosJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("vacation_photos")
+                        .HasDefaultValueSql("'[]'::jsonb");
 
                     b.Property<int>("WorkedDays")
                         .HasColumnType("integer")

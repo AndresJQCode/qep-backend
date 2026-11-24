@@ -24,9 +24,109 @@ public static class PayrollEndpoints
         MapSettings(group);
         MapPeriods(group);
         MapRecurring(group);
+        MapVacations(group);
 
         return endpoints;
     }
+
+    // Vacaciones disfrutadas de un empleado. Leer es `period.read`; previsualizar y escribir, `period.read` + `period.manage`
+    // (una novedad de nómina, no la ficha del empleado). El `PUT` y el `DELETE` exigen `If-Match`; crear y previsualizar, no.
+    private static void MapVacations(RouteGroupBuilder group)
+    {
+        const string route = "/companies/{companyId:guid}/employees/{employeeId:guid}/vacations";
+
+        group.MapGet(route, ListVacationsAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodRead)
+            .Produces<IReadOnlyList<VacationDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost(route + "/preview", PreviewVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<VacationPreviewRequest>("application/json")
+            .Produces<VacationPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost(route, CreateVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<VacationRequest>("application/json")
+            .Produces<IReadOnlyList<VacationDto>>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut(route + "/{vacationId:guid}", UpdateVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Accepts<VacationRequest>("application/json")
+            .Produces<IReadOnlyList<VacationDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+        group.MapDelete(route + "/{vacationId:guid}", DeleteVacationAsync)
+            .RequireAuthorization(PayrollPermissions.PeriodManage)
+            .Produces<IReadOnlyList<VacationDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+    }
+
+    private static async Task<IResult> CreateVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        VacationRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var list = await dispatcher.SendAsync(new CreateVacationCommand(tenantId, companyId, employeeId, request), cancellationToken);
+
+        return Results.Created($"/api/v1/tenants/{tenantId}/payroll/companies/{companyId}/employees/{employeeId}/vacations", list);
+    }
+
+    private static async Task<IResult> UpdateVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        Guid vacationId,
+        VacationRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new UpdateVacationCommand(tenantId, companyId, employeeId, vacationId, request, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> DeleteVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        Guid vacationId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new DeleteVacationCommand(tenantId, companyId, employeeId, vacationId, IfMatchOf(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ListVacationsAsync(
+        Guid tenantId, Guid companyId, Guid employeeId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListVacationsQuery(tenantId, companyId, employeeId), cancellationToken));
+
+    private static async Task<IResult> PreviewVacationAsync(
+        Guid tenantId,
+        Guid companyId,
+        Guid employeeId,
+        VacationPreviewRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new PreviewVacationQuery(tenantId, companyId, employeeId, request), cancellationToken));
 
     // Períodos. `ensure-current` abre las quincenas que faltan: es de quien administra (I-6) y el handler exige también `read`;
     // quien sólo lee usa `GET periods`, que no crea nada.

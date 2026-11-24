@@ -42,6 +42,7 @@ public sealed class PayrollHrDirectoryTests : IClassFixture<PayrollApiFixture>
         Assert.Equal("1020304050", employee.DocumentNumber);
         Assert.Equal("Standard", employee.ContributorSubtype);
         Assert.False(employee.ForeignPensionExempt);
+        Assert.Equal([DayOfWeek.Sunday], employee.RestDays);
         var contract = Assert.Single(employee.Contracts);
         Assert.Equal("Employee", contract.ContractType);
         Assert.Equal("Monthly", contract.SalaryType);
@@ -56,6 +57,22 @@ public sealed class PayrollHrDirectoryTests : IClassFixture<PayrollApiFixture>
         Assert.Equal(ArlClass.III, assignment.RiskClass);
         Assert.False(assignment.HighRiskPension);
         Assert.Equal("COMFAMA", assignment.CompensationFund);
+    }
+
+    [Fact]
+    public async Task CarriesTheRestDays()
+    {
+        using var tenant = await NewTenantAsync(_fixture);
+        var setup = await SeedSetupAsync(tenant);
+        await HireAsync(tenant, HireBody(setup, restDays: ["Saturday", "Sunday"]));
+
+        var employees = await WithDirectoryAsync(directory =>
+            directory.ListEmployeesAsync(tenant.Id, setup.Company.Id, Start, End, Ct));
+
+        // Order does not matter to the engine: compare as sets.
+        Assert.Equal(
+            new[] { DayOfWeek.Saturday, DayOfWeek.Sunday }.Order(),
+            Assert.Single(employees).RestDays.Order());
     }
 
     [Fact]

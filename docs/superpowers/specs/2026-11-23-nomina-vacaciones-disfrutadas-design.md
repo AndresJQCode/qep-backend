@@ -222,6 +222,7 @@ cambia la regla de la línea, no el modelo.
 
 - `SalaryRule` paga sólo los días trabajados (sin los de vacaciones). Con 0 días trabajados la línea `salary` es 0, en vez de la
   excepción de hoy («at least one covered day»). Los tramos de salario se cortan sólo sobre días trabajados.
+- Los conceptos recurrentes **proporcionales** no pagan los días de vacaciones (se prorratean por los días realmente trabajados, los mismos que usan el salario y el auxilio); los **fijos** siguen pagando: decisión del owner (2026-11-23).
 - `TransportAllowanceRule` causa por días trabajados: ningún día de vacaciones da auxilio, se pague o no por adelantado. El tope y
   la consolidación del mes (D-2, D-3) no cambian.
 - `MonthAccumulators.WorkedDays` sigue contando sólo días trabajados. Los de vacaciones del mes se calculan de las fechas de las
@@ -406,7 +407,7 @@ recurrentes). Las quincenas que cambian de estado suben su propia versión: una 
 escritura.
 
 `VacationRequest`: `{ origin, startDate, endDate, previousMonthIbc?, businessDays?, externalMonths? }`, con validador
-FluentValidation (`validation.failed` y mapa `errors`): `origin` (`Qep` | `External`) y fechas obligatorias, `endDate ≥ startDate`,
+FluentValidation (`validation.failed` y mapa `errors`): `origin` (`Qep` | `External`) y fechas obligatorias, `endDate ≥ startDate` y una duración de 366 días como máximo, inclusive (422 en `endDate`; decisión de la sesión (revisión final)),
 `previousMonthIbc > 0` si viene. Con `External`: `previousMonthIbc` y `businessDays ≥ 1` obligatorios; `externalMonths` opcional,
 `[{ month: 'yyyy-MM', vacationPay?, healthAdvance?, pensionAdvance?, solidarityFundAdvance? }]`, cada mes dentro del rango y sin
 repetir, cada monto `≥ 0` (clave `externalMonths[i].<campo>`). Con `Qep`, `businessDays` y `externalMonths` deben venir vacíos.

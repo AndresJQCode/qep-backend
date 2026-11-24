@@ -10,6 +10,7 @@ public sealed record PayrollWorkbookRow(
     string? Position,
     string? Workplace,
     int WorkedDays,
+    int VacationDays,
     PayrollSummary Summary);
 
 public sealed record PayrollWorkbookExcluded(string DocumentType, string DocumentNumber, string FullName, string Reason);

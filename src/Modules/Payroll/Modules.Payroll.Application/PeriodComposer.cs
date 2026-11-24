@@ -15,7 +15,9 @@ public sealed class PeriodComposer(
     PayrollCompanies companies,
     ConceptCatalog catalog,
     RecurringConceptComposer recurring,
-    PeriodApprovals approvals)
+    PeriodApprovals approvals,
+    IVacationRepository vacations,
+    VacationComposer vacationComposer)
 {
     private sealed record View(
         IReadOnlyList<PayrollEmployeeRowDto> Rows,
@@ -37,7 +39,7 @@ public sealed class PeriodComposer(
             .Select(ToDto)
             .ToList();
 
-        return new PayrollPeriodDetailDto(header, view.Rows, view.Excluded, view.Blocked, history);
+        return new PayrollPeriodDetailDto(header, view.Rows, view.Excluded, view.Blocked, history, await VacationsOfAsync(period, view, cancellationToken));
     }
 
     /// <summary>
@@ -64,10 +66,11 @@ public sealed class PeriodComposer(
                 header,
                 new PayrollEmployeeRowDto(
                     excluded.EmployeeId, excluded.DocumentType, excluded.DocumentNumber, excluded.FullName,
-                    null, null, null, false, false, false, null),
+                    null, null, null, false, false, false, null, null),
                 EmployeeInputsDto.Empty,
                 [],
-                null);
+                null,
+                await vacationComposer.TouchingAsync(period, employeeId, cancellationToken));
         }
 
         var concepts = await catalog.LoadAsync(period.TenantId, period.CompanyId, cancellationToken);
@@ -91,7 +94,8 @@ public sealed class PeriodComposer(
             row,
             new EmployeeInputsDto(Lines(ConceptKind.Overtime), Lines(ConceptKind.Income), Lines(ConceptKind.Deduction)),
             await recurring.ListAsync(period.TenantId, period.CompanyId, employeeId, cancellationToken),
-            saved is null ? null : PayrollResultMapper.ToDto(saved, PayrollResultMapper.ParseLegal(period.LegalValuesJson)));
+            saved is null ? null : PayrollResultMapper.ToDto(saved, PayrollResultMapper.ParseLegal(period.LegalValuesJson)),
+            await vacationComposer.TouchingAsync(period, employeeId, cancellationToken));
     }
 
     /// <summary>Sólo el encabezado: los de la lista y el de cada respuesta de capturas.</summary>
@@ -123,6 +127,9 @@ public sealed class PeriodComposer(
         var employees = await hr.ListEmployeesAsync(
             period.TenantId, period.CompanyId, period.StartDate, period.EndDate, cancellationToken);
         var storedByEmployee = stored.ToDictionary(result => result.EmployeeId);
+        var vacationsByEmployee = (await vacations.ListOverlappingAsync(
+                period.TenantId, period.CompanyId, new DateOnly(period.StartDate.Year, period.StartDate.Month, 1), period.EndDate, cancellationToken))
+            .ToLookup(item => item.EmployeeId);
 
         var rows = new List<PayrollEmployeeRowDto>(employees.Count);
         var excluded = new List<ExcludedEmployeeDto>();
@@ -130,7 +137,8 @@ public sealed class PeriodComposer(
         foreach (var employee in employees)
         {
             var fullName = FullNameOf(employee.FirstName, employee.LastName);
-            var eligibility = PayrollEligibility.Evaluate(employee, period.StartDate, period.EndDate, smmlv);
+            var eligibility = PayrollEligibility.WithVacations(
+                PayrollEligibility.Evaluate(employee, period.StartDate, period.EndDate, smmlv), vacationsByEmployee[employee.EmployeeId]);
             if (eligibility.Status == EligibilityStatus.Excluded)
             {
                 excluded.Add(new ExcludedEmployeeDto(
@@ -158,7 +166,8 @@ public sealed class PeriodComposer(
                 withInputs.Contains(employee.EmployeeId),
                 saved?.Liquidation.FinalSettlementPending ?? pending,
                 saved?.Liquidation.NegativeNet ?? false,
-                saved is null ? null : PayrollTotalsDto.From(saved.Liquidation.Summary)));
+                saved is null ? null : PayrollTotalsDto.From(saved.Liquidation.Summary),
+                saved?.Liquidation.VacationDays));
         }
 
         return new View(
@@ -166,6 +175,30 @@ public sealed class PeriodComposer(
             excluded.OrderBy(entry => entry.FullName, StringComparer.CurrentCultureIgnoreCase).ThenBy(entry => entry.EmployeeId).ToList(),
             blocked,
             stored);
+    }
+
+    // The vacations that touch the quincena, for the dialog of liquidating: the days are the payroll days in THIS quincena. The names come from
+    // the rows (the snapshot in an Approved or Closed period) and the excluded: Hr is not asked again.
+    private async Task<IReadOnlyList<PeriodVacationDto>> VacationsOfAsync(PayrollPeriod period, View view, CancellationToken cancellationToken)
+    {
+        var names = view.Excluded.ToDictionary(entry => entry.EmployeeId, entry => entry.FullName);
+        foreach (var row in view.Rows)
+        {
+            names[row.EmployeeId] = row.FullName;
+        }
+
+        return (await vacations.ListOverlappingAsync(period.TenantId, period.CompanyId, period.StartDate, period.EndDate, cancellationToken))
+            .Where(vacation => names.ContainsKey(vacation.EmployeeId))
+            .Select(vacation => new PeriodVacationDto(
+                vacation.EmployeeId,
+                names[vacation.EmployeeId],
+                vacation.StartDate,
+                vacation.EndDate,
+                VacationCalendar.PayrollDays(vacation.StartDate, vacation.EndDate).Single(days => days.Start == period.StartDate).Days))
+            .OrderBy(item => item.FullName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => item.StartDate)
+            .ThenBy(item => item.EmployeeId)
+            .ToList();
     }
 
     private async Task<PayrollPeriodDto> HeaderAsync(
@@ -227,7 +260,8 @@ public sealed class PeriodComposer(
         hasInputs,
         result.Liquidation.FinalSettlementPending,
         result.Liquidation.NegativeNet,
-        PayrollTotalsDto.From(result.Liquidation.Summary));
+        PayrollTotalsDto.From(result.Liquidation.Summary),
+        result.Liquidation.VacationDays);
 
     private static List<PayrollEmployeeRowDto> SortedRows(List<PayrollEmployeeRowDto> rows) => rows
         .OrderBy(row => row.FullName, StringComparer.CurrentCultureIgnoreCase)

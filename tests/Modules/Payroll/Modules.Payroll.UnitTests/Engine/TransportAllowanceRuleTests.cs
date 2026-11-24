@@ -15,6 +15,24 @@ public sealed class TransportAllowanceRuleTests
         input with { Incomes = [EngineTestData.Income(SystemConceptKey.Commissions, amount, true)] };
 
     [Fact]
+    public void NoVacationDayAccruesTheAllowance()
+    {
+        var day = new DateOnly(2026, 12, 1);
+
+        var some = EngineTestData.Input(day, 3_000_000m) with
+        {
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), paidHere: false)],
+        };
+        var all = EngineTestData.Input(day, 3_000_000m) with
+        {
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 11, 20), new DateOnly(2027, 1, 5), paidHere: false)],
+        };
+
+        Assert.Equal(107_941m, EngineTestData.Earnings(some).Transport.Line.Amount);
+        Assert.Equal(0m, EngineTestData.Earnings(all).Transport.Line.Amount);
+    }
+
+    [Fact]
     public void BiweeklyPaysTheDays()
     {
         var transport = EngineTestData.Earnings(EngineTestData.Input(FirstHalf)).Transport;
