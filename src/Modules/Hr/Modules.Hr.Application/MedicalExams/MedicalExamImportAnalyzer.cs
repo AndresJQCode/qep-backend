@@ -229,8 +229,9 @@ public sealed class MedicalExamImportAnalyzer(
             var text = HrText.Clean(Cell(header));
             if (text is not null && text.Length > max)
             {
+                // The row is already failed: the text is returned as typed so that the rules that read it (the restrictions end date
+                // needs restrictions) judge what the person wrote and not an invented gap. It never reaches an exam.
                 Error(HrErrorCodes.MedicalExamImportRow.TextTooLong, field, $"Este campo no puede pasar de {max} caracteres.");
-                return null;
             }
 
             return text;

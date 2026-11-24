@@ -293,6 +293,31 @@ public sealed class MedicalExamImportApiTests : IClassFixture<HrApiFixture>
         Assert.Equal(["2:hr.medical_exam.import.row.text_too_long", "3:hr.medical_exam.import.row.text_too_long"], ErrorCodes(preview));
     }
 
+    // A text over its limit is a row error and writes nothing: never a silent drop, and no second error invented by the drop (the
+    // restrictions end date is still judged against the restrictions that were typed).
+    [Fact]
+    public async Task ImportTooLongRestrictionsIsASingleRowErrorAndWritesNothing()
+    {
+        var (tenant, first, second) = await SeedAsync();
+        using var _ = tenant;
+        var file = Workbook(
+            Row("9100000001", ("RESTRICCIONES", new string('x', 2001)), ("RESTRICCIONES HASTA", "2026-12-01")),
+            Row("9100000002", ("RECOMENDACIONES", new string('y', 2001))),
+            Row("9100000002", ("TIPO DE EXAMEN", "Seguimiento"), ("IPS / MÉDICO", new string('z', 201))));
+
+        var preview = await ProblemAsync(await PreviewAsync(tenant.Hr, tenant, file), HttpStatusCode.OK);
+        var response = await ImportAsync(tenant.Hr, tenant, file);
+
+        Assert.Equal(
+            ["2:hr.medical_exam.import.row.text_too_long", "3:hr.medical_exam.import.row.text_too_long", "4:hr.medical_exam.import.row.text_too_long"],
+            ErrorCodes(preview));
+        Assert.Equal(0, preview.GetProperty("validRows").GetArrayLength());
+        Assert.Equal("restrictions", preview.GetProperty("errors")[0].GetProperty("field").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(preview.GetProperty("errors")[0].GetProperty("message").GetString()));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Empty((await ExamsOfAsync(tenant, first)).GetProperty("exams").EnumerateArray());
+        Assert.Empty((await ExamsOfAsync(tenant, second)).GetProperty("exams").EnumerateArray());
+    }
     [Fact]
     public async Task ImportExitRowClosesPendingRequirement()
     {
