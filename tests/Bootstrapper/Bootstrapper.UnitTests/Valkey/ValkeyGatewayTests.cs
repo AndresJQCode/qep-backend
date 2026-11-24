@@ -75,6 +75,7 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
 
         Assert.False(attempt.Succeeded);
         Assert.Equal(1, harness.Recorder.Fallbacks("presence"));
+        Assert.Equal(1, harness.Recorder.Fallbacks("presence", "NotConnected"));
     }
 
     // Review Focus 3: Valkey lento, no caído. La operación queda colgada y el gateway tiene que soltarla a tiempo.
@@ -98,6 +99,7 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
             Assert.False(attempt.Succeeded);
             Assert.True(stopwatch.ElapsedMilliseconds < 500, $"Tardó {stopwatch.ElapsedMilliseconds} ms.");
             Assert.Equal(1, harness.Recorder.Fallbacks("rate_limiting"));
+            Assert.Equal(1, harness.Recorder.Fallbacks("rate_limiting", "TimeoutException"));
         }
         finally
         {
@@ -258,7 +260,7 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
     private sealed class Recorder : IDisposable
     {
         private readonly MeterListener _listener = new();
-        private readonly List<(string Instrument, string? Area, long Value)> _measurements = [];
+        private readonly List<(string Instrument, string? Area, string? Reason, long Value)> _measurements = [];
 
         public Recorder(IMeterFactory factory)
         {
@@ -282,6 +284,17 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
             }
         }
 
+        /// <summary>Los respaldos de un área con ese motivo (<c>NotConnected</c> o el tipo de la excepción).</summary>
+        public long Fallbacks(string area, string reason)
+        {
+            lock (_measurements)
+            {
+                return _measurements
+                    .Where(m => m.Instrument == "qep.valkey.fallbacks" && m.Area == area && m.Reason == reason)
+                    .Sum(m => m.Value);
+            }
+        }
+
         public long Connected()
         {
             lock (_measurements)
@@ -301,17 +314,22 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
         private void Add(Instrument instrument, long value, ReadOnlySpan<KeyValuePair<string, object?>> tags)
         {
             string? area = null;
+            string? reason = null;
             foreach (var tag in tags)
             {
                 if (tag.Key == "area")
                 {
                     area = tag.Value as string;
                 }
+                else if (tag.Key == "reason")
+                {
+                    reason = tag.Value as string;
+                }
             }
 
             lock (_measurements)
             {
-                _measurements.Add((instrument.Name, area, value));
+                _measurements.Add((instrument.Name, area, reason, value));
             }
         }
     }
