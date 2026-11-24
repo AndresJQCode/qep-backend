@@ -51,6 +51,26 @@ public sealed class QuotationPartyTests
     }
 
     [Fact]
+    public void ColombianPartyWithRegionIsLaneInvalid()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewQuotation(null, Foreign() with { Country = null, CityName = null, RegionId = Guid.CreateVersion7() }));
+
+        Assert.Equal("quotations.party.city_lane_invalid", error.Code);
+        Assert.Contains("Parties.Shipping.RegionId", error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void ForeignPartyKeepsRegion()
+    {
+        var regionId = Guid.CreateVersion7();
+        var quotation = NewQuotation(null, Foreign() with { RegionId = regionId });
+
+        Assert.Equal(regionId, quotation.Shipping!.RegionId);
+        Assert.Equal(regionId, quotation.Shipping.ToDetails().RegionId);
+    }
+
+    [Fact]
     public void AForeignPartyIsCompleteWithACityName()
     {
         var quotation = NewQuotation(null, Foreign());

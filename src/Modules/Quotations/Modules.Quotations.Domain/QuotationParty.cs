@@ -75,6 +75,9 @@ public sealed class QuotationParty
     /// <summary>La ciudad como texto, sólo fuera de Colombia.</summary>
     public string? CityName { get; private set; }
 
+    /// <summary>The region of a party outside Colombia; see <see cref="QuotationPartyDetails.RegionId"/>.</summary>
+    public Guid? RegionId { get; private set; }
+
     /// <summary>Si los seis campos están cargados. Existir con algunos vacíos es un estado
     /// válido mientras se edita —cada campo es opcional por separado, ver la clase—, pero un
     /// pedido no puede heredar una dirección a medio llenar: <see cref="Quotation.EnsureConvertibleToOrder"/>
@@ -115,6 +118,7 @@ public sealed class QuotationParty
         CityId = CityId,
         Country = Country,
         CityName = CityName,
+        RegionId = RegionId,
     };
 
     internal void Apply(QuotationPartyDetails details)
@@ -133,5 +137,6 @@ public sealed class QuotationParty
         CityId = normalized.CityId;
         Country = normalized.Country;
         CityName = normalized.CityName;
+        RegionId = normalized.RegionId;
     }
 }
