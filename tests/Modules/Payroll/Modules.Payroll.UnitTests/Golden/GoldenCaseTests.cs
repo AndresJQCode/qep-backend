@@ -66,20 +66,18 @@ public sealed class GoldenCaseTests
             .ToHashSet(StringComparer.Ordinal);
         var covered = GoldenCaseLoader.All().SelectMany(golden => golden.Covers).ToHashSet(StringComparer.Ordinal);
 
-        // The vacation rules get their goldens in the last task of block A; each commit before it keeps the suite green.
-        rules.ExceptWith(["VacationDaysRule", "VacationPayRule", "VacationAdvanceRule"]);
-
         Assert.NotEmpty(rules);
         Assert.Empty(rules.Except(covered));
         Assert.Empty(covered.Except(rules));
     }
 
     [Fact]
-    public void ThereAreTwentyNineSyntheticFilesWithUniqueNames()
+    public void ThereAreFortySyntheticFilesWithUniqueNames()
     {
         var cases = GoldenCaseLoader.All();
 
-        Assert.Equal(29, cases.Count(golden => golden.Source == "synthetic"));
+        // 29 from the first project and 11 of enjoyed vacations.
+        Assert.Equal(40, cases.Count(golden => golden.Source == "synthetic"));
         Assert.Equal(cases.Count, cases.Select(golden => golden.Name).Distinct().Count());
     }
 }
