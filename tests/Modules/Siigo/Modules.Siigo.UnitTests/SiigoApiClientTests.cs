@@ -123,6 +123,20 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.Empty(_failures.Recorded);
     }
 
+    // Una lectura con un servicio de Siigo caído no es una respuesta inesperada. Sigue siendo UpstreamServiceException (y no
+    // ServiceUnavailableException) porque la tanda reintenta la segunda y aquí no se reintenta: el usuario puede facturar en Siigo.
+    [Fact]
+    public async Task AReadAnsweredWithAServiceErrorSaysSiigoIsDownWithoutAskingForARetry()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _api.On("/v1/invoices/abc/pdf", HttpStatusCode.BadRequest, """{"Status":400,"Errors":[{"Code":"documents_service","Message":"x"}]}""");
+
+        var failure = await Assert.ThrowsAsync<UpstreamServiceException>(
+            () => _client.GetInvoicePdfAsync(Credentials, "abc", TestContext.Current.CancellationToken));
+
+        Assert.Equal("siigo.invoice.siigo_service", failure.Code);
+    }
+
     [Fact]
     public async Task ASecond401LeavesCredentialsRejected()
     {

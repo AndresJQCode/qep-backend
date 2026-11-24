@@ -444,10 +444,12 @@ internal sealed class SiigoApiClient(
         if (!reply.Success)
         {
             // Sólo los códigos de Siigo, nunca sus mensajes: repiten los valores rechazados (documento, dirección, nombre).
-            var codes = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false).Select(error => error.Code).Distinct().Take(5);
-            var detail = string.Join(", ", codes);
+            var errors = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false);
+            var detail = string.Join(", ", errors.Select(error => error.Code).Distinct().Take(5));
+            // Un servicio de Siigo caído tiene su código, para que la pantalla diga que es de Siigo. No es ServiceUnavailableException:
+            // la tanda reintenta esa, y esto no se reintenta (el usuario puede facturar directamente en Siigo).
             throw new UpstreamServiceException(
-                "siigo.unexpected_response",
+                SiigoApiErrors.IsServiceUnavailable(errors) ? SiigoErrorCodes.InvoiceSiigoService : "siigo.unexpected_response",
                 $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}");
         }
     }
