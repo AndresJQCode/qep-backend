@@ -71,6 +71,35 @@ public sealed class CompanyProvisioningTests
     }
 
     [Fact]
+    public async Task TheFirstCompanyIsCreatedWhenTheTenantHasNone()
+    {
+        var world = new World();
+
+        var id = await world.Sut.EnsureFirstCompanyAsync(
+            TenantId, ActorId, Data("CO", "NIT", "900123456", cityId: KnownCity), TestContext.Current.CancellationToken);
+
+        var company = Assert.Single(world.Repository.Companies);
+        Assert.Equal(company.Id.Value, id);
+        Assert.Equal(["begin", $"lock:{TenantId}", "save", "commit"], world.UnitOfWork.Log.Take(4));
+    }
+
+    [Fact]
+    public async Task TheFirstCompanyIsSkippedWhenTheTenantAlreadyHasOneEvenInactiveOrOfAnotherDocument()
+    {
+        var world = new World();
+        var existing = world.Seed(CompanyDocumentType.Nit, "800111222", "La que ya tenia");
+        existing.Deactivate(DateTimeOffset.UnixEpoch);
+
+        var id = await world.Sut.EnsureFirstCompanyAsync(
+            TenantId, ActorId, Data("CO", "NIT", "900123456", cityId: KnownCity), TestContext.Current.CancellationToken);
+
+        Assert.Null(id);
+        Assert.Single(world.Repository.Companies);
+        Assert.DoesNotContain("save", world.UnitOfWork.Log);
+        Assert.Empty(world.Audit.Entries);
+    }
+
+    [Fact]
     public async Task ReusesAnInactiveCompanyToo()
     {
         var world = new World();

@@ -389,4 +389,14 @@ public interface IWholesaleCompanyProvisioning
         Guid actorUserId,
         WholesaleCompanyDraft draft,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Para un tenant que ya existía (el distribuidor vinculó uno suyo): crea la empresa sólo si el tenant no tiene ninguna. Devuelve
+    /// <c>null</c> cuando ya tenía alguna y no se escribió nada.
+    /// </summary>
+    Task<Guid?> EnsureFirstCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken);
 }

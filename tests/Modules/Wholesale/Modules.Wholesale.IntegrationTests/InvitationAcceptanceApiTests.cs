@@ -257,6 +257,44 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal("CO", await TenantCountryAsync(mine.TenantId));
     }
 
+    // Owner, 2026-11-24: al vincular un tenant que ya existía, la empresa del distribuidor nace sólo si ese tenant no tiene ninguna.
+    [Fact]
+    public async Task LinkTenantOnATenantWithoutCompaniesCreatesTheDistributorCompany()
+    {
+        var mine = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, WholesaleApiHarness.EmailOf(mine));
+        using var session = WholesaleApiHarness.CreateSession(Factory, mine.SubjectId, mine.TenantId);
+
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "LinkTenant", tenantId = mine.TenantId }, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var companies = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM companies.companies WHERE tenant_id = {mine.TenantId}""");
+        Assert.Equal(1, companies[0]);
+    }
+
+    [Fact]
+    public async Task LinkTenantOnATenantThatAlreadyHasACompanyCreatesNone()
+    {
+        var mine = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using (var manager = WholesaleApiHarness.CreateManager(Factory, mine))
+        {
+            await WholesaleApiHarness.CreateCompanyAsync(manager, mine.TenantId, "La que ya tenia", "800111222");
+        }
+
+        var (_, _, token) = await WholesaleApiHarness.InvitedAsync(Factory, WholesaleApiHarness.EmailOf(mine));
+        using var session = WholesaleApiHarness.CreateSession(Factory, mine.SubjectId, mine.TenantId);
+
+        var response = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "LinkTenant", tenantId = mine.TenantId }, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var companies = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM companies.companies WHERE tenant_id = {mine.TenantId}""");
+        Assert.Equal(1, companies[0]);
+    }
+
     private async Task<string> TenantCountryAsync(Guid tenantId) =>
         (await WholesaleApiHarness.RowsAsync<string>(
             Factory, $"""SELECT country AS "Value" FROM tenancy.tenants WHERE id = {tenantId}"""))[0];
