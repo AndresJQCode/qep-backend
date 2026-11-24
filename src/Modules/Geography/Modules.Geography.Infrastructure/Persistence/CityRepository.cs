@@ -6,12 +6,28 @@ namespace Modules.Geography.Infrastructure.Persistence;
 
 internal sealed class CityRepository(GeographyDbContext dbContext) : ICityRepository
 {
+    // Bogotá es el municipio 11001 del departamento 11 (Distrito Capital) y sigue ahí: no hay una segunda fila. Pero
+    // geográficamente está en Cundinamarca (25), y quien arma una dirección la busca en esa lista. Por eso la lista de
+    // Cundinamarca la incluye también (decisión del owner, 2026-11-23). Es una sola fila con un solo código, así que
+    // el código DIVIPOLA único y la regla "empieza por el código de su departamento" se mantienen.
+    private const string CundinamarcaDivipolaCode = "25";
+    private const string BogotaDivipolaCode = "11001";
+
     public async Task<IReadOnlyList<City>> ListByDepartmentAsync(
         DepartmentId departmentId, CancellationToken cancellationToken) =>
-        await dbContext.Cities
+        await CitiesOfDepartment(departmentId).ToArrayAsync(cancellationToken);
+
+    private IQueryable<City> CitiesOfDepartment(DepartmentId departmentId)
+    {
+        // Subconsulta dentro de la misma sentencia: no es un viaje aparte a la base.
+        return dbContext.Cities
             .AsNoTracking()
-            .Where(city => city.DepartmentId == departmentId)
-            .ToArrayAsync(cancellationToken);
+            .Where(city => city.DepartmentId == departmentId
+                || (city.DivipolaCode == BogotaDivipolaCode
+                    && dbContext.Departments.Any(department =>
+                        department.Id == departmentId
+                        && department.DivipolaCode == CundinamarcaDivipolaCode)));
+    }
 
     public Task<City?> FindAsync(CityId cityId, CancellationToken cancellationToken) =>
         dbContext.Cities

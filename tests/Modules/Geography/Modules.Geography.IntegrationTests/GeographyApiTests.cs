@@ -112,6 +112,40 @@ public sealed class GeographyApiTests
     }
 
     [Fact]
+    public async Task ListCitiesForCundinamarcaAlsoReturnsBogota()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateAuthenticatedClient(factory);
+        var departmentsResponse = await client.GetAsync(
+            "/api/v1/departments", TestContext.Current.CancellationToken);
+        departmentsResponse.EnsureSuccessStatusCode();
+        var departments = await departmentsResponse.Content.ReadFromJsonAsync<DepartmentResponse[]>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(departments);
+        var cundinamarcaId = departments.Single(department => department.DivipolaCode == "25").Id;
+        var bogotaDistrictId = departments.Single(department => department.DivipolaCode == "11").Id;
+
+        var response = await client.GetAsync(
+            $"/api/v1/cities?departmentId={cundinamarcaId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var cities = await response.Content.ReadFromJsonAsync<CityResponse[]>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(cities);
+        // Bogotá sigue siendo el municipio 11001 del Distrito Capital: aparece también acá, sin fila nueva.
+        Assert.Single(cities, city => city.DivipolaCode == "11001" && city.DepartmentId == bogotaDistrictId);
+        Assert.Contains(cities, city => city.DivipolaCode == "25001");
+
+        var districtResponse = await client.GetAsync(
+            $"/api/v1/cities?departmentId={bogotaDistrictId}", TestContext.Current.CancellationToken);
+        var districtCities = await districtResponse.Content.ReadFromJsonAsync<CityResponse[]>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(districtCities);
+        Assert.Contains(districtCities, city => city.DivipolaCode == "11001");
+    }
+
+    [Fact]
     public async Task ListCitiesForAnUnknownDepartmentReturnsAnEmptyArray()
     {
         await using var database = await StartDatabaseAsync();
