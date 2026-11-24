@@ -19,7 +19,9 @@ public sealed record CreateCompanyCommand(
     string? Email,
     string? Address,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    bool? ChargesVat = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    bool? ChargesVat = null,
+    // Spec 2026-11-23: la región (provincia) del domicilio de un país con catálogo distinto de Colombia; null es «sin región».
+    Guid? RegionId = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Las reglas viven en CompanyWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCompanyValidator : AbstractValidator<CreateCompanyCommand>
@@ -70,6 +72,10 @@ public sealed class CreateCompanyHandler(
                     "The city was not found.");
         }
 
+        // Spec 2026-11-23: la región existe y es del país de la empresa. Antes de tocar el agregado, como la ciudad.
+        var region = await CompanyRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country!, command.RegionId, cancellationToken);
+
         // Spec ReteICA por empresa §7.3: en el alta, ausente es «ninguna». Se valida antes de crear, como la ciudad.
         var withholdingTaxRateIds = command.WithholdingTaxRateIds ?? [];
         var withholdingTaxRates = await taxRateLookup.FindManyAsync(
@@ -95,7 +101,8 @@ public sealed class CreateCompanyHandler(
             },
             now,
             // Spec 2026-11-17 §5.1: ausente es «cobra IVA».
-            command.ChargesVat ?? true);
+            command.ChargesVat ?? true,
+            command.RegionId);
         company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
 
         repository.Add(company);
@@ -123,6 +130,7 @@ public sealed class CreateCompanyHandler(
         return company.ToDto(
             city,
             await CompanyMapping.ResolveWithholdingTaxRatesAsync(
-                company.WithholdingTaxRateIds, withholdingTaxRates, geographyLookup, cancellationToken));
+                company.WithholdingTaxRateIds, withholdingTaxRates, geographyLookup, cancellationToken),
+            region);
     }
 }

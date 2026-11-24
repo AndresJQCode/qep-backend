@@ -86,6 +86,37 @@ public sealed class CompanyCountryMigrationTests
         Assert.Equal("CK_companies_city_lane", failure.ConstraintName);
     }
 
+    // El carril lo respalda la base: una empresa colombiana con region no entra aunque alguien se salte el dominio.
+    [Fact]
+    public async Task CheckRejectsColombiaWithRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var _ = factory.CreateClient();
+        using var scope = factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<CompaniesDbContext>();
+        await context.GetService<IMigrator>().MigrateAsync(null, TestContext.Current.CancellationToken);
+
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var cityId = await ScalarAsync<Guid>(connection, "SELECT id FROM geography.cities LIMIT 1");
+        var madrid = await ScalarAsync<Guid>(
+            connection, "SELECT id FROM geography.regions WHERE country_code = 'ES' AND code = '28'");
+        await using var insert = new NpgsqlCommand(
+            "INSERT INTO companies.companies (id, tenant_id, name, tax_id, country, document_type, city_id, city_name, region_id, is_active, version, created_at, updated_at) " +
+            "VALUES (@id, @tenant, 'Andes', '900123456', 'CO', 'NIT', @city, NULL, @region, true, 1, now(), now())",
+            connection);
+        insert.Parameters.AddWithValue("id", Guid.NewGuid());
+        insert.Parameters.AddWithValue("tenant", Guid.Parse(TenantId));
+        insert.Parameters.AddWithValue("city", cityId);
+        insert.Parameters.AddWithValue("region", madrid);
+
+        var failure = await Assert.ThrowsAsync<PostgresException>(
+            () => insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("CK_companies_city_lane", failure.ConstraintName);
+    }
+
     private static async Task<T> ScalarAsync<T>(NpgsqlConnection connection, string sql)
     {
         await using var command = new NpgsqlCommand(sql, connection);

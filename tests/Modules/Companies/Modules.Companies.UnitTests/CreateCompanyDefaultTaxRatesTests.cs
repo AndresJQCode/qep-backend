@@ -16,6 +16,8 @@ public sealed class CreateCompanyDefaultTaxRatesTests
     private static readonly Guid TenantId = Guid.Parse("01900000-0000-7000-8000-000000000001");
     private static readonly Guid SubjectId = Guid.Parse("01900000-0000-7000-8000-000000000002");
     private static readonly Guid BogotaId = Guid.Parse("01900000-0000-7000-8000-0000000000c1");
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000e1");
+    private static readonly Guid LisbonRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000e2");
 
     [Fact]
     public async Task AColombianCompanyWithVatAsksForTheDefaultRates()
@@ -154,6 +156,49 @@ public sealed class CreateCompanyDefaultTaxRatesTests
         Assert.Empty(seeder.Calls);
     }
 
+    // Spec 2026-11-23: una region que existe pero es de otro pais se rechaza con 422, nunca se guarda.
+    [Fact]
+    public async Task RegionOfAnotherCountryIsRejected()
+    {
+        var repository = new InMemoryCompanyRepository();
+        var handler = CreateHandler(repository, new RecordingDefaultTaxRates());
+
+        var failure = await Assert.ThrowsAsync<CompaniesDomainException>(() => handler.HandleAsync(
+            CreateCommand(chargesVat: null) with
+            {
+                Country = "ES",
+                DocumentType = "NIF",
+                CityId = null,
+                CityName = "Madrid",
+                RegionId = LisbonRegionId
+            },
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("companies.company.region_invalid", failure.Code);
+        Assert.Empty(repository.Companies);
+    }
+
+    [Fact]
+    public async Task ARegionOfTheCompanyCountryIsStoredAndReturned()
+    {
+        var repository = new InMemoryCompanyRepository();
+        var handler = CreateHandler(repository, new RecordingDefaultTaxRates());
+
+        var company = await handler.HandleAsync(
+            CreateCommand(chargesVat: null) with
+            {
+                Country = "ES",
+                DocumentType = "NIF",
+                CityId = null,
+                CityName = "Madrid",
+                RegionId = MadridRegionId
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(MadridRegionId, Assert.Single(repository.Companies).RegionId);
+        Assert.Equal("Madrid", company.Region?.Name);
+    }
+
     private static CreateCompanyCommand CreateCommand(bool? chargesVat) =>
         new(
             TenantId,
@@ -258,7 +303,12 @@ public sealed class CreateCompanyDefaultTaxRatesTests
 
         public Task<IReadOnlyDictionary<Guid, CompanyRegionRef>> FindRegionsAsync(
             IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, CompanyRegionRef>>(new Dictionary<Guid, CompanyRegionRef>());
+            Task.FromResult<IReadOnlyDictionary<Guid, CompanyRegionRef>>(
+                new[]
+                {
+                    new CompanyRegionRef(MadridRegionId, "ES", "Madrid"),
+                    new CompanyRegionRef(LisbonRegionId, "PT", "Lisboa")
+                }.Where(region => regionIds.Contains(region.Id)).ToDictionary(region => region.Id));
 
         public Task<IReadOnlyDictionary<Guid, CompanyCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
