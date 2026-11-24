@@ -27,12 +27,13 @@ public static class PayrollEngine
         var transport = TransportAllowanceRule.Compute(input, worked, salary, month, vacations);
         var vacationPay = VacationPayRule.Compute(input);
 
-        var ibc = IbcRule.Compute(input, worked, salary.Line.Amount, month);
+        var ibc = IbcRule.Compute(input, worked, vacations, salary.Line.Amount, month);
         var employeeDeductions = EmployeeDeductionsRule.Compute(input, ibc);
         var solidarity = SolidarityFundRule.Compute(input, salary.SalaryInForce, ibc);
         var otherDeductions = DeductionRule.Compute(input);
         var employer = EmployerContributionsRule.Compute(input, ibc, month);
-        var provisions = ProvisionsRule.Compute(input, salary.Line.Amount, transport.Line.Amount, overtime.Total, salaryIncome);
+        var provisions = ProvisionsRule.Compute(
+            input, salary.Line.Amount, transport.Line.Amount, overtime.Total, salaryIncome, vacations.ServiceValue);
 
         // Fixed order (I-11): Earning, Info, Deduction, EmployerContribution, Provision; inside a group, the contract's code table
         // (a recurring deduction sits before health_employee there).
