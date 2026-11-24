@@ -216,6 +216,27 @@ public sealed class PayrollEligibilityTests
     }
 
     [Fact]
+    public void AVacationOfAnOlderContractDoesNotBlockTheNewOne()
+    {
+        // The old contract ended on the 9th and its vacation does not touch the new contract at all: the builder drops it.
+        var result = Evaluate(Employee(contracts: Contract(startDate: new DateOnly(2026, 11, 10))));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 6))]);
+
+        Assert.Equal(result, same);
+    }
+
+    [Fact]
+    public void AVacationAfterTheEndOfTheContractDoesNotBlock()
+    {
+        var result = Evaluate(Employee(contracts: Contract(endedOn: new DateOnly(2026, 11, 12))));
+
+        var same = PayrollEligibility.WithVacations(result, [VacationOn(new DateOnly(2026, 11, 20), new DateOnly(2026, 11, 25))]);
+
+        Assert.Equal(result, same);
+    }
+
+    [Fact]
     public void TheVacationBlockerJoinsTheOthers()
     {
         var result = Evaluate(Employee(contracts: Contract(endedOn: new DateOnly(2026, 11, 12), assignments: [])));

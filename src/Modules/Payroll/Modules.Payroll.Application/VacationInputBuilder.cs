@@ -165,7 +165,8 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
         var first = await periods.FindByStartAsync(period.TenantId, period.CompanyId, previousMonth, cancellationToken);
         var second = await periods.FindByStartAsync(
             period.TenantId, period.CompanyId, new DateOnly(previousMonth.Year, previousMonth.Month, 16), cancellationToken);
-        if (first is { Status: not PayrollPeriodStatus.Draft } && second is { Status: not PayrollPeriodStatus.Draft })
+        // «Liquidada o más»: Reopen and MarkOutdated keep the old result rows, so a stored result alone proves nothing.
+        if (IsSettled(first) && IsSettled(second))
         {
             var ofFirst = await results.FindAsync(period.TenantId, first.Id, employee.EmployeeId, cancellationToken);
             var ofSecond = await results.FindAsync(period.TenantId, second.Id, employee.EmployeeId, cancellationToken);
@@ -183,6 +184,9 @@ public sealed class VacationInputBuilder(IPayrollPeriodRepository periods, IPayr
 
         return (SalaryOn(contract, vacation.StartDate.AddDays(-1)).Amount, VacationIbcSource.Salary);
     }
+
+    private static bool IsSettled([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] PayrollPeriod? period) =>
+        period is { Outdated: false, Status: PayrollPeriodStatus.Liquidated or PayrollPeriodStatus.Approved or PayrollPeriodStatus.Closed };
 
     // The salary record in force on the day; a day before the first record takes the first one (Hr guarantees one from the start).
     private static HrSalarySource SalaryOn(HrContractSource contract, DateOnly day)

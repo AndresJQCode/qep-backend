@@ -116,8 +116,10 @@ public static class PayrollEligibility
     }
 
     /// <summary>
-    /// A vacation that starts before the contract or ends after it leaves days outside it (Hr shortened the contract after the
-    /// vacation was registered): the employee is blocked until the vacation is corrected. An excluded employee is returned as is.
+    /// A vacation that straddles a boundary of the contract (it touches the contract but starts before it or ends after it) leaves
+    /// days outside it (Hr shortened the contract after the vacation was registered): the employee is blocked until the vacation is
+    /// corrected. One that does not touch the contract at all belongs to another contract of the employee (the builder drops it) and
+    /// blocks nothing. An excluded employee is returned as is.
     /// </summary>
     public static EligibilityResult WithVacations(EligibilityResult result, IEnumerable<Vacation> employeeVacations)
     {
@@ -128,8 +130,11 @@ public static class PayrollEligibility
             return result;
         }
 
+        var contractEnd = contract.EndedOn ?? DateOnly.MaxValue;
         var outside = employeeVacations.Any(vacation =>
-            vacation.StartDate < contract.StartDate || (contract.EndedOn is { } ended && vacation.EndDate > ended));
+            vacation.StartDate <= contractEnd
+            && vacation.EndDate >= contract.StartDate
+            && (vacation.StartDate < contract.StartDate || vacation.EndDate > contractEnd));
         if (!outside)
         {
             return result;

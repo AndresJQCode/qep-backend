@@ -125,6 +125,26 @@ public sealed class VacationInputBuilderTests
     }
 
     [Fact]
+    public async Task AReopenedOrOutdatedHalfDoesNotCountAsAQepIbc()
+    {
+        // Reopening keeps the old result rows until the next liquidation (PayrollPeriod.Reopen), so a stored result is not enough:
+        // the spec says «Liquidada o más», and a half that is Reopened or Outdated is no longer one.
+        Liquidated(new DateOnly(2026, 11, 1), ResultWith(2_700_000m));
+        var second = Liquidated(new DateOnly(2026, 11, 16), ResultWith(2_800_000m));
+        var vacation = Qep(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), typedIbc: 2_500_000m);
+
+        second.MarkOutdated(Ana, Now);
+        var outdated = Assert.Single((await BuildAsync(Period(new DateOnly(2026, 12, 1)), Contract(), [vacation])).Inputs);
+        Assert.Equal((2_500_000m, VacationIbcSource.Typed), (outdated.PreviousMonthIbc, outdated.PreviousIbcSource));
+
+        var reopened = Liquidated(new DateOnly(2026, 11, 16), ResultWith(2_800_000m));
+        reopened.Approve(new ApprovalContext(Ana, false, false, false, true), Now);
+        reopened.Reopen(Ana, "Corregir", Now);
+        var afterReopen = Assert.Single((await BuildAsync(Period(new DateOnly(2026, 12, 1)), Contract(), [vacation])).Inputs);
+        Assert.Equal((2_500_000m, VacationIbcSource.Typed), (afterReopen.PreviousMonthIbc, afterReopen.PreviousIbcSource));
+    }
+
+    [Fact]
     public async Task PreviousIbcFallsBackToTheSalary()
     {
         // A raise on the very day the vacation starts: the IBC before the vacation is the salary of the day before.

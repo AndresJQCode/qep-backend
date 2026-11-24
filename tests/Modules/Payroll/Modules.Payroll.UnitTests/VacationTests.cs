@@ -52,6 +52,22 @@ public sealed class VacationTests
     }
 
     [Fact]
+    public void TheMonthsListIsCopiedOnCreateAndUpdate()
+    {
+        // The caller keeps editing its own list (a request body); what was saved must not move with it.
+        var typed = new List<ExternalVacationMonth> { new(new DateOnly(2026, 12, 1), 900_000m, 36_000m, 36_000m, 0m) };
+        var vacation = Vacation.Create(
+            VacationId.New(), Tenant, Company, Employee, VacationOrigin.External, Start, End, 14, new DateOnly(2027, 1, 6), 2_800_000m, typed, T0);
+        typed.Add(new ExternalVacationMonth(new DateOnly(2027, 1, 1), null, 0m, 0m, 0m));
+        Assert.Single(vacation.ExternalMonths);
+
+        var updated = new List<ExternalVacationMonth> { new(new DateOnly(2026, 12, 1), null, 0m, 0m, 0m) };
+        vacation.Update(VacationOrigin.External, Start, End, 14, new DateOnly(2027, 1, 6), 2_800_000m, updated, T1);
+        updated.Clear();
+        Assert.Single(vacation.ExternalMonths);
+    }
+
+    [Fact]
     public void QepCannotCarryExternalMonths()
     {
         var months = new[] { new ExternalVacationMonth(new DateOnly(2026, 12, 1), null, 0m, 0m, 0m) };

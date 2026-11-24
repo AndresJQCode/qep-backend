@@ -68,7 +68,7 @@ public sealed class Vacation
             BusinessDays = businessDays,
             ReturnDate = returnDate,
             PreviousMonthIbc = previousMonthIbc,
-            ExternalMonths = externalMonths,
+            ExternalMonths = [.. externalMonths],
             Version = 1,
             CreatedAt = now,
             UpdatedAt = now,
@@ -93,7 +93,7 @@ public sealed class Vacation
         BusinessDays = businessDays;
         ReturnDate = returnDate;
         PreviousMonthIbc = previousMonthIbc;
-        ExternalMonths = externalMonths;
+        ExternalMonths = [.. externalMonths];
         Version++;
         UpdatedAt = now;
     }
