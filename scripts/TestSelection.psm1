@@ -1,0 +1,122 @@
+﻿# Selección de pruebas del nivel rápido. Funciones sin efectos: reciben rutas y contenidos, no leen el disco ni git.
+
+$script:CrossCuttingWarning = "Cambio transversal: conviene la corrida completa antes de seguir"
+
+# Declaraciones de primer nivel (columna 0: los namespaces son de archivo). El grupo opcional entre paréntesis
+# salta el constructor primario, con paréntesis anidados, antes de leer la clase base.
+$script:ClassPattern = '(?m)^(?:public|internal)\s+(?<mods>(?:(?:sealed|abstract|partial|static)\s+)*)class\s+(?<name>\w+)' +
+    '(?:<[^>\r\n]*>)?(?:\s*\((?>[^()]+|\((?<p>)|\)(?<-p>))*(?(p)(?!))\))?(?:\s*:\s*(?<base>\w+))?'
+
+function Get-ClassMap([hashtable]$Sources, [string]$ProjectDir) {
+    $classes = @{}
+    foreach ($path in $Sources.Keys) {
+        $normalized = $path -replace '\\', '/'
+        if (-not $normalized.StartsWith("$ProjectDir/")) { continue }
+        $content = [string]$Sources[$path]
+        $hasFacts = $content -match '\[(Fact|Theory)\b'
+        foreach ($m in [regex]::Matches($content, $script:ClassPattern)) {
+            $name = $m.Groups["name"].Value
+            if (-not $classes.ContainsKey($name)) {
+                $classes[$name] = @{ Abstract = $false; HasFacts = $false; Base = ""; Files = @() }
+            }
+            $class = $classes[$name]
+            if ($m.Groups["mods"].Value -match '\babstract\b') { $class.Abstract = $true }
+            if ($hasFacts) { $class.HasFacts = $true }
+            if ($m.Groups["base"].Success) { $class.Base = $m.Groups["base"].Value }
+            $class.Files += $normalized
+        }
+    }
+    return $classes
+}
+
+# La clase y todo lo que herede de ella.
+function Get-WithDescendants($Classes, [string]$Name) {
+    $found = @($Name)
+    for ($i = 0; $i -lt $found.Count; $i++) {
+        foreach ($other in $Classes.Keys) {
+            if ($Classes[$other].Base -eq $found[$i] -and $found -notcontains $other) { $found += $other }
+        }
+    }
+    return $found
+}
+
+# Con pruebas propias o heredadas.
+function Test-IsTestClass($Classes, [string]$Name) {
+    $seen = @()
+    while ($Classes.ContainsKey($Name) -and $seen -notcontains $Name) {
+        if ($Classes[$Name].HasFacts) { return $true }
+        $seen += $Name
+        $Name = $Classes[$Name].Base
+    }
+    return $false
+}
+
+function Get-TestPlan {
+    param(
+        [string[]]$ChangedFiles = @(),
+        [string[]]$Projects = @(),
+        [hashtable]$TestSources = @{}
+    )
+
+    $files = @($ChangedFiles | Where-Object { $_ } | ForEach-Object { $_ -replace '\\', '/' } | Sort-Object -Unique)
+    $all = @($Projects | ForEach-Object { $_ -replace '\\', '/' })
+    $steps = New-Object System.Collections.ArrayList
+    $warnings = New-Object System.Collections.ArrayList
+
+    function Add-Step([string]$Project, [string]$Filter = "") {
+        [void]$steps.Add([pscustomobject]@{ Project = $Project; Filter = $Filter })
+    }
+
+    $all | Where-Object { $_ -like "*/ArchitectureTests.csproj" } | ForEach-Object { Add-Step $_ }
+
+    $touched = @($files | ForEach-Object { if ($_ -match '^(?:src|tests)/Modules/([^/]+)/') { $Matches[1] } } | Sort-Object -Unique)
+    foreach ($module in $touched) {
+        $all | Where-Object { $_ -like "*/Modules.$module.UnitTests.csproj" } | ForEach-Object { Add-Step $_ }
+    }
+
+    if ($files -match '^(src/Bootstrapper|src/Api|tests/Bootstrapper)/') {
+        $all | Where-Object { $_ -like "*/Bootstrapper.UnitTests.csproj" } | ForEach-Object { Add-Step $_ }
+    }
+
+    $integrationModules = @()
+    foreach ($project in $all | Where-Object { $_ -like "*.IntegrationTests.csproj" } | Sort-Object) {
+        $dir = $project.Substring(0, $project.LastIndexOf('/'))
+        $changed = @($files | Where-Object { $_.StartsWith("$dir/") })
+        if (-not $changed) { continue }
+
+        $classes = Get-ClassMap $TestSources $dir
+        $selected = @()
+        foreach ($file in $changed) {
+            $declared = @($classes.Keys | Where-Object { $classes[$_].Files -contains $file })
+            $targets = @($declared | ForEach-Object { Get-WithDescendants $classes $_ } |
+                Where-Object { -not $classes[$_].Abstract -and (Test-IsTestClass $classes $_) })
+            if ($targets) {
+                $selected += $targets
+            }
+            elseif ($file -notlike "*.cs" -or $TestSources.ContainsKey($file)) {
+                # Un .cs que ya no está en TestSources se borró: no hay nada que inferir ni que avisar.
+                [void]$warnings.Add("Apoyo de pruebas cambiado, sus clases no se infieren: $file")
+            }
+        }
+
+        if ($selected) {
+            $filter = ($selected | Sort-Object -Unique | ForEach-Object { "FullyQualifiedName~.$_." }) -join "|"
+            Add-Step $project $filter
+            if ($dir -match '^tests/Modules/([^/]+)/') { $integrationModules += $Matches[1] }
+        }
+    }
+
+    $production = @($files | ForEach-Object { if ($_ -match '^src/Modules/([^/]+)/') { $Matches[1] } } | Sort-Object -Unique)
+    foreach ($module in $production | Where-Object { $integrationModules -notcontains $_ }) {
+        [void]$warnings.Add("${module}: cambió producción y no corre ninguna prueba de integración")
+    }
+
+    $migrated = @($files | ForEach-Object { if ($_ -match '^src/Modules/([^/]+)/.*/Migrations/') { $Matches[1] } } | Sort-Object -Unique)
+    if (($files -match '^(src/(BuildingBlocks|Bootstrapper|Api)/|Directory\.[^/]*\.props$)') -or $migrated.Count -gt 1) {
+        [void]$warnings.Add($script:CrossCuttingWarning)
+    }
+
+    return [pscustomobject]@{ Steps = @($steps); Warnings = [string[]]@($warnings) }
+}
+
+Export-ModuleMember -Function Get-TestPlan
