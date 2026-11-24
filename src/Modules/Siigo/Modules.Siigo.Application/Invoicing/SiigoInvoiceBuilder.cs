@@ -395,8 +395,9 @@ public static class SiigoInvoiceBuilder
         if (line.IsGift)
         {
             // Un obsequio va con precio 0 y no suma al total: Siigo calcula su IVA sobre `tax_base`, que es el precio de lista sin IVA
-            // (el de lista viene con IVA incluido).
-            var taxBase = Math.Round(line.ListUnitPrice * 100m / (100m + line.TaxPercentage), 6, MidpointRounding.AwayFromZero);
+            // (el de lista viene con IVA incluido). Siigo documenta `tax_base` con «máximo 11 enteros y 2 decimales» (`price` admite 6): con más
+            // decimales rechaza con `invalid_amount` en `items[n].tax_base` (observado el 2026-11-24 con 30168,067227).
+            var taxBase = Math.Round(line.ListUnitPrice * 100m / (100m + line.TaxPercentage), 2, MidpointRounding.AwayFromZero);
             return new ResolvedItem(
                 VariantLink(settings, line.VariantId)!.SiigoProductCode,
                 line.Name,

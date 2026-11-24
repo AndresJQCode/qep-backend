@@ -738,7 +738,8 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal(1m, item.GetProperty("quantity").GetDecimal());
         Assert.Equal(0m, item.GetProperty("price").GetDecimal());
         Assert.Equal(0m, item.GetProperty("discount").GetDecimal());
-        Assert.Equal(840.336134m, item.GetProperty("tax_base").GetDecimal());
+        // Siigo documenta `tax_base` con «máximo 11 enteros y 2 decimales» (a diferencia de `price`, que admite 6): 840,336134 → 840,34.
+        Assert.Equal(840.34m, item.GetProperty("tax_base").GetDecimal());
         Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
         var taxes = item.GetProperty("taxes");
         Assert.Equal(1, taxes.GetArrayLength());
