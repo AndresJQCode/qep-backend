@@ -8,8 +8,9 @@ using Modules.Siigo.Domain;
 
 namespace Bootstrapper.UnitTests;
 
-/// <summary>Un reenvío que no se puede hacer (conexión, permiso) no deja <c>Failed</c> un pedido cuya factura puede existir: queda por
-/// confirmar, enlazado a su fila. Con una fila que nunca salió, o sin fila, sigue fallido.</summary>
+/// <summary>Un reenvío que no se puede hacer (conexión, permiso) no deja <c>Failed</c> un pedido cuya factura existe o puede existir:
+/// por confirmar o en camino queda por confirmar, enlazado a su fila, y ya creada queda facturado. Con una fila que nunca salió y nadie
+/// está mandando, o sin fila, sigue fallido.</summary>
 public sealed class SiigoBatchItemInvokerTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
@@ -67,6 +68,75 @@ public sealed class SiigoBatchItemInvokerTests
         Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceBatchForbidden), outcome);
     }
 
+    // El POST síncrono en camino, o uno cortado hace menos de 8 min: no se sabe si Siigo la creará, aunque la fila nunca haya quedado sin
+    // respuesta.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnInvoiceBeingSentStaysToConfirm(bool permitted)
+    {
+        var row = Pending(Now.AddMinutes(-1));
+        row.BeginSend(Now.AddMinutes(-1));
+
+        var outcome = await InvokeAsync(permitted, SiigoErrorCodes.ConnectionUnavailable, row);
+
+        Assert.Equal(
+            new SiigoBatchItemOutcome.ToConfirm(
+                row.Id, permitted ? SiigoErrorCodes.ConnectionUnavailable : SiigoErrorCodes.InvoiceBatchForbidden),
+            outcome);
+    }
+
+    // La factura ya existe: lo que no se pudo hacer es volver a marcar el pedido. Sin una lectura que confirme la marca, se avisa.
+    [Theory]
+    [InlineData(SiigoInvoiceStatus.Created, true, false)]
+    [InlineData(SiigoInvoiceStatus.Created, false, true)]
+    [InlineData(SiigoInvoiceStatus.Stamped, false, true)]
+    [InlineData(SiigoInvoiceStatus.StampRejected, true, false)]
+    public async Task AnInvoicedOrderIsInvoicedAndNotFailed(SiigoInvoiceStatus status, bool marked, bool orderMarkFailed)
+    {
+        var row = Invoiced(status);
+        var orders = new OrderMarks(marked);
+
+        var outcome = await InvokeAsync(permitted: true, SiigoErrorCodes.ConnectionUnavailable, orders, row);
+
+        Assert.Equal(status, row.Status);
+        Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", row.Id, orderMarkFailed), outcome);
+        Assert.Equal([(TenantId, OrderId, "FV-1-9")], orders.Reads);
+    }
+
+    [Fact]
+    public async Task ALostPermissionOverAnInvoicedOrderIsInvoiced()
+    {
+        var row = Invoiced(SiigoInvoiceStatus.Created);
+
+        var outcome = await InvokeAsync(permitted: false, conflict: null, row);
+
+        Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", row.Id), outcome);
+    }
+
+    [Fact]
+    public async Task AnInvoicedOrderWhoseMarkCannotBeReadSaysTheMarkFailed()
+    {
+        var row = Invoiced(SiigoInvoiceStatus.Created);
+
+        var outcome = await InvokeAsync(permitted: true, SiigoErrorCodes.ConnectionUnavailable, new OrderMarks(null), row);
+
+        Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", row.Id, OrderMarkFailed: true), outcome);
+    }
+
+    private static SiigoInvoice Invoiced(SiigoInvoiceStatus status)
+    {
+        var row = Pending(Now.AddMinutes(-20));
+        row.BeginSend(Now.AddMinutes(-20));
+        row.MarkCreated("id-1", "FV-1-9", 100m, status == SiigoInvoiceStatus.Stamped ? "cufe" : null, Now.AddMinutes(-20));
+        if (status == SiigoInvoiceStatus.StampRejected)
+        {
+            row.MarkStampRejected("dian.rejected", "Regla 90", Now.AddMinutes(-20));
+        }
+
+        return row;
+    }
+
     private static SiigoInvoice Pending(DateTimeOffset createdAt) =>
         SiigoInvoice.PendingFor(
             Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), OrderId, SiigoInvoiceKind.Order, """{"a":1}""", 7,
@@ -87,17 +157,51 @@ public sealed class SiigoBatchItemInvokerTests
         return row;
     }
 
-    private static async Task<SiigoBatchItemOutcome> InvokeAsync(bool permitted, string? conflict, params SiigoInvoice[] rows)
+    private static Task<SiigoBatchItemOutcome> InvokeAsync(bool permitted, string? conflict, params SiigoInvoice[] rows) =>
+        InvokeAsync(permitted, conflict, new OrderMarks(true), rows);
+
+    private static async Task<SiigoBatchItemOutcome> InvokeAsync(
+        bool permitted, string? conflict, OrderMarks orders, params SiigoInvoice[] rows)
     {
         var services = new ServiceCollection();
+        services.AddLogging();
         services.AddScoped<DelegatedExecutionScope>();
         services.AddSingleton<IRequestDispatcher>(new ConflictingDispatcher(conflict ?? "unused"));
         services.AddSingleton<ISiigoInvoiceRepository>(new Invoices(rows));
+        services.AddSingleton<ISiigoOrderSource>(orders);
         services.AddSingleton<IClock>(new FixedClock());
         await using var provider = services.BuildServiceProvider();
-        var invoker = new SiigoBatchItemInvoker(new Permissions(permitted), provider.GetRequiredService<IServiceScopeFactory>());
+        var invoker = ActivatorUtilities.CreateInstance<SiigoBatchItemInvoker>(provider, new Permissions(permitted));
 
         return await invoker.InvokeAsync(TenantId, Guid.CreateVersion7(), OrderId, null, TestContext.Current.CancellationToken);
+    }
+
+    /// <param name="marked">Lo que contesta la lectura de la marca; <c>null</c> falla.</param>
+    private sealed class OrderMarks(bool? marked) : ISiigoOrderSource
+    {
+        public List<(Guid TenantId, Guid OrderId, string Number)> Reads { get; } = [];
+
+        public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken)
+        {
+            Reads.Add((tenantId, orderId, number));
+            return marked is { } value
+                ? Task.FromResult(value)
+                : Task.FromException<bool>(new InvalidOperationException("The order cannot be read."));
+        }
+
+        public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task MarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class Permissions(bool permitted) : IAuthorizationService
