@@ -179,6 +179,60 @@ public sealed record ServicePageDto(
 /// </summary>
 public sealed record ChargesPreviewDto(int ChargesToGenerate, int OverdueCharges, DateOnly DefaultNextReviewDate);
 
+/// <summary>
+/// El contrato de una fila de revisiones: lo que la fila pinta y lo que necesita para confirmar (<c>Price</c> y <c>Version</c>),
+/// sin pedir el detalle de cada uno.
+/// </summary>
+public sealed record PriceReviewServiceRefDto(
+    Guid Id,
+    string Name,
+    CustomerRefDto Customer,
+    decimal Price,
+    string Currency,
+    string Cycle,
+    long Version);
+
+/// <summary>
+/// Una fila de «Revisiones de precio». <c>IpcRate</c> es la del año que necesita el contrato, si está cargada, y
+/// <c>ComputedPrice</c> el precio que saldría de ella con los puntos y el redondeo del tenant: la pantalla no calcula, y manda
+/// ese número de vuelta como precio esperado al confirmar. Ambos nulos en <c>Manual</c> o sin tasa.
+/// </summary>
+public sealed record PriceReviewRowDto(
+    PriceReviewServiceRefDto Service,
+    MemberRefDto? Assignee,
+    PriceReviewInfoDto Review,
+    decimal? IpcRate,
+    decimal? ComputedPrice);
+
+/// <summary>Un año de IPC que algún contrato por revisar necesita: la pantalla pide cargar los que vengan sin tasa.</summary>
+public sealed record IpcYearNeedDto(int Year, decimal? Rate, int ContractCount);
+
+/// <summary><c>Summary</c> e <c>IpcYears</c> son del tenant entero, sin los filtros ni la página.</summary>
+public sealed record PriceReviewPageDto(
+    IReadOnlyList<PriceReviewRowDto> Items,
+    int Total,
+    int Page,
+    int PageSize,
+    PriceReviewCountsDto Summary,
+    IReadOnlyList<IpcYearNeedDto> IpcYears);
+
+/// <summary>
+/// La tasa de un año. <c>InUse</c> dice que algún cambio pendiente la usa, y entonces la pantalla no deja editarla;
+/// <c>Rate</c> es además lo que vuelve como <c>expectedRate</c> al guardar.
+/// </summary>
+public sealed record IpcRateDto(int Year, decimal Rate, bool InUse, MemberRefDto? UpdatedBy, DateTimeOffset UpdatedAt, long Version);
+
+public sealed record IpcRateListDto(IReadOnlyList<IpcRateDto> Items);
+
+/// <summary>
+/// El resultado de un contrato del lote. Cada uno va por separado: <c>Outcome</c> es <c>Confirmed</c> o <c>Failed</c>, con el
+/// <c>Code</c> del motivo; <c>Service</c> trae el contrato como quedó para repintar la fila sin volver a pedirlo.
+/// </summary>
+public sealed record ConfirmIpcResultDto(Guid ServiceId, string Outcome, string? Code, ServiceDto? Service);
+
+/// <summary>En el orden pedido.</summary>
+public sealed record ConfirmIpcResponseDto(IReadOnlyList<ConfirmIpcResultDto> Results);
+
 public sealed record AssigneesDto(IReadOnlyList<MemberRefDto> Items);
 
 /// <summary><c>NotReadyReason</c>: <c>template_not_approved</c> | <c>connection_unavailable</c> | null.</summary>

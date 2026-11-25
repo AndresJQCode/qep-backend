@@ -29,6 +29,8 @@ public sealed class ServiceContractsPriceReviewApiTests
 
     private static readonly string[] ReviewFields = ["AdjustmentMode", "IpcExtraPoints", "NextReviewDate"];
 
+    private static readonly string[] ConfirmedFields = ["newPrice", "effectiveFrom", "reason", "ipcYear", "ipcRate", "extraPoints"];
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     // Los tenants de las pruebas viven en America/Bogota (UTC-5, sin horario de verano): la «hoy» del tenant.
@@ -557,6 +559,406 @@ public sealed class ServiceContractsPriceReviewApiTests
         Assert.Equal(version, await world.VersionAsync(service));
     }
 
+    [Fact]
+    public async Task TheListShowsDueAndHeldByGenerationDate()
+    {
+        await using var world = await World.OpenAsync();
+        var (held, heldPeriod) = await world.SeedHeldAsync();
+        var (ipc, ipcPeriod) = await world.SeedDueAsync(AdjustmentMode.Ipc, points: 2m);
+        var (manual, manualPeriod) = await world.SeedDueAsync(AdjustmentMode.Manual, name: "Manual por revisar");
+        var anchor = TenantToday.AddMonths(2);
+        await world.SeedAsync(anchor, anchor, AdjustmentMode.Ipc, anchor.AddMonths(12), name: "Lejano");
+        var (covered, _) = await world.SeedDueAsync(AdjustmentMode.Manual, name: "Ya programado");
+        await world.SeedScheduleAsync(covered, 120000m, null);
+
+        var before = await world.ReviewsAsync();
+
+        // Orden por fecha de generación; el empate de los dos «por revisar» lo rompe el id.
+        var due = new[] { ipc, manual }.Order().ToArray();
+        Assert.Equal(new[] { held, due[0], due[1] }, before.Items.Select(row => row.Service.Id));
+        Assert.Equal((3, 1, 25), (before.Total, before.Page, before.PageSize));
+        Assert.Equal(new PriceReviewCountsDto(2, 1), before.Summary);
+        Assert.All(before.Items, row => Assert.Null(row.ComputedPrice));
+        Assert.All(before.Items, row => Assert.Null(row.IpcRate));
+        var needed = new[] { heldPeriod, ipcPeriod }.GroupBy(period => period.Year - 1).OrderBy(group => group.Key).ToList();
+        Assert.Equal(needed.Select(group => new IpcYearNeedDto(group.Key, null, group.Count())), before.IpcYears);
+
+        foreach (var year in needed)
+        {
+            await world.SaveRateAsync(year.Key, 5.2m);
+        }
+
+        var after = await world.ReviewsAsync();
+        var heldOnly = await world.ReviewsAsync("?state=held");
+        var dueOnly = await world.ReviewsAsync("?state=DUE");
+        var second = await world.ReviewsAsync("?page=2&pageSize=1");
+
+        var heldRow = after.Items[0];
+        Assert.Equal(
+            ("Held", (decimal?)5.2m, (decimal?)105200m, Price, "COP", "Monthly", "Panadería La Esquina"),
+            (heldRow.Review.State, heldRow.IpcRate, heldRow.ComputedPrice, heldRow.Service.Price, heldRow.Service.Currency,
+                heldRow.Service.Cycle, heldRow.Service.Customer.Name));
+        Assert.Equal((world.AdminId, "Ana Admin"), (heldRow.Assignee!.MemberId, heldRow.Assignee.DisplayName));
+        Assert.Equal((await world.StoredAsync(held)).Version, heldRow.Service.Version);
+        Assert.Equal(107200m, after.Items.Single(row => row.Service.Id == ipc).ComputedPrice);
+        var manualRow = after.Items.Single(row => row.Service.Id == manual);
+        Assert.Equal(("Due", (DateOnly?)manualPeriod, (decimal?)null, (decimal?)null),
+            (manualRow.Review.State, manualRow.Review.ReviewPeriodDate, manualRow.IpcRate, manualRow.ComputedPrice));
+        Assert.Equal([held], heldOnly.Items.Select(row => row.Service.Id));
+        Assert.Equal((1, new PriceReviewCountsDto(2, 1)), (heldOnly.Total, heldOnly.Summary));
+        Assert.Equal(needed.Select(group => new IpcYearNeedDto(group.Key, 5.2m, group.Count())), heldOnly.IpcYears);
+        Assert.Equal(due, dueOnly.Items.Select(row => row.Service.Id));
+        Assert.Equal((due[0], 3, 2, 1), (Assert.Single(second.Items).Service.Id, second.Total, second.Page, second.PageSize));
+    }
+
+    [Fact]
+    public async Task AssigneeMeAndSearchFilterLikeTheCharges()
+    {
+        await using var world = await World.OpenAsync();
+        var (hosting, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Hosting");
+
+        // Sin membresía activa no se es encargado de nadie: vacía, con el resumen del tenant.
+        var stranger = await world.ReviewsAsync("?assignee=me");
+        Assert.Empty(stranger.Items);
+        Assert.Equal((0, new PriceReviewCountsDto(1, 0)), (stranger.Total, stranger.Summary));
+        Assert.Single(stranger.IpcYears);
+
+        var caller = await SeedCallerMembershipAsync(world.Factory, "Caro Cobros");
+        var mine = await SeedCustomerAsync(world.Factory, Tenant, "Ferretería Central", email: "ferre@example.com");
+        await world.SeedProfileAsync(mine, caller);
+        var (domain, _) = await world.SeedDueAsync(AdjustmentMode.Manual, name: "Dominio", customerId: mine);
+
+        var assigned = await world.ReviewsAsync("?assignee=me");
+        var byCustomer = await world.ReviewsAsync("?search=ferreter");
+        var byService = await world.ReviewsAsync("?search=host");
+        var wildcard = await world.ReviewsAsync("?search=%25");
+        var both = await world.ReviewsAsync("?assignee=me&search=host");
+
+        Assert.Equal([domain], assigned.Items.Select(row => row.Service.Id));
+        Assert.Equal(new PriceReviewCountsDto(2, 0), assigned.Summary);
+        Assert.Equal([domain], byCustomer.Items.Select(row => row.Service.Id));
+        Assert.Equal([hosting], byService.Items.Select(row => row.Service.Id));
+        Assert.Empty(wildcard.Items);
+        Assert.Empty(both.Items);
+    }
+
+    [Fact]
+    public async Task TheListsAreForReadersAndTheRateAndTheBatchNeedManageAccess()
+    {
+        await using var world = await World.OpenAsync();
+        using var reader = CreateReader(world.Factory);
+        var year = TenantToday.Year - 1;
+
+        var reviews = await reader.GetAsync($"{ServiceContractsUrl()}/price-reviews", Ct);
+        var rates = await reader.GetAsync($"{ServiceContractsUrl()}/ipc-rates", Ct);
+        var save = await reader.PutAsJsonAsync(RateUrl(year), new { rate = 5.2m, expectedRate = (decimal?)null }, Ct);
+        var confirm = await reader.PostAsJsonAsync(
+            ConfirmUrl(), new { year, items = new[] { new { serviceId = Guid.CreateVersion7(), version = 1, expectedPrice = 1m } } }, Ct);
+        var badState = await reader.GetAsync($"{ServiceContractsUrl()}/price-reviews?state=scheduled&pageSize=101", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, reviews.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, rates.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, save.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, confirm.StatusCode);
+        var errors = await ErrorsOfAsync(badState);
+        Assert.True(errors.TryGetProperty("State", out _));
+        Assert.True(errors.TryGetProperty("PageSize", out _));
+    }
+
+    [Fact]
+    public async Task SavingTheFirstRateNeedsANullExpectedRate()
+    {
+        await using var world = await World.OpenAsync();
+        var caller = await SeedCallerMembershipAsync(world.Factory, "Caro Cobros");
+        var year = TenantToday.Year - 1;
+
+        var stale = await world.PutRateAsync(year, 5.2m, 5.0m);
+        var saved = await world.PutRateAsync(year, 5.2m, null);
+
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal("billing.ipc.rate_changed", await CodeOfAsync(stale));
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var dto = (await saved.Content.ReadFromJsonAsync<IpcRateDto>(Ct))!;
+        Assert.Equal(
+            (year, 5.2m, false, caller, "Caro Cobros", 1L),
+            (dto.Year, dto.Rate, dto.InUse, dto.UpdatedBy!.MemberId, dto.UpdatedBy.DisplayName, dto.Version));
+        await world.SaveRateAsync(year - 1, 9.28m);
+        var list = await world.Manager.GetFromJsonAsync<IpcRateListDto>($"{ServiceContractsUrl()}/ipc-rates", Ct);
+        Assert.Equal([(year, 5.2m), (year - 1, 9.28m)], list!.Items.Select(item => (item.Year, item.Rate)));
+        Assert.Equal("Caro Cobros", list.Items[0].UpdatedBy!.DisplayName);
+        var id = year.ToString(CultureInfo.InvariantCulture);
+        Assert.Equal(1, await CountAuditEntriesAsync(world.Factory, ServiceContractsAuditActions.IpcSaved, id));
+        var fields = await ChangedFieldsOfAsync(world.Factory, ServiceContractsAuditActions.IpcSaved, id);
+        Assert.Contains("year", fields);
+        Assert.Contains("rate", fields);
+    }
+
+    [Fact]
+    public async Task AnExpectedRateThatIsNotStoredIs409()
+    {
+        await using var world = await World.OpenAsync();
+        var year = TenantToday.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+
+        var other = await world.PutRateAsync(year, 6m, 5.0m);
+        var none = await world.PutRateAsync(year, 6m, null);
+        var vanished = await world.PutRateAsync(year - 1, 6m, 5.2m);
+
+        foreach (var response in new[] { other, none, vanished })
+        {
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("billing.ipc.rate_changed", await CodeOfAsync(response));
+        }
+
+        var stored = Assert.Single(await world.RatesAsync());
+        Assert.Equal((year, 5.2m, 1), (stored.Year, stored.Rate, stored.Version));
+
+        var changed = (await (await world.PutRateAsync(year, 6m, 5.2m)).Content.ReadFromJsonAsync<IpcRateDto>(Ct))!;
+        Assert.Equal((6m, 2L), (changed.Rate, changed.Version));
+    }
+
+    [Fact]
+    public async Task TheSameStoredRateIs200EvenWithAStaleExpectedRate()
+    {
+        await using var world = await World.OpenAsync();
+        var year = TenantToday.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+
+        var response = await world.PutRateAsync(year, 5.20m, 3m);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = (await response.Content.ReadFromJsonAsync<IpcRateDto>(Ct))!;
+        Assert.Equal((5.2m, 1L), (dto.Rate, dto.Version));
+        Assert.Equal(
+            1,
+            await CountAuditEntriesAsync(
+                world.Factory, ServiceContractsAuditActions.IpcSaved, year.ToString(CultureInfo.InvariantCulture)));
+    }
+
+    [Fact]
+    public async Task ARateInUseCannotChange()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var confirmed = await world.ConfirmAsync(year, new { serviceId = service, version = await world.VersionAsync(service), expectedPrice = 105200m });
+        Assert.Equal("Confirmed", Assert.Single(confirmed).Outcome);
+
+        // El conflicto de tasa se mira antes que el uso.
+        var stale = await world.PutRateAsync(year, 6m, 4m);
+        var inUse = await world.PutRateAsync(year, 6m, 5.2m);
+        var same = await world.PutRateAsync(year, 5.2m, 5.2m);
+        var list = await world.Manager.GetFromJsonAsync<IpcRateListDto>($"{ServiceContractsUrl()}/ipc-rates", Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal("billing.ipc.rate_changed", await CodeOfAsync(stale));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, inUse.StatusCode);
+        Assert.Equal("billing.ipc.in_use", await CodeOfAsync(inUse));
+        Assert.True((await same.Content.ReadFromJsonAsync<IpcRateDto>(Ct))!.InUse);
+        var item = Assert.Single(list!.Items);
+        Assert.Equal((5.2m, true), (item.Rate, item.InUse));
+    }
+
+    [Fact]
+    public async Task TwoUpdatesOfTheSameRateNeverOverwriteSilently()
+    {
+        await using var world = await World.OpenAsync();
+        var year = TenantToday.Year - 1;
+        await world.SaveRateAsync(year, 5m);
+
+        var responses = await Task.WhenAll(world.PutRateAsync(year, 5.5m, 5m), world.PutRateAsync(year, 6m, 5m));
+
+        var winner = Assert.Single(responses, response => response.StatusCode == HttpStatusCode.OK);
+        var loser = Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Conflict);
+        Assert.Equal("billing.ipc.rate_changed", await CodeOfAsync(loser));
+        var stored = Assert.Single(await world.RatesAsync());
+        Assert.Equal(((await winner.Content.ReadFromJsonAsync<IpcRateDto>(Ct))!.Rate, 2), (stored.Rate, stored.Version));
+    }
+
+    // El orden de dos requests no se controla: aquí la escritura de la otra persona entra, sin falta, entre la lectura y el
+    // guardado. Con fila guardada la frena el token de versión (R-4); sin ella, la clave primaria.
+    [Theory]
+    [InlineData(true, "billing.ipc.rate_changed")]
+    [InlineData(false, "billing.concurrent_first_write")]
+    public async Task ARateWrittenBetweenTheReadAndTheSaveIsNeverOverwritten(bool alreadyStored, string code)
+    {
+        var interleave = new RateInterleave();
+        await using var world = await World.OpenAsync(services =>
+        {
+            var rates = services.Single(descriptor => descriptor.ServiceType == typeof(IIpcRateRepository));
+            services.Remove(rates);
+            services.AddScoped<IIpcRateRepository>(provider => new InterleavingIpcRateRepository(
+                (IIpcRateRepository)ActivatorUtilities.CreateInstance(provider, rates.ImplementationType!), interleave));
+        });
+        var year = TenantToday.Year - 1;
+        if (alreadyStored)
+        {
+            await world.SaveRateAsync(year, 5m);
+        }
+
+        interleave.AfterNextFind(() => world.WriteRateBehindTheBackAsync(year, 7m));
+        var response = await world.PutRateAsync(year, 6m, alreadyStored ? 5m : null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(code, await CodeOfAsync(response));
+        Assert.Equal(7m, Assert.Single(await world.RatesAsync()).Rate);
+    }
+
+    [Fact]
+    public async Task AnAbsentExpectedRateIsValidationFailed()
+    {
+        await using var world = await World.OpenAsync();
+        var year = TenantToday.Year - 1;
+
+        var absent = await world.Manager.PutAsJsonAsync(RateUrl(year), new { rate = 5.2m }, Ct);
+        var outOfRange = await world.PutRateAsync(1999, 100.01m, null);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, absent.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(absent));
+        Assert.True((await ErrorsOfAsync(absent)).TryGetProperty("ExpectedRate", out _));
+        var errors = await ErrorsOfAsync(outOfRange);
+        Assert.True(errors.TryGetProperty("Year", out _));
+        Assert.True(errors.TryGetProperty("Rate", out _));
+        Assert.Empty(await world.RatesAsync());
+    }
+
+    [Fact]
+    public async Task ConfirmingWithoutTheRateIsNotSet()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+
+        var response = await world.Manager.PostAsJsonAsync(
+            ConfirmUrl(),
+            new { year = period.Year - 1, items = new[] { new { serviceId = service, version = 1, expectedPrice = 105200m } } },
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.ipc.not_set", await CodeOfAsync(response));
+        Assert.Equal(0, await world.CountSchedulesAsync());
+    }
+
+    [Fact]
+    public async Task ConfirmingReleasesHeldAndSchedulesDue()
+    {
+        await using var world = await World.OpenAsync();
+        await SeedCallerMembershipAsync(world.Factory, "Caro Cobros");
+        var (held, heldPeriod) = await world.SeedHeldAsync();
+        var (due, duePeriod) = await world.SeedDueAsync(AdjustmentMode.Ipc, points: 2m);
+        foreach (var year in new[] { heldPeriod.Year - 1, duePeriod.Year - 1 }.Distinct())
+        {
+            await world.SaveRateAsync(year, 5.2m);
+        }
+
+        // Un lote es de un solo año; a fin de diciembre los dos períodos caen en años distintos, así que van aparte.
+        var heldResult = Assert.Single(await world.ConfirmAsync(
+            heldPeriod.Year - 1, new { serviceId = held, version = await world.VersionAsync(held), expectedPrice = 105200m }));
+        var dueResult = Assert.Single(await world.ConfirmAsync(
+            duePeriod.Year - 1, new { serviceId = due, version = await world.VersionAsync(due), expectedPrice = 107200m }));
+
+        Assert.Equal((held, "Confirmed", (string?)null), (heldResult.ServiceId, heldResult.Outcome, heldResult.Code));
+        Assert.Equal(
+            ("Upcoming", (DateOnly?)null, 105200m),
+            (heldResult.Service!.PriceReview.State, heldResult.Service.PriceReview.HeldSince, heldResult.Service.Price));
+        Assert.Equal(await world.VersionAsync(held), heldResult.Service.Version);
+        var detail = await world.DetailAsync(held);
+        var charge = Assert.Single(detail.Charges);
+        Assert.Equal(
+            (heldPeriod, Later(heldPeriod, TenantToday.AddDays(5)), 105200m, false),
+            (charge.PeriodDate, charge.DueDate, charge.Amount, charge.PriceUnreviewed));
+        var change = Assert.Single(detail.PriceChanges);
+        Assert.Equal(
+            ("Ipc", $"IPC {heldPeriod.Year - 1} (5,20 %)", "Caro Cobros"), (change.Origin, change.Reason, change.ChangedBy!.DisplayName));
+
+        Assert.Equal("Confirmed", dueResult.Outcome);
+        var review = dueResult.Service!.PriceReview;
+        Assert.Equal(("Scheduled", Price), (review.State, dueResult.Service.Price));
+        Assert.Equal(
+            ("Ipc", (int?)(duePeriod.Year - 1), (decimal?)5.2m, (decimal?)2m, 107200m, duePeriod,
+                $"IPC {duePeriod.Year - 1} (5,20 %) + 2,00 puntos"),
+            (review.Scheduled!.Source, review.Scheduled.IpcYear, review.Scheduled.IpcRate, review.Scheduled.ExtraPoints,
+                review.Scheduled.NewPrice, review.Scheduled.EffectiveFrom, review.Scheduled.Reason));
+        Assert.Empty((await world.DetailAsync(due)).Charges);
+        var fields = await ChangedFieldsOfAsync(world.Factory, ServiceContractsAuditActions.ServicePriceScheduled, due.ToString());
+        Assert.All(ConfirmedFields, field => Assert.Contains(field, fields));
+    }
+
+    [Fact]
+    public async Task EachItemFailsOnItsOwn()
+    {
+        await using var world = await World.OpenAsync();
+        var (confirmed, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var (stale, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Versión vieja");
+        var (manual, _) = await world.SeedDueAsync(AdjustmentMode.Manual, name: "Manual");
+        var anchor = TenantToday.AddMonths(2);
+        var upcoming = await world.SeedAsync(anchor, anchor, AdjustmentMode.Ipc, anchor.AddMonths(12), name: "Lejano");
+        // Retenido desde hace dos años: su IPC es de otro año.
+        var oldAnchor = TenantToday.AddYears(-2).AddMonths(-1);
+        var otherYear = await world.SeedAsync(
+            oldAnchor, oldAnchor, AdjustmentMode.Ipc, oldAnchor.AddMonths(1), name: "Otro año", held: true);
+        var (wrongPrice, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Precio distinto");
+        var (noReason, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Sin motivo");
+        var (typed, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Precio escrito");
+        var (covered, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Ya confirmado");
+        await world.SeedScheduleAsync(covered, 120000m, null);
+        // Por revisar con un cambio pendiente sobre un período anterior al de la revisión que la corrida aún no generó.
+        var earlierAnchor = TenantToday.AddDays(10).AddMonths(-2);
+        var earlier = await world.SeedAsync(
+            earlierAnchor, earlierAnchor, AdjustmentMode.Ipc, earlierAnchor.AddMonths(2), name: "Con otro pendiente");
+        await world.SeedScheduleAsync(earlier, 120000m, earlierAnchor.AddMonths(1));
+        var unknown = Guid.CreateVersion7();
+
+        async Task<object> ItemAsync(Guid id, decimal expected = 105200m, decimal? newPrice = null, string? reason = null) =>
+            new { serviceId = id, version = await world.VersionAsync(id), expectedPrice = expected, newPrice, reason };
+
+        var results = await world.ConfirmAsync(
+            year,
+            new { serviceId = stale, version = 99L, expectedPrice = 105200m },
+            await ItemAsync(manual),
+            await ItemAsync(confirmed),
+            await ItemAsync(upcoming),
+            await ItemAsync(otherYear),
+            await ItemAsync(wrongPrice, expected: 105000m),
+            await ItemAsync(noReason, newPrice: 106000m, reason: "  "),
+            await ItemAsync(typed, newPrice: 106000m, reason: "Acordado con el cliente"),
+            new { serviceId = unknown, version = 1L, expectedPrice = 105200m },
+            await ItemAsync(covered),
+            await ItemAsync(earlier));
+
+        Assert.Equal(
+            new (Guid, string, string?)[]
+            {
+                (stale, "Failed", "concurrency.conflict"),
+                (manual, "Failed", "billing.price_review.not_ipc"),
+                (confirmed, "Confirmed", null),
+                (upcoming, "Failed", "billing.price_review.not_pending"),
+                (otherYear, "Failed", "billing.price_review.year_mismatch"),
+                (wrongPrice, "Failed", "billing.price_review.price_changed"),
+                (noReason, "Failed", "billing.service.price_reason_required"),
+                (typed, "Confirmed", null),
+                (unknown, "Failed", "billing.service.not_found"),
+                (covered, "Failed", "billing.price_review.not_pending"),
+                (earlier, "Failed", "billing.price_schedule.already_pending"),
+            },
+            results.Select(result => (result.ServiceId, result.Outcome, result.Code)));
+        Assert.All(results, result => Assert.Equal(result.Outcome == "Confirmed", result.Service is not null));
+        var scheduled = results[7].Service!.PriceReview.Scheduled!;
+        Assert.Equal((106000m, "Acordado con el cliente", (decimal?)5.2m), (scheduled.NewPrice, scheduled.Reason, scheduled.IpcRate));
+        // Dos confirmados más los dos sembrados: ningún ítem fallido dejó nada.
+        Assert.Equal(4, await world.CountSchedulesAsync());
+        foreach (var failed in new[] { stale, manual, upcoming, wrongPrice, noReason })
+        {
+            Assert.Equal(1, (await world.StoredAsync(failed)).Version);
+        }
+    }
+
+    private static string RateUrl(int year) => $"{ServiceContractsUrl()}/ipc-rates/{year}";
+
+    private static string ConfirmUrl() => $"{ServiceContractsUrl()}/price-reviews/confirm-ipc";
+
     private static string ServiceUrl(Guid serviceId) => $"{ServiceContractsUrl()}/services/{serviceId}";
 
     private static string Iso(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -622,6 +1024,31 @@ public sealed class ServiceContractsPriceReviewApiTests
         return (await response.Content.ReadFromJsonAsync<ServiceDetailDto>(Ct))!;
     }
 
+    /// <summary>Corre una vez, justo después de la próxima lectura de una tasa.</summary>
+    private sealed class RateInterleave
+    {
+        private Func<Task>? action;
+
+        public void AfterNextFind(Func<Task> next) => action = next;
+
+        public Task RunAsync() => Interlocked.Exchange(ref action, null) is { } next ? next() : Task.CompletedTask;
+    }
+
+    private sealed class InterleavingIpcRateRepository(IIpcRateRepository inner, RateInterleave interleave) : IIpcRateRepository
+    {
+        public void Add(IpcRate rate) => inner.Add(rate);
+
+        public async Task<IpcRate?> FindAsync(Guid tenantId, int year, CancellationToken cancellationToken)
+        {
+            var found = await inner.FindAsync(tenantId, year, cancellationToken);
+            await interleave.RunAsync();
+            return found;
+        }
+
+        public Task<IReadOnlyList<IpcRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            inner.ListAsync(tenantId, cancellationToken);
+    }
+
     /// <summary>Base, fábrica, un cliente con perfil y el encargado <c>Ana Admin</c>.</summary>
     private sealed class World : IAsyncDisposable
     {
@@ -644,9 +1071,11 @@ public sealed class ServiceContractsPriceReviewApiTests
 
         public HttpClient Manager { get; }
 
-        public static async Task<World> OpenAsync()
+        public static async Task<World> OpenAsync(Action<IServiceCollection>? configureServices = null)
         {
-            var (database, factory) = await ServiceContractsApiHarness.OpenAsync();
+            var database = await StartDatabaseAsync();
+            var factory = new QepApiFactory(database.GetConnectionString(), configureServices);
+            await SeedTenantAsync(factory);
             var admin = await SeedMemberAsync(factory, "ana@example.com", "Ana Admin", "admin");
             var customer = await SeedCustomerAsync(factory, Tenant, "Panadería La Esquina", "+573001234567", "pan@example.com");
             var world = new World(database, factory, customer, admin);
@@ -785,6 +1214,46 @@ public sealed class ServiceContractsPriceReviewApiTests
             Manager.SendAsync(WithVersion(HttpMethod.Post, $"{ServiceUrl(serviceId)}/keep-price", version), Ct);
 
         public Task<int> CountSchedulesAsync() => WithDbAsync(db => db.ServicePriceSchedules.CountAsync(Ct));
+
+        public async Task<PriceReviewPageDto> ReviewsAsync(string query = "") =>
+            (await Manager.GetFromJsonAsync<PriceReviewPageDto>($"{ServiceContractsUrl()}/price-reviews{query}", Ct))!;
+
+        public Task<HttpResponseMessage> PutRateAsync(int year, decimal rate, decimal? expectedRate) =>
+            Manager.PutAsJsonAsync(RateUrl(year), new { rate, expectedRate }, Ct);
+
+        /// <summary>La primera tasa de un año.</summary>
+        public async Task SaveRateAsync(int year, decimal rate)
+        {
+            var response = await PutRateAsync(year, rate, null);
+            Assert.True(response.IsSuccessStatusCode, await BodyAsync(response));
+        }
+
+        public Task<List<IpcRate>> RatesAsync() => WithDbAsync(db => db.IpcRates.AsNoTracking().ToListAsync(Ct));
+
+        /// <summary>La escritura de «otra persona», directa en la base: crea la tasa o la cambia subiendo su versión.</summary>
+        public Task<bool> WriteRateBehindTheBackAsync(int year, decimal rate) =>
+            WithDbAsync(async db =>
+            {
+                var stored = await db.IpcRates.SingleOrDefaultAsync(item => item.Year == year, Ct);
+                if (stored is null)
+                {
+                    db.IpcRates.Add(IpcRate.Create(Tenant, year, rate, null, DateTimeOffset.UtcNow));
+                }
+                else
+                {
+                    stored.Change(rate, null, DateTimeOffset.UtcNow);
+                }
+
+                await db.SaveChangesAsync(Ct);
+                return true;
+            });
+
+        public async Task<IReadOnlyList<ConfirmIpcResultDto>> ConfirmAsync(int year, params object[] items)
+        {
+            var response = await Manager.PostAsJsonAsync(ConfirmUrl(), new { year, items }, Ct);
+            Assert.True(response.IsSuccessStatusCode, await BodyAsync(response));
+            return (await response.Content.ReadFromJsonAsync<ConfirmIpcResponseDto>(Ct))!.Results;
+        }
 
         public Task<ServiceContract> StoredAsync(Guid serviceId) =>
             WithDbAsync(async db =>

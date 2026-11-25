@@ -115,6 +115,14 @@ public static class ServiceContractsMapping
         change.OccurredAt,
         change.Origin.ToString());
 
+    public static IpcRateDto ToIpcRateDto(IpcRate rate, bool inUse, MemberRefDto? updatedBy) => new(
+        rate.Year,
+        rate.Rate,
+        inUse,
+        updatedBy,
+        rate.UpdatedAt,
+        rate.Version);
+
     public static ProfileDto ToProfileDto(CustomerBillingProfile profile, MemberRefDto assignee) => new(
         profile.CustomerId,
         profile.Channel.ToString(),

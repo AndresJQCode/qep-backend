@@ -27,6 +27,19 @@ public interface IServiceContractRepository
     /// </summary>
     Task<IReadOnlyList<ServiceContract>> ListAllAsync(ServiceContractQuery query, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// De <paramref name="ids"/>, los del tenant que cumplen el encargado (del perfil del cliente) y la búsqueda (nombre del
+    /// servicio, o cliente entre <paramref name="searchCustomerIds"/>), con la misma regla de la bandeja de cobros. Un filtro nulo
+    /// no filtra. La lista de revisiones se calcula en memoria y le pregunta a la base sólo esto.
+    /// </summary>
+    Task<IReadOnlySet<ServiceContractId>> FilterIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ServiceContractId> ids,
+        Guid? assigneeMemberId,
+        string? searchTerm,
+        IReadOnlyCollection<Guid>? searchCustomerIds,
+        CancellationToken cancellationToken);
+
     /// <summary>Los servicios <c>Active</c> del tenant: sobre ellos corre la generación de cobros del worker (§3.3, paso 3).</summary>
     Task<IReadOnlyList<ServiceContract>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 

@@ -96,6 +96,34 @@ public static class ServiceContractsEndpoints
 
         WithContractActionResponses(group.MapPost("/services/{serviceId:guid}/keep-price", KeepPriceAsync));
 
+        // Revisiones, IPC del tenant y confirmación en lote (spec 2026-11-24 §8). Sin If-Match: la tasa usa expectedRate y el
+        // lote lleva la versión de cada contrato.
+        group.MapGet("/price-reviews", ListPriceReviewsAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Read)
+            .Produces<PriceReviewPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/price-reviews/confirm-ipc", ConfirmIpcReviewsAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Manage)
+            .Accepts<ConfirmIpcRequest>("application/json")
+            .Produces<ConfirmIpcResponseDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/ipc-rates", ListIpcRatesAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Read)
+            .Produces<IpcRateListDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/ipc-rates/{year:int}", SaveIpcRateAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Manage)
+            .Accepts<SaveIpcRateRequest>("application/json")
+            .Produces<IpcRateDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Cobros (spec §4). La lista y el detalle leen; marcar pagado y corregir el pago gestionan. Sin If-Match: pagar dos
         // veces es 422 not_pending, no 412.
         group.MapGet("/charges", ListChargesAsync)
@@ -351,6 +379,46 @@ public static class ServiceContractsEndpoints
 
         return Results.NoContent();
     }
+
+    private static async Task<IResult> ListPriceReviewsAsync(
+        Guid tenantId,
+        string? state,
+        string? assignee,
+        string? search,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int page = 1,
+        int pageSize = ListPriceReviewsQuery.DefaultPageSize) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListPriceReviewsQuery(
+                tenantId,
+                string.IsNullOrWhiteSpace(state) ? ListPriceReviewsQuery.DefaultState : state,
+                string.Equals(assignee?.Trim(), "me", StringComparison.OrdinalIgnoreCase),
+                search,
+                page,
+                pageSize),
+            cancellationToken));
+
+    private static async Task<IResult> ConfirmIpcReviewsAsync(
+        Guid tenantId,
+        ConfirmIpcRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(ConfirmIpcReviewsCommand.From(tenantId, request), cancellationToken));
+
+    private static async Task<IResult> ListIpcRatesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListIpcRatesQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> SaveIpcRateAsync(
+        Guid tenantId,
+        int year,
+        SaveIpcRateRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(SaveIpcRateCommand.From(tenantId, year, request), cancellationToken));
 
     private static RouteHandlerBuilder WithContractActionResponses(RouteHandlerBuilder route) =>
         route.RequireAuthorization(ServiceContractsPermissions.Manage)
