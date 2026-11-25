@@ -99,6 +99,9 @@ public sealed class SiigoCustomerMapperTests
 
         Assert.Null(SiigoCustomerMapper.Map(party)!.Phone); // «57300…» son 12 dígitos en el número
         Assert.Null(SiigoCustomerMapper.Map(party with { Phone = null })!.Phone);
+        Assert.Equal(
+            new SiigoPhone("57", "3001234567"),
+            SiigoCustomerMapper.Map(party with { Phone = new SiigoPhone("57", "300 123 4567") })!.Phone);
     }
 
     [Fact]

@@ -4,6 +4,7 @@ paths:
   - "tests/Modules/Siigo/**"
   - "src/Bootstrapper/SiigoOpenInvoiceCheck.cs"
   - "src/Bootstrapper/SiigoInvoiceWhatsApp.cs"
+  - "src/Bootstrapper/SiigoOrderSource.cs"
 ---
 
 # Siigo (facturación de pedidos)
