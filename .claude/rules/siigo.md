@@ -99,7 +99,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `SiigoBatchItemInvoker` mira la fila `Order` vigente. `Unknown`, por confirmar o en envío (reclamo sin vencer: el `POST` síncrono en
   camino o uno cortado hace menos de 8 minutos) → `ToConfirm` con esa fila y el código del fallo. Ya facturada (`Created`, `Stamped`,
   `StampRejected`) → `Invoiced` con su número e id, y `orderMarkFailed` salvo que una lectura confirme la marca (`SiigoOrderMark`, como
-  la recuperación de una tanda; decidido el 2026-11-25).
+  la recuperación de una tanda; decidido el 2026-11-25). **Salvo que la de flete siga `Pending`:** el reenvío era para mandarla, así que
+  el ítem sale `Failed` con el código del fallo; «facturado» la dejaría sin mandar sin que nadie lo vea.
 - **El `errorCode` de un ítem `ToConfirm` depende de cuál se escribió de último** (`SiigoInvoiceBatchItem.Effective`, decidido el
   2026-11-25): mientras la fila no cambie desde que el ítem se cerró (`updated_at` de la fila ≤ el del ítem) ves el del ítem, que dice
   por qué no salió el reenvío; si la fila cambia después (otro reenvío, vencimiento, resolución), manda la fila. Si el que manda viene

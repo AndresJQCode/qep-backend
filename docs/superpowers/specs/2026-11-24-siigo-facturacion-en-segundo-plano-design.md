@@ -118,7 +118,9 @@ pedido. **Un reenvío que no se puede hacer** (conexión no disponible, permiso 
 `Failed` si el pedido ya tiene una factura `Order` vigente `Unknown`, por confirmar o en envío (`IsBeingSent`): termina `ToConfirm` con
 el `invoice_id` de esa fila y el código del fallo, porque la factura puede existir. Si esa fila ya existe en Siigo (`Created`, `Stamped`,
 `StampRejected`) termina `Invoiced` con su número y su id, y `orderMarkFailed` salvo que una lectura confirme la marca (la misma regla
-de la recuperación, §4). Con una fila que nunca salió y nadie está mandando queda `Failed`, como siempre (decidido el 2026-11-25).
+de la recuperación, §4). La excepción es un pedido ya facturado con la de flete todavía `Pending`: el reenvío era para mandarla, así que
+el ítem queda `Failed` con el código del fallo, porque `Invoiced` la dejaría sin mandar sin que nadie lo vea. Con una fila del pedido
+que nunca salió y nadie está mandando queda `Failed`, como siempre (decidido el 2026-11-25).
 `SiigoInvoiceBatchItem` suma `MarkToConfirm(invoiceId, errorCode, now)` y guarda `invoice_id` también en `MarkInvoiced` y `MarkFailed`
 cuando hay fila.
 

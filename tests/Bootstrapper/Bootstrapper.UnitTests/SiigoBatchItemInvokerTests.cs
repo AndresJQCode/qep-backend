@@ -10,7 +10,7 @@ namespace Bootstrapper.UnitTests;
 
 /// <summary>Un reenvío que no se puede hacer (conexión, permiso) no deja <c>Failed</c> un pedido cuya factura existe o puede existir:
 /// por confirmar o en camino queda por confirmar, enlazado a su fila, y ya creada queda facturado. Con una fila que nunca salió y nadie
-/// está mandando, o sin fila, sigue fallido.</summary>
+/// está mandando, sin fila, o con la del pedido creada y la de flete todavía <c>Pending</c>, sigue fallido.</summary>
 public sealed class SiigoBatchItemInvokerTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
@@ -86,7 +86,8 @@ public sealed class SiigoBatchItemInvokerTests
             outcome);
     }
 
-    // La factura ya existe: lo que no se pudo hacer es volver a marcar el pedido. Sin una lectura que confirme la marca, se avisa.
+    // La factura ya existe y no queda ninguna Pending por mandar: el reenvío sólo volvería a marcar el pedido y no usa la conexión, así
+    // que lo que lo frena antes es que quien pidió la tanda ya no pueda facturar. Sin una lectura que confirme la marca, se avisa.
     [Theory]
     [InlineData(SiigoInvoiceStatus.Created, true, false)]
     [InlineData(SiigoInvoiceStatus.Created, false, true)]
@@ -97,7 +98,7 @@ public sealed class SiigoBatchItemInvokerTests
         var row = Invoiced(status);
         var orders = new OrderMarks(marked);
 
-        var outcome = await InvokeAsync(permitted: true, SiigoErrorCodes.ConnectionUnavailable, orders, row);
+        var outcome = await InvokeAsync(permitted: false, conflict: null, orders, row);
 
         Assert.Equal(status, row.Status);
         Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", row.Id, orderMarkFailed), outcome);
@@ -105,23 +106,75 @@ public sealed class SiigoBatchItemInvokerTests
     }
 
     [Fact]
-    public async Task ALostPermissionOverAnInvoicedOrderIsInvoiced()
-    {
-        var row = Invoiced(SiigoInvoiceStatus.Created);
-
-        var outcome = await InvokeAsync(permitted: false, conflict: null, row);
-
-        Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", row.Id), outcome);
-    }
-
-    [Fact]
     public async Task AnInvoicedOrderWhoseMarkCannotBeReadSaysTheMarkFailed()
     {
         var row = Invoiced(SiigoInvoiceStatus.Created);
 
-        var outcome = await InvokeAsync(permitted: true, SiigoErrorCodes.ConnectionUnavailable, new OrderMarks(null), row);
+        var outcome = await InvokeAsync(permitted: false, conflict: null, new OrderMarks(null), row);
 
         Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", row.Id, OrderMarkFailed: true), outcome);
+    }
+
+    // Una de flete que ya no se reenvía (creada, rechazada, descartada o sin resolver) no cambia lo que pasó con el pedido.
+    [Theory]
+    [InlineData(SiigoInvoiceStatus.Created)]
+    [InlineData(SiigoInvoiceStatus.Rejected)]
+    [InlineData(SiigoInvoiceStatus.Failed)]
+    [InlineData(SiigoInvoiceStatus.Unknown)]
+    public async Task AFreightThatIsNotPendingLeavesTheInvoicedOrderInvoiced(SiigoInvoiceStatus freightStatus)
+    {
+        var order = Invoiced(SiigoInvoiceStatus.Created);
+        var freight = Freight(freightStatus);
+
+        var outcome = await InvokeAsync(permitted: false, conflict: null, order, freight);
+
+        Assert.Equal(freightStatus, freight.Status);
+        Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", order.Id), outcome);
+    }
+
+    // La de flete sigue Pending: el reenvío era para mandarla y no se pudo. Decir «facturado» la dejaría sin mandar sin que nadie lo vea.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task APendingFreightThatCannotBeSentKeepsTheFailure(bool permitted, bool unanswered)
+    {
+        var order = Invoiced(SiigoInvoiceStatus.Created);
+        var freight = Pending(Now.AddMinutes(-20), SiigoInvoiceKind.Freight);
+        if (unanswered)
+        {
+            freight.BeginSend(Now.AddMinutes(-20));
+            freight.MarkUnanswered(SiigoErrorCodes.InvoiceTimeout, null, Now.AddMinutes(-20));
+        }
+
+        var outcome = await InvokeAsync(permitted, SiigoErrorCodes.ConnectionUnavailable, order, freight);
+
+        Assert.Equal(
+            new SiigoBatchItemOutcome.Failed(permitted ? SiigoErrorCodes.ConnectionUnavailable : SiigoErrorCodes.InvoiceBatchForbidden),
+            outcome);
+    }
+
+    private static SiigoInvoice Freight(SiigoInvoiceStatus status)
+    {
+        var row = Pending(status == SiigoInvoiceStatus.Unknown ? Now.AddHours(-25) : Now.AddMinutes(-20), SiigoInvoiceKind.Freight);
+        switch (status)
+        {
+            case SiigoInvoiceStatus.Created:
+                row.MarkCreated("id-2", "FV-1-10", 10m, null, Now.AddMinutes(-20));
+                break;
+            case SiigoInvoiceStatus.Rejected:
+                row.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now.AddMinutes(-20));
+                break;
+            case SiigoInvoiceStatus.Failed:
+                row.MarkFailed("siigo.invoice.order_rejected", "Discarded.", Now.AddMinutes(-20));
+                break;
+            default:
+                row.ExpireIfStale(Now);
+                break;
+        }
+
+        return row;
     }
 
     private static SiigoInvoice Invoiced(SiigoInvoiceStatus status)
@@ -137,10 +190,9 @@ public sealed class SiigoBatchItemInvokerTests
         return row;
     }
 
-    private static SiigoInvoice Pending(DateTimeOffset createdAt) =>
+    private static SiigoInvoice Pending(DateTimeOffset createdAt, SiigoInvoiceKind kind = SiigoInvoiceKind.Order) =>
         SiigoInvoice.PendingFor(
-            Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), OrderId, SiigoInvoiceKind.Order, """{"a":1}""", 7,
-            Guid.CreateVersion7(), createdAt);
+            Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), OrderId, kind, """{"a":1}""", 7, Guid.CreateVersion7(), createdAt);
 
     private static SiigoInvoice AwaitingConfirmation()
     {

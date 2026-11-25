@@ -19,7 +19,8 @@ namespace Bootstrapper;
 /// permiso, el pedido falla con <see cref="SiigoErrorCodes.InvoiceBatchForbidden"/> y no se llama a Siigo. Todo lo que le pasa al pedido sale
 /// como resultado: ni un error del pedido ni de Siigo frena a los demás de la tanda. Hay dos excepciones a «falla», porque que no se
 /// pueda hacer el reenvío no dice que la factura no exista: un pedido cuya factura está por confirmar, <c>Unknown</c> o en camino sale por
-/// confirmar con ese motivo, y uno cuya factura ya existe en Siigo sale facturado, avisando si el pedido no confirma su marca.
+/// confirmar con ese motivo, y uno cuya factura ya existe en Siigo, sin una de flete <c>Pending</c> por mandar, sale facturado, avisando
+/// si el pedido no confirma su marca.
 /// </summary>
 internal sealed partial class SiigoBatchItemInvoker(
     IAuthorizationService authorization, IServiceScopeFactory scopeFactory, ILogger<SiigoBatchItemInvoker> logger) : ISiigoBatchItemInvoker
@@ -106,8 +107,8 @@ internal sealed partial class SiigoBatchItemInvoker(
         }
     }
 
-    // La fila viva del pedido, leída aparte y sin escribir. Facturada: lo que no se pudo fue lo que venía después (volver a marcar el
-    // pedido), y se avisa como en la recuperación de una tanda. Abierta y en camino, o sin certeza: la decide una persona. Una que nunca
+    // La fila viva del pedido, leída aparte y sin escribir. Facturada y sin flete por mandar: lo que no se pudo fue volver a marcar el
+    // pedido, y se avisa como en la recuperación de una tanda. Abierta y en camino, o sin certeza: la decide una persona. Una que nunca
     // salió y nadie está mandando deja el fallo como está.
     private async Task<SiigoBatchItemOutcome> KeepWhatMayExistAsync(
         Guid tenantId, Guid orderId, SiigoBatchItemOutcome.Failed failed, CancellationToken cancellationToken)
@@ -125,6 +126,13 @@ internal sealed partial class SiigoBatchItemInvoker(
 
         if (!row.IsOpen)
         {
+            // Con la de flete todavía Pending, el reenvío era para mandarla y no se pudo: «facturado» la dejaría sin mandar a la vista de
+            // nadie. Sólo las Pending se reenvían; en cualquier otro estado no cambia lo que pasó con el pedido.
+            if (rows.Any(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
+            {
+                return failed;
+            }
+
             var marked = row.Number is { } number
                 && await SiigoOrderMark.IsConfirmedAsync(
                     scope.ServiceProvider.GetRequiredService<ISiigoOrderSource>(),
