@@ -302,6 +302,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:65 — reenvía al singleton MessagingPresence (presencia apagada)"),
         new("Bootstrapper.Realtime.IRealtimePresence", "Bootstrapper.Realtime.LocalRealtimePresence",
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:157 — reenvía al singleton LocalRealtimePresence (presencia apagada)"),
+        new("Bootstrapper.Realtime.IAppMemberPresence", "Bootstrapper.Realtime.LocalAppMemberPresence",
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:160 — reenvía al singleton LocalAppMemberPresence (presencia apagada), sin estado propio: lee AppHubConnections"),
         new("Modules.Messaging.Infrastructure.CustomerDeletion.ICustomerMediaPurgeProcessor",
             "Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeProcessor",
             "Modules/Messaging/Modules.Messaging.Infrastructure/MessagingInfrastructureExtensions.cs:147 — reenvía al singleton concreto"),

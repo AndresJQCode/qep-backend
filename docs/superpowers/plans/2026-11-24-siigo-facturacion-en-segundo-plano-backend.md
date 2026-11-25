@@ -261,6 +261,11 @@
   - `ARecoveredItemWhoseInvoiceWasCreatedIsInvoiced`: igual con la fila `Created` → `Invoiced` con su número.
   - `AShutdownDuringTheSendClosesTheItemWithoutWaitingForTheLease`: `world.Siigo.OnRequest("/v1/invoices", _ => { cts.Cancel(); throw new OperationCanceledException(cts.Token); })`; `await Assert.ThrowsAnyAsync<OperationCanceledException>(() => worker.DrainAsync(cts.Token))`; en la base el ítem queda `ToConfirm` con `invoice_id` y `lease_until` nulo, la tanda con `finished_at`; el `GET` muestra el ítem `Sending` (la fila sigue en envío) y, con `UPDATE siigo.invoices SET sending_since = now() - interval '9 minutes'`, `ToConfirm`.
   - `AFirstAttemptDataRejectionFailsWithTheInvoiceId`: amplía `ASiigoRejectionFailsOnlyThatOrderWithItsCode` para exigir `invoiceId`.
+  - `ABatchOfAnOrderWhoseInvoiceWasNotMarkedMarksItWithoutCallingSiigo` (H-1 del spec del frontend, aprobada 2026-11-24; reemplaza a
+    «Generar» sobre la ruta síncrona, que se borra en contract): fila `Created` con el pedido sin marcar (la marca falló en el primer
+    envío por una marca manual puesta en medio, como en `AnOrderMarkedByHandAfterTheSendReturnsTheCreatedRowWithAWarningAndNeverA422`,
+    y después se quita) → tanda de ese pedido (202, no 422) → ítem `Invoiced` sin `orderMarkFailed`, pedido marcado con el número y una
+    sola llamada a `/v1/invoices` en toda la prueba. Si ya pasa en RED es la garantía que faltaba: déjala y anótalo.
 - [ ] **Step 2: RED** — `dotnet build tests/Modules/Siigo/Modules.Siigo.IntegrationTests` y corrida filtrada en rojo (los asserts de `ToConfirm`). Pega la salida.
 - [ ] **Step 3: Implementar** lo de «Interfaces» y la viñeta de `siigo.md`.
 - [ ] **Step 4: GREEN** — `$env:Seed__Enabled = "false"` y `dotnet test tests/Modules/Siigo/Modules.Siigo.IntegrationTests --filter "FullyQualifiedName~SiigoInvoiceBatchApiTests"` (en este punto, la clase completa ya es el filtro útil). Además `dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --filter "FullyQualifiedName~Siigo"` y `dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~CompositionRoot|FullyQualifiedName~Siigo"`.
