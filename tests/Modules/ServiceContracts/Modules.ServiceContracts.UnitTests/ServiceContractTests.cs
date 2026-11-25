@@ -7,6 +7,8 @@ public sealed class ServiceContractTests
 {
     private static readonly DateTimeOffset Now = new(2026, 3, 10, 12, 0, 0, TimeSpan.Zero);
 
+    private static readonly DateOnly Today = new(2026, 3, 10);
+
     private static ServiceContract NewService(BillingCycle cycle = BillingCycle.Monthly, string first = "2026-01-10") =>
         ServiceContract.Create(
             ServiceContractId.New(), Guid.NewGuid(), Guid.NewGuid(), "Hosting", 100m, "COP",
@@ -24,7 +26,7 @@ public sealed class ServiceContractTests
         service.Update("Hosting 2", null, 120m, "COP", "Ajuste anual", null, Now.AddHours(1));
         Assert.Equal(Now, service.StatusChangedAt);
 
-        service.Pause(Now.AddDays(1));
+        service.Pause(Today.AddDays(1), Now.AddDays(1));
         Assert.Equal(Now.AddDays(1), service.StatusChangedAt);
 
         service.Resume(new DateOnly(2026, 3, 12), Now.AddDays(2));
@@ -87,9 +89,9 @@ public sealed class ServiceContractTests
         var service = NewService();
         AssertCode(ServiceContractsErrorCodes.ServiceInvalidTransition, () => service.Resume(new DateOnly(2026, 3, 10), Now));
 
-        service.Pause(Now);
+        service.Pause(Today, Now);
         Assert.Equal(ServiceContractStatus.Paused, service.Status);
-        AssertCode(ServiceContractsErrorCodes.ServiceInvalidTransition, () => service.Pause(Now));
+        AssertCode(ServiceContractsErrorCodes.ServiceInvalidTransition, () => service.Pause(Today, Now));
 
         service.Resume(new DateOnly(2026, 3, 10), Now);
         Assert.Equal(ServiceContractStatus.Active, service.Status);
@@ -103,12 +105,12 @@ public sealed class ServiceContractTests
         Assert.Equal(ServiceContractStatus.Cancelled, active.Status);
 
         var paused = NewService();
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         paused.Cancel(Now);
         Assert.Equal(ServiceContractStatus.Cancelled, paused.Status);
 
         AssertCode(ServiceContractsErrorCodes.ServiceInvalidTransition, () => active.Resume(new DateOnly(2026, 3, 10), Now));
-        AssertCode(ServiceContractsErrorCodes.ServiceInvalidTransition, () => active.Pause(Now));
+        AssertCode(ServiceContractsErrorCodes.ServiceInvalidTransition, () => active.Pause(Today, Now));
         AssertCode(ServiceContractsErrorCodes.ServiceInvalidTransition, () => active.Cancel(Now));
     }
 
@@ -144,7 +146,7 @@ public sealed class ServiceContractTests
     public void ResumeRecordsTheReactivationDate()
     {
         var service = NewService();
-        service.Pause(Now);
+        service.Pause(Today, Now);
 
         service.Resume(new DateOnly(2026, 5, 3), Now);
 
@@ -169,14 +171,14 @@ public sealed class ServiceContractTests
     {
         var service = NewService();
         service.MarkGenerated(new DateOnly(2026, 2, 10));
-        service.Pause(Now);
+        service.Pause(Today, Now);
         service.Resume(new DateOnly(2026, 5, 3), Now);
 
         Assert.Equal(new DateOnly(2026, 5, 10), service.NextPeriodToGenerate());
 
         var onTheAnchor = NewService();
         onTheAnchor.MarkGenerated(new DateOnly(2026, 2, 10));
-        onTheAnchor.Pause(Now);
+        onTheAnchor.Pause(Today, Now);
         onTheAnchor.Resume(new DateOnly(2026, 5, 10), Now);
 
         Assert.Equal(new DateOnly(2026, 5, 10), onTheAnchor.NextPeriodToGenerate());
@@ -187,7 +189,7 @@ public sealed class ServiceContractTests
     {
         var service = NewService();
         service.MarkGenerated(new DateOnly(2026, 2, 10));
-        service.Pause(Now);
+        service.Pause(Today, Now);
         service.Resume(new DateOnly(2026, 2, 20), Now);
 
         Assert.Equal(new DateOnly(2026, 3, 10), service.NextPeriodToGenerate());
@@ -197,7 +199,7 @@ public sealed class ServiceContractTests
     public void NextPeriodToGenerateIsNullUnlessActive()
     {
         var paused = NewService();
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         Assert.Null(paused.NextPeriodToGenerate());
 
         var cancelled = NewService();
@@ -283,7 +285,7 @@ public sealed class ServiceContractTests
     {
         var paused = NewService();
         paused.MarkGenerated(new DateOnly(2026, 3, 10));
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         var version = paused.Version;
 
         AssertCode(
@@ -307,7 +309,7 @@ public sealed class ServiceContractTests
         var paused = NewService();
         paused.Hold(new DateOnly(2026, 3, 10));
         Assert.Equal(new DateOnly(2026, 3, 10), paused.HeldSince);
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         Assert.Null(paused.HeldSince);
 
         var cancelled = NewService();
@@ -332,8 +334,46 @@ public sealed class ServiceContractTests
             [new DateOnly(2026, 4, 10), new DateOnly(2026, 5, 10), new DateOnly(2026, 6, 10)],
             ipc.UpcomingPeriods());
 
-        ipc.Pause(Now);
+        ipc.Pause(Today, Now);
         Assert.Empty(ipc.UpcomingPeriods());
+    }
+
+    [Fact]
+    public void UpcomingPeriodsSkipThePauseButNotTheCarriedPeriods()
+    {
+        var service = PausedWhileHeld();
+        service.UpdatePriceReview(AdjustmentMode.Manual, 0m, new DateOnly(2027, 1, 10), Now);
+        service.Resume(new DateOnly(2027, 4, 20), Now);
+
+        Assert.Equal(
+            [
+                new DateOnly(2027, 1, 10), new DateOnly(2027, 2, 10), new DateOnly(2027, 5, 10), new DateOnly(2027, 6, 10),
+                new DateOnly(2027, 7, 10), new DateOnly(2027, 8, 10), new DateOnly(2027, 9, 10), new DateOnly(2027, 10, 10),
+                new DateOnly(2027, 11, 10), new DateOnly(2027, 12, 10), new DateOnly(2028, 1, 10), new DateOnly(2028, 2, 10),
+            ],
+            service.UpcomingPeriods());
+    }
+
+    [Fact]
+    public void AScheduleAppliesAlongTheCarriedPeriods()
+    {
+        var service = PausedWhileHeld();
+        service.Resume(new DateOnly(2027, 4, 20), Now);
+
+        Assert.Equal(new DateOnly(2027, 2, 10), PriceReview.AppliesTo(service, new DateOnly(2027, 2, 1)));
+        // Marzo y abril cayeron en la pausa.
+        Assert.Equal(new DateOnly(2027, 5, 10), PriceReview.AppliesTo(service, new DateOnly(2027, 3, 1)));
+    }
+
+    /// <summary>Un contrato <c>Ipc</c> retenido en enero de 2027 y pausado el 5 de febrero: arrastra enero y febrero.</summary>
+    private static ServiceContract PausedWhileHeld()
+    {
+        var service = NewService();
+        service.MarkGenerated(new DateOnly(2026, 12, 10));
+        service.InitializePriceReview(AdjustmentMode.Ipc, 0m, new DateOnly(2027, 1, 10));
+        service.Hold(new DateOnly(2027, 1, 5));
+        service.Pause(new DateOnly(2027, 2, 5), Now);
+        return service;
     }
 
     // La pantalla de un contrato pausado y la invariante del reajuste necesitan el período aunque no se vaya a generar.
@@ -342,7 +382,7 @@ public sealed class ServiceContractTests
     {
         var service = NewService();
         service.MarkGenerated(new DateOnly(2026, 3, 10));
-        service.Pause(Now);
+        service.Pause(Today, Now);
 
         Assert.Null(service.NextPeriodToGenerate());
         Assert.Equal(new DateOnly(2026, 4, 10), service.NextUngeneratedPeriod());
@@ -363,7 +403,7 @@ public sealed class ServiceContractTests
         Assert.Equal(version + 1, service.Version);
         Assert.Equal(Now.AddDays(1), service.UpdatedAt);
 
-        service.Pause(Now);
+        service.Pause(Today, Now);
         AssertCode(ServiceContractsErrorCodes.ServiceNotActive, () => service.KeepPrice(Now));
         service.Cancel(Now);
         AssertCode(ServiceContractsErrorCodes.ServiceCancelled, () => service.KeepPrice(Now));

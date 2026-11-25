@@ -43,7 +43,7 @@ Sin discrepancias entre el spec y el frontend publicado: rutas, cuerpos, campos,
 
 1. **Retención que dura varios períodos:** al liberar, todos los períodos liberados nacen juntos con vencimiento `max(period, today + 5)` (pueden coincidir), los siguientes conservan su ancla y ninguno se duplica. Pruebas en la Tarea 2 (unitaria) y la Tarea 4 (corrida real, dos cobros con el mismo `due_date`).
 2. **La corrida diaria y una acción del usuario liberan el mismo contrato a la vez:** uno gana, el otro recibe 412 (acción) o relee (corrida); nunca un cobro duplicado ni un programado `Applied` sin su cobro. Pruebas en las Tareas 3 (traducción) y 4 (relectura por el índice nuevo).
-3. **Pausa larga sobre un contrato retenido:** pausar borra la retención; al reanudar hay **una** revisión, en el primer período generado después, y nunca se componen IPC de varios años. Prueba en la Tarea 2.
+3. **Pausa sobre un contrato retenido:** pausar guarda en `carried_held_periods` los períodos con `p − 5 <=` día de la pausa y borra `held_since`; reanudar los deja retenidos (`held_since` = día de la reanudación) y al liberarlos nacen con `max(period, today + 5)`; lo que cayó en la pausa nunca se cobra; varias pausas acumulan huecos sin duplicar un período; sin retención al pausar, una sola revisión después y nunca se componen IPC de varios años en una revisión. Pruebas en las Tareas 2 y 10.
 4. **Dos personas guardan la tasa IPC del mismo año:** nunca gana la última en silencio (insert simultáneo → `concurrent_first_write`; update simultáneo → `rate_changed`, R-4). Prueba en la Tarea 7.
 5. **Datos existentes al migrar:** ningún contrato existente queda retenido ni sin cobrar (`Manual`), `next_review_date` cae en un aniversario `>= hoy UTC + 15`, un ancla 29 feb da 28 feb, y `period_date = due_date` en todo cobro. Prueba en la Tarea 3.
 
@@ -326,6 +326,63 @@ Sin discrepancias entre el spec y el frontend publicado: rutas, cuerpos, campos,
 - [ ] **Step 6: Commit** — `git commit -m "feat(notifications): add the price reviews bell and digest sections"`.
 
 **Revisión del Bloque 3** (una), y luego la revisión fuerte de toda la rama.
+
+---
+
+### Task 10: Periods held before a pause survive the resume
+
+Runs after Task 7 is committed (it touches `ServiceContractsPriceReviewApiTests.cs`). Independent of Tasks 8 and 9.
+Owner decision (2026-11-25, binding): resuming keeps the periods already held before the pause; they stay held until a price is decided, then bill as released held charges. Periods that fell during the pause are never billed.
+
+**Files:**
+- Modify (Domain): `src/Modules/ServiceContracts/Modules.ServiceContracts.Domain/ServiceContract.cs`, `PriceReview.cs`
+- Modify (Application): `.../Modules.ServiceContracts.Application/ChangeServiceStatus.cs`
+- Modify (Infrastructure): `Persistence/ServiceContractsDbContext.cs`; **edit** (do not add) `Persistence/Migrations/20261125131151_AddPriceAdjustment.cs`, its `.Designer.cs` and `ServiceContractsDbContextModelSnapshot.cs`
+- Modify (callers of `Pause`, mechanical): unit `ServiceContractTests`, `ChargeGeneratorTests`, `ChargeGeneratorReviewTests`, `PriceReviewTests`, `ServicePriceScheduleTests`; integration `ServiceContractsPersistenceTests`, `ServiceContractsRepositoryTests`, `ServiceContractsReminderProcessorTests`, `ServiceContractsPriceReviewApiTests`
+- Test: `ChargeGeneratorReviewTests`, `ServiceContractTests`, `ServiceContractsPersistenceTests`, `ServiceContractsPriceAdjustmentMigrationTests`, `ServiceContractsPriceReviewApiTests`
+- Docs: the spec (text below) and the plan (append this task; replace Review Focus 3)
+
+**Interfaces** (consumes Tasks 1-6: `ChargeGenerator.Generate`, `PriceReviewGeneration.Run`, `IServicePriceScheduleRepository.FindPendingAsync`)
+
+`ServiceContract`:
+- `private readonly List<DateOnly> _carriedHeldPeriods = [];` and `public IReadOnlyList<DateOnly> CarriedHeldPeriods => _carriedHeldPeriods;` (ascending, every item `> LastGeneratedPeriodDate`).
+- `public void Pause(DateOnly today, DateTimeOffset now)` (**signature change**). If `HeldSince is not null`: walk `p = NextUngeneratedPeriod()` while `p <= today.AddDays(ChargeGenerator.WindowDays)`, add `p` if missing, `p = PeriodAfter(p)`. Then `HeldSince = null`, as today.
+- `Resume(DateOnly today, DateTimeOffset now)` (same signature): add `if (_carriedHeldPeriods.Count > 0) HeldSince = today;`.
+- `Cancel`: also `_carriedHeldPeriods.Clear()`.
+- `public DateOnly NextUngeneratedPeriod()`: `LastGeneratedPeriodDate is null ? FirstDueDate : PeriodAfter(last)`.
+- `private DateOnly PeriodAfter(DateOnly period)`: the first carried period `> period` if any; otherwise `ReactivatedOn > period ? BillingCycles.FirstDueDateOnOrAfter(FirstDueDate, Cycle, ReactivatedOn) : BillingCycles.NextDueDate(FirstDueDate, Cycle, period)`. With an empty list this is the current arithmetic.
+- `public DateOnly FirstUngeneratedPeriodOnOrAfter(DateOnly date)`: the first carried period `>= date`; otherwise `start = carried.Count > 0 ? PeriodAfter(carried[^1]) : NextUngeneratedPeriod()` and `start >= date ? start : BillingCycles.FirstDueDateOnOrAfter(FirstDueDate, Cycle, date)`.
+- `MarkGenerated(DateOnly periodDate)`: `_carriedHeldPeriods.Remove(periodDate); LastGeneratedPeriodDate = periodDate;`.
+- `UpcomingPeriods()`: steps with `PeriodAfter`, not `BillingCycles.NextDueDate`.
+
+`PriceReview.AppliesTo` => `service.FirstUngeneratedPeriodOnOrAfter(effectiveFrom)`. `Covers`, `EnsureNotAfterReview` and `UpcomingPeriods` must walk the same cursor, never raw anchors.
+
+`ChangeServiceStatusHandler`: inject `IServicePriceChangeRepository priceChanges`; read tenant `today` for Pause and Resume; on Resume call `service.Resume(today, now)` and, if `service.CarriedHeldPeriods.Count > 0`, `PriceReviewGeneration.Run(service, await schedules.FindPendingAsync(...), today, now, charges, priceChanges)` in the same transaction. Update the class XML doc.
+
+EF: `service.PrimitiveCollection<List<DateOnly>>("_carriedHeldPeriods").HasColumnName("carried_held_periods").HasColumnType("date[]").HasDefaultValueSql("'{}'")` (precedent: `AuthorizationDbContext` `_permissions`).
+
+Migration (edit `AddPriceAdjustment`; it is not in develop and never deployed): `Up` `AddColumn<List<DateOnly>>("carried_held_periods", schema "billing", table "services", type "date[]", nullable false, defaultValueSql "'{}'")` next to the other `services` columns, no backfill; `Down` `DropColumn`. Designer and snapshot: copy the property from a probe migration (`dotnet ef migrations add Probe ...`, copy, `dotnet ef migrations remove`).
+
+`ChargeGenerator` and `ServiceContractsReminderProcessor` **do not change**.
+
+- [ ] **Step 1: Failing tests.** Monthly contract anchored on the 10th, `Ipc`, review 2027-01-10, last generated 2026-12-10, price 100000, IPC price 107200. Use the existing `NewService`, `Run`, `ConfirmIpc` helpers of `ChargeGeneratorReviewTests`.
+  - `PausingAHeldContractKeepsThePeriodsWhoseGenerationDayHadCome` (Theory): `Run("2027-01-05")` (held). `Pause(2027-02-05)` => carried `[2027-01-10, 2027-02-10]`, `HeldSince == null`. `Pause(2027-02-04)` => `[2027-01-10]`.
+  - `PausingAContractThatWasNotHeldCarriesNothing`: `Run("2027-01-04")` (nothing, no hold), `Pause(2027-01-05)` => `[]`; `Resume(2027-03-01)`, `Run("2027-03-05")` => no charges, `HeldSince == 2027-03-05`, review period 2027-03-10; 01-10 and 02-10 never billed.
+  - `ResumingKeepsTheCarriedPeriodsHeld`: held on 01-05, `Pause(2027-02-05)`, `Resume(2027-04-20)` => `HeldSince == 2027-04-20`; `PriceReview.Of(..., 2027-04-20)` => `(Held, ReviewPeriodDate 2027-01-10, IpcYear 2026)`; `UpcomingPeriods() == [2027-01-10]`; `Run("2027-04-21")` => no charges, `ServiceChanged == false`, `HeldSince` unchanged.
+  - `ReleasingTheCarriedPeriodsBillsThemAndSkipsThePause`: previous case plus `Run("2027-04-21", ConfirmIpc(service))` => `[(2027-01-10, due 2027-04-26), (2027-02-10, due 2027-04-26)]`, both 107200; list empty, `HeldSince == null`, `NextReviewDate == 2028-01-10`, `NextPeriodToGenerate() == 2027-05-10` (03-10, 04-10 never billed). `Run("2027-05-05")` => `[(2027-05-10, 2027-05-10)]`.
+  - `SeveralPausesKeepEveryHeldGap`: held on 01-05, `Pause(2027-01-20)` => `[01-10]`; `Resume(2027-03-01)`, `Run("2027-03-06")` (still held), `Pause(2027-03-07)` => `[01-10, 03-10]`; `Resume(2027-06-01)`, `Run("2027-06-02", ConfirmIpc)` => `[(01-10, 06-07), (03-10, 06-07)]`; `NextPeriodToGenerate() == 2027-06-10` (02-10, 04-10, 05-10 never billed).
+  - `SwitchingToManualWhilePausedBillsTheCarriedPeriodsAtResume`: held, `Pause(2027-02-05)`, `UpdatePriceReview(Manual, 0, 2027-01-10)`, `Resume(2027-04-20)`, `Run("2027-04-20")` => `[(01-10, 04-25, unreviewed: true), (02-10, 04-25, unreviewed: false)]`, both 100000; `NextReviewDate == 2028-01-10`, `HeldSince == null`.
+  - `AfterALongPauseTheCarriedReviewAndTheNewYearAreTwoReviews`: held, `Pause(2027-01-20)`, `Resume(2030-05-03)` => `IpcYear` 2026; `Run("2030-05-06", ConfirmIpc(2026))` => `[(2027-01-10, 2030-05-11)]`, `HeldSince == 2030-05-06` (new hold), review period 2030-05-10, `IpcYear` 2029; `ServicePriceSchedule.ConfirmIpc(service, 2029, ...)` and `Run("2030-05-06", it)` => `[(2030-05-10, 2030-05-11)]`, `NextReviewDate == 2031-01-10`.
+  - `CancellingDropsTheCarriedPeriods`: held, `Pause(2027-02-05)`, `Cancel` => `[]`, `HeldSince == null`.
+  - `ServiceContractTests`: `UpcomingPeriodsSkipThePauseButNotTheCarriedPeriods` (held, `Pause(2027-02-05)`, switch to `Manual`, `Resume(2027-04-20)` => `[01-10, 02-10, 05-10, 06-10, ...]`, 12 items); `AScheduleAppliesAlongTheCarriedPeriods` (`AppliesTo(2027-02-01) == 2027-02-10`; `AppliesTo(2027-03-01) == 2027-05-10`). Update every `Pause(now)` to `Pause(<date>, now)`. `PausingAHeldContractClearsTheHold` also asserts carried `[2027-01-10]` with `Pause(2027-01-08)`. `AfterAPauseOfSeveralYearsThereIsOneReview` unchanged (not held).
+  - `ServiceContractsPersistenceTests.AServiceRoundTripsItsCarriedHeldPeriods`: save with two carried periods, reload => same list; `MarkGenerated(first)`, save, reload => one left.
+  - `ServiceContractsPriceAdjustmentMigrationTests`: `ExistingContractsGetManual...` also asserts `carried_held_periods = '{}'`.
+  - `ServiceContractsPriceReviewApiTests`: `ResumingAHeldContractKeepsItHeld` (`SeedHeldAsync` period P, `POST pause`, `POST resume` => `state: Held`, `heldSince: TenantToday`, `reviewPeriodDate: P`, no charge with `periodDate >= P`); `KeepingAResumedHeldContractBillsTheCarriedPeriods` (then `POST keep-price` => charge `(P, Later(P, TenantToday + 5), Price, priceUnreviewed: false)`, `heldSince: null`); `ResumingAPausedHeldContractSwitchedToManualBillsAtOnce` (pause, `PUT price-review` Manual, resume => charge P due `max(P, today + 5)`, `priceUnreviewed: true`, `heldSince: null`).
+- [ ] **Step 2: RED.** `dotnet build` of the unit and integration test projects. Expected: compile failure (`CarriedHeldPeriods`, `Pause(DateOnly, DateTimeOffset)`). Paste output.
+- [ ] **Step 3: Implement** the interfaces above.
+- [ ] **Step 4: Migration.** Edit `AddPriceAdjustment` (Up, Down, Designer, snapshot). `dotnet ef migrations has-pending-model-changes --project src/Modules/ServiceContracts/Modules.ServiceContracts.Infrastructure --context ServiceContractsDbContext` => no changes. Snapshot brings nothing unrelated.
+- [ ] **Step 5: GREEN.** Unit project. Then `$env:Seed__Enabled = "false"` and integration with `--filter "FullyQualifiedName~Carried|FullyQualifiedName~Resum|FullyQualifiedName~ServiceContractsPriceAdjustmentMigrationTests" -- xUnit.MaxParallelThreads=4`. Then once, one at a time: `ServiceContractsPriceReviewApiTests`, `ServiceContractsPersistenceTests`, `ServiceContractApiTests`.
+- [ ] **Step 6: Commit** `fix(service-contracts): keep the periods held before a pause when resuming`.
 
 ---
 

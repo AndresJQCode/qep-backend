@@ -23,8 +23,7 @@ public sealed class SiigoInvoiceWhatsAppApiTests
     private static async Task<(HttpClient Client, InvoiceWhatsAppDoubles Doubles, Guid InvoiceId)> ArrangeSendAsync(
         InvoicingWorld world, params WhatsAppChannel[] channels)
     {
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
-        var invoiceId = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0].GetProperty("id").GetGuid();
+        var invoiceId = (await IssueRowsThroughBatchAsync(world))[0].GetProperty("id").GetGuid();
         SiigoServesThePdf(world);
         var (factory, doubles) = Host(world, channels);
         var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, InvoicerPermissions);
@@ -185,7 +184,7 @@ public sealed class SiigoInvoiceWhatsAppApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        await IssueRowsThroughBatchAsync(world);
         var (oneChannel, _) = Host(world, Meta);
         var (noChannel, _) = Host(world, []);
         var (twoChannels, _) = Host(world, Meta, Zenvia);
@@ -209,7 +208,7 @@ public sealed class SiigoInvoiceWhatsAppApiTests
         using var world = await ArrangeAsync(database);
         world.Siigo.OnRequest(
             "/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.BadRequest, """{"Errors":[{"Code":"invalid_item","Message":"x"}]}"""));
-        await world.Client.PostAsync(world.BaseRoute, null, Ct);
+        await IssueThroughBatchAsync(world);
         var (factory, _) = Host(world, Meta);
         using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, InvoicerPermissions);
 

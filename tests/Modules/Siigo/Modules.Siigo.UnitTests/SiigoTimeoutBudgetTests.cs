@@ -23,10 +23,10 @@ public sealed class SiigoTimeoutBudgetTests
             $"The send lease ({SiigoInvoice.SendLease}) does not fit in the worker lease ({SiigoInvoiceBatchWorker.Lease}).");
     }
 
-    // Etapa expand: la ruta síncrona sigue viva, así que crear la factura todavía no pasa de 30 s.
+    // Siigo recomienda 120 s o más para crear documentos; todo lo demás sigue en 30 s (spec 2026-11-24 §4).
     [Fact]
-    public void TheProductionDeadlinesAreThirtySecondsInExpand() =>
+    public void TheProductionDeadlinesAreThirtyAndOneHundredTwentySeconds() =>
         Assert.Equal(
-            new SiigoApiTimeouts(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30)),
+            new SiigoApiTimeouts(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(120)),
             SiigoApiTimeouts.Production);
 }

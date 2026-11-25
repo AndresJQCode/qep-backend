@@ -244,6 +244,14 @@ public sealed class ServiceContractsImportAnalyzerTests
 
         public Task<IReadOnlyList<ActiveServiceTotal>> ActiveTotalsAsync(Guid tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlySet<ServiceContractId>> FilterIdsAsync(
+            Guid tenantId,
+            IReadOnlyCollection<ServiceContractId> ids,
+            Guid? assigneeMemberId,
+            string? searchTerm,
+            IReadOnlyCollection<Guid>? searchCustomerIds,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class AnaManages : IServiceContractsMemberDirectory

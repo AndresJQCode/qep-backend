@@ -64,10 +64,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
 - **El cliente de Siigo no corta con `HttpClient.Timeout` (está en `Timeout.InfiniteTimeSpan`): cada llamada lleva su plazo**
   (`SiigoApiClient.SendAsync`, `CancellationTokenSource` enlazado que cubre el envío y la lectura del cuerpo). `POST v1/invoices` usa
-  `InvoiceCreateTimeout` y todo lo demás, incluido el `/auth` previo a la factura, `DefaultTimeout`; hoy los dos son 30 s y no se
-  configuran. **Una petición nueva tiene que pasar un plazo:** sin él no la corta nada. El vencimiento del plazo es `timeout`; una
-  cancelación de quien llama sube como `OperationCanceledException`. Si subes un plazo, `SiigoTimeoutBudgetTests` exige que cuatro
-  llamadas generales más dos facturas quepan en `SiigoInvoice.SendLease`, y ése en el lease del worker.
+  `InvoiceCreateTimeout` (120 s, lo que Siigo recomienda para crear documentos) y todo lo demás, incluido el `/auth` previo a la
+  factura, `DefaultTimeout` (30 s); no se configuran. **Una petición nueva tiene que pasar un plazo:** sin él no la corta nada. El
+  vencimiento del plazo es `timeout`; una cancelación de quien llama sube como `OperationCanceledException`. Si subes un plazo,
+  `SiigoTimeoutBudgetTests` exige que cuatro llamadas generales más dos facturas quepan en `SiigoInvoice.SendLease`, y ése en el lease
+  del worker.
+- **Generar una factura no tiene ruta síncrona: toda emisión es una tanda** (spec 2026-11-24, etapa contract). `POST …/siigo-invoice`
+  ya no existe; la crean `POST …/siigo/invoice-batches` y el worker. Una petición HTTP no debe esperar a crear la factura: con 120 s la
+  cortaría el proxy a mitad del envío. En las pruebas de integración se factura con `SiigoInvoicingHarness.IssueThroughBatchAsync`
+  (tanda de uno y `DrainAsync`).
 - **Una llamada a Siigo que falla deja su curl y la respuesta en `siigo.call_failures`** (spec 2026-11-21). Una fila por llamada fallida,
   lecturas y escrituras: el `curl.exe` de la petición (token y `access_key` enmascarados, `SiigoCurl.Build`) y lo que contestó Siigo, atada a la
   factura por la `Idempotency-Key` (creación) o el id de Siigo (sellado). **Una llamada buena no se guarda nunca:** la respuesta de `/auth`
@@ -80,23 +85,20 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `tenant_id` compila y deja ambas operaciones en 500.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
-  `Created`, y la respuesta del `POST` y el ítem de la tanda llevan `orderMarkFailed`; el siguiente `POST` o la siguiente tanda del
-  pedido reintentan sólo la marca. Nunca deja la emisión fallando.
+  `Created` y el ítem de la tanda lleva `orderMarkFailed`; la siguiente tanda del pedido reintenta sólo la marca. Nunca deja la
+  emisión fallando.
 - **`orderMarkFailed` de las filas del pedido se calcula al leer** (lista, sellar y resolver; no se guarda en `siigo.invoices`): sólo en
   la fila `Order` que existe en Siigo y tiene número, y nunca mientras una tanda tenga el pedido (ítem `Pending` o `Sending`), para que un
-  envío en curso no parpadee un aviso. El `POST` síncrono no tiene ítem: una lectura que caiga entre que guarda la factura y marca el
-  pedido puede avisar de paso. Lee la marca con `SiigoOrderMark`, el mismo de la recuperación de una tanda: 5 s de plazo y, si la
+  envío en curso no parpadee un aviso. Lee la marca con `SiigoOrderMark`, el mismo de la recuperación de una tanda: 5 s de plazo y, si la
   lectura falla, avisa. Una respuesta nueva que devuelva filas del pedido tiene que calcularlo: sin él la pantalla no ofrece «Generar».
 - **`canResend` va en `false` mientras una tanda tenga el pedido** (en las filas del pedido y en los ítems de las tandas): otra tanda
   respondería 409. Se pregunta una vez con todos los ids (`ListOpenOrderIdsAsync`), nunca por fila. No lo decide el dominio
   (`SiigoInvoice.CanResend` y `SiigoInvoiceBatchItem.Effective` no ven las otras tandas): una respuesta nueva que ofrezca reenviar tiene
-  que cruzarlo. `canResolve` no lo mira. La excepción es la respuesta del `POST` síncrono, que no lo cruza: puede traer `canResend` en
-  `true` con el pedido en una tanda.
+  que cruzarlo. `canResolve` no lo mira.
 - **«No existe» se rechaza mientras una tanda tenga el pedido** (409 `siigo.invoice_batch.order_in_progress`, dentro de la transacción
   que bloquea el pedido): soltar la fila haría que el worker armara otra factura con otra clave en vez de reenviar la misma, y podría
   duplicarla. «Existe» sí se acepta. Crear una tanda no toma ese candado, así que una creada justo entre la consulta y el guardado se
-  cuela. El `POST` síncrono no deja ítem, así que esta guarda no lo ve: mientras manda, la protege el reclamo
-  (`siigo.invoice.state_invalid`), y uno que espere el candado detrás de un «no existe» arma una factura nueva.
+  cuela.
 - **Un ítem no sale `Failed` mientras su factura pueda existir:** si el reenvío no se puede hacer (conexión, permiso) y la fila `Order`
   vigente es `Unknown` o está por confirmar, `SiigoBatchItemInvoker` lo cierra `ToConfirm` con esa fila y el código del fallo. Al leer
   manda el `errorCode` de la fila; el del fallo sólo se ve si la fila no tiene.
