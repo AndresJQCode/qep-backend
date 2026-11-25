@@ -20,7 +20,7 @@ namespace Bootstrapper;
 /// como resultado: ni un error del pedido ni de Siigo frena a los demás de la tanda. Hay dos excepciones a «falla», porque que no se
 /// pueda hacer el reenvío no dice que la factura no exista: un pedido cuya factura está por confirmar, <c>Unknown</c> o en camino sale por
 /// confirmar con ese motivo, y uno cuya factura ya existe en Siigo, sin una de flete <c>Pending</c> por mandar, sale facturado, avisando
-/// si el pedido no confirma su marca.
+/// si el pedido no confirma su marca. Con la de flete todavía <c>Pending</c> sale fallido, también cuando la emisión sí contestó.
 /// </summary>
 internal sealed partial class SiigoBatchItemInvoker(
     IAuthorizationService authorization, IServiceScopeFactory scopeFactory, ILogger<SiigoBatchItemInvoker> logger) : ISiigoBatchItemInvoker
@@ -38,7 +38,7 @@ internal sealed partial class SiigoBatchItemInvoker(
         CancellationToken cancellationToken)
     {
         var outcome = await IssueAsync(tenantId, requestedBy, orderId, payments, cancellationToken);
-        // Sin fila en el resultado, el fallo es de quien pidió o de la conexión: falta mirar si el pedido ya tiene una factura.
+        // Un fallo sin fila es de quien pidió, de la conexión o de la de flete: se mira qué factura tiene el pedido.
         return outcome is SiigoBatchItemOutcome.Failed { InvoiceId: null } failed
             ? await KeepWhatMayExistAsync(tenantId, orderId, failed, cancellationToken)
             : outcome;
@@ -149,12 +149,21 @@ internal sealed partial class SiigoBatchItemInvoker(
             : failed;
     }
 
-    // La fila del pedido manda: la de flete sola no cambia lo que pasó con el pedido.
+    // La fila del pedido manda: la de flete sola no cambia lo que pasó con el pedido. La salvedad es la de KeepWhatMayExistAsync: con la
+    // del pedido en Siigo y la de flete todavía Pending (no salió, o salió y no tuvo respuesta), «facturado» la dejaría sin mandar a la
+    // vista de nadie (decidido el 2026-11-25). Reenviar manda sólo la de flete y vuelve a marcar el pedido.
     private static SiigoBatchItemOutcome Map(IReadOnlyList<SiigoInvoiceDto> rows)
     {
         if (rows.FirstOrDefault(row => row.Kind == nameof(SiigoInvoiceKind.Order)) is not { } order)
         {
             return new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.Unavailable);
+        }
+
+        if (order.Status is nameof(SiigoInvoiceStatus.Created) or nameof(SiigoInvoiceStatus.Stamped) or nameof(SiigoInvoiceStatus.StampRejected)
+            && rows.FirstOrDefault(row => row is { Kind: nameof(SiigoInvoiceKind.Freight), Status: nameof(SiigoInvoiceStatus.Pending) })
+                is { } freight)
+        {
+            return new SiigoBatchItemOutcome.Failed(freight.ErrorCode ?? SiigoErrorCodes.InvoiceInterrupted);
         }
 
         return order.Status switch

@@ -112,6 +112,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `StampRejected`) → `Invoiced` con su número e id, y `orderMarkFailed` salvo que una lectura confirme la marca (`SiigoOrderMark`, como
   la recuperación de una tanda; decidido el 2026-11-25). **Salvo que la de flete siga `Pending`:** el reenvío era para mandarla, así que
   el ítem sale `Failed` con el código del fallo; «facturado» la dejaría sin mandar sin que nadie lo vea.
+- **Con la del pedido en Siigo y la de flete todavía `Pending`, ningún ítem sale `Invoiced`** (decidido el 2026-11-25): vale en la
+  emisión que sí contestó (`SiigoBatchItemInvoker.Map`) y en la recuperación y el corte por apagado
+  (`SiigoInvoiceBatchWorker.RecoverAsync`). Sale `Failed` **sin `invoice_id`**, con el `errorCode` de la de flete o
+  `siigo.invoice.interrupted`; una de flete en cualquier otro estado no cambia el resultado. Reintentar el pedido manda sólo la de flete
+  y vuelve a marcarlo. El ítem no guarda `orderMarkFailed`: el aviso lo calculan las filas del pedido al leerse. Un camino nuevo que
+  cierre un ítem como facturado tiene que mirar la de flete. **Todavía no lo hace `SiigoInvoiceBatchItem.Effective`** (pendiente del
+  owner): un ítem `ToConfirm` cuya del pedido pasa a existir se lee `Invoiced` aunque la de flete siga `Pending`.
 - **El `errorCode` de un ítem `ToConfirm` depende de cuál se escribió de último** (`SiigoInvoiceBatchItem.Effective`, decidido el
   2026-11-25): mientras la fila no cambie desde que el ítem se cerró (`updated_at` de la fila ≤ el del ítem) ves el del ítem, que dice
   por qué no salió el reenvío; si la fila cambia después (otro reenvío, vencimiento, resolución), manda la fila. Si el que manda viene
@@ -173,8 +180,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   reenvía una persona (mismos bytes y clave) o la resuelve, y a las 24 h pasa a `Unknown`. Un rechazo de datos en un **primer** intento, o
   una conexión caída, lo dejan `Failed`; un rechazo de datos en el reenvío de una que ya tuvo un envío sin respuesta deja la fila `Pending`
   y el ítem sale `ToConfirm`. **Un ítem recuperado (lease vencido) o cortado por el apagado nunca llama a Siigo:** toma el estado de la fila `Order` viva del
-  pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced`, ninguna → `Failed` con `siigo.invoice.interrupted`). Una creada sale con
-  `orderMarkFailed` salvo que el pedido ya lleve la marca de ese número: la recuperación sólo lo lee (5 s de plazo; si la lectura falla,
+  pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced` salvo con la de flete `Pending` —arriba—, ninguna → `Failed` con
+  `siigo.invoice.interrupted`). Una creada que sale facturada lleva `orderMarkFailed` salvo que el pedido ya lleve la marca de ese número: la recuperación sólo lo lee (5 s de plazo; si la lectura falla,
   también avisa) y reenviar es lo que lo marca. El corte por apagado guarda ese resultado con `CancellationToken.None` y relanza la
   cancelación. `ToConfirm` cierra el ítem: al leerlo, su estado sigue a la factura (`SiigoInvoiceBatchItem.Effective`), así que un reenvío
   desde otra tanda o una resolución desde el pedido se ven sin escribir en el ítem. Una tanda de **un** pedido puede llevar las formas de

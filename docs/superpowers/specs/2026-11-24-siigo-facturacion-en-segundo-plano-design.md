@@ -106,7 +106,7 @@ que ampliar). Se agrega al final del enum.
 | `Sending` | un worker lo tiene | no |
 | `Invoiced` | la factura existe en Siigo | sí |
 | `ToConfirm` (nuevo) | se mandó y no se sabe si Siigo la creó; la fila de la factura sigue viva con la misma clave | sí |
-| `Failed` | no se facturó y se sabe (rechazo de datos, conexión, permiso, interrupción antes de mandar) | sí |
+| `Failed` | no se facturó y se sabe (rechazo de datos, conexión, permiso, interrupción antes de mandar), o la del pedido existe y la de flete sigue `Pending` (ver abajo) | sí |
 | `Skipped` | el pedido no estaba en condiciones; no se llamó a Siigo para crear | sí |
 
 `ToConfirm` cierra el ítem (`IsSettled`): la tanda termina aunque queden por confirmar, porque ya no depende del worker sino de una persona.
@@ -121,6 +121,22 @@ el `invoice_id` de esa fila y el código del fallo, porque la factura puede exis
 de la recuperación, §4). La excepción es un pedido ya facturado con la de flete todavía `Pending`: el reenvío era para mandarla, así que
 el ítem queda `Failed` con el código del fallo, porque `Invoiced` la dejaría sin mandar sin que nadie lo vea. Con una fila del pedido
 que nunca salió y nadie está mandando queda `Failed`, como siempre (decidido el 2026-11-25).
+
+**La misma regla vale cuando la emisión sí contestó y en la recuperación (§4)** (decidido el 2026-11-25). Si la fila `Order` existe en
+Siigo (`Created`, `Stamped`, `StampRejected`) y la de flete sigue `Pending` (nunca salió, o salió y no tuvo respuesta), el ítem no sale
+`Invoiced`: sale `Failed` **sin `invoice_id`**, con el `errorCode` de la fila de flete o, si no tiene, `siigo.invoice.interrupted`. No
+hay códigos, campos ni columnas nuevas. Una de flete `Created`, `Stamped`, `StampRejected`, `Rejected`, `Failed` o `Unknown` no cambia el
+resultado. Ten presente:
+
+- Otra tanda del pedido manda **sólo la de flete**, con su clave: la del pedido ya existe y no se vuelve a crear, y el pedido se vuelve a
+  marcar. Pasadas las 24 h la de flete es `Unknown`: ya no se manda y el ítem de esa tanda sale `Invoiced`.
+- El ítem `Failed` no guarda `orderMarkFailed`, aunque el pedido tampoco haya quedado marcado. El aviso no se pierde: las filas del pedido
+  lo calculan al leerse (§5) y el reintento repite la marca. La marca manual sigue bloqueada por la factura vigente.
+- El ítem `Failed` no ofrece nada (`canResend` y `canResolve` en `false`). El reintento y «Existe / No existe» de la de flete se hacen
+  desde el pedido.
+- **Pendiente (decisión del owner):** el efectivo de un ítem `ToConfirm` (tabla de abajo) sigue mirando sólo la fila `Order`: si ésa pasa a
+  existir con la de flete todavía `Pending`, el ítem se lee `Invoiced`.
+
 `SiigoInvoiceBatchItem` suma `MarkToConfirm(invoiceId, errorCode, now)` y guarda `invoice_id` también en `MarkInvoiced` y `MarkFailed`
 cuando hay fila.
 
@@ -213,6 +229,8 @@ durante la caída, la registra con «resolver → existe» y su número, que ade
 - `MaxAttempts = 1` no cambia. **Un ítem recuperado (lease vencido) nunca llama a Siigo**: hoy se da por `Failed(siigo.unavailable)`;
   ahora toma el estado de la fila `Order` viva del pedido: `Pending`/`Unknown` → `ToConfirm` (código de la fila o
   `siigo.invoice.interrupted`, nuevo), creada → `Invoiced`, ninguna → `Failed(siigo.invoice.interrupted)` (no alcanzó a salir la factura).
+  Con la del pedido creada y la de flete todavía `Pending` no sale `Invoiced` sino `Failed`, sin `invoice_id`, con el código de la de flete
+  o `siigo.invoice.interrupted` (§2; decidido el 2026-11-25). Ahí no se lee la marca del pedido.
 - **Apagado y redespliegue.** Un envío de 120 s no cabe en los 30 s de `ShutdownTimeout`: el `stoppingToken` corta la llamada. En ese
   caso el worker hace un último guardado con `CancellationToken.None` (una sentencia corta, dentro del presupuesto) y cierra el ítem con la
   misma regla de recuperación, en vez de dejarlo `Sending` 10 minutos. Si ese guardado no alcanza, lo cierra la recuperación del lease.
@@ -325,7 +343,7 @@ Nuevos (en `SiigoErrorCodes`):
 | Código | Tipo | Cuándo |
 | --- | --- | --- |
 | `siigo.invoice_batch.order_in_progress` | 409, `details.orderIds` | un pedido ya está en una tanda sin terminar |
-| `siigo.invoice.interrupted` | código de fila/ítem | el envío empezó y el proceso se detuvo sin respuesta |
+| `siigo.invoice.interrupted` | código de fila/ítem | el envío empezó y el proceso se detuvo sin respuesta; también un ítem `Failed` cuya de flete sigue `Pending` sin código (decidido el 2026-11-25) |
 | `siigo.invoice.resolved_missing` | código de ítem efectivo | una persona declaró que la factura no existe en Siigo |
 | `siigo.invoice.resolve_too_early` | 422, `details.availableAt` | «No existe» antes de 10 min del último intento sin respuesta |
 
@@ -354,7 +372,8 @@ RED primero; donde el fallo esperado es de compilación, la evidencia es el buil
   `Pending` con `UnansweredAt` (el caso de producción); timeout → reenvío con rechazo de datos → no `Rejected`; rechazo de datos en primer
   intento → `Rejected` (no cambia); `ResumeAsync` con `SendingSince` vencido marca sin respuesta.
 - **Invoker y worker:** `Pending` → `ToConfirm` con `invoiceId`; ítem recuperado toma el estado de la fila y no llama a Siigo; corte por
-  `stoppingToken` cierra el ítem; `payments` llega al comando.
+  `stoppingToken` cierra el ítem; `payments` llega al comando; con la del pedido creada y la de flete `Pending`, `Failed` en la emisión y
+  en la recuperación (decidido el 2026-11-25), y el reintento manda sólo la de flete.
 - **Cliente HTTP:** el plazo de `POST v1/invoices` es 120 s y el de lecturas 30 s (plazos inyectables en la prueba, sin esperar de verdad).
 - **Integración** (filtradas por nombre mientras se itera): `POST` 202 con `payments`; 422 `payments` con dos pedidos; 409
   `order_in_progress`; lista paginada con `statusCounts` completo en cero; detalle con estado efectivo después de resolver y de reenviar

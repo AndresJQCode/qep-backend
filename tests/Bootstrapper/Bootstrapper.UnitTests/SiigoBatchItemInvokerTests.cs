@@ -155,6 +155,91 @@ public sealed class SiigoBatchItemInvokerTests
             outcome);
     }
 
+    // La emisión contestó: la del pedido existe y la de flete sigue Pending (nunca salió, o salió y no tuvo respuesta). «Facturado» la
+    // dejaría sin mandar sin que nadie lo vea. El motivo es el de la fila de flete o, si no trae, el de un envío interrumpido.
+    [Theory]
+    [InlineData(SiigoInvoiceStatus.Created, "waiting", "siigo.invoice.interrupted", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "sending", "siigo.invoice.interrupted", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "unanswered", "siigo.invoice.timeout", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "never-left", "siigo.invoice.unavailable", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "waiting", "siigo.invoice.interrupted", true)]
+    [InlineData(SiigoInvoiceStatus.Stamped, "unanswered", "siigo.invoice.timeout", false)]
+    [InlineData(SiigoInvoiceStatus.StampRejected, "unanswered", "siigo.invoice.timeout", true)]
+    public async Task AnIssueThatLeavesTheFreightPendingIsNotInvoiced(
+        SiigoInvoiceStatus orderStatus, string freightCase, string code, bool orderMarkFailed)
+    {
+        var order = Invoiced(orderStatus);
+        var freight = PendingFreight(freightCase);
+
+        var outcome = await IssueAsync(orderMarkFailed, order, freight);
+
+        Assert.Equal(new SiigoBatchItemOutcome.Failed(code), outcome);
+    }
+
+    [Theory]
+    [InlineData(SiigoInvoiceStatus.Created)]
+    [InlineData(SiigoInvoiceStatus.Stamped)]
+    [InlineData(SiigoInvoiceStatus.StampRejected)]
+    [InlineData(SiigoInvoiceStatus.Rejected)]
+    [InlineData(SiigoInvoiceStatus.Failed)]
+    [InlineData(SiigoInvoiceStatus.Unknown)]
+    public async Task AnIssueWithAFreightThatIsNotPendingIsInvoiced(SiigoInvoiceStatus freightStatus)
+    {
+        var order = Invoiced(SiigoInvoiceStatus.Created);
+        var freight = freightStatus is SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected
+            ? Invoiced(freightStatus, SiigoInvoiceKind.Freight)
+            : Freight(freightStatus);
+
+        var outcome = await IssueAsync(orderMarkFailed: false, order, freight);
+
+        Assert.Equal(freightStatus, freight.Status);
+        Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", order.Id), outcome);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnIssueWithoutAFreightIsInvoicedWithItsMarkWarning(bool orderMarkFailed)
+    {
+        var order = Invoiced(SiigoInvoiceStatus.Created);
+
+        var outcome = await IssueAsync(orderMarkFailed, order);
+
+        Assert.Equal(new SiigoBatchItemOutcome.Invoiced("FV-1-9", order.Id, orderMarkFailed), outcome);
+    }
+
+    // Sin saber si la del pedido existe, la de flete que la espera no cambia nada: la decide una persona.
+    [Fact]
+    public async Task AnIssueThatLeavesTheOrderInvoiceOpenStaysToConfirm()
+    {
+        var order = AwaitingConfirmation();
+
+        var outcome = await IssueAsync(orderMarkFailed: false, order, PendingFreight("waiting"));
+
+        Assert.Equal(new SiigoBatchItemOutcome.ToConfirm(order.Id, SiigoErrorCodes.InvoiceTimeout), outcome);
+    }
+
+    private static SiigoInvoice PendingFreight(string freightCase)
+    {
+        var row = Pending(Now.AddMinutes(-20), SiigoInvoiceKind.Freight);
+        switch (freightCase)
+        {
+            case "sending":
+                row.BeginSend(Now.AddMinutes(-1));
+                break;
+            case "unanswered":
+                row.BeginSend(Now.AddMinutes(-20));
+                row.MarkUnanswered(SiigoErrorCodes.InvoiceTimeout, null, Now.AddMinutes(-20));
+                break;
+            case "never-left":
+                row.BeginSend(Now.AddMinutes(-20));
+                row.MarkTransient(SiigoErrorCodes.InvoiceUnavailable, Now.AddMinutes(-20));
+                break;
+        }
+
+        return row;
+    }
+
     private static SiigoInvoice Freight(SiigoInvoiceStatus status)
     {
         var row = Pending(status == SiigoInvoiceStatus.Unknown ? Now.AddHours(-25) : Now.AddMinutes(-20), SiigoInvoiceKind.Freight);
@@ -177,9 +262,9 @@ public sealed class SiigoBatchItemInvokerTests
         return row;
     }
 
-    private static SiigoInvoice Invoiced(SiigoInvoiceStatus status)
+    private static SiigoInvoice Invoiced(SiigoInvoiceStatus status, SiigoInvoiceKind kind = SiigoInvoiceKind.Order)
     {
-        var row = Pending(Now.AddMinutes(-20));
+        var row = Pending(Now.AddMinutes(-20), kind);
         row.BeginSend(Now.AddMinutes(-20));
         row.MarkCreated("id-1", "FV-1-9", 100m, status == SiigoInvoiceStatus.Stamped ? "cufe" : null, Now.AddMinutes(-20));
         if (status == SiigoInvoiceStatus.StampRejected)
@@ -212,13 +297,26 @@ public sealed class SiigoBatchItemInvokerTests
     private static Task<SiigoBatchItemOutcome> InvokeAsync(bool permitted, string? conflict, params SiigoInvoice[] rows) =>
         InvokeAsync(permitted, conflict, new OrderMarks(true), rows);
 
+    private static Task<SiigoBatchItemOutcome> InvokeAsync(
+        bool permitted, string? conflict, OrderMarks orders, params SiigoInvoice[] rows) =>
+        InvokeAsync(permitted, new ConflictingDispatcher(conflict ?? "unused"), orders, rows);
+
+    /// <summary>La emisión corre y contesta con esas filas.</summary>
+    private static Task<SiigoBatchItemOutcome> IssueAsync(bool orderMarkFailed, params SiigoInvoice[] rows) =>
+        InvokeAsync(
+            permitted: true,
+            new IssuedDispatcher(
+                [.. rows.Select(row => SiigoInvoiceDto.From(row, Now, orderMarkFailed && row.Kind == SiigoInvoiceKind.Order))]),
+            new OrderMarks(!orderMarkFailed),
+            rows);
+
     private static async Task<SiigoBatchItemOutcome> InvokeAsync(
-        bool permitted, string? conflict, OrderMarks orders, params SiigoInvoice[] rows)
+        bool permitted, IRequestDispatcher dispatcher, OrderMarks orders, SiigoInvoice[] rows)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddScoped<DelegatedExecutionScope>();
-        services.AddSingleton<IRequestDispatcher>(new ConflictingDispatcher(conflict ?? "unused"));
+        services.AddSingleton(dispatcher);
         services.AddSingleton<ISiigoInvoiceRepository>(new Invoices(rows));
         services.AddSingleton<ISiigoOrderSource>(orders);
         services.AddSingleton<IClock>(new FixedClock());
@@ -269,6 +367,15 @@ public sealed class SiigoBatchItemInvokerTests
     {
         public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) =>
             Task.FromException<TResponse>(new ResourceConflictException(code, "The connection cannot be used."));
+
+        public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class IssuedDispatcher(IReadOnlyList<SiigoInvoiceDto> rows) : IRequestDispatcher
+    {
+        public Task<TResponse> SendAsync<TResponse>(ICommand<TResponse> command, CancellationToken cancellationToken = default) =>
+            Task.FromResult((TResponse)rows);
 
         public Task<TResponse> QueryAsync<TResponse>(IQuery<TResponse> query, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

@@ -566,9 +566,10 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.True(item.BatchFinished);
     }
 
-    // Con flete en factura aparte, la marca del pedido pudo fallar antes de que el apagado cortara el envío del flete: no se pierde.
+    // Con flete en factura aparte, la marca del pedido pudo fallar antes de que el apagado cortara el envío del flete: el ítem no sale
+    // facturado (decidido el 2026-11-25) y las filas del pedido siguen avisando que no quedó marcado.
     [Fact]
-    public async Task AShutdownDuringTheFreightSendKeepsThatTheOrderCouldNotBeMarked()
+    public async Task AShutdownDuringTheFreightSendFailsTheItemAndTheOrderStillSaysItIsNotMarked()
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
@@ -593,10 +594,48 @@ public sealed class SiigoInvoiceBatchApiTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Worker(world).DrainAsync(shutdown.Token));
 
         var item = await StoredItemAsync(world);
-        Assert.Equal(("Invoiced", "FV-1-123", true), (item.Status, item.InvoiceNumber, item.OrderMarkFailed));
+        Assert.Equal(
+            ("Failed", "siigo.invoice.interrupted", (Guid?)null), (item.Status, item.ErrorCode, item.InvoiceId));
         Assert.True(item.LeaseReleased);
         Assert.True(item.BatchFinished);
         Assert.Equal(2, InvoiceCalls(world.Siigo).Count);
+        var orderRow = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+        Assert.Equal(
+            ("Order", true), (orderRow.GetProperty("kind").GetString(), orderRow.GetProperty("orderMarkFailed").GetBoolean()));
+    }
+
+    // La de flete se queda sin respuesta: el ítem no sale facturado, y otra tanda del pedido manda sólo la de flete, con su clave.
+    [Fact]
+    public async Task AnUnsentFreightFailsTheItemAndTheNextBatchSendsOnlyTheFreight()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        var sends = 0;
+        world.Siigo.OnRequest("/v1/invoices", _ => Interlocked.Increment(ref sends) switch
+        {
+            1 => Created("FV-1-123", "id-1", 0m),
+            2 => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"),
+            _ => Created("FV-1-124", "id-2", 0m),
+        });
+
+        var failed = await RunBatchOfOneAsync(world);
+
+        Assert.Equal(
+            ("Failed", "siigo.invoice.unavailable", JsonValueKind.Null),
+            (failed.GetProperty("status").GetString(), failed.GetProperty("errorCode").GetString(),
+                failed.GetProperty("invoiceId").ValueKind));
+        Assert.True((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
+
+        var resent = await RunBatchOfOneAsync(world);
+
+        Assert.Equal(
+            ("Invoiced", "FV-1-123"),
+            (resent.GetProperty("status").GetString(), resent.GetProperty("invoiceNumber").GetString()));
+        var calls = InvoiceCalls(world.Siigo);
+        Assert.Equal(3, calls.Count);
+        Assert.Equal(calls[1].Header("Idempotency-Key"), calls[2].Header("Idempotency-Key"));
+        Assert.NotEqual(calls[0].Header("Idempotency-Key"), calls[2].Header("Idempotency-Key"));
     }
 
     // Un redespliegue corta la llamada a Siigo: el ítem se cierra de una vez con la fila, sin esperar el lease ni volver a Pending.

@@ -233,7 +233,9 @@ public abstract record SiigoBatchItemOutcome
     /// <summary>No se facturó y se sabe: Siigo la rechazó por un dato, la conexión no sirve, quien la pidió ya no puede facturar o el envío
     /// se cortó antes de salir. <paramref name="InvoiceId"/> viene si quedó una fila. No se programa un reintento (owner,
     /// 2026-11-24). Si el pedido ya tenía una factura por confirmar, <c>Unknown</c> o en camino, no es éste sino <see cref="ToConfirm"/>;
-    /// si ya la tenía creada y no queda una de flete <c>Pending</c>, es <see cref="Invoiced"/>.</summary>
+    /// si ya la tenía creada y no queda una de flete <c>Pending</c>, es <see cref="Invoiced"/>. Es también el de un pedido cuya factura
+    /// existe y cuya de flete sigue <c>Pending</c> (decidido el 2026-11-25): va sin <paramref name="InvoiceId"/> y con el código de la de
+    /// flete o <c>siigo.invoice.interrupted</c> (si lo que no se pudo fue el reenvío, el motivo de ese fallo).</summary>
     public sealed record Failed(string ErrorCode, Guid? InvoiceId = null) : SiigoBatchItemOutcome;
 
     /// <summary>Se mandó (o se está mandando) y no se sabe si Siigo la creó: la fila sigue viva con la misma clave y la decide una persona
