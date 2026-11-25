@@ -106,6 +106,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   hay y **sin retenciones** (no tiene base). No suma al `computedOrderTotal`: el total sin IVA del regalo es 0 y los pagos no cambian. Un regalo
   de una variante o un IVA sin vincular sale como faltante igual que una línea pagada. **No está probado contra una factura real de Siigo:**
   verifícalo con `send_to_dian` apagado antes de confiar en `tax_base` y `taxpayer`.
+- **El teléfono del cliente nuevo se parte en `SiigoOrderSource`** (Bootstrapper; spec 2026-11-25) con `IPhoneNumberSplitter` de
+  Customers, porque Siigo no lo referencia: región `CO` por defecto (país de la parte vacío o `CO`) y, si no, el país de la parte. Lo que no
+  se puede partir viaja crudo y `SiigoCustomerMapper` deja sólo dígitos: si el número queda vacío o pasa de 10, **omite `phones`** y el
+  cliente se crea igual; sin indicativo utilizable el objeto no lleva la propiedad `indicative`. **No está probado contra Siigo real.**
 - **La factura no lleva `additional_fields.purchase_order`.** Siigo lo rechaza con `document_settings` (`Params: ["additional_fields.purchase_order"]`) si el
   tipo de comprobante no tiene la orden de compra configurada, y Ritual Botánico factura sin él. El número del pedido ya va en `observations`.
 - **Los pagos suman el total que calcula Siigo, no el de QEP.** QEP saca el IVA de un precio con IVA incluido como bruto − neto; Siigo lo redondea por
