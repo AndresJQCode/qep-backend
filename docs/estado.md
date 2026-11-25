@@ -553,6 +553,13 @@ facturación esté completa; cambiaría D-S7 y D-S15.
   construir:** plan `2026-11-24-siigo-facturacion-en-segundo-plano-backend` escrito y aprobado (D-1 a D-4); el spec del frontend va en
   `qep-frontend`.
 
+- 2026-11-24 — Mergeado a `develop` (fast-forward hasta `7c174ef76`, sin push) **los dos rojos heredados de
+  `ArchitectureTests`** (`fix/architecture-reds`; owner): `Notifications:TaskNotice:EscalationAfterMinutes` quedó
+  documentada en `appsettings.example.json` e `IAppMemberPresence` en `MultiReplicaInventory.InterfaceFactories`.
+  `ArchitectureTests` 324/324 sobre el commit mergeado; las menciones anteriores a esas dos fallas quedan como
+  historia. Sin correr `Bootstrapper.UnitTests`, que el nivel rápido pide por tocar `src/Api`: había una suite completa
+  en curso y esas pruebas levantan contenedores. Rama y worktree borrados.
+
 - 2026-11-24 — Mergeado a `develop` (fast-forward hasta `109fc1b99`, sin push) **las pruebas en dos niveles**
   (`feature/test-tiers`; spec y plan `2026-11-24-pruebas-en-dos-niveles`; owner). Para mergear a `develop` basta
   `scripts/test-feature.ps1` (build, `ArchitectureTests`, unitarias de los módulos tocados y sólo las clases de
