@@ -73,7 +73,7 @@ public sealed class TenantLanguageTests
     {
         var tenant = Tenant.Create(
             TenantId.New(), "qcode-demo", "QCode Demo", "es-CO", "America/Bogota", "yyyy-MM-dd",
-            MembershipId.New(), CreatedAt, requested);
+            MembershipId.New(), CreatedAt, language: requested);
 
         Assert.Equal(stored, tenant.Language);
     }
@@ -82,7 +82,7 @@ public sealed class TenantLanguageTests
     public void ARegistrationWithAnUnsupportedLanguageFailsBeforeCreatingAnything()
     {
         var exception = Assert.Throws<TenantDomainException>(() =>
-            Tenant.EnsureValidRegistration("acme", "Acme", "es-CO", "America/Bogota", "dd/MM/yyyy", "en-US"));
+            Tenant.EnsureValidRegistration("acme", "Acme", "es-CO", "America/Bogota", "dd/MM/yyyy", language: "en-US"));
 
         Assert.Equal("tenancy.settings.language.invalid", exception.Code);
     }
