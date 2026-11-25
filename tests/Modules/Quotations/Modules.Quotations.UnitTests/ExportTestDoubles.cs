@@ -187,6 +187,20 @@ internal sealed class RecordingExportFileStorage : IExportFileStorage
     }
 }
 
+/// <summary>El partidor de teléfonos del Excel de pedidos (spec 2026-11-25): sólo parte lo que la prueba le
+/// enseña, y anota qué se le preguntó.</summary>
+internal sealed class StubQuotationPhoneNumbers(IReadOnlyDictionary<string, string>? nationalNumbers = null)
+    : IQuotationPhoneNumbers
+{
+    public List<string> Calls { get; } = [];
+
+    public string? NationalNumberOf(string phone)
+    {
+        Calls.Add(phone);
+        return nationalNumbers is not null && nationalNumbers.TryGetValue(phone, out var national) ? national : null;
+    }
+}
+
 /// <summary>El layout de columnas del Excel de pedidos en memoria (spec 2026-09-24). Anota cuántas
 /// veces se preguntó: el processor lo resuelve una vez por job, y el conteo es la aserción.</summary>
 internal sealed class InMemoryOrdersExportLayoutRepository : IOrdersExportLayoutRepository
