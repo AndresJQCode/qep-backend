@@ -95,7 +95,8 @@ public sealed class OrderProofBatchingTests
             costLookup: null!,
             geographyLookup: null!,
             wholesalePricing: null!,
-            customerLookup: null!);
+            customerLookup: null!,
+            deliveryCheck: null!);
         var command = new SaveOrderEditsCommand(
             TenantId,
             order.Id.Value,

@@ -2222,6 +2222,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderNumbers, ShopifyOrderNumbers>();
         services.AddScoped<IShopifyTenantConnections, ShopifyTenantConnections>();
         services.AddScoped<IShopifyStoreReferences, ShopifyStoreReferences>();
+        // Spec 2026-11-24 §11.1.4: la otra dirección, Quotations → Shopify: «Editar pedido» pregunta si Shopify puede recibir la
+        // dirección antes de guardarla.
+        services.AddScoped<IExternalOrderDeliveryCheck, ExternalOrderDeliveryCheck>();
         // Spec 2026-11-17 §5.4: productos desde Shopify. El escritor enrola un CatalogDbContext de un scope hijo en la transacción
         // de Shopify; la imagen va por la subida de servidor de Storage, fuera de esa transacción; la reautorización es el inicio A
         // de la instalación de Integrations.

@@ -63,7 +63,8 @@ public sealed class SaveOrderEditsHandler(
     IOrderVariantCostLookup costLookup,
     IQuotationGeographyLookup geographyLookup,
     IWholesaleLinePricing wholesalePricing,
-    IQuotationCustomerLookup customerLookup)
+    IQuotationCustomerLookup customerLookup,
+    IExternalOrderDeliveryCheck deliveryCheck)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -211,8 +212,8 @@ public sealed class SaveOrderEditsHandler(
             var deliveryBefore = OrderDeliveryState.Of(order);
             var shippingBeforeDelivery = order.ShippingDetails;
             var deliveryChanged = await OrderDeliveryEdits.ApplyAsync(
-                order, command.Delivery, strict: true, customerLookup, geographyLookup, command.TenantId, updatedBy, now,
-                cancellationToken);
+                order, command.Delivery, strict: true, customerLookup, geographyLookup, deliveryCheck, command.TenantId,
+                updatedBy, now, cancellationToken);
             var deliverySummary = deliveryChanged
                 ? await OrderDeliveryEdits.DescribeChangeAsync(
                     geographyLookup, deliveryBefore, OrderDeliveryState.Of(order), cancellationToken)

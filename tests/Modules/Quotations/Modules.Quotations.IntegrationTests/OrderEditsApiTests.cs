@@ -1585,6 +1585,33 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.True((await GetDetailAsync(client, tenantId, shopifyId)).Order.DeliveryEditable);
     }
 
+    // Las reglas de Shopify (spec 2026-11-24 §11.1.4) son sólo de sus pedidos: uno manual manda a España sin región y vuelve a
+    // los datos del cliente.
+    [Fact]
+    public async Task AManualOrderSkipsTheShopifyRules()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var orderId = await CreateManualOrderAsync(client, tenantId);
+        var detail = await GetDetailAsync(client, tenantId, orderId);
+        var productId = Assert.Single(detail.Items).VariantId;
+        var spain = new QuotationPartyRequest(
+            "Lucía Fernández", null, "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null,
+            Country: "ES", CityName: "Madrid");
+
+        var toSpain = await PutEditsAsync(
+            client, tenantId, orderId, detail.Order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, spain)));
+        var saved = await ReadDetailAsync(toSpain);
+        var toCustomer = await PutEditsAsync(
+            client, tenantId, orderId, saved.Order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, null)));
+
+        Assert.Equal(HttpStatusCode.OK, toSpain.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, toCustomer.StatusCode);
+    }
+
     [Fact]
     public async Task AWholesaleOrderAwaitingApprovalChangesItsDelivery()
     {
