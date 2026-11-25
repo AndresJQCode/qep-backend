@@ -79,10 +79,11 @@ public sealed class IssueSiigoInvoiceHandler(
         }
 
         await EnsureOrderMarkedAsync(prepared, cancellationToken);
+        var now = clock.UtcNow;
         return
         [
             .. SiigoInvoiceSupport.Current(prepared.Rows)
-                .Select(row => SiigoInvoiceDto.From(row, prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order)),
+                .Select(row => SiigoInvoiceDto.From(row, now, prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order)),
         ];
     }
 

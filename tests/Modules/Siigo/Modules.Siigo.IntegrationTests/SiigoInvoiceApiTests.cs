@@ -254,6 +254,144 @@ public sealed class SiigoInvoiceApiTests
         Assert.Equal("FV-1-777", order.GetProperty("invoiceNumber").GetString());
     }
 
+    // Un envío sin respuesta: la fila queda por confirmar (spec 2026-11-24 §3).
+    private static async Task<JsonElement> LeaveAwaitingConfirmationAsync(InvoicingWorld world)
+    {
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        return await ReadAsync(await PostAsync(world));
+    }
+
+    // Han pasado más de los 10 minutos que «No existe» espera desde el último envío sin respuesta.
+    private static Task AgeTheUnansweredSendAsync(InvoicingWorld world) =>
+        ExecuteAsync(
+            world.ConnectionString,
+            """
+            UPDATE siigo.invoices SET last_unanswered_at = now() - interval '11 minutes', sending_since = NULL
+            WHERE last_unanswered_at IS NOT NULL
+            """);
+
+    [Fact]
+    public async Task APendingAwaitingConfirmationIsResolvedAsExistsWithoutWaitingADay()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await LeaveAwaitingConfirmationAsync(world);
+
+        var resolved = await ReadAsync(await PostAsync(world, "/resolve", new { outcome = "exists", number = "FV-1-777" }));
+
+        Assert.Equal(("Created", "FV-1-777"), (resolved.GetProperty("status").GetString(), resolved.GetProperty("number").GetString()));
+        Assert.False(resolved.GetProperty("awaitingConfirmation").GetBoolean());
+        var order = await GetOrderAsync(world);
+        Assert.True(order.GetProperty("invoiced").GetBoolean());
+        Assert.Equal("FV-1-777", order.GetProperty("invoiceNumber").GetString());
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    [Fact]
+    public async Task MissingBeforeTenMinutesIs422WithAvailableAtAndAfterThemFreesTheOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await LeaveAwaitingConfirmationAsync(world);
+
+        var early = await PostAsync(world, "/resolve", new { outcome = "missing" });
+
+        var text = await early.Content.ReadAsStringAsync(Ct);
+        AssertRejectedCode(early, HttpStatusCode.UnprocessableEntity, "siigo.invoice.resolve_too_early", text);
+        using (var json = JsonDocument.Parse(text))
+        {
+            var availableAt = json.RootElement.GetProperty("details").GetProperty("availableAt").GetDateTimeOffset();
+            Assert.InRange(availableAt, DateTimeOffset.UtcNow.AddMinutes(8), DateTimeOffset.UtcNow.AddMinutes(10));
+        }
+
+        await AgeTheUnansweredSendAsync(world);
+        var resolved = await ReadAsync(await PostAsync(world, "/resolve", new { outcome = "missing" }));
+
+        Assert.Equal("Failed", resolved.GetProperty("status").GetString());
+        world.Siigo.OnRequest("/v1/invoices", _ => Created("FV-1-124", "id-2", 0m));
+        var again = (await ReadAsync(await PostAsync(world)))[0];
+        Assert.Equal("Created", again.GetProperty("status").GetString());
+        Assert.Equal(2, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
+    }
+
+    [Fact]
+    public async Task APendingBeingSentCannotBeResolved()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await LeaveAwaitingConfirmationAsync(world);
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now()");
+
+        var missing = await PostAsync(world, "/resolve", new { outcome = "missing" });
+        var exists = await PostAsync(world, "/resolve", new { outcome = "exists", number = "FV-1-777" });
+
+        AssertRejectedCode(missing, HttpStatusCode.UnprocessableEntity, "siigo.invoice.state_invalid", await missing.Content.ReadAsStringAsync(Ct));
+        AssertRejectedCode(exists, HttpStatusCode.UnprocessableEntity, "siigo.invoice.state_invalid", await exists.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("Pending", await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoices"));
+    }
+
+    [Fact]
+    public async Task ResolvingTheOrderAsMissingDiscardsTheFreightThatNeverLeft()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        var rows = await LeaveAwaitingConfirmationAsync(world);
+        Assert.Equal(2, rows.GetArrayLength());
+        Assert.False(rows[1].GetProperty("awaitingConfirmation").GetBoolean());
+        await AgeTheUnansweredSendAsync(world);
+
+        var resolved = await ReadAsync(await PostAsync(world, "/resolve", new { kind = "Order", outcome = "missing" }));
+
+        Assert.Equal("Failed", resolved.GetProperty("status").GetString());
+        Assert.Equal(
+            "Failed|siigo.invoice.order_rejected",
+            await ScalarAsync<string>(world.ConnectionString, "SELECT status || '|' || error_code FROM siigo.invoices WHERE kind = 'Freight'"));
+        Assert.Equal(
+            0,
+            await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices WHERE status NOT IN ('Rejected', 'Failed')"));
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    [Fact]
+    public async Task TheListSaysWhichPendingAwaitsConfirmationAndWhatCanBeDone()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await LeaveAwaitingConfirmationAsync(world);
+
+        var idle = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+
+        Assert.True(idle.GetProperty("awaitingConfirmation").GetBoolean());
+        Assert.True(idle.GetProperty("canResend").GetBoolean());
+        Assert.True(idle.GetProperty("canResolve").GetBoolean());
+        Assert.Equal(JsonValueKind.String, idle.GetProperty("missingAvailableAt").ValueKind);
+
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now()");
+        var sending = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+
+        Assert.False(sending.GetProperty("awaitingConfirmation").GetBoolean());
+        Assert.False(sending.GetProperty("canResend").GetBoolean());
+        Assert.False(sending.GetProperty("canResolve").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, sending.GetProperty("missingAvailableAt").ValueKind);
+    }
+
+    [Fact]
+    public async Task TheResolutionAuditCarriesWhereItCameFrom()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await LeaveAwaitingConfirmationAsync(world);
+
+        await ReadAsync(await PostAsync(world, "/resolve", new { outcome = "exists", number = "FV-1-777" }));
+
+        Assert.Equal(
+            "Pending",
+            await ScalarAsync<string>(
+                world.ConnectionString,
+                "SELECT changed_fields ->> 'fromStatus' FROM audit.entries WHERE action = 'siigo.invoice.resolved'"));
+    }
+
     [Fact]
     public async Task StampRetryMovesCreatedToStamped()
     {
