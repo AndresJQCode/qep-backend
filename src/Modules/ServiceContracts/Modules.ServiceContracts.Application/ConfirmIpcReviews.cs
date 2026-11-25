@@ -243,7 +243,7 @@ public sealed class ConfirmIpcReviewsHandler(
         var confirmed = await services.FindManyAsync(tenantId, ids, cancellationToken);
         var customerRefs = (await customers.FindManyAsync(
                 tenantId, confirmed.Select(service => service.CustomerId).Distinct().ToArray(), cancellationToken))
-            .ToDictionary(customer => customer.Id, customer => new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email));
+            .ToDictionary(customer => customer.Id, customer => new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.BusinessName));
 
         return (await composer.ComposeSummariesAsync(tenantId, confirmed, customerRefs, cancellationToken))
             .ToDictionary(service => service.Id);
