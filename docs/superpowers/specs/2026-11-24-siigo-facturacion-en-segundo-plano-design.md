@@ -128,7 +128,7 @@ es el **efectivo**, calculado al leer con la fila enlazada:
 | Guardado | Fila de la factura ahora | Efectivo | Código / número |
 | --- | --- | --- | --- |
 | `ToConfirm` | `Pending` y `IsBeingSent` | `Sending` | — |
-| `ToConfirm` | `Pending` o `Unknown` | `ToConfirm` | `ErrorCode` de la fila; si no tiene (un primer envío cortado o muerto), el del ítem (decidido durante la implementación, 2026-11-24) |
+| `ToConfirm` | `Pending` o `Unknown` | `ToConfirm` | Si la fila no cambió desde que el ítem se cerró (`updated_at` de la fila ≤ el del ítem), el `ErrorCode` del ítem (dice por qué no salió el reenvío); si cambió después (otro reenvío, vencimiento, resolución), el de la fila. Si el que manda viene vacío, el otro (decidido el 2026-11-25) |
 | `ToConfirm` | `Created`, `Stamped`, `StampRejected` | `Invoiced` | `Number` de la fila |
 | `ToConfirm` | `Failed` (alguien declaró que no existe) | `Failed` | `siigo.invoice.resolved_missing` (nuevo) |
 | `ToConfirm` | `Rejected` | `Failed` | `ErrorCode` de la fila |

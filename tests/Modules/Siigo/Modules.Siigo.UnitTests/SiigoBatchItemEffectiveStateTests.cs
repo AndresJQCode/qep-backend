@@ -31,11 +31,79 @@ public sealed class SiigoBatchItemEffectiveStateTests
     private static SiigoInvoiceBatchItem NewItem() =>
         SiigoInvoiceBatch.Create(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid()], Now).Items[0];
 
-    private static SiigoInvoiceBatchItem ToConfirm(SiigoInvoice invoice)
+    // El ítem se cerró antes de lo último que le pasó a la fila (otro reenvío, el vencimiento, una resolución): manda la fila.
+    private static SiigoInvoiceBatchItem ToConfirm(SiigoInvoice invoice) => ToConfirm(invoice, "siigo.invoice.network", Now.AddMinutes(-1));
+
+    private static SiigoInvoiceBatchItem ToConfirm(SiigoInvoice invoice, string? errorCode, DateTimeOffset settledAt)
     {
         var item = NewItem();
-        item.MarkToConfirm(invoice.Id, "siigo.invoice.network", Now);
+        item.MarkToConfirm(invoice.Id, errorCode, settledAt);
         return item;
+    }
+
+    // Un reenvío que no se pudo hacer (conexión, permiso) no toca la fila: su código es el de un envío anterior y no dice por qué no salió
+    // éste. Con la misma hora también manda el ítem: la recuperación y el envío normal copian el de la fila.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    public void AnItemSettledAfterTheLastChangeOfItsRowShowsItsOwnCode(int minutesAfter)
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice, "siigo.connection_unavailable", Now.AddMinutes(minutesAfter));
+
+        var state = item.Effective(invoice, Now.AddMinutes(minutesAfter));
+
+        Assert.Equal(
+            (SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.connection_unavailable"), (state.Status, state.ErrorCode));
+    }
+
+    [Fact]
+    public void ARowThatChangesAfterTheItemSettledDecidesTheCode()
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice, "siigo.connection_unavailable", Now.AddMinutes(5));
+        invoice.BeginSend(Now.AddMinutes(10));
+        invoice.MarkUnanswered("siigo.invoice.siigo_service", "documents_service", Now.AddMinutes(11));
+
+        var state = item.Effective(invoice, Now.AddMinutes(12));
+
+        Assert.Equal("siigo.invoice.siigo_service", state.ErrorCode);
+    }
+
+    [Fact]
+    public void ARowThatExpiresAfterTheItemSettledDecidesTheCode()
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice, "siigo.invoice_batch.forbidden", Now.AddMinutes(5));
+        invoice.ExpireIfStale(Now.AddHours(25));
+
+        var state = item.Effective(invoice, Now.AddHours(25));
+
+        Assert.Equal("siigo.invoice.timeout", state.ErrorCode);
+    }
+
+    [Fact]
+    public void AnItemWithoutACodeTakesTheOneOfItsUnchangedRow()
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice, null, Now.AddMinutes(5));
+
+        var state = item.Effective(invoice, Now.AddMinutes(5));
+
+        Assert.Equal("siigo.invoice.timeout", state.ErrorCode);
+    }
+
+    [Fact]
+    public void ARowThatChangedWithoutACodeKeepsTheItemCode()
+    {
+        var invoice = NewInvoice();
+        var item = ToConfirm(invoice, "siigo.connection_unavailable", Now);
+        invoice.BeginSend(Now.AddMinutes(1));
+
+        var state = item.Effective(invoice, Now.AddMinutes(1) + SiigoInvoice.SendLease);
+
+        Assert.Null(invoice.ErrorCode);
+        Assert.Equal("siigo.connection_unavailable", state.ErrorCode);
     }
 
     [Fact]
@@ -51,7 +119,7 @@ public sealed class SiigoBatchItemEffectiveStateTests
     }
 
     [Fact]
-    public void AToConfirmWhoseInvoiceIsPendingStaysToConfirmWithTheRowCodeAndItsActions()
+    public void AToConfirmWhoseInvoiceChangedLaterStaysToConfirmWithTheRowCodeAndItsActions()
     {
         var invoice = Unanswered();
         var item = ToConfirm(invoice);

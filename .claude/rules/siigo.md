@@ -96,8 +96,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `SiigoBatchItemInvoker` mira la fila `Order` vigente. `Unknown`, por confirmar o en envío (reclamo sin vencer: el `POST` síncrono en
   camino o uno cortado hace menos de 8 minutos) → `ToConfirm` con esa fila y el código del fallo. Ya facturada (`Created`, `Stamped`,
   `StampRejected`) → `Invoiced` con su número e id, y `orderMarkFailed` salvo que una lectura confirme la marca (`SiigoOrderMark`, como
-  la recuperación de una tanda; decidido el 2026-11-25). Al leer manda el `errorCode` de la fila; el del fallo sólo se ve si la fila no
-  tiene.
+  la recuperación de una tanda; decidido el 2026-11-25).
+- **El `errorCode` de un ítem `ToConfirm` depende de cuál se escribió de último** (`SiigoInvoiceBatchItem.Effective`, decidido el
+  2026-11-25): mientras la fila no cambie desde que el ítem se cerró (`updated_at` de la fila ≤ el del ítem) ves el del ítem, que dice
+  por qué no salió el reenvío; si la fila cambia después (otro reenvío, vencimiento, resolución), manda la fila. Si el que manda viene
+  vacío, ves el otro. Por eso el ítem se guarda **después** de su fila y cerrado no se vuelve a escribir: si tocas el `updated_at` de un
+  ítem cerrado, o escribes una fila sin mover el suyo, muestras el código equivocado.
 - **`canResolve` es el mismo en las filas del pedido y en los ítems de las tandas** (`SiigoInvoice.OffersResolution`: `Unknown`, una
   `Pending` vencida que todavía no se expiró, o por confirmar). El endpoint acepta más (`IsResolvable`: cualquier `Pending` que nadie
   esté mandando); no uses ése para dibujar la acción. `missingAvailableAt` sólo viaja con `canResolve`.
