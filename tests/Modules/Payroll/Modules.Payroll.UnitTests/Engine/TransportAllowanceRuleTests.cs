@@ -84,7 +84,11 @@ public sealed class TransportAllowanceRuleTests
         {
             Prior = MonthAccumulators.Empty with
             {
-                WorkedDays = 15, SalaryRaw = 1_500_000m, Salary = 1_500_000m, TransportRaw = 124_547.5m, Transport = 124_548m,
+                WorkedDays = 15,
+                SalaryRaw = 1_500_000m,
+                Salary = 1_500_000m,
+                TransportRaw = 124_547.5m,
+                Transport = 124_548m,
             },
         };
 

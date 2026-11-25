@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Wholesale.Domain;
 
 /// <summary>
@@ -170,7 +172,7 @@ public sealed class Distributor
             CityId = cityId == Guid.Empty ? null : cityId,
             CityName = NullIfBlank(cityName),
             Address = NullIfBlank(address),
-            Invitation =DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
+            Invitation = DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
         };
     }
 
@@ -211,6 +213,55 @@ public sealed class Distributor
         }
 
         Invitation.SetNotice(status, failureCode);
+        return true;
+    }
+
+    /// <summary>
+    /// Decisión del owner 2026-11-24: los datos que el mayorista llenó al invitar (correo, razón social, país, documento,
+    /// contacto, ciudad y dirección) se editan sólo mientras está invitado; afuera no hace nada y devuelve <c>false</c>, como
+    /// <see cref="ChangeNoticeTarget"/>. Recibe los valores finales (Application ya mezcló lo que el cuerpo no trae con lo
+    /// guardado) y los recorta como <see cref="Invite"/>. Con otro país, el tipo de documento tiene que seguir siendo válido
+    /// para él. Cambiar el correo <b>no</b> reenvía la invitación ni rota el token: eso es «Reenviar». No sube
+    /// <see cref="Version"/>: lo hace <see cref="ChangeTerms"/>, que corre en el mismo <c>PUT</c>.
+    /// </summary>
+    public bool ChangeProfile(
+        string email,
+        string businessName,
+        string country,
+        string identificationType,
+        string identificationNumber,
+        string contactName,
+        Guid? cityId,
+        string? cityName,
+        string? address)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        ArgumentException.ThrowIfNullOrWhiteSpace(businessName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(country);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identificationType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identificationNumber);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contactName);
+        if (Status != DistributorStatus.Invited)
+        {
+            return false;
+        }
+
+        var normalizedCountry = country.Trim().ToUpperInvariant();
+        var normalizedType = identificationType.Trim().ToUpperInvariant();
+        if (!DocumentTypesByCountry.IsAllowed(normalizedType, normalizedCountry))
+        {
+            throw new ArgumentException("The identification type is not valid for the country.", nameof(identificationType));
+        }
+
+        Email = NormalizeEmail(email);
+        BusinessName = businessName.Trim();
+        Country = normalizedCountry;
+        IdentificationType = normalizedType;
+        IdentificationNumber = identificationNumber.Trim();
+        ContactName = contactName.Trim();
+        CityId = cityId == Guid.Empty ? null : cityId;
+        CityName = NullIfBlank(cityName);
+        Address = NullIfBlank(address);
         return true;
     }
 

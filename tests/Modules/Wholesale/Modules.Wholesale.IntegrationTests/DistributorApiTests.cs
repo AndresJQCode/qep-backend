@@ -389,6 +389,190 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         Assert.Equal("wholesale.distributor.invalid_transition", await WholesaleApiHarness.CodeOfAsync(refused));
     }
 
+    // Decisión del owner 2026-11-24: los datos de la invitación se editan mientras está invitado.
+    [Fact]
+    public async Task UpdateWhileInvitedEditsTheNameTheDocumentTheCityAndTheEmail()
+    {
+        var (manager, tenant, invited, token) = await InviteForUpdateAsync();
+        using var client = manager;
+        var otherCity = await WholesaleApiHarness.OtherCityAsync(manager, invited.City!.Id!.Value);
+
+        var response = await PutAsync(manager, tenant, invited, new
+        {
+            priceListId = invited.PriceList.Id,
+            advisorId = invited.Advisor.MemberId,
+            billingCompanyId = invited.BillingCompany.Id,
+            businessName = "Distribuciones Sur SAS",
+            country = "CO",
+            identificationType = "NIT",
+            identificationNumber = "800111222",
+            contactName = "Luis Gómez",
+            email = " Luis@Sur.co ",
+            cityId = otherCity,
+            address = "Carrera 7 # 1-1",
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var stored = (await manager.GetFromJsonAsync<DistributorDetailDto>(DistributorUrl(tenant, invited), Ct))!;
+        Assert.Equal(
+            ("Distribuciones Sur SAS", "800111222", "Luis Gómez", "luis@sur.co", (Guid?)otherCity, "Carrera 7 # 1-1"),
+            (stored.BusinessName, stored.IdentificationNumber, stored.ContactName, stored.Email, stored.City!.Id, stored.Address));
+        Assert.Equal(invited.Version + 1, stored.Version);
+        // Cambiar el correo no reenvía ni rota: el único evento sigue siendo el de invitar, con el mismo token.
+        Assert.Equal(token, await WholesaleApiHarness.LatestTokenAsync(Factory, invited.Id));
+        var events = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM platform.outbox_messages
+            WHERE event_name = {WholesaleApiHarness.DistributorInvitedEvent} AND payload ->> 'distributorId' = {invited.Id.ToString()}
+            """);
+        Assert.Equal(1, events[0]);
+    }
+
+    [Fact]
+    public async Task UpdateToTheDocumentOfAnotherDistributorIs409IdentificationTaken()
+    {
+        var (manager, tenant, invited, _) = await InviteForUpdateAsync();
+        using var client = manager;
+        await WholesaleApiHarness.InviteAsync(
+            Factory, manager, tenant, invited.PriceList.Id, invited.BillingCompany.Id, "luis@otra.co", "800999888");
+
+        var response = await PutAsync(manager, tenant, invited, new
+        {
+            priceListId = invited.PriceList.Id,
+            advisorId = invited.Advisor.MemberId,
+            billingCompanyId = invited.BillingCompany.Id,
+            identificationNumber = "800999888",
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("wholesale.distributor.identification_taken", await WholesaleApiHarness.CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task UpdateWithAnUnknownCityIs422CityNotFound()
+    {
+        var (manager, tenant, invited, _) = await InviteForUpdateAsync();
+        using var client = manager;
+
+        var response = await PutAsync(manager, tenant, invited, new
+        {
+            priceListId = invited.PriceList.Id,
+            advisorId = invited.Advisor.MemberId,
+            billingCompanyId = invited.BillingCompany.Id,
+            cityId = Guid.NewGuid(),
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wholesale.distributor.city_not_found", await WholesaleApiHarness.CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task UpdateWithAStaleIfMatchIs412()
+    {
+        var (manager, tenant, invited, _) = await InviteForUpdateAsync();
+        using var client = manager;
+
+        var response = await PutAsync(manager, tenant, invited with { Version = invited.Version + 1 }, new
+        {
+            priceListId = invited.PriceList.Id,
+            advisorId = invited.Advisor.MemberId,
+            billingCompanyId = invited.BillingCompany.Id,
+            businessName = "Distribuciones Sur SAS",
+        });
+
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+    }
+
+    // Un frontend viejo no manda los campos nuevos: todo se conserva.
+    [Fact]
+    public async Task UpdateWithoutTheNewFieldsKeepsTheDistributorData()
+    {
+        var (manager, tenant, invited, _) = await InviteForUpdateAsync();
+        using var client = manager;
+
+        var response = await PutAsync(manager, tenant, invited, new
+        {
+            priceListId = invited.PriceList.Id,
+            advisorId = invited.Advisor.MemberId,
+            billingCompanyId = invited.BillingCompany.Id,
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var stored = (await response.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
+        Assert.Equal(
+            (invited.BusinessName, invited.Country, invited.IdentificationType, invited.IdentificationNumber, invited.ContactName,
+                invited.Email, invited.City, invited.Address),
+            (stored.BusinessName, stored.Country, stored.IdentificationType, stored.IdentificationNumber, stored.ContactName,
+                stored.Email, stored.City, stored.Address));
+    }
+
+    [Fact]
+    public async Task UpdateOfAnActiveDistributorDoesNotChangeItsData()
+    {
+        var (wholesaler, invited, token) = await WholesaleApiHarness.InvitedAsync(Factory);
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token);
+        using (var session = WholesaleApiHarness.CreateSession(Factory, userId))
+        {
+            (await session.PostAsJsonAsync(
+                $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "NewTenant" }, Ct)).EnsureSuccessStatusCode();
+        }
+
+        using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
+        var active = (await manager.GetFromJsonAsync<DistributorDetailDto>(DistributorUrl(wholesaler, invited), Ct))!;
+
+        var refused = await PutAsync(manager, wholesaler, active, new
+        {
+            priceListId = active.PriceList.Id,
+            advisorId = active.Advisor.MemberId,
+            billingCompanyId = active.BillingCompany.Id,
+            businessName = "Otro nombre SAS",
+        });
+        // El formulario reenvía lo que pintó, con el nombre de la ciudad: nada cambia y se acepta.
+        var resent = await PutAsync(manager, wholesaler, active, new
+        {
+            priceListId = active.PriceList.Id,
+            advisorId = active.Advisor.MemberId,
+            billingCompanyId = active.BillingCompany.Id,
+            businessName = active.BusinessName,
+            country = active.Country,
+            identificationType = active.IdentificationType,
+            identificationNumber = active.IdentificationNumber,
+            contactName = active.ContactName,
+            email = active.Email,
+            cityId = active.City!.Id,
+            cityName = active.City.Name,
+            address = active.Address,
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Equal("wholesale.distributor.invalid_transition", await WholesaleApiHarness.CodeOfAsync(refused));
+        Assert.Equal(HttpStatusCode.OK, resent.StatusCode);
+        var stored = (await resent.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
+        Assert.Equal((active.BusinessName, active.Version + 1), (stored.BusinessName, stored.Version));
+    }
+
+    private async Task<(HttpClient Manager, WholesaleTestTenant Tenant, DistributorDetailDto Invited, string Token)> InviteForUpdateAsync()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
+        var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
+        var (invited, token) = await WholesaleApiHarness.InviteAsync(Factory, manager, tenant, list.Id, company);
+        return (manager, tenant, invited, token);
+    }
+
+    private static string DistributorUrl(WholesaleTestTenant tenant, DistributorDetailDto distributor) =>
+        $"{WholesaleApiHarness.DistributorsUrl(tenant.TenantId)}/{distributor.Id}";
+
+    private static Task<HttpResponseMessage> PutAsync(
+        HttpClient client, WholesaleTestTenant tenant, DistributorDetailDto distributor, object body) =>
+        client.SendAsync(
+            WholesaleApiHarness.WithIfMatch(
+                new HttpRequestMessage(HttpMethod.Put, DistributorUrl(tenant, distributor)) { Content = JsonContent.Create(body) },
+                distributor.Version),
+            Ct);
+
     private static Task<HttpResponseMessage> ResendAsync(HttpClient manager, Guid tenantId, DistributorDetailDto distributor) =>
         PostWithVersionAsync(
             manager, $"{WholesaleApiHarness.DistributorsUrl(tenantId)}/{distributor.Id}/resend-invitation", distributor.Version);

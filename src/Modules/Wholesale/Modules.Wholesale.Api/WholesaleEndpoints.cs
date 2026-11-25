@@ -91,6 +91,7 @@ public static class WholesaleEndpoints
             .Produces<DistributorDetailDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
@@ -225,7 +226,16 @@ public static class WholesaleEndpoints
                 request.AdvisorId,
                 request.BillingCompanyId,
                 request.Phone,
-                request.WhatsAppConnectionId),
+                request.WhatsAppConnectionId,
+                request.BusinessName,
+                request.Country,
+                request.IdentificationType,
+                request.IdentificationNumber,
+                request.ContactName,
+                request.Email,
+                request.CityId,
+                request.CityName,
+                request.Address),
             cancellationToken);
 
         return Results.Ok(distributor);
@@ -303,11 +313,23 @@ public sealed record DistributorInviteRequest(
     string? CityName = null,
     string? Address = null);
 
-/// <summary>Lo que se edita de una relación en cualquier estado; los datos del distribuidor no cambian. <c>Phone</c> y
-/// <c>WhatsAppConnectionId</c> sólo cuentan mientras está invitada, y <c>Phone</c> ausente o <c>null</c> los borra.</summary>
+/// <summary>Lo que se edita de una relación. Lista, asesor y empresa facturadora, en cualquier estado. <c>Phone</c> y
+/// <c>WhatsAppConnectionId</c> sólo cuentan mientras está invitada, y <c>Phone</c> ausente o <c>null</c> los borra.
+/// El resto son los datos del distribuidor (decisión del owner 2026-11-24): se editan sólo mientras está invitada, y ausente o
+/// <c>null</c> conserva lo guardado (la dirección se borra con <c>""</c>). Fuera de <c>Invited</c>, uno distinto del guardado es
+/// <c>409 wholesale.distributor.invalid_transition</c>. Cambiar <c>Email</c> no reenvía la invitación.</summary>
 public sealed record DistributorUpdateRequest(
     Guid PriceListId,
     Guid AdvisorId,
     Guid BillingCompanyId,
     string? Phone = null,
-    Guid? WhatsAppConnectionId = null);
+    Guid? WhatsAppConnectionId = null,
+    string? BusinessName = null,
+    string? Country = null,
+    string? IdentificationType = null,
+    string? IdentificationNumber = null,
+    string? ContactName = null,
+    string? Email = null,
+    Guid? CityId = null,
+    string? CityName = null,
+    string? Address = null);

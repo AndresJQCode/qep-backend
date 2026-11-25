@@ -1,9 +1,9 @@
-using BuildingBlocks.Domain.Pricing;
 using BuildingBlocks.Application;
-using Modules.Tenancy.Application;
+using BuildingBlocks.Domain.Pricing;
 using FluentValidation;
 using Modules.Pos.Application;
 using Modules.Pos.Domain;
+using Modules.Tenancy.Application;
 using static Modules.Pos.UnitTests.PosFixtures;
 
 namespace Modules.Pos.UnitTests;

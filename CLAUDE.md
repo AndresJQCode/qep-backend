@@ -209,4 +209,10 @@ justo cuando alguien renombra una columna o toca el adaptador.
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
-[README § Verificación](README.md#verificación).
+[README § Verificación](README.md#verificación). Las pruebas van en dos niveles (decisión del owner, 2026-11-24):
+
+- **Para mergear a `develop`** basta `.\scripts\test-feature.ps1` en verde, **leyendo sus avisos**. No se corre el
+  proyecto de integración completo de cada módulo tocado.
+- **La suite completa** (`.\scripts\run-all-tests.ps1`) corre de noche o antes de llevar `develop` a `main`.
+- **`main` sólo recibe un commit con reporte completo en verde** y el árbol limpio, según el encabezado de
+  `TestResults\report.md`. `develop` puede quedar roto hasta esa corrida; lo que ahí falle se corrige antes de `main`.

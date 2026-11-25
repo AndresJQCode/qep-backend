@@ -1,9 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Support.Application;
 using Modules.Support.Domain;
-using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using static Modules.Support.IntegrationTests.SupportApiHarness;
 

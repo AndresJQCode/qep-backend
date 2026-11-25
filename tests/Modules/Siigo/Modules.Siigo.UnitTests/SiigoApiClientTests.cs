@@ -123,8 +123,7 @@ public sealed class SiigoApiClientTests : IDisposable
         Assert.Empty(_failures.Recorded);
     }
 
-    // Una lectura con un servicio de Siigo caído no es una respuesta inesperada. Sigue siendo UpstreamServiceException (y no
-    // ServiceUnavailableException) porque la tanda reintenta la segunda y aquí no se reintenta: el usuario puede facturar en Siigo.
+    // Una lectura con un servicio de Siigo caído no es una respuesta inesperada: lleva su propio código.
     [Fact]
     public async Task AReadAnsweredWithAServiceErrorSaysSiigoIsDownWithoutAskingForARetry()
     {

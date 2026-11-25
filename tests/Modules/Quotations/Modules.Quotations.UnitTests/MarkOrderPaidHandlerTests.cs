@@ -246,7 +246,10 @@ public sealed class MarkOrderPaidHandlerTests
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
-                CompanyId = Guid.CreateVersion7(), BankName = "Bancolombia", AccountNumber = "7542", Currency = "USD",
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "USD",
             },
             ShippingDetails.None,
             [

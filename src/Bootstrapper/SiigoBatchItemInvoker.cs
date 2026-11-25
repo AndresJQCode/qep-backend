@@ -1,6 +1,6 @@
+using Bootstrapper.Copilot;
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
-using Bootstrapper.Copilot;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Authorization.Application;
@@ -65,12 +65,12 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
         }
         catch (ResourceConflictException conflict)
         {
-            // La conexión no sirve ahora (pausada, clave rechazada) o dos facturas chocaron: puede arreglarse y el handler reanuda con la misma fila.
-            return new SiigoBatchItemOutcome.Retry(conflict.Code);
+            // La conexión no sirve ahora (pausada, clave rechazada) o dos facturas chocaron.
+            return new SiigoBatchItemOutcome.Failed(conflict.Code);
         }
         catch (ServiceUnavailableException unavailable)
         {
-            return new SiigoBatchItemOutcome.Retry(unavailable.Code);
+            return new SiigoBatchItemOutcome.Failed(unavailable.Code);
         }
         catch (UpstreamServiceException upstream)
         {
@@ -88,8 +88,9 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
                 new SiigoBatchItemOutcome.Invoiced(order.Number ?? string.Empty),
             nameof(SiigoInvoiceStatus.Rejected) or nameof(SiigoInvoiceStatus.Failed) =>
                 new SiigoBatchItemOutcome.Failed(order.ErrorCode ?? "siigo.invoice.rejected"),
-            // Pending o Unknown: no se sabe si Siigo la creó. El handler reanuda con los mismos bytes y la misma clave.
-            _ => new SiigoBatchItemOutcome.Retry(SiigoErrorCodes.Unavailable),
+            // Pending o Unknown: no se sabe si Siigo la creó. La tanda no la reenvía; una persona la reanuda desde el pedido, con los mismos
+            // bytes y la misma clave. La fila trae el motivo (timeout, red, límite, caída).
+            _ => new SiigoBatchItemOutcome.Failed(order?.ErrorCode ?? SiigoErrorCodes.Unavailable),
         };
     }
 }

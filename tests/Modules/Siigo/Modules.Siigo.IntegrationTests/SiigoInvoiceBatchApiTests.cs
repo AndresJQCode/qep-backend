@@ -118,30 +118,25 @@ public sealed class SiigoInvoiceBatchApiTests
     }
 
     [Fact]
-    public async Task ASiigoOutageKeepsTheOrderPendingForARetryAndTheRetryInvoicesIt()
+    public async Task ASiigoOutageFailsTheOrderAtOnceAndNothingIsScheduledForLater()
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
         world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
         var created = await ReadAsync(await PostBatchAsync(world, world.OrderId));
-        var batchId = created.GetProperty("id").GetGuid();
 
         await DrainAsync(world);
-
-        var waiting = await GetBatchAsync(world, batchId);
-        Assert.Equal(("InProgress", "Pending"), (waiting.GetProperty("status").GetString(), Item(waiting, 0).GetProperty("status").GetString()));
-
-        world.Siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f", 0m));
-        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoice_batch_items SET available_at = now() - interval '1 minute'");
-        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = NULL");
         await DrainAsync(world);
 
-        var done = await GetBatchAsync(world, batchId);
-        Assert.Equal(("Finished", "Invoiced"), (done.GetProperty("status").GetString(), Item(done, 0).GetProperty("status").GetString()));
+        var batch = await GetBatchAsync(world, created.GetProperty("id").GetGuid());
+        Assert.Equal(("Finished", "Failed"), (batch.GetProperty("status").GetString(), Item(batch, 0).GetProperty("status").GetString()));
+        Assert.Equal("siigo.invoice.unavailable", Item(batch, 0).GetProperty("errorCode").GetString());
+        Assert.Single(InvoiceCalls(world.Siigo));
     }
 
+    // Un proceso que murió a mitad del envío no se reanuda más tarde: el usuario pudo haber creado la factura en Siigo entre tanto.
     [Fact]
-    public async Task AClaimedOrderWhoseLeaseExpiredIsClaimedAgain()
+    public async Task AnOrderWhoseSendWasCutShortIsFailedWithoutCallingSiigoAgain()
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
@@ -149,22 +144,6 @@ public sealed class SiigoInvoiceBatchApiTests
         await ExecuteAsync(
             world.ConnectionString,
             "UPDATE siigo.invoice_batch_items SET status = 'Sending', attempts = 1, lease_until = now() - interval '1 minute'");
-
-        await DrainAsync(world);
-
-        var batch = await GetBatchAsync(world, created.GetProperty("id").GetGuid());
-        Assert.Equal("Invoiced", Item(batch, 0).GetProperty("status").GetString());
-    }
-
-    [Fact]
-    public async Task AnOrderClaimedMoreTimesThanAllowedIsFailedWithoutCallingSiigo()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var world = await ArrangeAsync(database);
-        var created = await ReadAsync(await PostBatchAsync(world, world.OrderId));
-        await ExecuteAsync(
-            world.ConnectionString,
-            "UPDATE siigo.invoice_batch_items SET status = 'Sending', attempts = 5, lease_until = now() - interval '1 minute'");
 
         await DrainAsync(world);
 

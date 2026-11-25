@@ -101,7 +101,12 @@ public sealed class MedicalExamOverviewApiTests : IClassFixture<HrApiFixture>
         Assert.Equal(
             new Dictionary<string, int>
             {
-                ["ExitPending"] = 1, ["NoExams"] = 1, ["Overdue"] = 2, ["DueSoon"] = 1, ["UpToDate"] = 1, ["NotRequired"] = 1,
+                ["ExitPending"] = 1,
+                ["NoExams"] = 1,
+                ["Overdue"] = 2,
+                ["DueSoon"] = 1,
+                ["UpToDate"] = 1,
+                ["NotRequired"] = 1,
             },
             counts.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.GetInt32()));
         Assert.Equal(counts.GetRawText(), filtered.GetProperty("counts").GetRawText());

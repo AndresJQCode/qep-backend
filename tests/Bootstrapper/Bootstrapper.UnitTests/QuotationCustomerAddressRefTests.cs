@@ -59,7 +59,11 @@ public sealed class QuotationCustomerAddressRefTests
         var address = customer.AddAddress(
             new CustomerAddressDetails
             {
-                Name = "Bodega Madrid", Address = "Calle Mayor 1", Country = "ES", CityName = "Madrid", Phone = "+34600111222"
+                Name = "Bodega Madrid",
+                Address = "Calle Mayor 1",
+                Country = "ES",
+                CityName = "Madrid",
+                Phone = "+34600111222"
             },
             false,
             Now);

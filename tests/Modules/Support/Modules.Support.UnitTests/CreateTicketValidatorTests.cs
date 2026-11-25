@@ -24,7 +24,8 @@ public sealed class CreateTicketValidatorTests
         CreateTicketCommand.From(
             Tenant,
             new CreateTicketRequest(Guid.CreateVersion7(), subject, description, medium, channel, null, requester ?? Ana, null))
-        with { TenantCountry = tenantCountry };
+        with
+        { TenantCountry = tenantCountry };
 
     private static List<string> Errors(CreateTicketCommand command) =>
         new CreateTicketValidator().Validate(command).Errors.Select(error => error.PropertyName).ToList();
@@ -128,7 +129,8 @@ public sealed class CreateTicketValidatorTests
                 Tenant,
                 new CreateTicketRequest(
                     Guid.CreateVersion7(), "Asunto", "Descripción", "Phone", channel, customerId, requester, null, Anonymous: true))
-            with { TenantCountry = "CO" };
+            with
+            { TenantCountry = "CO" };
 
         Assert.Empty(Errors(Anonymous("Portal", null, null)));
         Assert.Equal(["ReplyChannel"], Errors(Anonymous("Email", null, null)));
@@ -146,7 +148,8 @@ public sealed class CreateTicketValidatorTests
     public void AMissingTypeFails()
     {
         var command = CreateTicketCommand.From(
-            Tenant, new CreateTicketRequest(null, "Asunto", "Descripción", "Phone", "Email", null, Ana, null)) with { TenantCountry = "CO" };
+            Tenant, new CreateTicketRequest(null, "Asunto", "Descripción", "Phone", "Email", null, Ana, null)) with
+        { TenantCountry = "CO" };
 
         Assert.Equal(["TicketTypeId"], Errors(command));
     }

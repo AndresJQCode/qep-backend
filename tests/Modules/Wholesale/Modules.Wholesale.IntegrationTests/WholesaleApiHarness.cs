@@ -463,6 +463,22 @@ internal static class WholesaleApiHarness
         return first ?? throw new InvalidOperationException("No seeded DIVIPOLA city.");
     }
 
+    /// <summary>Una ciudad sembrada distinta de <paramref name="excluded"/>.</summary>
+    public static async Task<Guid> OtherCityAsync(HttpClient client, Guid excluded)
+    {
+        var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<GeographyRow>>($"/api/v1/cities?departmentId={department.Id}", Ct) ?? [];
+            if (cities.FirstOrDefault(city => city.Id != excluded) is { } other)
+            {
+                return other.Id;
+            }
+        }
+
+        throw new InvalidOperationException("No second seeded DIVIPOLA city.");
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage response)
     {
         if (!response.IsSuccessStatusCode)

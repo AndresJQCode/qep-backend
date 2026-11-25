@@ -1170,7 +1170,10 @@ public sealed partial class RunProcessorTests
         var variables = RunVariables.Empty();
         variables.Set("factura", new System.Text.Json.Nodes.JsonObject
         {
-            ["messageId"] = messageId.ToString(), ["fileName"] = "f.pdf", ["mimeType"] = "application/pdf", ["stored"] = false,
+            ["messageId"] = messageId.ToString(),
+            ["fileName"] = "f.pdf",
+            ["mimeType"] = "application/pdf",
+            ["stored"] = false,
         });
         return variables;
     }

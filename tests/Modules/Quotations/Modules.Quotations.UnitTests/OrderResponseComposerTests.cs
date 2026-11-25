@@ -266,7 +266,8 @@ public sealed class OrderResponseComposerTests
         var accountId = Guid.CreateVersion7();
         var buyers = new StubQuotationBuyerAccountLookup(new QuotationBuyerAccountRef(accountId, "ana@example.com"));
         var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto()
-            with { Source = "Store", BuyerAccountId = accountId };
+            with
+        { Source = "Store", BuyerAccountId = accountId };
 
         var response = await Composer(buyers: buyers).ComposeAsync(
             TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
@@ -279,7 +280,8 @@ public sealed class OrderResponseComposerTests
     {
         var buyers = new StubQuotationBuyerAccountLookup();
         var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto()
-            with { Source = "Store", BuyerAccountId = Guid.CreateVersion7() };
+            with
+        { Source = "Store", BuyerAccountId = Guid.CreateVersion7() };
 
         var response = await Composer(buyers: buyers).ComposeAsync(
             TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);

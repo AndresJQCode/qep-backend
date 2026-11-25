@@ -4,8 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
-using Modules.Notifications.Infrastructure.Persistence;
 using Modules.Notifications.Infrastructure.Messaging;
+using Modules.Notifications.Infrastructure.Persistence;
 using static Modules.Notifications.IntegrationTests.NotificationsDeliveryHarness;
 
 namespace Modules.Notifications.IntegrationTests;

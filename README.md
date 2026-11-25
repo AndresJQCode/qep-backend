@@ -1410,7 +1410,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog` | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive` | `purchases.order.manage` |
 | `/api/v1/tenants/{tenantId}/wholesale/price-lists/preview` | `POST` (la lista sin guardar, `{ adjustmentPercent, visibility, categoryIds, exclusions }`: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe). Las listas mismas están en `/catalog/price-lists` desde el spec 2026-11-22. Módulo `wholesale` | `catalog.price_list.manage` + `wholesale.distributor.read` |
 | `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `catalog.price_list.manage` + `wholesale.distributor.read` |
-| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone` y `whatsAppConnectionId`; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
+| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone`, `whatsAppConnectionId` y los datos del distribuidor: `businessName`, `country`, `identificationType`, `identificationNumber`, `contactName`, `email`, `cityId`, `cityName`, `address`, todos opcionales; `If-Match`; ver [Editar un distribuidor](#editar-un-distribuidor)), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
 | `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `email-code` (`POST`, anónimo, `credentials`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
@@ -2614,6 +2614,26 @@ prueba el buzón, y el correo no tiene que ser el invitado.
   `wholesale.invitation.not_tenant_owner`; `401 identity.credentials.invalid`; `422 wholesale.invitation.self_link`,
   `identity.terms.unavailable`, `identity.terms.version_mismatch`, los de `register-tenant` y `validation.failed` (`Mode`,
   `TenantId`, `TermsVersion`, `Password`).
+
+#### Editar un distribuidor
+
+`PUT …/wholesale/distributors/{id}` (`If-Match`; cuerpo `{ priceListId, advisorId, billingCompanyId, phone?,
+whatsAppConnectionId?, businessName?, country?, identificationType?, identificationNumber?, contactName?, email?, cityId?,
+cityName?, address? }`). Decisión del owner 2026-11-24: mientras está `Invited` se editan los datos que se llenaron al invitar.
+
+- Lista, asesor y empresa facturadora se editan en cualquier estado. `phone` y `whatsAppConnectionId` sólo cuentan invitado
+  (afuera se ignoran) y `phone` ausente **borra** los dos.
+- Los datos del distribuidor son opcionales: ausente o `null` **conserva** lo guardado. No se puede borrar el nombre ni la
+  ciudad; la dirección se borra con `""`.
+- Invitado, rigen las reglas de invitar: `422 validation.failed` con `errors` por campo (`Email`, `BusinessName`, `Country`,
+  `IdentificationType`, `IdentificationNumber`, `ContactName`, `CityId`, `CityName`, `Address`),
+  `422 wholesale.distributor.city_not_found` y `409 wholesale.distributor.identification_taken` contra los demás
+  distribuidores. Al cambiar de país hay que mandar el tipo de documento y la ciudad válidos para el nuevo. Una invitación
+  vieja sin ciudad no la exige mientras no se mande la ciudad ni cambie el país.
+- `Active` o `Blocked`: un dato distinto del guardado es `409 wholesale.distributor.invalid_transition`. Reenviar los mismos
+  valores se acepta (en Colombia `cityName` no cuenta, y afuera `cityId` tampoco).
+- Cambiar el correo **no** reenvía la invitación ni rota el token: para que llegue al correo nuevo, usa `resend-invitation`.
+- La auditoría (`wholesale.distributor.updated`) nombra los campos que cambiaron, nunca sus valores.
 
 #### Aviso por WhatsApp de la invitación
 
@@ -5484,7 +5504,8 @@ consola de operador, como `pos`), esquema `siigo` (`settings`, los vínculos de 
 `invoices`), y del lado de Integrations el proveedor `siigo`. Recibos de caja y notas crédito quedan fuera (fase 2).
 
 **Conexión.** El tenant crea la conexión `siigo` en Integrations con su usuario y su clave de acceso (cifrada, como las demás); el
-probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage`, bajo
+probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage` (de
+fábrica `admin` y `billing`; crear, editar o desconectar la conexión exige `integrations.connection.manage`, sólo `admin`), bajo
 `/api/v1/tenants/{tenantId}/siigo/connections/{connectionId}`: tipo de documento, vendedor, centro de costo, bodega, empresa de QEP
 que factura, impuestos, formas de pago y vínculos de productos. Los `PUT` llevan `If-Match` (sin él, 428; con una versión vieja,
 412). El asistente propone cada paso con lo que lee de Siigo (`/options/{lista}`) y el auto-vínculo casa variantes y productos por
@@ -6642,6 +6663,68 @@ dotnet format --verify-no-changes
 dotnet build --no-restore
 dotnet test --no-build
 ```
+
+### Pruebas en dos niveles
+
+| Nivel | Comando | Cuándo |
+| --- | --- | --- |
+| Rápido: sólo lo que cambió la rama | `.\scripts\test-feature.ps1` | Antes de mergear a `develop` |
+| Completo: todos los proyectos | `.\scripts\run-all-tests.ps1` | De noche, o antes de llevar `develop` a `main` |
+
+```powershell
+.\scripts\test-feature.ps1                 # compara contra develop
+.\scripts\test-feature.ps1 -DryRun         # muestra el plan sin compilar ni probar
+.\scripts\test-feature.ps1 -Base HEAD~3    # compara contra otra referencia
+.\scripts\test-feature.ps1 -NoBuild        # usa la compilación que ya existe
+```
+
+El nivel rápido toma lo cambiado desde el punto en que la rama se separó de la base, commiteado o no, y corre:
+compilación (con `--no-restore`: restaura antes en un worktree nuevo), `ArchitectureTests`, las unitarias de cada módulo
+tocado, `Bootstrapper.UnitTests` si tocaste `Bootstrapper` o `Api`, y **sólo las clases de integración nuevas o
+modificadas**. No corre las demás clases de integración que tu cambio pueda romper; esas aparecen en la corrida
+completa. Lee los avisos: dicen qué quedó sin probar. El reporte queda en `TestResults\feature\report.md`, y sale con 1
+si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
+
+Un reporte completo en verde vale para el commit que dice su encabezado, con el árbol limpio. Para programarlo todas las
+noches (se registra una vez, desde la raíz del checkout que quieras probar):
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -File `"$PWD\scripts\run-all-tests.ps1`""
+Register-ScheduledTask -TaskName "qep-backend-pruebas" -Action $action -Trigger (New-ScheduledTaskTrigger -Daily -At 1am)
+```
+
+Necesita el equipo encendido, Docker Desktop abierto y ningún `Api.exe` ni `testhost` vivo. Si algo de eso falta no hay
+reporte nuevo: se nota en la fecha y el commit del encabezado. Las pruebas del propio selector se corren con
+`powershell -NoProfile -File scripts\tests\TestSelection.Tests.ps1`.
+
+### Correr todas las pruebas y sacar el reporte de fallas
+
+`dotnet test` sobre toda la solución en paralelo no sirve en Windows: cada clase de integración levanta un
+Postgres con Testcontainers y se agotan puertos y memoria. Usa el script, que corre **un proyecto a la vez**:
+
+```powershell
+.\scripts\run-all-tests.ps1                          # todo: unitarias primero, luego integración
+.\scripts\run-all-tests.ps1 -Kind Unit               # sólo unitarias (no necesita Docker)
+.\scripts\run-all-tests.ps1 -Filter Quotations       # sólo los proyectos cuya ruta contenga el texto
+.\scripts\run-all-tests.ps1 -Filter Quotations -NoBuild -MaxThreads 2
+```
+
+Los proyectos que declaran `[assembly: CollectionBehavior(MaxParallelThreads = n)]` (comparten un solo contenedor) corren
+con ese número; los demás, con 4. `-MaxThreads` pisa los dos casos: úsalo si una corrida agota puertos o conexiones.
+
+Antes de correrlo:
+
+- **Docker Desktop debe estar corriendo** (`docker info` responde). Sin daemon, todas las pruebas de integración
+  fallan por conexión y el resumen de `dotnet test` muestra miles de "errores" aunque el build esté limpio.
+- No debe haber `Api.exe` ni `testhost` vivos; el script se detiene si los encuentra. El build host de C# Dev Kit
+  (`dotnet.exe` de VS Code) no estorba.
+- `Modules.Ai.Eval` queda fuera: es la evaluación con IA real y se corre aparte (ver su sección).
+
+Salida, en `TestResults/` (ignorada por git y borrada en cada corrida):
+
+- `report.md`: tabla por proyecto (total, pasan, fallan, segundos), las causas de falla más repetidas y la lista de
+  pruebas que fallan por proyecto.
+- `<proyecto>/<proyecto>.trx`: el detalle completo. Ábrelo con `Get-Content -LiteralPath` (los nombres llevan corchetes).
 
 La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones

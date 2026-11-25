@@ -208,13 +208,22 @@ public sealed class InAppSupportTaskTests
     private static string AssignedPayload(Guid tenantId, Guid ticketId, Guid assignee, Guid assignedBy) =>
         JsonSerializer.Serialize(new
         {
-            ticketId, tenantId, ticketNumber = "SOP-000127", assigneeMemberId = assignee, assignedByMemberId = assignedBy,
+            ticketId,
+            tenantId,
+            ticketNumber = "SOP-000127",
+            assigneeMemberId = assignee,
+            assignedByMemberId = assignedBy,
         });
 
     private static string ReleasedPayload(Guid tenantId, Guid ticketId, Guid former, string reason, bool isInternal) =>
         JsonSerializer.Serialize(new
         {
-            ticketId, tenantId, ticketNumber = "SOP-000127", formerAssigneeMemberId = former, reason, isInternal,
+            ticketId,
+            tenantId,
+            ticketNumber = "SOP-000127",
+            formerAssigneeMemberId = former,
+            reason,
+            isInternal,
         });
 
     private static async Task ExecuteAsync(string connectionString, string sql)
