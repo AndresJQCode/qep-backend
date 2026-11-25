@@ -146,9 +146,8 @@ public sealed class ArchiveLocationHandler(
         location.Archive(now);
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        var locationResources = (await resources.ListAsync(command.TenantId, ResourceScope.All, cancellationToken))
-            .Where(resource => resource.LocationId == location.Id)
-            .ToArray();
+        // Con seguimiento: los recursos se archivan abajo y ese cambio se guarda con el resto (ListAsync lee sin seguimiento).
+        var locationResources = await resources.ListByLocationForUpdateAsync(command.TenantId, location.Id, cancellationToken);
         // Archived resources are locked too: nothing new can book on them, but a cancel or a reschedule of an old appointment may be running.
         await appointments.LockResourcesAsync(command.TenantId, [.. locationResources.Select(resource => resource.Id)], cancellationToken);
 
