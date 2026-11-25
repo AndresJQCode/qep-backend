@@ -142,7 +142,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   desde otra tanda o una resolución desde el pedido se ven sin escribir en el ítem. Una tanda de **un** pedido puede llevar las formas de
   pago elegidas (`payments_json`). Un pedido que ya está en un ítem `Pending` o `Sending` es 409 `siigo.invoice_batch.order_in_progress` con
   `details.orderIds` (la consulta antes de guardar y, en la carrera, el índice `IX_invoice_batch_items_tenant_order_open`). El resto de la
-  tanda sigue. El timbre sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre
+  tanda sigue. **`finished_at` puede quedar vacío** si dos réplicas resuelven a la vez los dos últimos pedidos: al leer, la tanda es
+  `Finished` si está cerrada o si ningún pedido guardado le falta, con la hora del último resuelto
+  (`SiigoInvoiceBatch.ReadFinishedAt`); quien filtre por `finished_at` en SQL no ve esas. El timbre sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre
   calla y sólo queda la red de seguridad de 30 s. Tope de 50 pedidos por tanda.
 
 - **`qep_siigo_call_failures_total{operation,reason}` no lleva tenant, conexión ni ruta** (cardinalidad): el tenant se busca en `siigo.call_failures`

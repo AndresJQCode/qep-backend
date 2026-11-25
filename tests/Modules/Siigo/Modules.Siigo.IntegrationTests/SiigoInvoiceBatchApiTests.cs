@@ -760,6 +760,26 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Equal([newest, middle, oldest], Ids(byDefault));
     }
 
+    // La carrera de dos réplicas deja finished_at vacío con todos los pedidos resueltos: se lee terminada, en el detalle y en la lista.
+    [Fact]
+    public async Task ABatchLeftOpenWithEveryItemSettledReadsAsFinished()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var batchId = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoice_batches SET finished_at = NULL");
+
+        var detail = await GetBatchAsync(world, batchId);
+        var summary = (await ReadAsync(await world.Client.GetAsync(BatchesRoute(world), Ct))).GetProperty("items")[0];
+
+        foreach (var batch in new[] { detail, summary })
+        {
+            Assert.Equal("Finished", batch.GetProperty("status").GetString());
+            Assert.Equal(JsonValueKind.String, batch.GetProperty("finishedAt").ValueKind);
+        }
+    }
+
     [Fact]
     public async Task ABadPageIs422WithItsField()
     {

@@ -24,7 +24,10 @@ public sealed record SiigoInvoiceBatchStatusCountDto(string Status, int Count)
 /// la pantalla sepa cuándo dejar de consultar; <c>statusCounts</c> trae los seis estados contados para pintar el resumen sin recorrer los
 /// ítems (<c>invoiced</c>, <c>skipped</c> y <c>failed</c> se quedan porque la pantalla publicada los lee). Todo sale del estado
 /// <b>efectivo</b> de cada pedido (spec 2026-11-24 §2): uno que quedó por confirmar sigue a su factura, así que una tanda <c>Finished</c>
-/// puede mostrar uno <c>Sending</c> porque otra lo está reenviando. Nunca lleva la petición a Siigo, la clave ni sus mensajes.</summary>
+/// puede mostrar uno <c>Sending</c> porque otra lo está reenviando. Es <c>Finished</c> cuando la tanda quedó cerrada o cuando ningún pedido
+/// guardado le queda por procesar, y <c>finishedAt</c> siempre viene en una <c>Finished</c>: en una que quedó sin cerrar es la hora del
+/// último pedido resuelto (<see cref="SiigoInvoiceBatch.ReadFinishedAt"/>). Nunca lleva la petición a Siigo, la clave ni sus
+/// mensajes.</summary>
 public sealed record SiigoInvoiceBatchDto(
     Guid Id,
     string Status,
@@ -58,15 +61,16 @@ public sealed record SiigoInvoiceBatchDto(
             .ToList();
         var states = items.Select(row => row.State).ToList();
         var queued = queuedOrderIds.ToHashSet();
+        var finishedAt = batch.ReadFinishedAt();
         return new(
             batch.Id,
-            SiigoInvoiceBatchViews.StatusOf(batch),
+            SiigoInvoiceBatchViews.StatusOf(finishedAt),
             items.Count,
             states.Count(state => state.Status == SiigoInvoiceBatchItemStatus.Invoiced),
             states.Count(state => state.Status == SiigoInvoiceBatchItemStatus.Skipped),
             states.Count(state => state.Status == SiigoInvoiceBatchItemStatus.Failed),
             batch.CreatedAt,
-            batch.FinishedAt,
+            finishedAt,
             [
                 .. items.Select(row => SiigoInvoiceBatchItemDto.From(
                     row.Item, row.State, row.Invoice, labels.GetValueOrDefault(row.Item.OrderId), queued.Contains(row.Item.OrderId))),
@@ -135,7 +139,8 @@ public sealed record SiigoInvoiceBatchItemDto(
 }
 
 /// <summary>Una tanda en la lista (spec 2026-11-24 §5). BFF: <paramref name="StatusCounts"/> trae los seis estados efectivos, incluso en
-/// cero, así la pantalla pinta el avance de cada fila sin pedir el detalle.</summary>
+/// cero, así la pantalla pinta el avance de cada fila sin pedir el detalle. <paramref name="Status"/> y <paramref name="FinishedAt"/> salen
+/// igual que en el detalle.</summary>
 public sealed record SiigoInvoiceBatchSummaryDto(
     Guid Id,
     string Status,
@@ -149,13 +154,14 @@ public sealed record SiigoInvoiceBatchSummaryDto(
     {
         ArgumentNullException.ThrowIfNull(batch);
         var states = batch.Items.Select(item => item.Effective(SiigoInvoiceBatchViews.Linked(item, invoices), now)).ToList();
+        var finishedAt = batch.ReadFinishedAt();
         return new(
             batch.Id,
-            SiigoInvoiceBatchViews.StatusOf(batch),
+            SiigoInvoiceBatchViews.StatusOf(finishedAt),
             batch.Items.Count,
             SiigoInvoiceBatchStatusCountDto.From(states),
             batch.CreatedAt,
-            batch.FinishedAt);
+            finishedAt);
     }
 }
 
@@ -166,7 +172,8 @@ public sealed record SiigoInvoiceBatchPageDto(
 /// <summary>Lo que comparten las tres lecturas de una tanda.</summary>
 internal static class SiigoInvoiceBatchViews
 {
-    public static string StatusOf(SiigoInvoiceBatch batch) => batch.IsFinished ? "Finished" : "InProgress";
+    /// <param name="finishedAt">El de <see cref="SiigoInvoiceBatch.ReadFinishedAt"/>.</param>
+    public static string StatusOf(DateTimeOffset? finishedAt) => finishedAt is null ? "InProgress" : "Finished";
 
     public static SiigoInvoice? Linked(SiigoInvoiceBatchItem item, IReadOnlyDictionary<Guid, SiigoInvoice> invoices) =>
         item.InvoiceId is { } id ? invoices.GetValueOrDefault(id) : null;

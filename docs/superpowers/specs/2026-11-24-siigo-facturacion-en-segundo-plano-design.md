@@ -217,6 +217,10 @@ SiigoInvoiceBatchStatusCountDto(Status, Count)
 **`StatusCounts` viaja completo y en orden fijo, incluso en cero**: `Pending, Sending, Invoiced, ToConfirm, Failed, Skipped`. Así la
 pantalla no tiene que conocer el enum para dibujar el que falta (precedente `ReportStatusSliceDto`). Se calcula con el estado efectivo.
 
+**Tanda terminada al leer** (precisión del 2026-11-25): `status` es `Finished` si la tanda quedó cerrada (`finished_at`) o si ningún
+ítem guardado le falta por procesar, en el detalle y en la lista. Cubre la carrera de dos réplicas que resuelven a la vez los dos últimos
+ítems y no la cierran. En ese caso `finishedAt` es la hora del último ítem resuelto (`updated_at`); la columna sigue vacía.
+
 **Detalle enriquecido** (`GET …/invoice-batches/{batchId}`, y la respuesta 202 del `POST`): `SiigoInvoiceBatchDto` suma `StatusCounts`
 y conserva `Invoiced`, `Skipped`, `Failed` (aditivo: el frontend publicado los lee). Cada ítem:
 
