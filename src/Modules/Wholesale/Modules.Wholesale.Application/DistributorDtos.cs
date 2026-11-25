@@ -67,8 +67,11 @@ public sealed record DistributorSummaryDto(
 /// <summary>
 /// La ciudad del distribuidor, con el nombre ya resuelto. <c>Id</c> es el de Geography en Colombia y <c>null</c> afuera, donde
 /// la ciudad es el texto que escribió el mayorista.
+/// <para><c>DepartmentId</c> y <c>DepartmentName</c> van por la pantalla (BFF): la edición elige departamento y luego ciudad, y
+/// sin ellos no tiene cómo preseleccionar la guardada. Son <c>null</c> afuera de Colombia y si la ciudad ya no se
+/// encuentra.</para>
 /// </summary>
-public sealed record DistributorCityDto(Guid? Id, string Name);
+public sealed record DistributorCityDto(Guid? Id, string Name, Guid? DepartmentId = null, string? DepartmentName = null);
 
 /// <summary>
 /// El distribuidor completo para su pantalla (BFF). <c>AllowedActions</c> ya cruza estado y permiso (en minúscula y en el orden

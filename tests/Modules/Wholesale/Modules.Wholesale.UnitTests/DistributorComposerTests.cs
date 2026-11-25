@@ -29,7 +29,8 @@ public sealed class DistributorComposerTests
 
         var detail = await world.Composer().DetailAsync(distributor, Ct);
 
-        Assert.Equal(new DistributorCityDto(world.MedellinId, "Medellín"), detail.City);
+        Assert.Equal(
+            new DistributorCityDto(world.MedellinId, "Medellín", world.Cities.DepartmentId, "Antioquia"), detail.City);
         Assert.Equal("Calle 10 # 40-20", detail.Address);
     }
 
