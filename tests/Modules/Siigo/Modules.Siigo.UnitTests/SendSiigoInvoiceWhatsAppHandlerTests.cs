@@ -105,7 +105,7 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
         var json = Assert.Single(harness.Audit.Entries).ChangedFieldsJson;
         using var document = JsonDocument.Parse(json);
         Assert.Equal(
-            ["errorCode", "kind", "number", "orderId", "outcome", "status"],
+            ["errorCode", "fromStatus", "kind", "number", "orderId", "outcome", "status"],
             [.. document.RootElement.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal)]);
         Assert.DoesNotContain(Convert.ToBase64String(Pdf), json, StringComparison.Ordinal);
         Assert.DoesNotContain("phone", json, StringComparison.OrdinalIgnoreCase);

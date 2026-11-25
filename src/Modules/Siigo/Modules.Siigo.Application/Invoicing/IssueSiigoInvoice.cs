@@ -44,7 +44,11 @@ public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInv
 /// </list>
 /// Después del commit, fuera de la transacción y sin reintentos propios, <c>POST /v1/invoices</c> por borrador (la del pedido primero, la
 /// de flete sólo si la del pedido salió) y el resultado se guarda aparte: 2xx → <c>Created</c>/<c>Stamped</c> y el pedido se marca; error de
-/// validación de Siigo → <c>Rejected</c> y el pedido sigue libre; timeout, 5xx, 429 o red → sigue <c>Pending</c>.
+/// validación de Siigo en un primer intento → <c>Rejected</c> y el pedido sigue libre.
+/// <para>Spec 2026-11-24 §3: ante la duda la factura queda <b>por confirmar</b> (<c>Pending</c> con <c>unanswered_at</c>), con la misma
+/// clave, y decide una persona. Pasa con timeout, red, 5xx, 429, una respuesta ilegible, un error de servicio de Siigo (aun en el primer
+/// intento), un rechazo de datos en el reenvío de una que ya tuvo un envío sin respuesta, y al reanudar un envío cuyo reclamo venció sin
+/// resultado. Sin <c>Partner-Id</c> o sin token la factura no salió: sigue <c>Pending</c> sin quedar por confirmar.</para>
 /// </summary>
 public sealed class IssueSiigoInvoiceHandler(
     IExecutionContext executionContext,
@@ -137,6 +141,12 @@ public sealed class IssueSiigoInvoiceHandler(
         var toSend = pending.Where(row => !row.IsBeingSent(now)).ToList();
         foreach (var row in toSend)
         {
+            // Un reclamo vencido que sigue puesto es un envío que murió sin registrar resultado: se anota antes de reclamar de nuevo.
+            if (row.RecoverInterruptedSend(now))
+            {
+                SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceUnanswered, now);
+            }
+
             row.BeginSend(now);
         }
 
@@ -207,8 +217,8 @@ public sealed class IssueSiigoInvoiceHandler(
             cancellationToken);
     }
 
-    // El tramo sin candado: la llamada a Siigo y su resultado, fila por fila. Un fallo no sabido (Pending) corta: la de flete no sale
-    // antes de saber qué pasó con la del pedido.
+    // El tramo sin candado: la llamada a Siigo y su resultado, fila por fila. Cualquier resultado que no sea «creada» corta: la de flete
+    // no sale antes de saber qué pasó con la del pedido.
     private async Task SendAsync(Prepared prepared, CancellationToken cancellationToken)
     {
         foreach (var row in prepared.ToSend.OrderBy(value => value.Kind))
@@ -261,30 +271,75 @@ public sealed class IssueSiigoInvoiceHandler(
                 return true;
 
             case SiigoInvoiceOutcome.Rejected rejected:
-                row.MarkRejected(
+                var serviceOutage = SiigoApiErrors.IsServiceUnavailable(rejected.Errors);
+                var alreadyUnanswered = row.UnansweredAt is not null;
+                var isRejected = row.RecordRejection(
                     SiigoInvoiceSupport.ErrorCodeOf(rejected.Errors),
                     SiigoInvoiceSupport.ErrorDetailOf(rejected.Errors),
                     rejected.ExpectedPaymentsTotal,
+                    serviceOutage,
                     now);
-                SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceRejected, now);
-                if (row.Kind == SiigoInvoiceKind.Order)
+                if (isRejected)
                 {
-                    // La de flete no salió nunca: se descarta, y el pedido queda libre para armarse otra vez.
-                    foreach (var sibling in prepared.Rows.Where(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
+                    SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceRejected, now);
+                    if (row.Kind == SiigoInvoiceKind.Order)
                     {
-                        sibling.MarkFailed("siigo.invoice.order_rejected", "The order invoice was rejected, so the freight invoice was not sent.", now);
+                        // La de flete no salió nunca: se descarta, y el pedido queda libre para armarse otra vez.
+                        foreach (var sibling in prepared.Rows.Where(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
+                        {
+                            sibling.MarkFailed("siigo.invoice.order_rejected", "The order invoice was rejected, so the freight invoice was not sent.", now);
+                        }
                     }
+                }
+                else
+                {
+                    // Queda por confirmar. Se audita la primera vez, y cada rechazo de datos retenido por un envío anterior sin respuesta;
+                    // otra caída de servicio sobre una que ya lo estaba no agrega nada.
+                    if (!alreadyUnanswered || !serviceOutage)
+                    {
+                        SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceUnanswered, now);
+                    }
+
+                    ReleaseWaiting(prepared, row, now);
                 }
 
                 await unitOfWork.SaveChangesAsync(cancellationToken);
                 return false;
 
-            default:
-                // Timeout, 5xx, 429 o red: no se sabe si Siigo la creó. Sigue Pending, se suelta el reclamo y el reintento manda lo mismo.
-                // El motivo queda en la fila para que el pedido le diga al tenant qué pasó (spec siigo-motivo-pendiente).
-                row.MarkTransient(outcome is SiigoInvoiceOutcome.Transient transient ? SiigoInvoiceSupport.TransientCodeOf(transient.Reason) : null, now);
+            case SiigoInvoiceOutcome.Transient transient:
+                // El motivo queda en la fila para que el pedido le diga al tenant qué pasó (spec siigo-motivo-pendiente). En los dos casos
+                // sigue Pending, se suelta el reclamo y el reenvío manda lo mismo con la misma clave.
+                var errorCode = SiigoInvoiceSupport.TransientCodeOf(transient.Reason);
+                if (!SiigoInvoiceSupport.LeftQep(transient.Reason))
+                {
+                    row.MarkTransient(errorCode, now);
+                }
+                else if (row.MarkUnanswered(errorCode, null, now))
+                {
+                    SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceUnanswered, now);
+                }
+
+                ReleaseWaiting(prepared, row, now);
                 await unitOfWork.SaveChangesAsync(cancellationToken);
                 return false;
+
+            default:
+                throw new InvalidOperationException("Unknown invoice outcome.");
+        }
+    }
+
+    // La del pedido no salió bien y corta el envío: la de flete de esta petición nunca salió. Suelta su reclamo en el mismo guardado; si
+    // lo conservara, el siguiente reenvío la tomaría por un envío cortado y la dejaría por confirmar (spec 2026-11-24 §3).
+    private static void ReleaseWaiting(Prepared prepared, SiigoInvoice sent, DateTimeOffset now)
+    {
+        if (sent.Kind != SiigoInvoiceKind.Order)
+        {
+            return;
+        }
+
+        foreach (var waiting in prepared.ToSend.Where(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
+        {
+            waiting.MarkTransient(null, now);
         }
     }
 

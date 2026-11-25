@@ -452,6 +452,23 @@ public sealed class SiigoInvoiceApiTests
         AssertRejectedCode(manual, HttpStatusCode.Conflict, "order.order.external_invoice_pending", await manual.Content.ReadAsStringAsync(Ct));
     }
 
+    // Spec 2026-11-24 §3: una caída de Siigo no dice si el documento quedó creado, así que el pedido sigue bloqueado hasta resolverla.
+    [Fact]
+    public async Task ADocumentsServiceOnTheFirstAttemptBlocksTheManualMarkUntilResolved()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(
+            HttpStatusCode.BadRequest, """{"Errors":[{"Code":"documents_service","Message":"Your request could not be completed"}]}"""));
+
+        var row = (await ReadAsync(await PostAsync(world)))[0];
+        var manual = await world.Client.PostAsync($"/api/v1/tenants/{world.TenantId}/orders/{world.OrderId}/invoice", null, Ct);
+
+        Assert.Equal("Pending", row.GetProperty("status").GetString());
+        Assert.Equal("siigo.invoice.siigo_service", row.GetProperty("errorCode").GetString());
+        AssertRejectedCode(manual, HttpStatusCode.Conflict, "order.order.external_invoice_pending", await manual.Content.ReadAsStringAsync(Ct));
+    }
+
     // Con el módulo apagado no hay pantalla ni endpoint (403) para resolver una factura Pending: no puede seguir bloqueando la marca manual.
     [Fact]
     public async Task WithTheModuleOffALiveSiigoInvoiceNoLongerBlocksTheManualMark()
@@ -567,7 +584,7 @@ public sealed class SiigoInvoiceApiTests
         Assert.Equal("Pending", inside.GetProperty("status").GetString());
         Assert.Single(InvoiceCalls(world.Siigo));
 
-        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '3 minutes'");
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '9 minutes'");
         var expired = (await ReadAsync(await PostAsync(world)))[0];
 
         Assert.Equal("Created", expired.GetProperty("status").GetString());

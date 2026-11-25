@@ -107,6 +107,12 @@ internal static class SiigoInvoiceSupport
         _ => SiigoErrorCodes.InvoiceUnavailable,
     };
 
+    /// <summary>Si la petición de la factura pudo haber salido hacia Siigo (D-2, spec 2026-11-24). Sin <c>Partner-Id</c> no se llama, y
+    /// sin token la autenticación no llegó a dar con qué mandarla: en los demás motivos no se sabe, incluido un timeout o una falla de red
+    /// de <c>/auth</c>, que llegan igual que los de la factura y se tratan como sin respuesta.</summary>
+    public static bool LeftQep(string transientReason) =>
+        transientReason is not ("partner_id_missing" or "auth_without_token");
+
     public static string ErrorCodeOf(IReadOnlyList<SiigoError> errors)
     {
         if (errors.Any(error => string.Equals(error.Code, SiigoApiErrors.InvalidTotalPayments, StringComparison.OrdinalIgnoreCase)))
@@ -146,7 +152,8 @@ internal static class SiigoInvoiceSupport
         SiigoInvoice invoice,
         string action,
         DateTimeOffset now,
-        string? outcome = null) =>
+        string? outcome = null,
+        string? fromStatus = null) =>
         recorder.Record(
             invoice.TenantId,
             executionContext.SubjectId,
@@ -162,6 +169,7 @@ internal static class SiigoInvoiceSupport
                 number = invoice.Number,
                 errorCode = invoice.ErrorCode,
                 outcome,
+                fromStatus,
             }),
             now);
 

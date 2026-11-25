@@ -30,12 +30,18 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Los errores de servicio de Siigo llegan como un 400, no como un 5xx** (catálogo «Manejo de errores» de su documentación; ejemplo real:
   `{"Status":400,"Errors":[{"Code":"documents_service","Message":"Your request could not be completed…"}]}`). `documents_service`,
   `payment_types_service`, `general_service`, `service_unavailable` y `request_timeout` son una caída de Siigo, no un dato mal enviado
-  (`SiigoApiErrors.IsServiceUnavailable`: sólo si **todos** los errores son de esos; uno de otro tipo manda). La factura queda `Rejected` con
-  `error_code = siigo.invoice.siigo_service` (la pantalla debe decir que es un problema de Siigo, no de la plataforma, y que reintente en unos
-  minutos); al sellar, es un 503 `siigo.unavailable` y la factura sigue `Created`; una lectura (listas, cliente, PDF) responde 502 con el
-  mismo `siigo.invoice.siigo_service`. **No se reintenta solo** (owner, 2026-11-24): con la API caída el usuario puede crear la factura
-  directamente en Siigo, y un reintento la duplicaría; en una tanda el pedido sale fallido. `unhandled_error` **no** entra: es un fallo sin
-  clasificar.
+  (`SiigoApiErrors.IsServiceUnavailable`: sólo si **todos** los errores son de esos; uno de otro tipo manda). La factura queda **por
+  confirmar** (`Pending` con `unanswered_at`), aun en el primer intento, con `error_code = siigo.invoice.siigo_service`: `documents_service`
+  no dice si el documento quedó creado (la pantalla debe decir que es un problema de Siigo, no de la plataforma). Al sellar, es un 503
+  `siigo.unavailable` y la factura sigue `Created`; una lectura (listas, cliente, PDF) responde 502 con el mismo
+  `siigo.invoice.siigo_service`. **No se reintenta solo** (owner, 2026-11-24): con la API caída el usuario puede crear la factura
+  directamente en Siigo, y un reintento la duplicaría. `unhandled_error` **no** entra: es un fallo sin clasificar.
+- **Una factura por confirmar nunca pasa a `Rejected`** (spec 2026-11-24 §3): ni por una caída ni por un rechazo de datos en un reenvío
+  (Siigo pudo haber creado la primera). Cuenta como intento sin respuesta todo lo que pudo salir (timeout, red, 5xx, 429, respuesta
+  ilegible, error de servicio y un `sending_since` vencido sin resultado); `partner_id_missing` y `auth_without_token` no
+  (`SiigoInvoiceSupport.LeftQep`). La reenvía una persona con la misma clave o la resuelve («existe» o «no existe», esto último 10 minutos
+  después del último intento sin respuesta); mientras tanto bloquea la marca manual y la anulación. La de flete que esperaba a la del
+  pedido suelta su reclamo y no queda por confirmar.
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
