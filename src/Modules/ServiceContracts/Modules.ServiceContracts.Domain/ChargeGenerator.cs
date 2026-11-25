@@ -15,8 +15,8 @@ public static class ChargeGenerator
         var limit = today.AddDays(WindowDays);
         var charges = new List<Charge>();
 
-        while (service.NextDueDateToGenerate() is { } next
-            && (next <= limit || service.LastGeneratedDueDate is null))
+        while (service.NextPeriodToGenerate() is { } next
+            && (next <= limit || service.LastGeneratedPeriodDate is null))
         {
             charges.Add(Charge.Generate(service, next, now));
             service.MarkGenerated(next);

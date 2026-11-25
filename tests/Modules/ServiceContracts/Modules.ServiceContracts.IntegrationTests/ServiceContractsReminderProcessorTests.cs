@@ -157,7 +157,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         Assert.Equal(
             [anchor, new DateOnly(2026, 1, 10), new DateOnly(2026, 2, 10), new DateOnly(2026, 3, 10)],
             (await ChargesOfAsync(service)).Select(c => c.DueDate));
-        Assert.Equal(new DateOnly(2026, 3, 10), (await ServiceAsync(service)).LastGeneratedDueDate);
+        Assert.Equal(new DateOnly(2026, 3, 10), (await ServiceAsync(service)).LastGeneratedPeriodDate);
     }
 
     [Fact]
@@ -611,7 +611,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
 
         Assert.Equal(2, chargeClash.AddRangeCalls);
         Assert.Equal([anchor, Today.AddMonths(-1), Today], (await ChargesOfAsync(service)).Select(c => c.DueDate));
-        Assert.Equal(Today, (await ServiceAsync(service)).LastGeneratedDueDate);
+        Assert.Equal(Today, (await ServiceAsync(service)).LastGeneratedPeriodDate);
     }
 
     /// <summary>

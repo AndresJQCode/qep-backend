@@ -139,7 +139,7 @@ public sealed class ServiceContractsPersistenceTests
         Assert.Equal(BillingCycle.Semiannual, loaded.Cycle);
         Assert.Equal(ServiceContractStatus.Active, loaded.Status);
         Assert.Equal(new DateOnly(2026, 12, 1), loaded.ReactivatedOn);
-        Assert.Equal(new DateOnly(2026, 11, 5), loaded.LastGeneratedDueDate);
+        Assert.Equal(new DateOnly(2026, 11, 5), loaded.LastGeneratedPeriodDate);
         Assert.Equal(service.Version, loaded.Version);
         Assert.Equal(new DateOnly(2026, 11, 5), loaded.FirstDueDate);
     }
