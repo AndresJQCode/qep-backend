@@ -295,7 +295,8 @@ public sealed class QuotationResponseComposer(
                 customer.IdentificationType,
                 customer.Region,
                 (customer.BillingProfiles ?? []).Select(ToBillingProfileResponse).ToArray(),
-                customer.BillingProfileLimit);
+                customer.BillingProfileLimit,
+                customer.IdentificationNumber);
 
     private static QuotationClientBillingProfileResponse ToBillingProfileResponse(
         QuotationCustomerBillingProfileRef profile) =>
