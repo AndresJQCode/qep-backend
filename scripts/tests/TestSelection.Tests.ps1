@@ -104,6 +104,16 @@ Assert-Equal "trx: conteos" "2,1,1" "$($r.Total),$($r.Passed),$($r.Failed)"
 Assert-Equal "trx: falla" "N.C.Falla|boom" "$($r.Failures[0].Test)|$($r.Failures[0].Message)"
 Remove-Item -LiteralPath $tmp -Recurse -Force
 
+$declared = "using Xunit;`n[assembly: CollectionBehavior(MaxParallelThreads = 16)]`nnamespace N;"
+$plain = "namespace N;`npublic sealed class A { }"
+$commented = "// [assembly: CollectionBehavior(MaxParallelThreads = 16)]`nnamespace N;"
+function Threads([string[]]$sources, [bool]$explicit) { (@(Get-ThreadArguments -Sources $sources -MaxThreads 4 -Explicit $explicit) -join " ") }
+Assert-Equal "hilos: sin declaracion" "-- xUnit.MaxParallelThreads=4" (Threads @($plain) $false)
+Assert-Equal "hilos: el proyecto declara" "" (Threads @($plain, $declared) $false)
+Assert-Equal "hilos: el parametro explicito manda" "-- xUnit.MaxParallelThreads=4" (Threads @($declared) $true)
+Assert-Equal "hilos: declaracion comentada" "-- xUnit.MaxParallelThreads=4" (Threads @($commented) $false)
+Assert-Equal "hilos: sin fuentes" "-- xUnit.MaxParallelThreads=4" (Threads @() $false)
+
 Assert-Equal "sello" $true ((Get-GitStamp) -match '^Rama \S+ · commit [0-9a-f]{7,} · (árbol limpio|con cambios sin commitear)$')
 
 if ($script:failed) { Write-Host "$($script:failed) fallas"; exit 1 }

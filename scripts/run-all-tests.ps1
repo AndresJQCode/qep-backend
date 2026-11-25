@@ -9,7 +9,8 @@
   Unit, Integration o All (por defecto).
 
 .PARAMETER MaxThreads
-  Hilos de xUnit por proyecto. 4 es cómodo con Testcontainers.
+  Hilos de xUnit para los proyectos que no declaran los suyos (4 es cómodo con Testcontainers). Los que declaran
+  MaxParallelThreads usan su valor, salvo que pases este parámetro: entonces manda en todos.
 
 .PARAMETER NoBuild
   Omite la compilación previa.
@@ -61,7 +62,11 @@ foreach ($p in $projects) {
     $dir = Join-Path $out $name
     Write-Host ">> $name" -ForegroundColor Cyan
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    dotnet test $p.FullName --no-build -nologo --logger "trx;LogFileName=$name.trx" --results-directory $dir -- xUnit.MaxParallelThreads=$MaxThreads | Out-Null
+    $sources = @(Get-ChildItem -LiteralPath $p.DirectoryName -Recurse -Filter *.cs |
+        Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
+        ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 })
+    $threads = @(Get-ThreadArguments -Sources $sources -MaxThreads $MaxThreads -Explicit $PSBoundParameters.ContainsKey("MaxThreads"))
+    dotnet test $p.FullName --no-build -nologo --logger "trx;LogFileName=$name.trx" --results-directory $dir @threads | Out-Null
     $sw.Stop()
 
     $result = Read-TrxResult -Directory $dir

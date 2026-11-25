@@ -6694,6 +6694,9 @@ Postgres con Testcontainers y se agotan puertos y memoria. Usa el script, que co
 .\scripts\run-all-tests.ps1 -Filter Quotations -NoBuild -MaxThreads 2
 ```
 
+Los proyectos que declaran `[assembly: CollectionBehavior(MaxParallelThreads = n)]` (comparten un solo contenedor) corren
+con ese número; los demás, con 4. `-MaxThreads` pisa los dos casos: úsalo si una corrida agota puertos o conexiones.
+
 Antes de correrlo:
 
 - **Docker Desktop debe estar corriendo** (`docker info` responde). Sin daemon, todas las pruebas de integración
