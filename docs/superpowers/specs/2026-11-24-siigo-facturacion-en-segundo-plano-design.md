@@ -165,8 +165,10 @@ bloqueando el pedido para siempre. Una de flete con `UnansweredAt` se resuelve a
 QEP corta a los 120 s, pero Siigo puede seguir procesando, y «No existe» es la única acción que libera el pedido para facturar con otra
 clave. Para eso la fila guarda además **`last_unanswered_at`** (`LastUnansweredAt`, nuevo, nullable), que **cada** intento sin respuesta
 actualiza (`UnansweredAt` conserva el primero). Antes de ese plazo responde 422 `siigo.invoice.resolve_too_early` (nuevo) con
-`details.availableAt`. `ResolveExists` y «Reenviar» no esperan: ninguno puede duplicar. Una `Unknown` ya pasó las 24 h y no se ve
-afectada. La constante vive en el dominio (`SiigoInvoice.MissingResolutionDelay`).
+`details.availableAt`. `ResolveExists` y «Reenviar» no esperan: ninguno puede duplicar. La espera vale también para una `Unknown`: una
+`Pending` se puede reenviar poco antes de las 24 h y Siigo puede seguir procesándola. Por eso `ExpireIfStale` no expira una que se está
+mandando y conserva el último intento sin respuesta (también un `SendingSince` vencido), desde el que se cuentan los 10 minutos
+(decidido durante la implementación, 2026-11-24). La constante vive en el dominio (`SiigoInvoice.MissingResolutionDelay`).
 
 **Reenviar** es crear una tanda con ese pedido (desde el pedido o desde la tanda): el handler reanuda la `Pending` con los mismos bytes y
 la misma clave. Una `Unknown` no se reenvía (el handler la devuelve tal cual, como hoy).
