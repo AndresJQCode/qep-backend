@@ -35,7 +35,7 @@ public static partial class SiigoApiErrors
     public const int ProductsPageSize = 100;
 
     /// <summary>El total que Siigo esperaba: el <b>último</b> número del mensaje, con cultura invariante (punto decimal). <c>null</c> si
-    /// no hay ninguno o no se puede leer. No se usa para ajustar los pagos: sólo se muestra junto al de QEP (spec §6.4).</summary>
+    /// no hay ninguno o no se puede leer. Se muestra junto al de QEP y sólo ajusta los pagos si la diferencia es de redondeo.</summary>
     public static decimal? ParseExpectedPaymentsTotal(string? message)
     {
         if (string.IsNullOrWhiteSpace(message))

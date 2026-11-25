@@ -14,6 +14,9 @@ public static class SiigoAuditActions
     /// por un envío anterior sin respuesta.</summary>
     public const string InvoiceUnanswered = "siigo.invoice.unanswered";
 
+    /// <summary>Siigo rechazó los pagos por una diferencia de redondeo (hasta un peso) y la factura salió otra vez con su total.</summary>
+    public const string InvoicePaymentsAdjusted = "siigo.invoice.payments_adjusted";
+
     public const string InvoiceResolved = "siigo.invoice.resolved";
 
     /// <summary>Se mandó el PDF de la factura al WhatsApp del cliente (spec 2026-11-21). Sólo el pedido, el tipo, el estado y el número:
