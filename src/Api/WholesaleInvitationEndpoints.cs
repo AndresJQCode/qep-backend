@@ -243,7 +243,13 @@ public static class WholesaleInvitationEndpoints
         // usuario (WholesaleInvitationPasswordSession).
         var email = string.IsNullOrWhiteSpace(request.Email) ? invitation.Email : request.Email.Trim();
         var user = await passwordSession.OpenAsync(
-            email, request.Password ?? string.Empty, request.Code, request.TermsVersion, httpContext.TraceIdentifier, cancellationToken);
+            email,
+            request.Password ?? string.Empty,
+            request.Code,
+            emailProven: false,
+            request.TermsVersion,
+            httpContext.TraceIdentifier,
+            cancellationToken);
 
         return await establisher.EstablishAsync(httpContext, user.UserId, user.Email, cancellationToken);
     }
