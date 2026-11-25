@@ -115,6 +115,19 @@ public sealed class ShopifyOrderCorrectionsTests
         Assert.Equal(["begin", "save", "commit"], world.Edit.World.Database.Log.TakeLast(3));
     }
 
+    // El formulario de la corrección no tiene código postal: reenviar la misma parte de un pedido que lo guarda no es un cambio.
+    [Fact]
+    public async Task TheSamePartyOnAnOrderWithPostalCodeSendsNothing()
+    {
+        var world = new CorrectionWorld(
+            order => order with { ShippingParty = order.ShippingParty! with { PostalCode = "050021" } });
+
+        var result = await world.CorrectAsync(world.Command(PartyInput(MedellinId)));
+
+        Assert.Equal(CorrectShopifyOrderHandler.SyncNothingToSend, result.ShopifySync);
+        Assert.Empty(world.AllPushes);
+    }
+
     [Fact]
     public async Task ASecondCorrectionMergesIntoThePendingPush()
     {
@@ -399,7 +412,11 @@ internal sealed class FakeOrderCorrectionWriter(FakeOrderWriter orders) : IShopi
         var updated = state with
         {
             ShippingParty = correction.ShippingParty is { DepartmentId: { } department, CityId: { } city } party
-                ? new ShopifyShippingFingerprint(party.Name, party.Phone, party.Email, party.Address, department, city)
+                // Como Quotations: la corrección no recibe código postal y conserva el del pedido mientras no cambie el
+                // departamento.
+                ? new ShopifyShippingFingerprint(
+                    party.Name, party.Phone, party.Email, party.Address, department, city,
+                    state.ShippingParty?.DepartmentId == department ? state.ShippingParty.PostalCode : null)
                 : state.ShippingParty,
             BuyerNotes = correction.ReplaceBuyerNotes ? correction.BuyerNotes : state.BuyerNotes,
             Version = state.Version + 1,
