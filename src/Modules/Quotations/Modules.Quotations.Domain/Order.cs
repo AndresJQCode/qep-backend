@@ -1838,6 +1838,34 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>
+    /// Quita la marca de un proveedor externo cuya factura se anuló allá (spec 2026-11-25 §4). Sólo suelta la marca de <b>ese</b>
+    /// proveedor y <b>ese</b> número. Sin marca, o con otra (manual, otro número u otro proveedor), no hace nada: la anulación ya está
+    /// guardada en el proveedor y una marca puesta en medio es una declaración de la persona que no se borra desde aquí.
+    /// </summary>
+    /// <returns>Si el pedido perdió la marca.</returns>
+    public bool RevertExternalInvoicing(string provider, string number, MemberId revertedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(number);
+
+        if (!IsInvoiced
+            || !string.Equals(InvoiceProvider, provider, StringComparison.Ordinal)
+            || !string.Equals(InvoiceNumber, number, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        InvoicedBy = null;
+        InvoicedAt = null;
+        InvoiceProvider = null;
+        InvoiceNumber = null;
+        InvoiceExternalId = null;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     public void RevertInvoicing(MemberId revertedBy, DateTimeOffset occurredAt)
     {
         if (!IsInvoiced)

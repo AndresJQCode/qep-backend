@@ -160,6 +160,97 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal(["Facturado en Siigo, factura FV-1-123."], repository.History.Select(entry => entry.Details));
     }
 
+    // Spec 2026-11-25 §4: la factura se anuló en Siigo y QEP lo verificó: el pedido pierde la marca de esa factura.
+    [Fact]
+    public void RevertingTheSameExternalMarkClearsItAndBumpsTheVersion()
+    {
+        var order = NewOrder();
+        order.InvoiceExternally("siigo", "FV-1-1", "id-1", Biller, Now);
+        var version = order.Version;
+
+        var released = order.RevertExternalInvoicing("siigo", "FV-1-1", Advisor, Now.AddMinutes(5));
+
+        Assert.True(released);
+        Assert.False(order.IsInvoiced);
+        Assert.Null(order.InvoicedAt);
+        Assert.Null(order.InvoicedBy);
+        Assert.Null(order.InvoiceProvider);
+        Assert.Null(order.InvoiceNumber);
+        Assert.Null(order.InvoiceExternalId);
+        Assert.Equal(Now.AddMinutes(5), order.UpdatedAt);
+        Assert.Equal(version + 1, order.Version);
+    }
+
+    // Sin marca, o con otra, no hay nada que soltar: una marca manual es una declaración de la persona que esta acción no borra.
+    [Theory]
+    [InlineData("none")]
+    [InlineData("manual")]
+    [InlineData("other_number")]
+    [InlineData("other_provider")]
+    public void RevertingAnotherMarkLeavesTheOrderAsItWas(string mark)
+    {
+        var order = NewOrder();
+        switch (mark)
+        {
+            case "manual":
+                order.Invoice(Advisor, requireFullPayment: false, Now);
+                break;
+            case "other_number":
+                order.InvoiceExternally("siigo", "FV-1-2", "id-2", Biller, Now);
+                break;
+            case "other_provider":
+                order.InvoiceExternally("otro", "FV-1-1", "id-1", Biller, Now);
+                break;
+        }
+
+        var before = (order.Version, order.UpdatedAt, order.InvoicedAt, order.InvoicedBy, order.InvoiceProvider, order.InvoiceNumber, order.InvoiceExternalId);
+
+        var released = order.RevertExternalInvoicing("siigo", "FV-1-1", Advisor, Now.AddMinutes(5));
+
+        Assert.False(released);
+        Assert.Equal(
+            before,
+            (order.Version, order.UpdatedAt, order.InvoicedAt, order.InvoicedBy, order.InvoiceProvider, order.InvoiceNumber, order.InvoiceExternalId));
+    }
+
+    [Fact]
+    public async Task RevertExternalInvoicingWritesTheHistoryAndTheAuditOnlyWhenItReleases()
+    {
+        var order = NewOrder();
+        order.InvoiceExternally("siigo", "FV-1-1", "id-1", Biller, Now);
+        var repository = new StubOrderListRepository(order);
+        var audit = new RecordingQuotationAuditPublisher();
+        var service = new ExternalOrderInvoicingService(
+            repository,
+            new NoOpQuotationsUnitOfWork(),
+            audit,
+            new SubjectExecutionContext(Guid.CreateVersion7(), TenantId),
+            new FixedClock(Now),
+            new FixedTenantClock(Now),
+            new FixedQuotationSettingsStore(),
+            new StubTenantDirectory(),
+            new StubQuotationCustomerLookup(new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Calle 1 # 2-3",
+                WithRetention: false, VatSurplus: false)),
+            new StubQuotationAdvisorLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
+
+        var first = await service.RevertExternalInvoicingAsync(
+            TenantId, order.Id.Value, "siigo", "FV-1-1", Biller.Value, TestContext.Current.CancellationToken);
+        var second = await service.RevertExternalInvoicingAsync(
+            TenantId, order.Id.Value, "siigo", "FV-1-1", Biller.Value, TestContext.Current.CancellationToken);
+
+        Assert.Equal((true, false), (first, second));
+        Assert.False(order.IsInvoiced);
+        var entry = Assert.Single(repository.History);
+        Assert.Equal(
+            (OrderHistoryEventType.InvoicingReverted, "Se anuló en Siigo la factura FV-1-1; el pedido quedó sin facturar."),
+            (entry.EventType, entry.Details));
+        Assert.Equal(["quotation.order.invoice_reverted"], audit.Actions);
+        var details = Assert.Single(audit.Details);
+        Assert.Equal(("siigo", "FV-1-1"), (details["provider"], details["number"]));
+    }
+
     // Spec 2026-11-24 §5: las tandas de facturación pintan el número y el cliente que muestra /orders, en una consulta de cada uno; un
     // pedido de otro tenant o que no existe no aparece.
     [Fact]

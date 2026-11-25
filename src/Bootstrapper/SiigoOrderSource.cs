@@ -78,6 +78,10 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
     public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken) =>
         invoicing.IsMarkedAsync(tenantId, orderId, Provider, number, cancellationToken);
 
+    public Task<bool> UnmarkInvoicedAsync(
+        Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken) =>
+        invoicing.RevertExternalInvoicingAsync(tenantId, orderId, Provider, number, memberId, cancellationToken);
+
     public async Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
         (await invoicing.ListLabelsAsync(tenantId, orderIds, cancellationToken)).ToDictionary(

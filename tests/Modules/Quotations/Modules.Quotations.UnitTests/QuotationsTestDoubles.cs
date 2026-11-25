@@ -511,9 +511,16 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
         Entries.Add((action, actorId));
     }
 
+    /// <summary>Los detalles de cada <see cref="PublishWithDetails"/>, en orden.</summary>
+    public List<IReadOnlyDictionary<string, string?>> Details { get; } = [];
+
     public void PublishWithDetails(
         Guid tenantId, Guid actorId, string action, string resourceId,
-        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) => Actions.Add(action);
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details)
+    {
+        Actions.Add(action);
+        Details.Add(details);
+    }
 
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>

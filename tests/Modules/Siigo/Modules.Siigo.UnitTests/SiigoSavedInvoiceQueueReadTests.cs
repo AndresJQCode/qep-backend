@@ -269,6 +269,10 @@ public sealed class SiigoSavedInvoiceQueueReadTests
             return MarkFailure is null ? Task.CompletedTask : Task.FromException(MarkFailure);
         }
 
+        public Task<bool> UnmarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

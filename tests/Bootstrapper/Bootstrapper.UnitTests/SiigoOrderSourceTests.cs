@@ -119,6 +119,19 @@ public sealed class SiigoOrderSourceTests
     }
 
     [Fact]
+    public async Task UnmarkPassesTheSiigoProvider()
+    {
+        var invoicing = new FakeInvoicing(Order()) { Releases = true };
+        var source = new SiigoOrderSource(invoicing, new FakeGeography());
+
+        var released = await source.UnmarkInvoicedAsync(
+            TenantId, OrderId, "FV-1-1", Guid.CreateVersion7(), TestContext.Current.CancellationToken);
+
+        Assert.True(released);
+        Assert.Equal(("siigo", "FV-1-1"), invoicing.RevertAsked);
+    }
+
+    [Fact]
     public async Task TheLabelsTravelByOrderId()
     {
         var other = Guid.CreateVersion7();
@@ -182,6 +195,17 @@ public sealed class SiigoOrderSourceTests
         {
             MarkAsked = (provider, number);
             return Task.FromResult(Marks);
+        }
+
+        public bool Releases { get; init; }
+
+        public (string Provider, string Number)? RevertAsked { get; private set; }
+
+        public Task<bool> RevertExternalInvoicingAsync(
+            Guid tenantId, Guid orderId, string provider, string number, Guid memberId, CancellationToken cancellationToken)
+        {
+            RevertAsked = (provider, number);
+            return Task.FromResult(Releases);
         }
 
         public Dictionary<Guid, ExternalInvoicingOrderLabel> Labels { get; } = [];
