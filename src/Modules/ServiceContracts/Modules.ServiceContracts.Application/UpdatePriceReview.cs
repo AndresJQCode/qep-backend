@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.ServiceContracts.Domain;
 using Modules.Tenancy.Application;
 
@@ -28,12 +29,12 @@ public sealed record UpdatePriceReviewCommand(
 
 public sealed class UpdatePriceReviewValidator : AbstractValidator<UpdatePriceReviewCommand>
 {
-    public UpdatePriceReviewValidator(ITenantClock tenantClock)
+    public UpdatePriceReviewValidator()
     {
         RuleFor(command => command.AdjustmentMode).MustBeAnAdjustmentMode();
         RuleFor(command => command.IpcExtraPoints).MustBeIpcExtraPoints();
+        // El techo de diez años lo pone el handler: depende de la fecha que el contrato ya tiene guardada.
         RuleFor(command => command.NextReviewDate).NotEmpty();
-        RuleFor(command => command.NextReviewDate).MustBeAReasonableReviewDate(tenantClock, command => command.TenantId);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -73,6 +74,14 @@ public sealed class UpdatePriceReviewHandler(
 
         var pending = await schedules.FindPendingAsync(command.TenantId, service.Id, cancellationToken);
         var today = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).Today;
+        // El techo sólo se le exige a una fecha que cambia: «Mantener precio» repetido puede dejar la guardada más allá, y eso
+        // no puede impedir editar el modo o los puntos.
+        if (command.NextReviewDate != service.NextReviewDate && command.NextReviewDate > PriceReviewRules.LatestReviewDate(today))
+        {
+            throw new ValidationException(
+                [new ValidationFailure(nameof(command.NextReviewDate), PriceReviewRules.LatestReviewDateMessage)]);
+        }
+
         var now = clock.UtcNow;
         var previous = (Mode: service.AdjustmentMode, Points: service.IpcExtraPoints, Review: service.NextReviewDate);
         service.UpdatePriceReview(mode, command.IpcExtraPoints, command.NextReviewDate, now);

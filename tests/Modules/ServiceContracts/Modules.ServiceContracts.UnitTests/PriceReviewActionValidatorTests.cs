@@ -22,7 +22,7 @@ public sealed class PriceReviewActionValidatorTests
         .Errors.Any(error => error.PropertyName == property);
 
     private static async Task<bool> FailsAsync(PriceReviewInput input, string property, long version = 1) =>
-        (await new UpdatePriceReviewValidator(Clock).ValidateAsync(
+        (await new UpdatePriceReviewValidator().ValidateAsync(
             UpdatePriceReviewCommand.From(Guid.NewGuid(), Guid.NewGuid(), input, version), Ct))
         .Errors.Any(error => error.PropertyName == property);
 
@@ -75,13 +75,12 @@ public sealed class PriceReviewActionValidatorTests
         Assert.Equal(
             rejected, await FailsAsync(new PriceReviewInput("Ipc", Number(points), new DateOnly(2027, 6, 10)), "IpcExtraPoints"));
 
+    // El techo de diez años de esta fecha lo pone el handler, que conoce la guardada: sólo lo exige a una fecha que cambia.
     [Theory]
     [InlineData(null, true)]
     [InlineData("2027-06-10", false)]
-    [InlineData("2037-01-10", false)]
-    [InlineData("2037-01-11", true)]
-    [InlineData("9999-12-31", true)]
-    public async Task TheReviewDateIsRequiredAndAtMostTenYearsAhead(string? date, bool rejected) =>
+    [InlineData("2037-01-11", false)]
+    public async Task TheReviewDateIsRequired(string? date, bool rejected) =>
         Assert.Equal(rejected, await FailsAsync(new PriceReviewInput("Ipc", 0m, Date(date)), "NextReviewDate"));
 
     [Fact]

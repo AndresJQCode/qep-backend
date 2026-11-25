@@ -62,7 +62,9 @@ public sealed class ServiceDetailComposer(
             profileDto,
             chargeDtos,
             historyDtos,
-            service.UpcomingPeriods());
+            // Sólo lo que se puede elegir: un período más allá del techo respondería 422 como «desde cuándo». En un contrato
+            // anual, doce períodos lo pasan.
+            service.UpcomingPeriods().Where(period => period <= PriceReviewRules.LatestReviewDate(today)).ToList());
     }
 
     /// <summary>

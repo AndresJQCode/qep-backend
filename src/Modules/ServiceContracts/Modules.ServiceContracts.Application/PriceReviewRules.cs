@@ -22,26 +22,23 @@ internal static class PriceReviewRules
     /// <summary>
     /// El techo de una fecha de revisión y de un «desde cuándo»: la «hoy» del tenant + 10 años. Una fecha de siglos adelante
     /// desbordaría la aritmética de períodos (<c>DateOnly</c> termina en el año 9999) en cada lectura que calcule revisiones, no
-    /// sólo en el contrato que la guardó.
+    /// sólo en el contrato que la guardó. Se exige a lo que una persona escribe: «Mantener precio» puede dejar la revisión
+    /// guardada más allá.
     /// </summary>
     public const int LatestReviewDateYearsAhead = 10;
+
+    public static readonly string LatestReviewDateMessage =
+        $"The date cannot be more than {LatestReviewDateYearsAhead} years from today.";
+
+    public static DateOnly LatestReviewDate(DateOnly today) => today.AddYears(LatestReviewDateYearsAhead);
 
     /// <summary>Nula pasa: es «la fecha por defecto» y la elige el dominio.</summary>
     public static IRuleBuilderOptions<T, DateOnly?> MustBeAReasonableReviewDate<T>(
         this IRuleBuilder<T, DateOnly?> rule, ITenantClock tenantClock, Func<T, Guid> tenantId) =>
         rule.MustAsync(async (command, date, cancellationToken) =>
-                date is not { } value || await IsWithinReviewHorizonAsync(tenantClock, tenantId(command), value, cancellationToken))
-            .WithMessage($"The date cannot be more than {LatestReviewDateYearsAhead} years from today.");
-
-    public static IRuleBuilderOptions<T, DateOnly> MustBeAReasonableReviewDate<T>(
-        this IRuleBuilder<T, DateOnly> rule, ITenantClock tenantClock, Func<T, Guid> tenantId) =>
-        rule.MustAsync((command, date, cancellationToken) =>
-                IsWithinReviewHorizonAsync(tenantClock, tenantId(command), date, cancellationToken))
-            .WithMessage($"The date cannot be more than {LatestReviewDateYearsAhead} years from today.");
-
-    private static async Task<bool> IsWithinReviewHorizonAsync(
-        ITenantClock tenantClock, Guid tenantId, DateOnly date, CancellationToken cancellationToken) =>
-        date <= (await tenantClock.GetAsync(tenantId, cancellationToken)).Today.AddYears(LatestReviewDateYearsAhead);
+                date is not { } value
+                || value <= LatestReviewDate((await tenantClock.GetAsync(tenantId(command), cancellationToken)).Today))
+            .WithMessage(LatestReviewDateMessage);
 
     /// <summary>Sólo los dos nombres exactos del contrato, como <see cref="ServiceRules.TryParseCycle"/>.</summary>
     public static bool TryParseMode(string? text, out AdjustmentMode mode)

@@ -97,12 +97,16 @@ public sealed class ConfirmIpcReviewsHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var year = command.Year!.Value;
-        var rate = await ipcRates.FindAsync(command.TenantId, year, cancellationToken)
-            ?? throw new ServiceContractsDomainException(ServiceContractsErrorCodes.IpcNotSet, $"There is no IPC rate for {year}.");
+        // Sólo comprueba que el año tenga tasa, para rechazar el lote entero; cada contrato la vuelve a leer.
+        if (await ipcRates.FindAsync(command.TenantId, year, cancellationToken) is null)
+        {
+            throw new ServiceContractsDomainException(ServiceContractsErrorCodes.IpcNotSet, $"There is no IPC rate for {year}.");
+        }
+
         var memberId = await membershipDirectory.FindActiveMembershipIdAsync(
             executionContext.SubjectId, command.TenantId, cancellationToken);
         var today = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).Today;
-        var batch = new Batch(command.TenantId, year, rate.Rate, memberId, today);
+        var batch = new Batch(command.TenantId, year, memberId, today);
 
         var outcomes = new List<(Guid ServiceId, string? Code)>(command.Items.Count);
         foreach (var item in command.Items)
@@ -179,9 +183,13 @@ public sealed class ConfirmIpcReviewsHandler(
             return ServiceContractsErrorCodes.PriceReviewYearMismatch;
         }
 
+        // La tasa se lee por contrato (el contexto se vació antes de este ítem, así que viene de la base): si alguien la editó
+        // durante el lote, quien vio la anterior recibe price_changed, y el motivo y el cambio programado copian la que vale
+        // ahora. Sin candado: una edición que entre entre esta lectura y el guardado todavía puede pasar.
+        var rate = await ipcRates.FindAsync(batch.TenantId, batch.Year, cancellationToken);
         var rounding = await RoundingAsync(batch, service.Currency, cancellationToken);
-        var computed = PriceReview.IpcPrice(service.Price, batch.Rate, service.IpcExtraPoints, rounding);
-        if (computed is null || computed != item.ExpectedPrice)
+        var computed = rate is null ? null : PriceReview.IpcPrice(service.Price, rate.Rate, service.IpcExtraPoints, rounding);
+        if (rate is null || computed is null || computed != item.ExpectedPrice)
         {
             return ServiceContractsErrorCodes.PriceReviewPriceChanged;
         }
@@ -193,9 +201,9 @@ public sealed class ConfirmIpcReviewsHandler(
             return ServiceContractsErrorCodes.PriceChangeReasonRequired;
         }
 
-        var reason = typed ? item.Reason! : PriceReview.IpcReason(batch.Year, batch.Rate, service.IpcExtraPoints);
+        var reason = typed ? item.Reason! : PriceReview.IpcReason(batch.Year, rate.Rate, service.IpcExtraPoints);
         var now = clock.UtcNow;
-        var schedule = ServicePriceSchedule.ConfirmIpc(service, batch.Year, batch.Rate, newPrice, reason, batch.MemberId, now);
+        var schedule = ServicePriceSchedule.ConfirmIpc(service, batch.Year, rate.Rate, newPrice, reason, batch.MemberId, now);
         schedules.Add(schedule);
         PriceReviewGeneration.Run(service, schedule, batch.Today, now, charges, priceChanges);
 
@@ -237,7 +245,7 @@ public sealed class ConfirmIpcReviewsHandler(
     }
 
     /// <summary>Lo que es igual para todos los ítems de un lote.</summary>
-    private sealed record Batch(Guid TenantId, int Year, decimal Rate, Guid? MemberId, DateOnly Today)
+    private sealed record Batch(Guid TenantId, int Year, Guid? MemberId, DateOnly Today)
     {
         public Dictionary<string, PriceRounding> Roundings { get; } = new(StringComparer.Ordinal);
     }

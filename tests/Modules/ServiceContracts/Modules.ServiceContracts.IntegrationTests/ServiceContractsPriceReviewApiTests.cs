@@ -277,6 +277,46 @@ public sealed class ServiceContractsPriceReviewApiTests
         Assert.Equal(version, await world.VersionAsync(service));
     }
 
+    // «Mantener precio» repetido puede dejar la revisión guardada más allá del techo: editar los puntos o el modo con esa
+    // misma fecha sigue permitido; cambiarla por otra igual de lejana, no.
+    [Fact]
+    public async Task AStoredReviewDatePastTheBoundDoesNotBlockTheOtherFields()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        var stored = anchor.AddYears(11);
+        var service = await world.SeedAsync(anchor, anchor, AdjustmentMode.Ipc, stored);
+
+        var same = await ReadDetailAsync(await world.ReviewAsync(
+            service,
+            await world.VersionAsync(service),
+            new { adjustmentMode = "Ipc", ipcExtraPoints = 2m, nextReviewDate = Iso(stored) }));
+        var moved = await world.ReviewAsync(
+            service,
+            same.Service.Version,
+            new { adjustmentMode = "Ipc", ipcExtraPoints = 2m, nextReviewDate = Iso(stored.AddDays(1)) });
+
+        Assert.Equal((stored, 2m), (same.Service.PriceReview.NextReviewDate, same.Service.PriceReview.IpcExtraPoints));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, moved.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(moved));
+        Assert.True((await ErrorsOfAsync(moved)).TryGetProperty("NextReviewDate", out _));
+        Assert.Equal(same.Service.Version, await world.VersionAsync(service));
+    }
+
+    // Un período más allá del techo de las fechas respondería 422 como «desde cuándo»: no se ofrece.
+    [Fact]
+    public async Task TheUpcomingPeriodsStopAtTheTenYearBound()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(1);
+        var service = await world.SeedAsync(
+            anchor, anchor, AdjustmentMode.Manual, anchor.AddYears(1), cycle: BillingCycle.Annual);
+
+        var detail = await world.DetailAsync(service);
+
+        Assert.Equal(Enumerable.Range(1, 9).Select(years => anchor.AddYears(years)), detail.UpcomingPeriodDates);
+    }
+
     [Fact]
     public async Task SchedulingWithAStaleVersionIs412()
     {
@@ -784,13 +824,7 @@ public sealed class ServiceContractsPriceReviewApiTests
     public async Task ARateWrittenBetweenTheReadAndTheSaveIsNeverOverwritten(bool alreadyStored, string code)
     {
         var interleave = new RateInterleave();
-        await using var world = await World.OpenAsync(services =>
-        {
-            var rates = services.Single(descriptor => descriptor.ServiceType == typeof(IIpcRateRepository));
-            services.Remove(rates);
-            services.AddScoped<IIpcRateRepository>(provider => new InterleavingIpcRateRepository(
-                (IIpcRateRepository)ActivatorUtilities.CreateInstance(provider, rates.ImplementationType!), interleave));
-        });
+        await using var world = await World.OpenAsync(services => Interleave(services, interleave));
         var year = TenantToday.Year - 1;
         if (alreadyStored)
         {
@@ -1008,6 +1042,38 @@ public sealed class ServiceContractsPriceReviewApiTests
         Assert.Null(detail.Service.PriceReview.HeldSince);
     }
 
+    // La tasa se vuelve a leer por contrato: si otra persona la cambia durante el lote, quien vio la anterior recibe
+    // price_changed y quien confirma la nueva queda con ella en el motivo y en el cambio programado.
+    [Fact]
+    public async Task ConfirmingReadsTheRateAgainForEachContract()
+    {
+        var interleave = new RateInterleave();
+        await using var world = await World.OpenAsync(services => Interleave(services, interleave));
+        var (sawTheOld, period) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Vio la anterior");
+        var (sawTheNew, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Vio la nueva");
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        // La escritura entra justo después de la lectura con la que el lote comprueba que la tasa existe.
+        interleave.AfterNextFind(() => world.WriteRateBehindTheBackAsync(year, 7m));
+
+        var results = await world.ConfirmAsync(
+            year,
+            new { serviceId = sawTheOld, version = await world.VersionAsync(sawTheOld), expectedPrice = 105200m },
+            new { serviceId = sawTheNew, version = await world.VersionAsync(sawTheNew), expectedPrice = 107000m });
+
+        Assert.Equal(
+            new (Guid, string, string?)[]
+            {
+                (sawTheOld, "Failed", "billing.price_review.price_changed"),
+                (sawTheNew, "Confirmed", null),
+            },
+            results.Select(result => (result.ServiceId, result.Outcome, result.Code)));
+        var scheduled = results[1].Service!.PriceReview.Scheduled!;
+        Assert.Equal(
+            ((decimal?)7m, 107000m, $"IPC {year} (7,00 %)"), (scheduled.IpcRate, scheduled.NewPrice, scheduled.Reason));
+        Assert.Equal(1, await world.CountSchedulesAsync());
+    }
+
     private static string RateUrl(int year) => $"{ServiceContractsUrl()}/ipc-rates/{year}";
 
     private static string ConfirmUrl() => $"{ServiceContractsUrl()}/price-reviews/confirm-ipc";
@@ -1087,6 +1153,15 @@ public sealed class ServiceContractsPriceReviewApiTests
         public Task RunAsync() => Interlocked.Exchange(ref action, null) is { } next ? next() : Task.CompletedTask;
     }
 
+    /// <summary>Envuelve el repositorio de tasas para meter una escritura justo después de la próxima lectura.</summary>
+    private static void Interleave(IServiceCollection services, RateInterleave interleave)
+    {
+        var rates = services.Single(descriptor => descriptor.ServiceType == typeof(IIpcRateRepository));
+        services.Remove(rates);
+        services.AddScoped<IIpcRateRepository>(provider => new InterleavingIpcRateRepository(
+            (IIpcRateRepository)ActivatorUtilities.CreateInstance(provider, rates.ImplementationType!), interleave));
+    }
+
     private sealed class InterleavingIpcRateRepository(IIpcRateRepository inner, RateInterleave interleave) : IIpcRateRepository
     {
         public void Add(IpcRate rate) => inner.Add(rate);
@@ -1151,7 +1226,7 @@ public sealed class ServiceContractsPriceReviewApiTests
                 return true;
             });
 
-        /// <summary>Un contrato mensual que ya generó hasta <paramref name="lastGenerated"/>.</summary>
+        /// <summary>Un contrato, mensual si no se dice otro ciclo, que ya generó hasta <paramref name="lastGenerated"/>.</summary>
         public Task<Guid> SeedAsync(
             DateOnly firstDueDate,
             DateOnly lastGenerated,
@@ -1164,12 +1239,13 @@ public sealed class ServiceContractsPriceReviewApiTests
             Guid? customerId = null,
             bool held = false,
             bool paused = false,
-            Func<ServiceContract, Charge[]>? charges = null) =>
+            Func<ServiceContract, Charge[]>? charges = null,
+            BillingCycle cycle = BillingCycle.Monthly) =>
             WithDbAsync(async db =>
             {
                 var now = DateTimeOffset.UtcNow;
                 var service = ServiceContract.Create(
-                    ServiceContractId.New(), Tenant, customerId ?? CustomerId, name, price, currency, BillingCycle.Monthly,
+                    ServiceContractId.New(), Tenant, customerId ?? CustomerId, name, price, currency, cycle,
                     firstDueDate, now);
                 service.MarkGenerated(lastGenerated);
                 service.InitializePriceReview(mode, points, reviewDate);
