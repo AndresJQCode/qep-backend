@@ -202,3 +202,31 @@ sin correrla y se deja dicho. Todo es unitario; no hace falta integración nueva
 2. **El WhatsApp de la tienda (`store-settings-form`) entra en la entrega 3 del frontend** con el selector de país. Antes de
    desplegar esa entrega se revisa en `qep-storefront` cómo pinta `contact.whatsApp` (ver spec del frontend).
 3. **Cambio 2 (`WhatsAppPhone` respeta el `+`) queda en este spec** (aprobado con el resto).
+
+## Adición: `id_type` y formato del documento (aprobada por el owner, 2026-11-25)
+
+**Evidencia de producción:** 11 llamadas `CustomerCreate` con 400 por `id_type` y 1 `CustomerFind` con 400 por una identificación con
+puntos. El problema del teléfono de este spec se dedujo del código y de la documentación de Siigo, no de estos registros.
+
+**`id_type`:** en `POST /v1/customers` viaja como texto (`"13"`), no como `{ "code": "13" }`.
+
+**Documento del comprador** (`SiigoCustomerMapper.Identification`; es el que usas para buscar el cliente, crearlo y facturar). Sólo
+cambia lo que se manda: lo guardado en QEP queda igual.
+
+| Tipo | Lo que viaja |
+| --- | --- |
+| Consumidor final | el documento genérico, como antes |
+| CC | sólo dígitos ASCII |
+| NIT que termina en guion y un solo dígito (con o sin espacios) | los dígitos anteriores al guion |
+| NIT sin ese final | sólo dígitos; si quedan 10, empiezan por 8 o 9 y el último es el dígito de verificación de los 9 primeros, se quita |
+| CE y pasaporte | sólo letras y dígitos ASCII, con las mayúsculas como se escribieron |
+| Otro tipo o sin tipo | sin espacios en los bordes, como antes |
+
+Un guion en otra parte del NIT ya no corta el número. Si no queda nada, el documento cuenta como faltante, igual que antes.
+
+Dígito de verificación de la DIAN: pesos 3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67 y 71 desde la cifra de la derecha;
+`s` = suma módulo 11; el dígito es `11 - s` si `s > 1` y, si no, `s`.
+
+**Riesgo:** una factura `Pending` reenvía los bytes guardados, con la forma anterior. Si Siigo ya tiene un cliente con una forma
+distinta de la nueva (por ejemplo, uno hecho a mano con el dígito de verificación pegado), la búsqueda no lo encuentra y la siguiente
+factura armada intenta crear otro. No hay código para ese caso.

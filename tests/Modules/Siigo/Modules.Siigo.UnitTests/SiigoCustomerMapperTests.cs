@@ -24,6 +24,33 @@ public sealed class SiigoCustomerMapperTests
         Assert.Equal("31", request.IdTypeCode);
     }
 
+    // Spec 2026-11-25: el documento sale sin separadores y el NIT sin su dígito de verificación; lo guardado no cambia.
+    [Theory]
+    [InlineData(SiigoIdentificationKind.Cc, "1.234.567.890", "1234567890")]
+    [InlineData(SiigoIdentificationKind.Cc, " 12 345 678 ", "12345678")]
+    [InlineData(SiigoIdentificationKind.Cc, "abc", null)]
+    [InlineData(SiigoIdentificationKind.Nit, "900.123.456-8", "900123456")]
+    [InlineData(SiigoIdentificationKind.Nit, "9 0 0 1 2 3 4 5 6 - 8", "900123456")]
+    [InlineData(SiigoIdentificationKind.Nit, "90-0123456", "900123456")] // un guion en otra parte no corta el número
+    [InlineData(SiigoIdentificationKind.Nit, "800197268-4", "800197268")]
+    [InlineData(SiigoIdentificationKind.Nit, "8001972684", "800197268")] // 10 dígitos y el último es el de verificación
+    [InlineData(SiigoIdentificationKind.Nit, "8909039388", "890903938")]
+    [InlineData(SiigoIdentificationKind.Nit, "8600029644", "860002964")]
+    [InlineData(SiigoIdentificationKind.Nit, "9001234568", "900123456")]
+    [InlineData(SiigoIdentificationKind.Nit, "8001972685", "8001972685")] // el último no es el de verificación
+    [InlineData(SiigoIdentificationKind.Nit, "800197268", "800197268")]
+    [InlineData(SiigoIdentificationKind.Nit, "1020304050", "1020304050")] // persona natural
+    [InlineData(SiigoIdentificationKind.Nit, "1020304058", "1020304058")] // el 8 sería su dígito, pero no empieza por 8 ni 9
+    [InlineData(SiigoIdentificationKind.Nit, " - 8 ", null)]
+    [InlineData(SiigoIdentificationKind.Ce, "AB-123 456", "AB123456")]
+    [InlineData(SiigoIdentificationKind.Pasaporte, " ab.123 ", "ab123")]
+    [InlineData(SiigoIdentificationKind.Ce, " .- ", null)]
+    [InlineData(SiigoIdentificationKind.Nif, " X-123.4 ", "X-123.4")]
+    [InlineData(null, " 12.34 ", "12.34")]
+    [InlineData(null, "  ", null)]
+    public void TheDocumentIsSentAsSiigoExpectsIt(SiigoIdentificationKind? kind, string raw, string? expected) =>
+        Assert.Equal(expected, SiigoCustomerMapper.Identification(Person() with { IdentificationType = kind, Identification = raw }));
+
     [Fact]
     public void ACompanyNameIsASingleElement()
     {

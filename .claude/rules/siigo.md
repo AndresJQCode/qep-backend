@@ -22,6 +22,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **En `POST /v1/customers`, `id_type` es texto (`"13"`), no `{ "code": "13" }`:** el objeto sólo viene en las respuestas. Con el objeto Siigo
   responde `invalid_type` en `id_type` y no se crea ningún cliente (producción, 2026-11-24 y 25). Una prueba unitaria que fija la forma
   del cuerpo no la valida contra Siigo: la documentación de la petición es la que manda.
+- **El documento sale a Siigo sin separadores y el NIT sin dígito de verificación** (`SiigoCustomerMapper.Identification`; owner,
+  2026-11-25; Siigo rechazó con 400 la búsqueda de una identificación con puntos). CC: sólo dígitos. NIT: se quita un guion con un solo
+  dígito al final o, sin él, el décimo dígito de un número que empiece por 8 o 9 y cuadre con el algoritmo de la DIAN; un guion en otra
+  parte no corta nada. CE y pasaporte: sólo letras y dígitos ASCII. Lo guardado en QEP no cambia, y un reenvío manda los bytes ya
+  guardados, con la forma que tenían. Si Siigo ya tiene un cliente con otra forma del documento, la búsqueda no lo encuentra y la
+  siguiente factura armada intenta crear otro.
 - **Las retenciones no van todas en el mismo lugar:** ReteFuente se manda en los `taxes` de **cada ítem** (después del IVA) y ReteICA
   en `retentions` de la factura. Sólo se manda el id del vínculo: el monto lo calcula Siigo. ReteIVA y autorretención no se mandan
   (decisión pendiente, V-7).

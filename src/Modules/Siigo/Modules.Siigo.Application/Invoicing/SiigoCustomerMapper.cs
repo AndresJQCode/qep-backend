@@ -2,8 +2,9 @@ namespace Modules.Siigo.Application.Invoicing;
 
 /// <summary>
 /// Spec 2026-11-18 §6.2: la parte facturada del pedido como el cliente que se crea en Siigo. Persona: el primer token del nombre son los
-/// nombres y el resto los apellidos (un solo token se repite en los dos; V-6). Empresa: la razón social, un solo elemento. NIT: sin lo que
-/// va después del guion y sólo con dígitos. Consumidor final: el documento genérico de la DIAN con tipo CC (V-3).
+/// nombres y el resto los apellidos (un solo token se repite en los dos; V-6). Empresa: la razón social, un solo elemento. Documento: sin
+/// separadores y el NIT sin dígito de verificación (<see cref="Identification"/>). Consumidor final: el documento genérico de la DIAN con
+/// tipo CC (V-3).
 /// </summary>
 public static class SiigoCustomerMapper
 {
@@ -13,6 +14,9 @@ public static class SiigoCustomerMapper
 
     /// <summary>El máximo de dígitos del indicativo y del número en la documentación de Siigo (crear cliente).</summary>
     private const int PhonePartMaxLength = 10;
+
+    /// <summary>Los pesos del dígito de verificación de la DIAN, desde la cifra de la derecha del número.</summary>
+    private static readonly int[] CheckDigitWeights = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71];
 
     /// <summary><c>null</c> si no se puede armar: sin identificación, con un tipo sin código de Siigo o sin ciudad con código DANE. Quien
     /// llama ya reportó cada caso como faltante.</summary>
@@ -62,8 +66,12 @@ public static class SiigoCustomerMapper
             Clean(party.Email));
     }
 
-    /// <summary>El documento tal como se busca y se crea en Siigo: el NIT sin dígito de verificación y sólo con números; los demás, sin
-    /// espacios en los bordes. <c>null</c> si queda vacío.</summary>
+    /// <summary>
+    /// El documento tal como se busca, se crea y se factura en Siigo; lo guardado en QEP no cambia (spec 2026-11-25). CC: sólo dígitos.
+    /// NIT: sólo dígitos y sin el de verificación (<see cref="NitWithoutCheckDigit"/>). CE y pasaporte: sólo letras y dígitos ASCII, con
+    /// las mayúsculas como se escribieron. Otro tipo o sin tipo: sin espacios en los bordes. Consumidor final: el documento genérico.
+    /// <c>null</c> si queda vacío.
+    /// </summary>
     public static string? Identification(SiigoBilledPartyInput party)
     {
         ArgumentNullException.ThrowIfNull(party);
@@ -73,15 +81,48 @@ public static class SiigoCustomerMapper
         }
 
         var raw = party.Identification?.Trim() ?? string.Empty;
-        if (party.IdentificationType == SiigoIdentificationKind.Nit)
+        var sent = party.IdentificationType switch
         {
-            var dash = raw.IndexOf('-', StringComparison.Ordinal);
-            raw = dash >= 0 ? raw[..dash] : raw;
-            raw = new string(raw.Where(char.IsAsciiDigit).ToArray());
+            SiigoIdentificationKind.Cc => Digits(raw),
+            SiigoIdentificationKind.Nit => NitWithoutCheckDigit(raw),
+            SiigoIdentificationKind.Ce or SiigoIdentificationKind.Pasaporte =>
+                new string(raw.Where(char.IsAsciiLetterOrDigit).ToArray()),
+            _ => raw,
+        };
+
+        return sent.Length == 0 ? null : sent;
+    }
+
+    // Un guion seguido de un solo dígito al final es el de verificación. Sin él, sólo se quita el décimo dígito de un número que empieza
+    // por 8 o 9 (el rango de los NIT de empresa) y cuyo último dígito cuadra con los nueve primeros; una cédula usada como NIT no se toca.
+    private static string NitWithoutCheckDigit(string raw)
+    {
+        var dash = raw.LastIndexOf('-');
+        if (dash >= 0 && raw[(dash + 1)..].TrimStart() is [var suffix] && char.IsAsciiDigit(suffix))
+        {
+            return Digits(raw[..dash]);
         }
 
-        return raw.Length == 0 ? null : raw;
+        var digits = Digits(raw);
+        return digits is ['8' or '9', _, _, _, _, _, _, _, _, var last] && last - '0' == CheckDigit(digits[..^1])
+            ? digits[..^1]
+            : digits;
     }
+
+    // El algoritmo de la DIAN: la suma ponderada módulo 11; si el residuo pasa de 1, el dígito es 11 menos el residuo.
+    private static int CheckDigit(string number)
+    {
+        var sum = 0;
+        for (var position = 0; position < number.Length; position++)
+        {
+            sum += (number[^(position + 1)] - '0') * CheckDigitWeights[position];
+        }
+
+        var remainder = sum % 11;
+        return remainder > 1 ? 11 - remainder : remainder;
+    }
+
+    private static string Digits(string value) => new(value.Where(char.IsAsciiDigit).ToArray());
 
     private static (string First, string Remainder) SplitName(string name)
     {
@@ -108,7 +149,7 @@ public static class SiigoCustomerMapper
     // Sólo los dígitos ASCII; null si no queda ninguno o si pasan del máximo.
     private static string? PhonePart(string? value)
     {
-        var digits = new string((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+        var digits = Digits(value ?? string.Empty);
         return digits.Length is 0 or > PhonePartMaxLength ? null : digits;
     }
 
