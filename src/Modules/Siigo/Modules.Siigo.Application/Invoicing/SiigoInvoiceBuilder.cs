@@ -5,8 +5,8 @@ using Modules.Siigo.Domain;
 namespace Modules.Siigo.Application.Invoicing;
 
 /// <summary>Un pago de la factura armada, para que la vista previa lo muestre. <paramref name="ProofId"/> es el comprobante del que sale
-/// (<c>null</c> en el saldo, que va a la forma de pago de la cuenta de cobro); <paramref name="DueDate"/> sólo en el saldo, el día de la factura.</summary>
-public sealed record SiigoDraftPayment(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly? DueDate);
+/// (<c>null</c> en el saldo, que va a la forma de pago de la cuenta de cobro); <paramref name="DueDate"/> es el día de la factura.</summary>
+public sealed record SiigoDraftPayment(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly DueDate);
 
 /// <summary>Una factura armada: su tipo, el cuerpo ya serializado y el cliente que habría que crear si Siigo no lo tiene.
 /// <paramref name="Total"/> es lo que suman sus pagos (el neto, con las retenciones ya descontadas).</summary>
@@ -357,16 +357,19 @@ public static class SiigoInvoiceBuilder
     {
         var payments = new List<SiigoDraftPayment>();
         var proposed = ProposedPaymentType(input, settings);
+
+        // Todo pago vence el día de la factura: Siigo rechaza con `parameter_required` el que no lo trae si su forma de pago maneja
+        // vencimiento, y eso se configura en Siigo, así que un comprobante puede caer en una así.
         foreach (var part in plan.Proofs.Where(part => part.Kind == kind))
         {
             var chosen = overrides.FirstOrDefault(value => value.Kind == kind && value.ProofId == part.ProofId)?.SiigoPaymentTypeId;
-            payments.Add(new SiigoDraftPayment(part.ProofId, (chosen ?? proposed)!, part.Amount, null));
+            payments.Add(new SiigoDraftPayment(part.ProofId, (chosen ?? proposed)!, part.Amount, input.Today));
         }
 
         var balance = plan.Balances.Single(value => value.Kind == kind).Amount;
         if (balance > 0)
         {
-            // El saldo vence el día de la factura y va a la misma forma de pago que los comprobantes (spec 2026-11-20).
+            // El saldo va a la misma forma de pago que los comprobantes (spec 2026-11-20).
             payments.Add(new SiigoDraftPayment(null, proposed!, balance, input.Today));
         }
 
@@ -505,15 +508,11 @@ public static class SiigoInvoiceBuilder
         // Sin `additional_fields.purchase_order`: un comprobante sin la orden de compra configurada lo rechaza con `document_settings`
         // (prueba real, 2026-11-20), y el número de pedido ya va en las observaciones.
         body["items"] = items;
-        body["payments"] = payments.Select(payment =>
+        body["payments"] = payments.Select(payment => new Dictionary<string, object?>
         {
-            var json = new Dictionary<string, object?> { ["id"] = IdValue(payment.SiigoPaymentTypeId), ["value"] = payment.Value };
-            if (payment.DueDate is { } dueDate)
-            {
-                json["due_date"] = dueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            }
-
-            return json;
+            ["id"] = IdValue(payment.SiigoPaymentTypeId),
+            ["value"] = payment.Value,
+            ["due_date"] = payment.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         }).ToList();
         if (invoiceRetentions.Count > 0)
         {
