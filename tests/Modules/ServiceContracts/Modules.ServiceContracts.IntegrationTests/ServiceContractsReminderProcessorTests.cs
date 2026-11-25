@@ -595,6 +595,8 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         Assert.Empty(await DigestsAsync());
     }
 
+    // Una réplica reclamó el digest y se cayó antes de guardar nada más: vencidos los leases, la corrida retomada vuelve a
+    // reclamarlo y publica un solo evento de revisiones.
     [Fact]
     public async Task TheDigestIsSentOncePerDayWithReviews()
     {
@@ -602,13 +604,48 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
         await SeedProfileAsync(customer, BillingChannel.Email, assignee);
         await SeedReviewAsync(customer, Today.AddDays(10));
+        await WithDbAsync(async db =>
+        {
+            db.TenantRuns.Add(new TenantRun { TenantId = Tenant, RunDate = Today, ClaimedUntil = NineLocal.AddMinutes(-1) });
+            db.DailyDigests.Add(new DailyDigest
+            {
+                TenantId = Tenant,
+                MemberId = assignee,
+                RunDate = Today,
+                Status = MessageDeliveryStatus.Sending,
+                ClaimedUntil = NineLocal.AddMinutes(-6),
+            });
+            return await db.SaveChangesAsync(Ct);
+        });
 
-        await ProcessAsync();
-        clock.UtcNow = NineLocal.AddHours(2);
         await ProcessAsync();
 
         Assert.Single(staffEmail.Sent);
-        Assert.Single(await DigestsAsync());
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+        Assert.Equal(1, await PriceReviewEventCountAsync());
+    }
+
+    // Que las revisiones no se puedan leer no deja sin digest de cobros ni deja el día abierto.
+    [Fact]
+    public async Task AFailureLoadingThePriceReviewsStillSendsTheChargeDigest()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedChargeAsync(customer, Today, name: "Dominio");
+        await SeedReviewAsync(customer, Today.AddDays(10));
+        // Sólo la carga de revisiones lee las tasas, y sólo si hay alguna revisión abierta.
+        await ExecuteSqlAsync("ALTER TABLE billing.ipc_rates RENAME TO ipc_rates_unavailable;");
+
+        await ProcessAsync();
+
+        var digest = Assert.Single(staffEmail.Sent);
+        Assert.Equal(["Dominio"], digest.DueSoon.Select(row => row.ServiceName));
+        Assert.Empty(digest.PriceReviews);
+        Assert.Empty(digest.HeldCharges);
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+        Assert.Equal(0, await PriceReviewEventCountAsync());
+        Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
     }
 
     [Fact]
@@ -1003,6 +1040,15 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         WithServicesAsync(services => services.GetRequiredService<DailyDigestStore>().TryClaimAsync(Tenant, memberId, Today, now, Ct));
 
     private Task<int> ExecuteSqlAsync(string sql) => WithDbAsync(db => db.Database.ExecuteSqlRawAsync(sql, Ct));
+
+    private async Task<long> PriceReviewEventCountAsync()
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(Ct);
+        await using var command = new NpgsqlCommand(
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'billing.price-reviews.digest.v1'", connection);
+        return (long)(await command.ExecuteScalarAsync(Ct))!;
+    }
 
     private async Task ProcessAsync()
     {

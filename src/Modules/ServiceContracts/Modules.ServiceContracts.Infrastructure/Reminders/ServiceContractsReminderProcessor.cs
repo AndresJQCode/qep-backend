@@ -57,6 +57,9 @@ internal sealed partial class ServiceContractsReminderProcessor(
     [LoggerMessage(Level = LogLevel.Error, Message = "Billing daily digest failed for member {MemberId} of tenant {TenantId}.")]
     private static partial void LogDigestFailed(ILogger logger, Exception exception, Guid memberId, Guid tenantId);
 
+    [LoggerMessage(Level = LogLevel.Error, Message = "Billing price reviews could not be loaded for the daily digest of tenant {TenantId}.")]
+    private static partial void LogReviewsFailed(ILogger logger, Exception exception, Guid tenantId);
+
     public async Task ProcessTenantAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
@@ -394,7 +397,7 @@ internal sealed partial class ServiceContractsReminderProcessor(
         var ofInterest = pending.Charges
             .Where(charge => charge.DueDate <= horizon || IsFailed(lastReminders, charge))
             .ToArray();
-        var reviews = await LoadReviewsAsync(run, cancellationToken);
+        var reviews = await LoadReviewsOrNoneAsync(run, cancellationToken);
         if (ofInterest.Length == 0 && reviews.Count == 0)
         {
             return;
@@ -456,6 +459,27 @@ internal sealed partial class ServiceContractsReminderProcessor(
             {
                 dbContext.ChangeTracker.Clear();
             }
+        }
+    }
+
+    /// <summary>
+    /// Las revisiones son un añadido al digest: si no se pueden leer, el email de los cobros sale igual, sin ellas, y la corrida
+    /// termina. Ese día las revisiones no se avisan.
+    /// </summary>
+    private async Task<IReadOnlyList<CustomerReview>> LoadReviewsOrNoneAsync(Run run, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await LoadReviewsAsync(run, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogReviewsFailed(logger, exception, run.TenantId);
+            return [];
+        }
+        finally
+        {
+            dbContext.ChangeTracker.Clear();
         }
     }
 
