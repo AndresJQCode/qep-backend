@@ -337,8 +337,8 @@ mismo, es §11, P-1.
   `409 billing.concurrent_first_write` a la que pierde el insert (existe, `ServiceContractsUnitOfWork.cs:62`). No hay «última
   escritura gana».
 - **Guardar la tasa y confirmar con ella se excluyen** con un candado de fila sobre `billing.ipc_rates`, en una transacción
-  explícita `READ COMMITTED` por cada ítem de la confirmación y por cada `PUT`, y todo lo que decide el resultado se lee después
-  de tomarlo. La confirmación lo toma compartido (`FOR SHARE`): los ítems de un mismo año no se esperan ni se tumban entre sí.
+  explícita `READ COMMITTED` por cada ítem de la confirmación y por cada `PUT`; la tasa y los datos del contrato que deciden el
+  resultado se leen después de tomarlo (el redondeo del tenant y «hoy» se leen una vez por lote). La confirmación lo toma compartido (`FOR SHARE`): los ítems de un mismo año no se esperan ni se tumban entre sí.
   El `PUT` lo toma exclusivo (`FOR UPDATE`): mientras un ítem tiene la tasa, espera y después ve el cambio programado nuevo
   (`billing.ipc.in_use`); mientras el `PUT` la tiene, el ítem espera y lee la tasa nueva
   (`billing.price_review.price_changed`). Una primera tasa no tiene fila que bloquear: ningún ítem puede confirmar con ella y
