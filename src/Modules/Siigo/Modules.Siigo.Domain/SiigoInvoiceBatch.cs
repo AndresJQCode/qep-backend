@@ -31,7 +31,10 @@ public sealed class SiigoInvoiceBatch
 
     public bool IsFinished => FinishedAt is not null;
 
-    public static SiigoInvoiceBatch Create(Guid id, Guid tenantId, Guid requestedBy, IReadOnlyList<Guid> orderIds, DateTimeOffset now)
+    /// <param name="paymentsJson">Las formas de pago que la persona eligió, sólo en una tanda de un pedido: son por comprobante de
+    /// ese pedido (el validador lo frena antes con el campo).</param>
+    public static SiigoInvoiceBatch Create(
+        Guid id, Guid tenantId, Guid requestedBy, IReadOnlyList<Guid> orderIds, DateTimeOffset now, string? paymentsJson = null)
     {
         ArgumentNullException.ThrowIfNull(orderIds);
         if (orderIds.Count is 0 or > MaxItems)
@@ -44,10 +47,16 @@ public sealed class SiigoInvoiceBatch
             throw new SiigoDomainException(SiigoErrorCodes.InvoiceBatchOrders, "The orders of a batch are required and cannot repeat.");
         }
 
+        if (paymentsJson is not null && orderIds.Count != 1)
+        {
+            throw new ArgumentException("Payment choices only travel with a batch of a single order.", nameof(paymentsJson));
+        }
+
         var batch = new SiigoInvoiceBatch { Id = id, TenantId = tenantId, RequestedBy = requestedBy, CreatedAt = now };
         for (var position = 0; position < orderIds.Count; position++)
         {
-            batch._items.Add(SiigoInvoiceBatchItem.Pending(Guid.CreateVersion7(), id, tenantId, orderIds[position], position, now));
+            batch._items.Add(
+                SiigoInvoiceBatchItem.Pending(Guid.CreateVersion7(), id, tenantId, orderIds[position], position, paymentsJson, now));
         }
 
         return batch;
@@ -103,6 +112,16 @@ public sealed class SiigoInvoiceBatchItem
 
     public string? InvoiceNumber { get; private set; }
 
+    /// <summary>La fila del pedido en <c>siigo.invoices</c> que produjo el intento, si hubo una.</summary>
+    public Guid? InvoiceId { get; private set; }
+
+    /// <summary>Las formas de pago elegidas al pedir la factura de un solo pedido; <c>null</c> usa la propuesta de la cuenta de
+    /// cobro.</summary>
+    public string? PaymentsJson { get; private set; }
+
+    /// <summary>La factura existe pero el pedido no se pudo marcar (anulado o marcado a mano en medio).</summary>
+    public bool OrderMarkFailed { get; private set; }
+
     public int Attempts { get; private set; }
 
     /// <summary>No antes de esta hora se reclama.</summary>
@@ -113,9 +132,13 @@ public sealed class SiigoInvoiceBatchItem
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
-    public bool IsSettled => Status is SiigoInvoiceBatchItemStatus.Invoiced or SiigoInvoiceBatchItemStatus.Skipped or SiigoInvoiceBatchItemStatus.Failed;
+    /// <summary>El worker ya no tiene nada que hacer con el pedido. Una por confirmar cierra: depende de una persona.</summary>
+    public bool IsSettled =>
+        Status is SiigoInvoiceBatchItemStatus.Invoiced or SiigoInvoiceBatchItemStatus.Skipped or SiigoInvoiceBatchItemStatus.Failed
+            or SiigoInvoiceBatchItemStatus.ToConfirm;
 
-    internal static SiigoInvoiceBatchItem Pending(Guid id, Guid batchId, Guid tenantId, Guid orderId, int position, DateTimeOffset now) =>
+    internal static SiigoInvoiceBatchItem Pending(
+        Guid id, Guid batchId, Guid tenantId, Guid orderId, int position, string? paymentsJson, DateTimeOffset now) =>
         new()
         {
             Id = id,
@@ -123,6 +146,7 @@ public sealed class SiigoInvoiceBatchItem
             TenantId = tenantId,
             OrderId = orderId,
             Position = position,
+            PaymentsJson = paymentsJson,
             Status = SiigoInvoiceBatchItemStatus.Pending,
             AvailableAt = now,
             UpdatedAt = now,
@@ -137,7 +161,7 @@ public sealed class SiigoInvoiceBatchItem
         UpdatedAt = now;
     }
 
-    public void MarkInvoiced(string number, DateTimeOffset now)
+    public void MarkInvoiced(string number, DateTimeOffset now, Guid? invoiceId = null, bool orderMarkFailed = false)
     {
         if (IsSettled)
         {
@@ -146,6 +170,8 @@ public sealed class SiigoInvoiceBatchItem
 
         Status = SiigoInvoiceBatchItemStatus.Invoiced;
         InvoiceNumber = Cap(number, InvoiceNumberMaxLength);
+        InvoiceId = invoiceId;
+        OrderMarkFailed = orderMarkFailed;
         Settle(null, [], now);
     }
 
@@ -161,7 +187,7 @@ public sealed class SiigoInvoiceBatchItem
         Settle(errorCode, missingCodes, now);
     }
 
-    public void MarkFailed(string errorCode, DateTimeOffset now)
+    public void MarkFailed(string errorCode, DateTimeOffset now, Guid? invoiceId = null)
     {
         if (IsSettled)
         {
@@ -169,7 +195,52 @@ public sealed class SiigoInvoiceBatchItem
         }
 
         Status = SiigoInvoiceBatchItemStatus.Failed;
+        InvoiceId = invoiceId;
         Settle(errorCode, [], now);
+    }
+
+    /// <summary>Se mandó y no se sabe si Siigo creó la factura: el pedido queda enlazado a su fila.</summary>
+    public void MarkToConfirm(Guid invoiceId, string? errorCode, DateTimeOffset now)
+    {
+        if (IsSettled)
+        {
+            return;
+        }
+
+        Status = SiigoInvoiceBatchItemStatus.ToConfirm;
+        InvoiceId = invoiceId;
+        Settle(errorCode, [], now);
+    }
+
+    /// <summary>El estado que se devuelve al leer (spec 2026-11-24 §2). Sólo un pedido guardado <c>ToConfirm</c> sigue a su factura: así
+    /// un reenvío desde otra tanda, o una resolución desde el pedido, se ve sin escribir en ítems ajenos.</summary>
+    /// <param name="invoice">La fila enlazada (<see cref="InvoiceId"/>); otra, o ninguna, deja lo guardado.</param>
+    public SiigoBatchItemState Effective(SiigoInvoice? invoice, DateTimeOffset now)
+    {
+        if (Status != SiigoInvoiceBatchItemStatus.ToConfirm || invoice is null || invoice.Id != InvoiceId)
+        {
+            return new SiigoBatchItemState(Status, ErrorCode, InvoiceNumber, false, false, null);
+        }
+
+        return invoice.Status switch
+        {
+            SiigoInvoiceStatus.Pending when invoice.IsBeingSent(now) =>
+                new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Sending, null, null, false, false, null),
+            SiigoInvoiceStatus.Pending or SiigoInvoiceStatus.Unknown => new SiigoBatchItemState(
+                SiigoInvoiceBatchItemStatus.ToConfirm,
+                invoice.ErrorCode,
+                null,
+                invoice.CanResend(now),
+                invoice.IsResolvable(now),
+                invoice.MissingAvailableAt(now)),
+            SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected =>
+                new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, invoice.Number, false, false, null),
+            SiigoInvoiceStatus.Failed => new SiigoBatchItemState(
+                SiigoInvoiceBatchItemStatus.Failed, SiigoErrorCodes.InvoiceResolvedMissing, null, false, false, null),
+            SiigoInvoiceStatus.Rejected =>
+                new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Failed, invoice.ErrorCode, null, false, false, null),
+            _ => throw new InvalidOperationException($"Unknown invoice status '{invoice.Status}'."),
+        };
     }
 
     private void Settle(string? errorCode, IReadOnlyList<string> missingCodes, DateTimeOffset now)
