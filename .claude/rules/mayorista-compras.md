@@ -28,14 +28,23 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   miembros, y `SensitivePathTelemetry` (registrado en `Program.cs` después de `AddQepLogging`) con la misma regla en el
   `url.path` de los spans de OpenTelemetry y en el scope `RequestPath` de cada log del request. Una ruta nueva con un secreto en
   un segmento se suma ahí.
-- **El link de la invitación ya no prueba el buzón, y el correo no tiene que coincidir** (spec 2026-11-19). El link identifica
-  la invitación; la acepta cualquier cuenta, una sola vez. Si el correo de la cuenta no es el del distribuidor, lo reemplaza en
+- **El link de la invitación por sí solo no prueba el buzón, y el correo no tiene que coincidir** (spec 2026-11-19; el link del
+  correo sí puede probarlo, abajo). El link identifica la invitación; la acepta cualquier cuenta, una sola vez. Si el correo de la cuenta no es el del distribuidor, lo reemplaza en
   el commit final, con auditoría (`wholesale.distributor.email_changed`, sin los correos) y aviso a los dos correos por outbox.
   `email_mismatch` se retiró. No lo vuelvas a exigir: el owner decidió que prevalece el correo de quien acepta.
-- **Sin contraseña, siempre hay código** (foco 1 del spec 2026-11-19). En `session-with-password`, una cuenta que no existe o
-  existe sin contraseña necesita un código válido de `email-code` (`IEmailChallenges`) y la versión de los términos antes de
-  escribir nada; sólo quien ya tiene contraseña entra con ella. El código es la única llave, así que `IEmailChallenges` sostiene
-  tres invariantes que no se aflojan (revisión final de la rama, hallazgo 1): **a lo sumo un desafío vivo por correo** (la
+- **Sin contraseña hace falta el código o la prueba del link del correo** (foco 1 del spec 2026-11-19; spec 2026-11-24). En
+  `session-with-password`, una cuenta que no existe o existe sin contraseña necesita un código válido de `email-code`
+  (`IEmailChallenges`) **o** el `emailProof` del link del correo con el correo invitado, y siempre la versión de los términos
+  antes de escribir nada; sólo quien ya tiene contraseña entra con ella, y a esa cuenta la prueba no la toca. La prueba es un
+  secreto aparte del token que viaja sólo en `?ev=` del correo (campo `emailProof` de `wholesale.distributor-invited.v1`); en
+  base queda su hash (`distributor_invitations.email_proof_hash`). La decide Wholesale (`DistributorEmailProofs.Proves`) y
+  `WholesaleInvitationPasswordSession` sólo recibe el resultado. **Tres anulaciones:** «Copiar» (rota el token y la deja nula),
+  «Reenviar» (pone una nueva) y **cambiar el correo** del distribuidor (la deja nula: sin esto, quien tiene el correo viejo
+  crearía la cuenta del nuevo). No la pongas en el link de «Copiar», en el de WhatsApp, en una respuesta de la API, en un log
+  ni en la auditoría. **Riesgo aceptado por el spec:** quien reenvía el correo de invitación entrega ese paso (el destinatario
+  puede crear la cuenta del correo invitado mientras la invitación siga pendiente y la cuenta no tenga contraseña); lo acotan
+  las 72 h, el uso único y la rotación con «Copiar» o «Reenviar». Para todo lo demás el código es la única llave, así que
+  `IEmailChallenges` sostiene tres invariantes que no se aflojan (revisión final de la rama, hallazgo 1): **a lo sumo un desafío vivo por correo** (la
   emisión corre bajo `pg_advisory_xact_lock(EmailChallengeIssuanceLock.Namespace, hashtext(email_hash))` e invalida el anterior
   en la misma transacción), **sólo cuenta el más reciente** (`TryConsumeAsync` actualiza ese y ningún otro; el código de uno
   anterior es un código errado) y **5 desafíos por correo en 24 h móviles** (`MaxIssuesPerDay`; el sexto no se emite y no falla,

@@ -2565,20 +2565,21 @@ Módulo `wholesale` (spec `docs/superpowers/specs/2026-11-17-compras-y-mayorista
 `docs/superpowers/plans/2026-11-17-mayorista-fase-2-backend.md`, «Contrato HTTP»). El mayorista asigna a cada distribuidor
 una lista de precios de Catalog (ver [Listas de precios por canal](#listas-de-precios-por-canal); su ajuste se aplica en la moneda
 por defecto del mayorista, redondeado con su regla) e invita distribuidores por correo.
-El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}` (72 horas; reenviar rota el token y el link viejo
-pasa a `404`).
+El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}?ev={prueba}` (72 horas; reenviar rota el token y el
+link viejo pasa a `404`). `ev` es la prueba de buzón (spec `2026-11-24-invitacion-distribuidor-prueba-de-correo-design.md`): sólo
+la lleva el link del correo; el de «Copiar», `invitationUrl` y el aviso de WhatsApp van sin ella.
 
 | Método | Ruta                                                   | Autenticación                        | Límite        |
 | ------ | ------------------------------------------------------ | ------------------------------------ | ------------- |
 | `GET`  | `/api/v1/wholesale-invitations/{token}`                | Anónimo                              | `public`      |
 | `POST` | `/api/v1/wholesale-invitations/{token}/email-code`     | Anónimo, `{ email }`, siempre `202`  | `credentials` |
 | `POST` | `/api/v1/wholesale-invitations/{token}/session`        | Bearer de Google (o stub)            | `credentials` |
-| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ email, password, code, termsVersion }` | `credentials` |
+| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ email, password, code?, termsVersion, emailProof? }` | `credentials` |
 | `GET`  | `/api/v1/wholesale-invitations/{token}/linkable-tenants` | Sesión QEP                         | `public`      |
 | `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
 
-Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.md`: el link identifica la invitación, no
-prueba el buzón, y el correo no tiene que ser el invitado.
+Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.md`: el link identifica la invitación y el
+correo no tiene que ser el invitado. Por sí solo no prueba el buzón; el del correo sí puede, con su `ev` (spec 2026-11-24).
 
 - `email-code` manda un código de 6 dígitos al correo que escribió el distribuidor (vence a los 10 minutos, 5 intentos; uno
   nuevo cada 60 s como mucho y 5 por correo en 24 h móviles). Cada código nuevo invalida el anterior y sólo cuenta el más
@@ -2586,9 +2587,12 @@ prueba el buzón, y el correo no tiene que ser el invitado.
   sólo emite con la invitación pendiente.
 - `session-with-password` (sin `email`, el invitado): si ese correo ya tiene contraseña, es un login normal
   (`IPasswordLogin`: `401 identity.credentials.invalid`, o `403 identity.email.not_verified` con el correo sin verificar; el
-  link no lo verifica). Si no tiene usuario o no tiene contraseña, exige un `code` válido de `email-code`: sin él es el mismo
-  `401` que una contraseña errada, así que la respuesta no dice si el correo tiene cuenta. Con el código ya gastado exige
-  `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla cerrado con
+  link no lo verifica, y `emailProof` se ignora). Si no tiene usuario o no tiene contraseña, exige un `code` válido de
+  `email-code` **o** `emailProof`, el valor de `?ev=` del link del correo: sin ninguno de los dos es el mismo `401` que una
+  contraseña errada, así que la respuesta no dice si el correo tiene cuenta ni si falló la prueba o el código. `emailProof`
+  sólo vale con la invitación pendiente, la prueba vigente y el correo invitado (sin mayúsculas ni espacios de más); la anulan
+  «Copiar», «Reenviar» (que manda una nueva) y cambiar el correo del distribuidor. Con el buzón probado o el código ya gastado
+  exige `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla cerrado con
   `identity.terms.unavailable`), y entonces aprovisiona, crea la contraseña y registra los términos.
 - `session` abre la sesión del correo **verificado** de Google (`403` si no está verificado), sea o no el invitado: usa el
   usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno

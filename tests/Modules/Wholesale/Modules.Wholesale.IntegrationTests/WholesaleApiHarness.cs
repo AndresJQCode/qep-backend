@@ -404,6 +404,22 @@ internal static class WholesaleApiHarness
     /// <summary>El token del último evento de invitación de ese distribuidor (un reenvío publica otro).</summary>
     public static async Task<string> LatestTokenAsync(QepApiFactory factory, Guid distributorId)
     {
+        using var document = await LatestInvitationPayloadAsync(factory, distributorId);
+        return document.RootElement.GetProperty("token").GetString()!;
+    }
+
+    /// <summary>
+    /// La prueba de buzón del último evento de invitación (spec 2026-11-24), la que el correo manda como <c>?ev=</c>;
+    /// <c>null</c> si el evento no la trae.
+    /// </summary>
+    public static async Task<string?> LatestEmailProofAsync(QepApiFactory factory, Guid distributorId)
+    {
+        using var document = await LatestInvitationPayloadAsync(factory, distributorId);
+        return document.RootElement.TryGetProperty("emailProof", out var emailProof) ? emailProof.GetString() : null;
+    }
+
+    private static async Task<JsonDocument> LatestInvitationPayloadAsync(QepApiFactory factory, Guid distributorId)
+    {
         var payloads = await RowsAsync<string>(
             factory,
             $"""
@@ -411,8 +427,7 @@ internal static class WholesaleApiHarness
             WHERE event_name = {DistributorInvitedEvent} AND payload ->> 'distributorId' = {distributorId.ToString()}
             ORDER BY occurred_at DESC, id DESC
             """);
-        using var document = JsonDocument.Parse(payloads[0]);
-        return document.RootElement.GetProperty("token").GetString()!;
+        return JsonDocument.Parse(payloads[0]);
     }
 
     /// <summary>El <c>If-Match</c> de las escrituras sobre un recurso existente, con la forma fuerte <c>"7"</c>.</summary>
