@@ -86,8 +86,6 @@ public sealed class StampSiigoInvoiceHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        var queued = await batches.FindOpenBatchIdAsync(command.TenantId, command.OrderId, cancellationToken) is not null;
-        var orderMarkFailed = await SiigoOrderMark.IsMissingAsync(orders, row, queued, logger, cancellationToken);
-        return SiigoInvoiceDto.From(row, now, orderMarkFailed, queued: queued);
+        return await SiigoSavedInvoice.ToDtoAsync(batches, orders, row, now, logger, cancellationToken);
     }
 }

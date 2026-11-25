@@ -4,6 +4,13 @@ public interface IServiceContractsUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Abre una transacción explícita <c>READ COMMITTED</c> sobre la conexión del módulo: la que sostiene los candados de fila de
+    /// <see cref="IIpcRateRepository"/> hasta que se guarda. Los <see cref="SaveChangesAsync"/> que corran dentro quedan en ella.
+    /// Sin confirmarla, se revierte al liberarla.
+    /// </summary>
+    Task<IServiceContractsTransaction> BeginTransactionAsync(CancellationToken cancellationToken);
+
     /// <summary>Suelta todo lo que el contexto sigue: la importación guarda fila por fila, y una fila que falló no puede arrastrar sus entidades a la siguiente.</summary>
     void Clear();
 
@@ -14,4 +21,9 @@ public interface IServiceContractsUnitOfWork
     /// de un lote así no se usa: ahí una falla de base sigue siendo un 500.
     /// </summary>
     Task<T> RunBatchItemAsync<T>(Func<Task<T>> item, CancellationToken cancellationToken);
+}
+
+public interface IServiceContractsTransaction : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
 }

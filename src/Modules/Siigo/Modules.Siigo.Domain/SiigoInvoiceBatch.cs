@@ -220,7 +220,9 @@ public sealed class SiigoInvoiceBatchItem
     }
 
     /// <summary>El estado que se devuelve al leer (spec 2026-11-24 §2). Sólo un pedido guardado <c>ToConfirm</c> sigue a su factura: así
-    /// un reenvío desde otra tanda, o una resolución desde el pedido, se ve sin escribir en ítems ajenos.</summary>
+    /// un reenvío desde otra tanda, o una resolución desde el pedido, se ve sin escribir en ítems ajenos. Mientras siga por confirmar, el
+    /// código es el del ítem si la fila no cambió después de que se cerró (dice por qué no salió un reenvío que no tocó la fila) y el de
+    /// la fila si cambió después; si el que manda viene vacío, el otro.</summary>
     /// <param name="invoice">La fila enlazada (<see cref="InvoiceId"/>); otra, o ninguna, deja lo guardado.</param>
     public SiigoBatchItemState Effective(SiigoInvoice? invoice, DateTimeOffset now)
     {
@@ -235,8 +237,8 @@ public sealed class SiigoInvoiceBatchItem
                 new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Sending, null, null, false, false, null),
             SiigoInvoiceStatus.Pending or SiigoInvoiceStatus.Unknown => new SiigoBatchItemState(
                 SiigoInvoiceBatchItemStatus.ToConfirm,
-                // Un primer envío cortado o muerto no deja código en la fila: el del ítem es lo que dice qué pasó.
-                invoice.ErrorCode ?? ErrorCode,
+                // UpdatedAt del ítem es la hora en que se cerró: cerrado, nada lo vuelve a escribir. La fila se guarda antes.
+                invoice.UpdatedAt > UpdatedAt ? invoice.ErrorCode ?? ErrorCode : ErrorCode ?? invoice.ErrorCode,
                 null,
                 invoice.CanResend(now),
                 // Lo mismo que ofrece la pantalla del pedido: una que nunca salió no se ofrece resolver.

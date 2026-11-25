@@ -127,7 +127,9 @@ public sealed class LegalParameterOperatorApiTests
         Assert.Equal("2026-01-01", current.GetProperty("effectiveFrom").GetString());
         Assert.Equal(1_750_905m, current.GetProperty("value").GetDecimal());
         var rows = smmlv.GetProperty("rows").EnumerateArray().ToList();
-        Assert.Equal(["2026-01-01", "2025-01-01", "2024-01-01"], rows.Select(row => row.GetProperty("effectiveFrom").GetString()));
+        Assert.Equal(
+            Enumerable.Range(2017, 10).Reverse().Select(year => $"{year}-01-01"),
+            rows.Select(row => row.GetProperty("effectiveFrom").GetString()));
         Assert.All(rows, row => Assert.Equal(JsonValueKind.Null, row.GetProperty("updatedAt").ValueKind));
         Assert.False(Parameter(root, "WeeklyHours").GetProperty("yearly").GetBoolean());
         var brackets = Assert.Single(root.GetProperty("brackets").EnumerateArray());
@@ -347,15 +349,15 @@ public sealed class LegalParameterOperatorApiTests
     public async Task TheSalaryRulesStopFailingAfterCreatingTheMissingYear()
     {
         await using var world = await OpenAsync(NovemberThirtieth, [.. ReadAndManage, HrPermissions.ContractRead]);
-        var rules = $"{HrUrl()}/salary-rules?date=2023-06-01";
+        var rules = $"{HrUrl()}/salary-rules?date=2016-06-01";
 
         var before = await world.Client.GetAsync(rules, Ct);
-        await JsonAsync(await world.Client.PutAsJsonAsync($"{Base()}/Smmlv/2023-01-01", new { value = 1_160_000 }, Ct));
-        await JsonAsync(await world.Client.PutAsJsonAsync($"{Base()}/IntegralSalaryFloor/2023-01-01", new { value = 15_080_000 }, Ct));
+        await JsonAsync(await world.Client.PutAsJsonAsync($"{Base()}/Smmlv/2016-01-01", new { value = 689_455 }, Ct));
+        await JsonAsync(await world.Client.PutAsJsonAsync($"{Base()}/IntegralSalaryFloor/2016-01-01", new { value = 8_962_915 }, Ct));
         var after = await world.Client.GetAsync(rules, Ct);
 
         await ProblemAsync(before, HttpStatusCode.UnprocessableEntity, "hr.legal_parameter.missing");
         var body = await JsonAsync(after);
-        Assert.Equal(1_160_000m, body.GetProperty("smmlv").GetDecimal());
+        Assert.Equal(689_455m, body.GetProperty("smmlv").GetDecimal());
     }
 }
