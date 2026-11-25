@@ -118,9 +118,7 @@ public sealed class ResolveSiigoInvoiceHandler(
             await orders.MarkInvoicedAsync(command.TenantId, command.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), memberId, cancellationToken);
         }
 
-        var queued = await batches.FindOpenBatchIdAsync(command.TenantId, command.OrderId, cancellationToken) is not null;
-        var orderMarkFailed = await SiigoOrderMark.IsMissingAsync(orders, row, queued, logger, cancellationToken);
-        return SiigoInvoiceDto.From(row, now, orderMarkFailed, queued: queued);
+        return await SiigoSavedInvoice.ToDtoAsync(batches, orders, row, now, logger, cancellationToken);
     }
 
     // La de flete sólo sale después de que la del pedido existe, y acá la del pedido estaba sin resolver: la de flete sin resolver nunca
