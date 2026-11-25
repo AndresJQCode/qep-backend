@@ -256,7 +256,7 @@ public sealed class SiigoInvoiceBatchOrderInProgressException(IReadOnlyList<Guid
 }
 
 /// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase): entre 1 y 50 pedidos, sin vacíos ni repetidos;
-/// las formas de pago, con las reglas del POST del pedido y un solo pedido.</summary>
+/// las formas de pago, con las reglas del comando de emisión y un solo pedido.</summary>
 public sealed class CreateSiigoInvoiceBatchValidator : AbstractValidator<CreateSiigoInvoiceBatchCommand>
 {
     public CreateSiigoInvoiceBatchValidator()

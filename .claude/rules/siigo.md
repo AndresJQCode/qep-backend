@@ -56,10 +56,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
 - **El cliente de Siigo no corta con `HttpClient.Timeout` (está en `Timeout.InfiniteTimeSpan`): cada llamada lleva su plazo**
   (`SiigoApiClient.SendAsync`, `CancellationTokenSource` enlazado que cubre el envío y la lectura del cuerpo). `POST v1/invoices` usa
-  `InvoiceCreateTimeout` y todo lo demás, incluido el `/auth` previo a la factura, `DefaultTimeout`; hoy los dos son 30 s y no se
-  configuran. **Una petición nueva tiene que pasar un plazo:** sin él no la corta nada. El vencimiento del plazo es `timeout`; una
-  cancelación de quien llama sube como `OperationCanceledException`. Si subes un plazo, `SiigoTimeoutBudgetTests` exige que cuatro
-  llamadas generales más dos facturas quepan en `SiigoInvoice.SendLease`, y ése en el lease del worker.
+  `InvoiceCreateTimeout` (120 s, lo que Siigo recomienda para crear documentos) y todo lo demás, incluido el `/auth` previo a la
+  factura, `DefaultTimeout` (30 s); no se configuran. **Una petición nueva tiene que pasar un plazo:** sin él no la corta nada. El
+  vencimiento del plazo es `timeout`; una cancelación de quien llama sube como `OperationCanceledException`. Si subes un plazo,
+  `SiigoTimeoutBudgetTests` exige que cuatro llamadas generales más dos facturas quepan en `SiigoInvoice.SendLease`, y ése en el lease
+  del worker.
+- **Generar una factura no tiene ruta síncrona: toda emisión es una tanda** (spec 2026-11-24, etapa contract). `POST …/siigo-invoice`
+  ya no existe; la crean `POST …/siigo/invoice-batches` y el worker. Una petición HTTP no debe esperar a crear la factura: con 120 s la
+  cortaría el proxy a mitad del envío. En las pruebas de integración se factura con `SiigoInvoicingHarness.IssueThroughBatchAsync`
+  (tanda de uno y `DrainAsync`).
 - **Una llamada a Siigo que falla deja su curl y la respuesta en `siigo.call_failures`** (spec 2026-11-21). Una fila por llamada fallida,
   lecturas y escrituras: el `curl.exe` de la petición (token y `access_key` enmascarados, `SiigoCurl.Build`) y lo que contestó Siigo, atada a la
   factura por la `Idempotency-Key` (creación) o el id de Siigo (sellado). **Una llamada buena no se guarda nunca:** la respuesta de `/auth`
@@ -72,7 +77,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `tenant_id` compila y deja ambas operaciones en 500.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
-  `Created` y la respuesta lleva `orderMarkFailed`; el siguiente `POST` reintenta sólo la marca. Nunca deja el `POST` fallando.
+  `Created` y el ítem de la tanda lleva `orderMarkFailed`; la siguiente tanda del pedido reintenta sólo la marca. Nunca deja la
+  emisión fallando.
 - **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
   `ListUnitPrice × 100 / (100 + IVA)` a **2 decimales**: la documentación de Siigo da a `tax_base` «máximo 11 enteros y 2 decimales», y con 6
   Siigo rechazó con `invalid_amount` en `items[n].tax_base`; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo

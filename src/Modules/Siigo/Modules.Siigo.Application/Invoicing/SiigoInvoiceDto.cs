@@ -7,11 +7,12 @@ namespace Modules.Siigo.Application.Invoicing;
 /// Una factura de Siigo tal como la pantalla la dibuja (spec 2026-11-18 §5.6). BFF: <c>errorCode</c> viaja ya traducido a un código
 /// <c>siigo.invoice.*</c> (los pagos que no suman llegan como <c>siigo.invoice.totals_mismatch</c> con <c>expectedPaymentsTotal</c>, para que
 /// la pantalla muestre el total de Siigo junto al de QEP) y <c>orderChanged</c> dice que el pedido ya no estaba en la versión armada.
-/// <c>orderMarkFailed</c> avisa que la factura existe pero el pedido no se pudo marcar (se anuló o alguien lo marcó a mano): la pantalla
-/// lo muestra y el siguiente «Generar» reintenta sólo la marca. <c>hasPdf</c> dice si la pantalla ofrece «Descargar PDF»: la factura existe en
+/// <c>orderMarkFailed</c> avisa que la factura existe pero el pedido no se pudo marcar (se anuló o alguien lo marcó a mano): lo pone la
+/// emisión, el worker lo copia al ítem de la tanda (la lista del pedido lo trae en <c>false</c>) y la siguiente emisión reintenta sólo la
+/// marca. <c>hasPdf</c> dice si la pantalla ofrece «Descargar PDF»: la factura existe en
 /// Siigo con su id (la pantalla no puede deducirlo del estado: una resuelta a mano no tiene id). <c>canSendWhatsApp</c> dice si la pantalla ofrece «Enviar por WhatsApp»: la fila tiene PDF <b>y</b> el pedido se puede entregar hoy
 /// (canal que se resuelve y cliente con teléfono). La pantalla no puede deducirlo: no ve los canales del tenant ni la elección guardada, y
-/// sólo lo calcula la lista (<c>GET …/siigo-invoice</c>); las respuestas de generar, sellar y resolver lo traen en <c>false</c>. <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
+/// sólo lo calcula la lista (<c>GET …/siigo-invoice</c>); las respuestas de sellar y resolver lo traen en <c>false</c>. <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.
 /// <para>Spec 2026-11-24 §3: <c>awaitingConfirmation</c> dice que no se sabe si Siigo creó la factura (la pantalla no puede pintarla como
 /// «Enviando…»); <c>canResend</c> y <c>canResolve</c>, si ofrece «Reintentar» y «Existe en Siigo» / «No existe»; y
 /// <c>missingAvailableAt</c>, desde cuándo se puede declarar que no existe, si todavía hay que esperar. Van calculados porque la pantalla

@@ -65,14 +65,25 @@ public sealed class SiigoNoLeakTests
         await CallAsync("GET settings", () => client.GetAsync($"{tenantRoute}/siigo/connections/{world.ConnectionId}/settings", Ct));
         await CallAsync("GET options", () => client.GetAsync($"{tenantRoute}/siigo/connections/{world.ConnectionId}/options/taxes", Ct));
 
+        // La tanda la crea el cliente y la procesa el worker del host que graba los logs: la emisión entera queda a la vista.
+        var batches = $"{tenantRoute}/siigo/invoice-batches";
+        var worker = factory.Services.GetServices<IHostedService>().OfType<SiigoInvoiceBatchWorker>().Single();
+        async Task IssueAsync(string attempt)
+        {
+            await CallAsync($"POST batch {attempt}", () => client.PostAsJsonAsync(batches, new { orderIds = new[] { world.OrderId } }, Ct));
+            using var created = JsonDocument.Parse(bodies[^1].Body);
+            await worker.DrainAsync(Ct);
+            await CallAsync($"GET batch {attempt}", () => client.GetAsync($"{batches}/{created.RootElement.GetProperty("id").GetGuid()}", Ct));
+        }
+
         // Siigo rechaza y su mensaje repite la dirección del cliente; después la factura se crea. La petición (con el cliente) sólo
         // viaja a Siigo: ni el log del cliente HTTP, ni la fila ni la respuesta la repiten.
         world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(
             HttpStatusCode.BadRequest,
             """{"Errors":[{"Code":"invalid_customer","Message":"Cliente invalido: Calle 10 # 45-12"}]}"""));
-        await CallAsync("POST invoice rejected", () => client.PostAsync(world.BaseRoute, null, Ct));
+        await IssueAsync("rejected");
         world.Siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f", 0m));
-        await CallAsync("POST invoice created", () => client.PostAsync(world.BaseRoute, null, Ct));
+        await IssueAsync("created");
         await CallAsync("GET invoices", () => client.GetAsync(world.BaseRoute, Ct));
         // Spec 2026-11-21: la lista de fallas no lleva el curl ni la respuesta (que repiten la dirección y el documento del cliente).
         await CallAsync("GET call-failures", () => client.GetAsync($"{tenantRoute}/siigo/call-failures", Ct));
@@ -86,7 +97,8 @@ public sealed class SiigoNoLeakTests
         Assert.Equal(
             [
                 "POST test connection → 200", "GET connection → 200", "GET connections → 200", "GET settings → 200", "GET options → 200",
-                "POST invoice rejected → 200", "POST invoice created → 200", "GET invoices → 200", "GET call-failures → 200",
+                "POST batch rejected → 202", "GET batch rejected → 200", "POST batch created → 202", "GET batch created → 200",
+                "GET invoices → 200", "GET call-failures → 200",
             ],
             bodies.Select(entry => entry.Call));
         // Control positivo: el host registró en Trace.
@@ -170,8 +182,7 @@ public sealed class SiigoNoLeakTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
-        var invoiceId = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0].GetProperty("id").GetGuid();
+        var invoiceId = (await IssueRowsThroughBatchAsync(world))[0].GetProperty("id").GetGuid();
         SiigoServesThePdf(world);
         var (host, doubles) = Host(world, Zenvia);
         var logs = new RecordingLoggerProvider();
