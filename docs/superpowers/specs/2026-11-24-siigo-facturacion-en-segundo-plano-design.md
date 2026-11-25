@@ -248,18 +248,17 @@ Los `can*` existen porque la pantalla no ve `SendingSince` ni el reloj de 24 h: 
 `SiigoInvoiceDto` (lista del pedido) suma igual **`awaitingConfirmation`**, **`canResend`** y **`canResolve`** (aditivos): hoy el frontend
 muestra toda `Pending` como «Enviando…».
 
-**`orderMarkFailed` en las filas del pedido** (precisión del 2026-11-25): además de la respuesta del `POST` síncrono, lo calculan al leer
-las respuestas que devuelven esas filas (`GET …/siigo-invoice`, `/stamp` y `/resolve`). Va en `true` sólo en la fila `Order` vigente que
-existe en Siigo (`Created`, `Stamped` o `StampRejected`, con número) cuando el pedido no está marcado como facturado con ese número y
-ninguna tanda sin terminar lo tiene (ítem `Pending` o `Sending`): un envío por tanda en curso no muestra el aviso de paso (mientras exista
-el `POST` síncrono, que no tiene ítem, una lectura simultánea sí puede mostrarlo de paso). Si la marca no se puede leer (5 s de plazo),
-avisa, igual que la recuperación de una tanda (§4). La de flete va en `false`. «Generar», por cualquiera de los dos caminos, sólo
+**`orderMarkFailed` en las filas del pedido** (precisión de la etapa contract, 2026-11-25): sin la ruta síncrona, lo calculan al leer las
+respuestas que devuelven esas filas (`GET …/siigo-invoice`, `/stamp` y `/resolve`). Va en `true` sólo en la fila `Order` vigente que existe
+en Siigo (`Created`, `Stamped` o `StampRejected`, con número) cuando el pedido no está marcado como facturado con ese número y ninguna tanda
+sin terminar lo tiene (ítem `Pending` o `Sending`): un envío en curso no muestra el aviso de paso. Si la marca no se puede leer (5 s de
+plazo), avisa, igual que la recuperación de una tanda (§4). La de flete va en `false`. «Generar» es una tanda de ese pedido, que sólo
 reintenta la marca.
 
 **`canResend` con el pedido en una tanda** (precisión del 2026-11-25): mientras una tanda tenga el pedido (ítem `Pending` o `Sending`),
 `canResend` va en `false` en las filas del pedido y en los ítems de cualquier tanda, porque una tanda nueva respondería 409
 `order_in_progress`. Un ítem `ToConfirm` de una tanda que todavía está en curso, cuyo pedido ninguna tiene, lo conserva en `true`. Se
-consulta una vez con los ids de los pedidos. `canResolve` no cambia. La respuesta del `POST` síncrono, mientras exista, no lo cruza.
+consulta una vez con los ids de los pedidos. `canResolve` no cambia.
 
 El ítem y `SiigoInvoiceDto` suman también **`missingAvailableAt`** (nullable): la hora desde la cual se acepta «No existe»
 (`LastUnansweredAt + 10 min`), `null` si ya se puede o si no aplica `canResolve`. La pantalla deshabilita «No existe» hasta esa hora.

@@ -2,7 +2,7 @@ using Modules.Siigo.Application.Invoicing;
 
 namespace Modules.Siigo.UnitTests;
 
-/// <summary>Un <c>payments: [null]</c> falla en el campo de ese elemento, en el POST del pedido y en la tanda de uno: sin esto sería un
+/// <summary>Un <c>payments: [null]</c> falla en el campo de ese elemento, en el comando de emisión y en la tanda de uno: sin esto sería un
 /// 500.</summary>
 public sealed class SiigoPaymentChoiceValidatorTests
 {
