@@ -86,16 +86,20 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
     // La fila del pedido manda: la de flete sola no cambia lo que pasó con el pedido.
     private static SiigoBatchItemOutcome Map(IReadOnlyList<SiigoInvoiceDto> rows)
     {
-        var order = rows.FirstOrDefault(row => row.Kind == nameof(SiigoInvoiceKind.Order));
-        return order?.Status switch
+        if (rows.FirstOrDefault(row => row.Kind == nameof(SiigoInvoiceKind.Order)) is not { } order)
+        {
+            return new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.Unavailable);
+        }
+
+        return order.Status switch
         {
             nameof(SiigoInvoiceStatus.Created) or nameof(SiigoInvoiceStatus.Stamped) or nameof(SiigoInvoiceStatus.StampRejected) =>
-                new SiigoBatchItemOutcome.Invoiced(order.Number ?? string.Empty),
+                new SiigoBatchItemOutcome.Invoiced(order.Number ?? string.Empty, order.Id, order.OrderMarkFailed),
             nameof(SiigoInvoiceStatus.Rejected) or nameof(SiigoInvoiceStatus.Failed) =>
-                new SiigoBatchItemOutcome.Failed(order.ErrorCode ?? "siigo.invoice.rejected"),
-            // Pending o Unknown: no se sabe si Siigo la creó. La tanda no la reenvía; una persona la reanuda desde el pedido, con los mismos
-            // bytes y la misma clave. La fila trae el motivo (timeout, red, límite, caída).
-            _ => new SiigoBatchItemOutcome.Failed(order?.ErrorCode ?? SiigoErrorCodes.Unavailable),
+                new SiigoBatchItemOutcome.Failed(order.ErrorCode ?? "siigo.invoice.rejected", order.Id),
+            // Pending o Unknown: no se sabe si Siigo la creó. La tanda no la reenvía; una persona la reenvía con los mismos bytes y la misma
+            // clave, o la resuelve. La fila trae el motivo (timeout, red, límite, caída).
+            _ => new SiigoBatchItemOutcome.ToConfirm(order.Id, order.ErrorCode),
         };
     }
 }

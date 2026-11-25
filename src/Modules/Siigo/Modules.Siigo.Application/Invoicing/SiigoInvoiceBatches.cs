@@ -74,15 +74,21 @@ public abstract record SiigoBatchItemOutcome
     {
     }
 
-    /// <summary>La factura existe en Siigo (creada, estampada, o rechazada por la DIAN pero creada): el número que le dio.</summary>
-    public sealed record Invoiced(string Number) : SiigoBatchItemOutcome;
+    /// <summary>La factura existe en Siigo (creada, estampada, o rechazada por la DIAN pero creada): el número que le dio y su fila.
+    /// <paramref name="OrderMarkFailed"/> dice que el pedido no se pudo marcar.</summary>
+    public sealed record Invoiced(string Number, Guid? InvoiceId = null, bool OrderMarkFailed = false) : SiigoBatchItemOutcome;
 
     /// <summary>El pedido no estaba en condiciones: no listo, ya facturado, anulado, sin pagar… No se llamó a Siigo para crear nada.</summary>
     public sealed record Skipped(string ErrorCode, IReadOnlyList<string> Missing) : SiigoBatchItemOutcome;
 
-    /// <summary>Siigo la rechazó o no respondió, la conexión no sirve, o quien la pidió ya no puede facturar. No se programa un reintento
-    /// (owner, 2026-11-24).</summary>
-    public sealed record Failed(string ErrorCode) : SiigoBatchItemOutcome;
+    /// <summary>No se facturó y se sabe: Siigo la rechazó por un dato, la conexión no sirve, quien la pidió ya no puede facturar o el envío
+    /// se cortó antes de salir. <paramref name="InvoiceId"/> viene si quedó una fila. No se programa un reintento (owner,
+    /// 2026-11-24).</summary>
+    public sealed record Failed(string ErrorCode, Guid? InvoiceId = null) : SiigoBatchItemOutcome;
+
+    /// <summary>Se mandó (o se está mandando) y no se sabe si Siigo la creó: la fila sigue viva con la misma clave y la decide una persona
+    /// (spec 2026-11-24 §2).</summary>
+    public sealed record ToConfirm(Guid InvoiceId, string? ErrorCode) : SiigoBatchItemOutcome;
 }
 
 /// <summary>

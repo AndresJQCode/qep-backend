@@ -103,14 +103,20 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   pedido y la clave de idempotencia evitan duplicados al repetir o recuperar un lease. El worker corre **como quien pidió la tanda**:
   `SiigoBatchItemInvoker` (Bootstrapper) instala un `DelegatedExecutionContext` con los permisos que esa persona tiene al procesar *ese*
   pedido; si ya no tiene `siigo.invoice.issue`, el pedido falla con `siigo.invoice_batch.forbidden` y no se llama a Siigo. Es, junto al
-  copiloto, el único que instala ese contexto (`CompositionRootTests`). El reclamo es un `UPDATE … SKIP LOCKED` de un pedido (lease de 5 min;
-  más de 5 reclamos y se da por fallido). Un pedido que no está en condiciones sale `Skipped` con su código (y, si es `not_ready`, los códigos
-  de lo que falta); **no se programan reintentos** (owner, 2026-11-24): Siigo sin responder o la conexión caída dejan el pedido fallido con
-  su motivo, y uno cuyo lease vence con el proceso muerto falla sin llamar a Siigo (`MaxAttempts` = 1). La fila de la factura que no se
-  sabe si salió sigue `Pending`: la reanuda una persona desde el pedido (mismos bytes y clave) y a las 24 h pasa a `Unknown` para resolverla.
-  El resto de la tanda sigue. El timbre
-  sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre calla y sólo queda la
-  red de seguridad de 30 s. Tope de 50 pedidos por tanda.
+  copiloto, el único que instala ese contexto (`CompositionRootTests`). El reclamo es un `UPDATE … SKIP LOCKED` de un pedido (lease de
+  **10 min**, mayor que `SiigoInvoice.SendLease` de 8: un ítem no se recupera mientras su factura se considera en envío). Un pedido que no
+  está en condiciones sale `Skipped` con su código (y, si es `not_ready`, los códigos de lo que falta); **no se programan reintentos** (owner,
+  2026-11-24; `MaxAttempts` = 1). Siigo sin responder deja el pedido **`ToConfirm`** con el `invoice_id` de su fila, que sigue `Pending`: la
+  reenvía una persona (mismos bytes y clave) o la resuelve, y a las 24 h pasa a `Unknown`. Un rechazo de datos o una conexión caída lo dejan
+  `Failed`. **Un ítem recuperado (lease vencido) o cortado por el apagado nunca llama a Siigo:** toma el estado de la fila `Order` viva del
+  pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced`, ninguna → `Failed` con `siigo.invoice.interrupted`). El corte por apagado
+  guarda ese resultado con `CancellationToken.None` y relanza la cancelación. `ToConfirm` cierra el ítem: al leerlo, su estado sigue a la
+  factura (`SiigoInvoiceBatchItem.Effective`), así que un reenvío desde otra tanda o una resolución desde el pedido se ven sin escribir en
+  el ítem. Una tanda de **un** pedido puede llevar las formas de pago elegidas (`payments_json`). Un pedido que ya está en un ítem `Pending`
+  o `Sending` es 409 `siigo.invoice_batch.order_in_progress` con `details.orderIds` (la consulta antes de guardar y, en la carrera, el
+  índice `IX_invoice_batch_items_tenant_order_open`). El resto de la tanda sigue. El timbre sale solo del `INSERT` en
+  `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre calla y sólo queda la red de seguridad de 30 s.
+  Tope de 50 pedidos por tanda.
 
 - **`qep_siigo_call_failures_total{operation,reason}` no lleva tenant, conexión ni ruta** (cardinalidad): el tenant se busca en `siigo.call_failures`
   o por `TraceId`. Lo suma `SiigoApiClient.RecordAsync` **antes** de la guarda de captura, así que cuentan también las fallas sin curl

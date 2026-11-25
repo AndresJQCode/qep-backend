@@ -25,10 +25,54 @@ public sealed class SiigoInvoiceBatchApiTests
     private static async Task<JsonElement> GetBatchAsync(InvoicingWorld world, Guid batchId) =>
         await ReadAsync(await world.Client.GetAsync($"{BatchesRoute(world)}/{batchId}", Ct));
 
-    private static async Task DrainAsync(InvoicingWorld world)
+    private static SiigoInvoiceBatchWorker Worker(InvoicingWorld world) =>
+        world.Factory.Services.GetServices<IHostedService>().OfType<SiigoInvoiceBatchWorker>().Single();
+
+    private static Task<TimeSpan?> DrainAsync(InvoicingWorld world) => Worker(world).DrainAsync(Ct);
+
+    // Un worker lo reclamó y murió sin guardar nada: el lease ya venció.
+    private static Task AbandonTheItemAsync(InvoicingWorld world) =>
+        ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE siigo.invoice_batch_items SET status = 'Sending', attempts = 1, lease_until = now() - interval '1 minute'");
+
+    private static Task<Guid> StoredInvoiceIdAsync(InvoicingWorld world) =>
+        ScalarAsync<Guid>(world.ConnectionString, "SELECT id FROM siigo.invoices");
+
+    private sealed record StoredItem(
+        string Status,
+        string? ErrorCode,
+        Guid? InvoiceId,
+        string? InvoiceNumber,
+        bool OrderMarkFailed,
+        bool LeaseReleased,
+        bool BatchFinished);
+
+    // Lo que quedó guardado del único pedido de la única tanda (no el estado efectivo que devuelve la API).
+    private static async Task<StoredItem> StoredItemAsync(InvoicingWorld world)
     {
-        var worker = world.Factory.Services.GetServices<IHostedService>().OfType<SiigoInvoiceBatchWorker>().Single();
-        await worker.DrainAsync(Ct);
+        await using var connection = new NpgsqlConnection(world.ConnectionString);
+        await connection.OpenAsync(Ct);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT i.status, i.error_code, i.invoice_id, i.invoice_number, i.order_mark_failed, i.lease_until IS NULL,
+                   b.finished_at IS NOT NULL
+            FROM siigo.invoice_batch_items i
+            JOIN siigo.invoice_batches b ON b.id = i.batch_id
+            """,
+            connection);
+        await using var reader = await command.ExecuteReaderAsync(Ct);
+        Assert.True(await reader.ReadAsync(Ct));
+        var item = new StoredItem(
+            reader.GetString(0),
+            await reader.IsDBNullAsync(1, Ct) ? null : reader.GetString(1),
+            await reader.IsDBNullAsync(2, Ct) ? null : reader.GetGuid(2),
+            await reader.IsDBNullAsync(3, Ct) ? null : reader.GetString(3),
+            reader.GetBoolean(4),
+            reader.GetBoolean(5),
+            reader.GetBoolean(6));
+        Assert.False(await reader.ReadAsync(Ct));
+        return item;
     }
 
     private static JsonElement Item(JsonElement batch, int position) => batch.GetProperty("items")[position];
@@ -253,7 +297,7 @@ public sealed class SiigoInvoiceBatchApiTests
     }
 
     [Fact]
-    public async Task ASiigoRejectionFailsOnlyThatOrderWithItsCode()
+    public async Task AFirstAttemptDataRejectionFailsWithTheInvoiceId()
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
@@ -266,6 +310,32 @@ public sealed class SiigoInvoiceBatchApiTests
         using var batch = JsonDocument.Parse(text);
         Assert.Equal(("Failed", "siigo.invoice.rejected"), (Item(batch.RootElement, 0).GetProperty("status").GetString(), Item(batch.RootElement, 0).GetProperty("errorCode").GetString()));
         Assert.DoesNotContain("SENTINEL", text, StringComparison.Ordinal);
+        var item = await StoredItemAsync(world);
+        Assert.Equal(("Failed", await StoredInvoiceIdAsync(world)), (item.Status, item.InvoiceId));
+    }
+
+    // La factura existe pero el pedido quedó marcado a mano en medio: el ítem es Invoiced y lo avisa.
+    [Fact]
+    public async Task AnInvoicedItemSaysWhenTheOrderCouldNotBeMarked()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ =>
+        {
+            ExecuteAsync(
+                world.ConnectionString,
+                "UPDATE quotations.orders SET invoiced_at = now(), invoiced_by = @by WHERE id = @id",
+                ("by", Guid.CreateVersion7()), ("id", world.OrderId)).GetAwaiter().GetResult();
+            return Created("FV-1-123", "id-1", 0m);
+        });
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+
+        await DrainAsync(world);
+
+        var item = await StoredItemAsync(world);
+        Assert.Equal(
+            ("Invoiced", "FV-1-123", await StoredInvoiceIdAsync(world), true),
+            (item.Status, item.InvoiceNumber, item.InvoiceId, item.OrderMarkFailed));
     }
 
     [Fact]
@@ -282,38 +352,103 @@ public sealed class SiigoInvoiceBatchApiTests
     }
 
     [Fact]
-    public async Task ASiigoOutageFailsTheOrderAtOnceAndNothingIsScheduledForLater()
+    public async Task ASiigoOutageLeavesTheOrderToConfirmAndNothingIsScheduledForLater()
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
         world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
-        var created = await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
 
         await DrainAsync(world);
         await DrainAsync(world);
 
-        var batch = await GetBatchAsync(world, created.GetProperty("id").GetGuid());
-        Assert.Equal(("Finished", "Failed"), (batch.GetProperty("status").GetString(), Item(batch, 0).GetProperty("status").GetString()));
-        Assert.Equal("siigo.invoice.unavailable", Item(batch, 0).GetProperty("errorCode").GetString());
+        var item = await StoredItemAsync(world);
+        Assert.Equal(
+            ("ToConfirm", "siigo.invoice.unavailable", await StoredInvoiceIdAsync(world)),
+            (item.Status, item.ErrorCode, item.InvoiceId));
+        Assert.True(item.BatchFinished);
         Assert.Single(InvoiceCalls(world.Siigo));
     }
 
-    // Un proceso que murió a mitad del envío no se reanuda más tarde: el usuario pudo haber creado la factura en Siigo entre tanto.
+    // Un proceso que murió antes de guardar la fila de la factura: no alcanzó a salir, y no se manda más tarde sin que alguien lo pida.
     [Fact]
-    public async Task AnOrderWhoseSendWasCutShortIsFailedWithoutCallingSiigoAgain()
+    public async Task AnOrderCutShortBeforeItsInvoiceExistedIsFailedAsInterrupted()
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        var created = await ReadAsync(await PostBatchAsync(world, world.OrderId));
-        await ExecuteAsync(
-            world.ConnectionString,
-            "UPDATE siigo.invoice_batch_items SET status = 'Sending', attempts = 1, lease_until = now() - interval '1 minute'");
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        await AbandonTheItemAsync(world);
 
         await DrainAsync(world);
 
-        var batch = await GetBatchAsync(world, created.GetProperty("id").GetGuid());
-        Assert.Equal("Failed", Item(batch, 0).GetProperty("status").GetString());
+        var item = await StoredItemAsync(world);
+        Assert.Equal(("Failed", "siigo.invoice.interrupted", (Guid?)null), (item.Status, item.ErrorCode, item.InvoiceId));
+        Assert.True(item.BatchFinished);
         Assert.Empty(InvoiceCalls(world.Siigo));
+    }
+
+    // El ítem recuperado (lease vencido) toma el estado de la fila del pedido y nunca llama a Siigo (spec 2026-11-24 §4).
+    [Fact]
+    public async Task ARecoveredItemTakesThePendingInvoiceAndNeverCallsSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        await AbandonTheItemAsync(world);
+
+        await DrainAsync(world);
+
+        var item = await StoredItemAsync(world);
+        Assert.Equal(
+            ("ToConfirm", "siigo.invoice.unavailable", await StoredInvoiceIdAsync(world)),
+            (item.Status, item.ErrorCode, item.InvoiceId));
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    [Fact]
+    public async Task ARecoveredItemWhoseInvoiceWasCreatedIsInvoiced()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        await AbandonTheItemAsync(world);
+
+        await DrainAsync(world);
+
+        var item = await StoredItemAsync(world);
+        Assert.Equal(
+            ("Invoiced", "FV-1-123", await StoredInvoiceIdAsync(world)),
+            (item.Status, item.InvoiceNumber, item.InvoiceId));
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    // Un redespliegue corta la llamada a Siigo: el ítem se cierra de una vez con la fila, sin esperar el lease ni volver a Pending.
+    [Fact]
+    public async Task AShutdownDuringTheSendClosesTheItemWithoutWaitingForTheLease()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        world.Siigo.OnRequest("/v1/invoices", _ =>
+        {
+            shutdown.Cancel();
+            throw new OperationCanceledException(shutdown.Token);
+        });
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Worker(world).DrainAsync(shutdown.Token));
+
+        var item = await StoredItemAsync(world);
+        Assert.Equal(
+            ("ToConfirm", "siigo.invoice.interrupted", await StoredInvoiceIdAsync(world)),
+            (item.Status, item.ErrorCode, item.InvoiceId));
+        Assert.True(item.LeaseReleased);
+        Assert.True(item.BatchFinished);
+        await DrainAsync(world);
+        Assert.Single(InvoiceCalls(world.Siigo));
     }
 
     [Fact]
