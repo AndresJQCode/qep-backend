@@ -581,6 +581,34 @@ public sealed class DistributorTests
             distributor.ChangeProfile(blank, "Norte", "CO", "NIT", "900123456", "Ana", null, null, null));
     }
 
+    // La marca de «empezó a aceptar» sube la versión una sola vez: un PUT con la anterior queda viejo.
+    [Fact]
+    public void StartAcceptanceMarksOnceAndBumpsTheVersion()
+    {
+        var distributor = Invite();
+
+        var first = distributor.StartAcceptance(Now.AddHours(1));
+        var again = distributor.StartAcceptance(Now.AddHours(2));
+
+        Assert.True(first);
+        Assert.False(again);
+        Assert.Equal(
+            ((DateTimeOffset?)Now.AddHours(1), Now.AddHours(1), 2L, DistributorStatus.Invited),
+            (distributor.AcceptanceStartedAt, distributor.UpdatedAt, distributor.Version, distributor.Status));
+        Assert.Null(distributor.Invitation.AcceptedAt);
+    }
+
+    [Fact]
+    public void StartAcceptanceOutsideInvitedIsAnInvalidTransition()
+    {
+        var active = Active();
+
+        var error = Assert.Throws<WholesaleDomainException>(() => active.StartAcceptance(Now.AddHours(2)));
+
+        Assert.Equal("wholesale.distributor.invalid_transition", error.Code);
+        Assert.Null(active.AcceptanceStartedAt);
+    }
+
     [Fact]
     public void ChangeProfileOutsideInvitedDoesNothingAndReturnsFalse()
     {

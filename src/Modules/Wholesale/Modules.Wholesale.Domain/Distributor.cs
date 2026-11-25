@@ -75,6 +75,13 @@ public sealed class Distributor
 
     public DateTimeOffset? ActivatedAt { get; private set; }
 
+    /// <summary>
+    /// Cuándo empezó la primera aceptación que llegó a escribir en otro módulo (<see cref="StartAcceptance"/>). No consume la
+    /// invitación ni cambia el estado, y no se borra: lo que ese intento haya creado sigue existiendo. Mientras esté puesta no
+    /// se cambia el documento. <c>null</c> también en las aceptaciones a medias anteriores a la columna.
+    /// </summary>
+    public DateTimeOffset? AcceptanceStartedAt { get; private set; }
+
     public long Version { get; private set; }
 
     /// <summary>
@@ -358,6 +365,24 @@ public sealed class Distributor
     /// <summary>Si el correo de la sesión es el de la invitación, sin importar mayúsculas ni espacios alrededor.</summary>
     public bool InvitedEmailMatches(string? email) =>
         !string.IsNullOrWhiteSpace(email) && string.Equals(email.Trim(), Email, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Deja constancia de que una aceptación va a escribir en otros módulos; se confirma <b>antes</b> de esa primera escritura.
+    /// La primera vez sube <see cref="Version"/> —un <c>PUT</c> con la anterior pierde por concurrencia— y devuelve
+    /// <c>true</c>; después no cambia nada. Sólo mientras está invitada; el vencimiento lo revisa quien acepta.
+    /// </summary>
+    public bool StartAcceptance(DateTimeOffset now)
+    {
+        EnsureStatus(DistributorStatus.Invited);
+        if (AcceptanceStartedAt is not null)
+        {
+            return false;
+        }
+
+        AcceptanceStartedAt = now;
+        Touch(now);
+        return true;
+    }
 
     /// <summary>
     /// Consume la invitación y activa la relación. Sólo invitada y sin vencer: una relación ya aceptada (activa o bloqueada)

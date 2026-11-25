@@ -85,6 +85,8 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
         distributor.Property(value => value.CreatedAt).HasColumnName("created_at");
         distributor.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         distributor.Property(value => value.ActivatedAt).HasColumnName("activated_at");
+        // La marca de «empezó a aceptar»: se confirma antes de escribir en otro módulo y bloquea el cambio de documento.
+        distributor.Property(value => value.AcceptanceStartedAt).HasColumnName("acceptance_started_at");
         distributor.Property(value => value.Version)
             .HasColumnName("version")
             .HasColumnType("bigint")
