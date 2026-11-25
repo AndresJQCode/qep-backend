@@ -194,6 +194,12 @@ internal sealed class FakeGeographyLookup : IShopifyGeographyLookup
     public Task<ShopifyCityName?> DescribeCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken) =>
         Task.FromResult(Names.GetValueOrDefault((departmentId, cityId)));
 
+    /// <summary>Las regiones de fuera de Colombia, por id, con su país y su código oficial.</summary>
+    public Dictionary<Guid, (string CountryCode, string Code)> Regions { get; } = [];
+
+    public Task<(string CountryCode, string Code)?> DescribeRegionAsync(Guid regionId, CancellationToken cancellationToken) =>
+        Task.FromResult<(string CountryCode, string Code)?>(Regions.TryGetValue(regionId, out var region) ? region : null);
+
     /// <summary>Por ids, contra lo sembrado en <see cref="Cities"/> y <see cref="Departments"/>.</summary>
     public Task<ShopifyCityCheck> CheckCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken)
     {

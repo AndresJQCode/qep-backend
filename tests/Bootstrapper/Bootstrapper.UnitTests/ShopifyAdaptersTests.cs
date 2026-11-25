@@ -807,7 +807,7 @@ public sealed class ShopifyAdaptersTests
     {
         var antioquia = Department.Create(DepartmentId.New(), "05", "Antioquia");
         var medellin = City.Create(CityId.New(), "05001", "Medellín", antioquia.Id);
-        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia), new NamedCities(medellin));
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia), new NamedCities(medellin), new CountingRegionRepository());
 
         Assert.Equal(new ShopifyCityRef(antioquia.Id.Value, medellin.Id.Value), (await lookup.LookupCityAsync("Antioquia", "Medellín", Ct)).City);
         Assert.Null((await lookup.LookupCityAsync("Antioquia", "Bello", Ct)).City);
@@ -824,7 +824,7 @@ public sealed class ShopifyAdaptersTests
         var cali = City.Create(CityId.New(), "76001", "Cali", valle.Id);
         var synonymId = CitySynonymId.New();
         var cities = new NamedCities(cali) { Synonyms = { [(valle.Id, "CALLI")] = (cali, synonymId) } };
-        var lookup = new ShopifyGeographyLookup(new NamedDepartments(valle), cities);
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(valle), cities, new CountingRegionRepository());
 
         Assert.Equal(
             new ShopifyCityLookup(valle.Id.Value, new ShopifyCityRef(valle.Id.Value, cali.Id.Value, synonymId.Value)),
@@ -846,7 +846,8 @@ public sealed class ShopifyAdaptersTests
         var cundinamarca = Department.Create(DepartmentId.New(), "25", "CUNDINAMARCA");
         var medellin = City.Create(CityId.New(), "05001", "MEDELLÍN", antioquia.Id);
         var soacha = City.Create(CityId.New(), "25754", "SOACHA", cundinamarca.Id);
-        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia, cundinamarca), new NamedCities(medellin, soacha));
+        var lookup = new ShopifyGeographyLookup(
+            new NamedDepartments(antioquia, cundinamarca), new NamedCities(medellin, soacha), new CountingRegionRepository());
 
         Assert.Equal(ShopifyCityCheck.Matches, await lookup.CheckCityAsync(antioquia.Id.Value, medellin.Id.Value, Ct));
         Assert.Equal(ShopifyCityCheck.CityNotInDepartment, await lookup.CheckCityAsync(antioquia.Id.Value, soacha.Id.Value, Ct));
@@ -1180,6 +1181,37 @@ public sealed class ShopifyAdaptersTests
         var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
 
         Assert.Equal("050021", state!.ShippingParty!.PostalCode);
+    }
+
+    // La entrega editable puede dejar una parte de fuera de Colombia: leer el pedido para la sincronización y el envío no exige
+    // departamento ni ciudad.
+    [Fact]
+    public async Task ReadingTheStateOfAnOrderWithASpanishPartyDoesNotThrow()
+    {
+        var (orderId, regionId) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var orders = new FakeExternalOrderWriter();
+        orders.EditStates[(TenantId, orderId)] = EditState(orderId, shippingCountry: "ES") with
+        {
+            ShippingParty = new ExternalShippingParty(
+                "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28001", "ES", "Madrid", regionId),
+        };
+
+        var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
+
+        Assert.Equal(
+            new ShopifyShippingFingerprint(
+                "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28001", "ES", "Madrid", regionId),
+            state!.ShippingParty);
+    }
+
+    [Fact]
+    public async Task GeographyLookupDescribesARegionWithItsCountryAndCode()
+    {
+        var madrid = Region.Create(RegionId.New(), "ES", "28", "Madrid");
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(), new NamedCities(), new CountingRegionRepository(madrid));
+
+        Assert.Equal(("ES", "28"), await lookup.DescribeRegionAsync(madrid.Id.Value, Ct));
+        Assert.Null(await lookup.DescribeRegionAsync(Guid.CreateVersion7(), Ct));
     }
 
     // ---- Armado ----

@@ -49,9 +49,12 @@ public sealed record ExternalOrderResult(
 /// <summary>La parte de envío de un pedido externo (spec 2026-10-26 §4.4). Sin documento: a quien se le entrega no
 /// se le factura. Los campos son los de <c>OrderParty</c>, tal como el consumidor los guarda en su huella.
 /// <paramref name="PostalCode"/> (spec 2026-11-24) sale con la parte guardada; la corrección del asesor lo ignora y conserva el
-/// que tenga el pedido.</summary>
+/// que tenga el pedido. Fuera de Colombia (la entrega editable, spec 2026-11-24 §11) van <paramref name="Country"/>,
+/// <paramref name="CityName"/> y, si el país tiene regiones, <paramref name="RegionId"/>, sin ids de DIVIPOLA;
+/// <paramref name="Country"/> en <c>null</c> es Colombia, como en el dominio.</summary>
 public sealed record ExternalShippingParty(
-    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null);
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null,
+    string? Country = null, string? CityName = null, Guid? RegionId = null);
 
 /// <summary>
 /// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa necesita de un pedido para decidir si le falta la parte de
@@ -350,7 +353,9 @@ public sealed class ExternalOrderService(
     private static ExternalShippingParty? ToExternal(OrderParty? party) =>
         party is null
             ? null
-            : new(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode);
+            : new(
+                party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode,
+                party.Country, party.CityName, party.RegionId);
 
     private static QuotationPartyDetails ToDetails(ExternalShippingParty party) => new()
     {
@@ -361,6 +366,9 @@ public sealed class ExternalOrderService(
         DepartmentId = party.DepartmentId,
         CityId = party.CityId,
         PostalCode = party.PostalCode,
+        Country = party.Country,
+        CityName = party.CityName,
+        RegionId = party.RegionId,
     };
 
     public Task<ExternalShippingOutcome> AttachShippingAsync(

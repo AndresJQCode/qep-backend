@@ -302,6 +302,10 @@ public interface IShopifyGeographyLookup
 
     /// <summary>Owner 2026-11-15: la corrección del pedido valida que el departamento exista y que la ciudad exista y sea de él.</summary>
     Task<ShopifyCityCheck> CheckCityAsync(Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-24 §11.1: la región de una dirección de fuera de Colombia, con su país y su código oficial en él (el
+    /// INE en España); <c>null</c> si no existe. Con <see cref="ShopifyShippingAddressRules"/> sale el <c>provinceCode</c>.</summary>
+    Task<(string CountryCode, string Code)?> DescribeRegionAsync(Guid regionId, CancellationToken cancellationToken);
 }
 
 /// <summary>Una ciudad de Geography por sus nombres, como los guarda la semilla (mayúsculas y con tildes).</summary>

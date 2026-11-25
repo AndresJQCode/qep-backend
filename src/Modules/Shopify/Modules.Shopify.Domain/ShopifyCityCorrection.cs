@@ -7,9 +7,14 @@ namespace Modules.Shopify.Domain;
 /// <para><see cref="PostalCode"/> (spec 2026-11-24) es parte de la dirección: lo guardan el estado del pedido, la huella de
 /// <c>shopify.city_corrections</c> y la proyección, y la comparación de ediciones (<c>ShopifyOrderProjection.SameParty</c>) lo
 /// mira.</para>
+/// <para>En Colombia van <see cref="DepartmentId"/> y <see cref="CityId"/> y <see cref="Country"/> es <c>null</c>. Fuera (la
+/// entrega editable, spec 2026-11-24 §11) van el país, la ciudad escrita y, si el país tiene regiones,
+/// <see cref="RegionId"/>, sin ids de DIVIPOLA. La huella de un sinónimo es siempre colombiana, así que su tabla no guarda esos
+/// tres. Una proyección guardada antes de que existieran los lee en <c>null</c>.</para>
 /// </summary>
 public sealed record ShopifyShippingFingerprint(
-    string? Name, string? Phone, string? Email, string? Address, Guid DepartmentId, Guid CityId, string? PostalCode = null);
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null,
+    string? Country = null, string? CityName = null, Guid? RegionId = null);
 
 /// <summary>De dónde salió la huella (O8): la corrección en segundo plano de un sinónimo confirmado, o un pedido o cliente que casó
 /// por el sinónimo al importarse.</summary>
@@ -187,15 +192,20 @@ public sealed class ShopifyCityCorrection
     private void WriteParty(ShopifyShippingFingerprint party)
     {
         ArgumentNullException.ThrowIfNull(party);
-        ArgumentOutOfRangeException.ThrowIfEqual(party.DepartmentId, Guid.Empty);
-        ArgumentOutOfRangeException.ThrowIfEqual(party.CityId, Guid.Empty);
+        // Un sinónimo es un texto de ciudad de Colombia: su huella siempre trae los dos ids.
+        var departmentId = party.DepartmentId
+            ?? throw new ArgumentException("A synonym correction is for a Colombian party, with its department.", nameof(party));
+        var cityId = party.CityId
+            ?? throw new ArgumentException("A synonym correction is for a Colombian party, with its city.", nameof(party));
+        ArgumentOutOfRangeException.ThrowIfEqual(departmentId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfEqual(cityId, Guid.Empty);
         PartyName = party.Name;
         PartyPhone = party.Phone;
         PartyEmail = party.Email;
         PartyAddress = party.Address;
         PartyPostalCode = party.PostalCode;
-        DepartmentId = party.DepartmentId;
-        CityId = party.CityId;
+        DepartmentId = departmentId;
+        CityId = cityId;
     }
 
     private void EnsureTarget(ShopifyCityCorrectionTarget expected)

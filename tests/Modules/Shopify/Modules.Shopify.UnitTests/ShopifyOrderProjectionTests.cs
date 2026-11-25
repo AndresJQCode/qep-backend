@@ -74,6 +74,38 @@ public sealed class ShopifyOrderProjectionTests
         Assert.True(ShopifyOrderProjection.SameParty(party with { PostalCode = null }, party with { PostalCode = " " }));
     }
 
+    // Fuera de Colombia la ciudad es país, nombre y región: cambiar cualquiera es otra dirección.
+    [Fact]
+    public void SamePartyComparesTheForeignCity()
+    {
+        var region = Guid.CreateVersion7();
+        var party = new ShopifyShippingFingerprint(
+            "Lucía", "+34600111222", "a@x.es", "Calle Mayor 1", null, null, "28001", "ES", "Madrid", region);
+
+        Assert.True(ShopifyOrderProjection.SameParty(party, party with { CityName = " Madrid " }));
+        Assert.False(ShopifyOrderProjection.SameParty(party, party with { Country = "PT" }));
+        Assert.False(ShopifyOrderProjection.SameParty(party, party with { CityName = "Getafe" }));
+        Assert.False(ShopifyOrderProjection.SameParty(party, party with { RegionId = null }));
+    }
+
+    // Una proyección guardada antes de que la huella llevara país, ciudad escrita y región (shopify.orders.applied_projection).
+    [Fact]
+    public void AnOldProjectionJsonWithoutTheNewFieldsStillDeserializes()
+    {
+        var json = $$$"""
+            {"lines":[],"shipping":{"isStorePickup":false,"carrierId":null,"carrierName":null,"chargeMode":null,"freightAmount":0,
+             "freightTaxPercentage":0,"cashOnDelivery":false},
+             "shippingParty":{"name":"Laura","phone":"3001112233","email":"laura@x.co","address":"Cra 5",
+             "departmentId":"{{{Department}}}","cityId":"{{{City}}}"},"buyerNotes":null,"document":null,"attributes":{}}
+            """;
+
+        var projection = ShopifyOrderProjection.Read(json);
+
+        Assert.Equal(
+            new ShopifyShippingFingerprint("Laura", "3001112233", "laura@x.co", "Cra 5", Department, City),
+            projection.ShippingParty);
+    }
+
     [Fact]
     public void WriteAndReadRoundTrip()
     {

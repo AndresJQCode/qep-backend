@@ -397,6 +397,31 @@ public sealed class ShopifyEditSyncFlowTests
         Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_edits"));
     }
 
+    // «Editar pedido» puede dejar el pedido con una parte de fuera de Colombia: la sincronización lo sigue leyendo, y la edición
+    // siguiente de Shopify sobre la dirección es conflicto (gana QEP).
+    [Fact]
+    public async Task AShopifyEditOnAnOrderWithASpanishPartyIsAConflict()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var saved = await ShopifyOrderDelivery.PutAsync(
+            client, flow, isStorePickup: false,
+            ShopifyOrderDelivery.SpanishParty(await ShopifyOrderDelivery.RegionIdAsync(flow, "ES", "28")));
+        Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync(Ct));
+
+        await flow.DeliverAsync(
+            "orders/updated", "wh-2", EchoOfTheEnvigadoCorrection("2026-10-01T10:30:00-05:00", address1: "Carrera 43A # 1-50"));
+
+        Assert.Equal("Pending|ShippingAddress|Conflict|qep_changed", await flow.ScalarAsync(
+            """
+            SELECT coalesce(
+                (SELECT e.status || '|' || (g ->> 'kind') || '|' || (g ->> 'outcome') || '|' || (g ->> 'reason')
+                 FROM shopify.order_edits e, jsonb_array_elements(e.groups) AS g), 'none')
+            """));
+        Assert.Equal("Calle Mayor 1", await flow.ScalarAsync("SELECT address FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
     [Fact]
     public async Task ListChangesAndSummaryCountPendingAndBlocked()
     {

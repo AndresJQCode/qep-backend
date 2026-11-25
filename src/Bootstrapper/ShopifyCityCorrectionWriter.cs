@@ -38,12 +38,17 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
         Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(expected);
+        // La corrección de ciudad es sólo de Colombia: su huella trae siempre los dos ids.
+        var expectedDepartmentId = expected.DepartmentId
+            ?? throw new InvalidOperationException("A city correction expects a Colombian party, with its department.");
+        var expectedCityId = expected.CityId
+            ?? throw new InvalidOperationException("A city correction expects a Colombian party, with its city.");
         await using var scope = scopes.CreateAsyncScope();
         var outcome = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CorrectShippingCityAsync(
             tenantId,
             orderId,
             new ExternalShippingParty(
-                expected.Name, expected.Phone, expected.Email, expected.Address, expected.DepartmentId, expected.CityId,
+                expected.Name, expected.Phone, expected.Email, expected.Address, expectedDepartmentId, expectedCityId,
                 expected.PostalCode),
             departmentId,
             cityId,
