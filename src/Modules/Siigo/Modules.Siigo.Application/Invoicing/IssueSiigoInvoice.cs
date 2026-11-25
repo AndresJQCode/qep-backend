@@ -275,6 +275,11 @@ public sealed class IssueSiigoInvoiceHandler(
 
         var now = clock.UtcNow;
         row.ResendAdjusted(adjusted, now);
+        foreach (var waiting in prepared.ToSend.Where(value => value != row && value.Status == SiigoInvoiceStatus.Pending))
+        {
+            waiting.RenewClaim(now);
+        }
+
         SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoicePaymentsAdjusted, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return await PostAsync();

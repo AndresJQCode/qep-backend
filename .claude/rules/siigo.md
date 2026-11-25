@@ -27,8 +27,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `Idempotency-Key`**, guardada antes de salir y auditada como `siigo.invoice.payments_adjusted`; la falla del primer envío queda en
   `call_failures` con la clave anterior. Motivo: Siigo redondea de una forma que no siempre se puede predecir (POB959, un centavo; POB916).
   Más de un peso es configuración del impuesto o la tasa: queda `Rejected` (`siigo.invoice.totals_mismatch`) y no se tapa. Un envío sin
-  respuesta nunca se ajusta, porque cambiar la clave podría duplicar. Con cada factura posiblemente dos veces, `SiigoTimeoutBudgetTests`
-  cuenta cuatro llamadas de factura dentro de `SendLease`.
+  respuesta nunca se ajusta, porque cambiar la clave podría duplicar. El reenvío renueva el reclamo de la fila y de las que esperan su
+  turno (`RenewClaim`).
 - **`error_detail` guarda los códigos de error de Siigo, no sus mensajes.** Siigo repite en el mensaje los valores que rechaza
   (documento, dirección, nombre del cliente) y la fila se guarda y se devuelve en el `GET`. La excepción es `invalid_total_payments`,
   cuyo mensaje es el total esperado. Lo amarra `SiigoNoLeakTests` (precedente: encontró que el mensaje se guardaba completo).
@@ -67,8 +67,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `InvoiceCreateTimeout` (120 s, lo que Siigo recomienda para crear documentos) y todo lo demás, incluido el `/auth` previo a la
   factura, `DefaultTimeout` (30 s); no se configuran. **Una petición nueva tiene que pasar un plazo:** sin él no la corta nada. El
   vencimiento del plazo es `timeout`; una cancelación de quien llama sube como `OperationCanceledException`. Si subes un plazo,
-  `SiigoTimeoutBudgetTests` exige que cuatro llamadas generales más dos facturas quepan en `SiigoInvoice.SendLease`, y ése en el lease
-  del worker.
+  `SiigoTimeoutBudgetTests` exige que cuatro llamadas generales más dos facturas (lo más que pasa sin renovar un reclamo) quepan en
+  `SiigoInvoice.SendLease`, y que ése y cuatro generales más cuatro facturas (cada una reenviada por redondeo) quepan en el lease del
+  worker, que no se renueva.
 - **Generar una factura no tiene ruta síncrona: toda emisión es una tanda** (spec 2026-11-24, etapa contract). `POST …/siigo-invoice`
   ya no existe; la crean `POST …/siigo/invoice-batches` y el worker. Una petición HTTP no debe esperar a crear la factura: con 120 s la
   cortaría el proxy a mitad del envío. En las pruebas de integración se factura con `SiigoInvoicingHarness.IssueThroughBatchAsync`
@@ -145,7 +146,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `SiigoBatchItemInvoker` (Bootstrapper) instala un `DelegatedExecutionContext` con los permisos que esa persona tiene al procesar *ese*
   pedido; si ya no tiene `siigo.invoice.issue`, el pedido falla con `siigo.invoice_batch.forbidden` y no se llama a Siigo. Es, junto al
   copiloto, el único que instala ese contexto (`CompositionRootTests`). El reclamo es un `UPDATE … SKIP LOCKED` de un pedido (lease de
-  **10 min**, mayor que `SiigoInvoice.SendLease` de 8: un ítem no se recupera mientras su factura se considera en envío). Un pedido que no
+  **12 min**, mayor que `SiigoInvoice.SendLease` de 8 y que los 10 del peor pedido, con cada factura reenviada por redondeo: un ítem no se recupera mientras su factura se considera en envío). Un pedido que no
   está en condiciones sale `Skipped` con su código (y, si es `not_ready`, los códigos de lo que falta); **no se programan reintentos** (owner,
   2026-11-24; `MaxAttempts` = 1). Siigo sin responder deja el pedido **`ToConfirm`** con el `invoice_id` de su fila, que sigue `Pending`: la
   reenvía una persona (mismos bytes y clave) o la resuelve, y a las 24 h pasa a `Unknown`. Un rechazo de datos en un **primer** intento, o

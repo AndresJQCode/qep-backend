@@ -516,6 +516,26 @@ public sealed class IssueSiigoInvoiceHandlerTests
         Assert.Equal(SiigoInvoiceStatus.Created, freight.Status);
     }
 
+    // El reenvío alarga la emisión: la de flete que espera su turno sigue reclamada contando desde ahí.
+    [Fact]
+    public async Task AResendRenewsTheClaimOfTheInvoiceStillWaiting()
+    {
+        var order = PendingRow(requestJson: Payments(100.01m));
+        var freight = PendingRow(SiigoInvoiceKind.Freight);
+        var harness = new Harness([order, freight], Mismatch(100m), Created(), Created());
+        var freightClaims = new List<DateTimeOffset?>();
+        harness.Api.OnCall = () =>
+        {
+            freightClaims.Add(freight.SendingSince);
+            harness.Clock.UtcNow = harness.Clock.UtcNow.AddMinutes(2);
+        };
+
+        await harness.Issue();
+
+        Assert.Equal([Now, Now.AddMinutes(2)], freightClaims.Take(2));
+        Assert.Equal(1, freight.Attempts);
+    }
+
     private static SiigoInvoice Unanswered(SiigoInvoiceKind kind, DateTimeOffset sentAt)
     {
         var row = PendingRow(kind, sentAt);

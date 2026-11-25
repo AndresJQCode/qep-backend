@@ -155,6 +155,17 @@ public sealed class SiigoInvoice
 
     public bool IsBeingSent(DateTimeOffset now) => SendingSince is { } since && now - since < SendLease;
 
+    /// <summary>La emisión se alargó (un reenvío por redondeo) mientras esta fila esperaba su turno: el reclamo cuenta desde ahora. No
+    /// es un intento, y sin reclamo no hace nada.</summary>
+    public void RenewClaim(DateTimeOffset now)
+    {
+        if (SendingSince is not null)
+        {
+            SendingSince = now;
+            UpdatedAt = now;
+        }
+    }
+
     /// <summary>Siigo rechazó los pagos por una diferencia de redondeo: se manda otra petición, así que lleva otra clave y cuenta como
     /// un intento nuevo. Sólo sin envíos sin respuesta: con uno, Siigo pudo haber creado la primera y otra clave la duplicaría.</summary>
     public void ResendAdjusted(string requestJson, DateTimeOffset now)

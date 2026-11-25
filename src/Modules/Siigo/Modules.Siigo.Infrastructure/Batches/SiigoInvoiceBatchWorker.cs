@@ -31,8 +31,8 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     ILogger<SiigoInvoiceBatchWorker> logger) : BackgroundService
 {
     /// <summary>Mayor que <see cref="SiigoInvoice.SendLease"/>: un pedido no se recupera mientras su factura todavía se considera en
-    /// envío.</summary>
-    internal static readonly TimeSpan Lease = TimeSpan.FromMinutes(10);
+    /// envío. Y mayor que el peor pedido, con cada factura reenviada por redondeo, porque este lease no se renueva.</summary>
+    internal static readonly TimeSpan Lease = TimeSpan.FromMinutes(12);
 
     [LoggerMessage(
         Level = LogLevel.Warning,
