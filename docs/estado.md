@@ -323,6 +323,10 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **Migración de ServiceContracts pendiente en `develop` (2026-11-25):** el merge `edc5b1dfc` trajo cambios de modelo
+  sin `AddPriceAdjustment`, que sigue en `feature/contract-price-adjustment` (`330fed277`). Hasta que esa rama se
+  mergee, las pruebas que levantan el host completo fallan con `PendingModelChangesWarning`. No lleves `develop` a
+  `main` así; después corre la compuerta y la integración que quedó sin correr.
 - **Marca de aceptación iniciada (2026-11-24):** migración aditiva de Wholesale `AddDistributorAcceptanceStartedAt`. Durante el rollout los pods viejos ignoran la marca: no edites documentos de invitados hasta que no queden pods viejos.
 - **Datos del distribuidor y su empresa al aceptar (2026-11-24):** migración aditiva de Wholesale `AddDistributorCityAndAddress`. **Backend y frontend juntos:** con la ciudad obligatoria, el formulario viejo no puede invitar con país `CO` (422). Las invitaciones vivas sin ciudad aceptan, pero sin empresa. Prueba manual: invitar con ciudad y dirección, aceptar con tenant nuevo y revisar que la empresa exista en el tenant del distribuidor y el cliente en el del mayorista con teléfono.
 - **Regalo al crear y editar un pedido (2026-11-23):** sin migraciones. Correr antes la integración completa de Quotations por clase (nunca cerró) y `ArchitectureTests`, y confirmar contra `develop` las tres fallas anotadas en «Trabajo en curso». **Backend antes que frontend:** el frontend nuevo manda `gifts` siempre al editar (incluso `[]`) y un backend viejo lo ignora, así que los regalos no se guardarían ni se quitarían sin avisar. Con el backend nuevo, un frontend viejo sigue bien: no manda `gifts`, así que se conservan los regalos guardados. Las rutas `…/orders/{id}/gifts` ya no existen: un frontend anterior a `6012dd74` que las llame recibe 404. Prueba manual: crear un pedido con un producto pagado y el mismo como regalo, editarlo cambiando la cantidad del regalo y quitándolo, y abrir el detalle (sólo insignia, sin «Agregar regalo»); un pedido mayorista no ofrece regalos.
@@ -555,6 +559,14 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`22972a869`, `--no-ff`, sin push) el resto de **los arreglos de la corrida completa**
+  (`fix/test-reds`, hasta `a1a4618f6`; rama y worktree borrados; otra parte ya había entrado con `53579490d`,
+  `052b7fbac` y `d3df88f9a`). Bugs corregidos en este merge: registrar un tenant tomaba el idioma como país (422),
+  `/openapi/v1.json` respondía 500 y archivar una sede dejaba sus recursos activos. El resto son pruebas. **Sin la
+  compuerta en verde, por decisión del owner:** en `test-feature.ps1` las unitarias y `ArchitectureTests` pasaron y la
+  integración se detuvo en `Modules.Automations.IntegrationTests` (125 de 125, `PendingModelChangesWarning` de
+  ServiceContracts, que viene de `develop` y no de la rama); el resto de la integración no corrió. Cada arreglo se
+  verificó antes con su corrida filtrada.
 - 2026-11-25 — Mergeado a `develop` en dos pasos (`01111d90f` hasta la tarea 5 y `34fbb20c5` el resto, `--no-ff`, ya en
   `origin/develop`) **el link del correo de la invitación de distribuidor prueba el buzón**
   (`feature/distributor-email-proof`, hasta `b8aa5929b`; frontend `25e78cde`; ramas y worktrees borrados). Invitar y
