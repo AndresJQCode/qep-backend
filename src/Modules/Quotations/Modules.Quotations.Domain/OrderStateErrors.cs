@@ -29,7 +29,8 @@ public static class OrderStateErrors
 
     public const string PaymentProofRequired = "order.order.payment_proof_required";
 
-    /// <summary>422: la factura la emitió un proveedor externo (Siigo) y revertirla es una nota crédito, que QEP no hace.</summary>
+    /// <summary>422: la factura la emitió un proveedor externo (Siigo) y la reversión manual no la toca: la marca se quita cuando la
+    /// factura se anula allá y QEP lo verifica (<see cref="Order.RevertExternalInvoicing"/>). Las notas crédito, QEP no las hace.</summary>
     public const string InvoicedExternally = "order.order.invoiced_externally";
 
     /// <summary>409: hay una factura externa saliendo o sin resolver (<c>Pending</c> o <c>Unknown</c>); marcar a mano ahora la duplicaría.</summary>

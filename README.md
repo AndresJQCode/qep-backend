@@ -5611,7 +5611,7 @@ no reconocida y queda en `call_failures` (operación `InvoiceRead`).
 
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
-  `Rejected` y `Failed` arman una fila nueva.
+  `Rejected`, `Failed` y `Annulled` arman una fila nueva.
 - Si no se sabe si Siigo creó la factura (timeout, red, 5xx, 429 o un error de servicio de Siigo), la fila queda por confirmar
   (`Pending`) y el ítem `ToConfirm`: una persona la reenvía con otra tanda o la resuelve (`POST …/resolve` con `exists` o `missing`;
   `missing` espera 10 minutos desde el último envío sin respuesta). No hay reintentos automáticos. Una `Pending` de más de 24 h pasa a

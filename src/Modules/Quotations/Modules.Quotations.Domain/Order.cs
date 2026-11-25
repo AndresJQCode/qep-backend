@@ -447,7 +447,8 @@ public sealed class Order
     public const int InvoiceExternalIdMaxLength = 64;
 
     /// <summary>Quién emitió la factura: <c>siigo</c> si la creó una integración (spec 2026-11-18 §5.5), <c>null</c> si la marca es
-    /// manual (alguien la hizo afuera y sólo dejó constancia). Una factura de un proveedor no se revierte desde QEP.</summary>
+    /// manual (alguien la hizo afuera y sólo dejó constancia). La marca de un proveedor no se revierte con <see cref="RevertInvoicing"/>:
+    /// sólo se quita cuando su factura se anuló allá (<see cref="RevertExternalInvoicing"/>).</summary>
     public string? InvoiceProvider { get; private set; }
 
     /// <summary>El número que el proveedor le dio a la factura (<c>FV-1-123</c> en Siigo). <c>null</c> en una marca manual.</summary>
@@ -1875,7 +1876,8 @@ public sealed class Order
                 "Only an invoiced order can have its invoicing reverted.");
         }
 
-        // Revertir una factura de Siigo es una nota crédito, fuera de alcance (spec §2 y §5.5): sólo se revierte la marca manual.
+        // Esta acción sólo revierte la marca manual. La de un proveedor externo se quita con RevertExternalInvoicing, cuando QEP verifica
+        // que la factura se anuló allá (spec 2026-11-25 §4); las notas crédito siguen fuera de alcance.
         if (InvoiceProvider is not null)
         {
             throw new QuotationsDomainException(

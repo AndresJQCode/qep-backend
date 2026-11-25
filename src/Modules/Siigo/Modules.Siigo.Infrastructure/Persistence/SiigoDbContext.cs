@@ -20,9 +20,9 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
     /// traduce por nombre a <c>409 siigo.settings.company_taken</c>.</summary>
     public const string SettingsTenantCompanyIndex = "IX_settings_tenant_company";
 
-    /// <summary>Spec 2026-11-18 §5.6: una factura vigente por pedido y tipo (todo menos <c>Rejected</c> y <c>Failed</c>). El candado del
-    /// pedido da la respuesta amable; este índice cierra la carrera. <c>SiigoUnitOfWork</c> lo traduce por nombre a
-    /// <c>409 siigo.invoice.already_exists</c>.</summary>
+    /// <summary>Spec 2026-11-18 §5.6: una factura vigente por pedido y tipo (todo menos <c>Rejected</c>, <c>Failed</c> y
+    /// <c>Annulled</c>). El candado del pedido da la respuesta amable; este índice cierra la carrera. <c>SiigoUnitOfWork</c> lo traduce
+    /// por nombre a <c>409 siigo.invoice.already_exists</c>.</summary>
     public const string InvoicesTenantOrderKindIndex = "IX_invoices_tenant_order_kind";
 
     /// <summary>Spec 2026-11-24 §1: un pedido está a lo sumo en un ítem sin terminar (<c>Pending</c> o <c>Sending</c>). El handler
