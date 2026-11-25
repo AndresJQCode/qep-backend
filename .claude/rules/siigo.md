@@ -86,6 +86,16 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `order_id` o `tenant_id` compila y deja ambas operaciones en 500. La misma lista está en el filtro del índice
   `IX_invoices_tenant_order_kind` y en `SiigoInvoice.IsLive`: un estado nuevo se decide en los tres.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
+- **Soltar un pedido por una factura anulada en Siigo se verifica, es todo o nada y guarda Siigo primero** (spec 2026-11-25, `POST
+  …/siigo-invoice/annulment`). QEP no anula allá: lee cada factura viva y sólo si **todas** (la del pedido y la de flete) contestan
+  anuladas pasan a `Annulled`. Falla cerrado: lo que no se entiende, y una anulada que además dice `stamp.status = Accepted`, no cambia
+  nada; liberar con la factura viva deja facturar otra vez y duplica un documento legal. **`SiigoApiErrors.InvoiceNotFoundCodes` está
+  vacía a propósito:** ningún 404 cuenta como «borrada» (un 404 pelado también es una ruta o una `BaseUrl` mal armada) hasta tener la
+  respuesta real de Siigo, que queda en `call_failures` como `InvoiceRead`; se llena sólo con esa evidencia y su prueba. Las filas se
+  guardan con el candado del pedido y **la marca se quita después del commit**: al revés, un fallo al guardar dejaría el pedido libre
+  con la fila `Created` y la siguiente emisión lo volvería a marcar. Si falla la marca, `orderUnmarkFailed` lo dice y repetir la acción
+  la reintenta sin llamar a Siigo. Una marca manual o de otro número no se toca. Una respuesta nueva con filas del pedido tiene que
+  calcular `canConfirmAnnulment` y `orderUnmarkFailed`.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
   `Created` y el ítem de la tanda lleva `orderMarkFailed`; la siguiente tanda del pedido reintenta sólo la marca. Nunca deja la
   emisión fallando.

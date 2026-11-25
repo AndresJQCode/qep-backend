@@ -330,7 +330,135 @@ public sealed class SiigoInvoiceAnnulmentApiTests
         Assert.Equal(0, InvoiceReads(world));
     }
 
+    // --- canConfirmAnnulment y orderUnmarkFailed (spec §5) ---
+
+    [Fact]
+    public async Task TheListOffersTheAnnulmentOnlyWhenEveryLiveInvoiceCanBeVerified()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        var calls = 0;
+        world.Siigo.OnRequest("/v1/invoices", _ => Interlocked.Increment(ref calls) == 1
+            ? Created("FV-1-123", OrderInvoiceId, 0m)
+            : Created("FV-1-124", "id-f", 0m));
+        await IssueRowsThroughBatchAsync(world);
+
+        Assert.Equal(["Order:True:False", "Freight:False:False"], await FlagsAsync(world));
+
+        // Con una tanda sin terminar tampoco se ofrece: la acción respondería 409.
+        var itemStatus = await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoice_batch_items");
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoice_batch_items SET status = 'Pending'");
+        Assert.Equal(["Order:False:False", "Freight:False:False"], await FlagsAsync(world));
+        await ExecuteAsync(
+            world.ConnectionString, "UPDATE siigo.invoice_batch_items SET status = @status", ("status", itemStatus));
+
+        AnnulledInSiigo(world, OrderInvoiceId);
+        AnnulledInSiigo(world, "id-f");
+        await ReadAsync(await PostAnnulmentAsync(world));
+        Assert.Equal(["Order:False:False", "Freight:False:False"], await FlagsAsync(world));
+
+        // Con la de flete por confirmar no hay cómo verificarla: la del pedido tampoco ofrece la acción.
+        await using var otherDatabase = await StartDatabaseAsync();
+        using var other = await ArrangeAsync(otherDatabase, freightSeparate: true, freight: true);
+        other.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        var sends = 0;
+        other.Siigo.OnRequest("/v1/invoices", _ => Interlocked.Increment(ref sends) == 1
+            ? Created("FV-1-123", OrderInvoiceId, 0m)
+            : FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await IssueRowsThroughBatchAsync(other);
+
+        Assert.Equal("Order:Created,Freight:Pending", await StatusesAsync(other));
+        Assert.Equal(["Order:False:False", "Freight:False:False"], await FlagsAsync(other));
+    }
+
+    [Fact]
+    public async Task TheAnnulmentResponseCarriesTheFlags()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await IssueRowsThroughBatchAsync(world);
+        AnnulledInSiigo(world, OrderInvoiceId);
+
+        var rows = await ReadAsync(await PostAnnulmentAsync(world));
+
+        Assert.Equal(["Order:False:False"], Flags(rows));
+    }
+
+    // Review Focus 4: la marca falla después del commit. La anulación queda guardada, la respuesta lo dice y repetir la libera.
+    [Fact]
+    public async Task TheAnnulmentResponseCarriesTheFlagsWhenTheUnmarkThrows()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await IssueRowsThroughBatchAsync(world);
+        AnnulledInSiigo(world, OrderInvoiceId);
+        await ExecuteAsync(
+            world.ConnectionString,
+            """
+            CREATE FUNCTION public.reject_order_update() RETURNS trigger LANGUAGE plpgsql
+            AS $$ BEGIN RAISE EXCEPTION 'order update rejected by the test'; END $$;
+            CREATE TRIGGER reject_order_update BEFORE UPDATE ON quotations.orders
+            FOR EACH ROW EXECUTE FUNCTION public.reject_order_update();
+            """);
+
+        var rows = await ReadAsync(await PostAnnulmentAsync(world));
+
+        Assert.Equal(["Order:True:True"], Flags(rows));
+        Assert.Equal("Order:Annulled", await StatusesAsync(world));
+        await AssertStillMarkedAsync(world);
+
+        await ExecuteAsync(world.ConnectionString, "DROP TRIGGER reject_order_update ON quotations.orders");
+        var retried = await ReadAsync(await PostAnnulmentAsync(world));
+
+        Assert.Equal(["Order:False:False"], Flags(retried));
+        Assert.False((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
+        Assert.Equal(1, InvoiceReads(world));
+    }
+
+    [Fact]
+    public async Task AFailedUnmarkIsOfferedAgainAndRetriedWithoutCallingSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await IssueRowsThroughBatchAsync(world);
+        var invoicedBy = await ScalarAsync<Guid>(
+            world.ConnectionString, "SELECT invoiced_by FROM quotations.orders WHERE id = @id", ("id", world.OrderId));
+        AnnulledInSiigo(world, OrderInvoiceId);
+        await ReadAsync(await PostAnnulmentAsync(world));
+        // Como si la marca no se hubiera podido quitar: el pedido vuelve a llevar la de esa factura.
+        await ExecuteAsync(
+            world.ConnectionString,
+            """
+            UPDATE quotations.orders
+            SET invoiced_at = now(), invoiced_by = @by, invoice_provider = 'siigo', invoice_number = 'FV-1-123',
+                invoice_external_id = @external
+            WHERE id = @id
+            """,
+            ("by", invoicedBy),
+            ("external", OrderInvoiceId),
+            ("id", world.OrderId));
+
+        Assert.Equal(["Order:True:True"], await FlagsAsync(world));
+
+        var rows = await ReadAsync(await PostAnnulmentAsync(world));
+
+        Assert.Equal(["Order:False:False"], Flags(rows));
+        Assert.False((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
+        Assert.Equal(1, InvoiceReads(world));
+    }
+
     // --- Ayudas ---
+
+    // Una línea por fila: tipo, canConfirmAnnulment y orderUnmarkFailed.
+    private static List<string> Flags(JsonElement rows) =>
+        [
+            .. rows.EnumerateArray().Select(row =>
+                $"{Text(row, "kind")}:{row.GetProperty("canConfirmAnnulment").GetBoolean()}:{row.GetProperty("orderUnmarkFailed").GetBoolean()}"),
+        ];
+
+    private static async Task<List<string>> FlagsAsync(InvoicingWorld world) =>
+        Flags(await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)));
 
     private static void AnnulledInSiigo(InvoicingWorld world, string id) =>
         world.Siigo.On(

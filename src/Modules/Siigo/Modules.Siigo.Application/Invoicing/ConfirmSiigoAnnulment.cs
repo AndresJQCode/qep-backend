@@ -108,7 +108,28 @@ public sealed partial class ConfirmSiigoAnnulmentHandler(
             await TryUnmarkAsync(annulled, memberId, cancellationToken);
         }
 
-        return [.. SiigoInvoiceSupport.Current(rows).Select(row => SiigoInvoiceDto.From(row, now))];
+        return await ToDtosAsync(SiigoInvoiceSupport.Current(rows), now, cancellationToken);
+    }
+
+    // Lo que se lee después del commit no tumba la respuesta (como en SiigoSavedInvoice): si no se sabe si una tanda tiene el pedido, se
+    // trata como en cola, y una marca que no se puede leer no se avisa. La lista lo vuelve a decir.
+    private async Task<IReadOnlyList<SiigoInvoiceDto>> ToDtosAsync(
+        IReadOnlyList<SiigoInvoice> current, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var queued = await SiigoSavedInvoice.IsQueuedAsync(batches, current[0], logger, cancellationToken);
+        var result = new List<SiigoInvoiceDto>(current.Count);
+        foreach (var row in current)
+        {
+            var orderUnmarkFailed = await SiigoOrderMark.IsStillMarkedAfterAnnulmentAsync(orders, row, logger, cancellationToken);
+            result.Add(SiigoInvoiceDto.From(
+                row,
+                now,
+                queued: queued,
+                canConfirmAnnulment: SiigoOrderMark.CanConfirmAnnulment(row, current, queued, orderUnmarkFailed),
+                orderUnmarkFailed: orderUnmarkFailed));
+        }
+
+        return result;
     }
 
     // La última fila del pedido, si quedó anulada y con número: de ésa es la marca que hay que quitar.

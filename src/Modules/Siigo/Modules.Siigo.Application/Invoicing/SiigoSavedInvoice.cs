@@ -4,7 +4,8 @@ using Modules.Siigo.Domain;
 namespace Modules.Siigo.Application.Invoicing;
 
 /// <summary>La respuesta de sellar y de resolver: la fila <b>ya guardada</b>, con lo que se lee después del commit. Nada de eso puede
-/// hacer fallar la petición: la operación ya está hecha (hasta un sellado ante la DIAN) y repetirla respondería 422.</summary>
+/// hacer fallar la petición: la operación ya está hecha (hasta un sellado ante la DIAN) y repetirla respondería 422. La anulación arma
+/// sus filas aparte y comparte <see cref="IsQueuedAsync"/>.</summary>
 internal static partial class SiigoSavedInvoice
 {
     public static async Task<SiigoInvoiceDto> ToDtoAsync(
@@ -23,7 +24,7 @@ internal static partial class SiigoSavedInvoice
     // Sin respuesta se asume lo conservador, que alguna tanda tiene el pedido: no se ofrece reenviar ni se avisa de la marca, y la próxima
     // lectura del pedido lo dice bien. La cancelación de quien llama sí sube, como en el resto de las lecturas: ya no hay a quién
     // responder. El log lleva sólo el tipo de la excepción.
-    private static async Task<bool> IsQueuedAsync(
+    internal static async Task<bool> IsQueuedAsync(
         ISiigoInvoiceBatchRepository batches, SiigoInvoice row, ILogger logger, CancellationToken cancellationToken)
     {
         try
