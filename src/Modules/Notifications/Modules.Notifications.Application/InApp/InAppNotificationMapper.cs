@@ -123,6 +123,7 @@ internal static class InAppNotificationMapper
         InAppNotificationKind.SupportTicketUnassigned => ["ticketId", "ticketNumber", "thresholdHours"],
         InAppNotificationKind.WholesaleOrderPendingApproval => ["orderId", "orderNumber", "resolution"],
         InAppNotificationKind.ServiceChargesOverdue => ["overdueCount", "runDate"],
+        InAppNotificationKind.ServicePriceReviewsDue => ["dueCount", "heldCount", "runDate"],
         InAppNotificationKind.SupportTaskAssigned or InAppNotificationKind.SupportTicketAssigned => ["ticketId", "ticketNumber", "resolution"],
         InAppNotificationKind.HrMedicalExamsDue => ["pendingCount", "runDate"],
         InAppNotificationKind.HrExitExamRequired => ["employeeId", "employeeName", "dueDate"],
