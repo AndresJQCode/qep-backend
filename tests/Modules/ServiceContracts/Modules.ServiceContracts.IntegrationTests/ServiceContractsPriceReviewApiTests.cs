@@ -955,6 +955,59 @@ public sealed class ServiceContractsPriceReviewApiTests
         }
     }
 
+    // Spec reajuste §6.4 (owner, 2026-11-25): reanudar un retenido conserva lo retenido; no nace ningún cobro sin decidir.
+    [Fact]
+    public async Task ResumingAHeldContractKeepsItHeld()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedHeldAsync();
+
+        await ReadDetailAsync(await world.TransitionAsync(service, "pause"));
+        var detail = await ReadDetailAsync(await world.TransitionAsync(service, "resume"));
+
+        var review = detail.Service.PriceReview;
+        Assert.Equal(("Held", (DateOnly?)TenantToday, (DateOnly?)period), (review.State, review.HeldSince, review.ReviewPeriodDate));
+        Assert.DoesNotContain(detail.Charges, charge => charge.PeriodDate >= period);
+    }
+
+    [Fact]
+    public async Task KeepingAResumedHeldContractBillsTheCarriedPeriods()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedHeldAsync();
+        await ReadDetailAsync(await world.TransitionAsync(service, "pause"));
+        await ReadDetailAsync(await world.TransitionAsync(service, "resume"));
+
+        var detail = await ReadDetailAsync(await world.KeepAsync(service, await world.VersionAsync(service)));
+
+        var charge = Assert.Single(detail.Charges);
+        Assert.Equal(
+            (period, Later(period, TenantToday.AddDays(5)), Price, false),
+            (charge.PeriodDate, charge.DueDate, charge.Amount, charge.PriceUnreviewed));
+        Assert.Null(detail.Service.PriceReview.HeldSince);
+    }
+
+    [Fact]
+    public async Task ResumingAPausedHeldContractSwitchedToManualBillsAtOnce()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedHeldAsync();
+        await ReadDetailAsync(await world.TransitionAsync(service, "pause"));
+        var paused = await ReadDetailAsync(await world.ReviewAsync(
+            service,
+            await world.VersionAsync(service),
+            new { adjustmentMode = "Manual", ipcExtraPoints = 0m, nextReviewDate = Iso(period) }));
+        Assert.Empty(paused.Charges);
+
+        var detail = await ReadDetailAsync(await world.TransitionAsync(service, "resume"));
+
+        var charge = Assert.Single(detail.Charges);
+        Assert.Equal(
+            (period, Later(period, TenantToday.AddDays(5)), Price, true),
+            (charge.PeriodDate, charge.DueDate, charge.Amount, charge.PriceUnreviewed));
+        Assert.Null(detail.Service.PriceReview.HeldSince);
+    }
+
     private static string RateUrl(int year) => $"{ServiceContractsUrl()}/ipc-rates/{year}";
 
     private static string ConfirmUrl() => $"{ServiceContractsUrl()}/price-reviews/confirm-ipc";
@@ -1134,7 +1187,7 @@ public sealed class ServiceContractsPriceReviewApiTests
 
                 if (paused)
                 {
-                    service.Pause(now);
+                    service.Pause(TenantToday, now);
                 }
 
                 db.Services.Add(service);
@@ -1193,7 +1246,7 @@ public sealed class ServiceContractsPriceReviewApiTests
                 var schedule = ServicePriceSchedule.Schedule(service, null, newPrice, effectiveFrom, "Más usuarios", memberId, now);
                 if (whilePaused)
                 {
-                    service.Pause(now);
+                    service.Pause(TenantToday, now);
                 }
 
                 db.ServicePriceSchedules.Add(schedule);
@@ -1212,6 +1265,11 @@ public sealed class ServiceContractsPriceReviewApiTests
 
         public Task<HttpResponseMessage> KeepAsync(Guid serviceId, long version) =>
             Manager.SendAsync(WithVersion(HttpMethod.Post, $"{ServiceUrl(serviceId)}/keep-price", version), Ct);
+
+        /// <summary><c>pause</c>, <c>resume</c> o <c>cancel</c> con la versión vigente.</summary>
+        public async Task<HttpResponseMessage> TransitionAsync(Guid serviceId, string verb) =>
+            await Manager.SendAsync(
+                WithVersion(HttpMethod.Post, $"{ServiceUrl(serviceId)}/{verb}", await VersionAsync(serviceId)), Ct);
 
         public Task<int> CountSchedulesAsync() => WithDbAsync(db => db.ServicePriceSchedules.CountAsync(Ct));
 

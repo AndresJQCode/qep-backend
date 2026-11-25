@@ -140,6 +140,13 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
             .HasDefaultValue(0m);
         service.Property(value => value.NextReviewDate).HasColumnName("next_review_date");
         service.Property(value => value.HeldSince).HasColumnName("held_since");
+        // Una colección primitiva sobre el campo (no tiene vida propia): `CarriedHeldPeriods` es su vista de sólo lectura y sin
+        // ignorarla EF intentaría mapear las dos.
+        service.PrimitiveCollection<List<DateOnly>>("_carriedHeldPeriods")
+            .HasColumnName("carried_held_periods")
+            .HasColumnType("date[]")
+            .HasDefaultValueSql("'{}'");
+        service.Ignore(value => value.CarriedHeldPeriods);
         service.Property(value => value.Version)
             .HasColumnName("version")
             .HasColumnType("bigint")

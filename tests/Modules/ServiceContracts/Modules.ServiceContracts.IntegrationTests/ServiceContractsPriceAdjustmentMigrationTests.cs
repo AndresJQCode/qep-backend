@@ -52,6 +52,8 @@ public sealed class ServiceContractsPriceAdjustmentMigrationTests
         Assert.Equal(future.AddYears(1), (await ReadServiceAsync(database, futureId)).NextReviewDate);
         Assert.Equal(UtcToday.AddDays(15), (await ReadServiceAsync(database, onTheLimitId)).NextReviewDate);
         Assert.True((await ReadServiceAsync(database, justInsideId)).NextReviewDate > UtcToday.AddDays(300));
+        // Ningún contrato existente arrastra períodos retenidos: la columna nueva nace vacía, sin relleno.
+        Assert.Equal(4L, await ScalarAsync<long>(database, "SELECT count(*) FROM billing.services WHERE carried_held_periods = '{}'"));
     }
 
     [Fact]

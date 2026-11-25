@@ -61,7 +61,7 @@ public sealed class ChargeGeneratorTests
     public void NothingIsGeneratedForAPausedOrCancelledService()
     {
         var paused = NewService("2026-01-10");
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         var cancelled = NewService("2026-01-10");
         cancelled.Cancel(Now);
 

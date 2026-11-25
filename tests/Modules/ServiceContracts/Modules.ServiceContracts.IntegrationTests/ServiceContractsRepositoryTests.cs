@@ -194,7 +194,7 @@ public sealed class ServiceContractsRepositoryTests
             .FindAsync(Tenant, service.Id, TestContext.Current.CancellationToken);
         var secondCopy = await new ServiceContractRepository(secondDb)
             .FindAsync(Tenant, service.Id, TestContext.Current.CancellationToken);
-        firstCopy!.Pause(Now);
+        firstCopy!.Pause(Today, Now);
         secondCopy!.Cancel(Now);
         await new ServiceContractsUnitOfWork(firstDb).SaveChangesAsync(TestContext.Current.CancellationToken);
 
@@ -213,7 +213,7 @@ public sealed class ServiceContractsRepositoryTests
         var otherCustomer = Guid.CreateVersion7();
         var services = Enumerable.Range(0, 3).Select(_ => Service(customerId, "COP", 10m)).ToList();
         var paused = Service(customerId, "COP", 10m);
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         var foreign = Service(otherCustomer, "COP", 10m);
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -248,7 +248,7 @@ public sealed class ServiceContractsRepositoryTests
         using var __ = factory;
 
         var service = Service(Guid.CreateVersion7(), "COP", 10m);
-        service.Pause(Now.AddDays(1));
+        service.Pause(Today.AddDays(1), Now.AddDays(1));
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();

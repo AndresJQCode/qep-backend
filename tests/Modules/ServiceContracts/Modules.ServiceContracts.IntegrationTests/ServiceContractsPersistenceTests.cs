@@ -17,6 +17,7 @@ public sealed class ServiceContractsPersistenceTests
 {
     private static readonly Guid Tenant = Guid.Parse(TenantId);
     private static readonly DateTimeOffset Now = new(2026, 10, 29, 13, 0, 0, TimeSpan.Zero);
+    private static readonly DateOnly Today = new(2026, 10, 29);
 
     [Fact]
     public async Task ASecondChargeOfTheSamePeriodIsRejected()
@@ -403,7 +404,7 @@ public sealed class ServiceContractsPersistenceTests
         using var __ = factory;
 
         var service = NewService(BillingCycle.Semiannual);
-        service.Pause(Now);
+        service.Pause(Today, Now);
         service.Resume(new DateOnly(2026, 12, 1), Now);
         service.MarkGenerated(new DateOnly(2026, 11, 5));
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -424,6 +425,47 @@ public sealed class ServiceContractsPersistenceTests
         Assert.Equal(new DateOnly(2026, 11, 5), loaded.LastGeneratedPeriodDate);
         Assert.Equal(service.Version, loaded.Version);
         Assert.Equal(new DateOnly(2026, 11, 5), loaded.FirstDueDate);
+    }
+
+    // La lista se muta en su sitio (MarkGenerated saca el período): EF tiene que notar el cambio, no sólo guardarla al insertar.
+    [Fact]
+    public async Task AServiceRoundTripsItsCarriedHeldPeriods()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var first = new DateOnly(2026, 12, 5);
+        var second = new DateOnly(2027, 1, 5);
+        var service = NewService();
+        service.MarkGenerated(new DateOnly(2026, 11, 5));
+        service.InitializePriceReview(AdjustmentMode.Ipc, 0m, first);
+        ChargeGenerator.Generate(service, null, GenerationMode.Run, new DateOnly(2026, 11, 30), Now);
+        service.Pause(new DateOnly(2026, 12, 31), Now);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+            db.Services.Add(service);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+            var tracked = await db.Services.SingleAsync(value => value.Id == service.Id, TestContext.Current.CancellationToken);
+            Assert.Equal([first, second], tracked.CarriedHeldPeriods);
+
+            tracked.MarkGenerated(first);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var loaded = await read.ServiceProvider.GetRequiredService<ServiceContractsDbContext>().Services
+            .AsNoTracking()
+            .SingleAsync(value => value.Id == service.Id, TestContext.Current.CancellationToken);
+
+        Assert.Equal([second], loaded.CarriedHeldPeriods);
+        Assert.Equal(first, loaded.LastGeneratedPeriodDate);
     }
 
     [Fact]

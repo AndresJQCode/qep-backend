@@ -15,6 +15,8 @@ public sealed class ServiceContract
 
     private const int UpcomingPeriodsLimit = 12;
 
+    private readonly List<DateOnly> _carriedHeldPeriods = [];
+
     // EF Core materializa por acá; Create es el único punto de entrada de código.
     private ServiceContract()
     {
@@ -60,6 +62,12 @@ public sealed class ServiceContract
 
     /// <summary>Desde cuándo está retenido el cobro de la revisión; nulo si no lo está.</summary>
     public DateOnly? HeldSince { get; private set; }
+
+    /// <summary>
+    /// Los períodos que estaban retenidos al pausar y siguen pendientes (spec reajuste §6.4): en orden y siempre posteriores a
+    /// <see cref="LastGeneratedPeriodDate"/>. Son lo primero que el cursor de períodos recorre; lo que cayó en la pausa no está.
+    /// </summary>
+    public IReadOnlyList<DateOnly> CarriedHeldPeriods => _carriedHeldPeriods;
 
     public int Version { get; private set; }
 
@@ -219,26 +227,54 @@ public sealed class ServiceContract
         while (periods.Count < UpcomingPeriodsLimit && period <= last)
         {
             periods.Add(period);
-            period = BillingCycles.NextDueDate(FirstDueDate, Cycle, period);
+            period = PeriodAfter(period);
         }
 
         return periods;
     }
 
-    public void Pause(DateTimeOffset now)
+    /// <summary>
+    /// Pausa el contrato. Si estaba retenido, guarda lo retenido: todo período sin generar cuyo día de generación
+    /// (<c>período − 5</c>) es igual o anterior a <paramref name="today"/>, incluido el de la ventana que abrió ese mismo día
+    /// aunque la corrida todavía no haya pasado. Es lo mismo que cobraría una liberación ese día.
+    /// </summary>
+    /// <param name="today">La «hoy» del tenant.</param>
+    public void Pause(DateOnly today, DateTimeOffset now)
     {
         RequireStatus(ServiceContractStatus.Active);
+        if (HeldSince is not null)
+        {
+            var limit = today.AddDays(ChargeGenerator.WindowDays);
+            for (var period = NextUngeneratedPeriod(); period <= limit; period = PeriodAfter(period))
+            {
+                // El cursor recorre primero lo ya arrastrado, así que lo que se agrega queda al final y en orden.
+                if (!_carriedHeldPeriods.Contains(period))
+                {
+                    _carriedHeldPeriods.Add(period);
+                }
+            }
+        }
+
         Status = ServiceContractStatus.Paused;
         HeldSince = null;
         StatusChangedAt = now;
         Touch(now);
     }
 
+    /// <summary>
+    /// Reanuda: lo que cayó en la pausa no se cobra nunca, pero lo que ya estaba retenido sigue retenido desde hoy. Si deja de
+    /// ser de revisión lo decide la generación que quien llama corre después, en la misma transacción.
+    /// </summary>
     public void Resume(DateOnly today, DateTimeOffset now)
     {
         RequireStatus(ServiceContractStatus.Paused);
         Status = ServiceContractStatus.Active;
         ReactivatedOn = today;
+        if (_carriedHeldPeriods.Count > 0)
+        {
+            HeldSince = today;
+        }
+
         StatusChangedAt = now;
         Touch(now);
     }
@@ -252,6 +288,7 @@ public sealed class ServiceContract
 
         Status = ServiceContractStatus.Cancelled;
         HeldSince = null;
+        _carriedHeldPeriods.Clear();
         StatusChangedAt = now;
         Touch(now);
     }
@@ -262,22 +299,35 @@ public sealed class ServiceContract
 
     /// <summary>
     /// El primer período sin generar, mire o no el estado: lo necesitan la revisión de un contrato pausado y la invariante del
-    /// reajuste. Tras una reanudación se salta lo que cayó en la pausa: la primera ancla igual o posterior a la fecha de
-    /// reactivación.
+    /// reajuste. Primero los retenidos que una pausa dejó pendientes; agotados, tras una reanudación se salta lo que cayó en la
+    /// pausa: la primera ancla igual o posterior a la fecha de reactivación.
     /// </summary>
-    public DateOnly NextUngeneratedPeriod()
+    public DateOnly NextUngeneratedPeriod() =>
+        LastGeneratedPeriodDate is { } last ? PeriodAfter(last) : FirstDueDate;
+
+    /// <summary>
+    /// El primer período sin generar <c>&gt;= date</c>, por el mismo recorrido que <see cref="NextUngeneratedPeriod"/>: nunca
+    /// responde un período que cayó en una pausa antes de los retenidos que arrastra.
+    /// </summary>
+    public DateOnly FirstUngeneratedPeriodOnOrAfter(DateOnly date)
     {
-        if (LastGeneratedPeriodDate is not { } last)
+        foreach (var carried in _carriedHeldPeriods)
         {
-            return FirstDueDate;
+            if (carried >= date)
+            {
+                return carried;
+            }
         }
 
-        return ReactivatedOn is { } reactivated && reactivated > last
-            ? BillingCycles.FirstDueDateOnOrAfter(FirstDueDate, Cycle, reactivated)
-            : BillingCycles.NextDueDate(FirstDueDate, Cycle, last);
+        var start = _carriedHeldPeriods.Count > 0 ? PeriodAfter(_carriedHeldPeriods[^1]) : NextUngeneratedPeriod();
+        return start >= date ? start : BillingCycles.FirstDueDateOnOrAfter(FirstDueDate, Cycle, date);
     }
 
-    public void MarkGenerated(DateOnly periodDate) => LastGeneratedPeriodDate = periodDate;
+    public void MarkGenerated(DateOnly periodDate)
+    {
+        _carriedHeldPeriods.Remove(periodDate);
+        LastGeneratedPeriodDate = periodDate;
+    }
 
     /// <summary>La retención desde <paramref name="today"/>; cuándo es nueva y cuándo se conserva lo decide la generación.</summary>
     internal void Hold(DateOnly today) => HeldSince = today;
@@ -389,6 +439,25 @@ public sealed class ServiceContract
         {
             throw new ServiceContractsDomainException(ServiceContractsErrorCodes.ServiceNotActive, "The service is not active.");
         }
+    }
+
+    /// <summary>
+    /// El período que sigue a <paramref name="period"/> entre los que se cobran: el próximo retenido arrastrado y, sin más, la
+    /// siguiente ancla, saltando las que cayeron antes de la última reanudación.
+    /// </summary>
+    private DateOnly PeriodAfter(DateOnly period)
+    {
+        foreach (var carried in _carriedHeldPeriods)
+        {
+            if (carried > period)
+            {
+                return carried;
+            }
+        }
+
+        return ReactivatedOn is { } reactivated && reactivated > period
+            ? BillingCycles.FirstDueDateOnOrAfter(FirstDueDate, Cycle, reactivated)
+            : BillingCycles.NextDueDate(FirstDueDate, Cycle, period);
     }
 
     private void EnsureNotCancelled()

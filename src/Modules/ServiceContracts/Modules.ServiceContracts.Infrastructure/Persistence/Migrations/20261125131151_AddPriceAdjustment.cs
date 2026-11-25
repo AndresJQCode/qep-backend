@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -64,6 +65,15 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                 table: "services",
                 type: "date",
                 nullable: true);
+
+            // Sin relleno: ningún contrato existente tiene períodos retenidos antes de una pausa.
+            migrationBuilder.AddColumn<List<DateOnly>>(
+                name: "carried_held_periods",
+                schema: "billing",
+                table: "services",
+                type: "date[]",
+                nullable: false,
+                defaultValueSql: "'{}'");
 
             migrationBuilder.AddColumn<string>(
                 name: "origin",
@@ -268,6 +278,11 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropColumn(
                 name: "adjustment_mode",
+                schema: "billing",
+                table: "services");
+
+            migrationBuilder.DropColumn(
+                name: "carried_held_periods",
                 schema: "billing",
                 table: "services");
 

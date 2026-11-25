@@ -1003,7 +1003,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             charges.AddRange((pendingDueDates ?? []).Select(due => Charge.Generate(service, due, NineLocal)));
             if (status == ServiceContractStatus.Paused)
             {
-                service.Pause(NineLocal);
+                service.Pause(Today, NineLocal);
             }
 
             if (status == ServiceContractStatus.Cancelled)
