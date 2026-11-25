@@ -26,4 +26,7 @@ public enum SiigoCallOperation
 
     /// <summary>La descarga del PDF de una factura ya creada.</summary>
     InvoicePdf,
+
+    /// <summary>La lectura de una factura ya creada para verificar que se anuló en Siigo (spec 2026-11-25, anulación §2).</summary>
+    InvoiceRead,
 }

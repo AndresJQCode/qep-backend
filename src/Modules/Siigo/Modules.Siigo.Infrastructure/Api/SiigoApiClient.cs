@@ -281,6 +281,50 @@ internal sealed class SiigoApiClient(
         return new SiigoStampOutcome.Stamped(document is null ? null : SiigoJson.Cufe(document.RootElement));
     }
 
+    // Spec 2026-11-25, anulación §2: de esta lectura depende soltar un documento legal, así que lo que no se entiende no confirma nada.
+    // No usa GetAsync: un 4xx no es una excepción, es «no reconocida» y quien llama dice cuál factura.
+    public async Task<SiigoInvoiceLookup> GetInvoiceAsync(
+        SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
+    {
+        var reply = await CallAsync(
+            credentials,
+            HttpMethod.Get,
+            $"v1/invoices/{Uri.EscapeDataString(siigoInvoiceId)}",
+            null,
+            null,
+            _timeouts.Default,
+            cancellationToken);
+        await ReportFailureAsync(credentials, SiigoCallOperation.InvoiceRead, reply, null, siigoInvoiceId, cancellationToken);
+        ThrowIfUnanswered(reply);
+        if (!reply.Success)
+        {
+            var errors = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false);
+            if (SiigoApiErrors.IsServiceUnavailable(errors))
+            {
+                throw UnexpectedAnswer(reply, errors);
+            }
+
+            return reply.Status == HttpStatusCode.NotFound
+                && errors.Count > 0
+                && errors.All(error => SiigoApiErrors.InvoiceNotFoundCodes.Contains(error.Code))
+                    ? new SiigoInvoiceLookup.NotFound()
+                    : new SiigoInvoiceLookup.Unrecognized((int?)reply.Status);
+        }
+
+        using var document = SiigoJson.Parse(reply.Body);
+        if (document is { RootElement: var root }
+            && string.Equals(SiigoJson.Text(root, "id"), siigoInvoiceId, StringComparison.Ordinal)
+            && SiigoJson.Property(root, "annulled") is { ValueKind: JsonValueKind.True or JsonValueKind.False } annulled)
+        {
+            var stampStatus = SiigoJson.Property(root, "stamp") is { } stamp ? SiigoJson.Text(stamp, "status") : null;
+            return new SiigoInvoiceLookup.Found(annulled.GetBoolean(), stampStatus);
+        }
+
+        await ReportInvalidResponseAsync(
+            credentials, SiigoCallOperation.InvoiceRead, reply, null, cancellationToken, siigoInvoiceId);
+        return new SiigoInvoiceLookup.Unrecognized((int?)reply.Status);
+    }
+
     public async Task<byte[]> GetInvoicePdfAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken)
     {
         var reply = await GetAsync(
@@ -410,10 +454,16 @@ internal sealed class SiigoApiClient(
             cancellationToken);
     }
 
-    // Un 2xx que Siigo contestó sin lo que hacía falta (la factura o el cliente sin id): no se sabe qué se creó, y es el caso que más pide el curl.
+    // Un 2xx que Siigo contestó sin lo que hacía falta (la factura o el cliente sin id, o la lectura de una factura que no dice si está
+    // anulada): no se sabe qué pasó, y es el caso que más pide el curl.
     private Task ReportInvalidResponseAsync(
-        SiigoCredentials credentials, SiigoCallOperation operation, Reply reply, string? idempotencyKey, CancellationToken cancellationToken) =>
-        RecordAsync(credentials, operation, reply.Capture, "invalid_response", idempotencyKey, null, cancellationToken);
+        SiigoCredentials credentials,
+        SiigoCallOperation operation,
+        Reply reply,
+        string? idempotencyKey,
+        CancellationToken cancellationToken,
+        string? siigoInvoiceId = null) =>
+        RecordAsync(credentials, operation, reply.Capture, "invalid_response", idempotencyKey, siigoInvoiceId, cancellationToken);
 
     private async Task RecordAsync(
         SiigoCredentials credentials,
@@ -452,6 +502,17 @@ internal sealed class SiigoApiClient(
     // Las lecturas lanzan; la creación de facturas y el sellado no (ver ISiigoApi).
     private static void ThrowUnlessSuccess(Reply reply)
     {
+        ThrowIfUnanswered(reply);
+        if (!reply.Success)
+        {
+            // Sólo los códigos de Siigo, nunca sus mensajes: repiten los valores rechazados (documento, dirección, nombre).
+            throw UnexpectedAnswer(reply, SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false));
+        }
+    }
+
+    // Lo que ninguna lectura puede interpretar: Siigo no contestó, o rechazó las credenciales.
+    private static void ThrowIfUnanswered(Reply reply)
+    {
         if (reply.TransientReason is { } transient)
         {
             throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, $"Siigo did not answer in time or failed ({transient}).");
@@ -461,17 +522,15 @@ internal sealed class SiigoApiClient(
         {
             throw new ResourceConflictException(SiigoErrorCodes.ConnectionUnavailable, "Siigo rejected the credentials of this connection.");
         }
+    }
 
-        if (!reply.Success)
-        {
-            // Sólo los códigos de Siigo, nunca sus mensajes: repiten los valores rechazados (documento, dirección, nombre).
-            var errors = SiigoJson.Errors(reply.Body, reply.Status, fallbackToStatus: false);
-            var detail = string.Join(", ", errors.Select(error => error.Code).Distinct().Take(5));
-            // Un servicio de Siigo caído tiene su código, para que la pantalla diga que es de Siigo.
-            throw new UpstreamServiceException(
-                SiigoApiErrors.IsServiceUnavailable(errors) ? SiigoErrorCodes.InvoiceSiigoService : "siigo.unexpected_response",
-                $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}");
-        }
+    private static UpstreamServiceException UnexpectedAnswer(Reply reply, IReadOnlyList<SiigoError> errors)
+    {
+        var detail = string.Join(", ", errors.Select(error => error.Code).Distinct().Take(5));
+        // Un servicio de Siigo caído tiene su código, para que la pantalla diga que es de Siigo.
+        return new UpstreamServiceException(
+            SiigoApiErrors.IsServiceUnavailable(errors) ? SiigoErrorCodes.InvoiceSiigoService : "siigo.unexpected_response",
+            $"Siigo answered HTTP {(int)reply.Status!.Value}.{(detail.Length > 0 ? $" Error codes: {detail}." : string.Empty)}");
     }
 
     private async Task<Reply> CallAsync(

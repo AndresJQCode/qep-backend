@@ -100,6 +100,26 @@ public abstract record SiigoStampOutcome
     public sealed record Transient(string Reason) : SiigoStampOutcome;
 }
 
+/// <summary>El resultado de <c>GET /v1/invoices/{id}</c> (spec 2026-11-25, anulación §2). Una unión cerrada: <see cref="Found"/>,
+/// <see cref="NotFound"/> (Siigo dijo sin ambigüedad que no existe) o <see cref="Unrecognized"/> (no se entiende: quien llama no libera
+/// nada).</summary>
+public abstract record SiigoInvoiceLookup
+{
+    private SiigoInvoiceLookup()
+    {
+    }
+
+    /// <summary>Siigo devolvió esa factura. <paramref name="StampStatus"/> es <c>stamp.status</c> (<c>Draft</c>, <c>Accepted</c>,
+    /// <c>Rejected</c>), si vino.</summary>
+    public sealed record Found(bool Annulled, string? StampStatus) : SiigoInvoiceLookup;
+
+    /// <summary>Un 404 cuyos errores están todos en <see cref="SiigoApiErrors.InvoiceNotFoundCodes"/>.</summary>
+    public sealed record NotFound : SiigoInvoiceLookup;
+
+    /// <summary>Cualquier otra respuesta: otro 4xx, o un 2xx sin <c>annulled</c> booleano, de otra factura o ilegible.</summary>
+    public sealed record Unrecognized(int? Status) : SiigoInvoiceLookup;
+}
+
 /// <summary>
 /// El puerto de la API de Siigo (spec 2026-11-18 §3, §5.4). Todas las llamadas reciben las credenciales de la conexión. Las lecturas
 /// (listas, productos, clientes) lanzan: <c>ServiceUnavailableException</c> <c>siigo.unavailable</c> si Siigo no contestó o dio un
@@ -153,6 +173,11 @@ public interface ISiigoApi
 
     /// <summary><c>POST /v1/invoices/{id}/stamp</c>: envía a la DIAN una factura ya creada.</summary>
     Task<SiigoStampOutcome> StampInvoiceAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken);
+
+    /// <summary><c>GET /v1/invoices/{id}</c>: si la factura está anulada. Lanza como las demás lecturas (503, 502 de servicio, 409 de
+    /// credenciales); cualquier otra respuesta que no se entienda es <see cref="SiigoInvoiceLookup.Unrecognized"/> y queda en
+    /// <c>call_failures</c>. El cuerpo trae datos del cliente: no sale de aquí. Nunca se cachea.</summary>
+    Task<SiigoInvoiceLookup> GetInvoiceAsync(SiigoCredentials credentials, string siigoInvoiceId, CancellationToken cancellationToken);
 
     /// <summary><c>GET /v1/invoices/{id}/pdf</c>: el PDF de la factura, ya decodificado (Siigo lo manda en base64 dentro de un JSON). Lanza
     /// como las demás lecturas, y <c>siigo.unavailable</c> si Siigo contesta sin contenido. Nunca se cachea: pesa y es de un solo uso.</summary>
