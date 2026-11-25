@@ -217,8 +217,8 @@ public interface IDistributorRepository
 
 /// <summary>
 /// El evento <c>wholesale.distributor-invited.v1</c> hacia el correo y los otros eventos del módulo. El token plano sólo viaja en
-/// el del correo y en el del aviso con link; el adaptador los escribe en el outbox del contexto del módulo, así que salen con el
-/// mismo commit que la invitación.
+/// el del correo y en el del aviso con link; la prueba de buzón (spec 2026-11-24), sólo en el del correo. El adaptador los
+/// escribe en el outbox del contexto del módulo, así que salen con el mismo commit que la invitación.
 /// </summary>
 public interface IWholesaleEventPublisher
 {
@@ -228,6 +228,7 @@ public interface IWholesaleEventPublisher
         string email,
         string businessName,
         string token,
+        string emailProof,
         DateTimeOffset expiresAt,
         string correlationId,
         DateTimeOffset occurredAt);
@@ -236,7 +237,8 @@ public interface IWholesaleEventPublisher
     /// Spec 2026-11-19 §2: <c>wholesale.distributor-invitation-link.v1</c>, el aviso por WhatsApp de la invitación con su link.
     /// Reemplaza a <c>wholesale.distributor-invitation-notice.v1</c> (sin link), que ya no se escribe y sólo se drena. Sale en el
     /// mismo commit que la invitación y lo procesa el worker del aviso. <paramref name="token"/> es el mismo del correo y sólo
-    /// vive en el payload del outbox; <paramref name="generation"/> es la de la invitación al encolarlo (D-4).
+    /// vive en el payload del outbox; <paramref name="generation"/> es la de la invitación al encolarlo (D-4). No lleva la prueba
+    /// de buzón: el link de WhatsApp no demuestra nada sobre el correo (spec 2026-11-24).
     /// </summary>
     void InvitationLinkRequested(
         Guid tenantId,

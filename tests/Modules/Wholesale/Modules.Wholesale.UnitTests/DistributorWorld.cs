@@ -116,7 +116,8 @@ internal sealed class DistributorWorld
         string country = "CO",
         Guid? cityId = null,
         string? cityName = null,
-        string? address = null)
+        string? address = null,
+        string? emailProofHash = null)
     {
         var distributor = Distributor.Invite(
             Tenant,
@@ -137,7 +138,8 @@ internal sealed class DistributorWorld
             at ?? Now,
             cityId,
             cityName,
-            address);
+            address,
+            emailProofHash);
         return Distributors.Seed(distributor);
     }
 
