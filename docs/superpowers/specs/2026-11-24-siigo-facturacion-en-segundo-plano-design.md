@@ -350,6 +350,10 @@ Las facturas de producción que ya fallaron el 2026-11-24 no las arregla este ca
   «Existe en Siigo (número)» / «No existe» (`canResolve`), con advertencia de que «No existe» libera el pedido y regenerar usa otra clave.
   «No existe» queda deshabilitada hasta `missingAvailableAt`, con la hora a la vista; traducir `siigo.invoice.resolve_too_early`.
 - Dejar de mostrar «Enviando…» para una `Pending` con `awaitingConfirmation`.
+- **«Reenviar todas las por confirmar»** en el detalle de la tanda: una acción manual que crea una tanda con los pedidos que tienen
+  `canResend` (máximo 50), con el `POST` de tandas de siempre. No necesita cambios en el backend y no programa nada.
+- En la pantalla la acción se llama **«Reintentar»** (por fila y para todas). Antes de enviar avisa: la clave sólo reconoce las facturas
+  que creó QEP; una creada a mano en Siigo no la reconoce y reintentar la duplicaría. Esa se registra con «Existe en Siigo».
 - Explicar que una factura por confirmar bloquea la marca manual y la anulación.
 
 ## Decisiones tomadas por el asistente (corrígelas)
@@ -366,6 +370,12 @@ Las facturas de producción que ya fallaron el 2026-11-24 no las arregla este ca
 ## Decisiones del owner (2026-11-24)
 
 - **«No existe en Siigo» espera 10 minutos** desde el último intento sin respuesta.
+- **Envío cortado y sin reenviar** (D-1 del plan; precisa el §3): un `SendingSince` vencido cuenta como intento sin respuesta; se ve por
+  confirmar y los 10 minutos se cuentan desde `SendingSince ?? LastUnansweredAt`.
+- **Falla en `/auth` o sin configuración** (D-2): un timeout o falla de red al autenticarse deja la factura por confirmar;
+  `partner_id_missing` y `auth_without_token` no, porque la factura nunca salió.
+- **`canResolve`** (D-3) sólo en `Unknown` o por confirmar.
+- **`siigoErrors`** (D-4) es una lista de códigos.
 - **Timeout de creación: 120 s.**
 - **Un 429 deja la factura por confirmar.**
 - **La lista de tandas muestra todas**, también las de un solo pedido.

@@ -550,7 +550,8 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 - 2026-11-24 — **Aprobado el spec de facturación con Siigo en segundo plano** (owner; spec
   `2026-11-24-siigo-facturacion-en-segundo-plano-design`). Toda emisión pasa por una tanda (202), pantalla de tandas, facturas «Por
   confirmar» en vez de `Rejected` cuando no hubo respuesta, 120 s para crear la factura y 10 min antes de declarar «No existe». **Sin
-  construir:** falta el plan; el spec del frontend va en `qep-frontend`.
+  construir:** plan `2026-11-24-siigo-facturacion-en-segundo-plano-backend` escrito y aprobado (D-1 a D-4); el spec del frontend va en
+  `qep-frontend`.
 
 - 2026-11-24 — Mergeado a `develop` (fast-forward hasta `109fc1b99`, sin push) **las pruebas en dos niveles**
   (`feature/test-tiers`; spec y plan `2026-11-24-pruebas-en-dos-niveles`; owner). Para mergear a `develop` basta
