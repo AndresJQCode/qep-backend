@@ -32,7 +32,8 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 /// <summary>
 /// Spec 2026-11-18 §5.6 y 2026-11-24 §3: una factura de la que no hay certeza la resuelve una persona que miró en Siigo, sin esperar a que
 /// pasen 24 horas: una <c>Unknown</c>, o una <c>Pending</c> que no se esté mandando (<c>siigo.invoice.state_invalid</c> si no).
-/// <c>exists</c> con el número: la fila queda <c>Created</c> y el pedido se marca con ese número. <c>missing</c>: la fila pasa a
+/// <c>exists</c> con el número: la fila queda <c>Created</c> y el pedido se marca con ese número (si no se puede, la resolución queda
+/// guardada y la respuesta avisa con <c>orderMarkFailed</c>, salvo con el pedido en una tanda). <c>missing</c>: la fila pasa a
 /// <c>Failed</c> y el pedido queda libre para facturar de nuevo; antes de los 10 minutos del último envío sin respuesta es 422
 /// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete sin
 /// resolver (<c>Pending</c> o <c>Unknown</c>) se descarta en el mismo guardado, porque nunca salió; al declarar que existe, no se toca.
@@ -42,7 +43,7 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 /// <c>siigo.invoice_batch.order_in_progress</c>; <c>exists</c> sí se acepta, porque no manda nada.
 /// Audita quién la resolvió, cómo y desde qué estado.
 /// </summary>
-public sealed class ResolveSiigoInvoiceHandler(
+public sealed partial class ResolveSiigoInvoiceHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IMembershipDirectory memberships,
@@ -112,16 +113,35 @@ public sealed class ResolveSiigoInvoiceHandler(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        // «exists» marca el pedido con ese número, quien la resolvió. Idempotente: si falla acá, repetirlo no duplica nada.
+        // «exists» marca el pedido con ese número, quien la resolvió.
         if (row.Kind == SiigoInvoiceKind.Order && row.Status == SiigoInvoiceStatus.Created)
         {
-            await orders.MarkInvoicedAsync(command.TenantId, command.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), memberId, cancellationToken);
+            await TryMarkAsync(row, memberId, cancellationToken);
         }
 
-        var queued = await batches.FindOpenBatchIdAsync(command.TenantId, command.OrderId, cancellationToken) is not null;
-        var orderMarkFailed = await SiigoOrderMark.IsMissingAsync(orders, row, queued, logger, cancellationToken);
-        return SiigoInvoiceDto.From(row, now, orderMarkFailed, queued: queued);
+        return await SiigoSavedInvoice.ToDtoAsync(batches, orders, row, now, logger, cancellationToken);
     }
+
+    // La resolución ya está guardada y repetirla respondería 422 (la fila ya es Created): que el pedido no se pueda marcar (anulado,
+    // marcado a mano, otra escritura que ganó, la base caída) no hace fallar la petición. La respuesta lee la marca y avisa con
+    // orderMarkFailed, salvo que una tanda tenga el pedido; «Generar» reintenta sólo la marca. El log lleva sólo el tipo de la excepción.
+    private async Task TryMarkAsync(SiigoInvoice row, Guid memberId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await orders.MarkInvoicedAsync(
+                row.TenantId, row.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), memberId, cancellationToken);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogMarkFailed(logger, exception.GetType().Name);
+        }
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Marking the order failed ({ExceptionType}) after its Siigo invoice was resolved as existing; the resolution stays saved.")]
+    private static partial void LogMarkFailed(ILogger logger, string exceptionType);
 
     // La de flete sólo sale después de que la del pedido existe, y acá la del pedido estaba sin resolver: la de flete sin resolver nunca
     // salió, aunque tenga anotado un envío sin respuesta o ya haya pasado a Unknown. Si siguiera viva, bloquearía el pedido.

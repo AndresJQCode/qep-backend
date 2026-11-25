@@ -13,6 +13,7 @@ namespace Modules.Customers.Domain;
 public sealed class Customer
 {
     private readonly List<CustomerAddress> _addresses = [];
+    private readonly List<CustomerBillingProfile> _billingProfiles = [];
     private readonly List<CustomerTaxRate> _withholdingTaxRates = [];
     private readonly List<CustomerWithholdingAgentCity> _withholdingAgentCities = [];
 
@@ -156,6 +157,10 @@ public sealed class Customer
     /// <see cref="CityId"/>.
     /// </summary>
     public IReadOnlyCollection<CustomerAddress> Addresses => _addresses;
+
+    /// <summary>La libreta de perfiles de facturación (spec 2026-11-24): a quién se le puede facturar. Vacía por defecto y,
+    /// como <see cref="Addresses"/>, sólo si la consulta los incluyó.</summary>
+    public IReadOnlyCollection<CustomerBillingProfile> BillingProfiles => _billingProfiles;
 
     /// <summary>La direccion que la cotizacion propone por defecto. Null en un cliente sin libreta
     /// (ver <see cref="Addresses"/>), o si la consulta no incluyo las direcciones: EF materializa
@@ -863,6 +868,123 @@ public sealed class Customer
             other.MarkPrincipal(other == address, occurredAt);
         }
     }
+
+    /// <summary>
+    /// El <c>POST</c> de la libreta de perfiles (spec 2026-11-24 §3.2): idempotente por contenido, porque el frontend guarda
+    /// el perfil después de grabar el documento y un reintento no puede duplicarlo. Igual es mismo país, mismo tipo, mismo
+    /// número normalizado, mismo nombre y dirección, y misma ciudad (el id en <c>CO</c>, el texto afuera); teléfono, correo,
+    /// región, tipo de persona, tasas y excedente no cuentan. Lo encontrado se devuelve sin tocarlo (para cambiarlo está
+    /// <see cref="UpdateBillingProfile"/>) y no cuenta contra el tope. El primero queda principal aunque no lo pida.
+    /// </summary>
+    public (CustomerBillingProfile Profile, bool Added) EnsureBillingProfile(
+        CustomerBillingProfileDetails details, bool isPrincipal, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        EnsureNotMerged();
+        EnsureActive();
+        if (!IsComplete)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.incomplete",
+                "An incomplete customer cannot be edited until it is completed.");
+        }
+
+        var wanted = details.Normalized();
+        var wantedNumber = CustomerIdentificationNumbers.Normalize(wanted.IdentificationNumber);
+        var found = _billingProfiles.FirstOrDefault(entry =>
+            entry.Country == wanted.Country
+            && entry.IdentificationType == wanted.IdentificationType
+            && CustomerIdentificationNumbers.Normalize(entry.IdentificationNumber) == wantedNumber
+            && SameText(entry.Name, wanted.Name)
+            && SameText(entry.Address, wanted.Address)
+            && (wanted.Country == ColombiaCountryCode
+                ? entry.CityId == wanted.CityId
+                : SameText(entry.CityName, wanted.CityName)));
+        if (found is not null)
+        {
+            return (found, false);
+        }
+
+        if (_billingProfiles.Count >= CustomerBillingProfile.MaxPerCustomer)
+        {
+            throw new CustomersDomainException(
+                CustomerBillingProfileErrors.LimitReached,
+                $"A customer cannot have more than {CustomerBillingProfile.MaxPerCustomer} billing profiles.");
+        }
+
+        var profile = CustomerBillingProfile.Create(Id, TenantId, wanted, occurredAt);
+        _billingProfiles.Add(profile);
+        if (isPrincipal || _billingProfiles.Count == 1)
+        {
+            ApplyPrincipalBillingProfile(profile, occurredAt);
+        }
+
+        Touch(occurredAt);
+        return (profile, true);
+    }
+
+    /// <summary>Reemplaza el perfil entero. <paramref name="isPrincipal"/> en <c>false</c> no desmarca: se cambia marcando
+    /// otro, como en <see cref="UpdateAddress"/>.</summary>
+    public CustomerBillingProfile UpdateBillingProfile(
+        CustomerBillingProfileId id,
+        CustomerBillingProfileDetails details,
+        bool isPrincipal,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        EnsureNotMerged();
+        EnsureActive();
+
+        var profile = FindBillingProfile(id);
+        profile.Apply(TenantId, details, occurredAt);
+        if (isPrincipal)
+        {
+            ApplyPrincipalBillingProfile(profile, occurredAt);
+        }
+
+        Touch(occurredAt);
+        return profile;
+    }
+
+    /// <summary>Quita un perfil. El principal no se quita: primero hay que nombrar otro.</summary>
+    public void RemoveBillingProfile(CustomerBillingProfileId id, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+
+        var profile = FindBillingProfile(id);
+        if (profile.IsPrincipal)
+        {
+            throw new CustomersDomainException(
+                CustomerBillingProfileErrors.PrincipalNotRemovable,
+                "The principal billing profile cannot be removed. Mark another one as principal first.");
+        }
+
+        _billingProfiles.Remove(profile);
+        Touch(occurredAt);
+    }
+
+    public void MakeBillingProfilePrincipal(CustomerBillingProfileId id, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+
+        ApplyPrincipalBillingProfile(FindBillingProfile(id), occurredAt);
+        Touch(occurredAt);
+    }
+
+    private void ApplyPrincipalBillingProfile(CustomerBillingProfile profile, DateTimeOffset occurredAt)
+    {
+        foreach (var other in _billingProfiles)
+        {
+            other.MarkPrincipal(other == profile, occurredAt);
+        }
+    }
+
+    private CustomerBillingProfile FindBillingProfile(CustomerBillingProfileId id) =>
+        _billingProfiles.FirstOrDefault(profile => profile.Id == id)
+            ?? throw new CustomersDomainException(
+                CustomerBillingProfileErrors.NotFound, "The customer billing profile was not found.");
 
     /// <summary>
     /// Reemplaza las tasas de retención del cliente. Deduplica; <see cref="Guid.Empty"/> se rechaza. Sube la versión y

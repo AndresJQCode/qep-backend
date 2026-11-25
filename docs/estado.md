@@ -333,11 +333,14 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
      `UPDATE siigo.invoices SET unanswered_at = updated_at, last_unanswered_at = updated_at WHERE status = 'Pending' AND unanswered_at IS NULL AND (error_code IN ('siigo.invoice.timeout','siigo.invoice.network','siigo.invoice.rate_limited','siigo.invoice.unavailable','siigo.invoice.siigo_service') OR sending_since IS NOT NULL);`
   5. La etapa *contract* (quitar la emisión síncrona y subir la creación a 120 s, en `develop` con `d2b85a1e3`) no
      sale a `main` antes de que el frontend por tandas esté desplegado.
-- **Reajuste de precio de contratos (2026-11-25, en `develop` con `9e57559cc`, sin push).** Cierra la migración de
+- **Reajuste de precio de contratos (2026-11-25, `9e57559cc`; ya en `main` con `6f56c7265`).** Cierra la migración de
   ServiceContracts que había quedado pendiente tras `edc5b1dfc`: sobre `9e57559cc` la API compila y los 30 contextos
   no tienen cambios de modelo pendientes. Las ramas que partieron de `develop` entre esos dos merges traen `develop`;
   **no crean otra migración**.
-  1. **Se mergeó sin pruebas en verde** (orden del owner: no correrlas). Antes de `main`:
+  0. **Seguimiento en `develop` (`fe01048d7`), todavía no en `main`:** guardar una tasa y confirmar un contrato con ella
+     bloquean la fila de `billing.ipc_rates` (sin migración), vuelve la prueba del documento OpenAPI y se precisa el spec.
+     Compila; sus pruebas nunca se ejecutaron.
+  1. **Se mergeó sin pruebas en verde** (orden del owner: no correrlas). Pendiente de confirmar:
      `.\scripts\test-feature.ps1 -Base 3906398e6`, y por clase las integraciones de ServiceContracts,
      `InAppBillingTests`, `BillingEmailTemplatesTests` y `ArchitectureTests`.
   2. **Un solo despliegue, con corte** (backend a cero réplicas o `Recreate`; `k8s/prod-deployment.yaml` es
@@ -582,6 +585,25 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`f0380ab4b`, `--no-ff`, sin push) **SMMLV y piso del salario integral desde 2017**
+  (`feature/seed-salary-floors`, `2a288e003`; rama y worktree borrados). Importar empleados con ingreso anterior a 2024
+  fallaba por falta de valores legales. La migración Hr aditiva `20261125201557_SeedHistoricalSalaryFloors` siembra
+  `Smmlv` e `IntegralSalaryFloor` (13 × SMMLV) de 2017 a 2023 con `ON CONFLICT DO NOTHING`: una vigencia ya cargada por
+  la consola no se modifica. El owner insertó las mismas filas por SQL en producción (verificadas con una consulta de
+  sólo lectura), así que allí la migración no cambia datos; esas filas no quedan en el historial de la consola. No se
+  sembraron los demás parámetros de esos años. Pruebas: integración de Hr filtrada (parámetros legales, reglas de
+  salario e importación) 75/75. **No se completó** `scripts/test-feature.ps1` antes del merge (decisión del owner).
+- 2026-11-25 — Mergeado a `develop` (`a13fa371a`, `--no-ff`, sin push) **menores de la facturación con Siigo**
+  (`fix/siigo-menores`, hasta `592ba7946`; rama y worktree borrados). Un reenvío por tanda que no se puede hacer no
+  queda `Failed` si la factura se está enviando o ya existe (sí si falta mandar la de flete) y muestra por qué no
+  salió; sellar y resolver no responden error cuando la operación quedó guardada («existe» con el pedido que no se puede
+  marcar responde 200 con `orderMarkFailed`); los elementos nulos en los `PUT` de configuración responden 422 y un
+  `page` enorme se recorta. Antes de integrar `develop`, en la rama: Siigo unitarias 452, `Bootstrapper.UnitTests`
+  1134 (sin las clases con contenedores) y `ArchitectureTests` filtrado 94. **Sobre el merge con `develop`: sólo build
+  sin avisos, sin pruebas (decisión del owner), y la integración no corrió.** Sin corregir: «No existe» se ofrece con
+  el pedido en una tanda y responde 409 (pide un campo nuevo y frontend); el envío normal y la recuperación de una
+  tanda pueden mostrar «Facturado» con el flete pendiente; resolver «existe» desde la tanda no muestra el fallo de la
+  marca (el detalle del pedido sí).
 - 2026-11-25 — Mergeado a `develop` (`d2b85a1e3`, sin push) **facturación con Siigo en segundo plano, etapa *contract***
   (`feature/siigo-quitar-emision-sincrona`, hasta `49bfca66e`). Se quita `POST …/orders/{orderId}/siigo-invoice`, toda
   emisión es una tanda y `InvoiceCreateTimeout` sube a 120 s. Conflictos con las correcciones ya adaptadas en

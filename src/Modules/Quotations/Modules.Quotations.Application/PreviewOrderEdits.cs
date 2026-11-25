@@ -24,7 +24,8 @@ public sealed record PreviewOrderEditsQuery(
     IReadOnlyList<string>? ClearedWithholdingTypes = null,
     DateOnly? OrderDate = null,
     Guid? BillingCompanyId = null,
-    IReadOnlyList<OrderItemAddition>? Gifts = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    IReadOnlyList<OrderItemAddition>? Gifts = null,
+    OrderDeliveryEditRequest? Delivery = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -50,7 +51,8 @@ public sealed class PreviewOrderEditsHandler(
     ITenantClock tenantClock,
     IOrderVariantCostLookup costLookup,
     IQuotationGeographyLookup geographyLookup,
-    IWholesaleLinePricing wholesalePricing)
+    IWholesaleLinePricing wholesalePricing,
+    IQuotationCustomerLookup customerLookup)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -66,6 +68,12 @@ public sealed class PreviewOrderEditsHandler(
         var order = await orderRepository.FindUntrackedByIdAsync(
             query.TenantId, new OrderId(query.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(query.OrderId);
+        // Mismo orden que el guardado: el motivo exacto de la entrega antes que la guarda general.
+        if (query.Delivery is not null)
+        {
+            order.EnsureDeliveryEditable();
+        }
+
         if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
@@ -119,6 +127,12 @@ public sealed class PreviewOrderEditsHandler(
         {
             order.SetGlobalScaleFloor(query.GlobalScaleFloor, updatedBy, now);
         }
+
+        // Mismo orden que el guardado: la entrega antes de la facturación y del envío, con las mismas reglas salvo la
+        // parte completa, que el preview no exige mientras la persona teclea.
+        await OrderDeliveryEdits.ApplyAsync(
+            order, query.Delivery, strict: false, customerLookup, geographyLookup, query.TenantId, updatedBy, now,
+            cancellationToken);
 
         // Mismo orden que el guardado: la facturación mueve la retención y el excedente de IVA, así que va antes
         // de recalcular. Sin la regla NIT ni las exigencias de fila completa: el preview no las aplica mientras la persona teclea.

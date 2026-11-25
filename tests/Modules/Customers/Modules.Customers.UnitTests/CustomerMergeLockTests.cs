@@ -74,6 +74,9 @@ public sealed class CustomerMergeLockTests
         public Task MoveOwnedAsync(Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<Customer> ReadSurvivorAsync(Guid tenantId, Guid survivorId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

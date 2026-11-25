@@ -69,15 +69,39 @@ public sealed class SalaryRulesApiTests
         Assert.Equal(1_750_905m, document.RootElement.GetProperty("smmlv").GetDecimal());
     }
 
-    [Fact]
-    public async Task BeforeTwentyTwentyFourIs422Missing()
+    // Los pisos sembrados desde 2017: el integral es 13 veces el SMMLV (10 SMMLV más el 30 % de factor prestacional).
+    [Theory]
+    [InlineData("2017-01-01", 737_717, 9_590_321)]
+    [InlineData("2018-06-30", 781_242, 10_156_146)]
+    [InlineData("2019-06-30", 828_116, 10_765_508)]
+    [InlineData("2020-06-30", 877_803, 11_411_439)]
+    [InlineData("2021-06-30", 908_526, 11_810_838)]
+    [InlineData("2022-06-30", 1_000_000, 13_000_000)]
+    [InlineData("2023-12-31", 1_160_000, 15_080_000)]
+    public async Task AnswersTheSeededHistoricalFloors(string date, int smmlv, int integralFloor)
     {
         var (database, factory) = await OpenAtAsync();
         await using var _ = database;
         using var __ = factory;
         using var client = CreateFullAccess(factory);
 
-        var response = await client.GetAsync(RulesUrl("?date=2023-12-31"), Ct);
+        var response = await client.GetAsync(RulesUrl($"?date={date}"), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        Assert.Equal(smmlv, document.RootElement.GetProperty("smmlv").GetDecimal());
+        Assert.Equal(integralFloor, document.RootElement.GetProperty("integralFloor").GetDecimal());
+    }
+
+    [Fact]
+    public async Task BeforeTwentySeventeenIs422Missing()
+    {
+        var (database, factory) = await OpenAtAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateFullAccess(factory);
+
+        var response = await client.GetAsync(RulesUrl("?date=2016-12-31"), Ct);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         using var document = JsonDocument.Parse(await BodyAsync(response));

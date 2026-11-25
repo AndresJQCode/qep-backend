@@ -5552,7 +5552,9 @@ en esas filas y en los ítems de las tandas.
 - **Cuadre de totales.** Un pedido cuyos totales no cuadran con los de Siigo no se factura. Antes de enviar, el armador compara
   subtotal, IVA y total de los ítems con los del pedido (tolerancia de 1 peso: el pedido sale `Skipped` con
   `siigo.invoice.totals_mismatch`); en Siigo, si los pagos no suman, rechaza con `invalid_total_payments` y la fila queda
-  `Rejected` con el total esperado en `expectedPaymentsTotal`. **No se reintenta solo con el total que propone Siigo.**
+  `Rejected` con el total esperado en `expectedPaymentsTotal`. La excepción es una diferencia de redondeo (hasta 1 peso, sin
+  envíos sin respuesta): el último pago se ajusta al total de Siigo y la factura se reenvía una sola vez con otra clave
+  (`siigo.invoice.payments_adjusted` en la auditoría).
 - «Enviar a la DIAN» nace **apagado** en cada conexión. Con el interruptor apagado la factura queda creada y sin emitir, y una
   persona la revisa en Siigo antes de prenderlo. Una factura emitida no se borra, y no hay empresa de pruebas de Siigo: es la única red.
 - El flete va como un ítem de la factura del pedido o, si la conexión lo pide (`freight_separate_invoice`), en su propia factura.

@@ -251,6 +251,7 @@ public static class OrderResponses
             order.OrderDate,
             order.RequiresShipping,
             order.InvoiceProvider,
-            order.InvoiceNumber);
+            order.InvoiceNumber,
+            DeliveryEditable: order.DeliveryEditable);
     }
 }

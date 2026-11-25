@@ -491,7 +491,7 @@ public static class OrderEndpoints
                 tenantId, orderId, expectedVersion, items, proofs, request.Notes, request.GlobalScaleFloor,
                 request.IsRetail, request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
-                request.ClearedWithholdingTypes, request.OrderDate, ToGiftAdditions(request.Gifts)),
+                request.ClearedWithholdingTypes, request.OrderDate, ToGiftAdditions(request.Gifts), request.Delivery),
             cancellationToken);
         httpContext.Response.Headers.ETag = $"\"{detail.Order.Version}\"";
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
@@ -551,7 +551,7 @@ public static class OrderEndpoints
                 request.Shipping, request.Billing, request.WithholdingTaxRateIds, request.BillingAccount,
                 OperationCityChoices.From(request.OperationCityId, "order"), request.WithholdingPercentages,
                 request.ClearedWithholdingTypes, request.OrderDate, request.BillingCompanyId,
-                ToGiftAdditions(request.Gifts)),
+                ToGiftAdditions(request.Gifts), request.Delivery),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

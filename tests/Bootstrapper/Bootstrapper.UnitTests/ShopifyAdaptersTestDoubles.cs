@@ -389,6 +389,9 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<Customer> ReadSurvivorAsync(Guid tenantId, Guid survivorId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     /// <summary>Por id del fusionado; el que no está no se fusionó.</summary>
     public Dictionary<Guid, Guid> SurvivorsById { get; } = [];
 

@@ -60,6 +60,8 @@ public sealed class SaveIpcRateValidator : AbstractValidator<SaveIpcRateCommand>
 /// <summary>
 /// Guarda la tasa de un año sin pisar nunca en silencio la de otra persona (owner, spec reajuste §6.11): la misma tasa ya
 /// guardada responde sin escribir; si lo guardado no es <c>expectedRate</c>, 409; un año con cambios pendientes no se edita.
+/// Todo se decide con la fila de la tasa bajo candado exclusivo: una confirmación en curso termina antes de que aquí se mire si
+/// el año está en uso, y la que llegue después espera y lee la tasa nueva.
 /// </summary>
 public sealed class SaveIpcRateHandler(
     IExecutionContext executionContext,
@@ -84,11 +86,24 @@ public sealed class SaveIpcRateHandler(
 
         var rate = command.Rate!.Value;
         decimal? expected = command.ExpectedRate.ValueKind == JsonValueKind.Null ? null : command.ExpectedRate.GetDecimal();
-        var stored = await ipcRates.FindAsync(command.TenantId, command.Year, cancellationToken);
+        var (saved, savedInUse) = await SaveAsync(command, rate, expected, cancellationToken);
+
+        // Ya sin transacción: armar la respuesta no tiene por qué sostener el candado.
+        return await ToDtoAsync(saved, savedInUse, cancellationToken);
+    }
+
+    /// <summary>La tasa que queda guardada y si algún cambio pendiente la usa.</summary>
+    private async Task<(IpcRate Rate, bool InUse)> SaveAsync(
+        SaveIpcRateCommand command, decimal rate, decimal? expected, CancellationToken cancellationToken)
+    {
+        // Sin confirmarla (la misma tasa o un rechazo) se revierte al liberarla.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        // El candado primero: «en uso» se consulta después, así que ya cuenta lo que confirmó quien tenía la tasa.
+        var stored = await ipcRates.FindForUpdateAsync(command.TenantId, command.Year, cancellationToken);
         var inUse = (await schedules.ListPendingIpcYearsAsync(command.TenantId, cancellationToken)).Contains(command.Year);
         if (stored?.Rate == rate)
         {
-            return await ToDtoAsync(stored, inUse, cancellationToken);
+            return (stored, inUse);
         }
 
         // El conflicto antes que el uso: quien miraba una tasa vieja tiene que ver primero la nueva.
@@ -129,14 +144,16 @@ public sealed class SaveIpcRateHandler(
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
-        // R-4: el token de versión frenó la escritura porque otra persona guardó en el medio; para quien llama, lo guardado ya
-        // no es lo que esperaba. La primera escritura simultánea sale como billing.concurrent_first_write.
+        // R-4: con la fila bajo candado nadie debería poder cambiarla en el medio; el token de versión queda de respaldo y, si
+        // frena la escritura, para quien llama lo guardado ya no es lo que esperaba. La primera escritura simultánea, que no tiene
+        // fila que bloquear, sale como billing.concurrent_first_write.
         catch (RequestConcurrencyException exception)
         {
             throw RateChanged(exception);
         }
 
-        return await ToDtoAsync(stored, inUse: false, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return (stored, false);
     }
 
     private static ResourceConflictException RateChanged(Exception? inner) =>

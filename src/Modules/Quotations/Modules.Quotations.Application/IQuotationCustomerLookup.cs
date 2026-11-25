@@ -125,7 +125,33 @@ public sealed record QuotationCustomerRef(
     /// <summary>Tipo del documento de la ficha (uno de los siete códigos: NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID), el tipo de <see cref="IdentificationNumber"/>.</summary>
     string? IdentificationType = null,
     /// <summary>The region of a foreign customer (provincia guardada, spec 2026-11-23); null when it has none.</summary>
-    QuotationRegionDto? Region = null);
+    QuotationRegionDto? Region = null,
+    /// <summary>La libreta de perfiles de facturación (spec 2026-11-24), la principal primero. Sólo la trae
+    /// <see cref="IQuotationCustomerLookup.FindAsync"/> (el detalle); <c>FindManyAsync</c> (el Excel) la deja vacía.</summary>
+    IReadOnlyList<QuotationCustomerBillingProfileRef>? BillingProfiles = null,
+    /// <summary>Cuántos perfiles admite un cliente; lo dice Customers.</summary>
+    int BillingProfileLimit = 0);
+
+/// <summary>Un perfil de facturación de la ficha del cliente, resuelto, para que la cotización y el pedido lo copien en su
+/// facturación. Ningún documento guarda su id.</summary>
+public sealed record QuotationCustomerBillingProfileRef(
+    Guid Id,
+    string Name,
+    string? PersonType,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string Address,
+    string Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    QuotationRegionDto? Region,
+    IReadOnlyList<QuotationClientWithholdingRateResponse> WithholdingTaxRates,
+    bool VatSurplus,
+    bool IsPrincipal);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
 /// cotizacion.</summary>
