@@ -8,12 +8,13 @@ public sealed class OrderParty
     {
     }
 
-    private OrderParty(OrderPartyId id, OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details)
+    private OrderParty(
+        OrderPartyId id, OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details, string? fieldPrefix)
     {
         Id = id;
         OrderId = orderId;
         Role = role;
-        Apply(details);
+        Apply(details, fieldPrefix);
     }
 
     public OrderPartyId Id { get; private set; }
@@ -67,8 +68,11 @@ public sealed class OrderParty
             CityName = CityName
         }.HasCompleteCity;
 
-    public static OrderParty Create(OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details) =>
-        new(OrderPartyId.New(), orderId, role, details);
+    /// <param name="fieldPrefix">Con qué clave salen los errores de la parte en el mapa <c>errors</c>; null es
+    /// <c>Parties.{rol}</c>, la forma del cuerpo del alta. La entrega editable usa <c>Delivery.Shipping</c>.</param>
+    public static OrderParty Create(
+        OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details, string? fieldPrefix = null) =>
+        new(OrderPartyId.New(), orderId, role, details, fieldPrefix);
 
     public QuotationPartyDetails ToDetails() => new()
     {
@@ -87,11 +91,12 @@ public sealed class OrderParty
         PostalCode = PostalCode,
     };
 
-    public void Apply(QuotationPartyDetails details)
+    public void Apply(QuotationPartyDetails details, string? fieldPrefix = null)
     {
         var normalized = (Role == QuotationPartyRole.Billing
             ? details with { PostalCode = null }
-            : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null }).Normalized($"Parties.{Role}");
+            : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null })
+            .Normalized(fieldPrefix ?? $"Parties.{Role}");
         Name = normalized.Name;
         IdentificationNumber = normalized.IdentificationNumber;
         PersonType = normalized.PersonType;
