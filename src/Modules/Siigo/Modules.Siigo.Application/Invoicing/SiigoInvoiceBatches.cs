@@ -52,6 +52,18 @@ public interface ISiigoInvoiceBatchRepository
 
     /// <summary>La tanda del tenant con sus pedidos, o <c>null</c> si no existe o es de otro tenant.</summary>
     Task<SiigoInvoiceBatch?> FindAsync(Guid tenantId, Guid batchId, CancellationToken cancellationToken);
+
+    /// <summary>De esos pedidos, los que ya están en un ítem sin terminar (<c>Pending</c> o <c>Sending</c>). Sin tracking.</summary>
+    Task<IReadOnlyList<Guid>> ListOpenOrderIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
+
+    /// <summary>La tanda que tiene a ese pedido sin terminar, o <c>null</c>.</summary>
+    Task<Guid?> FindOpenBatchIdAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    /// <summary>La página pedida (<paramref name="page"/> desde 1) con sus pedidos, de la más nueva a la más vieja, y cuántas tandas
+    /// tiene el tenant.</summary>
+    Task<(IReadOnlyList<SiigoInvoiceBatch> Items, int Total)> SearchAsync(
+        Guid tenantId, int page, int pageSize, CancellationToken cancellationToken);
 }
 
 /// <summary>Lo que pasó al facturar un pedido de una tanda. Una unión cerrada que decide el ejecutor y aplica el worker.</summary>

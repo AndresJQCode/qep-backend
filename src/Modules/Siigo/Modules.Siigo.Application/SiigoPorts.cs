@@ -108,6 +108,10 @@ public interface ISiigoInvoiceRepository
     /// <summary>Todas las filas del pedido (de los dos tipos y de todos los estados), de la más vieja a la más nueva.</summary>
     Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 
+    /// <summary>Las filas del tenant con esos ids, en cualquier estado; las de otro tenant no salen. Sin ids, ninguna.</summary>
+    Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken);
+
     void Add(SiigoInvoice invoice);
 }
 
