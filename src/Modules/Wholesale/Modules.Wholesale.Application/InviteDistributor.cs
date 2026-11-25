@@ -22,7 +22,7 @@ public sealed record InviteDistributorCommand(
     Guid? CityId = null,
     string? CityName = null,
     string? Address = null)
-    : ICommand<DistributorDetailDto>;
+    : ICommand<DistributorDetailDto>, IDistributorProfile;
 
 /// <summary>
 /// Invita a un distribuidor. Orden: 403 → 422 de validación → 404 lista → 422 asesor → 422 empresa → 422 ciudad → 409 documento → 422
@@ -65,16 +65,11 @@ public sealed class InviteDistributorHandler(
             priceLists, members, companies, command.TenantId, command.PriceListId, command.AdvisorId, command.BillingCompanyId,
             cancellationToken);
 
-        // Sólo en Colombia la ciudad es una fila de Geography. Sin esta verificación un CityId inexistente pasaría la invitación
-        // y después haría fallar cada aceptación con companies.company.city_not_found.
-        if (string.Equals(command.Country.Trim(), "CO", StringComparison.OrdinalIgnoreCase)
-            && await cities.FindAsync(command.CityId!.Value, cancellationToken) is null)
-        {
-            throw WholesaleConflicts.CityNotFound();
-        }
+        await DistributorTerms.EnsureCityExistsAsync(cities, command.Country, command.CityId, cancellationToken);
 
         if (await distributors.IdentificationExistsAsync(
-                command.TenantId, command.IdentificationType.Trim().ToUpperInvariant(), command.IdentificationNumber.Trim(), cancellationToken))
+                command.TenantId, command.IdentificationType.Trim().ToUpperInvariant(), command.IdentificationNumber.Trim(),
+                excluding: null, cancellationToken))
         {
             throw WholesaleConflicts.IdentificationTaken();
         }
@@ -141,9 +136,25 @@ public sealed class InviteDistributorHandler(
     }
 }
 
-/// <summary>Las tres verificaciones que repiten invitar y editar.</summary>
+/// <summary>Las verificaciones contra otros datos que repiten invitar y editar.</summary>
 internal static class DistributorTerms
 {
+    /// <summary>
+    /// Sólo en Colombia la ciudad es una fila de Geography. Sin esta verificación un <c>CityId</c> inexistente quedaría en la
+    /// invitación y después haría fallar cada aceptación con <c>companies.company.city_not_found</c>. Sin <c>CityId</c> (sólo
+    /// una invitación vieja que se edita sin tocar la ciudad) no hay qué buscar.
+    /// </summary>
+    public static async Task EnsureCityExistsAsync(
+        IWholesaleCityLookup cities, string country, Guid? cityId, CancellationToken cancellationToken)
+    {
+        if (DistributorProfileValidator.IsColombian(country)
+            && cityId is { } id
+            && await cities.FindAsync(id, cancellationToken) is null)
+        {
+            throw WholesaleConflicts.CityNotFound();
+        }
+    }
+
     public static async Task EnsureValidAsync(
         IWholesalePriceLists priceLists,
         IWholesaleMemberDirectory members,

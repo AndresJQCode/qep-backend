@@ -516,4 +516,84 @@ public sealed class DistributorTests
         Assert.Equal("wholesale.distributor.invalid_transition", error.Code);
         Assert.Equal((Hash1, Hash1), (active.Invitation.TokenHash, invited.Invitation.TokenHash));
     }
+
+    // Decisión del owner 2026-11-24: los datos de la invitación se editan mientras está invitado. Recorta como Invite y, igual
+    // que ChangeNoticeTarget, no sube Version: lo hace ChangeTerms, que corre en el mismo PUT.
+    [Fact]
+    public void ChangeProfileWhileInvitedReplacesAndTrimsEveryDataField()
+    {
+        var distributor = Invite();
+        var cityId = Guid.CreateVersion7();
+
+        var applied = distributor.ChangeProfile(
+            " Compras@Norte.co ", "  Norte Nuevo SAS ", "co", "nit", " 800999888 ", " Luis Gómez ", cityId, null, " Calle 5 # 1-2 ");
+
+        Assert.True(applied);
+        Assert.Equal(
+            ("compras@norte.co", "Norte Nuevo SAS", "CO", "NIT", "800999888", "Luis Gómez", (Guid?)cityId, (string?)null, "Calle 5 # 1-2"),
+            (distributor.Email, distributor.BusinessName, distributor.Country, distributor.IdentificationType,
+                distributor.IdentificationNumber, distributor.ContactName, distributor.CityId, distributor.CityName, distributor.Address));
+        Assert.Equal(1L, distributor.Version);
+    }
+
+    [Fact]
+    public void ChangeProfileTurnsBlankCityNameAndAddressIntoNullAndAnEmptyCityIdIntoNull()
+    {
+        var distributor = InviteAt("CO", Guid.CreateVersion7(), "Medellín", "Calle 1");
+
+        distributor.ChangeProfile("ana@distri.co", "Norte", "CO", "NIT", "900123456", "Ana", Guid.Empty, "  ", "");
+
+        Assert.Equal(((Guid?)null, (string?)null, (string?)null), (distributor.CityId, distributor.CityName, distributor.Address));
+        Assert.False(distributor.HasCompanyCity);
+    }
+
+    [Fact]
+    public void ChangeProfileMovingToAnotherCountryKeepsTheCompanyCityRuleOfThatCountry()
+    {
+        var distributor = InviteAt("CO", Guid.CreateVersion7(), null, null);
+
+        distributor.ChangeProfile("ana@distri.co", "Norte", "ES", "NIF", "X1234567L", "Ana", null, "Madrid", null);
+
+        Assert.Equal(("ES", "NIF", (Guid?)null, "Madrid", true),
+            (distributor.Country, distributor.IdentificationType, distributor.CityId, distributor.CityName, distributor.HasCompanyCity));
+    }
+
+    [Fact]
+    public void ChangeProfileRejectsAnIdentificationTypeThatTheCountryDoesNotAdmit()
+    {
+        var distributor = Invite();
+
+        Assert.Throws<ArgumentException>(() =>
+            distributor.ChangeProfile("ana@distri.co", "Norte", "CO", "NIF", "900123456", "Ana", null, null, null));
+        Assert.Equal(("CO", "NIT"), (distributor.Country, distributor.IdentificationType));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ChangeProfileRejectsBlankRequiredTexts(string blank)
+    {
+        var distributor = Invite();
+
+        Assert.Throws<ArgumentException>(() =>
+            distributor.ChangeProfile("ana@distri.co", blank, "CO", "NIT", "900123456", "Ana", null, null, null));
+        Assert.Throws<ArgumentException>(() =>
+            distributor.ChangeProfile(blank, "Norte", "CO", "NIT", "900123456", "Ana", null, null, null));
+    }
+
+    [Fact]
+    public void ChangeProfileOutsideInvitedDoesNothingAndReturnsFalse()
+    {
+        var active = Active();
+        var blocked = Blocked();
+
+        var changedActive = active.ChangeProfile("otra@distri.co", "Otra SAS", "CO", "NIT", "1", "Otro", null, null, "X");
+        var changedBlocked = blocked.ChangeProfile("otra@distri.co", "Otra SAS", "CO", "NIT", "1", "Otro", null, null, "X");
+
+        Assert.False(changedActive);
+        Assert.False(changedBlocked);
+        Assert.Equal(("ana@distri.co", "Distribuciones Norte SAS", "900123456", (string?)null),
+            (active.Email, active.BusinessName, active.IdentificationNumber, active.Address));
+        Assert.Equal(("ana@distri.co", "Distribuciones Norte SAS"), (blocked.Email, blocked.BusinessName));
+    }
 }

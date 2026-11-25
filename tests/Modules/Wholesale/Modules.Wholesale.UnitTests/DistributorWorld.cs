@@ -77,8 +77,8 @@ internal sealed class DistributorWorld
     public RotateInvitationLinkHandler RotateHandler() => new(Context, Clock, Distributors, UnitOfWork, Audit, Links, Composer());
 
     public UpdateDistributorHandler UpdateHandler() => new(
-        Context, Clock, PriceLists, Distributors, Members, Companies, Tenancy, Phones, WhatsApp, UnitOfWork, Audit, Composer(),
-        new UpdateDistributorValidator());
+        Context, Clock, PriceLists, Distributors, Members, Companies, Cities, Tenancy, Phones, WhatsApp, UnitOfWork, Audit,
+        Composer(), new UpdateDistributorValidator());
 
     public TransitionDistributorHandler TransitionHandler() =>
         new(Context, Clock, Distributors, WhatsApp, Memberships, UnitOfWork, Audit, Events, Composer(),
