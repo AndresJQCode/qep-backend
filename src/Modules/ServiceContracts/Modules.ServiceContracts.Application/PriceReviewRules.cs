@@ -33,6 +33,12 @@ internal static class PriceReviewRules
                 date is not { } value || await IsWithinReviewHorizonAsync(tenantClock, tenantId(command), value, cancellationToken))
             .WithMessage($"The date cannot be more than {LatestReviewDateYearsAhead} years from today.");
 
+    public static IRuleBuilderOptions<T, DateOnly> MustBeAReasonableReviewDate<T>(
+        this IRuleBuilder<T, DateOnly> rule, ITenantClock tenantClock, Func<T, Guid> tenantId) =>
+        rule.MustAsync((command, date, cancellationToken) =>
+                IsWithinReviewHorizonAsync(tenantClock, tenantId(command), date, cancellationToken))
+            .WithMessage($"The date cannot be more than {LatestReviewDateYearsAhead} years from today.");
+
     private static async Task<bool> IsWithinReviewHorizonAsync(
         ITenantClock tenantClock, Guid tenantId, DateOnly date, CancellationToken cancellationToken) =>
         date <= (await tenantClock.GetAsync(tenantId, cancellationToken)).Today.AddYears(LatestReviewDateYearsAhead);
@@ -60,5 +66,9 @@ internal static class PriceReviewRules
     public static IRuleBuilderOptions<T, decimal?> MustBeIpcExtraPoints<T>(this IRuleBuilder<T, decimal?> rule) =>
         rule.NotNull()
             .InclusiveBetween(0m, ServiceContract.MaxIpcExtraPoints)
+            .PrecisionScale(PointsPrecision, PointsScale, ignoreTrailingZeros: true);
+
+    public static IRuleBuilderOptions<T, decimal> MustBeIpcExtraPoints<T>(this IRuleBuilder<T, decimal> rule) =>
+        rule.InclusiveBetween(0m, ServiceContract.MaxIpcExtraPoints)
             .PrecisionScale(PointsPrecision, PointsScale, ignoreTrailingZeros: true);
 }

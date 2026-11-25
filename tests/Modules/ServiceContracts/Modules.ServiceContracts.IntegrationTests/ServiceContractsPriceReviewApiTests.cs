@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.ServiceContracts.Application;
@@ -23,6 +24,10 @@ public sealed class ServiceContractsPriceReviewApiTests
     private const decimal Price = 100000m;
 
     private static readonly Guid Tenant = Guid.Parse(ServiceContractsApiHarness.TenantId);
+
+    private static readonly string[] ScheduledFields = ["newPrice", "effectiveFrom", "reason"];
+
+    private static readonly string[] ReviewFields = ["AdjustmentMode", "IpcExtraPoints", "NextReviewDate"];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -170,7 +175,430 @@ public sealed class ServiceContractsPriceReviewApiTests
             ("Held", (DateOnly?)heldPeriod, (DateOnly?)TenantToday), (heldReview.State, heldReview.ReviewPeriodDate, heldReview.HeldSince));
     }
 
+    [Fact]
+    public async Task SchedulingFromTheReviewMakesItScheduled()
+    {
+        await using var world = await World.OpenAsync();
+        await SeedCallerMembershipAsync(world.Factory, "Caro Cobros");
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Manual);
+        var version = await world.VersionAsync(service);
+
+        var detail = await ReadDetailAsync(await world.ScheduleAsync(service, version, new { newPrice = 120000m, reason = " Más usuarios " }));
+
+        var review = detail.Service.PriceReview;
+        Assert.Equal(("Scheduled", Price, version + 1), (review.State, detail.Service.Price, detail.Service.Version));
+        Assert.Equal(
+            (period, period, 120000m, "Manual", "Más usuarios"),
+            (review.Scheduled!.EffectiveFrom, review.Scheduled.AppliesToPeriodDate, review.Scheduled.NewPrice, review.Scheduled.Source,
+                review.Scheduled.Reason));
+        Assert.Equal("Caro Cobros", review.Scheduled.CreatedBy!.DisplayName);
+        Assert.Empty(detail.Charges);
+        Assert.Equal(1, await CountAuditEntriesAsync(world.Factory, ServiceContractsAuditActions.ServicePriceScheduled, service.ToString()));
+        var fields = await ChangedFieldsOfAsync(world.Factory, ServiceContractsAuditActions.ServicePriceScheduled, service.ToString());
+        Assert.All(ScheduledFields, field => Assert.Contains(field, fields));
+    }
+
+    [Fact]
+    public async Task SchedulingAHeldContractReleasesAndGeneratesNow()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedHeldAsync();
+        var version = await world.VersionAsync(service);
+
+        var detail = await ReadDetailAsync(await world.ScheduleAsync(service, version, new { newPrice = 120000m, reason = "Más usuarios" }));
+
+        var charge = Assert.Single(detail.Charges);
+        Assert.Equal(
+            (period, Later(period, TenantToday.AddDays(5)), 120000m, false),
+            (charge.PeriodDate, charge.DueDate, charge.Amount, charge.PriceUnreviewed));
+        Assert.Equal((120000m, version + 1), (detail.Service.Price, detail.Service.Version));
+        Assert.Null(detail.Service.PriceReview.HeldSince);
+        Assert.Null(detail.Service.PriceReview.Scheduled);
+        Assert.Equal(period.AddMonths(12), detail.Service.PriceReview.NextReviewDate);
+        var change = Assert.Single(detail.PriceChanges);
+        Assert.Equal(("Scheduled", Price, 120000m), (change.Origin, change.PreviousPrice, change.NewPrice));
+    }
+
+    [Fact]
+    public async Task SchedulingErrorsFollowTheContract()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        var review = anchor.AddMonths(3);
+        var ipc = await world.SeedAsync(anchor, anchor, AdjustmentMode.Ipc, review);
+        var paused = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, review, paused: true, name: "Pausado");
+        var cancelled = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, review, name: "Cancelado");
+        await ReadDetailAsync(await world.Manager.SendAsync(
+            WithVersion(HttpMethod.Post, $"{ServiceUrl(cancelled)}/cancel", await world.VersionAsync(cancelled)), Ct));
+        var pending = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, review, name: "Con pendiente");
+        await world.SeedScheduleAsync(pending, 120000m, null);
+
+        async Task ExpectAsync(Guid service, object body, string code)
+        {
+            var version = await world.VersionAsync(service);
+            var response = await world.ScheduleAsync(service, version, body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal(code, await CodeOfAsync(response));
+            Assert.Equal(version, await world.VersionAsync(service));
+        }
+
+        var valid = new { newPrice = 120000m, reason = "Más usuarios" };
+        await ExpectAsync(paused, valid, "billing.service.not_active");
+        await ExpectAsync(cancelled, valid, "billing.service.cancelled");
+        await ExpectAsync(pending, valid, "billing.price_schedule.already_pending");
+        await ExpectAsync(
+            ipc, new { newPrice = 120000m, effectiveFrom = Iso(anchor), reason = "x" }, "billing.price_schedule.period_generated");
+        await ExpectAsync(
+            ipc, new { newPrice = 120000m, effectiveFrom = Iso(review.AddDays(1)), reason = "x" }, "billing.price_schedule.after_review");
+        await ExpectAsync(ipc, new { newPrice = Price, reason = "x" }, "billing.price_schedule.same_price");
+        await ExpectAsync(ipc, new { newPrice = 120000m, reason = "  " }, "billing.service.price_reason_required");
+        Assert.Equal(1, await world.CountSchedulesAsync());
+    }
+
+    [Fact]
+    public async Task AFarReviewOrEffectiveDateIsValidationFailed()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        var service = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, anchor.AddMonths(12));
+        var version = await world.VersionAsync(service);
+
+        var review = await world.ReviewAsync(
+            service, version, new { adjustmentMode = "Manual", ipcExtraPoints = 0m, nextReviewDate = "9999-12-31" });
+        var schedule = await world.ScheduleAsync(
+            service, version, new { newPrice = 120000m, effectiveFrom = "9999-12-31", reason = "x" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, review.StatusCode);
+        Assert.True((await ErrorsOfAsync(review)).TryGetProperty("NextReviewDate", out _));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, schedule.StatusCode);
+        Assert.True((await ErrorsOfAsync(schedule)).TryGetProperty("EffectiveFrom", out _));
+        Assert.Equal(version, await world.VersionAsync(service));
+    }
+
+    [Fact]
+    public async Task SchedulingWithAStaleVersionIs412()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, _) = await world.SeedDueAsync(AdjustmentMode.Manual);
+
+        foreach (var request in ContractActions(service, version: 99))
+        {
+            var response = await world.Manager.SendAsync(request, Ct);
+
+            Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+            Assert.Equal("concurrency.conflict", await CodeOfAsync(response));
+        }
+    }
+
+    [Fact]
+    public async Task SchedulingAndTheOtherContractActionsWithoutIfMatchAre428()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, _) = await world.SeedDueAsync(AdjustmentMode.Manual);
+
+        foreach (var request in ContractActions(service, version: null))
+        {
+            var response = await world.Manager.SendAsync(request, Ct);
+
+            Assert.Equal(HttpStatusCode.PreconditionRequired, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task SchedulingAndTheOtherContractActionsNeedManageAndAKnownService()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, _) = await world.SeedDueAsync(AdjustmentMode.Manual);
+        var version = await world.VersionAsync(service);
+        using var reader = CreateReader(world.Factory);
+
+        foreach (var request in ContractActions(service, version))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await reader.SendAsync(request, Ct)).StatusCode);
+        }
+
+        foreach (var request in ContractActions(Guid.CreateVersion7(), version: 1))
+        {
+            var response = await world.Manager.SendAsync(request, Ct);
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("billing.service.not_found", await CodeOfAsync(response));
+        }
+
+        Assert.Equal(version, await world.VersionAsync(service));
+    }
+
+    [Fact]
+    public async Task CancellingThePendingScheduleBringsBackTheReview()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, _) = await world.SeedDueAsync(AdjustmentMode.Manual);
+        var scheduled = await ReadDetailAsync(await world.ScheduleAsync(
+            service, await world.VersionAsync(service), new { newPrice = 120000m, reason = "Más usuarios" }));
+
+        var detail = await ReadDetailAsync(await world.Manager.SendAsync(
+            WithVersion(HttpMethod.Delete, $"{ServiceUrl(service)}/price-schedule", scheduled.Service.Version), Ct));
+
+        Assert.Equal(("Due", scheduled.Service.Version + 1), (detail.Service.PriceReview.State, detail.Service.Version));
+        Assert.Null(detail.Service.PriceReview.Scheduled);
+        var stored = await world.WithDbAsync(db => db.ServicePriceSchedules.AsNoTracking().SingleAsync(Ct));
+        Assert.Equal(PriceScheduleStatus.Cancelled, stored.Status);
+        Assert.Equal(
+            1, await CountAuditEntriesAsync(world.Factory, ServiceContractsAuditActions.ServicePriceScheduleCancelled, service.ToString()));
+        Assert.Contains(
+            "scheduleId",
+            await ChangedFieldsOfAsync(world.Factory, ServiceContractsAuditActions.ServicePriceScheduleCancelled, service.ToString()));
+    }
+
+    [Fact]
+    public async Task CancellingWithoutPendingIs404()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, _) = await world.SeedDueAsync(AdjustmentMode.Manual);
+
+        var response = await world.Manager.SendAsync(
+            WithVersion(HttpMethod.Delete, $"{ServiceUrl(service)}/price-schedule", await world.VersionAsync(service)), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("billing.price_schedule.not_found", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task KeepingThePriceMovesTheReviewAYearAhead()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var version = await world.VersionAsync(service);
+
+        var detail = await ReadDetailAsync(await world.KeepAsync(service, version));
+
+        Assert.Equal(
+            ("Upcoming", period.AddMonths(12), Price, version + 1),
+            (detail.Service.PriceReview.State, detail.Service.PriceReview.NextReviewDate, detail.Service.Price, detail.Service.Version));
+        Assert.Empty(detail.Charges);
+        Assert.Empty(detail.PriceChanges);
+        Assert.Equal(1, await CountAuditEntriesAsync(world.Factory, ServiceContractsAuditActions.ServicePriceKept, service.ToString()));
+        Assert.Contains(
+            "nextReviewDate",
+            await ChangedFieldsOfAsync(world.Factory, ServiceContractsAuditActions.ServicePriceKept, service.ToString()));
+    }
+
+    [Fact]
+    public async Task KeepingAHeldContractGeneratesAtTheCurrentPrice()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedHeldAsync();
+
+        var detail = await ReadDetailAsync(await world.KeepAsync(service, await world.VersionAsync(service)));
+
+        var charge = Assert.Single(detail.Charges);
+        Assert.Equal(
+            (period, Later(period, TenantToday.AddDays(5)), Price, false),
+            (charge.PeriodDate, charge.DueDate, charge.Amount, charge.PriceUnreviewed));
+        Assert.Null(detail.Service.PriceReview.HeldSince);
+        Assert.Equal(period.AddMonths(12), detail.Service.PriceReview.NextReviewDate);
+    }
+
+    [Fact]
+    public async Task KeepingWithAPendingScheduleIsAlreadyPending()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Manual);
+        await world.SeedScheduleAsync(service, 120000m, null);
+        var version = await world.VersionAsync(service);
+
+        var response = await world.KeepAsync(service, version);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.price_schedule.already_pending", await CodeOfAsync(response));
+        var stored = await world.StoredAsync(service);
+        Assert.Equal((period, (int)version), (stored.NextReviewDate, stored.Version));
+    }
+
+    [Fact]
+    public async Task KeepingThePriceOfAPausedContractIsNotActive()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        var paused = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, anchor.AddMonths(12), paused: true);
+
+        var response = await world.KeepAsync(paused, await world.VersionAsync(paused));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.service.not_active", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task SwitchingAHeldContractToManualGeneratesUnreviewed()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedHeldAsync();
+        var version = await world.VersionAsync(service);
+
+        var detail = await ReadDetailAsync(await world.ReviewAsync(
+            service, version, new { adjustmentMode = "Manual", ipcExtraPoints = 5m, nextReviewDate = Iso(period) }));
+
+        var charge = Assert.Single(detail.Charges);
+        Assert.Equal(
+            (period, Later(period, TenantToday.AddDays(5)), Price, true),
+            (charge.PeriodDate, charge.DueDate, charge.Amount, charge.PriceUnreviewed));
+        var review = detail.Service.PriceReview;
+        Assert.Equal(("Manual", 0m, period.AddMonths(12)), (review.AdjustmentMode, review.IpcExtraPoints, review.NextReviewDate));
+        Assert.Null(review.HeldSince);
+        Assert.Equal(version + 1, detail.Service.Version);
+        // La revisión la movió la generación, no la persona: la auditoría sólo nombra lo que ella cambió.
+        var fields = await ChangedFieldsOfAsync(world.Factory, ServiceContractsAuditActions.ServicePriceReviewUpdated, service.ToString());
+        Assert.Contains("adjustmentMode", fields);
+        Assert.DoesNotContain("ipcExtraPoints", fields);
+        Assert.DoesNotContain("nextReviewDate", fields);
+    }
+
+    [Fact]
+    public async Task MovingTheReviewPastTheHeldPeriodGeneratesWithoutTheUnreviewedMark()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedHeldAsync();
+
+        var detail = await ReadDetailAsync(await world.ReviewAsync(
+            service,
+            await world.VersionAsync(service),
+            new { adjustmentMode = "Ipc", ipcExtraPoints = 1.5m, nextReviewDate = Iso(period.AddMonths(6)) }));
+
+        var charge = Assert.Single(detail.Charges);
+        Assert.Equal(
+            (period, Later(period, TenantToday.AddDays(5)), Price, false),
+            (charge.PeriodDate, charge.DueDate, charge.Amount, charge.PriceUnreviewed));
+        Assert.Null(detail.Service.PriceReview.HeldSince);
+        Assert.Equal(period.AddMonths(6), detail.Service.PriceReview.NextReviewDate);
+        var fields = await ChangedFieldsOfAsync(world.Factory, ServiceContractsAuditActions.ServicePriceReviewUpdated, service.ToString());
+        Assert.Contains("ipcExtraPoints", fields);
+        Assert.Contains("nextReviewDate", fields);
+        Assert.DoesNotContain("adjustmentMode", fields);
+    }
+
+    [Theory]
+    [InlineData(AdjustmentMode.Ipc)]
+    [InlineData(AdjustmentMode.Manual)]
+    public async Task MovingTheReviewBeforeAPendingChangeIsAfterReview(AdjustmentMode current)
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        // En Ipc se adelanta la revisión; en Manual el pendiente ya está después y se intenta pasar a Ipc.
+        var review = current == AdjustmentMode.Ipc ? anchor.AddMonths(12) : anchor.AddMonths(3);
+        var service = await world.SeedAsync(anchor, anchor, current, review);
+        await world.SeedScheduleAsync(service, 120000m, anchor.AddMonths(6));
+        var version = await world.VersionAsync(service);
+
+        var response = await world.ReviewAsync(
+            service, version, new { adjustmentMode = "Ipc", ipcExtraPoints = 0m, nextReviewDate = Iso(anchor.AddMonths(3)) });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.price_schedule.after_review", await CodeOfAsync(response));
+        var stored = await world.StoredAsync(service);
+        Assert.Equal((current, review, (int)version), (stored.AdjustmentMode, stored.NextReviewDate, stored.Version));
+    }
+
+    [Fact]
+    public async Task APausedContractCanEditItsPriceReview()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        var paused = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, anchor.AddMonths(12), paused: true);
+
+        var detail = await ReadDetailAsync(await world.ReviewAsync(
+            paused,
+            await world.VersionAsync(paused),
+            new { adjustmentMode = "Ipc", ipcExtraPoints = 2m, nextReviewDate = Iso(anchor.AddMonths(4)) }));
+
+        var review = detail.Service.PriceReview;
+        Assert.Equal(
+            ("Ipc", 2m, anchor.AddMonths(4), "None"),
+            (review.AdjustmentMode, review.IpcExtraPoints, review.NextReviewDate, review.State));
+        Assert.Empty(detail.Charges);
+    }
+
+    [Fact]
+    public async Task ACancelledContractCannot()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        var service = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, anchor.AddMonths(12));
+        var cancelled = await ReadDetailAsync(await world.Manager.SendAsync(
+            WithVersion(HttpMethod.Post, $"{ServiceUrl(service)}/cancel", await world.VersionAsync(service)), Ct));
+
+        var response = await world.ReviewAsync(
+            service,
+            cancelled.Service.Version,
+            new { adjustmentMode = "Ipc", ipcExtraPoints = 0m, nextReviewDate = Iso(anchor.AddMonths(4)) });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.service.cancelled", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task PointsAboveFiftyAreValidationFailedInThePriceReview()
+    {
+        await using var world = await World.OpenAsync();
+        var anchor = TenantToday.AddMonths(2);
+        var service = await world.SeedAsync(anchor, anchor, AdjustmentMode.Manual, anchor.AddMonths(12));
+        var version = await world.VersionAsync(service);
+
+        var points = await world.ReviewAsync(
+            service, version, new { adjustmentMode = "Ipc", ipcExtraPoints = 50.01m, nextReviewDate = Iso(anchor.AddMonths(4)) });
+        var empty = await world.ReviewAsync(service, version, new { });
+        var generated = await world.ReviewAsync(
+            service, version, new { adjustmentMode = "Ipc", ipcExtraPoints = 0m, nextReviewDate = Iso(anchor) });
+
+        Assert.Equal("validation.failed", await CodeOfAsync(points));
+        Assert.True((await ErrorsOfAsync(points)).TryGetProperty("IpcExtraPoints", out _));
+        var errors = await ErrorsOfAsync(empty);
+        Assert.All(ReviewFields, field => Assert.True(errors.TryGetProperty(field, out _), field));
+        Assert.Equal("billing.service.review_date_invalid", await CodeOfAsync(generated));
+        Assert.Equal(version, await world.VersionAsync(service));
+    }
+
     private static string ServiceUrl(Guid serviceId) => $"{ServiceContractsUrl()}/services/{serviceId}";
+
+    private static string Iso(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private static DateOnly Later(DateOnly first, DateOnly second) => first > second ? first : second;
+
+    /// <summary>Las cuatro acciones por contrato, cada una con un cuerpo válido.</summary>
+    private static HttpRequestMessage[] ContractActions(Guid serviceId, long? version) =>
+    [
+        WithVersion(
+            HttpMethod.Put, $"{ServiceUrl(serviceId)}/price-review", version,
+            new { adjustmentMode = "Manual", ipcExtraPoints = 0m, nextReviewDate = Iso(TenantToday.AddYears(1)) }),
+        WithVersion(
+            HttpMethod.Post, $"{ServiceUrl(serviceId)}/price-schedule", version, new { newPrice = 120000m, reason = "Más usuarios" }),
+        WithVersion(HttpMethod.Delete, $"{ServiceUrl(serviceId)}/price-schedule", version),
+        WithVersion(HttpMethod.Post, $"{ServiceUrl(serviceId)}/keep-price", version),
+    ];
+
+    private static async Task<string?> CodeOfAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.TryGetProperty("code", out var code) ? code.GetString() : null;
+    }
+
+    private static async Task<JsonElement> ErrorsOfAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.GetProperty("errors").Clone();
+    }
+
+    private static async Task<string> ChangedFieldsOfAsync(QepApiFactory factory, string action, string resourceId)
+    {
+        await using var connection = new NpgsqlConnection(
+            factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("QepDatabase")!);
+        await connection.OpenAsync(Ct);
+        await using var select = new NpgsqlCommand(
+            "SELECT changed_fields::text FROM audit.entries WHERE action = @action AND resource_id = @id ORDER BY occurred_at DESC LIMIT 1",
+            connection);
+        select.Parameters.AddWithValue("action", action);
+        select.Parameters.AddWithValue("id", resourceId);
+        return (string)(await select.ExecuteScalarAsync(Ct))!;
+    }
 
     private static HttpRequestMessage WithVersion(HttpMethod method, string url, long? version, object? body = null)
     {
@@ -346,6 +774,17 @@ public sealed class ServiceContractsPriceReviewApiTests
 
         public async Task<ServiceDetailDto> DetailAsync(Guid serviceId) =>
             await ReadDetailAsync(await Manager.GetAsync(ServiceUrl(serviceId), Ct));
+
+        public Task<HttpResponseMessage> ScheduleAsync(Guid serviceId, long version, object body) =>
+            Manager.SendAsync(WithVersion(HttpMethod.Post, $"{ServiceUrl(serviceId)}/price-schedule", version, body), Ct);
+
+        public Task<HttpResponseMessage> ReviewAsync(Guid serviceId, long version, object body) =>
+            Manager.SendAsync(WithVersion(HttpMethod.Put, $"{ServiceUrl(serviceId)}/price-review", version, body), Ct);
+
+        public Task<HttpResponseMessage> KeepAsync(Guid serviceId, long version) =>
+            Manager.SendAsync(WithVersion(HttpMethod.Post, $"{ServiceUrl(serviceId)}/keep-price", version), Ct);
+
+        public Task<int> CountSchedulesAsync() => WithDbAsync(db => db.ServicePriceSchedules.CountAsync(Ct));
 
         public Task<ServiceContract> StoredAsync(Guid serviceId) =>
             WithDbAsync(async db =>

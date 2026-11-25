@@ -443,6 +443,18 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.ServiceContracts.Application.DeleteServiceCommand, bool>,
             Modules.ServiceContracts.Application.DeleteServiceHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.UpdatePriceReviewCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.UpdatePriceReviewHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.SchedulePriceChangeCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.SchedulePriceChangeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.CancelPriceScheduleCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.CancelPriceScheduleHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.KeepPriceCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.KeepPriceHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.ServiceContracts.Application.ListChargesQuery, Modules.ServiceContracts.Application.ChargePageDto>,
             Modules.ServiceContracts.Application.ListChargesHandler>();
         services.AddScoped<
