@@ -120,7 +120,7 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
             .HasConversion<string>()
             .HasMaxLength(16);
         service.Property(value => value.ReactivatedOn).HasColumnName("reactivated_on");
-        service.Property(value => value.LastGeneratedDueDate).HasColumnName("last_generated_due_date");
+        service.Property(value => value.LastGeneratedPeriodDate).HasColumnName("last_generated_due_date");
         service.Property(value => value.Version)
             .HasColumnName("version")
             .HasColumnType("bigint")

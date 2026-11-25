@@ -2,14 +2,18 @@ namespace Modules.ServiceContracts.Domain;
 
 /// <summary>
 /// Un servicio recurrente que el tenant le cobra a un cliente. Guarda la ancla
-/// (<see cref="FirstDueDate"/>) y hasta qué vencimiento ya generó cobros
-/// (<see cref="LastGeneratedDueDate"/>); los cobros en sí son <see cref="Charge"/>.
+/// (<see cref="FirstDueDate"/>) y hasta qué período ya generó cobros
+/// (<see cref="LastGeneratedPeriodDate"/>); los cobros en sí son <see cref="Charge"/>.
 /// </summary>
 public sealed class ServiceContract
 {
     public const int NameMaxLength = 150;
 
     public const int DescriptionMaxLength = 1000;
+
+    public const decimal MaxIpcExtraPoints = 50m;
+
+    private const int UpcomingPeriodsLimit = 12;
 
     // EF Core materializa por acá; Create es el único punto de entrada de código.
     private ServiceContract()
@@ -43,7 +47,19 @@ public sealed class ServiceContract
     /// <summary>Cuándo se reanudó por última vez; sirve para saltar los períodos pausados.</summary>
     public DateOnly? ReactivatedOn { get; private set; }
 
-    public DateOnly? LastGeneratedDueDate { get; private set; }
+    /// <summary>El último período generado. La columna conserva su nombre desplegado, <c>last_generated_due_date</c>.</summary>
+    public DateOnly? LastGeneratedPeriodDate { get; private set; }
+
+    public AdjustmentMode AdjustmentMode { get; private set; }
+
+    /// <summary>Los puntos que se suman al IPC; 0 en <c>Manual</c>.</summary>
+    public decimal IpcExtraPoints { get; private set; }
+
+    /// <summary>Desde cuándo se revisa el precio (spec reajuste §5).</summary>
+    public DateOnly NextReviewDate { get; private set; }
+
+    /// <summary>Desde cuándo está retenido el cobro de la revisión; nulo si no lo está.</summary>
+    public DateOnly? HeldSince { get; private set; }
 
     public int Version { get; private set; }
 
@@ -81,6 +97,10 @@ public sealed class ServiceContract
             Cycle = cycle,
             FirstDueDate = firstDueDate,
             Status = ServiceContractStatus.Active,
+            // Provisional hasta que InitializePriceReview la fije, después de la generación del alta.
+            AdjustmentMode = AdjustmentMode.Manual,
+            IpcExtraPoints = ToMoney(0m),
+            NextReviewDate = firstDueDate.AddMonths(12),
             Version = 1,
             CreatedAt = now,
             UpdatedAt = now,
@@ -124,13 +144,92 @@ public sealed class ServiceContract
 
         return reason is null
             ? null
-            : ServicePriceChange.Record(this, previousPrice, previousCurrency, reason, changedByMemberId, now);
+            : ServicePriceChange.Record(
+                this, previousPrice, previousCurrency, reason, changedByMemberId, PriceChangeOrigin.Edit, null, now);
+    }
+
+    /// <summary>
+    /// El reajuste con que nace un contrato creado o importado. Se llama <b>después</b> de generar: la revisión por defecto
+    /// depende del último período generado. No toca <see cref="Version"/>, que en el alta sigue siendo 1.
+    /// </summary>
+    public void InitializePriceReview(AdjustmentMode mode, decimal ipcExtraPoints, DateOnly? nextReviewDate) =>
+        SetPriceReview(mode, ipcExtraPoints, nextReviewDate ?? DefaultNextReviewDate());
+
+    /// <summary>
+    /// La edición del reajuste; se permite en pausa. No libera una retención: eso lo decide la generación que quien llama corre
+    /// después, en la misma transacción.
+    /// </summary>
+    public void UpdatePriceReview(AdjustmentMode mode, decimal ipcExtraPoints, DateOnly nextReviewDate, DateTimeOffset now)
+    {
+        EnsureNotCancelled();
+        SetPriceReview(mode, ipcExtraPoints, nextReviewDate);
+        Touch(now);
+    }
+
+    /// <summary>El primer aniversario del ancla posterior a lo último generado (o al ancla si no generó nada).</summary>
+    public DateOnly DefaultNextReviewDate()
+    {
+        var after = LastGeneratedPeriodDate ?? FirstDueDate;
+        var years = 1;
+        while (FirstDueDate.AddMonths(12 * years) <= after)
+        {
+            years++;
+        }
+
+        return FirstDueDate.AddMonths(12 * years);
+    }
+
+    /// <summary>
+    /// La regla única de «la revisión quedó resuelta» (spec reajuste §5): suma los años enteros que hagan falta para quedar
+    /// después de <paramref name="resolved"/>, en una sola suma para no perder el día elegido (29 de febrero). Tras una pausa
+    /// larga queda una sola revisión, no una por cada año saltado.
+    /// </summary>
+    public void AdvanceReview(DateOnly resolved)
+    {
+        var years = 1;
+        while (NextReviewDate.AddMonths(12 * years) <= resolved)
+        {
+            years++;
+        }
+
+        NextReviewDate = NextReviewDate.AddMonths(12 * years);
+    }
+
+    /// <summary>«Mantener precio»: resuelve la revisión vigente sin tocar el precio.</summary>
+    public void KeepPrice(DateTimeOffset now)
+    {
+        EnsureCanChangePrice();
+        AdvanceReview(PriceReview.ReviewPeriodOf(this));
+        Touch(now);
+    }
+
+    /// <summary>
+    /// Los próximos períodos sin generar, para elegir desde cuándo programar. En <c>Ipc</c> sólo hasta la revisión inclusive:
+    /// un cambio posterior violaría <see cref="PriceReview.EnsureNotAfterReview"/>.
+    /// </summary>
+    public IReadOnlyList<DateOnly> UpcomingPeriods()
+    {
+        if (NextPeriodToGenerate() is not { } period)
+        {
+            return [];
+        }
+
+        var last = AdjustmentMode == AdjustmentMode.Ipc ? PriceReview.ReviewPeriodOf(this) : DateOnly.MaxValue;
+        var periods = new List<DateOnly>(UpcomingPeriodsLimit);
+        while (periods.Count < UpcomingPeriodsLimit && period <= last)
+        {
+            periods.Add(period);
+            period = BillingCycles.NextDueDate(FirstDueDate, Cycle, period);
+        }
+
+        return periods;
     }
 
     public void Pause(DateTimeOffset now)
     {
         RequireStatus(ServiceContractStatus.Active);
         Status = ServiceContractStatus.Paused;
+        HeldSince = null;
         StatusChangedAt = now;
         Touch(now);
     }
@@ -152,23 +251,23 @@ public sealed class ServiceContract
         }
 
         Status = ServiceContractStatus.Cancelled;
+        HeldSince = null;
         StatusChangedAt = now;
         Touch(now);
     }
 
-    /// <summary>
-    /// El próximo vencimiento a generar (spec §3.2), o null si el servicio no está activo. Tras una
-    /// reanudación se salta lo que cayó en la pausa: la primera ancla igual o posterior a la fecha
-    /// de reactivación.
-    /// </summary>
-    public DateOnly? NextDueDateToGenerate()
-    {
-        if (Status != ServiceContractStatus.Active)
-        {
-            return null;
-        }
+    /// <summary>El próximo período a generar (spec §3.2), o null si el servicio no está activo.</summary>
+    public DateOnly? NextPeriodToGenerate() =>
+        Status == ServiceContractStatus.Active ? NextUngeneratedPeriod() : null;
 
-        if (LastGeneratedDueDate is not { } last)
+    /// <summary>
+    /// El primer período sin generar, mire o no el estado: lo necesitan la revisión de un contrato pausado y la invariante del
+    /// reajuste. Tras una reanudación se salta lo que cayó en la pausa: la primera ancla igual o posterior a la fecha de
+    /// reactivación.
+    /// </summary>
+    public DateOnly NextUngeneratedPeriod()
+    {
+        if (LastGeneratedPeriodDate is not { } last)
         {
             return FirstDueDate;
         }
@@ -178,7 +277,33 @@ public sealed class ServiceContract
             : BillingCycles.NextDueDate(FirstDueDate, Cycle, last);
     }
 
-    public void MarkGenerated(DateOnly dueDate) => LastGeneratedDueDate = dueDate;
+    public void MarkGenerated(DateOnly periodDate) => LastGeneratedPeriodDate = periodDate;
+
+    /// <summary>La retención desde <paramref name="today"/>; cuándo es nueva y cuándo se conserva lo decide la generación.</summary>
+    internal void Hold(DateOnly today) => HeldSince = today;
+
+    internal void ReleaseHold() => HeldSince = null;
+
+    /// <summary>
+    /// Aplica un cambio programado en <paramref name="period"/>: el contrato toma el precio, el programado queda aplicado y se
+    /// devuelve la fila del historial, firmada por quien lo programó. Como la generación, no es una edición:
+    /// <see cref="UpdatedAt"/> no se toca y la versión la sube quien guarda.
+    /// </summary>
+    internal ServicePriceChange ApplyScheduledPrice(ServicePriceSchedule schedule, DateOnly period, DateTimeOffset now)
+    {
+        schedule.Apply(period, now);
+        var previousPrice = Price;
+        Price = ToMoney(schedule.NewPrice);
+        return ServicePriceChange.Record(
+            this,
+            previousPrice,
+            Currency,
+            schedule.Reason,
+            schedule.CreatedByMemberId,
+            schedule.Source == PriceScheduleSource.Ipc ? PriceChangeOrigin.Ipc : PriceChangeOrigin.Scheduled,
+            schedule.Id,
+            now);
+    }
 
     /// <summary>
     /// Lo llama la corrida diaria cuando generó cobros sobre un servicio ya guardado. Sin esto, una cancelación que cargó el servicio
@@ -194,7 +319,7 @@ public sealed class ServiceContract
     /// devuelve después, y los cobros que copian el precio heredan la misma escala. El validador del borde ya rechaza más de dos
     /// decimales; acá nunca se pierde un dígito significativo.
     /// </summary>
-    private static decimal ToMoney(decimal value) => decimal.Round(value, 2) + 0.00m;
+    internal static decimal ToMoney(decimal value) => decimal.Round(value, 2) + 0.00m;
 
     private static (string Name, string Currency) Validate(string name, decimal price, string currency)
     {
@@ -236,7 +361,8 @@ public sealed class ServiceContract
         return clean;
     }
 
-    private static string ValidateReason(string? reason)
+    /// <summary>El motivo de un cambio de precio, ya recortado; lo comparten la edición y el cambio programado.</summary>
+    internal static string ValidateReason(string? reason)
     {
         var clean = reason?.Trim() ?? string.Empty;
         if (clean.Length == 0)
@@ -254,6 +380,50 @@ public sealed class ServiceContract
         return clean;
     }
 
+    /// <summary>Programar un precio y mantenerlo exigen un contrato activo; cancelado y pausado se distinguen por su código.</summary>
+    internal void EnsureCanChangePrice()
+    {
+        EnsureNotCancelled();
+        if (Status != ServiceContractStatus.Active)
+        {
+            throw new ServiceContractsDomainException(ServiceContractsErrorCodes.ServiceNotActive, "The service is not active.");
+        }
+    }
+
+    private void EnsureNotCancelled()
+    {
+        if (Status == ServiceContractStatus.Cancelled)
+        {
+            throw new ServiceContractsDomainException(ServiceContractsErrorCodes.ServiceCancelled, "A cancelled service cannot be edited.");
+        }
+    }
+
+    private void SetPriceReview(AdjustmentMode mode, decimal ipcExtraPoints, DateOnly nextReviewDate)
+    {
+        if (ipcExtraPoints is < 0 or > MaxIpcExtraPoints)
+        {
+            throw new ServiceContractsDomainException(
+                ServiceContractsErrorCodes.ServiceInvalid, $"The IPC extra points must be between 0 and {MaxIpcExtraPoints}.");
+        }
+
+        if (LastGeneratedPeriodDate is { } last && nextReviewDate <= last)
+        {
+            throw new ServiceContractsDomainException(
+                ServiceContractsErrorCodes.ServiceReviewDateInvalid, "The next review date must be after the last generated period.");
+        }
+
+        AdjustmentMode = mode;
+        IpcExtraPoints = ToMoney(mode == AdjustmentMode.Ipc ? ipcExtraPoints : 0m);
+        NextReviewDate = nextReviewDate;
+    }
+
+    // Internal porque programar y cancelar un cambio de precio también cuentan como editar el contrato.
+    internal void Touch(DateTimeOffset now)
+    {
+        Version++;
+        UpdatedAt = now;
+    }
+
     private void RequireStatus(ServiceContractStatus expected)
     {
         if (Status != expected)
@@ -264,10 +434,4 @@ public sealed class ServiceContract
 
     private ServiceContractsDomainException InvalidTransition() =>
         new(ServiceContractsErrorCodes.ServiceInvalidTransition, $"The service is {Status} and cannot make that transition.");
-
-    private void Touch(DateTimeOffset now)
-    {
-        Version++;
-        UpdatedAt = now;
-    }
 }

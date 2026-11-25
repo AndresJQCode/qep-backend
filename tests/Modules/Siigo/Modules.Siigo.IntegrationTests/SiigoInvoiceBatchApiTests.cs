@@ -367,6 +367,49 @@ public sealed class SiigoInvoiceBatchApiTests
             (item.Status, item.InvoiceNumber, item.InvoiceId, item.OrderMarkFailed));
     }
 
+    // Spec frontend 2026-11-24, H-1: «Generar» es una tanda de ese pedido. La factura ya existe y sólo falta la marca: la tanda se acepta,
+    // marca el pedido y no vuelve a llamar a Siigo. Es la garantía que hace falta antes de quitar la ruta síncrona.
+    [Fact]
+    public async Task ABatchOfAnOrderWhoseInvoiceWasNotMarkedMarksItWithoutCallingSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        // Sólo el primer envío llega a Siigo (se comprueba al final): alguien marca el pedido a mano en medio y la marca de Siigo falla.
+        world.Siigo.OnRequest("/v1/invoices", _ =>
+        {
+            ExecuteAsync(
+                world.ConnectionString,
+                "UPDATE quotations.orders SET invoiced_at = now(), invoiced_by = @by WHERE id = @id",
+                ("by", Guid.CreateVersion7()), ("id", world.OrderId)).GetAwaiter().GetResult();
+            return Created("FV-1-123", "id-1", 0m);
+        });
+        var firstId = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        Assert.True(Item(await GetBatchAsync(world, firstId), 0).GetProperty("orderMarkFailed").GetBoolean());
+
+        // Se quita la marca manual: la factura sigue creada y el pedido, sin marcar.
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE quotations.orders SET invoiced_at = NULL, invoiced_by = NULL WHERE id = @id",
+            ("id", world.OrderId));
+        Assert.False((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
+
+        var response = await PostBatchAsync(world, world.OrderId);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var secondId = (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetGuid();
+        await DrainAsync(world);
+
+        var item = Item(await GetBatchAsync(world, secondId), 0);
+        Assert.Equal(
+            ("Invoiced", "FV-1-123", false),
+            (item.GetProperty("status").GetString(), item.GetProperty("invoiceNumber").GetString(), item.GetProperty("orderMarkFailed").GetBoolean()));
+        var order = await GetOrderAsync(world);
+        Assert.Equal(
+            (true, "FV-1-123"),
+            (order.GetProperty("invoiced").GetBoolean(), order.GetProperty("invoiceNumber").GetString()));
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
     [Fact]
     public async Task DrainingAgainNeverInvoicesAnOrderTwice()
     {

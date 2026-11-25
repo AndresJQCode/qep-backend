@@ -192,7 +192,7 @@ public sealed class ServiceContractApiTests
         Assert.Equal(PastAnchor(3), detail.Service.NextCharge!.DueDate);
     }
 
-    // Task 2 diferido (a): NextDueDateToGenerate ignora la reactivación cuando nunca generó; es inalcanzable porque crear siempre
+    // Task 2 diferido (a): NextPeriodToGenerate ignora la reactivación cuando nunca generó; es inalcanzable porque crear siempre
     // genera el primer cobro. Si alguien deja de generar al crear, esta prueba lo atrapa.
     [Fact]
     public async Task CreateAlwaysGeneratesTheFirstChargeSoAPauseAndResumeNeverSeesAnUngeneratedService()
@@ -211,8 +211,8 @@ public sealed class ServiceContractApiTests
         var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
         var stored = await new ServiceContractRepository(db)
             .FindAsync(Tenant, new ServiceContractId(created.Service.Id), Ct);
-        Assert.NotNull(stored!.LastGeneratedDueDate);
-        Assert.Equal(created.Service.FirstDueDate, stored.LastGeneratedDueDate);
+        Assert.NotNull(stored!.LastGeneratedPeriodDate);
+        Assert.Equal(created.Service.FirstDueDate, stored.LastGeneratedPeriodDate);
     }
 
     [Fact]

@@ -360,7 +360,8 @@ public sealed class Distributor
     /// <summary>
     /// Spec 2026-11-19 §6: el correo de la cuenta que acepta reemplaza al que escribió el mayorista. Sólo mientras está invitada
     /// (después es <c>wholesale.distributor.invalid_transition</c>) y normalizado como al invitar. Devuelve <c>true</c> y sube
-    /// <see cref="Version"/> sólo si cambió: el mismo correo con otras mayúsculas o espacios no escribe nada.
+    /// <see cref="Version"/> sólo si cambió: el mismo correo con otras mayúsculas o espacios no escribe nada. Un cambio anula la
+    /// prueba de buzón (spec 2026-11-24): era del correo anterior.
     /// </summary>
     public bool ReplaceEmail(string email, DateTimeOffset now)
     {
@@ -372,6 +373,7 @@ public sealed class Distributor
             return false;
         }
 
+        Invitation.ForgetEmailProof();
         Email = normalized;
         Touch(now);
         return true;
@@ -383,14 +385,17 @@ public sealed class Distributor
 
     /// <summary>
     /// Spec 2026-11-24: si quien acepta demuestra que controla el buzón invitado. Sólo mientras está invitada, con la prueba
-    /// vigente (<paramref name="emailProofHash"/> es su SHA-256, comparado en tiempo constante) y con el correo invitado. El
-    /// vencimiento lo revisa quien acepta, antes, en el mismo request.
+    /// vigente (<paramref name="emailProofHash"/> es su SHA-256, comparado en tiempo constante) y con el correo invitado,
+    /// normalizado como al invitar y comparado carácter a carácter: así lo distingue Identity, y comparar sin mayúsculas daría
+    /// por iguales direcciones que allá son cuentas distintas. El vencimiento lo revisa quien acepta, antes, en el mismo
+    /// request.
     /// </summary>
     public bool ProvesInvitedMailbox(string emailProofHash, string? email) =>
         Status == DistributorStatus.Invited
         && Invitation.EmailProofHash is { } stored
         && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(stored), Encoding.ASCII.GetBytes(emailProofHash))
-        && InvitedEmailMatches(email);
+        && !string.IsNullOrWhiteSpace(email)
+        && NormalizeEmail(email) == Email;
 
     /// <summary>
     /// Deja constancia de que una aceptación va a escribir en otros módulos; se confirma <b>antes</b> de esa primera escritura.
