@@ -54,6 +54,10 @@ internal sealed class SiigoUnitOfWork(SiigoDbContext dbContext) : ISiigoUnitOfWo
         // §5.6: ya hay una factura vigente de ese tipo para el pedido; el candado da la respuesta amable y el índice cierra la carrera.
         DbUpdateException update when IsUniqueViolation(update, SiigoDbContext.InvoicesTenantOrderKindIndex) => new ResourceConflictException(
             SiigoErrorCodes.InvoiceAlreadyExists, "The order already has a current Siigo invoice of that kind.", exception),
+        // Spec 2026-11-24 §1: otra tanda tomó el pedido entre la consulta del handler y este guardado.
+        DbUpdateException update when IsUniqueViolation(update, SiigoDbContext.InvoiceBatchItemsTenantOrderOpenIndex) =>
+            new ResourceConflictException(
+                SiigoErrorCodes.InvoiceBatchOrderInProgress, "An order is already in an unfinished invoice batch.", exception),
         _ => null,
     };
 

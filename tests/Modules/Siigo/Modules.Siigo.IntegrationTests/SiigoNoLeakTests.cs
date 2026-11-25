@@ -1,11 +1,15 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
 using Modules.Quotations.Domain;
 using Modules.Siigo.Application;
+using Modules.Siigo.Infrastructure.Batches;
 using static Modules.Siigo.IntegrationTests.InvoiceWhatsAppHarness;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
 using static Modules.Siigo.IntegrationTests.SiigoInvoicingHarness;
@@ -114,6 +118,45 @@ public sealed class SiigoNoLeakTests
             Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(secret, StringComparison.Ordinal));
             Assert.DoesNotContain(secret, audit, StringComparison.Ordinal);
             Assert.Empty(bodies.Where(entry => entry.Body.Contains(secret, StringComparison.Ordinal)).Select(entry => $"{entry.Call} lleva «{secret}»: {entry.Body}"));
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-11-24 §5: la tanda, su lista, su detalle y la lista del pedido leen la fila de la factura, pero nunca devuelven la
+    /// petición, la clave de idempotencia ni los mensajes de Siigo: de un error sólo viaja su código.
+    /// </summary>
+    [Fact]
+    public async Task TheBatchRoutesNeverCarryTheRequestTheKeyOrSiigoMessages()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(
+            HttpStatusCode.BadRequest, """{"Errors":[{"Code":"documents_service","Message":"CLIENTE-SENTINEL"}]}"""));
+        var batches = $"/api/v1/tenants/{world.TenantId}/siigo/invoice-batches";
+
+        var created = await world.Client.PostAsJsonAsync(batches, new { orderIds = new[] { world.OrderId } }, Ct);
+        Assert.Equal(HttpStatusCode.Accepted, created.StatusCode);
+        var createdBody = await created.Content.ReadAsStringAsync(Ct);
+        using var createdJson = JsonDocument.Parse(createdBody);
+        await world.Factory.Services.GetServices<IHostedService>().OfType<SiigoInvoiceBatchWorker>().Single().DrainAsync(Ct);
+        var list = await world.Client.GetStringAsync(batches, Ct);
+        var detail = await world.Client.GetStringAsync($"{batches}/{createdJson.RootElement.GetProperty("id").GetGuid()}", Ct);
+        var invoices = await world.Client.GetStringAsync(world.BaseRoute, Ct);
+
+        // Control positivo: Siigo recibió la petición y el ítem quedó enlazado a la fila, con el código que repitió.
+        Assert.Single(InvoiceCalls(world.Siigo));
+        using var detailJson = JsonDocument.Parse(detail);
+        Assert.Equal(
+            ["documents_service"],
+            detailJson.RootElement.GetProperty("items")[0].GetProperty("siigoErrors").EnumerateArray().Select(code => code.GetString()));
+        var key = await ScalarAsync<string>(world.ConnectionString, "SELECT idempotency_key FROM siigo.invoices");
+        Assert.False(string.IsNullOrWhiteSpace(key));
+        foreach (var body in new[] { createdBody, list, detail, invoices })
+        {
+            foreach (var secret in new[] { "SENTINEL", "requestJson", "request_json", key })
+            {
+                Assert.DoesNotContain(secret, body, StringComparison.OrdinalIgnoreCase);
+            }
         }
     }
 

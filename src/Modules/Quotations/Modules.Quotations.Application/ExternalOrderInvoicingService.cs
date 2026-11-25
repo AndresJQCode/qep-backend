@@ -137,6 +137,30 @@ public sealed class ExternalOrderInvoicingService(
     public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
         (await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken))?.Version;
 
+    public async Task<bool> IsMarkedAsync(
+        Guid tenantId, Guid orderId, string provider, string number, CancellationToken cancellationToken) =>
+        await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken) is { IsInvoiced: true } order
+        && string.Equals(order.InvoiceProvider, provider, StringComparison.Ordinal)
+        && string.Equals(order.InvoiceNumber, number, StringComparison.Ordinal);
+
+    public async Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
+    {
+        var rows = await orders.FindNumbersAndClientsAsync(
+            tenantId, [.. orderIds.Distinct().Select(id => new OrderId(id))], cancellationToken);
+        if (rows.Count == 0)
+        {
+            return new Dictionary<Guid, ExternalInvoicingOrderLabel>();
+        }
+
+        // El nombre, como en la lista de pedidos (OrderListing): una sola consulta para todos los clientes.
+        var names = await customerLookup.FindNamesAsync(
+            tenantId, [.. rows.Values.Select(row => row.ClientId).Distinct()], cancellationToken);
+        return rows.ToDictionary(
+            row => row.Key.Value,
+            row => new ExternalInvoicingOrderLabel(row.Value.OrderNumber, names.GetValueOrDefault(row.Value.ClientId)));
+    }
+
     public async Task MarkInvoicedAsync(
         Guid tenantId,
         Guid orderId,

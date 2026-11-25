@@ -78,6 +78,10 @@ public sealed record ExternalInvoicingOrder(
     string? ShippingAddress = null,
     string? ShippingCity = null);
 
+/// <summary>Cómo se nombra un pedido en una lista del facturador: el número y el cliente que muestra <c>/orders</c>
+/// (<paramref name="CustomerName"/> es <c>null</c> si la ficha ya no resuelve).</summary>
+public sealed record ExternalInvoicingOrderLabel(string OrderNumber, string? CustomerName);
+
 /// <summary>
 /// El puerto que un facturador externo (Siigo) usa sobre los pedidos (spec 2026-11-18 §5.5). El adaptador vive en Bootstrapper; este
 /// puerto es de Quotations y lo implementa <see cref="ExternalOrderInvoicingService"/>.
@@ -94,6 +98,16 @@ public interface IExternalOrderInvoicing
     /// <summary>La versión actual del pedido, o <c>null</c> si no es del tenant. Sin las precondiciones de <see cref="GetForInvoicingAsync"/>:
     /// el facturador la compara con la que armó, después de crear la factura, para avisar que el pedido cambió.</summary>
     Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
+
+    /// <summary>Si el pedido ya lleva la marca de esa factura (mismo proveedor y número, la misma regla con que
+    /// <see cref="MarkInvoicedAsync"/> no hace nada). Sólo lee. <c>false</c> también si no es del tenant, si está marcado a mano o con
+    /// otra factura.</summary>
+    Task<bool> IsMarkedAsync(Guid tenantId, Guid orderId, string provider, string number, CancellationToken cancellationToken);
+
+    /// <summary>El número y el nombre del cliente de estos pedidos, por id de pedido y en lote (spec 2026-11-24 §5). El nombre es el mismo
+    /// <c>ClientName</c> de la lista de pedidos. Un id que no es del tenant no aparece.</summary>
+    Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
 
     /// <summary>
     /// Marca el pedido como facturado por <paramref name="provider"/> (<see cref="Order.InvoiceExternally"/>), con historial

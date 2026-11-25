@@ -123,7 +123,7 @@ es el **efectivo**, calculado al leer con la fila enlazada:
 | Guardado | Fila de la factura ahora | Efectivo | Código / número |
 | --- | --- | --- | --- |
 | `ToConfirm` | `Pending` y `IsBeingSent` | `Sending` | — |
-| `ToConfirm` | `Pending` o `Unknown` | `ToConfirm` | `ErrorCode` de la fila |
+| `ToConfirm` | `Pending` o `Unknown` | `ToConfirm` | `ErrorCode` de la fila; si no tiene (un primer envío cortado o muerto), el del ítem (decidido durante la implementación, 2026-11-24) |
 | `ToConfirm` | `Created`, `Stamped`, `StampRejected` | `Invoiced` | `Number` de la fila |
 | `ToConfirm` | `Failed` (alguien declaró que no existe) | `Failed` | `siigo.invoice.resolved_missing` (nuevo) |
 | `ToConfirm` | `Rejected` | `Failed` | `ErrorCode` de la fila |
@@ -149,7 +149,8 @@ Reglas de dominio en `SiigoInvoice`:
   `ErrorDetail`. Siigo pudo haber creado la primera y contestar otra cosa al reenvío (es lo que pasó en producción).
 - **Un envío sin cierre también cuenta.** Al reanudar (`ResumeAsync`), una fila `Pending` cuyo `SendingSince` sigue puesto (vencido) es un
   envío que murió sin registrar resultado: `UnansweredAt ??= now` antes de `BeginSend`. Cubre la caída del proceso y el corte por
-  apagado.
+  apagado. Salvo en la de flete mientras la del pedido no exista en Siigo: sólo sale después de ella, así que su reclamo vencido es de
+  un envío que se cortó antes de llegarle y no queda por confirmar (decidido durante la implementación, 2026-11-24).
 - `IsAwaitingConfirmation(now)` = `Pending` ∧ `UnansweredAt` no nulo ∧ no `IsBeingSent(now)`.
 
 En `IssueSiigoInvoiceHandler.ApplyAsync`, la rama `Rejected` llama a la regla de arriba; la de flete hermana se descarta
@@ -157,16 +158,20 @@ En `IssueSiigoInvoiceHandler.ApplyAsync`, la rama `Rejected` llama a la regla de
 
 **Resolver sin esperar 24 h.** `ResolveSiigoInvoiceHandler` acepta la fila desde `Unknown` **o** desde `Pending` que no se esté mandando
 (`!IsBeingSent`). Una `Pending` en envío sigue siendo 422 `siigo.invoice.state_invalid` (código existente). `ResolveExists` y
-`ResolveMissing` cambian su guarda (`EnsureUnknown` → `EnsureResolvable(now)`). Al declarar `missing` la del pedido, una de flete hermana
-`Pending` **sin** `UnansweredAt` (nunca salió) se descarta con `MarkFailed("siigo.invoice.order_rejected", …)`; si no, quedaría viva,
-bloqueando el pedido para siempre. Una de flete con `UnansweredAt` se resuelve aparte, como hoy.
+`ResolveMissing` cambian su guarda (`EnsureUnknown` → `EnsureResolvable(now)`). Al declarar `missing` la del pedido, la de flete hermana
+sin resolver (`Pending` o `Unknown`) se descarta con `MarkFailed("siigo.invoice.order_rejected", …)`, **aunque tenga `UnansweredAt`**: la
+de flete sólo sale después de que la del pedido existe, así que nunca salió (el relleno de la migración o el vencimiento a las 24 h pueden
+haberla marcado igual). Si no, quedaría viva, bloqueando el pedido para siempre. Al declarar `exists`, o con la del pedido ya facturada,
+la de flete no se toca y se resuelve o se reenvía aparte (decidido durante la implementación, 2026-11-24).
 
 **Espera de 10 minutos para `missing`.** `ResolveMissing` exige que hayan pasado **10 minutos desde el último intento sin respuesta**:
 QEP corta a los 120 s, pero Siigo puede seguir procesando, y «No existe» es la única acción que libera el pedido para facturar con otra
 clave. Para eso la fila guarda además **`last_unanswered_at`** (`LastUnansweredAt`, nuevo, nullable), que **cada** intento sin respuesta
 actualiza (`UnansweredAt` conserva el primero). Antes de ese plazo responde 422 `siigo.invoice.resolve_too_early` (nuevo) con
-`details.availableAt`. `ResolveExists` y «Reenviar» no esperan: ninguno puede duplicar. Una `Unknown` ya pasó las 24 h y no se ve
-afectada. La constante vive en el dominio (`SiigoInvoice.MissingResolutionDelay`).
+`details.availableAt`. `ResolveExists` y «Reenviar» no esperan: ninguno puede duplicar. La espera vale también para una `Unknown`: una
+`Pending` se puede reenviar poco antes de las 24 h y Siigo puede seguir procesándola. Por eso `ExpireIfStale` no expira una que se está
+mandando y conserva el último intento sin respuesta (también un `SendingSince` vencido), desde el que se cuentan los 10 minutos
+(decidido durante la implementación, 2026-11-24). La constante vive en el dominio (`SiigoInvoice.MissingResolutionDelay`).
 
 **Reenviar** es crear una tanda con ese pedido (desde el pedido o desde la tanda): el handler reanuda la `Pending` con los mismos bytes y
 la misma clave. Una `Unknown` no se reenvía (el handler la devuelve tal cual, como hoy).

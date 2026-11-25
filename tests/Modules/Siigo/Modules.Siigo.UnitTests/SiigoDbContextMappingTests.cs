@@ -39,6 +39,35 @@ public sealed class SiigoDbContextMappingTests
     }
 
     [Fact]
+    public void TheBackgroundInvoicingColumnsAndTheOpenOrderIndexAreMapped()
+    {
+        using var context = new SiigoDbContextFactory().CreateDbContext([]);
+
+        var invoice = context.Model.FindEntityType(typeof(SiigoInvoice))!;
+        var item = context.Model.FindEntityType(typeof(SiigoInvoiceBatchItem))!;
+
+        var unanswered = invoice.FindProperty(nameof(SiigoInvoice.UnansweredAt))!;
+        var lastUnanswered = invoice.FindProperty(nameof(SiigoInvoice.LastUnansweredAt))!;
+        Assert.Equal(("unanswered_at", true), (unanswered.GetColumnName(), unanswered.IsNullable));
+        Assert.Equal(("last_unanswered_at", true), (lastUnanswered.GetColumnName(), lastUnanswered.IsNullable));
+
+        var invoiceId = item.FindProperty(nameof(SiigoInvoiceBatchItem.InvoiceId))!;
+        var payments = item.FindProperty(nameof(SiigoInvoiceBatchItem.PaymentsJson))!;
+        var markFailed = item.FindProperty(nameof(SiigoInvoiceBatchItem.OrderMarkFailed))!;
+        Assert.Equal(("invoice_id", true), (invoiceId.GetColumnName(), invoiceId.IsNullable));
+        Assert.DoesNotContain(item.GetForeignKeys(), key => key.Properties.Contains(invoiceId));
+        Assert.Equal(("payments_json", true, "text"), (payments.GetColumnName(), payments.IsNullable, payments.GetColumnType()));
+        Assert.Equal(("order_mark_failed", false), (markFailed.GetColumnName(), markFailed.IsNullable));
+        Assert.Equal(false, markFailed.GetDefaultValue());
+
+        var index = Assert.Single(
+            item.GetIndexes(), value => value.GetDatabaseName() == "IX_invoice_batch_items_tenant_order_open");
+        Assert.True(index.IsUnique);
+        Assert.Equal(["TenantId", "OrderId"], index.Properties.Select(property => property.Name));
+        Assert.Equal("status IN ('Pending', 'Sending')", index.GetFilter());
+    }
+
+    [Fact]
     public void TheSellerColumnIsNoLongerMapped()
     {
         using var context = new SiigoDbContextFactory().CreateDbContext([]);
