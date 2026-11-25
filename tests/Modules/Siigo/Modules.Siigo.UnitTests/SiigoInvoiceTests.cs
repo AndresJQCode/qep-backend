@@ -118,20 +118,30 @@ public sealed class SiigoInvoiceTests
     }
 
     [Fact]
-    public void OnlyAnUnknownCanBeResolved()
+    public void OnlyAnUnknownOrAPendingNotBeingSentCanBeResolved()
     {
-        var pending = NewPending();
+        var sending = NewPending();
+        sending.BeginSend(Now);
         var created = NewPending();
         created.MarkCreated("id-1", "FV-1-123", 100m, null, Now);
         var rejected = NewPending();
         rejected.MarkRejected("x", "y", null, Now);
 
-        foreach (var invoice in new[] { pending, created, rejected })
+        foreach (var invoice in new[] { sending, created, rejected })
         {
             Assert.Equal("siigo.invoice.state_invalid", CodeOf(() => invoice.ResolveExists("FV-1-999", Now)));
             Assert.Equal("siigo.invoice.state_invalid", CodeOf(() => invoice.ResolveMissing(Now)));
         }
+
+        var idle = NewPending();
+
+        idle.ResolveMissing(Now);
+
+        Assert.Equal(SiigoInvoiceStatus.Failed, idle.Status);
     }
+
+    [Fact]
+    public void TheSendLeaseIsEightMinutes() => Assert.Equal(TimeSpan.FromMinutes(8), SiigoInvoice.SendLease);
 
     [Fact]
     public void AnUnknownResolvedAsExistsBecomesCreatedWithThatNumber()

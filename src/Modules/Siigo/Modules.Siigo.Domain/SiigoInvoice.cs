@@ -7,6 +7,9 @@ namespace Modules.Siigo.Domain;
 /// Siigo devuelve la que ya creó. <see cref="RequestJson"/> lleva datos del cliente: sólo lo leen los handlers del módulo, nunca sale en
 /// un <c>GET</c> ni en un log, y el <c>ToString</c> no lo escribe. Una fila por pedido y tipo está «vigente» salvo que esté
 /// <c>Rejected</c> o <c>Failed</c> (índice único parcial <c>IX_invoices_tenant_order_kind</c>).
+/// <para>«Por confirmar» (spec 2026-11-24 §3) no es un estado aparte: es una <c>Pending</c> con <see cref="UnansweredAt"/>, es decir,
+/// con un envío del que no se sabe si Siigo creó la factura. Una así nunca pasa a <c>Rejected</c>: la reenvía una persona con la misma
+/// clave o declara si existe en Siigo.</para>
 /// </summary>
 public sealed class SiigoInvoice
 {
@@ -21,10 +24,16 @@ public sealed class SiigoInvoice
     /// tiempo reenviar puede duplicar. Pasa a <see cref="SiigoInvoiceStatus.Unknown"/> y la resuelve una persona.</summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromHours(24);
 
-    /// <summary>Cuánto dura el reclamo de un envío en curso: el timeout del cliente HTTP (30 s) más margen. Dentro de la ventana, otro
-    /// «Generar factura» del mismo pedido no vuelve a mandar la petición que ya va en camino; si el proceso murió, pasada la ventana se
-    /// retoma.</summary>
-    public static readonly TimeSpan SendLease = TimeSpan.FromMinutes(2);
+    /// <summary>Cuánto dura el reclamo de un envío en curso. Cubre el peor caso de un pedido, con cada llamada hasta su plazo
+    /// (autenticar, buscar y crear el cliente, autenticar, la factura y la del flete), porque nace antes de crear el cliente y también
+    /// protege a la de flete, que sale después. Dentro de la ventana, otro «Generar factura» del mismo pedido no vuelve a mandar la
+    /// petición que ya va en camino; si el proceso murió, pasada la ventana se retoma.</summary>
+    public static readonly TimeSpan SendLease = TimeSpan.FromMinutes(8);
+
+    /// <summary>Cuánto hay que esperar desde el último envío sin respuesta para declarar que la factura no existe: Siigo puede seguir
+    /// procesándola después de que QEP deja de esperar, y «No existe» es la única acción que libera el pedido para facturar con otra
+    /// clave.</summary>
+    public static readonly TimeSpan MissingResolutionDelay = TimeSpan.FromMinutes(10);
 
     private SiigoInvoice()
     {
@@ -75,6 +84,13 @@ public sealed class SiigoInvoice
 
     /// <summary>Desde cuándo un «Generar factura» la está mandando. <c>null</c> si nadie la está mandando.</summary>
     public DateTimeOffset? SendingSince { get; private set; }
+
+    /// <summary>Desde cuándo hay un envío del que no se sabe si Siigo creó la factura (el primero). Con valor, la fila ya no se puede
+    /// rechazar.</summary>
+    public DateTimeOffset? UnansweredAt { get; private set; }
+
+    /// <summary>El último envío sin respuesta: desde ahí se cuenta <see cref="MissingResolutionDelay"/>.</summary>
+    public DateTimeOffset? LastUnansweredAt { get; private set; }
 
     /// <summary>Id de membresía de quien la pidió, como <c>InvoicedBy</c> del pedido.</summary>
     public Guid CreatedBy { get; private set; }
@@ -136,8 +152,9 @@ public sealed class SiigoInvoice
 
     public bool IsBeingSent(DateTimeOffset now) => SendingSince is { } since && now - since < SendLease;
 
-    /// <summary>Timeout, 5xx, 429 o red: no se sabe si Siigo la creó. Sigue <c>Pending</c> y se suelta el reclamo para que el reintento
-    /// pueda mandar los mismos bytes con la misma clave.</summary>
+    /// <summary>La petición no llegó a salir (la de flete que espera a la del pedido, o una falla de configuración antes de enviar):
+    /// sigue <c>Pending</c> sin quedar por confirmar y se suelta el reclamo. Un envío que sí salió y no tuvo respuesta va por
+    /// <see cref="MarkUnanswered"/>.</summary>
     /// <param name="errorCode">Por qué falló este intento (<c>siigo.invoice.*</c>), para que el pedido se lo diga a quien factura. Nulo
     /// conserva el que ya había: es la factura de flete que espera a la del pedido, que no falló por sí misma.</param>
     public void MarkTransient(string? errorCode, DateTimeOffset now)
@@ -150,6 +167,87 @@ public sealed class SiigoInvoice
 
         SendingSince = null;
         UpdatedAt = now;
+    }
+
+    /// <summary>El envío salió y no se sabe si Siigo creó la factura (timeout, red, 5xx, 429 o un servicio suyo caído): sigue
+    /// <c>Pending</c> por confirmar, con el motivo, y se suelta el reclamo para que el reenvío mande los mismos bytes con la misma
+    /// clave.</summary>
+    /// <returns>Si es el primer envío sin respuesta de la fila (la que pasa a estar por confirmar).</returns>
+    public bool MarkUnanswered(string errorCode, string? errorDetail, DateTimeOffset now)
+    {
+        var first = UnansweredAt is null;
+        UnansweredAt ??= now;
+        LastUnansweredAt = now;
+        KeepPending(errorCode, errorDetail, now);
+        return first;
+    }
+
+    /// <summary>
+    /// Siigo contestó un error. Sólo queda <c>Rejected</c> (y libera el pedido) si es un dato rechazado y no hay ningún envío anterior
+    /// sin respuesta: una caída de servicio no dice si el documento quedó creado, y después de un envío sin respuesta Siigo pudo haber
+    /// creado la primera y contestar otra cosa al reenvío. En esos dos casos sigue <c>Pending</c> por confirmar.
+    /// </summary>
+    /// <param name="serviceOutage">Todos los errores son de servicio de Siigo.</param>
+    /// <returns>Si quedó <c>Rejected</c>.</returns>
+    public bool RecordRejection(
+        string errorCode, string errorDetail, decimal? expectedPaymentsTotal, bool serviceOutage, DateTimeOffset now)
+    {
+        if (serviceOutage)
+        {
+            MarkUnanswered(errorCode, errorDetail, now);
+            return false;
+        }
+
+        if (UnansweredAt is not null)
+        {
+            // Siigo sí contestó este reenvío: LastUnansweredAt no se mueve.
+            KeepPending(errorCode, errorDetail, now);
+            return false;
+        }
+
+        MarkRejected(errorCode, errorDetail, expectedPaymentsTotal, now);
+        return true;
+    }
+
+    /// <summary>Un envío cuyo reclamo venció sin registrar resultado (el proceso murió o se cortó por un redespliegue) cuenta como sin
+    /// respuesta: se marca antes de reenviar.</summary>
+    /// <returns>Si con esto la fila pasa a estar por confirmar por primera vez.</returns>
+    public bool RecoverInterruptedSend(DateTimeOffset now)
+    {
+        if (Status != SiigoInvoiceStatus.Pending || SendingSince is null || IsBeingSent(now))
+        {
+            return false;
+        }
+
+        return MarkUnanswered(SiigoErrorCodes.InvoiceInterrupted, null, now);
+    }
+
+    /// <summary>Por confirmar: <c>Pending</c>, nadie la está mandando y hay un envío sin respuesta, registrado
+    /// (<see cref="UnansweredAt"/>) o con el reclamo vencido sin resultado (<see cref="SendingSince"/>).</summary>
+    public bool IsAwaitingConfirmation(DateTimeOffset now) =>
+        Status == SiigoInvoiceStatus.Pending && (UnansweredAt is not null || SendingSince is not null) && !IsBeingSent(now);
+
+    /// <summary>La puede resolver una persona: <c>Unknown</c>, o <c>Pending</c> que nadie está mandando.</summary>
+    public bool IsResolvable(DateTimeOffset now) =>
+        Status == SiigoInvoiceStatus.Unknown || (Status == SiigoInvoiceStatus.Pending && !IsBeingSent(now));
+
+    /// <summary>Se puede reenviar con la misma clave: <c>Pending</c>, nadie la está mandando y no ha pasado
+    /// <see cref="StaleAfter"/>.</summary>
+    public bool CanResend(DateTimeOffset now) =>
+        Status == SiigoInvoiceStatus.Pending && !IsBeingSent(now) && now - CreatedAt <= StaleAfter;
+
+    /// <summary>Desde cuándo se puede declarar que no existe, si todavía hay que esperar. <c>null</c> si no es resoluble o si ya se
+    /// puede: una <c>Unknown</c> ya pasó las 24 h y una que nunca salió no tiene nada que esperar.</summary>
+    public DateTimeOffset? MissingAvailableAt(DateTimeOffset now)
+    {
+        if (Status != SiigoInvoiceStatus.Pending || !IsResolvable(now))
+        {
+            return null;
+        }
+
+        // El reclamo vencido sin resultado es más reciente que el último envío sin respuesta registrado.
+        var availableAt = (SendingSince ?? LastUnansweredAt) + MissingResolutionDelay;
+        return availableAt > now ? availableAt : null;
     }
 
     /// <summary>Siigo la creó. Con CUFE ya salió a la DIAN (<c>Stamped</c>); sin él, <c>Created</c>.</summary>
@@ -226,7 +324,7 @@ public sealed class SiigoInvoice
     /// desde QEP).</summary>
     public void ResolveExists(string number, DateTimeOffset now)
     {
-        EnsureUnknown();
+        EnsureResolvable(now);
         if (string.IsNullOrWhiteSpace(number))
         {
             throw new SiigoDomainException(SiigoErrorCodes.InvoiceStateInvalid, "The number of the invoice that exists in Siigo is required.");
@@ -235,14 +333,22 @@ public sealed class SiigoInvoice
         Number = Cap(number.Trim(), NumberMaxLength);
         Status = SiigoInvoiceStatus.Created;
         ClearError();
+        SendingSince = null;
         UpdatedAt = now;
     }
 
-    /// <summary>La persona miró en Siigo y no existe: <c>Failed</c>, el pedido queda libre para facturar de nuevo.</summary>
+    /// <summary>La persona miró en Siigo y no existe: <c>Failed</c>, el pedido queda libre para facturar de nuevo. Antes de
+    /// <see cref="MissingResolutionDelay"/> desde el último envío sin respuesta es 422 <c>siigo.invoice.resolve_too_early</c>.</summary>
     public void ResolveMissing(DateTimeOffset now)
     {
-        EnsureUnknown();
+        EnsureResolvable(now);
+        if (MissingAvailableAt(now) is { } availableAt)
+        {
+            throw new SiigoResolveTooEarlyException(availableAt);
+        }
+
         Status = SiigoInvoiceStatus.Failed;
+        SendingSince = null;
         UpdatedAt = now;
     }
 
@@ -252,11 +358,20 @@ public sealed class SiigoInvoice
     // el ToString por defecto sólo escribe el tipo: se deja explícito para que nadie lo «mejore».
     public override string ToString() => $"SiigoInvoice {{ Id = {Id}, Kind = {Kind}, Status = {Status} }}";
 
-    private void EnsureUnknown()
+    private void KeepPending(string errorCode, string? errorDetail, DateTimeOffset now)
     {
-        if (Status != SiigoInvoiceStatus.Unknown)
+        ErrorCode = Cap(errorCode, ErrorCodeMaxLength);
+        ErrorDetail = errorDetail is null ? null : Cap(errorDetail, ErrorDetailMaxLength);
+        SendingSince = null;
+        UpdatedAt = now;
+    }
+
+    private void EnsureResolvable(DateTimeOffset now)
+    {
+        if (!IsResolvable(now))
         {
-            throw new SiigoDomainException(SiigoErrorCodes.InvoiceStateInvalid, "Only an invoice in an unknown state can be resolved.");
+            throw new SiigoDomainException(
+                SiigoErrorCodes.InvoiceStateInvalid, "Only an unknown invoice, or a pending one that is not being sent, can be resolved.");
         }
     }
 
