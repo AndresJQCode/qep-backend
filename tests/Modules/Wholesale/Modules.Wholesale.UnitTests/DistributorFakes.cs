@@ -316,8 +316,14 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
     public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult(Tenants.TryGetValue(tenantId.Value, out var tenant) ? tenant.Name : null);
 
-    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult(Tenants.TryGetValue(tenantId.Value, out var tenant) ? (TenantStatus?)tenant.Status : null);
+    /// <summary>Los tenants por cuyo estado se preguntó.</summary>
+    public List<Guid> StatusQueries { get; } = [];
+
+    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        StatusQueries.Add(tenantId.Value);
+        return Task.FromResult(Tenants.TryGetValue(tenantId.Value, out var tenant) ? (TenantStatus?)tenant.Status : null);
+    }
 
     public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult(Tenants.TryGetValue(tenantId, out var tenant) ? TenantModuleSet.FromStored(tenant.Modules) : null);

@@ -1,5 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Wholesale.Application;
 
 namespace Modules.Wholesale.IntegrationTests;
@@ -550,6 +553,67 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         Assert.Equal(HttpStatusCode.OK, resent.StatusCode);
         var stored = (await resent.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
         Assert.Equal((active.BusinessName, active.Version + 1), (stored.BusinessName, stored.Version));
+    }
+
+    // Una aceptación a medias deja el tenant reservado creado y la invitación pendiente: cambiar el documento duplicaría la
+    // empresa y el cliente en el reintento.
+    [Fact]
+    public async Task UpdateOfTheDocumentAfterTheReservedTenantExistsIs409AndWritesNothing()
+    {
+        var (manager, tenant, invited, _) = await InviteForUpdateAsync();
+        using var client = manager;
+        await CreateReservedTenantAsync(invited.Id);
+
+        var refused = await PutAsync(manager, tenant, invited, new
+        {
+            priceListId = invited.PriceList.Id,
+            advisorId = invited.Advisor.MemberId,
+            billingCompanyId = invited.BillingCompany.Id,
+            identificationNumber = "800111222",
+            businessName = "Distribuciones Sur SAS",
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Equal("wholesale.distributor.acceptance_in_progress", await WholesaleApiHarness.CodeOfAsync(refused));
+        var untouched = (await manager.GetFromJsonAsync<DistributorDetailDto>(DistributorUrl(tenant, invited), Ct))!;
+        Assert.Equal(
+            (invited.IdentificationNumber, invited.BusinessName, invited.Version),
+            (untouched.IdentificationNumber, untouched.BusinessName, untouched.Version));
+
+        var accepted = await PutAsync(manager, tenant, invited, new
+        {
+            priceListId = invited.PriceList.Id,
+            advisorId = invited.Advisor.MemberId,
+            billingCompanyId = invited.BillingCompany.Id,
+            identificationNumber = invited.IdentificationNumber,
+            businessName = "Distribuciones Sur SAS",
+        });
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var stored = (await accepted.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
+        Assert.Equal(("Distribuciones Sur SAS", invited.Version + 1), (stored.BusinessName, stored.Version));
+    }
+
+    // Lo que deja un intento de aceptación que se cortó después de registrar el tenant.
+    private async Task CreateReservedTenantAsync(Guid distributorId)
+    {
+        var reserved = (await WholesaleApiHarness.RowsAsync<Guid>(
+            Factory,
+            $"""
+            SELECT reserved_tenant_id AS "Value" FROM wholesale.distributor_invitations WHERE distributor_id = {distributorId}
+            """))[0];
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        tenancy.Tenants.Add(Tenant.Create(
+            new TenantId(reserved),
+            $"reserved-{reserved:N}",
+            "Distribuidor a medias",
+            "es-CO",
+            "America/Bogota",
+            "yyyy-MM-dd",
+            MembershipId.New(),
+            DateTimeOffset.UtcNow));
+        await tenancy.SaveChangesAsync(Ct);
     }
 
     private async Task<(HttpClient Manager, WholesaleTestTenant Tenant, DistributorDetailDto Invited, string Token)> InviteForUpdateAsync()

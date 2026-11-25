@@ -166,6 +166,10 @@ mayorista ya sabía.
   `wholesale.distributor.city_not_found`, 409 `wholesale.distributor.identification_taken` contra los demás); la ciudad se exige a
   una invitación vieja sin ella sólo si se manda la ciudad o cambia el país. En `Active` o `Blocked`, un valor distinto del
   guardado es 409 `wholesale.distributor.invalid_transition`. Cambiar el correo no reenvía la invitación ni rota el token.
+  - Nota (2026-11-24): en `Invited`, cambiar el tipo o el número de documento cuando el tenant reservado de la invitación ya
+    existe (aceptación a medias) es 409 `wholesale.distributor.acceptance_in_progress` y no escribe nada, porque el reintento es
+    idempotente por documento y duplicaría la empresa y el cliente. Los demás campos siguen editables. Límite conocido: una
+    aceptación a medias vinculando un tenant existente no se detecta.
 - Al exigir la ciudad, **el formulario actual deja de poder invitar en Colombia** hasta que salga el frontend: backend y frontend se
   despliegan juntos (decisión pendiente del owner).
 

@@ -920,6 +920,79 @@ public sealed class DistributorHandlersTests
         Assert.Equal(("Distribuciones 900777888", (string?)null), (blocked.BusinessName, blocked.Address));
     }
 
+    // Una aceptación a medias deja el tenant reservado creado y la invitación pendiente: el reintento es idempotente por
+    // documento, así que cambiarlo duplicaría la empresa y el cliente.
+    [Theory]
+    [InlineData("CO", "NIT", "800111222")]
+    [InlineData("CO", "CC", "222222222")]
+    [InlineData("ES", "NIF", "222222222")]
+    public async Task UpdateOfTheDocumentAfterTheReservedTenantExistsIs409AndWritesNothing(string country, string type, string number)
+    {
+        var distributor = _world.SeedInvited("222222222", cityId: _world.MedellinId);
+        SeedReservedTenant(distributor);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => _world.UpdateHandler().HandleAsync(
+            UpdateCommand(distributor, null, null) with
+            {
+                Country = country,
+                IdentificationType = type,
+                IdentificationNumber = number,
+                CityName = country == "CO" ? null : "Madrid",
+                BusinessName = "Otro nombre",
+            },
+            Ct));
+
+        Assert.Equal("wholesale.distributor.acceptance_in_progress", error.Code);
+        Assert.Equal(
+            ("CO", "NIT", "222222222", "Distribuciones 222222222", 1L),
+            (distributor.Country, distributor.IdentificationType, distributor.IdentificationNumber, distributor.BusinessName,
+                distributor.Version));
+        Assert.Empty(_world.Audit.Entries);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+    }
+
+    // El formulario reenvía el documento: igual una vez normalizado no es un cambio, y el resto se sigue editando.
+    [Fact]
+    public async Task UpdateOfOtherFieldsAfterTheReservedTenantExistsPassesWithoutAskingTenancy()
+    {
+        var distributor = _world.SeedInvited("222222222", cityId: _world.MedellinId);
+        SeedReservedTenant(distributor);
+
+        await _world.UpdateHandler().HandleAsync(
+            UpdateCommand(distributor, null, null) with
+            {
+                Country = "co",
+                IdentificationType = " nit ",
+                IdentificationNumber = " 222222222 ",
+                BusinessName = "Otro nombre",
+                Email = "nuevo@distri.co",
+                Address = "Calle 2",
+            },
+            Ct);
+
+        Assert.Equal(
+            ("Otro nombre", "nuevo@distri.co", "Calle 2", "222222222", 2L),
+            (distributor.BusinessName, distributor.Email, distributor.Address, distributor.IdentificationNumber, distributor.Version));
+        Assert.Empty(_world.Tenancy.StatusQueries);
+    }
+
+    [Fact]
+    public async Task UpdateOfTheDocumentWithoutTheReservedTenantAsksTenancyForItAndPasses()
+    {
+        var distributor = _world.SeedInvited("222222222", cityId: _world.MedellinId);
+
+        await _world.UpdateHandler().HandleAsync(
+            UpdateCommand(distributor, null, null) with { IdentificationNumber = "800111222" }, Ct);
+
+        Assert.Equal("800111222", distributor.IdentificationNumber);
+        Assert.Equal([distributor.Invitation.ReservedTenantId], _world.Tenancy.StatusQueries);
+    }
+
+    private void SeedReservedTenant(Distributor distributor) =>
+        _world.Tenancy.AddTenant(
+            distributor.Invitation.ReservedTenantId, "Distribuidor a medias", Guid.CreateVersion7(),
+            Modules.Tenancy.Domain.TenantStatus.Active);
+
     private RotateInvitationLinkCommand RotateCommand(Distributor distributor) =>
         new(_world.Tenant, distributor.Id.Value, distributor.Version, "trace-rotate");
 
