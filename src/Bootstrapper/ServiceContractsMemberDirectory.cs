@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using Modules.ServiceContracts.Application;
 using Modules.Identity.Application;
+using Modules.ServiceContracts.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;

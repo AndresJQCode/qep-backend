@@ -22,7 +22,11 @@ public sealed class QuotationCustomerLookupRegionTests
         customer.AddAddress(
             new CustomerAddressDetails
             {
-                Name = "Sede Barcelona", Address = "Calle 2", Country = "ES", CityName = "Barcelona", RegionId = BarcelonaId
+                Name = "Sede Barcelona",
+                Address = "Calle 2",
+                Country = "ES",
+                CityName = "Barcelona",
+                RegionId = BarcelonaId
             },
             false,
             Now);
@@ -76,7 +80,11 @@ public sealed class QuotationCustomerLookupRegionTests
             CustomerId.New(), TenantId, "CLI00000001", "Verde Esencial", null, null, null, null,
             new CustomerContactInfo
             {
-                Phone = "+34910000000", Email = "v@verde.es", Address = "Calle 1", Country = "ES", CityName = "Madrid",
+                Phone = "+34910000000",
+                Email = "v@verde.es",
+                Address = "Calle 1",
+                Country = "ES",
+                CityName = "Madrid",
                 RegionId = withRegion ? MadridId : null
             },
             new CustomerCommercialInfo { ClassificationId = new ClientClassificationId(Guid.Parse("01900000-0000-7000-8000-000000002120")) },

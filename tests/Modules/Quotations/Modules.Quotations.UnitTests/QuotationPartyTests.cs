@@ -42,7 +42,10 @@ public sealed class QuotationPartyTests
         var incomplete = NewQuotation(null, Foreign() with { Country = null, CityName = null });
         var complete = NewQuotation(null, Foreign() with
         {
-            Country = null, CityName = null, DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+            Country = null,
+            CityName = null,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
         });
 
         Assert.False(incomplete.Shipping!.IsComplete);

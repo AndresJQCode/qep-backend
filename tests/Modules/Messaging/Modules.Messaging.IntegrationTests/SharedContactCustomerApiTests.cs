@@ -1,6 +1,6 @@
+using System.Net.Http.Json;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;

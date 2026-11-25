@@ -312,7 +312,7 @@ public sealed class ConnectionsApiTests
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "inactive");
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "orders", "inactive");
 
-        var catalog =await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
+        var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
         var list = await client.GetFromJsonAsync<ConnectionsResponse>(ConnectionsUrl(tenant.TenantId), Ct);
         var hidden = await SendAsync(client, HttpMethod.Get, ConnectionUrl(tenant.TenantId, created.Id));
         var newOne = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody("Otra"));
@@ -327,7 +327,7 @@ public sealed class ConnectionsApiTests
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "active");
         await SetModuleStatusAsync(connectionString, tenant.TenantId, "orders", "active");
 
-        var back =await client.GetFromJsonAsync<ConnectionResponse>(ConnectionUrl(tenant.TenantId, created.Id), Ct);
+        var back = await client.GetFromJsonAsync<ConnectionResponse>(ConnectionUrl(tenant.TenantId, created.Id), Ct);
         Assert.Equal(created.Version, back!.Version);
         Assert.Equal("Active", back.Status);
         Assert.True(back.Secrets["apiToken"].Readable);

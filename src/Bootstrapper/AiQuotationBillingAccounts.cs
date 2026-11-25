@@ -1,4 +1,4 @@
-﻿using Modules.Ai.Application;
+using Modules.Ai.Application;
 using Modules.Companies.Application;
 
 namespace Bootstrapper;

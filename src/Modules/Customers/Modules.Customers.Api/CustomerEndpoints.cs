@@ -528,7 +528,7 @@ public static class CustomerEndpoints
                 request.IsPrincipal,
                 request.Country,
                 request.CityName,
-                request.RegionId),            cancellationToken);
+                request.RegionId), cancellationToken);
 
         return Results.Ok(ToResponse(customer));
     }
@@ -553,7 +553,7 @@ public static class CustomerEndpoints
                 request.IsPrincipal,
                 request.Country,
                 request.CityName,
-                request.RegionId),            cancellationToken);
+                request.RegionId), cancellationToken);
 
         return Results.Ok(ToResponse(customer));
     }

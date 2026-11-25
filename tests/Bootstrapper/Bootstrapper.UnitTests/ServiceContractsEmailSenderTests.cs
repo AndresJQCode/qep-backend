@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Modules.ServiceContracts.Application;
 using Modules.Notifications.Application;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper.UnitTests;
 

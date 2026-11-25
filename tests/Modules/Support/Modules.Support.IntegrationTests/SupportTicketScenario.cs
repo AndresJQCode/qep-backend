@@ -66,16 +66,16 @@ internal sealed class SupportTicketScenario
         string replyChannel = "Email",
         Guid? assignee = null,
         string subject = "No me llegó la factura") => new()
-    {
-        ["ticketTypeId"] = typeId,
-        ["subject"] = subject,
-        ["description"] = "Pedí la factura de octubre y no ha llegado.",
-        ["manualMedium"] = "Phone",
-        ["replyChannel"] = replyChannel,
-        ["customerId"] = customerId,
-        ["requester"] = requester ?? Ana,
-        ["assigneeMemberId"] = assignee,
-    };
+        {
+            ["ticketTypeId"] = typeId,
+            ["subject"] = subject,
+            ["description"] = "Pedí la factura de octubre y no ha llegado.",
+            ["manualMedium"] = "Phone",
+            ["replyChannel"] = replyChannel,
+            ["customerId"] = customerId,
+            ["requester"] = requester ?? Ana,
+            ["assigneeMemberId"] = assignee,
+        };
 
     public static object Ana => new { firstNames = "Ana", lastNames = "Gómez", email = "ana@example.com", mobilePhone = "+573001234567" };
 

@@ -143,17 +143,17 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
     /// un agente la reclamaba el motor de chatbots y la sesión del agente no se cerraba.</summary>
     internal static AutomationInboxRecord NewReleaseRun(
         Guid tenantId, Guid connectionId, Guid conversationId, BotKind botKind, DateTimeOffset now) => new()
-    {
-        MessageId = Guid.CreateVersion7(),
-        TenantId = tenantId,
-        ConnectionId = connectionId,
-        ConversationId = conversationId,
-        Opened = false,
-        CreatedAt = now,
-        NextAttemptAt = now,
-        Kind = AutomationInboxKinds.ReleaseRun,
-        BotKind = (short)botKind,
-    };
+        {
+            MessageId = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            ConnectionId = connectionId,
+            ConversationId = conversationId,
+            Opened = false,
+            CreatedAt = now,
+            NextAttemptAt = now,
+            Kind = AutomationInboxKinds.ReleaseRun,
+            BotKind = (short)botKind,
+        };
 
     public void EnqueueDelegated(Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, DateTimeOffset now) =>
         dbContext.AutomationInbox.Add(NewDelegationRow(
@@ -167,18 +167,18 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
     /// una delegación chocarían) y la delegación en <c>delegation_id</c>.</summary>
     private static AutomationInboxRecord NewDelegationRow(
         Guid tenantId, Guid connectionId, Guid conversationId, Guid delegationId, string kind, BotKind botKind, DateTimeOffset now) => new()
-    {
-        MessageId = Guid.CreateVersion7(),
-        TenantId = tenantId,
-        ConnectionId = connectionId,
-        ConversationId = conversationId,
-        Opened = false,
-        CreatedAt = now,
-        NextAttemptAt = now,
-        Kind = kind,
-        BotKind = (short)botKind,
-        DelegationId = delegationId,
-    };
+        {
+            MessageId = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            ConnectionId = connectionId,
+            ConversationId = conversationId,
+            Opened = false,
+            CreatedAt = now,
+            NextAttemptAt = now,
+            Kind = kind,
+            BotKind = (short)botKind,
+            DelegationId = delegationId,
+        };
 
     // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Ninguna de esas filas está en lease: el reclamo sólo entrega la más
     // vieja pendiente de la conversación, y ésa es la que procesa quien llama (exceptMessageId) o una del otro bot que espera el candado.

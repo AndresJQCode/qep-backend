@@ -79,7 +79,9 @@ public sealed class SupplierCatalogTests
         var large = _wholesale.Add("CAM-L", 14000m, 15m, 11900m, 19m);
         _wholesale.Items[medium.VariantId] = medium with
         {
-            ProductId = productId, ProductName = "Camiseta", ImageUrl = "https://cdn.example.co/m.png",
+            ProductId = productId,
+            ProductName = "Camiseta",
+            ImageUrl = "https://cdn.example.co/m.png",
         };
         _wholesale.Items[large.VariantId] = large with { ProductId = productId, ProductName = "Camiseta", ImageUrl = null };
 
@@ -110,7 +112,9 @@ public sealed class SupplierCatalogTests
         var item = _wholesale.Add("ACE-1", 14000m, 15m, 11900m, 19m);
         _wholesale.Items[item.VariantId] = item with
         {
-            ProductId = Guid.CreateVersion7(), ProductName = "Aceite", ImageUrl = "https://cdn.example.co/a.png",
+            ProductId = Guid.CreateVersion7(),
+            ProductName = "Aceite",
+            ImageUrl = "https://cdn.example.co/a.png",
         };
         _wholesale.ShowPrices = false;
 

@@ -1,8 +1,8 @@
-using Modules.ServiceContracts.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper.UnitTests;
 

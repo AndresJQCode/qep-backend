@@ -23,15 +23,15 @@ public sealed class CustomerBillingProfile
 
     public static CustomerBillingProfile Create(
         Guid tenantId, Guid customerId, BillingChannel channel, Guid assigneeMemberId, DateTimeOffset now) => new()
-    {
-        TenantId = tenantId,
-        CustomerId = customerId,
-        Channel = channel,
-        AssigneeMemberId = assigneeMemberId,
-        Version = 1,
-        CreatedAt = now,
-        UpdatedAt = now,
-    };
+        {
+            TenantId = tenantId,
+            CustomerId = customerId,
+            Channel = channel,
+            AssigneeMemberId = assigneeMemberId,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
 
     public void Change(BillingChannel channel, Guid assigneeMemberId, DateTimeOffset now)
     {

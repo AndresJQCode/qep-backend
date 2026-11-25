@@ -89,7 +89,10 @@ public sealed class QuotationParty
         && !string.IsNullOrWhiteSpace(Address)
         && new QuotationPartyDetails
         {
-            Country = Country, DepartmentId = DepartmentId, CityId = CityId, CityName = CityName
+            Country = Country,
+            DepartmentId = DepartmentId,
+            CityId = CityId,
+            CityName = CityName
         }.HasCompleteCity;
 
     internal static QuotationParty Create(

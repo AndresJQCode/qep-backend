@@ -3,9 +3,9 @@ using FluentValidation;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Phones;
+using static Modules.Customers.UnitTests.CustomerWriteDoubles;
 using CustomerFieldPolicy = Modules.Tenancy.Domain.CustomerFieldPolicy;
 using FieldRequirement = Modules.Tenancy.Domain.FieldRequirement;
-using static Modules.Customers.UnitTests.CustomerWriteDoubles;
 
 namespace Modules.Customers.UnitTests;
 

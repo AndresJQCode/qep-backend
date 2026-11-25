@@ -326,8 +326,11 @@ public sealed class DocumentTotalsTests
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
-                CompanyId = Guid.CreateVersion7(), BankName = "Bancolombia", AccountNumber = "7542",
-                Currency = "COP", Country = "CO",
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
+                Country = "CO",
             },
             ShippingDetails.None,
             [.. lines.Select(line => new OrderLineInput(
