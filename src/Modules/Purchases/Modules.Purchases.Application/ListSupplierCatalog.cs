@@ -24,9 +24,13 @@ public sealed record SupplierCatalogItemDto(
     decimal? ListPrice,
     decimal TaxRatePercent,
     decimal? UnitCost,
-    Guid ProductId = default,
     string ProductName = "",
-    string? ImageUrl = null);
+    string? ImageUrl = null)
+{
+    // Propiedad y no parámetro del constructor, como UpdateTaxRateRequest.MinimumBase: con `Guid ProductId = default` el esquema de
+    // OpenAPI (JsonSchemaExporter) intenta escribir ese valor por defecto y /openapi/v1.json entero responde 500.
+    public Guid ProductId { get; init; }
+}
 
 /// <summary>La lista de precios que aplica al distribuidor (adenda: la tarjeta «Tarifa: Distribuidor estándar»).</summary>
 public sealed record SupplierCatalogPriceListDto(string Name, decimal? DiscountPercent);
@@ -88,9 +92,11 @@ public sealed class ListSupplierCatalogHandler(
                     show ? item.ListPrice : null,
                     item.TaxRatePercent,
                     show ? PurchaseOrderMath.NetOfVat(item.ListPrice, item.TaxRatePercent) : null,
-                    item.ProductId,
                     item.ProductName,
-                    item.ImageUrl))
+                    item.ImageUrl)
+                {
+                    ProductId = item.ProductId,
+                })
                 .ToList(),
             result.Total,
             page,

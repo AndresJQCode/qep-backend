@@ -364,8 +364,13 @@ public sealed record MembershipRolesUpdateRequest(IReadOnlyCollection<string>? R
 /// </remarks>
 public sealed record MembershipProfileUpdateRequest(
     string? DisplayName,
-    decimal? AdvisorCode,
-    JsonElement Phone = default);
+    decimal? AdvisorCode)
+{
+    // Propiedad y no parámetro del constructor, como UpdateTaxRateRequest.MinimumBase: con `JsonElement Phone = default` el esquema de
+    // OpenAPI (JsonSchemaExporter) intenta escribir ese valor por defecto y /openapi/v1.json entero responde 500. Ausente queda en default
+    // (ValueKind Undefined), igual que antes.
+    public JsonElement Phone { get; init; }
+}
 
 public sealed record MyPhoneUpdateRequest(string? Phone);
 
