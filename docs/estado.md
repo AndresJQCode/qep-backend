@@ -333,11 +333,14 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
      `UPDATE siigo.invoices SET unanswered_at = updated_at, last_unanswered_at = updated_at WHERE status = 'Pending' AND unanswered_at IS NULL AND (error_code IN ('siigo.invoice.timeout','siigo.invoice.network','siigo.invoice.rate_limited','siigo.invoice.unavailable','siigo.invoice.siigo_service') OR sending_since IS NOT NULL);`
   5. La etapa *contract* (quitar la emisión síncrona y subir la creación a 120 s, en `develop` con `d2b85a1e3`) no
      sale a `main` antes de que el frontend por tandas esté desplegado.
-- **Reajuste de precio de contratos (2026-11-25, en `develop` con `9e57559cc`, sin push).** Cierra la migración de
+- **Reajuste de precio de contratos (2026-11-25, `9e57559cc`; ya en `main` con `6f56c7265`).** Cierra la migración de
   ServiceContracts que había quedado pendiente tras `edc5b1dfc`: sobre `9e57559cc` la API compila y los 30 contextos
   no tienen cambios de modelo pendientes. Las ramas que partieron de `develop` entre esos dos merges traen `develop`;
   **no crean otra migración**.
-  1. **Se mergeó sin pruebas en verde** (orden del owner: no correrlas). Antes de `main`:
+  0. **Seguimiento en `develop` (`fe01048d7`), todavía no en `main`:** guardar una tasa y confirmar un contrato con ella
+     bloquean la fila de `billing.ipc_rates` (sin migración), vuelve la prueba del documento OpenAPI y se precisa el spec.
+     Compila; sus pruebas nunca se ejecutaron.
+  1. **Se mergeó sin pruebas en verde** (orden del owner: no correrlas). Pendiente de confirmar:
      `.\scripts\test-feature.ps1 -Base 3906398e6`, y por clase las integraciones de ServiceContracts,
      `InAppBillingTests`, `BillingEmailTemplatesTests` y `ArchitectureTests`.
   2. **Un solo despliegue, con corte** (backend a cero réplicas o `Recreate`; `k8s/prod-deployment.yaml` es
