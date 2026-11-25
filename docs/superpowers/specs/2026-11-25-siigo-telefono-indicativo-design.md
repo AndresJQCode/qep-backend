@@ -1,7 +1,8 @@
 # Siigo: teléfono del cliente con indicativo — diseño (backend, entrega 1)
 
-Fecha: 2026-11-25 · Repo: `qep-backend` · Rama: `feature/telefono-pais` · Estado: **aprobado** (owner, 2026-11-25). Nada está
-construido. Plan: `docs/superpowers/plans/2026-11-25-siigo-telefono-indicativo.md`. Hechos reverificados contra `develop` en
+Fecha: 2026-11-25 · Repo: `qep-backend` · Rama: `feature/telefono-pais` · Estado: **aprobado** (owner, 2026-11-25). Está
+implementado en la rama `feature/telefono-pais`, sin mergear todavía; las pruebas quedaron escritas, pero no se han corrido.
+Plan: `docs/superpowers/plans/2026-11-25-siigo-telefono-indicativo.md`. Hechos reverificados contra `develop` en
 `8a9bfd50d` (después de los cambios de Siigo del 2026-11-24 y 25, incluida la etapa contract): archivos, firmas y criterios siguen
 como se describen. `IssueSiigoInvoice.EnsureCustomerAsync` es privado y hoy lo corre sólo el worker de las tandas.
 Spec hermano: `qep-frontend/docs/superpowers/specs/2026-11-25-telefono-selector-pais-design.md` (entregas 2 y 3).
@@ -230,3 +231,5 @@ Dígito de verificación de la DIAN: pesos 3, 7, 13, 17, 19, 23, 29, 37, 41, 43,
 **Riesgo:** una factura `Pending` reenvía los bytes guardados, con la forma anterior. Si Siigo ya tiene un cliente con una forma
 distinta de la nueva (por ejemplo, uno hecho a mano con el dígito de verificación pegado), la búsqueda no lo encuentra y la siguiente
 factura armada intenta crear otro. No hay código para ese caso.
+
+Aceptado por el owner (2026-11-25): no se agrega una segunda búsqueda; si aparece un duplicado, se revisa en Siigo.
