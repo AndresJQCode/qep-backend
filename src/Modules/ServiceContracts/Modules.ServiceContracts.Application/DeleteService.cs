@@ -19,7 +19,8 @@ public sealed class DeleteServiceValidator : AbstractValidator<DeleteServiceComm
 /// <summary>
 /// Eliminar un contrato de servicio (decisión del owner, 2026-11-19): borrado duro de cualquier estado, aun con cobros pagados;
 /// el historial se pierde y la pantalla lo advierte. En la misma transacción se van el servicio, todos sus cobros (con sus
-/// <c>reminder_steps</c>) y su historial de precios: el esquema <c>billing</c> no declara FKs entre ellos, así que nada lo hace solo.
+/// <c>reminder_steps</c>), sus cambios programados y su historial de precios: el esquema <c>billing</c> no declara FKs entre
+/// ellos, así que nada lo hace solo.
 /// Los <c>customer_messages</c> son del cliente y del día, no del cobro, y se quedan.
 /// </summary>
 public sealed class DeleteServiceHandler(
@@ -28,6 +29,7 @@ public sealed class DeleteServiceHandler(
     IServiceContractRepository services,
     IChargeRepository charges,
     IServicePriceChangeRepository priceChanges,
+    IServicePriceScheduleRepository schedules,
     IServiceContractsUnitOfWork unitOfWork,
     IServiceContractsAuditPublisher auditPublisher,
     IClock clock,
@@ -49,6 +51,7 @@ public sealed class DeleteServiceHandler(
 
         await charges.RemoveByServiceAsync(service.Id, cancellationToken);
         await priceChanges.RemoveByServiceAsync(service.Id, cancellationToken);
+        await schedules.RemoveByServiceAsync(service.Id, cancellationToken);
         services.Remove(service);
 
         auditPublisher.Publish(

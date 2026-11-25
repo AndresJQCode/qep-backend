@@ -306,7 +306,8 @@ public sealed class ServiceContract
     }
 
     /// <summary>
-    /// Lo llama la corrida diaria cuando generó cobros sobre un servicio ya guardado. Sin esto, una cancelación que cargó el servicio
+    /// Lo llama la corrida diaria cuando la generación cambió un servicio ya guardado (generó cobros, retuvo, movió la revisión
+    /// o aplicó un cambio programado). Sin esto, una cancelación que cargó el servicio
     /// y sus <c>Pending</c> antes de que la corrida confirmara seguiría casando su <c>WHERE version</c> y dejaría el servicio
     /// <c>Cancelled</c> con un <c>Pending</c> que nunca vio; con la versión arriba pierde con 412 y se reintenta sobre lo nuevo.
     /// No vive en <see cref="MarkGenerated"/>: crear e importar también generan, sobre un servicio que nace en la misma transacción

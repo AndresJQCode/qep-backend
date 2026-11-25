@@ -54,7 +54,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             services.AddSingleton<IServiceContractsWhatsAppOutbound>(whatsApp);
 
             // Transparente salvo que una prueba arme `chargeClash`: ahí mete la escritura de «otra réplica» entre la lectura del
-            // servicio y el SaveChanges de la generación, el único hueco en que IX_charges_service_due puede chocar.
+            // servicio y el SaveChanges de la generación, el único hueco en que IX_charges_service_period puede chocar.
             var charges = services.Single(descriptor => descriptor.ServiceType == typeof(IChargeRepository));
             services.Remove(charges);
             services.AddScoped<IChargeRepository>(provider => new InterleavingChargeRepository(
@@ -173,6 +173,100 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
 
         Assert.Contains(inWindow, (await ChargesOfAsync(reached)).Select(c => c.DueDate));
         Assert.DoesNotContain(outOfWindow, (await ChargesOfAsync(notYet)).Select(c => c.DueDate));
+    }
+
+    // Spec reajuste §6.4: la revisión de un contrato Ipc entra en la ventana sin precio decidido; el cobro espera y al cliente
+    // no se le manda nada.
+    [Fact]
+    public async Task AnIpcContractWhoseReviewEntersTheWindowIsHeld()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        var previous = new DateOnly(2026, 2, 12);
+        var review = new DateOnly(2026, 3, 12);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], mode: AdjustmentMode.Ipc, reviewDate: review);
+        var version = (await ServiceAsync(service)).Version;
+
+        await ProcessAsync();
+
+        Assert.Equal([previous], (await ChargesOfAsync(service)).Select(c => c.PeriodDate));
+        var stored = await ServiceAsync(service);
+        Assert.Equal(Today, stored.HeldSince);
+        Assert.Equal(version + 1, stored.Version);
+        Assert.Equal(review, stored.NextReviewDate);
+        Assert.Equal(previous, stored.LastGeneratedPeriodDate);
+        Assert.Empty(customerEmail.Sent);
+        Assert.Empty(whatsApp.Sent);
+        Assert.Empty(await MessagesAsync());
+    }
+
+    [Fact]
+    public async Task AManualContractGeneratesUnreviewedAndMovesItsReview()
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var previous = new DateOnly(2026, 2, 12);
+        var review = new DateOnly(2026, 3, 12);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], reviewDate: review);
+
+        await ProcessAsync();
+
+        var charge = (await ChargesOfAsync(service))[^1];
+        Assert.Equal((review, review, true, 100000m), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed, charge.Amount));
+        var stored = await ServiceAsync(service);
+        Assert.Equal(review.AddMonths(12), stored.NextReviewDate);
+        Assert.Null(stored.HeldSince);
+    }
+
+    [Theory]
+    [InlineData(AdjustmentMode.Ipc, PriceChangeOrigin.Ipc)]
+    [InlineData(AdjustmentMode.Manual, PriceChangeOrigin.Scheduled)]
+    public async Task AScheduledChangeAppliesInTheRunAndLeavesItsHistory(AdjustmentMode mode, PriceChangeOrigin origin)
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var previous = new DateOnly(2026, 2, 12);
+        var review = new DateOnly(2026, 3, 12);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], mode: mode, reviewDate: review);
+        var schedule = await SeedScheduleAsync(service, origin == PriceChangeOrigin.Ipc, 107000m);
+
+        await ProcessAsync();
+
+        var charge = (await ChargesOfAsync(service))[^1];
+        Assert.Equal((review, review, false, 107000m), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed, charge.Amount));
+        var stored = await ServiceAsync(service);
+        Assert.Equal((107000m, review.AddMonths(12)), (stored.Price, stored.NextReviewDate));
+        Assert.Null(stored.HeldSince);
+        var applied = await WithDbAsync(db => db.ServicePriceSchedules.AsNoTracking().SingleAsync(s => s.Id == schedule, Ct));
+        Assert.Equal((PriceScheduleStatus.Applied, (DateOnly?)review), (applied.Status, applied.AppliedPeriodDate));
+        var change = Assert.Single(await WithDbAsync(db => db.ServicePriceChanges.AsNoTracking().ToListAsync(Ct)));
+        Assert.Equal((origin, (Guid?)schedule), (change.Origin, change.ScheduleId));
+        Assert.Equal((100000m, 107000m), (change.PreviousPrice, change.NewPrice));
+    }
+
+    // Spec reajuste §6.5: los períodos liberados juntos vencen el mismo día, cada uno con su período.
+    [Fact]
+    public async Task HeldPeriodsReleasedLateShareTheirDueDate()
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var previous = new DateOnly(2026, 1, 5);
+        var review = new DateOnly(2026, 2, 5);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], mode: AdjustmentMode.Ipc, reviewDate: review,
+            heldOn: new DateOnly(2026, 2, 1));
+        await SeedScheduleAsync(service, ipc: true, 107000m);
+
+        await ProcessAsync();
+
+        var released = (await ChargesOfAsync(service))
+            .Where(c => c.Status == ChargeStatus.Pending).OrderBy(c => c.PeriodDate).ToList();
+        Assert.Equal([review, review.AddMonths(1)], released.Select(c => c.PeriodDate));
+        Assert.All(released, charge => Assert.Equal((Today.AddDays(5), 107000m), (charge.DueDate, charge.Amount)));
+        var stored = await ServiceAsync(service);
+        Assert.Null(stored.HeldSince);
+        Assert.Equal(review.AddMonths(1), stored.LastGeneratedPeriodDate);
     }
 
     [Fact]
@@ -597,7 +691,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
 
     /// <summary>
     /// Review 9+10, T10-I2: otra réplica generó el primer período entre la lectura del servicio y el SaveChanges de esta. El
-    /// choque con IX_charges_service_due no es un error: se relee el servicio (ya avanzado) y se genera sólo lo que falta.
+    /// choque con IX_charges_service_period no es un error: se relee el servicio (ya avanzado) y se genera sólo lo que falta.
     /// </summary>
     [Fact]
     public async Task AGenerationClashRereadsTheServiceAndGeneratesOnlyWhatIsLeft()
@@ -867,12 +961,27 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         ServiceContractStatus status = ServiceContractStatus.Active,
         decimal price = 100000m,
         string currency = "COP",
-        string name = "Hosting") =>
+        string name = "Hosting",
+        AdjustmentMode mode = AdjustmentMode.Manual,
+        DateOnly? reviewDate = null,
+        DateOnly? heldOn = null) =>
         WithDbAsync(async db =>
         {
             var service = ServiceContract.Create(
                 ServiceContractId.New(), Tenant, customerId, name, price, currency, BillingCycle.Monthly, firstDueDate, NineLocal);
             service.MarkGenerated(lastGenerated);
+            if (reviewDate is { } review)
+            {
+                service.InitializePriceReview(mode, 0m, review);
+            }
+
+            // La retención como la deja la corrida de ese día: no genera nada, porque la revisión es el siguiente período.
+            if (heldOn is { } held)
+            {
+                Assert.Empty(ChargeGenerator.Generate(service, null, GenerationMode.Run, held, NineLocal).Charges);
+                Assert.Equal(held, service.HeldSince);
+            }
+
             var charges = new List<Charge>();
             foreach (var due in paidDueDates ?? [])
             {
@@ -903,6 +1012,19 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             db.Charges.AddRange(charges);
             await db.SaveChangesAsync(Ct);
             return service.Id;
+        });
+
+    /// <summary>Un cambio pendiente sobre el período de revisión: confirmado con el IPC o programado a mano.</summary>
+    private Task<Guid> SeedScheduleAsync(ServiceContractId serviceId, bool ipc, decimal newPrice) =>
+        WithDbAsync(async db =>
+        {
+            var service = await db.Services.SingleAsync(s => s.Id == serviceId, Ct);
+            var schedule = ipc
+                ? ServicePriceSchedule.ConfirmIpc(service, 2025, 7m, newPrice, "IPC 2025 (7,00 %)", null, NineLocal)
+                : ServicePriceSchedule.Schedule(service, null, newPrice, null, "Más usuarios", null, NineLocal);
+            db.ServicePriceSchedules.Add(schedule);
+            await db.SaveChangesAsync(Ct);
+            return schedule.Id;
         });
 
     /// <summary>Un cobro <c>Pending</c> con ese vencimiento en un servicio propio que ya generó hasta ahí: la corrida no le agrega nada.</summary>
@@ -976,7 +1098,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
     /// <summary>
     /// Decorador de <see cref="IChargeRepository"/>: la primera vez que la generación agrega cobros con <see cref="ChargeClash"/>
     /// armado, escribe antes —en otra conexión, como otra réplica— el primero de esos períodos y avanza el servicio hasta él, sin
-    /// tocar su versión. El SaveChanges de esta réplica choca entonces con IX_charges_service_due, no con el token.
+    /// tocar su versión. El SaveChanges de esta réplica choca entonces con IX_charges_service_period, no con el token.
     /// </summary>
     private sealed class InterleavingChargeRepository(IChargeRepository inner, ChargeClash clash) : IChargeRepository
     {
@@ -1049,14 +1171,15 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
                 return;
             }
 
-            var first = charges.MinBy(charge => charge.DueDate)!;
+            var first = charges.MinBy(charge => charge.PeriodDate)!;
             using var npgsql = new NpgsqlConnection(connection);
             npgsql.Open();
             using var insert = new NpgsqlCommand(
                 """
-                INSERT INTO billing.charges (id, tenant_id, service_id, customer_id, amount, currency, due_date, status, version, created_at)
-                VALUES (@id, @tenant, @service, @customer, @amount, @currency, @due, 'Pending', 1, now());
-                UPDATE billing.services SET last_generated_due_date = @due WHERE id = @service;
+                INSERT INTO billing.charges
+                    (id, tenant_id, service_id, customer_id, amount, currency, period_date, due_date, status, version, created_at)
+                VALUES (@id, @tenant, @service, @customer, @amount, @currency, @period, @due, 'Pending', 1, now());
+                UPDATE billing.services SET last_generated_due_date = @period WHERE id = @service;
                 """,
                 npgsql);
             insert.Parameters.AddWithValue("id", Guid.CreateVersion7());
@@ -1065,6 +1188,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             insert.Parameters.AddWithValue("customer", first.CustomerId);
             insert.Parameters.AddWithValue("amount", first.Amount);
             insert.Parameters.AddWithValue("currency", first.Currency);
+            insert.Parameters.AddWithValue("period", first.PeriodDate);
             insert.Parameters.AddWithValue("due", first.DueDate);
             insert.ExecuteNonQuery();
         }

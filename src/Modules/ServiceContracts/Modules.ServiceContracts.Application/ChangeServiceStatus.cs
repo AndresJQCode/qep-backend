@@ -31,8 +31,9 @@ public sealed class ChangeServiceStatusValidator : AbstractValidator<ChangeServi
 
 /// <summary>
 /// Pausar, reanudar y cancelar (spec §3.2). Pausar no toca los cobros: los <c>Pending</c> siguen pendientes y avisándose.
-/// Cancelar pasa <b>todos</b> los <c>Pending</c> a <c>Cancelled</c> en la misma transacción. Reanudar sólo escribe la fecha de
-/// reactivación: los períodos en pausa no se cobran y el worker retoma desde la primera ancla de ahí en adelante.
+/// Cancelar pasa <b>todos</b> los <c>Pending</c> a <c>Cancelled</c> y cancela el cambio de precio programado, en la misma
+/// transacción. Pausar y cancelar quitan la retención (en el dominio). Reanudar sólo escribe la fecha de reactivación: los
+/// períodos en pausa no se cobran y el worker retoma desde la primera ancla de ahí en adelante.
 /// </summary>
 public sealed class ChangeServiceStatusHandler(
     IExecutionContext executionContext,
@@ -40,6 +41,7 @@ public sealed class ChangeServiceStatusHandler(
     ITenantClock tenantClock,
     IServiceContractRepository services,
     IChargeRepository charges,
+    IServicePriceScheduleRepository schedules,
     IServiceContractsUnitOfWork unitOfWork,
     IServiceContractsAuditPublisher auditPublisher,
     IClock clock,
@@ -81,6 +83,8 @@ public sealed class ChangeServiceStatusHandler(
                     charge.Cancel(now);
                 }
 
+                var scheduled = await schedules.FindPendingAsync(command.TenantId, service.Id, cancellationToken);
+                scheduled?.Cancel(service, now);
                 action = ServiceContractsAuditActions.ServiceCancelled;
                 break;
         }

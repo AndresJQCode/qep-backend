@@ -19,6 +19,8 @@ internal sealed partial class ServiceContractsReminderProcessor(
     ServiceContractsDbContext dbContext,
     IServiceContractRepository services,
     IChargeRepository charges,
+    IServicePriceScheduleRepository schedules,
+    IServicePriceChangeRepository priceChanges,
     ICustomerBillingProfileRepository profiles,
     IServiceContractsSettingsRepository settingsRepository,
     IServiceContractsCustomerLookup customers,
@@ -130,9 +132,12 @@ internal sealed partial class ServiceContractsReminderProcessor(
     }
 
     /// <summary>
-    /// <c>IX_charges_service_due</c> es la deduplicación de la generación (spec §3.2): chocar es «otra réplica lo creó», no un
-    /// error. Se relee el servicio —su <c>last_generated_due_date</c> ya avanzó— y se intenta de nuevo, una vez; lo mismo si alguien
-    /// editó el servicio en el medio (token de concurrencia).
+    /// La generación de un contrato en modo <c>Run</c> (spec reajuste §6.3): aplica el cambio de precio pendiente que alcance,
+    /// retiene el cobro de una revisión <c>Ipc</c> sin precio decidido (o lo genera «sin revisar» en <c>Manual</c>) y guarda
+    /// cobros, historial, programado y contrato en una sola transacción. <c>IX_charges_service_period</c> es la deduplicación:
+    /// chocar es «otro lo creó», no un error. Se relee el servicio —su <c>last_generated_due_date</c> ya avanzó— y se intenta
+    /// de nuevo, una vez; lo mismo si alguien editó el servicio en el medio (token de concurrencia), que es también como chocan
+    /// dos réplicas que retienen a la vez.
     /// </summary>
     private async Task GenerateServiceAsync(Run run, ServiceContractId serviceId, CancellationToken cancellationToken)
     {
@@ -144,22 +149,28 @@ internal sealed partial class ServiceContractsReminderProcessor(
                 return;
             }
 
-            var generated = ChargeGenerator.Generate(service, run.Today, run.Now);
-            if (generated.Count == 0)
+            var pending = await schedules.FindPendingAsync(run.TenantId, serviceId, cancellationToken);
+            var generated = ChargeGenerator.Generate(service, pending, GenerationMode.Run, run.Today, run.Now);
+            if (!generated.ServiceChanged)
             {
                 return;
             }
 
             // Una cancelación o edición que cargó la versión anterior pierde con 412 en vez de confirmar sobre cobros que no vio.
             service.BumpVersionAfterGeneration();
-            charges.AddRange(generated);
+            charges.AddRange(generated.Charges);
+            foreach (var change in generated.PriceChanges)
+            {
+                priceChanges.Add(change);
+            }
+
             try
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
                 return;
             }
             catch (DbUpdateException exception) when (attempt == 0
-                && (exception is DbUpdateConcurrencyException || UniqueViolation.Is(exception, "IX_charges_service_due")))
+                && (exception is DbUpdateConcurrencyException || UniqueViolation.Is(exception, "IX_charges_service_period")))
             {
                 dbContext.ChangeTracker.Clear();
             }

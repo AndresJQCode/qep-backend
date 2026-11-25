@@ -16,8 +16,13 @@ public sealed class CreateServiceValidatorTests
         public DateTimeOffset UtcNow => Now;
     }
 
-    private static CreateServiceCommand Command(DateOnly firstDueDate, string cycle = "Monthly", decimal price = 100m, string name = "Hosting") =>
-        new(Guid.NewGuid(), Guid.NewGuid(), name, price, null, cycle, firstDueDate, null, null);
+    private static CreateServiceCommand Command(
+        DateOnly firstDueDate,
+        string cycle = "Monthly",
+        decimal price = 100m,
+        string name = "Hosting",
+        PriceReviewInput? priceReview = null) =>
+        new(Guid.NewGuid(), Guid.NewGuid(), name, price, null, cycle, firstDueDate, null, null, priceReview);
 
     private static bool Fails(CreateServiceCommand command, string property) =>
         new CreateServiceValidator(new FixedClock()).Validate(command).Errors.Any(error => error.PropertyName == property);
@@ -74,6 +79,40 @@ public sealed class CreateServiceValidatorTests
     {
         Assert.Equal(rejected, Fails(Command(new DateOnly(2026, 11, 1), name: name), nameof(CreateServiceCommand.Name)));
     }
+
+    [Theory]
+    [InlineData("Manual", false)]
+    [InlineData("Ipc", false)]
+    [InlineData("ipc", true)]
+    [InlineData("Annual", true)]
+    [InlineData("2", true)]
+    [InlineData(null, true)]
+    public void TheAdjustmentModeIsOneOfTheTwoWireNames(string? mode, bool rejected)
+    {
+        var command = Command(new DateOnly(2026, 11, 1), priceReview: new PriceReviewInput(mode, 0m, null));
+
+        Assert.Equal(rejected, Fails(command, "PriceReview.AdjustmentMode"));
+    }
+
+    [Theory]
+    [InlineData("0", false)]
+    [InlineData("2.50", false)]
+    [InlineData("50", false)]
+    [InlineData("50.01", true)]
+    [InlineData("-0.01", true)]
+    [InlineData("1.005", true)]
+    [InlineData(null, true)]
+    public void TheExtraPointsAreRequiredAndBounded(string? points, bool rejected)
+    {
+        var value = points is null ? (decimal?)null : decimal.Parse(points, System.Globalization.CultureInfo.InvariantCulture);
+        var command = Command(new DateOnly(2026, 11, 1), priceReview: new PriceReviewInput("Ipc", value, null));
+
+        Assert.Equal(rejected, Fails(command, "PriceReview.IpcExtraPoints"));
+    }
+
+    [Fact]
+    public void AnAbsentPriceReviewPasses() =>
+        Assert.True(new CreateServiceValidator(new FixedClock()).Validate(Command(new DateOnly(2026, 11, 1))).IsValid);
 
     [Fact]
     public void TheNameCannotExceedTheColumn()

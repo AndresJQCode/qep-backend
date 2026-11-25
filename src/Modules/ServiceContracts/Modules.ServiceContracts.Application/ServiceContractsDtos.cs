@@ -112,8 +112,12 @@ public sealed record ServicePageDto(
     int PageSize,
     ServiceSummaryDto Summary);
 
-/// <summary>Lo que <c>POST /services</c> crearía hoy con esos datos, sin escribir: el aviso «Se van a crear N cobros vencidos» del formulario.</summary>
-public sealed record ChargesPreviewDto(int ChargesToGenerate, int OverdueCharges);
+/// <summary>
+/// Lo que <c>POST /services</c> crearía hoy con esos datos, sin escribir: el aviso «Se van a crear N cobros vencidos» del
+/// formulario. <c>DefaultNextReviewDate</c> es la revisión que el alta pondría si no se escribe otra: viaja para que el
+/// formulario la proponga sin contar anclas del ciclo en el cliente.
+/// </summary>
+public sealed record ChargesPreviewDto(int ChargesToGenerate, int OverdueCharges, DateOnly DefaultNextReviewDate);
 
 public sealed record AssigneesDto(IReadOnlyList<MemberRefDto> Items);
 
