@@ -5534,7 +5534,8 @@ terminar tenga el pedido, `canResend` va en `false`, en esas filas y en los íte
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
   `Rejected` y `Failed` arman una fila nueva. Una `Pending` de más de 24 h pasa a `Unknown` y la resuelve una persona
   (`POST …/resolve` con `exists` o `missing`). Mientras una tanda sin terminar tenga el pedido, `missing` es
-  `409 siigo.invoice_batch.order_in_progress`.
+  `409 siigo.invoice_batch.order_in_progress`. La de flete no se resuelve mientras la del pedido siga abierta (`Pending` o
+  `Unknown`): `422 siigo.invoice.state_invalid`.
 - Si falta algo (variante sin vínculo, impuesto sin vínculo, cuenta sin forma de pago, cliente sin dato) responde
   `422 siigo.invoice.not_ready` con `details.missing` y nada sale a Siigo.
 - Cada comprobante de pago del pedido es un pago de la factura; el saldo va a contraentrega o a crédito. Los `payments` suman el
