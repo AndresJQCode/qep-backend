@@ -554,6 +554,19 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Código postal de la entrega
+
+La parte de **envío** de cotizaciones y pedidos tiene un `postalCode` opcional, en Colombia y fuera: se recorta, vacío es
+`null` y el tope son 20 caracteres, sin formato por país (spec 2026-11-24).
+
+- **Escritura:** `parties.shipping.postalCode` en las rutas que reciben partes. Omitirlo lo borra, como `regionId`. En
+  facturación se descarta. Más largo es `422 quotations.party.postal_code_too_long` con
+  `errors["Parties.Shipping.PostalCode"]`.
+- **Lectura:** cada parte responde `postalCode` (en facturación siempre `null`), y la cotización y el pedido (`order`)
+  traen `postalCodeSupported: true`, que es lo que el frontend mira para pintar el campo.
+- La conversión lo copia al pedido, el PDF lo imprime en la ubicación tras la dirección y el envío a Shopify lo manda
+  como `zip` (ver [El envío](#integración-con-shopify)). La libreta de direcciones del cliente todavía no lo tiene.
+
 ## Regiones y ciudades por país
 
 El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. Colombia guarda `CityId` y deriva su
@@ -5240,7 +5253,9 @@ atributos) viaja a Shopify.
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
   (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
   `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
-  dirección entera; la nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  dirección entera. El `zip` es el `postalCode` de la parte de QEP; sin él, el del último snapshot sólo si país y provincia de
+  la parte son los del snapshot; si no, no viaja. La corrección del panel no recibe código postal y conserva el que tenga el
+  pedido. La nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
   `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro

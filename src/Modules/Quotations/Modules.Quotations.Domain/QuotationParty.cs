@@ -78,6 +78,9 @@ public sealed class QuotationParty
     /// <summary>The region of a party outside Colombia; see <see cref="QuotationPartyDetails.RegionId"/>.</summary>
     public Guid? RegionId { get; private set; }
 
+    /// <summary>The postal code of the delivery party; see <see cref="QuotationPartyDetails.PostalCode"/>.</summary>
+    public string? PostalCode { get; private set; }
+
     /// <summary>Si los seis campos están cargados. Existir con algunos vacíos es un estado
     /// válido mientras se edita —cada campo es opcional por separado, ver la clase—, pero un
     /// pedido no puede heredar una dirección a medio llenar: <see cref="Quotation.EnsureConvertibleToOrder"/>
@@ -106,7 +109,8 @@ public sealed class QuotationParty
     //
     // El documento se descarta en la parte de entrega antes de normalizar, igual que recoger en
     // tienda descarta la entrega entera: es un dato que ahí no aplica, no una contradicción que
-    // merezca un 422 (ésas se rechazan, ver final_consumer_conflict).
+    // merezca un 422 (ésas se rechazan, ver final_consumer_conflict). El código postal, al revés,
+    // se descarta en la de facturación.
     /// <summary>La parte como la recibió: lo que <c>Order.FromQuotation</c> copia al pedido (spec 2026-10-15 §4.4).</summary>
     public QuotationPartyDetails ToDetails() => new()
     {
@@ -122,12 +126,13 @@ public sealed class QuotationParty
         Country = Country,
         CityName = CityName,
         RegionId = RegionId,
+        PostalCode = PostalCode,
     };
 
     internal void Apply(QuotationPartyDetails details)
     {
         var normalized = (Role == QuotationPartyRole.Billing
-            ? details
+            ? details with { PostalCode = null }
             : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null }).Normalized($"Parties.{Role}");
         Name = normalized.Name;
         IdentificationNumber = normalized.IdentificationNumber;
@@ -141,5 +146,6 @@ public sealed class QuotationParty
         Country = normalized.Country;
         CityName = normalized.CityName;
         RegionId = normalized.RegionId;
+        PostalCode = normalized.PostalCode;
     }
 }

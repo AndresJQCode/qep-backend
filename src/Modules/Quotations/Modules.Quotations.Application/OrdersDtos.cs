@@ -484,7 +484,10 @@ public sealed record OrderResponse(
     /// <summary>Ver <see cref="OrderDto.InvoiceProvider"/>.</summary>
     string? InvoiceProvider = null,
     /// <summary>Ver <see cref="OrderDto.InvoiceNumber"/>.</summary>
-    string? InvoiceNumber = null);
+    string? InvoiceNumber = null,
+    /// <summary>Ver <see cref="QuotationResponse.PostalCodeSupported"/>. Viaja acá y no en la raíz de
+    /// <see cref="OrderDetailResponse"/>, para que también lo traigan /approve, /cancel…</summary>
+    bool PostalCodeSupported = true);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y

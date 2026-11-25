@@ -46,11 +46,18 @@ public sealed record QuotationPartyDetails
     /// and city ids, so a Colombian party never carries one.</summary>
     public Guid? RegionId { get; init; }
 
+    /// <summary>The postal code of the delivery party (spec 2026-11-24), in Colombia and abroad. Only the shipping
+    /// party stores it: <see cref="QuotationParty"/> and <see cref="OrderParty"/> drop it on billing. Trimmed and
+    /// capped, with no per-country format: there is no table of formats.</summary>
+    public string? PostalCode { get; init; }
+
     public const string ColombiaCountryCode = "CO";
 
     public const int CountryLength = 2;
 
     public const int CityNameMaxLength = 120;
+
+    public const int PostalCodeMaxLength = 20;
 
     // Mismos topes que Customer para los campos que son el mismo dato: una parte es una copia
     // puntual de la ficha del cliente, no puede aceptar más de lo que la ficha acepta.
@@ -84,7 +91,22 @@ public sealed record QuotationPartyDetails
         var normalized = this with { Country = country };
         normalized.EnsureLane(fieldPrefix);
         normalized.EnsureDocumentTypeAllowed(fieldPrefix);
+        normalized.EnsurePostalCodeFits(fieldPrefix);
         return normalized.NormalizedFields(country);
+    }
+
+    // Con el campo en errors y su propio código: el formulario marca el input y no hace falta una regla repetida en
+    // cada validador (cotización, pedido y sus previews pasan todos por acá).
+    private void EnsurePostalCodeFits(string fieldPrefix)
+    {
+        if (PostalCode?.Trim().Length > PostalCodeMaxLength)
+        {
+            var message = $"The party postal code cannot exceed {PostalCodeMaxLength} characters.";
+            throw new QuotationsDomainException(
+                "quotations.party.postal_code_too_long",
+                message,
+                new Dictionary<string, string[]>(StringComparer.Ordinal) { [$"{fieldPrefix}.PostalCode"] = [message] });
+        }
     }
 
     // Se rechaza en vez de limpiar el campo que sobra: un id con un país de afuera (o una ciudad escrita
@@ -194,7 +216,9 @@ public sealed record QuotationPartyDetails
             $"The party address cannot exceed {AddressMaxLength} characters."),
         DepartmentId = NormalizeOptionalId(DepartmentId),
         CityId = NormalizeOptionalId(CityId),
-        RegionId = NormalizeOptionalId(RegionId)
+        RegionId = NormalizeOptionalId(RegionId),
+        // El largo ya se comprobó (EnsurePostalCodeFits): acá sólo se recorta y vacío queda en null.
+        PostalCode = string.IsNullOrWhiteSpace(PostalCode) ? null : PostalCode.Trim()
     };
 
     // Vacio y ausente son lo mismo para un campo opcional, mismo criterio que

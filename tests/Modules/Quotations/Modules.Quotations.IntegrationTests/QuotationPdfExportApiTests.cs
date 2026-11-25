@@ -80,6 +80,42 @@ public sealed class QuotationPdfExportApiTests
         Assert.Equal(second.GeneratedAt, third.GeneratedAt);
     }
 
+    // Spec 2026-11-24 §7: el documento que recibe el renderizador lleva el código postal de la entrega en la ubicación,
+    // con la dirección en Colombia y antes de la ciudad y el país fuera. Guardar sube la versión, así que se regenera.
+    [Fact]
+    public async Task TheDocumentPrintsTheShippingPostalCodeInTheLocation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
+        var colombian = new QuotationPartyRequest(
+            "Bodega", null, "3001234567", "bodega@x.co", "Zona Franca", home.DepartmentId, home.CityId,
+            PostalCode: "050021");
+        var quotation = await CreateQuotationAsync(
+            client, tenantId, customerId, parties: new QuotationPartiesRequest(null, colombian));
+
+        await ExportAsync(client, tenantId, quotation.Id);
+        Assert.Equal("Zona Franca, 050021", factory.PdfRenderer.LastDocument!.Shipping.Location);
+
+        var spanish = new QuotationPartyRequest(
+            "Bodega", null, "+34600111333", "bodega@madrid.es", "Calle Alcalá 20", null, null,
+            Country: "ES", CityName: "Madrid", PostalCode: "28014");
+        using var put = new HttpRequestMessage(HttpMethod.Put, $"{QuotationsUrl(tenantId)}/{quotation.Id}")
+        {
+            Content = JsonContent.Create(new SaveQuotationRequest(
+                quotation.ValidUntil, null, null, new QuotationPartiesRequest(null, spanish), null, null)),
+        };
+        put.Headers.TryAddWithoutValidation("If-Match", $"\"{quotation.Version}\"");
+        var saved = await client.SendAsync(put, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+
+        await ExportAsync(client, tenantId, quotation.Id);
+        Assert.Equal("Calle Alcalá 20, 28014, Madrid, ES", factory.PdfRenderer.LastDocument!.Shipping.Location);
+    }
+
     // Spec impuestos por tipo §9.3 (F-1): el documento que recibe el renderizador trae una fila por retención que
     // aplicó, con el nombre de la tasa; la que no alcanza su base mínima no sale.
     [Fact]
