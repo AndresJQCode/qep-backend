@@ -188,6 +188,10 @@ public interface ISiigoOrderSource
     Task MarkInvoicedAsync(
         Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken);
 
+    /// <summary>Si el pedido ya está marcado como facturado en Siigo con ese número. Sólo lee: la tanda lo pregunta al recuperar un envío
+    /// que no dejó resultado.</summary>
+    Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken);
+
     /// <summary>El número y el cliente de estos pedidos, en lote, para pintar una tanda (spec 2026-11-24 §5). Un id que no es del tenant
     /// no aparece. No se guardan en Siigo: un pedido puede cambiar de cliente y la tanda mostraría el viejo.</summary>
     Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(

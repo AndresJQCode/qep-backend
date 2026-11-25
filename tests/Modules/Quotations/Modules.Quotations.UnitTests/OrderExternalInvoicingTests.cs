@@ -192,6 +192,42 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal(1, customers.FindNamesCalls);
     }
 
+    // La recuperación de una tanda sólo pregunta: marcado es la marca de ese proveedor con ese número, no cualquier «facturado».
+    [Fact]
+    public async Task IsMarkedIsTrueOnlyForTheSameProviderAndNumber()
+    {
+        var marked = NewOrder();
+        marked.InvoiceExternally("siigo", "FV-1-123", "a1b2c3", Biller, Now);
+        var manual = NewOrder(number: "PED-2026-0002");
+        manual.Invoice(Advisor, requireFullPayment: false, Now);
+        var unmarked = NewOrder(number: "PED-2026-0003");
+        var service = new ExternalOrderInvoicingService(
+            new StubOrderListRepository(marked, manual, unmarked),
+            new NoOpQuotationsUnitOfWork(),
+            new RecordingQuotationAuditPublisher(),
+            new SubjectExecutionContext(Guid.CreateVersion7(), TenantId),
+            new FixedClock(Now),
+            new FixedTenantClock(Now),
+            new FixedQuotationSettingsStore(),
+            new StubTenantDirectory(),
+            new StubQuotationCustomerLookup(new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Calle 1 # 2-3",
+                WithRetention: false, VatSurplus: false)),
+            new StubQuotationAdvisorLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
+
+        Task<bool> IsMarked(Order order, string provider, string number) =>
+            service.IsMarkedAsync(TenantId, order.Id.Value, provider, number, TestContext.Current.CancellationToken);
+
+        Assert.True(await IsMarked(marked, "siigo", "FV-1-123"));
+        Assert.False(await IsMarked(marked, "siigo", "FV-1-124"));
+        Assert.False(await IsMarked(marked, "otro", "FV-1-123"));
+        Assert.False(await IsMarked(manual, "siigo", "FV-1-123"));
+        Assert.False(await IsMarked(unmarked, "siigo", "FV-1-123"));
+        Assert.False(await IsMarked(NewOrder(number: "PED-2026-0004"), "siigo", "FV-1-123"));
+        Assert.False(unmarked.IsInvoiced);
+    }
+
     // «Los mismos del cliente» no guarda parte de envío: el despacho va a la dirección y ciudad de la ficha del cliente, como la facturación.
     [Fact]
     public async Task GetForInvoicingShipsToTheCustomersAddressAndCityWhenTheOrderHasNoShippingParty()

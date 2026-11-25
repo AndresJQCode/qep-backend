@@ -452,8 +452,93 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Equal(
             ("Invoiced", "FV-1-123", await StoredInvoiceIdAsync(world)),
             (item.Status, item.InvoiceNumber, item.InvoiceId));
-        Assert.Equal(item.InvoiceId, Item(await GetBatchAsync(world, batchId), 0).GetProperty("invoiceId").GetGuid());
+        var read = Item(await GetBatchAsync(world, batchId), 0);
+        Assert.Equal(item.InvoiceId, read.GetProperty("invoiceId").GetGuid());
+        // El pedido sí quedó marcado con esa factura: no hay nada que avisar.
+        Assert.False(item.OrderMarkFailed);
+        Assert.False(read.GetProperty("orderMarkFailed").GetBoolean());
         Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    // El envío murió entre guardar la factura como creada y marcar el pedido: el ítem es Invoiced y avisa que falta la marca, para que
+    // alguien lo reenvíe. La recuperación sólo la consulta: no marca el pedido.
+    [Fact]
+    public async Task ARecoveredItemWhoseOrderWasNeverMarkedSaysSo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        var batchId = await CreateBatchAsync(world, world.OrderId);
+        await ExecuteAsync(
+            world.ConnectionString,
+            """
+            UPDATE quotations.orders
+            SET invoiced_at = NULL, invoiced_by = NULL, invoice_provider = NULL, invoice_number = NULL, invoice_external_id = NULL
+            WHERE id = @id
+            """,
+            ("id", world.OrderId));
+        await AbandonTheItemAsync(world);
+
+        await DrainAsync(world);
+
+        var item = await StoredItemAsync(world);
+        Assert.Equal(
+            ("Invoiced", "FV-1-123", await StoredInvoiceIdAsync(world), true),
+            (item.Status, item.InvoiceNumber, item.InvoiceId, item.OrderMarkFailed));
+        Assert.True(Item(await GetBatchAsync(world, batchId), 0).GetProperty("orderMarkFailed").GetBoolean());
+        Assert.False((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    [Fact]
+    public async Task ARecoveredItemIsSettledEvenIfTheOrderMarkCannotBeRead()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        await CreateBatchAsync(world, world.OrderId);
+        await AbandonTheItemAsync(world);
+        // La lectura del pedido falla en la base: sin confirmación, el ítem avisa y se cierra igual.
+        await ExecuteAsync(world.ConnectionString, "ALTER TABLE quotations.orders RENAME COLUMN invoice_number TO invoice_number_gone");
+
+        await DrainAsync(world);
+
+        var item = await StoredItemAsync(world);
+        Assert.Equal(("Invoiced", "FV-1-123", true), (item.Status, item.InvoiceNumber, item.OrderMarkFailed));
+        Assert.True(item.BatchFinished);
+    }
+
+    // Con flete en factura aparte, la marca del pedido pudo fallar antes de que el apagado cortara el envío del flete: no se pierde.
+    [Fact]
+    public async Task AShutdownDuringTheFreightSendKeepsThatTheOrderCouldNotBeMarked()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var sends = 0;
+        world.Siigo.OnRequest("/v1/invoices", _ =>
+        {
+            if (Interlocked.Increment(ref sends) == 1)
+            {
+                ExecuteAsync(
+                    world.ConnectionString,
+                    "UPDATE quotations.orders SET invoiced_at = now(), invoiced_by = @by WHERE id = @id",
+                    ("by", Guid.CreateVersion7()), ("id", world.OrderId)).GetAwaiter().GetResult();
+                return Created("FV-1-123", "id-1", 0m);
+            }
+
+            shutdown.Cancel();
+            throw new OperationCanceledException(shutdown.Token);
+        });
+        await CreateBatchAsync(world, world.OrderId);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Worker(world).DrainAsync(shutdown.Token));
+
+        var item = await StoredItemAsync(world);
+        Assert.Equal(("Invoiced", "FV-1-123", true), (item.Status, item.InvoiceNumber, item.OrderMarkFailed));
+        Assert.True(item.LeaseReleased);
+        Assert.True(item.BatchFinished);
+        Assert.Equal(2, InvoiceCalls(world.Siigo).Count);
     }
 
     // Un redespliegue corta la llamada a Siigo: el ítem se cierra de una vez con la fila, sin esperar el lease ni volver a Pending.

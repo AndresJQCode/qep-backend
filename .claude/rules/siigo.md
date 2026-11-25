@@ -109,14 +109,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   2026-11-24; `MaxAttempts` = 1). Siigo sin responder deja el pedido **`ToConfirm`** con el `invoice_id` de su fila, que sigue `Pending`: la
   reenvía una persona (mismos bytes y clave) o la resuelve, y a las 24 h pasa a `Unknown`. Un rechazo de datos o una conexión caída lo dejan
   `Failed`. **Un ítem recuperado (lease vencido) o cortado por el apagado nunca llama a Siigo:** toma el estado de la fila `Order` viva del
-  pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced`, ninguna → `Failed` con `siigo.invoice.interrupted`). El corte por apagado
-  guarda ese resultado con `CancellationToken.None` y relanza la cancelación. `ToConfirm` cierra el ítem: al leerlo, su estado sigue a la
-  factura (`SiigoInvoiceBatchItem.Effective`), así que un reenvío desde otra tanda o una resolución desde el pedido se ven sin escribir en
-  el ítem. Una tanda de **un** pedido puede llevar las formas de pago elegidas (`payments_json`). Un pedido que ya está en un ítem `Pending`
-  o `Sending` es 409 `siigo.invoice_batch.order_in_progress` con `details.orderIds` (la consulta antes de guardar y, en la carrera, el
-  índice `IX_invoice_batch_items_tenant_order_open`). El resto de la tanda sigue. El timbre sale solo del `INSERT` en
-  `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre calla y sólo queda la red de seguridad de 30 s.
-  Tope de 50 pedidos por tanda.
+  pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced`, ninguna → `Failed` con `siigo.invoice.interrupted`). Una creada sale con
+  `orderMarkFailed` salvo que el pedido ya lleve la marca de ese número: la recuperación sólo lo lee (5 s de plazo; si la lectura falla,
+  también avisa) y reenviar es lo que lo marca. El corte por apagado guarda ese resultado con `CancellationToken.None` y relanza la
+  cancelación. `ToConfirm` cierra el ítem: al leerlo, su estado sigue a la factura (`SiigoInvoiceBatchItem.Effective`), así que un reenvío
+  desde otra tanda o una resolución desde el pedido se ven sin escribir en el ítem. Una tanda de **un** pedido puede llevar las formas de
+  pago elegidas (`payments_json`). Un pedido que ya está en un ítem `Pending` o `Sending` es 409 `siigo.invoice_batch.order_in_progress` con
+  `details.orderIds` (la consulta antes de guardar y, en la carrera, el índice `IX_invoice_batch_items_tenant_order_open`). El resto de la
+  tanda sigue. El timbre sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre
+  calla y sólo queda la red de seguridad de 30 s. Tope de 50 pedidos por tanda.
 
 - **`qep_siigo_call_failures_total{operation,reason}` no lleva tenant, conexión ni ruta** (cardinalidad): el tenant se busca en `siigo.call_failures`
   o por `TraceId`. Lo suma `SiigoApiClient.RecordAsync` **antes** de la guarda de captura, así que cuentan también las fallas sin curl

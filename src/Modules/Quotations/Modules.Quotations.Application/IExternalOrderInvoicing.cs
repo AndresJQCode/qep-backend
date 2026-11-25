@@ -99,6 +99,11 @@ public interface IExternalOrderInvoicing
     /// el facturador la compara con la que armó, después de crear la factura, para avisar que el pedido cambió.</summary>
     Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 
+    /// <summary>Si el pedido ya lleva la marca de esa factura (mismo proveedor y número, la misma regla con que
+    /// <see cref="MarkInvoicedAsync"/> no hace nada). Sólo lee. <c>false</c> también si no es del tenant, si está marcado a mano o con
+    /// otra factura.</summary>
+    Task<bool> IsMarkedAsync(Guid tenantId, Guid orderId, string provider, string number, CancellationToken cancellationToken);
+
     /// <summary>El número y el nombre del cliente de estos pedidos, por id de pedido y en lote (spec 2026-11-24 §5). El nombre es el mismo
     /// <c>ClientName</c> de la lista de pedidos. Un id que no es del tenant no aparece.</summary>
     Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(

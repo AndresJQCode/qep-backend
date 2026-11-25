@@ -137,6 +137,12 @@ public sealed class ExternalOrderInvoicingService(
     public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
         (await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken))?.Version;
 
+    public async Task<bool> IsMarkedAsync(
+        Guid tenantId, Guid orderId, string provider, string number, CancellationToken cancellationToken) =>
+        await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken) is { IsInvoiced: true } order
+        && string.Equals(order.InvoiceProvider, provider, StringComparison.Ordinal)
+        && string.Equals(order.InvoiceNumber, number, StringComparison.Ordinal);
+
     public async Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
     {
