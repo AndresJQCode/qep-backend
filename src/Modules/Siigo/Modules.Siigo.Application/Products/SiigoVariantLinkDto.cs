@@ -33,6 +33,11 @@ internal static class SiigoProductLinksSupport
     /// <summary>De a cuántas filas pagina la tabla. Fijo: la pantalla no lo elige.</summary>
     public const int PageSize = 50;
 
+    /// <summary>La última página cuyo desplazamiento (<c>(page - 1) * PageSize</c>) cabe en un <c>int</c>. Una mayor se recorta a ésta y
+    /// la respuesta devuelve la que se usó: sin el tope el producto se desborda y el catálogo recibe un desplazamiento negativo
+    /// (500).</summary>
+    public const int MaxPage = int.MaxValue / PageSize;
+
     public const string StepName = "products";
 
     public const string FilterAll = "all";

@@ -274,10 +274,13 @@ public static class SiigoEndpoints
 
     // Un comprobante que falta viaja vacío y un elemento nulo (`payments: [null]`) sigue nulo: los rechaza el validador con su campo.
     private static SiigoPaymentChoice[]? ToPaymentChoices(IReadOnlyList<SiigoPaymentChoiceRequest?>? payments) =>
-        payments?.Select(payment => payment is null
-                ? null!
-                : new SiigoPaymentChoice(payment.Kind, payment.ProofId ?? Guid.Empty, payment.SiigoPaymentTypeId))
-            .ToArray();
+        MapElements(payments, payment => new SiigoPaymentChoice(payment.Kind, payment.ProofId ?? Guid.Empty, payment.SiigoPaymentTypeId));
+
+    // Las listas de los cuerpos. Un elemento nulo (`[null]`) sigue nulo: lo rechaza el validador en su campo; leerlo aquí sería un 500.
+    private static TInput[]? MapElements<TRequest, TInput>(IReadOnlyList<TRequest?>? items, Func<TRequest, TInput> map)
+        where TRequest : class
+        where TInput : class =>
+        items?.Select(item => item is null ? null! : map(item)).ToArray();
 
     private static async Task<IResult> StampInvoiceAsync(
         Guid tenantId, Guid orderId, string? kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -383,8 +386,8 @@ public static class SiigoEndpoints
                 new UpdateSiigoTaxesCommand(
                     tenantId,
                     connectionId,
-                    request.Vat?.Select(link => new SiigoVatLinkInput(link.TaxPercentage ?? -1, link.SiigoTaxId)).ToArray(),
-                    request.Withholdings?.Select(link => new SiigoWithholdingLinkInput(link.TaxRateId ?? Guid.Empty, link.SiigoTaxId)).ToArray(),
+                    MapElements(request.Vat, link => new SiigoVatLinkInput(link.TaxPercentage ?? -1, link.SiigoTaxId)),
+                    MapElements(request.Withholdings, link => new SiigoWithholdingLinkInput(link.TaxRateId ?? Guid.Empty, link.SiigoTaxId)),
                     RequireVersion(httpContext)),
                 cancellationToken));
 
@@ -401,7 +404,7 @@ public static class SiigoEndpoints
                 new UpdateSiigoPaymentsCommand(
                     tenantId,
                     connectionId,
-                    request.Accounts?.Select(account => new SiigoAccountLinkInput(account.BankAccountKey, account.SiigoPaymentTypeId)).ToArray(),
+                    MapElements(request.Accounts, account => new SiigoAccountLinkInput(account.BankAccountKey, account.SiigoPaymentTypeId)),
                     request.CreditPaymentTypeId,
                     request.CreditDays,
                     request.CashOnDeliveryPaymentTypeId,
@@ -422,7 +425,7 @@ public static class SiigoEndpoints
                 new UpdateSiigoSellersCommand(
                     tenantId,
                     connectionId,
-                    request.Sellers?.Select(seller => new SiigoSellerLinkInput(seller.MembershipId, seller.SiigoUserId, seller.SiigoUserName)).ToArray(),
+                    MapElements(request.Sellers, seller => new SiigoSellerLinkInput(seller.MembershipId, seller.SiigoUserId, seller.SiigoUserName)),
                     RequireVersion(httpContext)),
                 cancellationToken));
 

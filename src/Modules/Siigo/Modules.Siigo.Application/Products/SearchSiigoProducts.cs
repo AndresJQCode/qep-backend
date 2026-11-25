@@ -20,6 +20,10 @@ public static class SiigoProductPicker
     /// <summary>De a cuántas filas pagina el selector. Fijo: la pantalla no lo elige.</summary>
     public const int PageSize = 20;
 
+    /// <summary>La última página cuyo desplazamiento cabe en un <c>int</c>. Una mayor se recorta a ésta: sin el tope el producto se
+    /// desborda y vuelve la primera página.</summary>
+    public const int MaxPage = int.MaxValue / PageSize;
+
     /// <summary>Casa por código o por nombre, sin distinguir mayúsculas ni tildes («pantalon» encuentra «Pantalón»), y ordena por código.</summary>
     public static SiigoProductCandidatesPageDto Page(IReadOnlyList<SiigoProductOption> products, string? search, int page)
     {
@@ -31,7 +35,7 @@ public static class SiigoProductPicker
             .OrderBy(product => product.Code, StringComparer.OrdinalIgnoreCase)
             .ThenBy(product => product.Id, StringComparer.Ordinal)
             .ToList();
-        var current = Math.Max(page, 1);
+        var current = Math.Clamp(page, 1, MaxPage);
         return new SiigoProductCandidatesPageDto(
             [.. matches.Skip((current - 1) * PageSize).Take(PageSize).Select(product => new SiigoProductCandidateDto(product.Id, product.Code, product.Name))],
             current,

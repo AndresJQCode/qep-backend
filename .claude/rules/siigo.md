@@ -90,13 +90,28 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   respondería 409. Se pregunta una vez con todos los ids (`ListOpenOrderIdsAsync`), nunca por fila. No lo decide el dominio
   (`SiigoInvoice.CanResend` y `SiigoInvoiceBatchItem.Effective` no ven las otras tandas): una respuesta nueva que ofrezca reenviar tiene
   que cruzarlo. `canResolve` no lo mira.
+- **Lo que va después del commit no puede tumbar la respuesta** (sellar y resolver, `SiigoSavedInvoice`): la operación ya está
+  guardada —hasta un sellado ante la DIAN— y repetirla responde 422. Si la consulta de la tanda abierta falla, el pedido se trata como
+  en cola (`canResend` en `false`, sin aviso de marca) y queda un warning. Una respuesta nueva armada tras guardar pasa por ahí. **Marcar
+  el pedido al resolver «existe» tampoco** la tumba (decidido el 2026-11-25): si falla, la resolución queda guardada, queda un warning
+  con el tipo de la excepción y la respuesta avisa con `orderMarkFailed`, salvo con el pedido en una tanda (o sin poder saberlo): ahí
+  no ves el aviso, y es la tanda la que vuelve a marcar y lo dice en su ítem.
 - **«No existe» se rechaza mientras una tanda tenga el pedido** (409 `siigo.invoice_batch.order_in_progress`, dentro de la transacción
   que bloquea el pedido): soltar la fila haría que el worker armara otra factura con otra clave en vez de reenviar la misma, y podría
   duplicarla. «Existe» sí se acepta. Crear una tanda no toma ese candado, así que una creada justo entre la consulta y el guardado se
   cuela.
-- **Un ítem no sale `Failed` mientras su factura pueda existir:** si el reenvío no se puede hacer (conexión, permiso) y la fila `Order`
-  vigente es `Unknown` o está por confirmar, `SiigoBatchItemInvoker` lo cierra `ToConfirm` con esa fila y el código del fallo. Al leer
-  manda el `errorCode` de la fila; el del fallo sólo se ve si la fila no tiene.
+- **Un ítem no sale `Failed` mientras su factura exista o pueda existir:** si el reenvío no se puede hacer (conexión, permiso),
+  `SiigoBatchItemInvoker` mira la fila `Order` vigente. `Unknown`, por confirmar o en envío (reclamo sin vencer: otro envío en
+  camino o uno cortado hace menos de 8 minutos) → `ToConfirm` con esa fila y el código del fallo. Ya facturada (`Created`, `Stamped`,
+  `StampRejected`) → `Invoiced` con su número e id, y `orderMarkFailed` salvo que una lectura confirme la marca (`SiigoOrderMark`, como
+  la recuperación de una tanda; decidido el 2026-11-25). **Salvo que la de flete siga `Pending`:** el reenvío era para mandarla, así que
+  el ítem sale `Failed` con el código del fallo; «facturado» la dejaría sin mandar sin que nadie lo vea.
+- **El `errorCode` de un ítem `ToConfirm` depende de cuál se escribió de último** (`SiigoInvoiceBatchItem.Effective`, decidido el
+  2026-11-25): mientras la fila no cambie desde que el ítem se cerró (`updated_at` de la fila ≤ el del ítem) ves el del ítem, que dice
+  por qué no salió el reenvío; si la fila cambia después (otro reenvío, vencimiento, resolución), manda la fila. Si el que manda viene
+  vacío, ves el otro. Por eso el ítem se guarda **después** de su fila y cerrado no se vuelve a escribir: si tocas el `updated_at` de un
+  ítem cerrado, o escribes una fila sin mover el suyo, muestras el código equivocado. Cuando el que ves no es el de la fila,
+  `siigoErrors` viaja vacío (`SiigoInvoiceBatchItemDto.From`): el `error_detail` de la fila es de otro intento.
 - **`canResolve` es el mismo en las filas del pedido y en los ítems de las tandas** (`SiigoInvoice.OffersResolution`: `Unknown`, una
   `Pending` vencida que todavía no se expiró, o por confirmar). El endpoint acepta más (`IsResolvable`: cualquier `Pending` que nadie
   esté mandando); no uses ése para dibujar la acción. `missingAvailableAt` sólo viaja con `canResolve`.

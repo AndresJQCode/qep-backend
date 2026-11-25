@@ -1020,6 +1020,8 @@ public sealed class SiigoInvoiceBatchApiTests
                 world.ConnectionString,
                 "SELECT concat(status, '|', error_code, '|', invoice_id) FROM siigo.invoice_batch_items WHERE batch_id = @batch",
                 ("batch", second)));
+        // La fila no se tocó: se ve por qué no salió el reenvío, y no el motivo del envío anterior.
+        Assert.Equal(code, Item(await GetBatchAsync(world, second), 0).GetProperty("errorCode").GetString());
         Assert.Single(InvoiceCalls(world.Siigo));
     }
 

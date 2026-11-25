@@ -16,18 +16,18 @@ public sealed record UpdateSiigoSellersCommand(
     long ExpectedVersion) : ICommand<SiigoSettingsDto>;
 
 /// <summary>La forma del cuerpo: una membresía no se repite, y un usuario de Siigo lleva su nombre (la foto que muestra un vínculo cuyo
-/// usuario ya no está activo).</summary>
+/// usuario ya no está activo). Un vendedor nulo falla en su propio campo.</summary>
 public sealed class UpdateSiigoSellersValidator : AbstractValidator<UpdateSiigoSellersCommand>
 {
     public UpdateSiigoSellersValidator()
     {
         RuleFor(command => command.Sellers)
             .NotNull()
-            .Must(sellers => sellers!.Select(seller => seller.MembershipId).Distinct().Count() == sellers!.Count)
+            .Must(sellers => SiigoSettingsSupport.HasNoRepeated(sellers!, seller => seller.MembershipId))
             .When(command => command.Sellers is not null)
             .WithMessage("A member cannot repeat.")
             .OverridePropertyName("sellers");
-        RuleForEach(command => command.Sellers).ChildRules(seller =>
+        RuleForEach(command => command.Sellers).NotNull().ChildRules(seller =>
         {
             seller.RuleFor(value => value.SiigoUserId).MaximumLength(SiigoSellerLink.UserIdMaxLength).OverridePropertyName("siigoUserId");
             seller.RuleFor(value => value.SiigoUserName)

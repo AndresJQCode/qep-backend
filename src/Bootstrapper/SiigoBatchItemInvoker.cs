@@ -3,6 +3,7 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Modules.Authorization.Application;
 using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
@@ -16,11 +17,19 @@ namespace Bootstrapper;
 /// (<see cref="IAuthorizationService.ResolvePermissionsAsync"/>: membresía activa, roles y máscara de módulos). Es el segundo lugar, junto al
 /// ejecutor del copiloto, que instala un <see cref="DelegatedExecutionContext"/> (<c>CompositionRootTests</c> lo amarra). Si la persona perdió el
 /// permiso, el pedido falla con <see cref="SiigoErrorCodes.InvoiceBatchForbidden"/> y no se llama a Siigo. Todo lo que le pasa al pedido sale
-/// como resultado: ni un error del pedido ni de Siigo frena a los demás de la tanda. La excepción a «falla» es un pedido cuya factura ya
-/// está por confirmar o <c>Unknown</c>: que el reenvío no se pueda hacer no dice que no exista, así que sale por confirmar con ese motivo.
+/// como resultado: ni un error del pedido ni de Siigo frena a los demás de la tanda. Hay dos excepciones a «falla», porque que no se
+/// pueda hacer el reenvío no dice que la factura no exista: un pedido cuya factura está por confirmar, <c>Unknown</c> o en camino sale por
+/// confirmar con ese motivo, y uno cuya factura ya existe en Siigo, sin una de flete <c>Pending</c> por mandar, sale facturado, avisando
+/// si el pedido no confirma su marca.
 /// </summary>
-internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization, IServiceScopeFactory scopeFactory) : ISiigoBatchItemInvoker
+internal sealed partial class SiigoBatchItemInvoker(
+    IAuthorizationService authorization, IServiceScopeFactory scopeFactory, ILogger<SiigoBatchItemInvoker> logger) : ISiigoBatchItemInvoker
 {
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Reading whether order {OrderId} carries its Siigo invoice failed; the batch item says the order could not be marked.")]
+    private static partial void LogMarkReadFailed(ILogger logger, Exception exception, Guid orderId);
+
     public async Task<SiigoBatchItemOutcome> InvokeAsync(
         Guid tenantId,
         Guid requestedBy,
@@ -29,9 +38,9 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
         CancellationToken cancellationToken)
     {
         var outcome = await IssueAsync(tenantId, requestedBy, orderId, payments, cancellationToken);
-        // Sin fila en el resultado, el fallo es de quien pidió o de la conexión: falta mirar si ya hay una factura en el aire.
+        // Sin fila en el resultado, el fallo es de quien pidió o de la conexión: falta mirar si el pedido ya tiene una factura.
         return outcome is SiigoBatchItemOutcome.Failed { InvoiceId: null } failed
-            ? await KeepToConfirmAsync(tenantId, orderId, failed, cancellationToken)
+            ? await KeepWhatMayExistAsync(tenantId, orderId, failed, cancellationToken)
             : outcome;
     }
 
@@ -98,8 +107,10 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
         }
     }
 
-    // La fila viva del pedido, leída aparte y sin escribir. Una que nunca salió deja el fallo como está.
-    private async Task<SiigoBatchItemOutcome> KeepToConfirmAsync(
+    // La fila viva del pedido, leída aparte y sin escribir. Facturada y sin flete por mandar: lo que no se pudo fue volver a marcar el
+    // pedido, y se avisa como en la recuperación de una tanda. Abierta y en camino, o sin certeza: la decide una persona. Una que nunca
+    // salió y nadie está mandando deja el fallo como está.
+    private async Task<SiigoBatchItemOutcome> KeepWhatMayExistAsync(
         Guid tenantId, Guid orderId, SiigoBatchItemOutcome.Failed failed, CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -108,7 +119,32 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
         var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
         // Vienen de la más vieja a la más nueva.
         var row = rows.LastOrDefault(value => value.Kind == SiigoInvoiceKind.Order && value.IsLive);
-        return row is not null && row.OffersResolution(now)
+        if (row is null)
+        {
+            return failed;
+        }
+
+        if (!row.IsOpen)
+        {
+            // Con la de flete todavía Pending, el reenvío era para mandarla y no se pudo: «facturado» la dejaría sin mandar a la vista de
+            // nadie. Sólo las Pending se reenvían; en cualquier otro estado no cambia lo que pasó con el pedido.
+            if (rows.Any(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
+            {
+                return failed;
+            }
+
+            var marked = row.Number is { } number
+                && await SiigoOrderMark.IsConfirmedAsync(
+                    scope.ServiceProvider.GetRequiredService<ISiigoOrderSource>(),
+                    tenantId,
+                    orderId,
+                    number,
+                    exception => LogMarkReadFailed(logger, exception, orderId),
+                    cancellationToken);
+            return new SiigoBatchItemOutcome.Invoiced(row.Number ?? string.Empty, row.Id, OrderMarkFailed: !marked);
+        }
+
+        return row.IsBeingSent(now) || row.OffersResolution(now)
             ? new SiigoBatchItemOutcome.ToConfirm(row.Id, failed.ErrorCode)
             : failed;
     }
