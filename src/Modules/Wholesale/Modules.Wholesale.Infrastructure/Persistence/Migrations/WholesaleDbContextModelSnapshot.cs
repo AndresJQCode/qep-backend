@@ -329,6 +329,10 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                                 .HasColumnType("uuid")
                                 .HasColumnName("accepted_by_user_id");
 
+                            b1.Property<string>("EmailProofHash")
+                                .HasColumnType("char(64)")
+                                .HasColumnName("email_proof_hash");
+
                             b1.Property<DateTimeOffset>("ExpiresAt")
                                 .HasColumnType("timestamp with time zone")
                                 .HasColumnName("expires_at");

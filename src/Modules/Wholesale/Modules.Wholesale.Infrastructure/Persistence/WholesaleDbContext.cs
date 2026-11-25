@@ -124,6 +124,9 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
                 .HasConversion(id => id.Value, value => new DistributorId(value));
             invitation.HasKey(DistributorIdColumn);
             invitation.Property(value => value.TokenHash).HasColumnName("token_hash").HasColumnType("char(64)");
+            // Spec 2026-11-24: como el token, sólo el hash; la prueba plana no tiene columna. Sin índice: se compara sobre la
+            // invitación que ya se encontró por token.
+            invitation.Property(value => value.EmailProofHash).HasColumnName("email_proof_hash").HasColumnType("char(64)");
             invitation.Property(value => value.SentAt).HasColumnName("sent_at");
             invitation.Property(value => value.ExpiresAt).HasColumnName("expires_at");
             invitation.Property(value => value.ReservedTenantId).HasColumnName("reserved_tenant_id");

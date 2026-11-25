@@ -71,6 +71,17 @@ public sealed class WholesaleDbContextMappingTests
         Assert.Equal(["token_hash"], tokenColumns);
     }
 
+    // Spec 2026-11-24 (prueba de buzón): sólo el hash, nulo en las invitaciones sin prueba vigente.
+    [Fact]
+    public void TheEmailProofHashIsANullableChar64Column()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var invitations = context.Model.FindEntityType(typeof(DistributorInvitation))!;
+
+        var proof = invitations.FindProperty(nameof(DistributorInvitation.EmailProofHash))!;
+        Assert.Equal(("email_proof_hash", "char(64)", true), (proof.GetColumnName(), proof.GetColumnType(), proof.IsNullable));
+    }
+
     [Fact]
     public void TheDistributorCountryAndTypeAreRequiredAndTheIndexCoversTheType()
     {
