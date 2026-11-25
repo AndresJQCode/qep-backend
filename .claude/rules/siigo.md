@@ -72,7 +72,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `tenant_id` compila y deja ambas operaciones en 500.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
-  `Created` y la respuesta lleva `orderMarkFailed`; el siguiente `POST` reintenta sólo la marca. Nunca deja el `POST` fallando.
+  `Created`, y la respuesta del `POST` y el ítem de la tanda llevan `orderMarkFailed`; el siguiente `POST` o la siguiente tanda del
+  pedido reintentan sólo la marca. Nunca deja la emisión fallando.
+- **`orderMarkFailed` de las filas del pedido se calcula al leer** (lista, sellar y resolver; no se guarda en `siigo.invoices`): sólo en
+  la fila `Order` que existe en Siigo y tiene número, y nunca mientras una tanda tenga el pedido (ítem `Pending` o `Sending`), para que un
+  envío en curso no parpadee un aviso. El `POST` síncrono no tiene ítem: una lectura que caiga entre que guarda la factura y marca el
+  pedido puede avisar de paso. Lee la marca con `SiigoOrderMark`, el mismo de la recuperación de una tanda: 5 s de plazo y, si la
+  lectura falla, avisa. Una respuesta nueva que devuelva filas del pedido tiene que calcularlo: sin él la pantalla no ofrece «Generar».
 - **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
   `ListUnitPrice × 100 / (100 + IVA)` a **2 decimales**: la documentación de Siigo da a `tax_base` «máximo 11 enteros y 2 decimales», y con 6
   Siigo rechazó con `invalid_amount` en `items[n].tax_base`; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo

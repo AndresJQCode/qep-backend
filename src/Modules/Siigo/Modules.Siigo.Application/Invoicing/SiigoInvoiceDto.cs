@@ -7,8 +7,11 @@ namespace Modules.Siigo.Application.Invoicing;
 /// Una factura de Siigo tal como la pantalla la dibuja (spec 2026-11-18 §5.6). BFF: <c>errorCode</c> viaja ya traducido a un código
 /// <c>siigo.invoice.*</c> (los pagos que no suman llegan como <c>siigo.invoice.totals_mismatch</c> con <c>expectedPaymentsTotal</c>, para que
 /// la pantalla muestre el total de Siigo junto al de QEP) y <c>orderChanged</c> dice que el pedido ya no estaba en la versión armada.
-/// <c>orderMarkFailed</c> avisa que la factura existe pero el pedido no se pudo marcar (se anuló o alguien lo marcó a mano): la pantalla
-/// lo muestra y el siguiente «Generar» reintenta sólo la marca. <c>hasPdf</c> dice si la pantalla ofrece «Descargar PDF»: la factura existe en
+/// <c>orderMarkFailed</c> avisa que la factura existe pero el pedido no lleva su marca (se anuló, alguien lo marcó a mano o el envío murió
+/// antes de marcarlo); el siguiente «Generar» reintenta sólo la marca. Lo pone la emisión (de donde el worker lo copia al ítem de la
+/// tanda), y lo calculan al leer la lista, sellar y resolver: sólo en la fila del pedido que existe en Siigo y tiene número,
+/// y nunca mientras una tanda sin terminar tenga el pedido (<see cref="SiigoOrderMark"/>). La de flete siempre viaja en <c>false</c>.
+/// <c>hasPdf</c> dice si la pantalla ofrece «Descargar PDF»: la factura existe en
 /// Siigo con su id (la pantalla no puede deducirlo del estado: una resuelta a mano no tiene id). <c>canSendWhatsApp</c> dice si la pantalla ofrece «Enviar por WhatsApp»: la fila tiene PDF <b>y</b> el pedido se puede entregar hoy
 /// (canal que se resuelve y cliente con teléfono). La pantalla no puede deducirlo: no ve los canales del tenant ni la elección guardada, y
 /// sólo lo calcula la lista (<c>GET …/siigo-invoice</c>); las respuestas de generar, sellar y resolver lo traen en <c>false</c>. <b>Nunca</b> lleva la petición (<c>request_json</c>), la clave de idempotencia ni datos del cliente.

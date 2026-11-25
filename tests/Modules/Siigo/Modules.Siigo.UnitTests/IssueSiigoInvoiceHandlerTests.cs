@@ -1,5 +1,6 @@
 using System.Reflection;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Audit.Domain;
 using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
@@ -292,6 +293,20 @@ public sealed class IssueSiigoInvoiceHandlerTests
         Assert.Equal(SiigoInvoiceStatus.Pending, freight.Status);
     }
 
+    // La respuesta de resolver trae el mismo aviso que la lectura del pedido: sin confirmar la marca, se avisa.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task TheResolutionSaysWhetherTheOrderCarriesTheInvoice(bool marked, bool warns)
+    {
+        var harness = new Harness([Unanswered(SiigoInvoiceKind.Order, Now.AddMinutes(-11))]);
+        harness.Orders.Marked = marked;
+
+        var resolved = await harness.Resolve("exists", "FV-1-777");
+
+        Assert.Equal(warns, resolved.OrderMarkFailed);
+    }
+
     private static SiigoInvoice Unanswered(SiigoInvoiceKind kind, DateTimeOffset sentAt)
     {
         var row = PendingRow(kind, sentAt);
@@ -322,17 +337,19 @@ public sealed class IssueSiigoInvoiceHandlerTests
                 new ExecutionContext(),
                 new AllModules(),
                 new FixedMembership(),
-                new OrderSource(),
+                Orders,
                 new InMemoryInvoices([.. rows]),
                 new FakeUnitOfWork(),
                 Audit,
                 Clock,
-                new ResolveSiigoInvoiceValidator());
+                new ResolveSiigoInvoiceValidator(),
+                new NoOpenBatches(),
+                NullLogger<ResolveSiigoInvoiceHandler>.Instance);
             _handler = new IssueSiigoInvoiceHandler(
                 new ExecutionContext(),
                 new AllModules(),
                 new FixedMembership(),
-                new OrderSource(),
+                Orders,
                 // El camino de reanudación no lee la configuración.
                 null!,
                 new ActiveConnections(),
@@ -347,6 +364,8 @@ public sealed class IssueSiigoInvoiceHandlerTests
         public ApiProxy Api { get; }
 
         public RecordingAudit Audit { get; } = new();
+
+        public OrderSource Orders { get; } = new();
 
         public MutableClock Clock { get; } = new() { UtcNow = Now };
 
@@ -391,6 +410,9 @@ public sealed class IssueSiigoInvoiceHandlerTests
 
     private sealed class OrderSource : ISiigoOrderSource
     {
+        /// <summary>Lo que contesta la lectura de la marca del pedido.</summary>
+        public bool Marked { get; set; } = true;
+
         public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -402,7 +424,7 @@ public sealed class IssueSiigoInvoiceHandlerTests
             Task.CompletedTask;
 
         public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(Marked);
 
         public Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
@@ -434,6 +456,26 @@ public sealed class IssueSiigoInvoiceHandlerTests
             throw new NotSupportedException();
 
         public void Add(SiigoInvoice invoice) => throw new NotSupportedException();
+    }
+
+    /// <summary>Ninguna tanda tiene el pedido.</summary>
+    private sealed class NoOpenBatches : ISiigoInvoiceBatchRepository
+    {
+        public Task<Guid?> FindOpenBatchIdAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<Guid?>(null);
+
+        public void Add(SiigoInvoiceBatch batch) => throw new NotSupportedException();
+
+        public Task<SiigoInvoiceBatch?> FindAsync(Guid tenantId, Guid batchId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Guid>> ListOpenOrderIdsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<(IReadOnlyList<SiigoInvoiceBatch> Items, int Total)> SearchAsync(
+            Guid tenantId, int page, int pageSize, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeUnitOfWork : ISiigoUnitOfWork

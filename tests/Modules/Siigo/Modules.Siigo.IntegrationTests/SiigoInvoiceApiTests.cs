@@ -734,6 +734,87 @@ public sealed class SiigoInvoiceApiTests
         Assert.Null((await GetOrderAsync(world)).GetProperty("invoiceProvider").GetString());
     }
 
+    // La pantalla del pedido ofrece «Generar» sólo si la lectura le dice que falta la marca: la factura existe y el pedido no la lleva.
+    [Fact]
+    public async Task TheOrderRowsSayWhenTheInvoiceWasNeverMarked()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        await ReadAsync(await PostAsync(world));
+        // El pedido sí quedó marcado: no hay nada que avisar.
+        Assert.Equal([("Order", false), ("Freight", false)], MarkWarnings(await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct))));
+
+        await RemoveTheOrderMarkAsync(world);
+
+        // La de flete nunca marca el pedido, así que nunca avisa.
+        Assert.Equal([("Order", true), ("Freight", false)], MarkWarnings(await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct))));
+    }
+
+    [Fact]
+    public async Task TheStampResponseSaysWhenTheInvoiceWasNeverMarked()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await PostAsync(world));
+        await RemoveTheOrderMarkAsync(world);
+        world.Siigo.OnRequest($"/v1/invoices/{SiigoInvoiceGuid}/stamp", _ => FakeSiigoApi.Respond(
+            HttpStatusCode.OK, """{"stamp":{"status":"Accepted","cufe":"cufe-1"}}"""));
+
+        var row = await ReadAsync(await PostAsync(world, "/stamp?kind=Order"));
+
+        Assert.Equal(("Stamped", true), (row.GetProperty("status").GetString(), row.GetProperty("orderMarkFailed").GetBoolean()));
+    }
+
+    // Mientras una tanda tiene el pedido, el worker todavía puede estar marcándolo: avisar sería un parpadeo.
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Sending")]
+    public async Task TheOrderRowsDoNotWarnAboutTheMarkWhileABatchHoldsTheOrder(string itemStatus)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await PostAsync(world));
+        await RemoveTheOrderMarkAsync(world);
+        await ReadAsync(await PostBatchAsync(world, world.Client, world.TenantId));
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE siigo.invoice_batch_items SET status = @status WHERE status = 'Pending'",
+            ("status", itemStatus));
+
+        var row = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+
+        Assert.False(row.GetProperty("orderMarkFailed").GetBoolean());
+    }
+
+    // Igual que la recuperación de una tanda: si la marca no se puede leer no hay confirmación, así que se avisa y la lista sale entera.
+    [Fact]
+    public async Task TheOrderRowsWarnWhenTheMarkCannotBeRead()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await PostAsync(world));
+        await ExecuteAsync(world.ConnectionString, "ALTER TABLE quotations.orders RENAME COLUMN invoice_number TO invoice_number_gone");
+
+        var row = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+
+        Assert.Equal(("Created", true), (row.GetProperty("status").GetString(), row.GetProperty("orderMarkFailed").GetBoolean()));
+    }
+
+    private static (string? Kind, bool OrderMarkFailed)[] MarkWarnings(JsonElement rows) =>
+        [.. rows.EnumerateArray().Select(row => (row.GetProperty("kind").GetString(), row.GetProperty("orderMarkFailed").GetBoolean()))];
+
+    // La factura sigue creada en Siigo y el pedido queda como si la marca nunca hubiera llegado.
+    private static Task RemoveTheOrderMarkAsync(InvoicingWorld world) =>
+        ExecuteAsync(
+            world.ConnectionString,
+            """
+            UPDATE quotations.orders
+            SET invoiced_at = NULL, invoiced_by = NULL, invoice_provider = NULL, invoice_number = NULL, invoice_external_id = NULL
+            WHERE id = @id
+            """,
+            ("id", world.OrderId));
+
     // I2: la política, el grupo de rutas y la revalidación del handler.
     [Fact]
     public async Task WithoutThePermissionTheInvoiceEndpointsAre403AndNothingIsCreatedOrCalled()

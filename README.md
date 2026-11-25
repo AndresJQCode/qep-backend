@@ -5525,6 +5525,9 @@ código, sin distinguir mayúsculas ni espacios.
 **Generar la factura.** `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (permiso `siigo.invoice.issue`, y el
 handler revalida tenant y permiso: 403, nunca 404). `GET …/preview` devuelve la factura armada, los faltantes y la propuesta de
 pagos sin llamar a Siigo.
+Cada fila que devuelven `GET`, `/stamp` y `/resolve` trae `orderMarkFailed`: va en `true` en la factura del pedido que existe en
+Siigo cuando el pedido no lleva su marca (o no se pudo leer) y ninguna tanda sin terminar lo tiene; volver a generar (con ese
+`POST` o con una tanda del pedido) la completa sin crear otra factura. La de flete siempre va en `false`.
 
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
