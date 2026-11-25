@@ -192,7 +192,7 @@ public sealed class OperatorConsoleApiTests
         var all = await GetOkAsync<TenantPagePayload>(client, Url("tenants"));
         Assert.Equal(2, all.Total);
         Assert.Equal(new SummaryPayload(2, 0, 0), all.Summary);
-        Assert.All(all.Items, item => Assert.Equal((7, 24, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
+        Assert.All(all.Items, item => Assert.Equal((7, 25, "Active", false), (item.ActiveModules, item.TotalModules, item.Status, item.IsOperator)));
 
         var slug = (await GetOkAsync<DetailPayload>(client, Url($"tenants/{first}"))).Slug;
         var searched = await GetOkAsync<TenantPagePayload>(client, Url($"tenants?search={slug}"));
