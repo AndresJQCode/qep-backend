@@ -49,7 +49,7 @@ public sealed record ExternalOrderResult(
 /// <summary>La parte de envío de un pedido externo (spec 2026-10-26 §4.4). Sin documento: a quien se le entrega no
 /// se le factura. Los campos son los de <c>OrderParty</c>, tal como el consumidor los guarda en su huella.
 /// <paramref name="PostalCode"/> (spec 2026-11-24) sale con la parte guardada; la corrección del asesor lo ignora y conserva el
-/// que tenga el pedido. Fuera de Colombia (la entrega editable, spec 2026-11-24 §11) van <paramref name="Country"/>,
+/// que tenga el pedido mientras no cambie el departamento. Fuera de Colombia (la entrega editable, spec 2026-11-24 §11) van <paramref name="Country"/>,
 /// <paramref name="CityName"/> y, si el país tiene regiones, <paramref name="RegionId"/>, sin ids de DIVIPOLA;
 /// <paramref name="Country"/> en <c>null</c> es Colombia, como en el dominio.</summary>
 public sealed record ExternalShippingParty(
@@ -496,10 +496,18 @@ public sealed class ExternalOrderService(
         }
 
         // La corrección no recibe código postal (spec 2026-11-24 §5): reescribir la parte conserva el que tenía, o cada
-        // corrección lo borraría.
+        // corrección lo borraría. Sólo en el mismo departamento: el código es de la provincia, y en otra sería el de otra
+        // dirección, que además viajaría a Shopify por encima de su zip.
         var partyChanged = correction.ShippingParty is { } party
             && order.EditExternalShippingParty(
-                ToDetails(party) with { PostalCode = order.Shipping?.PostalCode }, correction.NotesLinePrefix, correction.OccurredAt);
+                ToDetails(party) with
+                {
+                    PostalCode = order.Shipping is { } current && current.DepartmentId == party.DepartmentId
+                        ? current.PostalCode
+                        : null,
+                },
+                correction.NotesLinePrefix,
+                correction.OccurredAt);
         var notesChanged = correction.ReplaceBuyerNotes
             && order.UpdateExternalBuyerNotes(correction.BuyerNotes, correction.OccurredAt);
         if (!partyChanged && !notesChanged)

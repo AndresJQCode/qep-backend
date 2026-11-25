@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Audit.Domain;
 using Modules.Quotations.Application;
 using Modules.Shopify.Application;
+using Modules.Shopify.Infrastructure.Workers;
 using static Modules.Shopify.IntegrationTests.ShopifyApiHarness;
 using Flow = Modules.Shopify.IntegrationTests.ShopifyEditSyncFlowTests.Flow;
 
@@ -110,6 +111,40 @@ public sealed class ShopifyOrderCorrectionApiTests
             $"{envigado}|055422",
             await flow.ScalarAsync(
                 "SELECT city_id::text || '|' || coalesce(postal_code, '') FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
+    // El código postal es de la provincia: al cambiar de departamento, el que tenía el pedido sería el de otra dirección. Se
+    // borra, y el envío a Shopify no lleva ninguno (el zip del pedido de Shopify es de la provincia anterior).
+    [Fact]
+    public async Task ACorrectionToAnotherDepartmentDropsThePostalCode()
+    {
+        var shopify = new ShopifyOrderPushWorkerTests.RecordingUpdater();
+        await using var flow = await Flow.StartAsync(services =>
+        {
+            services.RemoveAll<IShopifyOrderUpdater>();
+            services.AddSingleton<IShopifyOrderUpdater>(shopify);
+        });
+        var order = Fixture();
+        order["shipping_address"]!["zip"] = "050021";
+        await flow.DeliverAsync("orders/create", "wh-1", order);
+        Assert.Equal("050021", await flow.ScalarAsync("SELECT postal_code FROM quotations.order_parties WHERE role = 'Shipping'"));
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        var bogota = (await flow.ScalarAsync("SELECT department_id::text || '|' || id::text FROM geography.cities WHERE divipola_code = '11001'"))
+            .Split('|');
+        var body = await CorrectionBodyAsync(flow);
+        body["shippingParty"]!["departmentId"] = bogota[0];
+        body["shippingParty"]!["cityId"] = bogota[1];
+
+        var response = await PutAsync(client, flow, body);
+        await ActivatorUtilities.CreateInstance<ShopifyOrderPushWorker>(flow.Factory.Services).DrainAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            $"{bogota[1]}|none",
+            await flow.ScalarAsync(
+                "SELECT city_id::text || '|' || coalesce(postal_code, 'none') FROM quotations.order_parties WHERE role = 'Shipping'"));
+        var address = Assert.Single(shopify.Updates).ShippingAddress!;
+        Assert.Equal(("DC", (string?)null), (address.ProvinceCode, address.Zip));
     }
 
     // El formulario de la corrección no tiene código postal: reenviar la misma parte de un pedido que lo guarda no es un cambio.

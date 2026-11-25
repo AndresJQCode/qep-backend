@@ -412,9 +412,11 @@ internal sealed class FakeOrderCorrectionWriter(FakeOrderWriter orders) : IShopi
         var updated = state with
         {
             ShippingParty = correction.ShippingParty is { DepartmentId: { } department, CityId: { } city } party
-                // Como Quotations: la corrección no recibe código postal y conserva el del pedido.
+                // Como Quotations: la corrección no recibe código postal y conserva el del pedido mientras no cambie el
+                // departamento.
                 ? new ShopifyShippingFingerprint(
-                    party.Name, party.Phone, party.Email, party.Address, department, city, state.ShippingParty?.PostalCode)
+                    party.Name, party.Phone, party.Email, party.Address, department, city,
+                    state.ShippingParty?.DepartmentId == department ? state.ShippingParty.PostalCode : null)
                 : state.ShippingParty,
             BuyerNotes = correction.ReplaceBuyerNotes ? correction.BuyerNotes : state.BuyerNotes,
             Version = state.Version + 1,
