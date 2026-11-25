@@ -988,6 +988,36 @@ public sealed class DistributorHandlersTests
         Assert.Equal([distributor.Invitation.ReservedTenantId], _world.Tenancy.StatusQueries);
     }
 
+    // Vinculando un tenant existente no hay tenant reservado: la marca de la aceptación es lo único que lo delata.
+    [Fact]
+    public async Task UpdateOfTheDocumentAfterTheAcceptanceStartedIs409AndWritesNothing()
+    {
+        var distributor = _world.SeedInvited("222222222", cityId: _world.MedellinId);
+        distributor.StartAcceptance(DistributorWorld.Now);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => _world.UpdateHandler().HandleAsync(
+            UpdateCommand(distributor, null, null) with { IdentificationNumber = "800111222" }, Ct));
+
+        Assert.Equal("wholesale.distributor.acceptance_in_progress", error.Code);
+        Assert.Equal(("222222222", 2L), (distributor.IdentificationNumber, distributor.Version));
+        Assert.Empty(_world.Audit.Entries);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+        Assert.Empty(_world.Tenancy.StatusQueries);
+    }
+
+    [Fact]
+    public async Task UpdateOfOtherFieldsAfterTheAcceptanceStartedPasses()
+    {
+        var distributor = _world.SeedInvited("222222222", cityId: _world.MedellinId);
+        distributor.StartAcceptance(DistributorWorld.Now);
+
+        await _world.UpdateHandler().HandleAsync(
+            UpdateCommand(distributor, null, null) with { BusinessName = "Otro nombre" }, Ct);
+
+        Assert.Equal(("Otro nombre", 3L), (distributor.BusinessName, distributor.Version));
+        Assert.Equal(DistributorWorld.Now, distributor.AcceptanceStartedAt);
+    }
+
     private void SeedReservedTenant(Distributor distributor) =>
         _world.Tenancy.AddTenant(
             distributor.Invitation.ReservedTenantId, "Distribuidor a medias", Guid.CreateVersion7(),

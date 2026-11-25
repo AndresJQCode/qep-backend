@@ -330,9 +330,13 @@ internal sealed class FakeUnitOfWork : IWholesaleUnitOfWork
     /// <summary>Lo que lanza el próximo guardado (una carrera perdida en la base), una sola vez.</summary>
     public Exception? FailNextSaveWith { get; set; }
 
+    /// <summary>Cuántos guardados pasan antes de que <see cref="FailNextSaveWith"/> lance: 1 deja pasar la marca de la
+    /// aceptación y falla el commit final.</summary>
+    public int FailAfterSaves { get; set; }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken)
     {
-        if (FailNextSaveWith is { } failure)
+        if (Saves >= FailAfterSaves && FailNextSaveWith is { } failure)
         {
             FailNextSaveWith = null;
             throw failure;

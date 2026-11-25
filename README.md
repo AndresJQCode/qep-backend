@@ -2630,9 +2630,10 @@ cityName?, address? }`). Decisión del owner 2026-11-24: mientras está `Invited
   `422 wholesale.distributor.city_not_found` y `409 wholesale.distributor.identification_taken` contra los demás
   distribuidores. Al cambiar de país hay que mandar el tipo de documento y la ciudad válidos para el nuevo. Una invitación
   vieja sin ciudad no la exige mientras no se mande la ciudad ni cambie el país.
-- Invitado, cambiar el tipo o el número de documento cuando el tenant reservado de la invitación ya existe (una aceptación
-  que quedó a medias) es `409 wholesale.distributor.acceptance_in_progress` y no escribe nada; los demás campos se siguen
-  editando. No detecta una aceptación a medias vinculando un tenant existente.
+- Invitado, cambiar el tipo o el número de documento cuando la aceptación ya empezó (creando el tenant o vinculando uno
+  existente) es `409 wholesale.distributor.acceptance_in_progress` y no escribe nada; los demás campos se siguen editando.
+  La aceptación confirma esa marca antes de escribir en otros módulos y con ella sube `version`: un `PUT` con el `If-Match`
+  anterior es `412 concurrency.conflict`. Un accept rechazado en sus validaciones no deja marca. La marca no se borra.
 - `Active` o `Blocked`: un dato distinto del guardado es `409 wholesale.distributor.invalid_transition`. Reenviar los mismos
   valores se acepta (en Colombia `cityName` no cuenta, y afuera `cityId` tampoco).
 - Cambiar el correo **no** reenvía la invitación ni rota el token: para que llegue al correo nuevo, usa `resend-invitation`.

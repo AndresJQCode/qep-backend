@@ -87,14 +87,23 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   cuando se manda la ciudad o cambia el país. Afuera de `Invited`, un valor distinto es
   `wholesale.distributor.invalid_transition`. **Cambiar el correo no reenvía la invitación ni rota el token**: lo hace
   «Reenviar»; no lo automatices. La auditoría nombra los campos cambiados, nunca los valores.
-- **Con una aceptación a medias no se cambia el documento** (`UpdateDistributorHandler`): la empresa del tenant reservado y el
-  cliente del mayorista son idempotentes **por documento**, así que si el distribuidor está `Invited`, el `PUT` cambia el tipo o
-  el número (normalizados) y el tenant reservado ya existe (`ITenantDirectory.GetStatusAsync`, como D-17), responde 409
-  `wholesale.distributor.acceptance_in_progress` y no escribe. Los demás campos se siguen editando (el nombre del tenant ya creado
-  no cambia) y sin cambio de documento no se consulta Tenancy. **Límites conocidos:** una aceptación a medias **vinculando un
-  tenant existente** no deja tenant reservado y no se detecta (el cliente puede duplicarse; la empresa no, porque sólo se crea si
-  el tenant no tiene ninguna, y el proveedor es idempotente por tenant vinculado); y no hay candado entre módulos, así que un
-  `PUT` que confirma **mientras** una aceptación en curso todavía no creó el tenant pasa el chequeo.
+- **Con una aceptación a medias no se cambia el documento** (`UpdateDistributorHandler`): la empresa del distribuidor y el
+  cliente del mayorista son idempotentes **por documento**. Si el distribuidor está `Invited`, el `PUT` cambia el tipo o el número
+  (normalizados) y hay marca `acceptance_started_at` **o** el tenant reservado ya existe (`ITenantDirectory.GetStatusAsync`, como
+  D-17; cubre las aceptaciones a medias anteriores a la columna), responde 409 `wholesale.distributor.acceptance_in_progress` y
+  no escribe. Los demás campos se siguen editando y sin cambio de documento no se consulta Tenancy.
+- **La aceptación confirma su marca antes de la primera escritura en otro módulo** (`Distributor.StartAcceptance`,
+  `DistributorInvitationService`). Reglas que no se aflojan: va **después** de todo lo que rechaza sin escribir (un accept
+  rechazado no bloquea el documento) y **antes** del tenant, los módulos, la empresa, el proveedor y el cliente: una validación
+  nueva va en `PlanTargetAsync` o antes, y una escritura nueva en el `WriteAsync` del plan o después de la marca. La marca **sube
+  `Version`**: un `PUT` que cargó antes pierde con 412, y si el que confirmó primero fue el `PUT`, el guardado de la marca pierde,
+  la aceptación suelta lo rastreado y **vuelve a empezar desde la lectura** (hasta 3 veces, después 412). No la cambies a un
+  `UPDATE` suelto que no mire la versión: la aceptación seguiría con datos viejos. No consume la invitación, no cambia el estado,
+  no se repite en un reintento y **no se borra**.
+  **Límites conocidos:** una aceptación que falla después de la marca deja el documento bloqueado aunque no haya creado nada con
+  él (Companies rechaza los datos, una carrera por el slug que escribió el distribuidor), y para corregirlo hay que borrar la
+  invitación e invitar de nuevo; borrar e invitar con otro documento después de una aceptación a medias sí puede duplicar; y no se
+  detectan las vinculaciones de un tenant existente que quedaron a medias antes de la migración y no se han reintentado.
 - **El aviso de WhatsApp de la invitación es un evento aparte, y desde el spec 2026-11-19 lleva el token**: invitar y
   «Reenviar» escriben `wholesale.distributor-invitation-link.v1` (token sólo en el payload del outbox). El viejo
   `wholesale.distributor-invitation-notice.v1`, sin token, ya no se escribe: el procesador sólo lo drena. El mensaje de WhatsApp

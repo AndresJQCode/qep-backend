@@ -301,6 +301,9 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
 
     public List<TenantRegistrationData> Checked { get; } = [];
 
+    /// <summary>Corre justo antes de cada escritura de Tenancy: mira qué estaba confirmado en ese momento.</summary>
+    public Action? BeforeWrite { get; set; }
+
     /// <summary>Cualquier escritura de Tenancy: «no escribió nada» es cero.</summary>
     public int Writes => Registered.Count + Grants.Count;
 
@@ -358,6 +361,7 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
                 : throw new InvalidOperationException("Another owner.");
         }
 
+        BeforeWrite?.Invoke();
         Registered.Add((tenantId.Value, ownerUserId, data, modules));
         Tenants[tenantId.Value] = (data.DisplayName, TenantStatus.Active, ownerUserId, modules.ToHashSet());
         return Task.FromResult(true);
@@ -366,6 +370,7 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
     public Task<IReadOnlyList<TenantModuleKey>> EnsureActiveAsync(
         TenantId tenantId, IReadOnlyList<TenantModuleKey> keys, Guid actorUserId, string note, CancellationToken cancellationToken)
     {
+        BeforeWrite?.Invoke();
         Grants.Add((tenantId.Value, keys, actorUserId, note));
         var tenant = Tenants[tenantId.Value];
         IReadOnlyList<TenantModuleKey> enabled = TenantModuleKeys.All
@@ -532,6 +537,9 @@ internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
     /// <summary>Lo que Companies rechazaría (un <c>ValidationException</c>, por ejemplo).</summary>
     public Exception? Fail { get; set; }
 
+    /// <summary>Corre justo antes de cada escritura de Companies.</summary>
+    public Action? BeforeWrite { get; set; }
+
     /// <summary>Las llamadas de «sólo si el tenant no tiene ninguna»; la decisión de saltarla es de Companies, no de Wholesale.</summary>
     public List<(Guid Tenant, Guid Actor, WholesaleCompanyDraft Draft)> FirstCalls { get; } = [];
 
@@ -546,6 +554,7 @@ internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
             throw failure;
         }
 
+        BeforeWrite?.Invoke();
         FirstCalls.Add((distributorTenantId, actorUserId, draft));
         return Task.FromResult<Guid?>(CompanyId);
     }
@@ -561,6 +570,7 @@ internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
             throw failure;
         }
 
+        BeforeWrite?.Invoke();
         Calls.Add((distributorTenantId, actorUserId, draft));
         return Task.FromResult(CompanyId);
     }
