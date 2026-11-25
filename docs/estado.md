@@ -593,6 +593,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`f2734f280`, `--no-ff`, sin push) **todo pago de la factura de Siigo lleva `due_date`**
+  (`feature/siigo-payment-due-date`, `62986ec4d`). Los comprobantes salían sin él y Siigo rechazaba con `parameter_required`
+  una forma de pago que maneja vencimiento. Decisión del owner: se envía siempre. En verde `ArchitectureTests` (325) y
+  `Modules.Siigo.UnitTests` (468) por `test-feature.ps1`; **la integración de Siigo no se corrió**. Sin probar contra Siigo que
+  una forma sin vencimiento acepte el campo, ni dos pagos en una con vencimiento.
 - 2026-11-25 — Mergeado a `develop` (`d65658756`, `--no-ff`, sin push) **perfiles de facturación y entrega editable**
   (`feature/billing-profiles`, hasta `589783868`). La primera parte (perfiles y entrega editable, `8c41506e5`) ya había
   entrado a `develop` y a `main`; esta agrega Shopify: código postal en correcciones y proyecciones, direcciones fuera de
