@@ -549,6 +549,12 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`cf9f4d21e`, `--no-ff`, sin push) **la prueba de «Generar» por tanda (H-1 del spec del
+  frontend de facturación en segundo plano)** (`test/siigo-batch-marks-order`, `3e3e1f30e`; owner). Sólo agrega
+  `ABatchOfAnOrderWhoseInvoiceWasNotMarkedMarksItWithoutCallingSiigo`: una tanda de un pedido cuya factura quedó creada y
+  sin marcar lo marca sin volver a llamar a Siigo. Pasa sin cambios de producción y falla si se quita el reintento de la
+  marca. `test-feature.ps1` en verde, sin avisos (`ArchitectureTests` 325, Siigo unitarias 393,
+  `SiigoInvoiceBatchApiTests` 33). Era la garantía pendiente antes de la fase *contract*.
 - 2026-11-25 — Mergeado a `develop` (`1434edfd9`, `--no-ff`) **las 7 pruebas rojas de integración de Quotations** (`6433890bf`; rama y worktree borrados). `GET quotations/whatsapp-channels?document=invoice` vuelve a responder `422 quotation.whatsapp.document_invalid`; el harness borra los ajustes con los que nace el tenant. Las 7 en verde en corrida filtrada; el proyecto de integración completo se detuvo a los 46 minutos, sin fallos registrados hasta ahí.
 - 2026-11-25 — Mergeado a `develop` (`6fa4a9cfa`, `--no-ff`, sin push) **facturación ve las fallas de las llamadas a Siigo**
   (`feature/billing-siigo-calls`, `3ac8850e9`; decisión del owner). El rol de sistema `billing` lleva `siigo.calls.read`,
