@@ -409,6 +409,28 @@ public sealed class SiigoSettingsApiTests
         Assert.Contains("creditDays", problem["errors"]!.AsObject().Select(pair => pair.Key));
     }
 
+    // Un elemento nulo de cualquier lista de la configuración es un 422 en ese elemento, no un 500.
+    [Theory]
+    [InlineData("taxes", """{"vat":[null],"withholdings":[]}""", "vat[0]")]
+    [InlineData("taxes", """{"vat":[],"withholdings":[null]}""", "withholdings[0]")]
+    [InlineData("payments", """{"accounts":[null]}""", "accounts[0]")]
+    [InlineData("sellers", """{"sellers":[null]}""", "sellers[0]")]
+    public async Task ANullElementOfAListIs422WithItsField(string step, string body, string field)
+    {
+        await using var database = await StartDatabaseAsync();
+        var world = await ArrangeAsync(database, new FakeSiigoApi());
+        using var factory = world.Factory;
+        using var client = Manager(factory, world.Tenant);
+        await client.GetAsync(SettingsRoute(world.TenantId, world.ConnectionId), Ct);
+
+        var response = await PutAsync(
+            client, SettingsRoute(world.TenantId, world.ConnectionId, step), JsonNode.Parse(body)!, "\"0\"");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        Assert.Contains(field, problem["errors"]!.AsObject().Select(pair => pair.Key));
+    }
+
     [Fact]
     public async Task OptionsComeFromSiigoAndAreCachedForFiveMinutes()
     {
