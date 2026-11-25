@@ -585,6 +585,14 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`f0380ab4b`, `--no-ff`, sin push) **SMMLV y piso del salario integral desde 2017**
+  (`feature/seed-salary-floors`, `2a288e003`; rama y worktree borrados). Importar empleados con ingreso anterior a 2024
+  fallaba por falta de valores legales. La migración Hr aditiva `20261125201557_SeedHistoricalSalaryFloors` siembra
+  `Smmlv` e `IntegralSalaryFloor` (13 × SMMLV) de 2017 a 2023 con `ON CONFLICT DO NOTHING`: una vigencia ya cargada por
+  la consola no se modifica. El owner insertó las mismas filas por SQL en producción (verificadas con una consulta de
+  sólo lectura), así que allí la migración no cambia datos; esas filas no quedan en el historial de la consola. No se
+  sembraron los demás parámetros de esos años. Pruebas: integración de Hr filtrada (parámetros legales, reglas de
+  salario e importación) 75/75. **No se completó** `scripts/test-feature.ps1` antes del merge (decisión del owner).
 - 2026-11-25 — Mergeado a `develop` (`a13fa371a`, `--no-ff`, sin push) **menores de la facturación con Siigo**
   (`fix/siigo-menores`, hasta `592ba7946`; rama y worktree borrados). Un reenvío por tanda que no se puede hacer no
   queda `Failed` si la factura se está enviando o ya existe (sí si falta mandar la de flete) y muestra por qué no
