@@ -29,6 +29,8 @@ public static class ServiceContractsInfrastructureExtensions
         services.AddScoped<IServiceContractRepository, ServiceContractRepository>();
         services.AddScoped<IChargeRepository, ChargeRepository>();
         services.AddScoped<IServicePriceChangeRepository, ServicePriceChangeRepository>();
+        services.AddScoped<IServicePriceScheduleRepository, ServicePriceScheduleRepository>();
+        services.AddScoped<IIpcRateRepository, IpcRateRepository>();
         services.AddScoped<ICustomerBillingProfileRepository, CustomerBillingProfileRepository>();
         services.AddScoped<IServiceContractsSettingsRepository, ServiceContractsSettingsRepository>();
         services.AddScoped<IServiceContractsUnitOfWork, ServiceContractsUnitOfWork>();

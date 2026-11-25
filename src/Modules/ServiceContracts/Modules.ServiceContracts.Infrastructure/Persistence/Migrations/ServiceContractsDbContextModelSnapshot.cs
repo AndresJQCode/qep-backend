@@ -137,6 +137,16 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("payment_note");
 
+                    b.Property<DateOnly>("PeriodDate")
+                        .HasColumnType("date")
+                        .HasColumnName("period_date");
+
+                    b.Property<bool>("PriceUnreviewed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("price_unreviewed");
+
                     b.Property<Guid>("ServiceId")
                         .HasColumnType("uuid")
                         .HasColumnName("service_id");
@@ -158,9 +168,9 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ServiceId", "DueDate")
+                    b.HasIndex("ServiceId", "PeriodDate")
                         .IsUnique()
-                        .HasDatabaseName("IX_charges_service_due");
+                        .HasDatabaseName("IX_charges_service_period");
 
                     b.HasIndex("TenantId", "CustomerId", "Status")
                         .HasDatabaseName("IX_charges_tenant_customer_status");
@@ -215,11 +225,53 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.ServiceContracts.Domain.IpcRate", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<short>("Year")
+                        .HasColumnType("smallint")
+                        .HasColumnName("year");
+
+                    b.Property<decimal>("Rate")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)")
+                        .HasColumnName("rate");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_member_id");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("TenantId", "Year");
+
+                    b.ToTable("ipc_rates", "billing", t =>
+                        {
+                            t.HasCheckConstraint("CK_ipc_rates_rate", "rate >= -10 AND rate <= 100");
+                        });
+                });
+
             modelBuilder.Entity("Modules.ServiceContracts.Domain.ServiceContract", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<string>("AdjustmentMode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("adjustment_mode");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -248,7 +300,18 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                         .HasColumnType("date")
                         .HasColumnName("first_due_date");
 
-                    b.Property<DateOnly?>("LastGeneratedDueDate")
+                    b.Property<DateOnly?>("HeldSince")
+                        .HasColumnType("date")
+                        .HasColumnName("held_since");
+
+                    b.Property<decimal>("IpcExtraPoints")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("ipc_extra_points");
+
+                    b.Property<DateOnly?>("LastGeneratedPeriodDate")
                         .HasColumnType("date")
                         .HasColumnName("last_generated_due_date");
 
@@ -257,6 +320,10 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)")
                         .HasColumnName("name");
+
+                    b.Property<DateOnly>("NextReviewDate")
+                        .HasColumnType("date")
+                        .HasColumnName("next_review_date");
 
                     b.Property<decimal>("Price")
                         .HasPrecision(18, 2)
@@ -297,7 +364,11 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
 
                     b.ToTable("services", "billing", t =>
                         {
+                            t.HasCheckConstraint("CK_services_adjustment_mode", "adjustment_mode IN ('Manual','Ipc')");
+
                             t.HasCheckConstraint("CK_services_cycle_months", "cycle_months IN (1, 6, 12)");
+
+                            t.HasCheckConstraint("CK_services_ipc_extra_points", "ipc_extra_points >= 0 AND ipc_extra_points <= 50");
 
                             t.HasCheckConstraint("CK_services_status", "status IN ('Active','Paused','Cancelled')");
                         });
@@ -352,6 +423,12 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("occurred_at");
 
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("origin");
+
                     b.Property<string>("PreviousCurrency")
                         .IsRequired()
                         .HasMaxLength(3)
@@ -369,6 +446,10 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("reason");
 
+                    b.Property<Guid?>("ScheduleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("schedule_id");
+
                     b.Property<Guid>("ServiceId")
                         .HasColumnType("uuid")
                         .HasColumnName("service_id");
@@ -382,7 +463,111 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                     b.HasIndex("ServiceId", "OccurredAt")
                         .HasDatabaseName("IX_service_price_changes_service_occurred");
 
-                    b.ToTable("service_price_changes", "billing");
+                    b.ToTable("service_price_changes", "billing", t =>
+                        {
+                            t.HasCheckConstraint("CK_service_price_changes_origin", "origin IN ('Edit','Scheduled','Ipc')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.ServiceContracts.Domain.ServicePriceSchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("AppliedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("applied_at");
+
+                    b.Property<DateOnly?>("AppliedPeriodDate")
+                        .HasColumnType("date")
+                        .HasColumnName("applied_period_date");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_member_id");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<DateOnly>("EffectiveFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("effective_from");
+
+                    b.Property<decimal?>("ExtraPoints")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("extra_points");
+
+                    b.Property<decimal?>("IpcRate")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)")
+                        .HasColumnName("ipc_rate");
+
+                    b.Property<short?>("IpcYear")
+                        .HasColumnType("smallint")
+                        .HasColumnName("ipc_year");
+
+                    b.Property<decimal>("NewPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("new_price");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("ServiceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("service_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("source");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_service_price_schedules_pending")
+                        .HasFilter("status = 'Pending'");
+
+                    b.HasIndex("TenantId", "Source", "IpcYear")
+                        .HasDatabaseName("IX_service_price_schedules_tenant_source_year");
+
+                    b.ToTable("service_price_schedules", "billing", t =>
+                        {
+                            t.HasCheckConstraint("CK_service_price_schedules_new_price", "new_price > 0");
+
+                            t.HasCheckConstraint("CK_service_price_schedules_source", "source IN ('Manual','Ipc')");
+
+                            t.HasCheckConstraint("CK_service_price_schedules_status", "status IN ('Pending','Applied','Cancelled')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.ServiceContracts.Infrastructure.Persistence.CustomerMessage", b =>
