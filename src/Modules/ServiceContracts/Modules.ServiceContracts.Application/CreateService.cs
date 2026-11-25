@@ -54,7 +54,7 @@ public sealed record CreateServiceCommand(
 
 public sealed class CreateServiceValidator : AbstractValidator<CreateServiceCommand>
 {
-    public CreateServiceValidator(IClock clock)
+    public CreateServiceValidator(IClock clock, ITenantClock tenantClock)
     {
         RuleFor(command => command.CustomerId).NotEqual(Guid.Empty);
         RuleFor(command => command.Name).MustBeAServiceName();
@@ -68,6 +68,9 @@ public sealed class CreateServiceValidator : AbstractValidator<CreateServiceComm
         {
             RuleFor(command => command.PriceReview!.AdjustmentMode).MustBeAnAdjustmentMode();
             RuleFor(command => command.PriceReview!.IpcExtraPoints).MustBeIpcExtraPoints();
+            RuleFor(command => command.PriceReview!.NextReviewDate)
+                .MustBeAReasonableReviewDate(tenantClock, command => command.TenantId)
+                .When(command => command.PriceReview!.NextReviewDate is not null);
         });
     }
 }

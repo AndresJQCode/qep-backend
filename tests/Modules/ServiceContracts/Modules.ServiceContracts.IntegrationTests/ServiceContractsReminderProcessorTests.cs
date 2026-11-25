@@ -692,6 +692,8 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
     /// <summary>
     /// Review 9+10, T10-I2: otra réplica generó el primer período entre la lectura del servicio y el SaveChanges de esta. El
     /// choque con IX_charges_service_period no es un error: se relee el servicio (ya avanzado) y se genera sólo lo que falta.
+    /// El intento perdido no deja nada: ni el programado aplicado ni su fila de historial sin el cobro que los acompaña
+    /// (spec reajuste §6.11).
     /// </summary>
     [Fact]
     public async Task AGenerationClashRereadsTheServiceAndGeneratesOnlyWhatIsLeft()
@@ -699,13 +701,21 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
         var anchor = Today.AddMonths(-2);
         var service = await SeedServiceAsync(customer, anchor, lastGenerated: anchor, paidDueDates: [anchor]);
+        var schedule = await SeedScheduleAsync(service, ipc: false, 107000m, effectiveFrom: Today);
         chargeClash.Arm(database.GetConnectionString());
 
         await ProcessAsync();
 
         Assert.Equal(2, chargeClash.AddRangeCalls);
-        Assert.Equal([anchor, Today.AddMonths(-1), Today], (await ChargesOfAsync(service)).Select(c => c.DueDate));
-        Assert.Equal(Today, (await ServiceAsync(service)).LastGeneratedPeriodDate);
+        var charges = await ChargesOfAsync(service);
+        Assert.Equal([anchor, Today.AddMonths(-1), Today], charges.Select(c => c.DueDate));
+        Assert.Equal([100000m, 100000m, 107000m], charges.Select(c => c.Amount));
+        var stored = await ServiceAsync(service);
+        Assert.Equal((Today, 107000m), (stored.LastGeneratedPeriodDate, stored.Price));
+        var applied = await WithDbAsync(db => db.ServicePriceSchedules.AsNoTracking().SingleAsync(s => s.Id == schedule, Ct));
+        Assert.Equal((PriceScheduleStatus.Applied, (DateOnly?)Today), (applied.Status, applied.AppliedPeriodDate));
+        var change = Assert.Single(await WithDbAsync(db => db.ServicePriceChanges.AsNoTracking().ToListAsync(Ct)));
+        Assert.Equal(((Guid?)schedule, 107000m), (change.ScheduleId, change.NewPrice));
     }
 
     /// <summary>
@@ -1014,14 +1024,17 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             return service.Id;
         });
 
-    /// <summary>Un cambio pendiente sobre el período de revisión: confirmado con el IPC o programado a mano.</summary>
-    private Task<Guid> SeedScheduleAsync(ServiceContractId serviceId, bool ipc, decimal newPrice) =>
+    /// <summary>
+    /// Un cambio pendiente: confirmado con el IPC (sobre el período de revisión) o programado a mano desde
+    /// <paramref name="effectiveFrom"/>, que nulo es el período de revisión.
+    /// </summary>
+    private Task<Guid> SeedScheduleAsync(ServiceContractId serviceId, bool ipc, decimal newPrice, DateOnly? effectiveFrom = null) =>
         WithDbAsync(async db =>
         {
             var service = await db.Services.SingleAsync(s => s.Id == serviceId, Ct);
             var schedule = ipc
                 ? ServicePriceSchedule.ConfirmIpc(service, 2025, 7m, newPrice, "IPC 2025 (7,00 %)", null, NineLocal)
-                : ServicePriceSchedule.Schedule(service, null, newPrice, null, "Más usuarios", null, NineLocal);
+                : ServicePriceSchedule.Schedule(service, null, newPrice, effectiveFrom, "Más usuarios", null, NineLocal);
             db.ServicePriceSchedules.Add(schedule);
             await db.SaveChangesAsync(Ct);
             return schedule.Id;

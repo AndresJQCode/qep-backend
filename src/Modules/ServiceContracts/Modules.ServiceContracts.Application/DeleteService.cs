@@ -51,7 +51,7 @@ public sealed class DeleteServiceHandler(
 
         await charges.RemoveByServiceAsync(service.Id, cancellationToken);
         await priceChanges.RemoveByServiceAsync(service.Id, cancellationToken);
-        await schedules.RemoveByServiceAsync(service.Id, cancellationToken);
+        await schedules.RemoveByServiceAsync(command.TenantId, service.Id, cancellationToken);
         services.Remove(service);
 
         auditPublisher.Publish(

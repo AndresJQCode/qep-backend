@@ -24,8 +24,29 @@ public sealed class CreateServiceValidatorTests
         PriceReviewInput? priceReview = null) =>
         new(Guid.NewGuid(), Guid.NewGuid(), name, price, null, cycle, firstDueDate, null, null, priceReview);
 
+    // 02:00 UTC del 30 es todavía el 29 en Bogotá: así se distingue la «hoy» del tenant de la fecha UTC.
+    private static CreateServiceValidator Validator() =>
+        new(new FixedClock(), new FixedTenantClock(new DateTimeOffset(2026, 10, 30, 2, 0, 0, TimeSpan.Zero)));
+
     private static bool Fails(CreateServiceCommand command, string property) =>
-        new CreateServiceValidator(new FixedClock()).Validate(command).Errors.Any(error => error.PropertyName == property);
+        Validator().Validate(command).Errors.Any(error => error.PropertyName == property);
+
+    // Una revisión a siglos de hoy desbordaría la aritmética de fechas y tumbaría toda lectura del tenant que calcule revisiones.
+    [Theory]
+    [InlineData("2027-01-10", false)]
+    [InlineData("2036-10-29", false)]
+    [InlineData("2036-10-30", true)]
+    [InlineData("9999-12-31", true)]
+    [InlineData(null, false)]
+    public async Task TheNextReviewDateIsAtMostTenYearsAfterTheTenantToday(string? date, bool rejected)
+    {
+        var review = date is null ? (DateOnly?)null : DateOnly.ParseExact(date, "yyyy-MM-dd");
+        var command = Command(new DateOnly(2026, 11, 1), priceReview: new PriceReviewInput("Ipc", 0m, review));
+
+        var result = await Validator().ValidateAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.Equal(rejected, result.Errors.Any(error => error.PropertyName == "PriceReview.NextReviewDate"));
+    }
 
     [Theory]
     [InlineData("1999-12-31", true)]
@@ -112,7 +133,7 @@ public sealed class CreateServiceValidatorTests
 
     [Fact]
     public void AnAbsentPriceReviewPasses() =>
-        Assert.True(new CreateServiceValidator(new FixedClock()).Validate(Command(new DateOnly(2026, 11, 1))).IsValid);
+        Assert.True(Validator().Validate(Command(new DateOnly(2026, 11, 1))).IsValid);
 
     [Fact]
     public void TheNameCannotExceedTheColumn()

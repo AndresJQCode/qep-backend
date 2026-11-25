@@ -1,5 +1,6 @@
 using FluentValidation;
 using Modules.ServiceContracts.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.ServiceContracts.Application;
 
@@ -17,6 +18,24 @@ internal static class PriceReviewRules
     private const int PointsPrecision = 5;
 
     private const int PointsScale = 2;
+
+    /// <summary>
+    /// El techo de una fecha de revisión y de un «desde cuándo»: la «hoy» del tenant + 10 años. Una fecha de siglos adelante
+    /// desbordaría la aritmética de períodos (<c>DateOnly</c> termina en el año 9999) en cada lectura que calcule revisiones, no
+    /// sólo en el contrato que la guardó.
+    /// </summary>
+    public const int LatestReviewDateYearsAhead = 10;
+
+    /// <summary>Nula pasa: es «la fecha por defecto» y la elige el dominio.</summary>
+    public static IRuleBuilderOptions<T, DateOnly?> MustBeAReasonableReviewDate<T>(
+        this IRuleBuilder<T, DateOnly?> rule, ITenantClock tenantClock, Func<T, Guid> tenantId) =>
+        rule.MustAsync(async (command, date, cancellationToken) =>
+                date is not { } value || await IsWithinReviewHorizonAsync(tenantClock, tenantId(command), value, cancellationToken))
+            .WithMessage($"The date cannot be more than {LatestReviewDateYearsAhead} years from today.");
+
+    private static async Task<bool> IsWithinReviewHorizonAsync(
+        ITenantClock tenantClock, Guid tenantId, DateOnly date, CancellationToken cancellationToken) =>
+        date <= (await tenantClock.GetAsync(tenantId, cancellationToken)).Today.AddYears(LatestReviewDateYearsAhead);
 
     /// <summary>Sólo los dos nombres exactos del contrato, como <see cref="ServiceRules.TryParseCycle"/>.</summary>
     public static bool TryParseMode(string? text, out AdjustmentMode mode)

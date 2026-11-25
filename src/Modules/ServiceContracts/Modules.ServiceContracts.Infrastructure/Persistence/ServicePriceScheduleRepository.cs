@@ -17,7 +17,7 @@ internal sealed class ServicePriceScheduleRepository(ServiceContractsDbContext d
             cancellationToken);
 
     public async Task<IReadOnlyList<ServicePriceSchedule>> ListPendingByServicesAsync(
-        IReadOnlyCollection<ServiceContractId> serviceIds, CancellationToken cancellationToken)
+        Guid tenantId, IReadOnlyCollection<ServiceContractId> serviceIds, CancellationToken cancellationToken)
     {
         if (serviceIds.Count == 0)
         {
@@ -27,7 +27,9 @@ internal sealed class ServicePriceScheduleRepository(ServiceContractsDbContext d
         var ids = serviceIds.ToArray();
         return await dbContext.ServicePriceSchedules
             .AsNoTracking()
-            .Where(schedule => ids.Contains(schedule.ServiceId) && schedule.Status == PriceScheduleStatus.Pending)
+            .Where(schedule => schedule.TenantId == tenantId
+                && ids.Contains(schedule.ServiceId)
+                && schedule.Status == PriceScheduleStatus.Pending)
             .ToListAsync(cancellationToken);
     }
 
@@ -50,7 +52,9 @@ internal sealed class ServicePriceScheduleRepository(ServiceContractsDbContext d
             .OrderBy(year => year)
             .ToListAsync(cancellationToken);
 
-    public async Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken) =>
+    public async Task RemoveByServiceAsync(Guid tenantId, ServiceContractId serviceId, CancellationToken cancellationToken) =>
         dbContext.ServicePriceSchedules.RemoveRange(
-            await dbContext.ServicePriceSchedules.Where(schedule => schedule.ServiceId == serviceId).ToListAsync(cancellationToken));
+            await dbContext.ServicePriceSchedules
+                .Where(schedule => schedule.TenantId == tenantId && schedule.ServiceId == serviceId)
+                .ToListAsync(cancellationToken));
 }

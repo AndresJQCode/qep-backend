@@ -245,6 +245,40 @@ public sealed class ChargeGeneratorReviewTests
         Assert.Null(service.HeldSince);
     }
 
+    // Spec reajuste §6.4: pasar a Manual un retenido libera por «sin revisar», con el vencimiento corrido.
+    [Fact]
+    public void SwitchingAHeldContractToManualReleasesItUnreviewed()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.UpdatePriceReview(AdjustmentMode.Manual, 0m, service.NextReviewDate, Now);
+
+        var result = Run(service, "2027-01-14");
+
+        var charge = Assert.Single(result.Charges);
+        Assert.Equal((Date("2027-01-10"), Date("2027-01-19"), true), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed));
+        Assert.Equal(OldPrice, charge.Amount);
+        Assert.Equal(Date("2028-01-10"), service.NextReviewDate);
+        Assert.Null(service.HeldSince);
+    }
+
+    // Spec reajuste §6.4: correr la revisión más allá del período retenido es una decisión de una persona: no va «sin revisar».
+    [Fact]
+    public void MovingTheReviewPastTheHeldPeriodReleasesItAsReviewed()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.UpdatePriceReview(AdjustmentMode.Ipc, 0m, Date("2027-06-10"), Now);
+
+        var result = Run(service, "2027-01-14");
+
+        var charge = Assert.Single(result.Charges);
+        Assert.Equal((Date("2027-01-10"), Date("2027-01-19"), false), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed));
+        Assert.Equal(OldPrice, charge.Amount);
+        Assert.Equal(Date("2027-06-10"), service.NextReviewDate);
+        Assert.Null(service.HeldSince);
+    }
+
     [Fact]
     public void ANotHeldPassDueOnTheAnchor()
     {

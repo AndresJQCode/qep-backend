@@ -160,13 +160,20 @@ public sealed class ServiceContractsPersistenceTests
             ((int?)2026, (decimal?)5.2m, (decimal?)2m, "IPC 2026", confirmed.CreatedByMemberId, PriceScheduleStatus.Pending),
             (loaded.IpcYear, loaded.IpcRate, loaded.ExtraPoints, loaded.Reason, loaded.CreatedByMemberId, loaded.Status));
         Assert.Null(await schedules.FindPendingAsync(Guid.CreateVersion7(), ipc.Id, ct));
-        Assert.Equal(2, (await schedules.ListPendingByServicesAsync([ipc.Id, manual.Id], ct)).Count);
+        Assert.Equal(2, (await schedules.ListPendingByServicesAsync(Tenant, [ipc.Id, manual.Id], ct)).Count);
+        Assert.Empty(await schedules.ListPendingByServicesAsync(Guid.CreateVersion7(), [ipc.Id, manual.Id], ct));
         Assert.Equal(2, (await schedules.ListPendingByTenantAsync(Tenant, ct)).Count);
         Assert.Empty(await schedules.ListPendingByTenantAsync(Guid.CreateVersion7(), ct));
         Assert.Equal([2026], await schedules.ListPendingIpcYearsAsync(Tenant, ct));
 
-        await schedules.RemoveByServiceAsync(ipc.Id, ct);
-        await read.ServiceProvider.GetRequiredService<ServiceContractsDbContext>().SaveChangesAsync(ct);
+        var db2 = read.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        // Con otro tenant no se borra nada, aunque el id del contrato sea el correcto.
+        await schedules.RemoveByServiceAsync(Guid.CreateVersion7(), ipc.Id, ct);
+        await db2.SaveChangesAsync(ct);
+        Assert.Equal(2, (await schedules.ListPendingByTenantAsync(Tenant, ct)).Count);
+
+        await schedules.RemoveByServiceAsync(Tenant, ipc.Id, ct);
+        await db2.SaveChangesAsync(ct);
         Assert.Equal(manual.Id, Assert.Single(await schedules.ListPendingByTenantAsync(Tenant, ct)).ServiceId);
         Assert.Empty(await schedules.ListPendingIpcYearsAsync(Tenant, ct));
     }

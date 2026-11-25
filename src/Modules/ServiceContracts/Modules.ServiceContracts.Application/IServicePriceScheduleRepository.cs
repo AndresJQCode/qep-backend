@@ -10,9 +10,9 @@ public interface IServicePriceScheduleRepository
     /// <summary>Con tracking: quien lo lee lo aplica o lo cancela.</summary>
     Task<ServicePriceSchedule?> FindPendingAsync(Guid tenantId, ServiceContractId serviceId, CancellationToken cancellationToken);
 
-    /// <summary>Sin tracking: para pintar. Los ids ya vienen acotados al tenant por quien los cargó.</summary>
+    /// <summary>Sin tracking: para pintar.</summary>
     Task<IReadOnlyList<ServicePriceSchedule>> ListPendingByServicesAsync(
-        IReadOnlyCollection<ServiceContractId> serviceIds, CancellationToken cancellationToken);
+        Guid tenantId, IReadOnlyCollection<ServiceContractId> serviceIds, CancellationToken cancellationToken);
 
     /// <summary>Sin tracking.</summary>
     Task<IReadOnlyList<ServicePriceSchedule>> ListPendingByTenantAsync(Guid tenantId, CancellationToken cancellationToken);
@@ -21,5 +21,5 @@ public interface IServicePriceScheduleRepository
     Task<IReadOnlyList<int>> ListPendingIpcYearsAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>Todos los del contrato, en cualquier estado: borrar el contrato se los lleva.</summary>
-    Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken);
+    Task RemoveByServiceAsync(Guid tenantId, ServiceContractId serviceId, CancellationToken cancellationToken);
 }

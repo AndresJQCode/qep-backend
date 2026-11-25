@@ -29,8 +29,9 @@ public sealed class ServiceContractsPriceAdjustmentMigrationTests
         await using var database = await OpenAtThePreviousVersionAsync();
         var old = UtcToday.AddDays(-400);
         var future = UtcToday.AddDays(40);
-        // El aniversario justo a 15 días entra; el que cae a 14 salta al año siguiente.
-        var onTheLimit = UtcToday.AddDays(15).AddYears(-1);
+        // El aniversario justo a 15 días entra; el que cae a 14 salta al año siguiente. El que entra se ancla cuatro años atrás:
+        // un año atrás, un límite que caiga en 29 de febrero daría un ancla del 28 y la aserción dependería del día de la corrida.
+        var onTheLimit = UtcToday.AddDays(15).AddYears(-4);
         var justInside = UtcToday.AddDays(14).AddYears(-1);
         var oldId = await InsertServiceAsync(database, old);
         var futureId = await InsertServiceAsync(database, future);

@@ -1335,6 +1335,29 @@ public sealed class ServiceContractApiTests
     }
 
     [Fact]
+    public async Task AReviewDateMoreThanTenYearsAheadIsValidationFailed()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+
+        var response = await manager.PostAsJsonAsync(
+            ServicesUrl(),
+            ReviewedServiceBody(
+                customerId, ProfileBody("Email", admin), TenantToday.AddMonths(2),
+                new { adjustmentMode = "Ipc", ipcExtraPoints = 0m, nextReviewDate = "9999-12-31" }),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.True(Has(await ErrorsOfAsync(response), "PriceReview.NextReviewDate"));
+        var list = await manager.GetFromJsonAsync<ServicePageDto>($"{ServicesUrl()}?status=all", Ct);
+        Assert.Equal(0, list!.Total);
+    }
+
+    [Fact]
     public async Task PriceReviewFieldsAreValidatedWithTheirPrefix()
     {
         var (database, factory) = await OpenAsync();
