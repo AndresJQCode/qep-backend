@@ -547,6 +547,13 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-24 — Mergeado a `develop` (fast-forward `fd7e650c8`, sin push) **el rol `billing` ve las empresas y configura Siigo**
+  (owner, `ccbaa79e4`): suma `companies.company.read`, `integrations.connection.read` y `siigo.settings.manage`. No recibe
+  `integrations.connection.manage` (daría también WhatsApp, Instagram y Shopify): crear, editar la credencial y desconectar
+  una conexión siguen en `admin`. Frontend en `develop` (`31fcb07a`, sin push): el menú Integraciones se ofrece también con
+  `siigo.settings.manage`. Sin migración. Pruebas de la rama (`test-feature.ps1`): ArchitectureTests 325/325 y
+  Bootstrapper unitarias 1253/1254; la roja, `SchedulingReminderRecipientsTests.ACustomerWithoutAPhoneComesBackWithoutIt`
+  (`The customer phone is required.`), ya fallaba sin este cambio.
 - 2026-11-24 — **Aprobado el spec de facturación con Siigo en segundo plano** (owner; spec
   `2026-11-24-siigo-facturacion-en-segundo-plano-design`). Toda emisión pasa por una tanda (202), pantalla de tandas, facturas «Por
   confirmar» en vez de `Rejected` cuando no hubo respuesta, 120 s para crear la factura y 10 min antes de declarar «No existe». **Sin
