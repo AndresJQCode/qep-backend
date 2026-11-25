@@ -1151,8 +1151,8 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// Spec 2026-11-18 (integración Siigo): los permisos exigen el módulo <c>siigo</c>; admin lleva todos y facturación configura
-    /// la conexión (decisión del owner, 2026-11-24) y emite la factura. Asesor y cajero, ninguno.
+    /// Spec 2026-11-18 (integración Siigo): los permisos exigen el módulo <c>siigo</c>; admin y facturación llevan todos
+    /// (decisiones del owner, 2026-11-24 y 2026-11-25). Asesor y cajero, ninguno.
     /// </summary>
     [Fact]
     public void TheSiigoPermissionsRequireTheSiigoModuleAndGoToAdminAndBilling()
@@ -1174,8 +1174,8 @@ public sealed class CompositionRootTests
 
         Assert.Contains(SiigoPermissions.InvoiceIssue, catalog.PermissionsFor("billing"));
         Assert.Contains(SiigoPermissions.SettingsManage, catalog.PermissionsFor("billing"));
-        // Spec 2026-11-21: el curl y la respuesta llevan datos del cliente; quien factura no los ve de fábrica.
-        Assert.DoesNotContain(SiigoPermissions.CallsRead, catalog.PermissionsFor("billing"));
+        // Decisión del owner (2026-11-25): quien factura ve las fallas de sus llamadas, aunque lleven datos del cliente.
+        Assert.Contains(SiigoPermissions.CallsRead, catalog.PermissionsFor("billing"));
     }
 
     /// <summary>
