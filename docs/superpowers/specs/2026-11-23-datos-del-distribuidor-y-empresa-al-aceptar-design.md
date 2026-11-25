@@ -170,6 +170,15 @@ mayorista ya sabía.
     existe (aceptación a medias) es 409 `wholesale.distributor.acceptance_in_progress` y no escribe nada, porque el reintento es
     idempotente por documento y duplicaría la empresa y el cliente. Los demás campos siguen editables. Límite conocido: una
     aceptación a medias vinculando un tenant existente no se detecta.
+  - Nota (2026-11-24, marca de aceptación iniciada): ese límite, y el del `PUT` que confirmaba antes de que la aceptación
+    creara el tenant, se cierran con `wholesale.distributors.acceptance_started_at` (columna nullable, migración aditiva
+    `AddDistributorAcceptanceStartedAt`). `AcceptAsync` la confirma después de las validaciones que rechazan sin escribir y
+    antes de la primera escritura en otro módulo; sube `version`, así que un `PUT` simultáneo pierde con 412 o ve la marca, y si
+    el `PUT` confirmó primero, la aceptación relee y vuelve a validar (hasta 3 veces; después 412 `concurrency.conflict`). El 409
+    sale con la marca **o** con el tenant reservado existente (aceptaciones a medias anteriores a la columna). La invitación se
+    sigue consumiendo sólo en el último commit. Límites: la marca no se borra (para corregir el documento tras un fallo posterior
+    hay que borrar la invitación e invitar de nuevo), durante el rollout un pod viejo ni la pone ni la mira, y una vinculación a
+    medias anterior a la migración no se detecta hasta que se reintente.
 - Al exigir la ciudad, **el formulario actual deja de poder invitar en Colombia** hasta que salga el frontend: backend y frontend se
   despliegan juntos (decisión pendiente del owner).
 
