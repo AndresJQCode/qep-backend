@@ -10,8 +10,9 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Siigo.UnitTests;
 
-/// <summary>Sellar y resolver preguntan por la tanda abierta <b>después</b> del commit: si esa lectura falla, la operación ya está
-/// guardada (hasta un sellado ante la DIAN) y repetirla respondería 422. La respuesta sale igual, tratando el pedido como en cola.</summary>
+/// <summary>Lo que sellar y resolver hacen <b>después</b> del commit (preguntar por la tanda abierta y, al resolver «existe», marcar el
+/// pedido) no puede tumbar la respuesta: la operación ya está guardada (hasta un sellado ante la DIAN) y repetirla respondería 422. Sin
+/// la lectura de la tanda el pedido se trata como en cola; sin la marca, la respuesta lo avisa.</summary>
 public sealed class SiigoSavedInvoiceQueueReadTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
@@ -104,6 +105,57 @@ public sealed class SiigoSavedInvoiceQueueReadTests
         Assert.Equal(1, harness.UnitOfWork.Commits);
     }
 
+    public static TheoryData<Exception> MarkFailures =>
+    [
+        // El pedido se anuló o alguien lo marcó a mano; otra escritura ganó dos veces; la base no contestó a tiempo.
+        new SiigoDomainException("order.order.cancelled", "The order was cancelled."),
+        new RequestConcurrencyException("concurrency.conflict", "The order changed."),
+        new InvalidOperationException("The database is not reachable."),
+        new OperationCanceledException(),
+    ];
+
+    // La resolución ya está guardada: que el pedido no se pueda marcar se avisa, no se responde con un error que al repetir da 422.
+    [Theory]
+    [MemberData(nameof(MarkFailures), DisableDiscoveryEnumeration = true)]
+    public async Task AnExistsResolutionWhoseOrderCannotBeMarkedSaysTheMarkFailed(Exception failure)
+    {
+        var harness = new Harness(Unanswered(), new FailingBatches(null));
+        harness.Orders.MarkFailure = failure;
+
+        var resolved = await harness.Resolve("exists", "FV-1-777", TestContext.Current.CancellationToken);
+
+        Assert.Equal(("Created", "FV-1-777", true), (resolved.Status, resolved.Number, resolved.OrderMarkFailed));
+        Assert.Equal(1, harness.UnitOfWork.Commits);
+        Assert.Equal(LogLevel.Warning, Assert.Single(harness.ResolveLog.Levels));
+    }
+
+    // Con el pedido en una tanda no se avisa, como en las demás lecturas: el worker vuelve a marcarlo y su ítem dice si no pudo.
+    [Fact]
+    public async Task AnOrderHeldByABatchDoesNotWarnAboutTheMarkThatFailed()
+    {
+        var harness = new Harness(Unanswered(), new FailingBatches(null, heldBy: Guid.CreateVersion7()));
+        harness.Orders.MarkFailure = new InvalidOperationException("down");
+
+        var resolved = await harness.Resolve("exists", "FV-1-777", TestContext.Current.CancellationToken);
+
+        Assert.Equal(("Created", false), (resolved.Status, resolved.OrderMarkFailed));
+        Assert.Equal(0, harness.Orders.MarkReads);
+        Assert.Equal(LogLevel.Warning, Assert.Single(harness.ResolveLog.Levels));
+    }
+
+    [Fact]
+    public async Task ACancellationOfTheCallerWhileMarkingStillPropagates()
+    {
+        using var caller = new CancellationTokenSource();
+        var harness = new Harness(Unanswered(), new FailingBatches(null));
+        harness.Orders.MarkFailure = new OperationCanceledException(caller.Token);
+        harness.Orders.OnMark = caller.Cancel;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => harness.Resolve("exists", "FV-1-777", caller.Token));
+
+        Assert.Equal(1, harness.UnitOfWork.Commits);
+    }
+
     private static SiigoInvoice Pending() =>
         SiigoInvoice.PendingFor(
             Guid.CreateVersion7(), TenantId, ConnectionId, OrderId, SiigoInvoiceKind.Order, """{"a":1}""", 7, Guid.CreateVersion7(),
@@ -164,9 +216,11 @@ public sealed class SiigoSavedInvoiceQueueReadTests
                     new ResolveSiigoInvoiceCommand(TenantId, OrderId, null, outcome, number), cancellationToken);
     }
 
-    /// <param name="failure">Lo que lanza la lectura de la tanda abierta; <c>null</c> contesta que ninguna tiene el pedido.</param>
+    /// <param name="failure">Lo que lanza la lectura de la tanda abierta; <c>null</c> contesta <paramref name="heldBy"/>.</param>
     /// <param name="answeredReads">Cuántas lecturas contesta bien antes de empezar a fallar.</param>
-    private sealed class FailingBatches(Exception? failure, int answeredReads = 0, Action? onRead = null) : ISiigoInvoiceBatchRepository
+    /// <param name="heldBy">La tanda que tiene el pedido; <c>null</c> es ninguna.</param>
+    private sealed class FailingBatches(Exception? failure, int answeredReads = 0, Action? onRead = null, Guid? heldBy = null)
+        : ISiigoInvoiceBatchRepository
     {
         private int _reads;
 
@@ -174,7 +228,7 @@ public sealed class SiigoSavedInvoiceQueueReadTests
         {
             onRead?.Invoke();
             return failure is null || _reads++ < answeredReads
-                ? Task.FromResult<Guid?>(null)
+                ? Task.FromResult(heldBy)
                 : Task.FromException<Guid?>(failure);
         }
 
@@ -203,9 +257,17 @@ public sealed class SiigoSavedInvoiceQueueReadTests
             return Task.FromResult(false);
         }
 
+        /// <summary>Lo que lanza marcar el pedido; <c>null</c> lo marca.</summary>
+        public Exception? MarkFailure { get; set; }
+
+        public Action? OnMark { get; set; }
+
         public Task MarkInvoicedAsync(
-            Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+            Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken)
+        {
+            OnMark?.Invoke();
+            return MarkFailure is null ? Task.CompletedTask : Task.FromException(MarkFailure);
+        }
 
         public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

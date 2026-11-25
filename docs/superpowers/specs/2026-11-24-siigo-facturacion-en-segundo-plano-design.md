@@ -171,6 +171,11 @@ de flete sólo sale después de que la del pedido existe, así que nunca salió 
 haberla marcado igual). Si no, quedaría viva, bloqueando el pedido para siempre. Al declarar `exists`, o con la del pedido ya facturada,
 la de flete no se toca y se resuelve o se reenvía aparte (decidido durante la implementación, 2026-11-24).
 
+**La resolución guardada no falla por lo que viene después** (decidido el 2026-11-25). Al declarar `exists` la del pedido, marcar el
+pedido va después del commit: si falla (anulado, marcado a mano, otra escritura, la base), la respuesta es la fila `Created` con
+`orderMarkFailed` (§5), no un error, porque repetir la resolución sería 422 `state_invalid`. Con el pedido en una tanda sin terminar el
+aviso no viaja (§5). Una cancelación de quien llama sí sube.
+
 **La de flete espera a la del pedido** (decidido el 2026-11-25). Mientras la fila `Order` siga abierta (`Pending` o `Unknown`), la de
 flete nunca salió: resolverla, con `exists` o con `missing`, es 422 `siigo.invoice.state_invalid`, y sus filas viajan con `canResolve` en
 `false`. Con la del pedido facturada, rechazada o `Failed`, una de flete vigente se resuelve como cualquier otra.

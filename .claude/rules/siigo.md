@@ -87,9 +87,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   (`SiigoInvoice.CanResend` y `SiigoInvoiceBatchItem.Effective` no ven las otras tandas): una respuesta nueva que ofrezca reenviar tiene
   que cruzarlo. `canResolve` no lo mira. La excepción es la respuesta del `POST` síncrono, que no lo cruza: puede traer `canResend` en
   `true` con el pedido en una tanda.
-- **Lo que se lee después del commit no puede tumbar la respuesta** (sellar y resolver, `SiigoSavedInvoice`): la operación ya está
+- **Lo que va después del commit no puede tumbar la respuesta** (sellar y resolver, `SiigoSavedInvoice`): la operación ya está
   guardada —hasta un sellado ante la DIAN— y repetirla responde 422. Si la consulta de la tanda abierta falla, el pedido se trata como
-  en cola (`canResend` en `false`, sin aviso de marca) y queda un warning. Una respuesta nueva armada tras guardar pasa por ahí.
+  en cola (`canResend` en `false`, sin aviso de marca) y queda un warning. Una respuesta nueva armada tras guardar pasa por ahí. **Marcar
+  el pedido al resolver «existe» tampoco** la tumba (decidido el 2026-11-25): si falla, la resolución queda guardada, queda un warning
+  con el tipo de la excepción y la respuesta avisa con `orderMarkFailed`, salvo con el pedido en una tanda (o sin poder saberlo): ahí
+  no ves el aviso, y es la tanda la que vuelve a marcar y lo dice en su ítem.
 - **«No existe» se rechaza mientras una tanda tenga el pedido** (409 `siigo.invoice_batch.order_in_progress`, dentro de la transacción
   que bloquea el pedido): soltar la fila haría que el worker armara otra factura con otra clave en vez de reenviar la misma, y podría
   duplicarla. «Existe» sí se acepta. Crear una tanda no toma ese candado, así que una creada justo entre la consulta y el guardado se
