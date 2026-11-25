@@ -1,6 +1,8 @@
 using Modules.Siigo.Application;
+using Modules.Siigo.Infrastructure.Batches;
 using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using System.Net;
 using System.Text.Json;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
@@ -602,6 +604,46 @@ public sealed class SiigoInvoiceApiTests
         Assert.Equal("siigo.invoice.no_connection", availability.GetProperty("reason").GetString());
         await AssertUntouchedAsync(world);
     }
+
+    // Spec 2026-11-24 §1: la pantalla del pedido retoma el seguimiento de la tanda sin terminar al recargar.
+    [Fact]
+    public async Task TheAvailabilityPointsToTheOpenBatchOfTheOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        // Un rechazo termina la tanda y deja el pedido sin facturar: con él facturado, availability responde el 422 de la marca.
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(
+            HttpStatusCode.BadRequest, """{"Errors":[{"Code":"invalid_item","Message":"x"}]}"""));
+        var batch = await ReadAsync(await PostBatchAsync(world, world.Client, world.TenantId));
+
+        var queued = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+        await world.Factory.Services.GetServices<IHostedService>().OfType<SiigoInvoiceBatchWorker>().Single().DrainAsync(Ct);
+        var settled = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+
+        Assert.Equal(batch.GetProperty("id").GetGuid(), queued.GetProperty("queuedBatchId").GetGuid());
+        Assert.Equal(JsonValueKind.Null, settled.GetProperty("queuedBatchId").ValueKind);
+    }
+
+    // Las consultas de tandas abiertas son por tenant: la de otro cliente, aunque nombre el mismo pedido, no se ve ni bloquea.
+    [Fact]
+    public async Task TheOpenBatchOfAnotherTenantNeitherShowsNorBlocks()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var other = await RegisterTenantAsync(world.Factory);
+        await EnableSiigoAsync(world.ConnectionString, other.TenantId);
+        using var otherClient = CreateClient(world.Factory, other.OwnerUserId, other.TenantId, SiigoPermissions.InvoiceIssue);
+        await ReadAsync(await PostBatchAsync(world, otherClient, other.TenantId));
+
+        var availability = await ReadAsync(await world.Client.GetAsync(world.BaseRoute + "/availability", Ct));
+        var own = await PostBatchAsync(world, world.Client, world.TenantId);
+
+        Assert.Equal(JsonValueKind.Null, availability.GetProperty("queuedBatchId").ValueKind);
+        Assert.Equal(HttpStatusCode.Accepted, own.StatusCode);
+    }
+
+    private static Task<HttpResponseMessage> PostBatchAsync(InvoicingWorld world, HttpClient client, Guid tenantId) =>
+        client.PostAsJsonAsync($"/api/v1/tenants/{tenantId}/siigo/invoice-batches", new { orderIds = new[] { world.OrderId } }, Ct);
 
     [Fact]
     public async Task TheRealStatusAdapterSeesOpenInvoices()

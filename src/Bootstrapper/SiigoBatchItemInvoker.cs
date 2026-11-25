@@ -20,7 +20,12 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization, IServiceScopeFactory scopeFactory) : ISiigoBatchItemInvoker
 {
-    public async Task<SiigoBatchItemOutcome> InvokeAsync(Guid tenantId, Guid requestedBy, Guid orderId, CancellationToken cancellationToken)
+    public async Task<SiigoBatchItemOutcome> InvokeAsync(
+        Guid tenantId,
+        Guid requestedBy,
+        Guid orderId,
+        IReadOnlyList<SiigoPaymentChoice>? payments,
+        CancellationToken cancellationToken)
     {
         var permissions = await authorization.ResolvePermissionsAsync(requestedBy, tenantId, cancellationToken);
         if (permissions is null || !permissions.Contains(SiigoPermissions.InvoiceIssue, StringComparer.Ordinal))
@@ -35,7 +40,7 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
         var dispatcher = scope.ServiceProvider.GetRequiredService<IRequestDispatcher>();
         try
         {
-            return Map(await dispatcher.SendAsync(new IssueSiigoInvoiceCommand(tenantId, orderId, null), cancellationToken));
+            return Map(await dispatcher.SendAsync(new IssueSiigoInvoiceCommand(tenantId, orderId, payments), cancellationToken));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

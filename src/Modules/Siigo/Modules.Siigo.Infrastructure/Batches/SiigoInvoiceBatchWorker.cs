@@ -143,6 +143,7 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     private async Task ProcessAsync(Claim claim, CancellationToken cancellationToken)
     {
         Guid requestedBy;
+        IReadOnlyList<SiigoPaymentChoice>? payments;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
             var batch = await scope.ServiceProvider.GetRequiredService<ISiigoInvoiceBatchRepository>()
@@ -161,13 +162,14 @@ internal sealed partial class SiigoInvoiceBatchWorker(
             }
 
             requestedBy = batch.RequestedBy;
+            payments = SiigoBatchPayments.Deserialize(batch.Items.Single(value => value.Id == claim.ItemId).PaymentsJson);
         }
 
         SiigoBatchItemOutcome outcome;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
             outcome = await scope.ServiceProvider.GetRequiredService<ISiigoBatchItemInvoker>()
-                .InvokeAsync(claim.TenantId, requestedBy, claim.OrderId, cancellationToken);
+                .InvokeAsync(claim.TenantId, requestedBy, claim.OrderId, payments, cancellationToken);
         }
 
         await using (var scope = scopeFactory.CreateAsyncScope())

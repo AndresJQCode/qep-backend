@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain;
 using FluentValidation;
 using Modules.Audit.Domain;
 using Modules.Siigo.Domain;
@@ -91,13 +92,35 @@ public abstract record SiigoBatchItemOutcome
 /// </summary>
 public interface ISiigoBatchItemInvoker
 {
-    Task<SiigoBatchItemOutcome> InvokeAsync(Guid tenantId, Guid requestedBy, Guid orderId, CancellationToken cancellationToken);
+    /// <param name="payments">Las formas de pago elegidas al pedir la tanda de un pedido; <c>null</c> usa la propuesta de la cuenta de
+    /// cobro.</param>
+    Task<SiigoBatchItemOutcome> InvokeAsync(
+        Guid tenantId,
+        Guid requestedBy,
+        Guid orderId,
+        IReadOnlyList<SiigoPaymentChoice>? payments,
+        CancellationToken cancellationToken);
 }
 
-/// <summary><c>POST …/siigo/invoice-batches</c> (<c>siigo.invoice.issue</c>).</summary>
-public sealed record CreateSiigoInvoiceBatchCommand(Guid TenantId, IReadOnlyList<Guid>? OrderIds) : ICommand<SiigoInvoiceBatchDto>;
+/// <summary><c>POST …/siigo/invoice-batches</c> (<c>siigo.invoice.issue</c>). <paramref name="Payments"/> es opcional y sólo vale en una
+/// tanda de un pedido: las formas de pago son por comprobante de ese pedido.</summary>
+public sealed record CreateSiigoInvoiceBatchCommand(
+    Guid TenantId, IReadOnlyList<Guid>? OrderIds, IReadOnlyList<SiigoPaymentChoice>? Payments = null) : ICommand<SiigoInvoiceBatchDto>;
 
-/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase): entre 1 y 50 pedidos, sin vacíos ni repetidos.</summary>
+/// <summary>409 <c>siigo.invoice_batch.order_in_progress</c>: esos pedidos ya están en una tanda sin terminar; <c>details.orderIds</c>
+/// le dice a la pantalla cuáles.</summary>
+public sealed class SiigoInvoiceBatchOrderInProgressException(IReadOnlyList<Guid> orderIds)
+    : ResourceConflictException(SiigoErrorCodes.InvoiceBatchOrderInProgress, "An order is already in an unfinished invoice batch."),
+      IHasProblemExtensions
+{
+    public IReadOnlyDictionary<string, object?> ProblemExtensions { get; } = new Dictionary<string, object?>(StringComparer.Ordinal)
+    {
+        ["details"] = new { orderIds },
+    };
+}
+
+/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase): entre 1 y 50 pedidos, sin vacíos ni repetidos;
+/// las formas de pago, con las reglas del POST del pedido y un solo pedido.</summary>
 public sealed class CreateSiigoInvoiceBatchValidator : AbstractValidator<CreateSiigoInvoiceBatchCommand>
 {
     public CreateSiigoInvoiceBatchValidator()
@@ -109,13 +132,19 @@ public sealed class CreateSiigoInvoiceBatchValidator : AbstractValidator<CreateS
             .Must(ids => ids is null || (ids.All(id => id != Guid.Empty) && ids.Distinct().Count() == ids.Count))
             .WithMessage("The orders of a batch are required and cannot repeat.")
             .OverridePropertyName("orderIds");
+        RuleForEach(command => command.Payments).ChildRules(SiigoPaymentChoiceRules.Configure);
+        RuleFor(command => command.Payments)
+            .Must((command, payments) => payments is not { Count: > 0 } || command.OrderIds is { Count: 1 })
+            .WithMessage("Payment choices only travel with a batch of a single order.")
+            .OverridePropertyName("payments");
     }
 }
 
 /// <summary>
 /// Crea la tanda y sus ítems <c>Pending</c> en una sola transacción. El <c>INSERT</c> de los ítems timbra al worker solo (<c>QueueDoorbellInterceptor</c>). No llama a Siigo ni mira los
-/// pedidos: cada uno se revalida cuando le toca, con el handler de siempre, y una tanda con un pedido ajeno o inexistente lo ve saltado. La
-/// auditoría lleva cuántos pedidos y quién la pidió.
+/// pedidos: cada uno se revalida cuando le toca, con el handler de siempre, y una tanda con un pedido ajeno o inexistente lo ve saltado. Un
+/// pedido que ya está en una tanda sin terminar es 409: la consulta lo dice antes de guardar y, si otra tanda lo toma entre medias, lo
+/// frena el índice único. La auditoría lleva cuántos pedidos, si traía formas de pago y quién la pidió.
 /// </summary>
 public sealed class CreateSiigoInvoiceBatchHandler(
     IExecutionContext executionContext,
@@ -132,8 +161,16 @@ public sealed class CreateSiigoInvoiceBatchHandler(
         await SiigoInvoiceSupport.AuthorizeAsync(executionContext, tenantModules, command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
+        var inProgress = await batches.ListOpenOrderIdsAsync(command.TenantId, command.OrderIds!, cancellationToken);
+        if (inProgress.Count > 0)
+        {
+            throw new SiigoInvoiceBatchOrderInProgressException(inProgress);
+        }
+
         var now = clock.UtcNow;
-        var batch = SiigoInvoiceBatch.Create(Guid.CreateVersion7(), command.TenantId, executionContext.SubjectId, command.OrderIds!, now);
+        var paymentsJson = SiigoBatchPayments.Serialize(command.Payments);
+        var batch = SiigoInvoiceBatch.Create(
+            Guid.CreateVersion7(), command.TenantId, executionContext.SubjectId, command.OrderIds!, now, paymentsJson);
         batches.Add(batch);
         auditRecorder.Record(
             command.TenantId,
@@ -142,9 +179,18 @@ public sealed class CreateSiigoInvoiceBatchHandler(
             SiigoAuditActions.InvoiceBatchRequested,
             SiigoAuditActions.InvoiceBatchResourceType,
             batch.Id.ToString(),
-            JsonSerializer.Serialize(new { orders = batch.Items.Count }),
+            JsonSerializer.Serialize(new { orders = batch.Items.Count, withPayments = paymentsJson is not null }),
             now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (ResourceConflictException conflict) when (conflict.Code == SiigoErrorCodes.InvoiceBatchOrderInProgress)
+        {
+            // Otra tanda tomó el pedido entre la consulta y el guardado: se vuelve a preguntar cuáles para dar el mismo 409.
+            throw new SiigoInvoiceBatchOrderInProgressException(
+                await batches.ListOpenOrderIdsAsync(command.TenantId, command.OrderIds!, cancellationToken));
+        }
 
         return SiigoInvoiceBatchDto.From(batch);
     }

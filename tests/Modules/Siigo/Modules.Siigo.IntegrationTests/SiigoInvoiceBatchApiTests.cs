@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Modules.Siigo.Application;
 using Modules.Siigo.Infrastructure.Batches;
+using Npgsql;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
 using static Modules.Siigo.IntegrationTests.SiigoInvoicingHarness;
 
@@ -31,6 +32,169 @@ public sealed class SiigoInvoiceBatchApiTests
     }
 
     private static JsonElement Item(JsonElement batch, int position) => batch.GetProperty("items")[position];
+
+    private static Task<HttpResponseMessage> PostBatchWithPaymentsAsync(InvoicingWorld world, object[] payments, params Guid[] orderIds) =>
+        world.Client.PostAsJsonAsync(BatchesRoute(world), new { orderIds, payments }, Ct);
+
+    private static object Payment(Guid proofId, string? siigoPaymentTypeId = "5101") => new { kind = "Order", proofId, siigoPaymentTypeId };
+
+    private static async Task<JsonElement> ReadValidationErrorsAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("validation.failed", problem.GetProperty("code").GetString());
+        return problem.GetProperty("errors");
+    }
+
+    private static async Task AssertOrderInProgressAsync(HttpResponseMessage response, params Guid[] orderIds)
+    {
+        var text = await response.Content.ReadAsStringAsync(Ct);
+        Assert.True(response.StatusCode == HttpStatusCode.Conflict, $"{(int)response.StatusCode}: {text}");
+        using var problem = JsonDocument.Parse(text);
+        Assert.Equal("siigo.invoice_batch.order_in_progress", problem.RootElement.GetProperty("code").GetString());
+        Assert.Equal(
+            orderIds,
+            problem.RootElement.GetProperty("details").GetProperty("orderIds").EnumerateArray().Select(value => value.GetGuid()));
+    }
+
+    private static Task<long> BatchCountAsync(InvoicingWorld world) =>
+        ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoice_batches");
+
+    // Spec 2026-11-24 §1: las formas de pago elegidas viajan en el ítem y llegan al caso de uso de siempre; un comprobante que no es del
+    // pedido lo salta sin llamar a Siigo (sin `payments` el mismo pedido se factura: ABatchIsAccepted…).
+    [Fact]
+    public async Task ABatchWithPaymentsIsAcceptedAndThePaymentsReachTheIssue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var response = await PostBatchWithPaymentsAsync(world, [Payment(Guid.NewGuid())], world.OrderId);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        await DrainAsync(world);
+
+        var batch = await GetBatchAsync(world, created.GetProperty("id").GetGuid());
+        Assert.Equal(
+            ("Skipped", "siigo.invoice.payments_mismatch"),
+            (Item(batch, 0).GetProperty("status").GetString(), Item(batch, 0).GetProperty("errorCode").GetString()));
+        Assert.Empty(InvoiceCalls(world.Siigo));
+    }
+
+    [Fact]
+    public async Task PaymentsWithTwoOrdersIs422OnPayments()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var twoOrders = await PostBatchWithPaymentsAsync(world, [Payment(Guid.NewGuid())], world.OrderId, Guid.NewGuid());
+        var withoutType = await PostBatchWithPaymentsAsync(world, [Payment(Guid.NewGuid(), null)], world.OrderId);
+
+        Assert.True((await ReadValidationErrorsAsync(twoOrders)).TryGetProperty("payments", out _));
+        // Las mismas claves por elemento que el POST del pedido.
+        Assert.True((await ReadValidationErrorsAsync(withoutType)).TryGetProperty("Payments[0].siigoPaymentTypeId", out _));
+        Assert.Equal(0, await BatchCountAsync(world));
+    }
+
+    [Fact]
+    public async Task AnOrderAlreadyInAnOpenBatchIs409WithItsIds()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+
+        var second = await PostBatchAsync(world, Guid.NewGuid(), world.OrderId);
+
+        await AssertOrderInProgressAsync(second, world.OrderId);
+        Assert.Equal(1, await BatchCountAsync(world));
+        await DrainAsync(world);
+        Assert.Equal(HttpStatusCode.Accepted, (await PostBatchAsync(world, world.OrderId)).StatusCode);
+    }
+
+    [Fact]
+    public async Task TwoSimultaneousBatchesOfTheSameOrderCreateOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var responses = await Task.WhenAll(PostBatchAsync(world, world.OrderId), PostBatchAsync(world, world.OrderId));
+
+        var accepted = Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Accepted);
+        await AssertOrderInProgressAsync(Assert.Single(responses, response => response != accepted), world.OrderId);
+        Assert.Equal(1, await BatchCountAsync(world));
+    }
+
+    // El mismo choque cuando la otra tanda todavía no ha confirmado: la consulta previa no la ve, el INSERT espera en el índice único y
+    // el 23505 sale como el mismo 409 con sus ids.
+    [Fact]
+    public async Task TwoSimultaneousBatchesThatCollideAtTheIndexGetTheSame409()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await using var connection = new NpgsqlConnection(world.ConnectionString);
+        await connection.OpenAsync(Ct);
+        await using var transaction = await connection.BeginTransactionAsync(Ct);
+        await using (var insert = new NpgsqlCommand(
+            """
+            INSERT INTO siigo.invoice_batches (id, tenant_id, requested_by, created_at)
+            VALUES (@batch, @tenant, gen_random_uuid(), now());
+            INSERT INTO siigo.invoice_batch_items
+                (id, batch_id, tenant_id, order_id, position, status, missing_codes, attempts, available_at, updated_at)
+            VALUES (gen_random_uuid(), @batch, @tenant, @order, 0, 'Pending', '', 0, now() + interval '1 hour', now());
+            """,
+            connection,
+            transaction))
+        {
+            insert.Parameters.AddWithValue("batch", Guid.CreateVersion7());
+            insert.Parameters.AddWithValue("tenant", world.TenantId);
+            insert.Parameters.AddWithValue("order", world.OrderId);
+            await insert.ExecuteNonQueryAsync(Ct);
+        }
+
+        var post = PostBatchAsync(world, world.OrderId);
+        await WaitUntilAQueryWaitsForALockAsync(world);
+        await transaction.CommitAsync(Ct);
+
+        await AssertOrderInProgressAsync(await post, world.OrderId);
+        Assert.Equal(1, await BatchCountAsync(world));
+    }
+
+    private static async Task WaitUntilAQueryWaitsForALockAsync(InvoicingWorld world)
+    {
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            var waiting = await ScalarAsync<long>(
+                world.ConnectionString,
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'");
+            if (waiting > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50, Ct);
+        }
+
+        Assert.Fail("The second batch never waited on the open order index.");
+    }
+
+    [Fact]
+    public async Task TheBatchRequestAuditSaysWhetherItCarriedPayments()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        await DrainAsync(world);
+        await ReadAsync(await PostBatchWithPaymentsAsync(world, [Payment(Guid.NewGuid())], world.OrderId));
+
+        Assert.Equal(
+            "false,true",
+            await ScalarAsync<string>(
+                world.ConnectionString,
+                """
+                SELECT string_agg(changed_fields ->> 'withPayments', ',' ORDER BY occurred_at)
+                FROM audit.entries WHERE action = 'siigo.invoice_batch.requested'
+                """));
+    }
 
     [Fact]
     public async Task ABatchIsAcceptedInProgressAndTheWorkerInvoicesEachOrder()

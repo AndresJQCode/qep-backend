@@ -14,18 +14,25 @@ public sealed record SiigoPaymentChoice(string? Kind, Guid ProofId, string? Siig
 public sealed record IssueSiigoInvoiceCommand(Guid TenantId, Guid OrderId, IReadOnlyList<SiigoPaymentChoice>? Payments)
     : ICommand<IReadOnlyList<SiigoInvoiceDto>>;
 
+/// <summary>La forma de cada forma de pago elegida, la misma en el POST del pedido y en la tanda de uno: así los dos devuelven las mismas
+/// claves de error.</summary>
+internal static class SiigoPaymentChoiceRules
+{
+    public static void Configure(InlineValidator<SiigoPaymentChoice> payment)
+    {
+        payment.RuleFor(value => value.Kind).Must(SiigoInvoiceSupport.IsKind).OverridePropertyName("kind");
+        payment.RuleFor(value => value.ProofId).NotEmpty().OverridePropertyName("proofId");
+        payment.RuleFor(value => value.SiigoPaymentTypeId)
+            .NotEmpty().MaximumLength(SiigoSettings.IdMaxLength).OverridePropertyName("siigoPaymentTypeId");
+    }
+}
+
 /// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase).</summary>
 public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInvoiceCommand>
 {
     public IssueSiigoInvoiceValidator()
     {
-        RuleForEach(command => command.Payments).ChildRules(payment =>
-        {
-            payment.RuleFor(value => value.Kind).Must(SiigoInvoiceSupport.IsKind).OverridePropertyName("kind");
-            payment.RuleFor(value => value.ProofId).NotEmpty().OverridePropertyName("proofId");
-            payment.RuleFor(value => value.SiigoPaymentTypeId)
-                .NotEmpty().MaximumLength(SiigoSettings.IdMaxLength).OverridePropertyName("siigoPaymentTypeId");
-        });
+        RuleForEach(command => command.Payments).ChildRules(SiigoPaymentChoiceRules.Configure);
     }
 }
 
