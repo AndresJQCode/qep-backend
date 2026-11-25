@@ -41,7 +41,7 @@ internal static class CustomerMapping
         // pasan null, así que su región queda en null.
         IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById = null)
     {
-        var withholdingTaxRates = ToWithholdingDtos(customer, taxRatesById);
+        var withholdingTaxRates = ToWithholdingDtos(customer.WithholdingTaxRateIds, taxRatesById);
         return new CustomerDto(
             customer.Id.Value,
             customer.Cuc,
@@ -93,7 +93,42 @@ internal static class CustomerMapping
             Contacts: contacts,
             WithholdingTaxRates: withholdingTaxRates,
             WithholdingAgentCities: ToAgentCityDtos(customer, citiesById),
-            Region: ToRegionDto(customer.RegionId, regionsById));
+            Region: ToRegionDto(customer.RegionId, regionsById),
+            // La principal primero y el resto por nombre, como la libreta de direcciones. El listado y el Excel no los
+            // cargan y salen vacíos.
+            BillingProfiles: customer.BillingProfiles
+                .OrderByDescending(profile => profile.IsPrincipal)
+                .ThenBy(profile => profile.Name)
+                .Select(profile => ToBillingProfileDto(profile, citiesById, taxRatesById, regionsById))
+                .ToArray());
+    }
+
+    private static CustomerBillingProfileDto ToBillingProfileDto(
+        CustomerBillingProfile profile,
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById,
+        IReadOnlyDictionary<Guid, CustomerRegionRef>? regionsById)
+    {
+        // En CO la ciudad y el departamento salen de Geography; afuera la ciudad es el texto guardado.
+        var city = profile.CityId is { } cityId ? citiesById.GetValueOrDefault(cityId) : null;
+        return new CustomerBillingProfileDto(
+            profile.Id.Value,
+            profile.Name,
+            profile.PersonType,
+            profile.IdentificationType,
+            profile.IdentificationNumber,
+            profile.Phone,
+            profile.Email,
+            profile.Address,
+            profile.Country,
+            profile.CityId,
+            city?.CityName ?? profile.CityName,
+            city?.DepartmentId,
+            city?.DepartmentName,
+            ToRegionDto(profile.RegionId, regionsById),
+            ToWithholdingDtos(profile.WithholdingTaxRateIds, taxRatesById),
+            profile.VatSurplus,
+            profile.IsPrincipal);
     }
 
     private const string RetefuenteType = "Retefuente";
@@ -119,8 +154,8 @@ internal static class CustomerMapping
     // Del id guardado a lo que la ficha pinta. Un id que el catálogo ya no devuelve no puede pasar (la tasa «en uso» no se
     // desactiva ni se borra), pero si pasara, se prefiere omitirlo a tirar la ficha entera. Orden estable: país, tipo, nombre.
     private static CustomerWithholdingTaxRateDto[] ToWithholdingDtos(
-        Customer customer, IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById) =>
-        [.. customer.WithholdingTaxRateIds
+        IEnumerable<Guid> taxRateIds, IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById) =>
+        [.. taxRateIds
             .Where(taxRatesById.ContainsKey)
             .Select(id => taxRatesById[id])
             .OrderBy(rate => rate.Country, StringComparer.Ordinal)
@@ -130,7 +165,8 @@ internal static class CustomerMapping
                 rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.AppliesTo.ToString()))];
 
     /// <summary>
-    /// Las tasas de todos los clientes dados, con una sola consulta al catálogo (el listado y el Excel no pueden ir de a una).
+    /// Las tasas de todos los clientes dados y de sus perfiles de facturación (si vienen cargados), con una sola consulta al
+    /// catálogo (el listado y el Excel no pueden ir de a una).
     /// </summary>
     public static Task<IReadOnlyDictionary<Guid, CustomerTaxRateRef>> FindTaxRatesAsync(
         ICustomerTaxRateLookup taxRateLookup,
@@ -139,7 +175,10 @@ internal static class CustomerMapping
         CancellationToken cancellationToken) =>
         taxRateLookup.FindManyAsync(
             tenantId,
-            [.. customers.SelectMany(customer => customer.WithholdingTaxRateIds).Distinct()],
+            [.. customers
+                .SelectMany(customer => customer.WithholdingTaxRateIds.Concat(
+                    customer.BillingProfiles.SelectMany(profile => profile.WithholdingTaxRateIds)))
+                .Distinct()],
             cancellationToken);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
@@ -216,16 +255,19 @@ internal static class CustomerMapping
         // de afuera no aporta ciudad de domicilio: la suya es texto libre.
         var citiesById = await geographyLookup.FindCitiesAsync(
             CustomerCityIds.OfAddresses(customer)
+                .Concat(CustomerCityIds.OfBillingProfiles(customer))
                 .Concat(CustomerCityIds.OfDomicile(customer))
                 .Concat(customer.WithholdingAgentCities.Select(agent => agent.CityId))
                 .Distinct()
                 .ToArray(),
             cancellationToken);
         var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
-        // Las regiones del domicilio y de cada direccion, con una sola consulta (sin ids no se toca Geography).
+        // Las regiones del domicilio, de cada direccion y de cada perfil, con una sola consulta (sin ids no se toca
+        // Geography).
         var regionsById = await geographyLookup.FindRegionsAsync(
             customer.Addresses
                 .Select(address => address.RegionId)
+                .Concat(customer.BillingProfiles.Select(profile => profile.RegionId))
                 .Append(customer.RegionId)
                 .OfType<Guid>()
                 .Distinct()

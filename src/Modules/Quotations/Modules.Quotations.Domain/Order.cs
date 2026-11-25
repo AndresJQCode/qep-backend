@@ -948,6 +948,83 @@ public sealed class Order
     }
 
     /// <summary>
+    /// Los tres motivos por los que la entrega no se puede cambiar, del más específico al general (spec 2026-11-24 §10.1):
+    /// facturado, preparado y no editable. El guardado y el cálculo previo lo llaman antes de su guarda general, para que
+    /// la pantalla reciba el motivo exacto y no <c>order.order.not_editable</c>.
+    /// </summary>
+    public void EnsureDeliveryEditable()
+    {
+        EnsureNotInvoiced("The delivery of an invoiced order cannot change.");
+        EnsureNotPrepared("The delivery of a prepared order cannot change.");
+        EnsureEditable("The delivery can only change while the order is editable.");
+    }
+
+    /// <summary>
+    /// Cambia recoger o enviar y a dónde (owner 2026-11-24: revierte «el pedido no edita sus partes» para la entrega), en
+    /// todo origen. <paramref name="shipping"/> null con envío = los datos del cliente, sin fila. A recoger quita la fila y
+    /// limpia el envío, contraentrega incluida: no hay a dónde mandar nada. La fila existente se <b>modifica</b> y no se
+    /// reemplaza (<c>IX_order_parties_order_role</c>, como <see cref="SetBilling"/>). Devuelve <c>false</c>, sin tocar la
+    /// versión, si nada cambió. Una parte propia debe venir completa, como en el alta
+    /// (<c>order.shipping.party_incomplete</c>); con <paramref name="enforceCompleteness"/> en <c>false</c> (el cálculo
+    /// previo, que se hace mientras la persona teclea) no se exige.
+    /// </summary>
+    public bool SetDelivery(
+        bool isStorePickup,
+        QuotationPartyDetails? shipping,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt,
+        bool enforceCompleteness = true)
+    {
+        EnsureDeliveryEditable();
+        if (isStorePickup && shipping is not null)
+        {
+            throw new QuotationsDomainException(
+                OrderDeliveryErrors.ShippingPartyOnPickup, "A store pickup cannot carry a shipping party.");
+        }
+
+        // La fila candidata se arma aparte para validar y comparar lo normalizado antes de mutar nada.
+        var candidate = shipping is null
+            ? null
+            : OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping, "Delivery.Shipping");
+        if (enforceCompleteness && candidate is { IsComplete: false })
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+        }
+
+        var current = Shipping;
+        if (IsStorePickup == isStorePickup && current?.ToDetails() == candidate?.ToDetails())
+        {
+            return false;
+        }
+
+        if (candidate is null)
+        {
+            if (current is not null)
+            {
+                _parties.Remove(current);
+            }
+        }
+        else if (current is not null)
+        {
+            current.Apply(candidate.ToDetails());
+        }
+        else
+        {
+            _parties.Add(candidate);
+        }
+
+        IsStorePickup = isStorePickup;
+        if (isStorePickup)
+        {
+            AssignShipping(ShippingDetails.None);
+        }
+
+        Touch(updatedBy, occurredAt);
+        return true;
+    }
+
+    /// <summary>
     /// Reemplaza las tasas de retención de un pedido <see cref="IsEditable"/> por las de los selectores
     /// (spec impuestos por tipo D21): una por tipo, ya resueltas contra el catálogo por la aplicación. Cambia sólo
     /// este pedido, nunca la ficha del cliente. El agregado vuelve a exigir lo que guarda: empresa facturadora, cada
@@ -1326,10 +1403,10 @@ public sealed class Order
     }
 
     /// <summary>
-    /// Cambia el envío de un pedido pendiente (spec 2026-10-17 flete §5.4). No cambia recoger o enviar: el
-    /// pedido no edita sus partes. Prender la contraentrega exige un pago que todavía no empezó —sin
-    /// comprobantes y <see cref="OrderPaymentStatus.PaymentPending"/>— (D-F14); ya prendida, se conserva aunque
-    /// llegue el comprobante del giro.
+    /// Cambia el envío de un pedido pendiente (spec 2026-10-17 flete §5.4). No cambia recoger o enviar: eso lo hace
+    /// <see cref="SetDelivery"/>, que va antes en la misma edición. Prender la contraentrega exige un pago que todavía no
+    /// empezó —sin comprobantes y <see cref="OrderPaymentStatus.PaymentPending"/>— (D-F14); ya prendida, se conserva
+    /// aunque llegue el comprobante del giro.
     /// </summary>
     public void SetShipping(ShippingDetails shipping, MemberId updatedBy, DateTimeOffset occurredAt)
     {
@@ -2080,8 +2157,9 @@ public sealed class Order
     /// <summary>
     /// Spec 2026-10-26 §4.4: agrega la parte de envío que Shopify no pudo completar al crear el pedido (la ciudad
     /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte, en esa ciudad o en otra (un
-    /// reintento: como un pedido no edita sus partes, desvío S1, la misma parte en otra ciudad la puso un intento anterior con
-    /// la ciudad que el sinónimo tenía entonces; el consumidor lee la que quedó en <see cref="Shipping"/>).
+    /// reintento, desvío S1: la misma parte en otra ciudad se toma como puesta por un intento anterior con la ciudad que el
+    /// sinónimo tenía entonces, o cambiada después por la entrega editable; el consumidor lee la que quedó en
+    /// <see cref="Shipping"/>).
     /// Quita de las notas toda línea que empiece por <paramref name="notesLinePrefix"/> (ordinal): la dirección en
     /// crudo que se anotó mientras no había parte. Sólo pedidos externos pendientes, sin recogida en tienda y sin
     /// otra parte de envío; la parte debe quedar completa. No recalcula totales.
@@ -2132,7 +2210,8 @@ public sealed class Order
     /// departamento y ciudad). Si el pedido no la tenía, la crea y quita de las notas toda línea que empiece por
     /// <paramref name="notesLinePrefix"/> (la dirección cruda de la importación); si la tenía, la reemplaza en su fila.
     /// <c>true</c> si cambió; la misma parte no toca nada. Sólo pedidos externos editables, sin recogida en tienda, y la parte
-    /// debe quedar completa. Es el único camino por el que un pedido edita su parte de envío (desvío S1 sigue para los demás).
+    /// debe quedar completa. Fuera de este camino, la parte de envío sólo cambia por la entrega editable
+    /// (<see cref="SetDelivery"/>).
     /// </summary>
     public bool EditExternalShippingParty(QuotationPartyDetails party, string notesLinePrefix, DateTimeOffset occurredAt)
     {
@@ -2405,8 +2484,8 @@ public sealed class Order
     // confirma una persona en QEP), así que una fuente nueva no hereda por descarte el trato de integración.
     private bool IsExternal => Source is OrderSource.Shopify;
 
-    // Spec 2026-10-26 y desvío S1: un pedido no edita sus partes, así que una parte de envío igual salvo el departamento y la
-    // ciudad es la que puso la plataforma (en otra ciudad del mismo sinónimo), no una de otra persona.
+    // Spec 2026-10-26 y desvío S1: una parte de envío igual salvo el departamento y la ciudad se toma como la que puso la
+    // plataforma (en otra ciudad del mismo sinónimo), no como una de otra persona.
     private static bool SameExceptCity(QuotationPartyDetails party, QuotationPartyDetails other) =>
         party with { DepartmentId = other.DepartmentId, CityId = other.CityId } == other;
 
