@@ -12,6 +12,9 @@ public sealed class DistributorTests
     // La forma de InvitationTokens.HashOf: SHA-256 en hex minúsculo.
     private const string Hash1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string Hash2 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    // Los hashes de la prueba de buzón: misma forma, valores distintos a los del token.
+    private const string Proof1 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    private const string Proof2 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
     // Ruling W11 (c): la última red sobre el campo más sensible de la invitación. Un token plano (base64url, 43 caracteres),
     // un hash en mayúsculas, uno cortado o uno que no es hex no se guardan nunca.
@@ -86,11 +89,12 @@ public sealed class DistributorTests
     private static readonly Guid Connection = Guid.CreateVersion7();
 
     private static Distributor Invite(
-        string email = "ana@distri.co", string tokenHash = Hash1, string? phone = null, Guid? connection = null) =>
+        string email = "ana@distri.co", string tokenHash = Hash1, string? phone = null, Guid? connection = null,
+        string? emailProofHash = null) =>
         Distributor.Invite(
             Tenant, email, "  Distribuciones Norte SAS ", "CO", "NIT", " 900123456 ", " Ana Pérez ", PriceListId.New(),
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), tokenHash, Guid.CreateVersion7(), phone,
-            connection, Now);
+            connection, Now, emailProofHash: emailProofHash);
 
     private static Distributor Active()
     {
@@ -516,6 +520,92 @@ public sealed class DistributorTests
         Assert.Equal("wholesale.distributor.invalid_transition", error.Code);
         Assert.Equal((Hash1, Hash1), (active.Invitation.TokenHash, invited.Invitation.TokenHash));
     }
+
+    // Spec 2026-11-24 (prueba de buzón): el link del correo lleva un secreto propio; acá sólo vive su hash.
+    [Fact]
+    public void InviteKeepsTheEmailProofHash()
+    {
+        Assert.Equal(Proof1, Invite(emailProofHash: Proof1).Invitation.EmailProofHash);
+        Assert.Null(Invite().Invitation.EmailProofHash);
+    }
+
+    // La misma red que la del token: la prueba plana nunca llega a la base aunque quien llama se equivoque de variable.
+    [Theory]
+    [InlineData("Zx0pQ9mW3rT7yU1iO5aS8dF2gH6jK4lZ0xC3vB7nM1q")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")]
+    public void InviteAndResendRejectAnEmailProofHashThatIsNotALowercaseSha256(string emailProofHash)
+    {
+        var onInvite = Assert.Throws<ArgumentException>(() => Invite(emailProofHash: emailProofHash));
+        var distributor = Invite(emailProofHash: Proof1);
+        var onResend = Assert.Throws<ArgumentException>(() =>
+            distributor.ResendInvitation(Hash2, noticeQueued: false, Now.AddHours(1), emailProofHash));
+
+        Assert.Equal(("emailProofHash", "emailProofHash"), (onInvite.ParamName, onResend.ParamName));
+        Assert.Equal((Hash1, Proof1, 1L),
+            (distributor.Invitation.TokenHash, distributor.Invitation.EmailProofHash, distributor.Version));
+    }
+
+    [Fact]
+    public void ResendReplacesTheEmailProof()
+    {
+        var distributor = Invite(emailProofHash: Proof1);
+
+        distributor.ResendInvitation(Hash2, noticeQueued: false, Now.AddHours(1), Proof2);
+
+        Assert.Equal(Proof2, distributor.Invitation.EmailProofHash);
+    }
+
+    // «Copiar» rota el token y no manda correo: la prueba que llegó al buzón deja de corresponder a este link.
+    [Fact]
+    public void RotateInvitationLinkVoidsTheEmailProof()
+    {
+        var distributor = Invite(emailProofHash: Proof1);
+
+        distributor.RotateInvitationLink(Hash2, Now.AddHours(1));
+
+        Assert.Null(distributor.Invitation.EmailProofHash);
+    }
+
+    // Sin esto, quien tiene el correo viejo podría crear la cuenta del nuevo. Otras mayúsculas o espacios no son un cambio.
+    [Fact]
+    public void ChangeProfileVoidsTheEmailProofOnlyWhenTheEmailChanges()
+    {
+        var distributor = Invite(emailProofHash: Proof1);
+
+        distributor.ChangeProfile(" Ana@Distri.CO ", "Norte", "CO", "NIT", "900123456", "Ana", null, null, null);
+
+        Assert.Equal(Proof1, distributor.Invitation.EmailProofHash);
+
+        distributor.ChangeProfile("otra@distri.co", "Norte", "CO", "NIT", "900123456", "Ana", null, null, null);
+
+        Assert.Null(distributor.Invitation.EmailProofHash);
+        Assert.Equal(Hash1, distributor.Invitation.TokenHash);
+    }
+
+    [Fact]
+    public void ProvesInvitedMailboxNeedsTheStoredHashAndTheInvitedEmail()
+    {
+        var distributor = Invite(emailProofHash: Proof1);
+
+        Assert.True(distributor.ProvesInvitedMailbox(Proof1, "ana@distri.co"));
+        Assert.False(distributor.ProvesInvitedMailbox(Hash2, "ana@distri.co"));
+        Assert.False(distributor.ProvesInvitedMailbox(Proof1, "otra@distri.co"));
+        Assert.False(distributor.ProvesInvitedMailbox(Proof1, null));
+        Assert.False(distributor.ProvesInvitedMailbox(Proof1, ""));
+        Assert.False(Invite().ProvesInvitedMailbox(Proof1, "ana@distri.co"));
+        Assert.False(Active().ProvesInvitedMailbox(Proof1, "ana@distri.co"));
+
+        // Con la prueba guardada, aceptada ya no prueba nada: lo que la anula acá es el estado, no la falta del hash.
+        distributor.Accept(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Now.AddHours(1));
+
+        Assert.False(distributor.ProvesInvitedMailbox(Proof1, "ana@distri.co"));
+    }
+
+    [Fact]
+    public void ProvesInvitedMailboxIgnoresCaseAndSpacesOfTheEmail() =>
+        Assert.True(Invite(emailProofHash: Proof1).ProvesInvitedMailbox(Proof1, " Ana@Distri.CO "));
 
     // Decisión del owner 2026-11-24: los datos de la invitación se editan mientras está invitado. Recorta como Invite y, igual
     // que ChangeNoticeTarget, no sube Version: lo hace ChangeTerms, que corre en el mismo PUT.
