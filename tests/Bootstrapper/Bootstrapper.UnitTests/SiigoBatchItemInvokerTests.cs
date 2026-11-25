@@ -138,7 +138,7 @@ public sealed class SiigoBatchItemInvokerTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task APendingFreightThatCannotBeSentKeepsTheFailure(bool permitted, bool unanswered)
+    public async Task APendingFreightThatCannotBeSentFailsAsFreightPending(bool permitted, bool unanswered)
     {
         var order = Invoiced(SiigoInvoiceStatus.Created);
         var freight = Pending(Now.AddMinutes(-20), SiigoInvoiceKind.Freight);
@@ -150,30 +150,28 @@ public sealed class SiigoBatchItemInvokerTests
 
         var outcome = await InvokeAsync(permitted, SiigoErrorCodes.ConnectionUnavailable, order, freight);
 
-        Assert.Equal(
-            new SiigoBatchItemOutcome.Failed(permitted ? SiigoErrorCodes.ConnectionUnavailable : SiigoErrorCodes.InvoiceBatchForbidden),
-            outcome);
+        Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceFreightPending), outcome);
     }
 
     // La emisión contestó: la del pedido existe y la de flete sigue Pending (nunca salió, o salió y no tuvo respuesta). «Facturado» la
-    // dejaría sin mandar sin que nadie lo vea. El motivo es el de la fila de flete o, si no trae, el de un envío interrumpido.
+    // dejaría sin mandar sin que nadie lo vea. El código dice que la del pedido existe y falta la de flete.
     [Theory]
-    [InlineData(SiigoInvoiceStatus.Created, "waiting", "siigo.invoice.interrupted", false)]
-    [InlineData(SiigoInvoiceStatus.Created, "sending", "siigo.invoice.interrupted", false)]
-    [InlineData(SiigoInvoiceStatus.Created, "unanswered", "siigo.invoice.timeout", false)]
-    [InlineData(SiigoInvoiceStatus.Created, "never-left", "siigo.invoice.unavailable", false)]
-    [InlineData(SiigoInvoiceStatus.Created, "waiting", "siigo.invoice.interrupted", true)]
-    [InlineData(SiigoInvoiceStatus.Stamped, "unanswered", "siigo.invoice.timeout", false)]
-    [InlineData(SiigoInvoiceStatus.StampRejected, "unanswered", "siigo.invoice.timeout", true)]
+    [InlineData(SiigoInvoiceStatus.Created, "waiting", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "sending", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "unanswered", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "never-left", false)]
+    [InlineData(SiigoInvoiceStatus.Created, "waiting", true)]
+    [InlineData(SiigoInvoiceStatus.Stamped, "unanswered", false)]
+    [InlineData(SiigoInvoiceStatus.StampRejected, "unanswered", true)]
     public async Task AnIssueThatLeavesTheFreightPendingIsNotInvoiced(
-        SiigoInvoiceStatus orderStatus, string freightCase, string code, bool orderMarkFailed)
+        SiigoInvoiceStatus orderStatus, string freightCase, bool orderMarkFailed)
     {
         var order = Invoiced(orderStatus);
         var freight = PendingFreight(freightCase);
 
         var outcome = await IssueAsync(orderMarkFailed, order, freight);
 
-        Assert.Equal(new SiigoBatchItemOutcome.Failed(code), outcome);
+        Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceFreightPending), outcome);
     }
 
     [Theory]
@@ -385,6 +383,10 @@ public sealed class SiigoBatchItemInvokerTests
     {
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && row.OrderId == orderId)]);
+
+        public Task<IReadOnlyList<SiigoInvoice>> ListPendingFreightAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken) =>

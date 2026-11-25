@@ -223,9 +223,9 @@ internal sealed partial class SiigoInvoiceBatchWorker(
         // Con la del pedido en Siigo y la de flete todavía Pending, «facturado» la dejaría sin mandar a la vista de nadie (la misma regla
         // del ejecutor; decidido el 2026-11-25). No se lee la marca: las filas del pedido la avisan al leerse y el reintento la repite.
         if (row is { IsOpen: false }
-            && rows.LastOrDefault(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }) is { } freight)
+            && rows.Any(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
         {
-            return new SiigoBatchItemOutcome.Failed(freight.ErrorCode ?? SiigoErrorCodes.InvoiceInterrupted);
+            return new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceFreightPending);
         }
 
         return row switch

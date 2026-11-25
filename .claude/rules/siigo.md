@@ -111,14 +111,18 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   camino o uno cortado hace menos de 8 minutos) → `ToConfirm` con esa fila y el código del fallo. Ya facturada (`Created`, `Stamped`,
   `StampRejected`) → `Invoiced` con su número e id, y `orderMarkFailed` salvo que una lectura confirme la marca (`SiigoOrderMark`, como
   la recuperación de una tanda; decidido el 2026-11-25). **Salvo que la de flete siga `Pending`:** el reenvío era para mandarla, así que
-  el ítem sale `Failed` con el código del fallo; «facturado» la dejaría sin mandar sin que nadie lo vea.
+  el ítem sale `Failed` con `siigo.invoice.freight_pending`; «facturado» la dejaría sin mandar sin que nadie lo vea.
 - **Con la del pedido en Siigo y la de flete todavía `Pending`, ningún ítem sale `Invoiced`** (decidido el 2026-11-25): vale en la
-  emisión que sí contestó (`SiigoBatchItemInvoker.Map`) y en la recuperación y el corte por apagado
-  (`SiigoInvoiceBatchWorker.RecoverAsync`). Sale `Failed` **sin `invoice_id`**, con el `errorCode` de la de flete o
-  `siigo.invoice.interrupted`; una de flete en cualquier otro estado no cambia el resultado. Reintentar el pedido manda sólo la de flete
-  y vuelve a marcarlo. El ítem no guarda `orderMarkFailed`: el aviso lo calculan las filas del pedido al leerse. Un camino nuevo que
-  cierre un ítem como facturado tiene que mirar la de flete. **Todavía no lo hace `SiigoInvoiceBatchItem.Effective`** (pendiente del
-  owner): un ítem `ToConfirm` cuya del pedido pasa a existir se lee `Invoiced` aunque la de flete siga `Pending`.
+  emisión que sí contestó (`SiigoBatchItemInvoker.Map`), en la recuperación y el corte por apagado
+  (`SiigoInvoiceBatchWorker.RecoverAsync`) y al leer un ítem `ToConfirm` cuya del pedido ya existe
+  (`SiigoInvoiceBatchItem.Effective`; ahí, mientras la de flete se manda, se lee `Sending`). Sale `Failed` con
+  `siigo.invoice.freight_pending` y, al cerrarse así, **sin `invoice_id`**: el código dice que la del pedido existe, para que nadie la
+  cree otra vez en Siigo; el motivo de la de flete se ve en el pedido. Una de flete en cualquier otro estado no cambia el resultado.
+  Reintentar el pedido manda sólo la de flete y vuelve a marcarlo. Un camino nuevo que cierre o lea un ítem como facturado tiene que
+  mirar la de flete: `Effective` la recibe como parámetro opcional y sin ella responde `Invoiced`.
+- **El `orderMarkFailed` de un ítem guardado `ToConfirm` se calcula al leer el detalle de la tanda** (`SiigoOrderMark.IsMissingAsync`,
+  sólo con su factura ya en Siigo y sin una tanda que tenga el pedido): el ítem no lo guarda. La lista de tandas no lo lleva. Un ítem
+  cerrado `Failed` por la de flete tampoco lo guarda: el aviso lo calculan las filas del pedido.
 - **El `errorCode` de un ítem `ToConfirm` depende de cuál se escribió de último** (`SiigoInvoiceBatchItem.Effective`, decidido el
   2026-11-25): mientras la fila no cambie desde que el ítem se cerró (`updated_at` de la fila ≤ el del ítem) ves el del ítem, que dice
   por qué no salió el reenvío; si la fila cambia después (otro reenvío, vencimiento, resolución), manda la fila. Si el que manda viene

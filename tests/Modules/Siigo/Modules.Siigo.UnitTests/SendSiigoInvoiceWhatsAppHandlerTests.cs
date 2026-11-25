@@ -276,6 +276,10 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && row.OrderId == orderId)]);
 
+        public Task<IReadOnlyList<SiigoInvoice>> ListPendingFreightAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && invoiceIds.Contains(row.Id))]);

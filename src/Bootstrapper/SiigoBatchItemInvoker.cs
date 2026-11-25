@@ -127,10 +127,11 @@ internal sealed partial class SiigoBatchItemInvoker(
         if (!row.IsOpen)
         {
             // Con la de flete todavía Pending, el reenvío era para mandarla y no se pudo: «facturado» la dejaría sin mandar a la vista de
-            // nadie. Sólo las Pending se reenvían; en cualquier otro estado no cambia lo que pasó con el pedido.
+            // nadie. Sólo las Pending se reenvían; en cualquier otro estado no cambia lo que pasó con el pedido. El código dice que la del
+            // pedido existe, para que nadie la cree otra vez; el motivo del reenvío sale al reintentar desde el pedido.
             if (rows.Any(value => value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending }))
             {
-                return failed;
+                return failed with { ErrorCode = SiigoErrorCodes.InvoiceFreightPending };
             }
 
             var marked = row.Number is { } number
@@ -160,10 +161,9 @@ internal sealed partial class SiigoBatchItemInvoker(
         }
 
         if (order.Status is nameof(SiigoInvoiceStatus.Created) or nameof(SiigoInvoiceStatus.Stamped) or nameof(SiigoInvoiceStatus.StampRejected)
-            && rows.FirstOrDefault(row => row is { Kind: nameof(SiigoInvoiceKind.Freight), Status: nameof(SiigoInvoiceStatus.Pending) })
-                is { } freight)
+            && rows.Any(row => row is { Kind: nameof(SiigoInvoiceKind.Freight), Status: nameof(SiigoInvoiceStatus.Pending) }))
         {
-            return new SiigoBatchItemOutcome.Failed(freight.ErrorCode ?? SiigoErrorCodes.InvoiceInterrupted);
+            return new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceFreightPending);
         }
 
         return order.Status switch

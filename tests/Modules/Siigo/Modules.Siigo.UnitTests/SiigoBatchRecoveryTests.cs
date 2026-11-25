@@ -18,45 +18,35 @@ public sealed class SiigoBatchRecoveryTests
     private static readonly Guid OrderId = Guid.CreateVersion7();
     private static readonly DateTimeOffset Now = new(2026, 11, 25, 12, 0, 0, TimeSpan.Zero);
 
-    // Nunca salió (esperaba a la del pedido), o se cortó con el reclamo puesto: la fila no trae motivo.
+    // Nunca salió (esperaba a la del pedido), se cortó con el reclamo puesto o se mandó y no tuvo respuesta: el ítem dice siempre lo
+    // mismo, que la del pedido existe y falta la de flete. El motivo de la fila de flete se ve en el pedido.
     [Theory]
-    [InlineData(SiigoInvoiceStatus.Created, false)]
-    [InlineData(SiigoInvoiceStatus.Created, true)]
-    [InlineData(SiigoInvoiceStatus.Stamped, false)]
-    [InlineData(SiigoInvoiceStatus.StampRejected, true)]
-    public async Task APendingFreightWithoutAReasonFailsAsInterrupted(SiigoInvoiceStatus orderStatus, bool claimed)
+    [InlineData(SiigoInvoiceStatus.Created, "waiting")]
+    [InlineData(SiigoInvoiceStatus.Created, "claimed")]
+    [InlineData(SiigoInvoiceStatus.Created, "unanswered")]
+    [InlineData(SiigoInvoiceStatus.Created, "never-left")]
+    [InlineData(SiigoInvoiceStatus.Stamped, "waiting")]
+    [InlineData(SiigoInvoiceStatus.StampRejected, "claimed")]
+    public async Task APendingFreightFailsAsFreightPending(SiigoInvoiceStatus orderStatus, string freightCase)
     {
         var freight = Pending(SiigoInvoiceKind.Freight);
-        if (claimed)
+        if (freightCase != "waiting")
         {
-            freight.BeginSend(Now.AddMinutes(-1));
+            freight.BeginSend(Now.AddMinutes(freightCase == "claimed" ? -1 : -20));
         }
 
-        var outcome = await RecoverAsync(new OrderMarks(true), Invoiced(orderStatus), freight);
-
-        Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceInterrupted), outcome);
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task APendingFreightFailsWithItsOwnReason(bool unanswered)
-    {
-        var freight = Pending(SiigoInvoiceKind.Freight);
-        freight.BeginSend(Now.AddMinutes(-20));
-        if (unanswered)
+        if (freightCase == "unanswered")
         {
             freight.MarkUnanswered(SiigoErrorCodes.InvoiceTimeout, null, Now.AddMinutes(-20));
         }
-        else
+        else if (freightCase == "never-left")
         {
             freight.MarkTransient(SiigoErrorCodes.InvoiceUnavailable, Now.AddMinutes(-20));
         }
 
-        var outcome = await RecoverAsync(new OrderMarks(true), Invoiced(SiigoInvoiceStatus.Created), freight);
+        var outcome = await RecoverAsync(new OrderMarks(true), Invoiced(orderStatus), freight);
 
-        Assert.Equal(
-            new SiigoBatchItemOutcome.Failed(unanswered ? SiigoErrorCodes.InvoiceTimeout : SiigoErrorCodes.InvoiceUnavailable), outcome);
+        Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceFreightPending), outcome);
     }
 
     // Aunque el pedido tampoco lleve la marca: la tanda del reintento la vuelve a poner y las filas del pedido la avisan al leerse.
@@ -66,7 +56,7 @@ public sealed class SiigoBatchRecoveryTests
         var outcome = await RecoverAsync(
             new OrderMarks(false), Invoiced(SiigoInvoiceStatus.Created), Pending(SiigoInvoiceKind.Freight));
 
-        Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceInterrupted), outcome);
+        Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceFreightPending), outcome);
     }
 
     // Una de flete que no está Pending no cambia lo que pasó con el pedido.
@@ -183,6 +173,10 @@ public sealed class SiigoBatchRecoveryTests
     {
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && row.OrderId == orderId)]);
+
+        public Task<IReadOnlyList<SiigoInvoice>> ListPendingFreightAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken) =>

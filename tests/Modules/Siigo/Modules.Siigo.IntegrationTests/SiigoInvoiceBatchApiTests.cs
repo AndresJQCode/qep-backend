@@ -595,7 +595,7 @@ public sealed class SiigoInvoiceBatchApiTests
 
         var item = await StoredItemAsync(world);
         Assert.Equal(
-            ("Failed", "siigo.invoice.interrupted", (Guid?)null), (item.Status, item.ErrorCode, item.InvoiceId));
+            ("Failed", "siigo.invoice.freight_pending", (Guid?)null), (item.Status, item.ErrorCode, item.InvoiceId));
         Assert.True(item.LeaseReleased);
         Assert.True(item.BatchFinished);
         Assert.Equal(2, InvoiceCalls(world.Siigo).Count);
@@ -622,7 +622,7 @@ public sealed class SiigoInvoiceBatchApiTests
         var failed = await RunBatchOfOneAsync(world);
 
         Assert.Equal(
-            ("Failed", "siigo.invoice.unavailable", JsonValueKind.Null),
+            ("Failed", "siigo.invoice.freight_pending", JsonValueKind.Null),
             (failed.GetProperty("status").GetString(), failed.GetProperty("errorCode").GetString(),
                 failed.GetProperty("invoiceId").ValueKind));
         Assert.True((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
@@ -636,6 +636,33 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Equal(3, calls.Count);
         Assert.Equal(calls[1].Header("Idempotency-Key"), calls[2].Header("Idempotency-Key"));
         Assert.NotEqual(calls[0].Header("Idempotency-Key"), calls[2].Header("Idempotency-Key"));
+    }
+
+    // La del pedido quedó por confirmar y la de flete nunca salió: declarar que la del pedido existe no deja el ítem facturado.
+    [Fact]
+    public async Task ResolvingTheOrderAsExistsLeavesTheItemFailedWhileItsFreightIsPending()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        var batchId = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+
+        await ReadAsync(await world.Client.PostAsJsonAsync(
+            $"{world.BaseRoute}/resolve", new { kind = "Order", outcome = "exists", number = "FV-1-777" }, Ct));
+
+        var batch = await GetBatchAsync(world, batchId);
+        var item = batch.GetProperty("items")[0];
+        Assert.Equal(
+            ("Failed", "siigo.invoice.freight_pending", false),
+            (item.GetProperty("status").GetString(), item.GetProperty("errorCode").GetString(),
+                item.GetProperty("orderMarkFailed").GetBoolean()));
+        var summary = (await ReadAsync(await world.Client.GetAsync(BatchesRoute(world), Ct))).GetProperty("items")[0];
+        Assert.Equal(
+            1,
+            summary.GetProperty("statusCounts").EnumerateArray()
+                .Single(count => count.GetProperty("status").GetString() == "Failed").GetProperty("count").GetInt32());
     }
 
     // Un redespliegue corta la llamada a Siigo: el ítem se cierra de una vez con la fila, sin esperar el lease ni volver a Pending.
