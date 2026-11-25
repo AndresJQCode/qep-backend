@@ -3,8 +3,9 @@ namespace Modules.Shopify.Application;
 /// <summary>
 /// Spec 2026-11-24 §11.1: Shopify espera la provincia como código ISO 3166-2 sin el prefijo del país (<c>M</c>, <c>B</c>…) y
 /// Geography guarda el código del INE de dos dígitos (<c>Region.Code</c>), así que la tabla vive acá, en código.
-/// <c>SpainProvinceCodesGeographyTests</c> la compara contra las regiones sembradas. Que Shopify use estos mismos códigos está por
-/// confirmar contra su lista de provincias antes del merge (decisión del owner P-4, 2026-11-25).
+/// <c>SpainProvinceCodesGeographyTests</c> la compara contra las regiones sembradas. Las 52 coinciden con los datos de
+/// <c>data/regions/ES.yml</c> de <c>Shopify/worldwide</c> (verificado el 2026-11-25, decisión P-4); es la fuente pública de
+/// Shopify, no la validación de la Admin API.
 /// </summary>
 public static class SpainProvinceCodes
 {
