@@ -237,6 +237,13 @@ Los `can*` existen porque la pantalla no ve `SendingSince` ni el reloj de 24 h: 
 `SiigoInvoiceDto` (lista del pedido) suma igual **`awaitingConfirmation`**, **`canResend`** y **`canResolve`** (aditivos): hoy el frontend
 muestra toda `Pending` como «Enviando…».
 
+**`orderMarkFailed` en las filas del pedido** (precisión de la etapa contract, 2026-11-25): sin la ruta síncrona, lo calculan al leer las
+respuestas que devuelven esas filas (`GET …/siigo-invoice`, `/stamp` y `/resolve`). Va en `true` sólo en la fila `Order` vigente que existe
+en Siigo (`Created`, `Stamped` o `StampRejected`, con número) cuando el pedido no está marcado como facturado con ese número y ninguna tanda
+sin terminar lo tiene (ítem `Pending` o `Sending`): un envío en curso no muestra el aviso de paso. Si la marca no se puede leer (5 s de
+plazo), avisa, igual que la recuperación de una tanda (§4). La de flete va en `false`. «Generar» es una tanda de ese pedido, que sólo
+reintenta la marca.
+
 El ítem y `SiigoInvoiceDto` suman también **`missingAvailableAt`** (nullable): la hora desde la cual se acepta «No existe»
 (`LastUnansweredAt + 10 min`), `null` si ya se puede o si no aplica `canResolve`. La pantalla deshabilita «No existe» hasta esa hora.
 

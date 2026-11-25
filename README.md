@@ -5531,6 +5531,9 @@ terminar es `409 siigo.invoice_batch.order_in_progress`. La factura de un pedido
 `/api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (`GET`, `/availability`, `/preview`, `/{invoiceId}/pdf`,
 `/{invoiceId}/send-whatsapp`, `/stamp` y `/resolve`); esa ruta no genera facturas. `GET …/preview` devuelve la factura armada, los
 faltantes y la propuesta de pagos sin llamar a Siigo. Crear la factura espera a Siigo hasta 120 s; todo lo demás, 30 s.
+Cada fila que devuelven `GET`, `/stamp` y `/resolve` trae `orderMarkFailed`: va en `true` en la factura del pedido que existe en
+Siigo cuando el pedido no lleva su marca (o no se pudo leer) y ninguna tanda sin terminar lo tiene; otra tanda del pedido la completa
+sin crear otra factura. La de flete siempre va en `false`.
 
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;

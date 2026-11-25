@@ -79,6 +79,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
   `Created` y el ítem de la tanda lleva `orderMarkFailed`; la siguiente tanda del pedido reintenta sólo la marca. Nunca deja la
   emisión fallando.
+- **`orderMarkFailed` de las filas del pedido se calcula al leer** (lista, sellar y resolver; no se guarda en `siigo.invoices`): sólo en
+  la fila `Order` que existe en Siigo y tiene número, y nunca mientras una tanda tenga el pedido (ítem `Pending` o `Sending`), para que un
+  envío en curso no parpadee un aviso. Lee la marca con `SiigoOrderMark`, el mismo de la recuperación de una tanda: 5 s de plazo y, si la
+  lectura falla, avisa. Una respuesta nueva que devuelva filas del pedido tiene que calcularlo: sin él la pantalla no ofrece «Generar».
 - **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
   `ListUnitPrice × 100 / (100 + IVA)` a **2 decimales**: la documentación de Siigo da a `tax_base` «máximo 11 enteros y 2 decimales», y con 6
   Siigo rechazó con `invalid_amount` en `items[n].tax_base`; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo

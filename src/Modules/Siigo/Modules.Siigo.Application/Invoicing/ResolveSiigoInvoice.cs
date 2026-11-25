@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Siigo.Domain;
 using Modules.Tenancy.Application;
 
@@ -46,7 +47,9 @@ public sealed class ResolveSiigoInvoiceHandler(
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
-    IValidator<ResolveSiigoInvoiceCommand> validator) : ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>
+    IValidator<ResolveSiigoInvoiceCommand> validator,
+    ISiigoInvoiceBatchRepository batches,
+    ILogger<ResolveSiigoInvoiceHandler> logger) : ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>
 {
     public async Task<SiigoInvoiceDto> HandleAsync(ResolveSiigoInvoiceCommand command, CancellationToken cancellationToken)
     {
@@ -97,7 +100,8 @@ public sealed class ResolveSiigoInvoiceHandler(
             await orders.MarkInvoicedAsync(command.TenantId, command.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), memberId, cancellationToken);
         }
 
-        return SiigoInvoiceDto.From(row, now);
+        var queued = await batches.FindOpenBatchIdAsync(command.TenantId, command.OrderId, cancellationToken) is not null;
+        return SiigoInvoiceDto.From(row, now, await SiigoOrderMark.IsMissingAsync(orders, row, queued, logger, cancellationToken));
     }
 
     // La de flete sólo sale después de que la del pedido existe, y acá la del pedido estaba sin resolver: la de flete sin resolver nunca
