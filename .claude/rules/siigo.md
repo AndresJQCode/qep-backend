@@ -4,6 +4,7 @@ paths:
   - "tests/Modules/Siigo/**"
   - "src/Bootstrapper/SiigoOpenInvoiceCheck.cs"
   - "src/Bootstrapper/SiigoInvoiceWhatsApp.cs"
+  - "src/Bootstrapper/SiigoOrderSource.cs"
 ---
 
 # Siigo (facturación de pedidos)
@@ -18,6 +19,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **«Enviar a la DIAN» (`send_to_dian`) nace apagado y prenderlo lo decide quien configura.** No hay empresa de pruebas de Siigo:
   cada factura sale contra la cuenta real, y una emitida a la DIAN no se borra. Con el interruptor apagado la factura queda creada y
   sin emitir, y una persona la revisa en Siigo. Una prueba o un seed nunca lo prende.
+- **En `POST /v1/customers`, `id_type` es texto (`"13"`), no `{ "code": "13" }`:** el objeto sólo viene en las respuestas. Con el objeto Siigo
+  responde `invalid_type` en `id_type` y no se crea ningún cliente (producción, 2026-11-24 y 25). Una prueba unitaria que fija la forma
+  del cuerpo no la valida contra Siigo: la documentación de la petición es la que manda.
+- **El documento sale a Siigo sin separadores y el NIT sin dígito de verificación** (`SiigoCustomerMapper.Identification`; owner,
+  2026-11-25; Siigo rechazó con 400 la búsqueda de una identificación con puntos). CC: sólo dígitos. NIT: se quita un guion con un solo
+  dígito al final o, sin él, el décimo dígito de un número que empiece por 8 o 9 y cuadre con el algoritmo de la DIAN; un guion en otra
+  parte no corta nada. CE y pasaporte: sólo letras y dígitos ASCII. Lo guardado en QEP no cambia, y un reenvío manda los bytes ya
+  guardados, con la forma que tenían. Si Siigo ya tiene un cliente con otra forma del documento, la búsqueda no lo encuentra y la
+  siguiente factura armada intenta crear otro.
 - **Las retenciones no van todas en el mismo lugar:** ReteFuente se manda en los `taxes` de **cada ítem** (después del IVA) y ReteICA
   en `retentions` de la factura. Sólo se manda el id del vínculo: el monto lo calcula Siigo. ReteIVA y autorretención no se mandan
   (decisión pendiente, V-7).
@@ -138,6 +148,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   hay y **sin retenciones** (no tiene base). No suma al `computedOrderTotal`: el total sin IVA del regalo es 0 y los pagos no cambian. Un regalo
   de una variante o un IVA sin vincular sale como faltante igual que una línea pagada. **No está probado contra una factura real de Siigo:**
   verifícalo con `send_to_dian` apagado antes de confiar en `tax_base` y `taxpayer`.
+- **El teléfono del cliente nuevo se parte en `SiigoOrderSource`** (Bootstrapper; spec 2026-11-25) con `IPhoneNumberSplitter` de
+  Customers, porque Siigo no lo referencia: región `CO` por defecto (país de la parte vacío o `CO`) y, si no, el país de la parte. Lo que no
+  se puede partir viaja crudo y `SiigoCustomerMapper` deja sólo dígitos: si el número queda vacío o pasa de 10, **omite `phones`** y el
+  cliente se crea igual; sin indicativo utilizable el objeto no lleva la propiedad `indicative`. **No está probado contra Siigo real.**
 - **La factura no lleva `additional_fields.purchase_order`.** Siigo lo rechaza con `document_settings` (`Params: ["additional_fields.purchase_order"]`) si el
   tipo de comprobante no tiene la orden de compra configurada, y Ritual Botánico factura sin él. El número del pedido ya va en `observations`.
 - **Los pagos suman el total que calcula Siigo, no el de QEP.** QEP saca el IVA de un precio con IVA incluido como bruto − neto; Siigo lo redondea por
