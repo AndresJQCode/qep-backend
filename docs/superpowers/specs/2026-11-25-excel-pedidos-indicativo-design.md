@@ -38,12 +38,17 @@ tocan, y lo guardado en el pedido y en el cliente no cambia.
 
 La celda sigue siendo de texto en todos los casos.
 
+Con el interruptor apagado nunca se pierden dígitos. «No se puede partir», y por tanto sale el valor guardado, cuando:
+
+- `libphonenumber` no lo reconoce como un número válido;
+- es un número no geográfico, de la región `001` (`+80012345678`);
+- los dígitos del valor guardado no son exactamente el indicativo seguido del número nacional (`+576015550000 ext 123`,
+  donde la extensión se descarta al partir).
+
+El cero inicial de Italia hace parte del número nacional, así que `+390612345678` sí se parte (`0612345678`).
+
 ## Piezas
 
 El partido usa `libphonenumber` a través de `IPhoneNumberSplitter` (Customers.Application), sin región de respaldo. Quotations no
 referencia a Customers: declara el puerto `IQuotationPhoneNumbers` y Bootstrapper lo implementa con `QuotationPhoneNumbers`. Los
 teléfonos no se registran en logs.
-
-## Pendiente
-
-La pantalla del frontend que muestra el interruptor.

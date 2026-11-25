@@ -1,4 +1,5 @@
 using Modules.Customers.Application;
+using Modules.Customers.Infrastructure.Phones;
 
 namespace Bootstrapper.UnitTests;
 
@@ -24,6 +25,20 @@ public sealed class QuotationPhoneNumbersTests
         var national = new QuotationPhoneNumbers(new RecordingSplitter(null)).NationalNumberOf("+99912");
 
         Assert.Null(national);
+    }
+
+    // Contra el normalizador real de Customers: lo que se verifica depende de cómo parte libphonenumber.
+    [Theory]
+    [InlineData("+573001234567", "3001234567")]
+    [InlineData("+34612345678", "612345678")]
+    [InlineData("+390612345678", "0612345678")] // en Italia el cero inicial es parte del número
+    [InlineData("+576015550000 ext 123", null)] // el partidor descarta la extensión: se perderían dígitos
+    [InlineData("+80012345678", null)] // no geográfico (región 001): sin el indicativo no se puede marcar
+    public void NeverLosesDigitsWithTheRealNormalizer(string phone, string? expected)
+    {
+        var national = new QuotationPhoneNumbers(new LibPhoneNumberNormalizer()).NationalNumberOf(phone);
+
+        Assert.Equal(expected, national);
     }
 
     private sealed class RecordingSplitter(PhoneNumberParts? parts) : IPhoneNumberSplitter
