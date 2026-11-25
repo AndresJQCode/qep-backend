@@ -964,10 +964,16 @@ public sealed class Order
     /// todo origen. <paramref name="shipping"/> null con envío = los datos del cliente, sin fila. A recoger quita la fila y
     /// limpia el envío, contraentrega incluida: no hay a dónde mandar nada. La fila existente se <b>modifica</b> y no se
     /// reemplaza (<c>IX_order_parties_order_role</c>, como <see cref="SetBilling"/>). Devuelve <c>false</c>, sin tocar la
-    /// versión, si nada cambió.
+    /// versión, si nada cambió. Una parte propia debe venir completa, como en el alta
+    /// (<c>order.shipping.party_incomplete</c>); con <paramref name="enforceCompleteness"/> en <c>false</c> (el cálculo
+    /// previo, que se hace mientras la persona teclea) no se exige.
     /// </summary>
     public bool SetDelivery(
-        bool isStorePickup, QuotationPartyDetails? shipping, MemberId updatedBy, DateTimeOffset occurredAt)
+        bool isStorePickup,
+        QuotationPartyDetails? shipping,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt,
+        bool enforceCompleteness = true)
     {
         EnsureDeliveryEditable();
         if (isStorePickup && shipping is not null)
@@ -980,6 +986,12 @@ public sealed class Order
         var candidate = shipping is null
             ? null
             : OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping, "Delivery.Shipping");
+        if (enforceCompleteness && candidate is { IsComplete: false })
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+        }
+
         var current = Shipping;
         if (IsStorePickup == isStorePickup && current?.ToDetails() == candidate?.ToDetails())
         {

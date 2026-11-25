@@ -211,7 +211,7 @@ public sealed class SaveOrderEditsHandler(
             var deliveryBefore = OrderDeliveryState.Of(order);
             var shippingBeforeDelivery = order.ShippingDetails;
             var deliveryChanged = await OrderDeliveryEdits.ApplyAsync(
-                order, command.Delivery, customerLookup, geographyLookup, command.TenantId, updatedBy, now,
+                order, command.Delivery, strict: true, customerLookup, geographyLookup, command.TenantId, updatedBy, now,
                 cancellationToken);
             var deliverySummary = deliveryChanged
                 ? await OrderDeliveryEdits.DescribeChangeAsync(

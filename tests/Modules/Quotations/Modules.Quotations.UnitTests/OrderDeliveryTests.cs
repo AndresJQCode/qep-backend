@@ -158,6 +158,38 @@ public sealed class OrderDeliveryTests
     }
 
     [Fact]
+    public void AnIncompleteShippingPartyIsRejected()
+    {
+        var order = NewOrder(isStorePickup: true);
+        var version = order.Version;
+        QuotationPartyDetails[] incompleteParties =
+            [new QuotationPartyDetails(), Party with { CityId = null }, Party with { Email = null }];
+
+        foreach (var incomplete in incompleteParties)
+        {
+            Assert.Equal(
+                "order.shipping.party_incomplete", CodeOf(() => order.SetDelivery(false, incomplete, Advisor, Now)));
+        }
+
+        Assert.True(order.IsStorePickup);
+        Assert.Null(order.Shipping);
+        Assert.Equal(version, order.Version);
+    }
+
+    // El cálculo previo se hace mientras la persona teclea.
+    [Fact]
+    public void AnIncompleteShippingPartyIsAcceptedWithoutEnforcingCompleteness()
+    {
+        var order = NewOrder(isStorePickup: true);
+
+        Assert.True(order.SetDelivery(
+            false, new QuotationPartyDetails { Name = "Bodega Norte" }, Advisor, Now, enforceCompleteness: false));
+
+        Assert.Equal("Bodega Norte", order.Shipping!.Name);
+        Assert.False(order.Shipping.IsComplete);
+    }
+
+    [Fact]
     public void ThePostalCodeTravelsWithTheParty()
     {
         var order = NewOrder(isStorePickup: true);

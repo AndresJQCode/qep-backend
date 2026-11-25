@@ -341,7 +341,8 @@ public record SaveOrderEditsRequest(
 /// dirección—, así que viaja junto y con el mismo significado que en <see cref="QuotationPartiesRequest"/>.</summary>
 /// <param name="IsStorePickup">Gana: a recoger se quita la dirección de envío y se limpia el envío, contraentrega incluida.</param>
 /// <param name="Shipping">La parte de envío con datos propios; null = la dirección del cliente. Con recogida debe venir
-/// null (<c>order.delivery.shipping_party_on_pickup</c>). La parte de envío no lleva documento: se ignora.</param>
+/// null (<c>order.delivery.shipping_party_on_pickup</c>). La parte de envío no lleva documento: se ignora. Al guardar debe
+/// venir completa (<c>order.shipping.party_incomplete</c>); el cálculo previo la acepta a medias.</param>
 public sealed record OrderDeliveryEditRequest(bool IsStorePickup, QuotationPartyRequest? Shipping);
 
 /// <summary>

@@ -128,9 +128,11 @@ public sealed class PreviewOrderEditsHandler(
             order.SetGlobalScaleFloor(query.GlobalScaleFloor, updatedBy, now);
         }
 
-        // Mismo orden que el guardado: la entrega antes de la facturación y del envío, con las mismas reglas.
+        // Mismo orden que el guardado: la entrega antes de la facturación y del envío, con las mismas reglas salvo la
+        // parte completa, que el preview no exige mientras la persona teclea.
         await OrderDeliveryEdits.ApplyAsync(
-            order, query.Delivery, customerLookup, geographyLookup, query.TenantId, updatedBy, now, cancellationToken);
+            order, query.Delivery, strict: false, customerLookup, geographyLookup, query.TenantId, updatedBy, now,
+            cancellationToken);
 
         // Mismo orden que el guardado: la facturación mueve la retención y el excedente de IVA, así que va antes
         // de recalcular. Sin la regla NIT ni las exigencias de fila completa: el preview no las aplica mientras la persona teclea.

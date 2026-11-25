@@ -1382,6 +1382,80 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Equal("Entrega: Recoger en tienda → Enviar a Calle Mayor 1, Madrid", entry.Details);
     }
 
+    // De enviar a enviar: la fila de envío se modifica, no se borra y se vuelve a crear (IX_order_parties_order_role).
+    [Fact]
+    public async Task ChangingTheShippingAddressUpdatesTheSameRow()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (party, cityName) = await ColombianShippingPartyAsync(client);
+        var (order, productId) = await ConvertPendingOrderAsync(
+            client, factory, tenantId, new QuotationPartiesRequest(null, party));
+        var before = Assert.Single(order.Parties, candidate => candidate.Role == "Shipping");
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, party with { Address = "Calle 1 # 2-3" })));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await ReadDetailAsync(response);
+        var saved = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.False(saved.Order.IsStorePickup);
+        var after = Assert.Single(saved.Order.Parties, candidate => candidate.Role == "Shipping");
+        Assert.Equal((before.Id, "Calle 1 # 2-3"), (after.Id, after.Address));
+        Assert.True(saved.Order.Version > order.Version);
+        var entry = Assert.Single(saved.History, history => history.EventType == "PartiesChanged");
+        Assert.Equal(
+            $"Entrega: Enviar a Cra 7 # 12-30, {cityName} → Enviar a Calle 1 # 2-3, {cityName}", entry.Details);
+        Assert.Single(await AuditActionsAsync(factory), action => action == "quotation.order.delivery_changed");
+    }
+
+    // Guardar exige la parte completa, como crear el pedido y como los escritores externos.
+    [Fact]
+    public async Task SavingAnIncompleteShippingPartyIsRejected()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var empty = new QuotationPartyRequest(null, null, null, null, null, null, null);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, empty)));
+
+        await AssertProblemAsync(response, "order.shipping.party_incomplete");
+        var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.DoesNotContain(fetched.Order.Parties, candidate => candidate.Role == "Shipping");
+        Assert.Equal(order.Version, fetched.Order.Version);
+    }
+
+    // El cálculo previo se hace mientras la persona teclea: una parte vacía o a medias no es un 422.
+    [Fact]
+    public async Task PreviewAcceptsAnIncompleteShippingParty()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var empty = new QuotationPartyRequest(null, null, null, null, null, null, null);
+
+        foreach (var party in new[] { empty, empty with { Name = "Bodega Norte" } })
+        {
+            var preview = await PreviewEditsAsync(
+                client, tenantId, order.Id, DeliveryBody(productId, new OrderDeliveryEditRequest(false, party)));
+
+            Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+            var previewed = (await ReadDetailAsync(preview)).Order;
+            Assert.Equal(
+                party.Name, Assert.Single(previewed.Parties, candidate => candidate.Role == "Shipping").Name);
+        }
+
+        Assert.DoesNotContain(
+            (await GetDetailAsync(client, tenantId, order.Id)).Order.Parties, candidate => candidate.Role == "Shipping");
+    }
+
     // R-3: la región la valida PartyRegionRules con la clave de la entrega.
     [Fact]
     public async Task ARegionOfAnotherCountryIsRejectedWithTheDeliveryKey()

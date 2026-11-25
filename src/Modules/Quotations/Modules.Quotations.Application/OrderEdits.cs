@@ -140,10 +140,12 @@ internal sealed record OrderDeliveryState(bool IsStorePickup, QuotationPartyDeta
 /// resuelve contra la recogida que queda.</summary>
 internal static class OrderDeliveryEdits
 {
-    /// <summary>Devuelve <c>false</c> si no hay bloque o nada cambió.</summary>
+    /// <summary>Devuelve <c>false</c> si no hay bloque o nada cambió. <paramref name="strict"/> exige la parte de envío
+    /// completa, como el guardado de la facturación; el cálculo previo no.</summary>
     public static async Task<bool> ApplyAsync(
         Order order,
         OrderDeliveryEditRequest? delivery,
+        bool strict,
         IQuotationCustomerLookup customerLookup,
         IQuotationGeographyLookup geographyLookup,
         Guid tenantId,
@@ -173,7 +175,7 @@ internal static class OrderDeliveryEdits
             }
         }
 
-        return order.SetDelivery(delivery.IsStorePickup, shipping, updatedBy, now);
+        return order.SetDelivery(delivery.IsStorePickup, shipping, updatedBy, now, enforceCompleteness: strict);
     }
 
     /// <summary>El texto del historial: la ciudad es la de DIVIPOLA en Colombia y la escrita afuera.</summary>
