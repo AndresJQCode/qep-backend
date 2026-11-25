@@ -48,14 +48,19 @@ public sealed class DistributorWhatsAppNoticeApiTests(DistributorWhatsAppNoticeA
         Assert.Equal(1, await CountEventsAsync(LinkEvent, created.Id));
         Assert.Equal(0, await CountEventsAsync(NoticeEvent, created.Id));
 
-        // El evento nuevo lleva el mismo token que el correo; sin vencimiento.
+        // El evento nuevo lleva el mismo token que el correo; sin vencimiento y, spec 2026-11-24, sin la prueba de buzón.
         var token = await WholesaleApiHarness.LatestTokenAsync(Factory, created.Id);
+        var emailProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, created.Id);
+        Assert.NotNull(emailProof);
         var (noticeId, payload) = await NoticeAsync(created.Id);
         using (var document = JsonDocument.Parse(payload))
         {
             Assert.False(document.RootElement.TryGetProperty("expiresAt", out _));
+            Assert.False(document.RootElement.TryGetProperty("emailProof", out _));
             Assert.Equal(token, document.RootElement.GetProperty("token").GetString());
         }
+
+        Assert.DoesNotContain(emailProof, payload, StringComparison.Ordinal);
 
         await ProcessNoticesAsync();
         var detail = await WholesaleApiHarness.EventuallyAsync(

@@ -111,6 +111,109 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
     }
 
+    // Spec 2026-11-24: quien llega desde el correo ya probó el buzón: crea la cuenta sin código, con los términos registrados.
+    // La prueba se lee del outbox, así que esta prueba fija también el nombre del campo del evento.
+    [Fact]
+    public async Task TheEmailLinkProofCreatesTheAccountWithoutACode()
+    {
+        var email = NewEmail();
+        var (_, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
+        var emailProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, distributor.Id);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+
+        var response = await anonymous.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password",
+            new { email, password = Password, termsVersion = WholesaleApiHarness.TermsVersion, emailProof },
+            Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var session = (await response.Content.ReadFromJsonAsync<SessionResponse>(Ct))!;
+        Assert.Equal(email, session.Email);
+        Assert.True(response.Headers.TryGetValues("Set-Cookie", out var cookies) && cookies.Any());
+        var terms = await WholesaleApiHarness.RowsAsync<string>(
+            Factory, $"""SELECT version AS "Value" FROM identity.terms_acceptances WHERE user_id = {session.UserId}""");
+        Assert.Equal([WholesaleApiHarness.TermsVersion], terms);
+        Assert.Null(await WholesaleApiHarness.LatestEmailCodeAsync(Factory, email));
+        Assert.Equal(HttpStatusCode.OK, (await AcceptNewTenantAsync(session.UserId, token)).StatusCode);
+    }
+
+    // La prueba sólo vale para el correo invitado, y una prueba errada responde lo mismo que un código errado.
+    [Fact]
+    public async Task AnEmailProofWithAnotherEmailOrAWrongProofIs401AndCreatesNoUser()
+    {
+        var email = NewEmail();
+        var otherEmail = NewEmail();
+        var (_, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
+        var emailProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, distributor.Id);
+        Assert.NotNull(emailProof);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
+
+        var anotherEmail = await anonymous.PostAsJsonAsync(
+            url,
+            new { email = otherEmail, password = Password, termsVersion = WholesaleApiHarness.TermsVersion, emailProof },
+            Ct);
+        var wrongProof = await anonymous.PostAsJsonAsync(
+            url,
+            new { email, password = Password, termsVersion = WholesaleApiHarness.TermsVersion, emailProof = "prueba-falsa" },
+            Ct);
+
+        Assert.Equal(
+            (HttpStatusCode.Unauthorized, "identity.credentials.invalid"),
+            (anotherEmail.StatusCode, await WholesaleApiHarness.CodeOfAsync(anotherEmail)));
+        Assert.Equal(
+            (HttpStatusCode.Unauthorized, "identity.credentials.invalid"),
+            (wrongProof.StatusCode, await WholesaleApiHarness.CodeOfAsync(wrongProof)));
+        Assert.Equal(0, await CountUsersAsync(otherEmail));
+        Assert.Equal(0, await CountUsersAsync(email));
+    }
+
+    [Fact]
+    public async Task TermsMissingOrStaleWithAValidProofAre422AndCreateNoUser()
+    {
+        var email = NewEmail();
+        var (_, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
+        var emailProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, distributor.Id);
+        Assert.NotNull(emailProof);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
+
+        var missing = await anonymous.PostAsJsonAsync(url, new { email, password = Password, emailProof }, Ct);
+        var stale = await anonymous.PostAsJsonAsync(
+            url, new { email, password = Password, termsVersion = "2025-01-01", emailProof }, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);
+        Assert.Contains("\"TermsVersion\"", await WholesaleApiHarness.BodyAsync(missing), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, stale.StatusCode);
+        Assert.Equal("identity.terms.version_mismatch", await WholesaleApiHarness.CodeOfAsync(stale));
+        Assert.Equal(0, await CountUsersAsync(email));
+    }
+
+    // Anti-objetivo del spec 2026-11-24: con la contraseña ya creada, la prueba no la cambia ni deja entrar con otra.
+    [Fact]
+    public async Task AProofDoesNotChangeThePasswordOfAnExistingAccount()
+    {
+        var email = NewEmail();
+        var (_, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
+        var emailProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, distributor.Id);
+        Assert.NotNull(emailProof);
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
+
+        var otherPassword = await anonymous.PostAsJsonAsync(
+            url,
+            new { email, password = "Otra-Clave-99", termsVersion = WholesaleApiHarness.TermsVersion, emailProof },
+            Ct);
+        var original = await anonymous.PostAsJsonAsync(url, new { email, password = Password }, Ct);
+
+        Assert.Equal(
+            (HttpStatusCode.Unauthorized, "identity.credentials.invalid"),
+            (otherPassword.StatusCode, await WholesaleApiHarness.CodeOfAsync(otherPassword)));
+        Assert.Equal(HttpStatusCode.OK, original.StatusCode);
+        Assert.Equal(userId, (await original.Content.ReadFromJsonAsync<SessionResponse>(Ct))!.UserId);
+    }
+
     // Revisión del bloque C: con el correo en el cuerpo, la respuesta sin código no puede decir si un correo cualquiera tiene
     // contraseña. Un correo sin cuenta y una cuenta con contraseña y una clave errada responden igual.
     [Fact]
@@ -986,6 +1089,65 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
             """);
         Assert.Equal(0, leaks[0]);
     }
+
+    // Spec 2026-11-24, anti-objetivo: la prueba viaja sólo en el evento del correo. No sale en las respuestas de la API, no queda
+    // en la auditoría ni en el log de fallas, y ningún otro evento del outbox la lleva (el aviso de WhatsApp se mira en
+    // DistributorWhatsAppNoticeApiTests, que tiene la conexión lista).
+    [Fact]
+    public async Task TheEmailProofNeverAppearsInAuditOrRequestLogs()
+    {
+        var email = NewEmail();
+        var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
+        var emailProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, distributor.Id);
+        Assert.NotNull(emailProof);
+        var failuresBefore = await SessionFailuresAsync();
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
+
+        var summary = await anonymous.GetStringAsync(WholesaleApiHarness.InvitationUrl(token), Ct);
+        var detail = await manager.GetStringAsync(
+            $"{WholesaleApiHarness.DistributorsUrl(wholesaler.TenantId)}/{distributor.Id}", Ct);
+        // Dos fallas con la prueba válida en el cuerpo, de las que el middleware guarda: sin términos (422) y otro correo (401).
+        var withoutTerms = await anonymous.PostAsJsonAsync(url, new { email, password = Password, emailProof }, Ct);
+        var anotherEmail = await anonymous.PostAsJsonAsync(
+            url, new { email = NewEmail(), password = Password, emailProof }, Ct);
+        var opened = await anonymous.PostAsJsonAsync(
+            url, new { email, password = Password, termsVersion = WholesaleApiHarness.TermsVersion, emailProof }, Ct);
+        var userId = (await opened.Content.ReadFromJsonAsync<SessionResponse>(Ct))!.UserId;
+        var accepted = await AcceptNewTenantAsync(userId, token);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, withoutTerms.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, anotherEmail.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, opened.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        Assert.NotNull(distributor.InvitationUrl);
+        Assert.DoesNotContain("ev=", distributor.InvitationUrl, StringComparison.Ordinal);
+        Assert.All(
+            new[] { distributor.InvitationUrl, summary, detail, await WholesaleApiHarness.BodyAsync(accepted) },
+            text => Assert.DoesNotContain(emailProof, text, StringComparison.Ordinal));
+        Assert.True(
+            await WholesaleApiHarness.EventuallyAsync(SessionFailuresAsync, count => count >= failuresBefore + 2)
+                >= failuresBefore + 2);
+        var leaks = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT ((SELECT count(*) FROM platform.request_failures f WHERE strpos(f::text, {emailProof}) > 0)
+                  + (SELECT count(*) FROM audit.entries e WHERE strpos(e::text, {emailProof}) > 0)
+                  + (SELECT count(*) FROM platform.outbox_messages o
+                     WHERE o.event_name <> {WholesaleApiHarness.DistributorInvitedEvent}
+                       AND strpos(o.payload::text, {emailProof}) > 0))::int AS "Value"
+            """);
+        Assert.Equal(0, leaks[0]);
+    }
+
+    private async Task<int> SessionFailuresAsync() =>
+        (await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM platform.request_failures
+            WHERE path = '/api/v1/wholesale-invitations/***/session-with-password'
+            """))[0];
 
     private static string NewEmail() => $"distri-{Guid.NewGuid():N}@distri.co";
 

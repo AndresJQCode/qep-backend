@@ -67,8 +67,9 @@ public static class WholesaleInvitationEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status410Gone);
 
-        // Anónimo, como accept-with-password de miembros. El link ya no prueba el buzón (spec 2026-11-19): una cuenta sin
-        // contraseña necesita el código de email-code y los términos. La sesión sale de esta llamada.
+        // Anónimo, como accept-with-password de miembros. El link por sí solo no prueba el buzón (spec 2026-11-19): una cuenta
+        // sin contraseña necesita el código de email-code o la prueba que sólo lleva el link del correo (spec 2026-11-24), y
+        // los términos. La sesión sale de esta llamada.
         endpoints.MapPost($"{Route}/session-with-password", SessionWithPasswordAsync)
             .AllowAnonymous()
             .RequireRateLimiting(RateLimiterPolicies.Credentials)
@@ -218,10 +219,11 @@ public static class WholesaleInvitationEndpoints
         return await establisher.EstablishAsync(httpContext, userId, accountEmail, cancellationToken);
     }
 
-    // Orden fijo: cuerpo (400) → invitación aceptable → contraseña con las reglas del registro (422, W17) → bajo el lock del
-    // correo, con contraseña ya creada sólo verificarla; sin ella, términos (422) y código del correo (401), y recién entonces
-    // aprovisionar, crear la contraseña y registrar los términos (WholesaleInvitationPasswordSession) → commit → sesión. La
-    // contraseña y el código no se registran en ningún lado.
+    // Orden fijo: cuerpo (400) → invitación aceptable → si la prueba del link prueba el buzón de ese correo (Wholesale) →
+    // contraseña con las reglas del registro (422, W17) → bajo el lock del correo, con contraseña ya creada sólo verificarla;
+    // sin ella, prueba de buzón o código del correo (401) y después términos (422), y recién entonces aprovisionar, crear la
+    // contraseña y registrar los términos (WholesaleInvitationPasswordSession) → commit → sesión. La contraseña, el código y
+    // la prueba no se registran en ningún lado.
     private static async Task<IResult> SessionWithPasswordAsync(
         string token,
         HttpContext httpContext,
@@ -242,11 +244,12 @@ public static class WholesaleInvitationEndpoints
         // Sin correo en el cuerpo (un cliente anterior), el invitado. Ruling W17: valida la contraseña antes de crear al
         // usuario (WholesaleInvitationPasswordSession).
         var email = string.IsNullOrWhiteSpace(request.Email) ? invitation.Email : request.Email.Trim();
+        var emailProven = DistributorEmailProofs.Proves(invitation, request.EmailProof, email);
         var user = await passwordSession.OpenAsync(
             email,
             request.Password ?? string.Empty,
             request.Code,
-            emailProven: false,
+            emailProven,
             request.TermsVersion,
             httpContext.TraceIdentifier,
             cancellationToken);
@@ -423,10 +426,13 @@ public sealed record WholesaleInvitationResponse(
     string? TermsVersion);
 
 /// <summary>
-/// Spec 2026-11-19 §4. <c>Email</c> es el que escribió el distribuidor (sin él, el invitado). <c>Code</c> y <c>TermsVersion</c>
-/// sólo se miran si esa cuenta todavía no tiene contraseña; entonces son obligatorios.
+/// Spec 2026-11-19 §4 y spec 2026-11-24. <c>Email</c> es el que escribió el distribuidor (sin él, el invitado). <c>Code</c>,
+/// <c>EmailProof</c> y <c>TermsVersion</c> sólo se miran si esa cuenta todavía no tiene contraseña; entonces los términos son
+/// obligatorios y hace falta el código o la prueba. <c>EmailProof</c> es el <c>ev</c> del link del correo: reemplaza al código
+/// sólo con el correo invitado y mientras siga vigente; si no, se ignora.
 /// </summary>
-public sealed record WholesaleInvitationPasswordRequest(string? Email, string? Password, string? Code, string? TermsVersion);
+public sealed record WholesaleInvitationPasswordRequest(
+    string? Email, string? Password, string? Code, string? TermsVersion, string? EmailProof = null);
 
 /// <summary>El correo al que se manda el código de un solo uso.</summary>
 public sealed record WholesaleInvitationEmailCodeRequest(string? Email);

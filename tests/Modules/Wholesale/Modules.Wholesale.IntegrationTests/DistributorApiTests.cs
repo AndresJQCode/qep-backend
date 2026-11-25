@@ -596,6 +596,83 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         Assert.Equal(("Distribuciones Sur SAS", invited.Version + 1), (stored.BusinessName, stored.Version));
     }
 
+    // Spec 2026-11-24: la prueba deja de servir cuando deja de corresponder al buzón. Un distribuidor por caso, cada uno con su
+    // correo para que ninguna cuenta de otra prueba convierta el intento en un inicio de sesión.
+    [Fact]
+    public async Task AnEmailProofIsVoidedByCopyResendAndAnEmailChange()
+    {
+        // «Copiar» rota el token y no manda correo: la prueba anterior no vale con el token nuevo.
+        var copiedEmail = NewEmail();
+        var (copyManager, copyTenant, copied, _) = await InviteForUpdateAsync(copiedEmail);
+        using var first = copyManager;
+        var copiedProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, copied.Id);
+        Assert.NotNull(copiedProof);
+        var rotated = (await (await RotateAsync(copyManager, copyTenant.TenantId, copied))
+            .Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
+        Assert.DoesNotContain("ev=", rotated.InvitationUrl!, StringComparison.Ordinal);
+        var copiedToken = Uri.UnescapeDataString(rotated.InvitationUrl!.Split("/wholesale-invitations/")[1]);
+
+        await AssertProofRefusedAsync(copiedToken, copiedEmail, copiedProof);
+
+        // «Reenviar» manda un correo con una prueba nueva: la anterior no vale y la nueva sí.
+        var resentEmail = NewEmail();
+        var (resendManager, resendTenant, resent, _) = await InviteForUpdateAsync(resentEmail);
+        using var second = resendManager;
+        var oldProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, resent.Id);
+        Assert.NotNull(oldProof);
+        (await ResendAsync(resendManager, resendTenant.TenantId, resent)).EnsureSuccessStatusCode();
+        var resentToken = await WholesaleApiHarness.LatestTokenAsync(Factory, resent.Id);
+        var newProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, resent.Id);
+        Assert.NotNull(newProof);
+        Assert.NotEqual(oldProof, newProof);
+
+        await AssertProofRefusedAsync(resentToken, resentEmail, oldProof);
+        var withNewProof = await SessionWithProofAsync(resentToken, resentEmail, newProof);
+        Assert.Equal(HttpStatusCode.OK, withNewProof.StatusCode);
+
+        // Cambiar el correo no rota el token, pero anula la prueba: no vale para el correo viejo ni para el nuevo.
+        var previousEmail = NewEmail();
+        var changedEmail = NewEmail();
+        var (changeManager, changeTenant, changed, changeToken) = await InviteForUpdateAsync(previousEmail);
+        using var third = changeManager;
+        var changedProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, changed.Id);
+        Assert.NotNull(changedProof);
+        (await PutAsync(changeManager, changeTenant, changed, new
+        {
+            priceListId = changed.PriceList.Id,
+            advisorId = changed.Advisor.MemberId,
+            billingCompanyId = changed.BillingCompany.Id,
+            email = changedEmail,
+        })).EnsureSuccessStatusCode();
+
+        await AssertProofRefusedAsync(changeToken, previousEmail, changedProof);
+        await AssertProofRefusedAsync(changeToken, changedEmail, changedProof);
+    }
+
+    private async Task<HttpResponseMessage> SessionWithProofAsync(string token, string email, string emailProof)
+    {
+        using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
+        return await anonymous.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password",
+            new { email, password = "Distri-2026!", termsVersion = WholesaleApiHarness.TermsVersion, emailProof },
+            Ct);
+    }
+
+    // El mismo 401 que un código errado, y sin usuario creado.
+    private async Task AssertProofRefusedAsync(string token, string email, string emailProof)
+    {
+        var response = await SessionWithProofAsync(token, email, emailProof);
+
+        Assert.Equal(
+            (HttpStatusCode.Unauthorized, "identity.credentials.invalid"),
+            (response.StatusCode, await WholesaleApiHarness.CodeOfAsync(response)));
+        var users = await WholesaleApiHarness.RowsAsync<int>(
+            Factory, $"""SELECT count(*)::int AS "Value" FROM identity.users WHERE email = {email}""");
+        Assert.Equal(0, users[0]);
+    }
+
+    private static string NewEmail() => $"distri-{Guid.NewGuid():N}@distri.co";
+
     // Lo que deja un intento de aceptación que se cortó después de registrar el tenant.
     private async Task CreateReservedTenantAsync(Guid distributorId)
     {
@@ -618,13 +695,14 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         await tenancy.SaveChangesAsync(Ct);
     }
 
-    private async Task<(HttpClient Manager, WholesaleTestTenant Tenant, DistributorDetailDto Invited, string Token)> InviteForUpdateAsync()
+    private async Task<(HttpClient Manager, WholesaleTestTenant Tenant, DistributorDetailDto Invited, string Token)> InviteForUpdateAsync(
+        string email = "ana@distri.co")
     {
         var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
         var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
         var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
         var company = await WholesaleApiHarness.CreateCompanyAsync(manager, tenant.TenantId, "Mayorista Central SAS");
-        var (invited, token) = await WholesaleApiHarness.InviteAsync(Factory, manager, tenant, list.Id, company);
+        var (invited, token) = await WholesaleApiHarness.InviteAsync(Factory, manager, tenant, list.Id, company, email);
         return (manager, tenant, invited, token);
     }
 
