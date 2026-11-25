@@ -89,6 +89,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   duplicarla. «Existe» sí se acepta. Crear una tanda no toma ese candado, así que una creada justo entre la consulta y el guardado se
   cuela. El `POST` síncrono no deja ítem, así que esta guarda no lo ve: mientras manda, la protege el reclamo
   (`siigo.invoice.state_invalid`), y uno que espere el candado detrás de un «no existe» arma una factura nueva.
+- **`canResolve` es el mismo en las filas del pedido y en los ítems de las tandas** (`SiigoInvoice.OffersResolution`: `Unknown`, una
+  `Pending` vencida que todavía no se expiró, o por confirmar). El endpoint acepta más (`IsResolvable`: cualquier `Pending` que nadie
+  esté mandando); no uses ése para dibujar la acción. `missingAvailableAt` sólo viaja con `canResolve`.
 - **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
   `ListUnitPrice × 100 / (100 + IVA)` a **2 decimales**: la documentación de Siigo da a `tax_base` «máximo 11 enteros y 2 decimales», y con 6
   Siigo rechazó con `invalid_amount` en `items[n].tax_base`; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo

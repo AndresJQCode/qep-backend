@@ -239,8 +239,9 @@ public sealed class SiigoInvoiceBatchItem
                 invoice.ErrorCode ?? ErrorCode,
                 null,
                 invoice.CanResend(now),
-                invoice.IsResolvable(now),
-                invoice.MissingAvailableAt(now)),
+                // Lo mismo que ofrece la pantalla del pedido: una que nunca salió no se ofrece resolver.
+                invoice.OffersResolution(now),
+                invoice.OffersResolution(now) ? invoice.MissingAvailableAt(now) : null),
             SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected =>
                 new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, invoice.Number, false, false, null),
             SiigoInvoiceStatus.Failed => new SiigoBatchItemState(

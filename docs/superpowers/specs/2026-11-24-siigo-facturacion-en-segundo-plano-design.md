@@ -235,7 +235,7 @@ y conserva `Invoiced`, `Skipped`, `Failed` (aditivo: el frontend publicado los l
 | `missing` | ítem | como hoy |
 | `orderMarkFailed` | ítem (nuevo) | la factura existe pero el pedido no se pudo marcar; hoy sólo lo traía la respuesta del `POST` síncrono |
 | `canResend` | calculado | efectivo `ToConfirm` ∧ fila `Pending` ∧ no en envío ∧ no vencida ∧ pedido sin ítem abierto en ninguna tanda |
-| `canResolve` | calculado | efectivo `ToConfirm` ∧ fila resoluble (§3) |
+| `canResolve` | calculado | efectivo `ToConfirm` ∧ (factura `Unknown` ∨ factura por confirmar), igual que en `SiigoInvoiceDto`; una `Pending` de más de 24 h cuenta como `Unknown` (decidido el 2026-11-25) |
 
 Los `can*` existen porque la pantalla no ve `SendingSince` ni el reloj de 24 h: sin ellos tendría que adivinar.
 `SiigoInvoiceDto` (lista del pedido) suma igual **`awaitingConfirmation`**, **`canResend`** y **`canResolve`** (aditivos): hoy el frontend

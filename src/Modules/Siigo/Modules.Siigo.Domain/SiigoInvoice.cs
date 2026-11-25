@@ -245,6 +245,12 @@ public sealed class SiigoInvoice
     public bool IsResolvable(DateTimeOffset now) =>
         Status == SiigoInvoiceStatus.Unknown || (Status == SiigoInvoiceStatus.Pending && !IsBeingSent(now));
 
+    /// <summary>Si la pantalla ofrece «Existe en Siigo» / «No existe» (spec 2026-11-24 §5): una <c>Unknown</c> (también la <c>Pending</c>
+    /// que ya pasó <see cref="StaleAfter"/> y que la próxima lectura del pedido expira) o una por confirmar. Es más estrecho que
+    /// <see cref="IsResolvable"/>: una que nunca salió se puede resolver, pero ofrecerlo confunde.</summary>
+    public bool OffersResolution(DateTimeOffset now) =>
+        Status == SiigoInvoiceStatus.Unknown || IsStale(now) || IsAwaitingConfirmation(now);
+
     /// <summary>Se puede reenviar con la misma clave: <c>Pending</c>, nadie la está mandando y no ha pasado
     /// <see cref="StaleAfter"/>.</summary>
     public bool CanResend(DateTimeOffset now) =>
@@ -325,7 +331,7 @@ public sealed class SiigoInvoice
     /// tuviera se conserva: de él depende <see cref="MissingAvailableAt"/>. Devuelve si cambió.</summary>
     public bool ExpireIfStale(DateTimeOffset now)
     {
-        if (Status != SiigoInvoiceStatus.Pending || now - CreatedAt <= StaleAfter || IsBeingSent(now))
+        if (!IsStale(now))
         {
             return false;
         }
@@ -391,6 +397,10 @@ public sealed class SiigoInvoice
             or SiigoErrorCodes.InvoiceRateLimited or SiigoErrorCodes.InvoiceSiigoService
             ? UpdatedAt
             : null;
+
+    // Lo que ya no se reenvía solo: una Pending de más de StaleAfter que nadie está mandando.
+    private bool IsStale(DateTimeOffset now) =>
+        Status == SiigoInvoiceStatus.Pending && now - CreatedAt > StaleAfter && !IsBeingSent(now);
 
     private bool AdoptUnrecordedAttempt()
     {

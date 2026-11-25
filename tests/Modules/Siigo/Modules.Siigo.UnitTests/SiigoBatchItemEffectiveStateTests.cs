@@ -79,6 +79,37 @@ public sealed class SiigoBatchItemEffectiveStateTests
         Assert.Equal((SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.interrupted"), (state.Status, state.ErrorCode));
     }
 
+    // Como en la pantalla del pedido: una que nunca salió (falla de configuración) se reintenta, pero no ofrece «Existe / No existe».
+    [Fact]
+    public void AToConfirmWhoseInvoiceNeverLeftIsNotOfferedForResolution()
+    {
+        var invoice = NewInvoice();
+        invoice.BeginSend(Now);
+        invoice.MarkTransient("siigo.invoice.unavailable", Now);
+        var item = ToConfirm(invoice);
+
+        var state = item.Effective(invoice, Now.AddMinutes(1));
+
+        Assert.Equal(
+            new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.unavailable", null, true, false, null), state);
+    }
+
+    // Pasadas las 24 horas es Unknown aunque nadie la haya leído desde el pedido: se ofrece resolver.
+    [Fact]
+    public void AToConfirmWhoseStalePendingWasNotExpiredYetCanBeResolved()
+    {
+        var invoice = NewInvoice();
+        invoice.BeginSend(Now);
+        invoice.MarkTransient("siigo.invoice.unavailable", Now);
+        var item = ToConfirm(invoice);
+
+        var state = item.Effective(invoice, Now.AddHours(25));
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, invoice.Status);
+        Assert.Equal(
+            new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.unavailable", null, false, true, null), state);
+    }
+
     [Fact]
     public void AToConfirmWhoseInvoiceIsUnknownCanOnlyBeResolved()
     {

@@ -49,7 +49,7 @@ public sealed record SiigoInvoiceDto(
         SiigoInvoice invoice, DateTimeOffset now, bool orderMarkFailed = false, bool canSendWhatsApp = false, bool queued = false)
     {
         var awaitingConfirmation = invoice.IsAwaitingConfirmation(now);
-        var canResolve = invoice.Status == SiigoInvoiceStatus.Unknown || awaitingConfirmation;
+        var canResolve = invoice.OffersResolution(now);
         return new(
             invoice.Id,
             invoice.Kind.ToString(),
