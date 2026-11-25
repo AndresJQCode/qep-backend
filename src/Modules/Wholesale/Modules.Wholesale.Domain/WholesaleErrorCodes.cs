@@ -28,6 +28,9 @@ public static class WholesaleErrorCodes
 
     public const string DistributorAlreadyLinked = "wholesale.distributor.already_linked";
 
+    // El PUT cambia el documento y el tenant reservado de la invitación pendiente ya existe (aceptación a medias).
+    public const string DistributorAcceptanceInProgress = "wholesale.distributor.acceptance_in_progress";
+
     public const string InvitationAlreadyAccepted = "wholesale.invitation.already_accepted";
 
     public const string InvitationUnavailable = "wholesale.invitation.unavailable";

@@ -87,9 +87,14 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   cuando se manda la ciudad o cambia el país. Afuera de `Invited`, un valor distinto es
   `wholesale.distributor.invalid_transition`. **Cambiar el correo no reenvía la invitación ni rota el token**: lo hace
   «Reenviar»; no lo automatices. La auditoría nombra los campos cambiados, nunca los valores.
-- **Editar el documento después de una aceptación a medias puede duplicar** (la invitación sigue `Invited`): la empresa del
-  tenant reservado y el cliente del mayorista son idempotentes **por documento**, así que el reintento crea otros con el nuevo y
-  los anteriores quedan; el nombre del tenant ya creado tampoco cambia.
+- **Con una aceptación a medias no se cambia el documento** (`UpdateDistributorHandler`): la empresa del tenant reservado y el
+  cliente del mayorista son idempotentes **por documento**, así que si el distribuidor está `Invited`, el `PUT` cambia el tipo o
+  el número (normalizados) y el tenant reservado ya existe (`ITenantDirectory.GetStatusAsync`, como D-17), responde 409
+  `wholesale.distributor.acceptance_in_progress` y no escribe. Los demás campos se siguen editando (el nombre del tenant ya creado
+  no cambia) y sin cambio de documento no se consulta Tenancy. **Límites conocidos:** una aceptación a medias **vinculando un
+  tenant existente** no deja tenant reservado y no se detecta (el cliente puede duplicarse; la empresa no, porque sólo se crea si
+  el tenant no tiene ninguna, y el proveedor es idempotente por tenant vinculado); y no hay candado entre módulos, así que un
+  `PUT` que confirma **mientras** una aceptación en curso todavía no creó el tenant pasa el chequeo.
 - **El aviso de WhatsApp de la invitación es un evento aparte, y desde el spec 2026-11-19 lleva el token**: invitar y
   «Reenviar» escriben `wholesale.distributor-invitation-link.v1` (token sólo en el payload del outbox). El viejo
   `wholesale.distributor-invitation-notice.v1`, sin token, ya no se escribe: el procesador sólo lo drena. El mensaje de WhatsApp

@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 using Modules.Wholesale.Domain;
 
 namespace Modules.Wholesale.Application;
@@ -27,7 +28,8 @@ public sealed record UpdateDistributorCommand(
 
 /// <summary>
 /// Lista, asesor y empresa facturadora, en cualquier estado. Orden: 403 → 422 → 404 → 412 → 409 datos fuera de
-/// <c>Invited</c> → las tres verificaciones → 422 de los datos → 422 ciudad → 409 documento → 422 <c>Phone</c> → 422 conexión.
+/// <c>Invited</c> → las tres verificaciones → 422 de los datos → 422 ciudad → 409 documento → 409 aceptación a medias
+/// (sólo si cambia tipo o número y el tenant reservado ya existe) → 422 <c>Phone</c> → 422 conexión.
 /// Teléfono y conexión del aviso (spec 2026-11-18) sólo cuentan mientras está invitada (P-2): afuera se ignoran sin 422,
 /// porque el formulario reenvía todos los campos. Sin teléfono se borran los dos (P-3). El mismo teléfono con la conexión nula
 /// o igual a la guardada no consulta Integrations (D-9): editar no falla porque la conexión dejó de estar lista. Un cambio deja
@@ -85,6 +87,11 @@ public sealed class UpdateDistributorHandler(
         if (changesProfile)
         {
             await EnsureProfileValidAsync(distributor, profile, changed, command, cancellationToken);
+        }
+
+        if (invited && ChangesDocument(changed))
+        {
+            await EnsureAcceptanceNotStartedAsync(distributor, cancellationToken);
         }
 
         var (phone, connectionId) = invited ? await NoticeTargetAsync(distributor, command, cancellationToken) : (null, null);
@@ -145,12 +152,27 @@ public sealed class UpdateDistributorHandler(
         }
 
         // D-13: contra los demás distribuidores del mayorista.
-        if ((changed.Contains("identificationType") || changed.Contains("identificationNumber"))
+        if (ChangesDocument(changed)
             && await distributors.IdentificationExistsAsync(
                 command.TenantId, DistributorProfile.Code(profile.IdentificationType), profile.IdentificationNumber.Trim(),
                 distributor.Id, cancellationToken))
         {
             throw WholesaleConflicts.IdentificationTaken();
+        }
+    }
+
+    // El país no es parte del documento: si cambiarlo obliga a otro tipo, ya cuenta por identificationType.
+    private static bool ChangesDocument(IReadOnlyList<string> changed) =>
+        changed.Contains("identificationType") || changed.Contains("identificationNumber");
+
+    // La aceptación no es atómica entre módulos (D-3): con el tenant reservado ya creado (D-17), la empresa y el cliente pueden
+    // existir con este documento, y como el reintento es idempotente por documento, cambiarlo los duplicaría.
+    private async Task EnsureAcceptanceNotStartedAsync(Distributor distributor, CancellationToken cancellationToken)
+    {
+        var reserved = new TenantId(distributor.Invitation.ReservedTenantId);
+        if (await tenants.GetStatusAsync(reserved, cancellationToken) is not null)
+        {
+            throw WholesaleConflicts.AcceptanceInProgress();
         }
     }
 
