@@ -33,8 +33,9 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
                     group.Count(),
                     group.Sum(record => (long)record.InputTokens),
                     group.Sum(record => (long)record.OutputTokens),
-                    group.Sum(record => (long?)record.CacheCreationInputTokens),
-                    group.Sum(record => (long?)record.CacheReadInputTokens)),
+                    // C-4: null si ningún registro lo reporta (ver la nota en ListSessionsAsync).
+                    group.Max(record => record.CacheCreationInputTokens) == null ? null : group.Sum(record => (long?)record.CacheCreationInputTokens),
+                    group.Max(record => record.CacheReadInputTokens) == null ? null : group.Sum(record => (long?)record.CacheReadInputTokens)),
             })
             .ToListAsync(cancellationToken);
 
@@ -158,8 +159,10 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
                 group.Count(),
                 group.Sum(record => (long)record.InputTokens),
                 group.Sum(record => (long)record.OutputTokens),
-                group.Sum(record => (long?)record.CacheCreationInputTokens),
-                group.Sum(record => (long?)record.CacheReadInputTokens)))
+                // C-4: null si ningún registro lo reporta. Sum sobre long? se traduce con COALESCE(sum, 0) y daría un cero inventado;
+                // max de puros null es null.
+                group.Max(record => record.CacheCreationInputTokens) == null ? null : group.Sum(record => (long?)record.CacheCreationInputTokens),
+                group.Max(record => record.CacheReadInputTokens) == null ? null : group.Sum(record => (long?)record.CacheReadInputTokens)))
             .ToListAsync(cancellationToken));
 
         return
@@ -225,8 +228,10 @@ internal sealed class AgentActivityReader(AiDbContext dbContext) : IAgentActivit
                 group.Count(),
                 group.Sum(record => (long)record.InputTokens),
                 group.Sum(record => (long)record.OutputTokens),
-                group.Sum(record => (long?)record.CacheCreationInputTokens),
-                group.Sum(record => (long?)record.CacheReadInputTokens)))
+                // C-4: null si ningún registro lo reporta. Sum sobre long? se traduce con COALESCE(sum, 0) y daría un cero inventado;
+                // max de puros null es null.
+                group.Max(record => record.CacheCreationInputTokens) == null ? null : group.Sum(record => (long?)record.CacheCreationInputTokens),
+                group.Max(record => record.CacheReadInputTokens) == null ? null : group.Sum(record => (long?)record.CacheReadInputTokens)))
             .ToListAsync(cancellationToken));
         var served = (await records
                 .Where(record => record.ServedModel != null)
