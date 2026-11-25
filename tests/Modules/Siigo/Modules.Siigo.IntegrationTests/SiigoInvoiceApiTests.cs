@@ -103,6 +103,33 @@ public sealed class SiigoInvoiceApiTests
         Assert.Equal(2, keys);
     }
 
+    // El pedido suma 35.700: Siigo calcula un centavo menos y la factura sale otra vez con su total (owner, 2026-11-25).
+    [Fact]
+    public async Task ARoundingMismatchIsResentOnceAndTheRowKeepsWhatWasSentLast()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var attempts = 0;
+        world.Siigo.OnRequest("/v1/invoices", _ => ++attempts == 1
+            ? FakeSiigoApi.Respond(
+                HttpStatusCode.BadRequest,
+                """{"Errors":[{"Code":"invalid_total_payments","Message":"The total invoice calculated is 35699.99"}]}""")
+            : Created("FV-1-123", "id-1", 35699.99m));
+
+        var row = (await ReadAsync(await PostAsync(world)))[0];
+
+        Assert.Equal("Created", row.GetProperty("status").GetString());
+        Assert.True((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
+        var calls = InvoiceCalls(world.Siigo);
+        Assert.Equal(2, calls.Count);
+        using var sent = JsonDocument.Parse(calls[1].Body!);
+        Assert.Equal(35699.99m, sent.RootElement.GetProperty("payments").EnumerateArray().Sum(payment => payment.GetProperty("value").GetDecimal()));
+        Assert.NotEqual(calls[0].Header("Idempotency-Key"), calls[1].Header("Idempotency-Key"));
+        Assert.Equal(1, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices"));
+        Assert.Equal(calls[1].Header("Idempotency-Key"), await ScalarAsync<string>(world.ConnectionString, "SELECT idempotency_key FROM siigo.invoices"));
+        Assert.Equal(calls[1].Body, await ScalarAsync<string>(world.ConnectionString, "SELECT request_json FROM siigo.invoices"));
+    }
+
     [Fact]
     public async Task ATimeoutLeavesItPendingAndTheRetrySendsTheSameBytesAndKey()
     {

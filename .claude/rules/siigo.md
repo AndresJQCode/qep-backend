@@ -21,9 +21,14 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Las retenciones no van todas en el mismo lugar:** ReteFuente se manda en los `taxes` de **cada ítem** (después del IVA) y ReteICA
   en `retentions` de la factura. Sólo se manda el id del vínculo: el monto lo calcula Siigo. ReteIVA y autorretención no se mandan
   (decisión pendiente, V-7).
-- **Nunca se reintenta con el total que propone Siigo.** Cuando los pagos no suman, Siigo rechaza con `invalid_total_payments` y el
-  total esperado; ajustar los pagos a ese valor taparía justo la diferencia que la regla quiere mostrar. La fila queda `Rejected`
-  (`siigo.invoice.totals_mismatch`) y se corrige la configuración del impuesto o la tasa.
+- **El total que propone Siigo sólo se usa para absorber redondeo** (owner, 2026-11-25). Cuando los pagos no suman, Siigo rechaza con
+  `invalid_total_payments` y el total esperado. Si es el único error, la fila no tiene envíos sin respuesta y la diferencia es de hasta
+  un peso (`SiigoInvoiceBuilder.Tolerance`), `SiigoPaymentRounding` ajusta el último pago y la factura sale **una vez más** con **otra
+  `Idempotency-Key`**, guardada antes de salir y auditada como `siigo.invoice.payments_adjusted`; la falla del primer envío queda en
+  `call_failures` con la clave anterior. Motivo: Siigo redondea de una forma que no siempre se puede predecir (POB959, un centavo; POB916).
+  Más de un peso es configuración del impuesto o la tasa: queda `Rejected` (`siigo.invoice.totals_mismatch`) y no se tapa. Un envío sin
+  respuesta nunca se ajusta, porque cambiar la clave podría duplicar. Con cada factura posiblemente dos veces, `SiigoTimeoutBudgetTests`
+  cuenta cuatro llamadas de factura dentro de `SendLease`.
 - **`error_detail` guarda los códigos de error de Siigo, no sus mensajes.** Siigo repite en el mensaje los valores que rechaza
   (documento, dirección, nombre del cliente) y la fila se guarda y se devuelve en el `GET`. La excepción es `invalid_total_payments`,
   cuyo mensaje es el total esperado. Lo amarra `SiigoNoLeakTests` (precedente: encontró que el mensaje se guardaba completo).

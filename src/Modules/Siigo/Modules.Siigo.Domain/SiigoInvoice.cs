@@ -4,7 +4,8 @@ namespace Modules.Siigo.Domain;
 /// Spec 2026-11-18 §5.6: una factura que QEP le pidió a Siigo, una fila por factura (<see cref="Kind"/>: la del pedido o, con
 /// <c>freight_separate_invoice</c>, también la del flete). Guarda la petición entera (<see cref="RequestJson"/>) y su
 /// <see cref="IdempotencyKey"/>: un reintento reenvía <b>los mismos bytes</b> con la misma clave, sin rearmar ni validar de nuevo, así
-/// Siigo devuelve la que ya creó. <see cref="RequestJson"/> lleva datos del cliente: sólo lo leen los handlers del módulo, nunca sale en
+/// Siigo devuelve la que ya creó (la única excepción es <see cref="ResendAdjusted"/>, cuando Siigo la rechazó por el redondeo de los
+/// pagos). <see cref="RequestJson"/> lleva datos del cliente: sólo lo leen los handlers del módulo, nunca sale en
 /// un <c>GET</c> ni en un log, y el <c>ToString</c> no lo escribe. Una fila por pedido y tipo está «vigente» salvo que esté
 /// <c>Rejected</c> o <c>Failed</c> (índice único parcial <c>IX_invoices_tenant_order_kind</c>).
 /// <para>«Por confirmar» (spec 2026-11-24 §3) no es un estado aparte: es una <c>Pending</c> con <see cref="UnansweredAt"/>, es decir,
@@ -66,8 +67,8 @@ public sealed class SiigoInvoice
     /// <summary>El total que devolvió Siigo al crearla.</summary>
     public decimal? SiigoTotal { get; private set; }
 
-    /// <summary>En un rechazo por pagos que no suman, el total que Siigo esperaba (se muestra junto al de QEP; nunca se usa para ajustar
-    /// los pagos, spec §6.4).</summary>
+    /// <summary>En un rechazo por pagos que no suman, el total que Siigo esperaba (se muestra junto al de QEP). Sólo ajusta los pagos si la
+    /// diferencia es de redondeo (<see cref="ResendAdjusted"/>).</summary>
     public decimal? ExpectedPaymentsTotal { get; private set; }
 
     public string? ErrorCode { get; private set; }
@@ -153,6 +154,23 @@ public sealed class SiigoInvoice
     }
 
     public bool IsBeingSent(DateTimeOffset now) => SendingSince is { } since && now - since < SendLease;
+
+    /// <summary>Siigo rechazó los pagos por una diferencia de redondeo: se manda otra petición, así que lleva otra clave y cuenta como
+    /// un intento nuevo. Sólo sin envíos sin respuesta: con uno, Siigo pudo haber creado la primera y otra clave la duplicaría.</summary>
+    public void ResendAdjusted(string requestJson, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestJson);
+        if (Status != SiigoInvoiceStatus.Pending || UnansweredAt is not null)
+        {
+            throw new SiigoDomainException(
+                SiigoErrorCodes.InvoiceStateInvalid, "Only a pending invoice that Siigo has answered every time can be sent with other payments.");
+        }
+
+        RequestJson = requestJson;
+        IdempotencyKey = SiigoIdempotencyKey.For(Guid.CreateVersion7());
+        ClearError();
+        BeginSend(now);
+    }
 
     /// <summary>La petición no llegó a salir (la de flete que espera a la del pedido, o una falla de configuración antes de enviar):
     /// sigue <c>Pending</c> sin quedar por confirmar y se suelta el reclamo. Un envío que sí salió y no tuvo respuesta va por

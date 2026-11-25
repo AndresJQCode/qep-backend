@@ -52,7 +52,8 @@ public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInv
 /// </list>
 /// Después del commit, fuera de la transacción y sin reintentos propios, <c>POST /v1/invoices</c> por borrador (la del pedido primero, la
 /// de flete sólo si la del pedido salió) y el resultado se guarda aparte: 2xx → <c>Created</c>/<c>Stamped</c> y el pedido se marca; error de
-/// validación de Siigo en un primer intento → <c>Rejected</c> y el pedido sigue libre.
+/// validación de Siigo en un primer intento → <c>Rejected</c> y el pedido sigue libre. La excepción (owner, 2026-11-25) es un
+/// <c>invalid_total_payments</c> de hasta un peso: se reenvía una vez con el total de Siigo (<see cref="SiigoPaymentRounding"/>).
 /// <para>Spec 2026-11-24 §3: ante la duda la factura queda <b>por confirmar</b> (<c>Pending</c> con <c>unanswered_at</c>), con la misma
 /// clave, y decide una persona. Pasa con timeout, red, 5xx, 429, una respuesta ilegible, un error de servicio de Siigo (aun en el primer
 /// intento), un rechazo de datos en el reenvío de una que ya tuvo un envío sin respuesta, y al reanudar un envío cuyo reclamo venció sin
@@ -250,14 +251,35 @@ public sealed class IssueSiigoInvoiceHandler(
                 continue;
             }
 
-            var outcome = await api.CreateInvoiceAsync(
-                prepared.Credentials!, new SiigoInvoiceRequest(row.RequestJson), row.IdempotencyKey, cancellationToken);
+            var outcome = await CreateAsync(prepared, row, cancellationToken);
             var proceed = await ApplyAsync(prepared, row, outcome, cancellationToken);
             if (!proceed)
             {
                 break;
             }
         }
+    }
+
+    // Si Siigo rechaza los pagos por redondeo, la petición ajustada se guarda antes de salir (si el proceso muere en medio, la reanudación
+    // manda esos bytes con esa clave) y sale una sola vez: lo que conteste es el resultado.
+    private async Task<SiigoInvoiceOutcome> CreateAsync(Prepared prepared, SiigoInvoice row, CancellationToken cancellationToken)
+    {
+        var outcome = await PostAsync();
+        if (outcome is not SiigoInvoiceOutcome.Rejected rejected
+            || row.UnansweredAt is not null
+            || SiigoPaymentRounding.Adjust(row.RequestJson, rejected) is not { } adjusted)
+        {
+            return outcome;
+        }
+
+        var now = clock.UtcNow;
+        row.ResendAdjusted(adjusted, now);
+        SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoicePaymentsAdjusted, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return await PostAsync();
+
+        Task<SiigoInvoiceOutcome> PostAsync() => api.CreateInvoiceAsync(
+            prepared.Credentials!, new SiigoInvoiceRequest(row.RequestJson), row.IdempotencyKey, cancellationToken);
     }
 
     private static bool IsInvoiced(IEnumerable<SiigoInvoice> rows) =>

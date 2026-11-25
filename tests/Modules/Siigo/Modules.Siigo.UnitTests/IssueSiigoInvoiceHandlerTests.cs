@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Audit.Domain;
@@ -356,6 +358,164 @@ public sealed class IssueSiigoInvoiceHandlerTests
         Assert.Equal(SiigoInvoiceStatus.Failed, freight.Status);
     }
 
+    // POB959 (2026-11-25): Siigo calculó un centavo menos que QEP y ningún redondeo conocido lo predice.
+    [Theory]
+    [InlineData("38519158.60")]
+    [InlineData("38519158.62")]
+    [InlineData("38519157.61")]
+    public async Task ARoundingDifferenceIsResentOnceWithSiigosTotalAndANewKey(string siigoTotal)
+    {
+        var expected = Amount(siigoTotal);
+        var row = PendingRow(requestJson: Payments(38_519_158.61m));
+        var firstKey = row.IdempotencyKey;
+        var harness = new Harness([row], Mismatch(expected), Created());
+
+        var result = await harness.Issue();
+
+        Assert.Equal("Created", Assert.Single(result).Status);
+        Assert.Equal([expected], PaymentValues(harness.Api.Bodies[1]));
+        Assert.Equal(harness.Api.Bodies[1], row.RequestJson);
+        Assert.Equal([firstKey, row.IdempotencyKey], harness.Api.Keys);
+        Assert.NotEqual(firstKey, row.IdempotencyKey);
+        Assert.Equal(2, row.Attempts);
+        Assert.Equal(["siigo.invoice.payments_adjusted", SiigoAuditActions.InvoiceCreated], harness.Audit.Actions);
+    }
+
+    [Fact]
+    public async Task OnlyTheLastPaymentAbsorbsTheDifference()
+    {
+        var row = PendingRow(requestJson: Payments(30_000_000m, 11_290_811.07m));
+        var harness = new Harness([row], Mismatch(41_290_811.09m), Created());
+
+        await harness.Issue();
+
+        Assert.Equal([30_000_000m, 11_290_811.09m], PaymentValues(row.RequestJson));
+        Assert.Contains("\"observations\":\"Pedido POB893\"", row.RequestJson, StringComparison.Ordinal);
+    }
+
+    // El reenvío sale con la petición ya guardada: si el proceso muere en medio, la reanudación manda estos bytes con esta clave.
+    [Fact]
+    public async Task TheAdjustedRequestIsSavedBeforeItIsSent()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var harness = new Harness([row], Mismatch(100m), Created());
+        var savedKeys = new List<string>();
+        var keysSavedAtEachCall = new List<string[]>();
+        harness.UnitOfWork.OnSave = () => savedKeys.Add(row.IdempotencyKey);
+        harness.Api.OnCall = () => keysSavedAtEachCall.Add([.. savedKeys]);
+
+        await harness.Issue();
+
+        Assert.Equal(2, harness.Api.Keys.Count);
+        Assert.Contains(harness.Api.Keys[1], keysSavedAtEachCall[1]);
+    }
+
+    [Theory]
+    [InlineData("38519157.60")]
+    [InlineData("38519159.62")]
+    [InlineData("38519158.61")]
+    [InlineData("38519158.605")]
+    public async Task ADifferenceThatIsNotRoundingStaysRejected(string siigoTotal)
+    {
+        var expected = Amount(siigoTotal);
+        var json = Payments(38_519_158.61m);
+        var row = PendingRow(requestJson: json);
+        var harness = new Harness([row], Mismatch(expected));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Equal(expected, row.ExpectedPaymentsTotal);
+        Assert.Equal(json, row.RequestJson);
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task APaymentThatWouldEndAtZeroIsNotAdjusted()
+    {
+        var row = PendingRow(requestJson: Payments(100m, 0.50m));
+        var harness = new Harness([row], Mismatch(100m));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task AMismatchAlongWithAnotherErrorIsNotAdjusted()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var outcome = new SiigoInvoiceOutcome.Rejected(
+            [new SiigoError("invalid_total_payments", "message"), new SiigoError("invalid_reference", "message")], 100m);
+        var harness = new Harness([row], outcome);
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task ASecondMismatchIsNotAdjustedAgain()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var harness = new Harness([row], Mismatch(100m), Mismatch(99.99m));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Equal(99.99m, row.ExpectedPaymentsTotal);
+        Assert.Equal(2, harness.Api.Keys.Count);
+        Assert.Equal(["siigo.invoice.payments_adjusted", SiigoAuditActions.InvoiceRejected], harness.Audit.Actions);
+    }
+
+    // Con un envío sin respuesta Siigo pudo haber creado la primera: cambiar la clave la duplicaría.
+    [Fact]
+    public async Task AnUnansweredInvoiceIsNeverAdjusted()
+    {
+        var json = Payments(100.01m);
+        var row = PendingRow(requestJson: json);
+        row.BeginSend(Now.AddMinutes(-11));
+        row.MarkUnanswered("siigo.invoice.timeout", null, Now.AddMinutes(-11));
+        var firstKey = row.IdempotencyKey;
+        var harness = new Harness([row], Mismatch(100m));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, row.Status);
+        Assert.Equal((json, firstKey), (row.RequestJson, row.IdempotencyKey));
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task ATimeoutOnTheAdjustedSendAwaitsConfirmationWithTheNewKey()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var harness = new Harness([row], Mismatch(100m), Transient("timeout"));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, row.Status);
+        Assert.Equal(Now, row.UnansweredAt);
+        Assert.Equal(2, harness.Api.Keys.Count);
+        Assert.Equal(harness.Api.Keys[1], row.IdempotencyKey);
+        Assert.Equal([100m], PaymentValues(row.RequestJson));
+    }
+
+    [Fact]
+    public async Task TheFreightGoesOutAfterItsOrderInvoiceWasAdjusted()
+    {
+        var order = PendingRow(requestJson: Payments(100.01m));
+        var freight = PendingRow(SiigoInvoiceKind.Freight);
+        var harness = new Harness([order, freight], Mismatch(100m), Created(), Created());
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Created, order.Status);
+        Assert.Equal(SiigoInvoiceStatus.Created, freight.Status);
+    }
+
     private static SiigoInvoice Unanswered(SiigoInvoiceKind kind, DateTimeOffset sentAt)
     {
         var row = PendingRow(kind, sentAt);
@@ -364,9 +524,28 @@ public sealed class IssueSiigoInvoiceHandlerTests
         return row;
     }
 
-    private static SiigoInvoice PendingRow(SiigoInvoiceKind kind = SiigoInvoiceKind.Order, DateTimeOffset? createdAt = null) =>
+    private static SiigoInvoice PendingRow(
+        SiigoInvoiceKind kind = SiigoInvoiceKind.Order, DateTimeOffset? createdAt = null, string requestJson = """{"a":1}""") =>
         SiigoInvoice.PendingFor(
-            Guid.CreateVersion7(), TenantId, ConnectionId, OrderId, kind, """{"a":1}""", 7, SubjectId, createdAt ?? Now.AddHours(-1));
+            Guid.CreateVersion7(), TenantId, ConnectionId, OrderId, kind, requestJson, 7, SubjectId, createdAt ?? Now.AddHours(-1));
+
+    private static string Payments(params decimal[] values) =>
+        JsonSerializer.Serialize(new
+        {
+            observations = "Pedido POB893",
+            payments = values.Select(value => new { id = 11719, value }),
+        });
+
+    private static decimal Amount(string value) => decimal.Parse(value, CultureInfo.InvariantCulture);
+
+    private static decimal[] PaymentValues(string requestJson)
+    {
+        using var json = JsonDocument.Parse(requestJson);
+        return [.. json.RootElement.GetProperty("payments").EnumerateArray().Select(payment => payment.GetProperty("value").GetDecimal())];
+    }
+
+    private static SiigoInvoiceOutcome.Rejected Mismatch(decimal expected) =>
+        new([new SiigoError("invalid_total_payments", "message")], expected);
 
     private static SiigoInvoiceOutcome.Transient Transient(string reason) => new(reason);
 
@@ -404,13 +583,15 @@ public sealed class IssueSiigoInvoiceHandlerTests
                 new ActiveConnections(),
                 Api.Instance,
                 new InMemoryInvoices([.. rows]),
-                new FakeUnitOfWork(),
+                UnitOfWork,
                 Audit,
                 Clock,
                 new IssueSiigoInvoiceValidator());
         }
 
         public ApiProxy Api { get; }
+
+        public FakeUnitOfWork UnitOfWork { get; } = new();
 
         public RecordingAudit Audit { get; } = new();
 
@@ -527,9 +708,15 @@ public sealed class IssueSiigoInvoiceHandlerTests
             throw new NotSupportedException();
     }
 
-    private sealed class FakeUnitOfWork : ISiigoUnitOfWork
+    public sealed class FakeUnitOfWork : ISiigoUnitOfWork
     {
-        public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => Task.FromResult(1);
+        public Action? OnSave { get; set; }
+
+        public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            OnSave?.Invoke();
+            return Task.FromResult(1);
+        }
 
         public Task<ISiigoTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
             Task.FromResult<ISiigoTransaction>(new FakeTransaction());
@@ -566,6 +753,10 @@ public sealed class IssueSiigoInvoiceHandlerTests
 
         public List<string> Keys { get; } = [];
 
+        public List<string> Bodies { get; } = [];
+
+        public Action? OnCall { get; set; }
+
         public ISiigoApi Instance => (ISiigoApi)(object)this;
 
         public static ApiProxy Create(IEnumerable<SiigoInvoiceOutcome> script)
@@ -582,7 +773,9 @@ public sealed class IssueSiigoInvoiceHandlerTests
                 throw new NotSupportedException(targetMethod?.Name);
             }
 
-            Keys.Add((string)args![2]!);
+            Bodies.Add(((SiigoInvoiceRequest)args![1]!).Json);
+            Keys.Add((string)args[2]!);
+            OnCall?.Invoke();
             return Task.FromResult(_script.Dequeue());
         }
     }

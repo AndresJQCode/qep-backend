@@ -13,8 +13,9 @@ public sealed class SiigoTimeoutBudgetTests
     [Fact]
     public void EveryCallOfAnOrderFitsInsideTheSendLeaseAndTheSendLeaseInsideTheWorkerLease()
     {
-        // El peor caso de un pedido: autenticar, buscar el cliente, crearlo y autenticar de nuevo, la factura y la del flete.
-        var worstCase = (SiigoApiClient.DefaultTimeout * 4) + (SiigoApiClient.InvoiceCreateTimeout * 2);
+        // El peor caso de un pedido: autenticar, buscar el cliente, crearlo y autenticar de nuevo, la factura y la del flete, cada una
+        // reenviada una vez por el redondeo de los pagos.
+        var worstCase = (SiigoApiClient.DefaultTimeout * 4) + (SiigoApiClient.InvoiceCreateTimeout * 4);
 
         Assert.True(worstCase < SiigoInvoice.SendLease, $"{worstCase} does not fit in the send lease ({SiigoInvoice.SendLease}).");
         Assert.True(
