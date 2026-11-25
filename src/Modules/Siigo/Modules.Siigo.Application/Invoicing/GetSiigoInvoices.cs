@@ -58,7 +58,7 @@ public sealed partial class GetSiigoInvoicesHandler(
         foreach (var row in current)
         {
             var orderMarkFailed = await SiigoOrderMark.IsMissingAsync(orders, row, queued, logger, cancellationToken);
-            result.Add(SiigoInvoiceDto.From(row, now, orderMarkFailed, canSend));
+            result.Add(SiigoInvoiceDto.From(row, now, orderMarkFailed, canSend, queued));
         }
 
         return result;

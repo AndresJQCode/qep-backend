@@ -83,6 +83,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   la fila `Order` que existe en Siigo y tiene número, y nunca mientras una tanda tenga el pedido (ítem `Pending` o `Sending`), para que un
   envío en curso no parpadee un aviso. Lee la marca con `SiigoOrderMark`, el mismo de la recuperación de una tanda: 5 s de plazo y, si la
   lectura falla, avisa. Una respuesta nueva que devuelva filas del pedido tiene que calcularlo: sin él la pantalla no ofrece «Generar».
+- **`canResend` va en `false` mientras una tanda tenga el pedido** (en las filas del pedido y en los ítems de las tandas): otra tanda
+  respondería 409. Se pregunta una vez con todos los ids (`ListOpenOrderIdsAsync`), nunca por fila. No lo decide el dominio
+  (`SiigoInvoice.CanResend` y `SiigoInvoiceBatchItem.Effective` no ven las otras tandas): una respuesta nueva que ofrezca reenviar tiene
+  que cruzarlo. `canResolve` no lo mira.
 - **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
   `ListUnitPrice × 100 / (100 + IVA)` a **2 decimales**: la documentación de Siigo da a `tax_base` «máximo 11 enteros y 2 decimales», y con 6
   Siigo rechazó con `invalid_amount` en `items[n].tax_base`; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo

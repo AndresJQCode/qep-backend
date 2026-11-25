@@ -230,7 +230,7 @@ y conserva `Invoiced`, `Skipped`, `Failed` (aditivo: el frontend publicado los l
 | `invoiceId`, `invoiceNumber` | fila enlazada / ítem | |
 | `missing` | ítem | como hoy |
 | `orderMarkFailed` | ítem (nuevo) | la factura existe pero el pedido no se pudo marcar; hoy sólo lo traía la respuesta del `POST` síncrono |
-| `canResend` | calculado | efectivo `ToConfirm` ∧ fila `Pending` ∧ no en envío ∧ no vencida |
+| `canResend` | calculado | efectivo `ToConfirm` ∧ fila `Pending` ∧ no en envío ∧ no vencida ∧ pedido sin ítem abierto en ninguna tanda |
 | `canResolve` | calculado | efectivo `ToConfirm` ∧ fila resoluble (§3) |
 
 Los `can*` existen porque la pantalla no ve `SendingSince` ni el reloj de 24 h: sin ellos tendría que adivinar.
@@ -243,6 +243,11 @@ en Siigo (`Created`, `Stamped` o `StampRejected`, con número) cuando el pedido 
 sin terminar lo tiene (ítem `Pending` o `Sending`): un envío en curso no muestra el aviso de paso. Si la marca no se puede leer (5 s de
 plazo), avisa, igual que la recuperación de una tanda (§4). La de flete va en `false`. «Generar» es una tanda de ese pedido, que sólo
 reintenta la marca.
+
+**`canResend` con el pedido en una tanda** (precisión del 2026-11-25): mientras una tanda tenga el pedido (ítem `Pending` o `Sending`),
+`canResend` va en `false` en las filas del pedido y en los ítems de cualquier tanda, porque una tanda nueva respondería 409
+`order_in_progress`. Un ítem `ToConfirm` de una tanda que todavía está en curso, cuyo pedido ninguna tiene, lo conserva en `true`. Se
+consulta una vez con los ids de los pedidos. `canResolve` no cambia.
 
 El ítem y `SiigoInvoiceDto` suman también **`missingAvailableAt`** (nullable): la hora desde la cual se acepta «No existe»
 (`LastUnansweredAt + 10 min`), `null` si ya se puede o si no aplica `canResolve`. La pantalla deshabilita «No existe» hasta esa hora.
