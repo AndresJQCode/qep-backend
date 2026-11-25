@@ -81,9 +81,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   errores) y cada escritura borra de paso hasta 200 filas de más de 7 días, de todos los tenants (sin worker). Se leen con `siigo.calls.read`
   (de fábrica `admin` y `billing`, éste por decisión del owner del 2026-11-25; soporte recibe un rol personalizado) en `GET …/siigo/call-failures` (sin curl ni cuerpo) y `…/{id}` (con ellos):
   llevan datos del cliente. El log de requests (`platform/request-log`) conserva sólo la excepción, ligada por `TraceId`; no lleva el curl.
-- **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected` y
-  `Failed`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`, `order_id` o
-  `tenant_id` compila y deja ambas operaciones en 500.
+- **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected`,
+  `Failed` y `Annulled`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`,
+  `order_id` o `tenant_id` compila y deja ambas operaciones en 500. La misma lista está en el filtro del índice
+  `IX_invoices_tenant_order_kind` y en `SiigoInvoice.IsLive`: un estado nuevo se decide en los tres.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
   `Created` y el ítem de la tanda lleva `orderMarkFailed`; la siguiente tanda del pedido reintenta sólo la marca. Nunca deja la

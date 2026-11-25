@@ -280,11 +280,11 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         invoice.Property(value => value.CreatedBy).HasColumnName("created_by");
         invoice.Property(value => value.CreatedAt).HasColumnName("created_at");
         invoice.Property(value => value.UpdatedAt).HasColumnName("updated_at");
-        // Una vigente por pedido y tipo. Parcial por el texto del estado: Rejected y Failed liberan el pedido.
+        // Una vigente por pedido y tipo. Parcial por el texto del estado: Rejected, Failed y Annulled liberan el pedido.
         invoice.HasIndex(value => new { value.TenantId, value.OrderId, value.Kind })
             .IsUnique()
             .HasDatabaseName(InvoicesTenantOrderKindIndex)
-            .HasFilter("status NOT IN ('Rejected', 'Failed')");
+            .HasFilter("status NOT IN ('Rejected', 'Failed', 'Annulled')");
         // La consulta de «¿hay una abierta?» de la marca manual (Pending y Unknown), por pedido.
         invoice.HasIndex(value => new { value.TenantId, value.OrderId }).HasDatabaseName("IX_invoices_tenant_order");
     }

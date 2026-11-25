@@ -299,7 +299,7 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "OrderId", "Kind")
                         .IsUnique()
                         .HasDatabaseName("IX_invoices_tenant_order_kind")
-                        .HasFilter("status NOT IN ('Rejected', 'Failed')");
+                        .HasFilter("status NOT IN ('Rejected', 'Failed', 'Annulled')");
 
                     b.ToTable("invoices", "siigo");
                 });
