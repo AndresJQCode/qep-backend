@@ -593,6 +593,8 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`c424a6534`, `--no-ff`, sin push) **duración de cada operación contra Valkey** (`feature/valkey-operation-duration`, `1a5663d10`; owner). Histograma `qep.valkey.operation.duration` (`qep_valkey_operation_duration_seconds`) con `area` y `outcome` (`ok`, `error`, `late`, `late_error`); una operación que pasa el tope se mide cuando termina. No cambia el tope ni el comportamiento. **Medido en producción ese día** (07:23–16:17, dos pods, `Sessions` recién desplegada): todos los respaldos con motivo son `TimeoutException` (`sessions` 189, `presence` 23, `rate_limiting` 9), `qep_valkey_connected` siempre 1, Valkey promedia 0,1 ms y está en el mismo nodo que el backend (`worker-02`), así que se descarta la causa «Valkey en otro nodo» sospechada el 2026-11-24. **Causa sin confirmar:** throttling de CPU y pausas de GC suben en los minutos con respaldo, pero el tráfico también, y en 30 de 177 de esos minutos el throttling estuvo bajo el 1 %. **Pendiente:** desplegar, medir un día y mirar los buckets `outcome=~"late.*"` antes de tocar `OperationTimeoutMs` o el límite de CPU; `Permissions` y la segunda réplica esperan. Pruebas: `.\scripts\test-feature.ps1` en verde (ArchitectureTests 325/325, `Bootstrapper.UnitTests` 1289/1289); no se corrió la suite completa.
+
 - 2026-11-25 — Mergeado a `develop` (`f2734f280`, `--no-ff`, sin push) **todo pago de la factura de Siigo lleva `due_date`**
   (`feature/siigo-payment-due-date`, `62986ec4d`). Los comprobantes salían sin él y Siigo rechazaba con `parameter_required`
   una forma de pago que maneja vencimiento. Decisión del owner: se envía siempre. En verde `ArchitectureTests` (325) y
