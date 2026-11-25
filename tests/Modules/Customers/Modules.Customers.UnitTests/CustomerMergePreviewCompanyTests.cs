@@ -27,9 +27,12 @@ public sealed class CustomerMergePreviewCompanyTests
             throw new NotSupportedException();
 
         public Task<CustomerMergeOwnedCounts> CountOwnedAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
-            Task.FromResult(new CustomerMergeOwnedCounts(0, 0));
+            Task.FromResult(new CustomerMergeOwnedCounts(0, 0, 0));
 
         public Task MoveOwnedAsync(Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Customer> ReadSurvivorAsync(Guid tenantId, Guid survivorId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
