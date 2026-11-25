@@ -21,6 +21,7 @@ namespace Modules.ServiceContracts.IntegrationTests;
 public sealed class OverdueDigestEventTests : IAsyncLifetime
 {
     private const string EventName = "billing.charges.overdue-digest.v1";
+    private const string PriceReviewEventName = "billing.price-reviews.digest.v1";
 
     private static readonly Guid Tenant = Guid.Parse(ServiceContractsApiHarness.TenantId);
     private static readonly DateOnly Today = new(2026, 3, 10);
@@ -146,6 +147,48 @@ public sealed class OverdueDigestEventTests : IAsyncLifetime
         Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
     }
 
+    // Spec reajuste §6.6: el evento de la campana de revisiones se publica al reclamar el digest, con los dos conteos.
+    [Fact]
+    public async Task AMemberWithReviewsGetsThePriceReviewEvent()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, assignee);
+        await SeedReviewAsync(customer, Today.AddDays(10));
+        await SeedReviewAsync(customer, Today.AddDays(2), heldOn: Today);
+
+        await ProcessAsync();
+
+        var row = Assert.Single(await EventsAsync(PriceReviewEventName));
+        Assert.Equal($"{Tenant:D}:{assignee:D}:2026-03-10", row.CorrelationId);
+        using var payload = JsonDocument.Parse(row.Payload);
+        var root = payload.RootElement;
+        Assert.Equal(Tenant, root.GetProperty("tenantId").GetGuid());
+        Assert.Equal(assignee, root.GetProperty("memberId").GetGuid());
+        Assert.Equal("2026-03-10", root.GetProperty("runDate").GetString());
+        Assert.Equal(1, root.GetProperty("dueCount").GetInt32());
+        Assert.Equal(1, root.GetProperty("heldCount").GetInt32());
+        Assert.Equal(NineLocal, root.GetProperty("occurredAt").GetDateTimeOffset());
+        Assert.Equal(NineLocal, row.OccurredAt);
+        // Nada vencido: la campana de vencidos no suena.
+        Assert.Empty(await EventsAsync());
+        Assert.Single(staffEmail.Sent);
+    }
+
+    [Fact]
+    public async Task NoReviewsNoPriceReviewEvent()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, assignee);
+        await SeedPendingChargeAsync(customer, Today.AddDays(-4), "Overdue");
+
+        await ProcessAsync();
+
+        Assert.Single(await EventsAsync());
+        Assert.Empty(await EventsAsync(PriceReviewEventName));
+    }
+
     private async Task ProcessAsync()
     {
         await using var scope = factory.Services.CreateAsyncScope();
@@ -181,13 +224,36 @@ public sealed class OverdueDigestEventTests : IAsyncLifetime
             return true;
         });
 
-    private async Task<IReadOnlyList<OutboxRow>> EventsAsync()
+    /// <summary>
+    /// A monthly <c>Ipc</c> contract whose next period is its review. With <paramref name="heldOn"/> it is left held since that day,
+    /// as the run of that day would.
+    /// </summary>
+    private Task<bool> SeedReviewAsync(Guid customerId, DateOnly reviewDate, DateOnly? heldOn = null) =>
+        WithDbAsync(async db =>
+        {
+            var previous = reviewDate.AddMonths(-1);
+            var service = ServiceContract.Create(
+                ServiceContractId.New(), Tenant, customerId, "Hosting", 100000m, "COP", BillingCycle.Monthly, previous, NineLocal);
+            service.MarkGenerated(previous);
+            service.InitializePriceReview(AdjustmentMode.Ipc, 0m, reviewDate);
+            if (heldOn is { } held)
+            {
+                ChargeGenerator.Generate(service, null, GenerationMode.Run, held, NineLocal);
+                Assert.Equal(held, service.HeldSince);
+            }
+
+            db.Services.Add(service);
+            await db.SaveChangesAsync(Ct);
+            return true;
+        });
+
+    private async Task<IReadOnlyList<OutboxRow>> EventsAsync(string eventName = EventName)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(Ct);
         await using var command = new NpgsqlCommand(
             "SELECT payload::text, correlation_id, occurred_at FROM platform.outbox_messages WHERE event_name = @name ORDER BY occurred_at", connection);
-        command.Parameters.AddWithValue("name", EventName);
+        command.Parameters.AddWithValue("name", eventName);
         await using var reader = await command.ExecuteReaderAsync(Ct);
         var rows = new List<OutboxRow>();
         while (await reader.ReadAsync(Ct))

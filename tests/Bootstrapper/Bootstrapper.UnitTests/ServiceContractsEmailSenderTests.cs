@@ -132,7 +132,7 @@ public sealed class ServiceContractsEmailSenderTests
         var sender = new ServiceContractsEmailSender(new RecordingChannel { Throw = true }, logger);
 
         var result = await sender.SendDigestAsync(
-            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [], [], [], Format), CancellationToken.None);
+            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [], [], [], Format, [], []), CancellationToken.None);
 
         Assert.Equal("send_failed", Assert.IsType<ServiceContractsSendResult.Failed>(result).Code);
         var entry = Assert.Single(logger.Entries);
@@ -152,7 +152,7 @@ public sealed class ServiceContractsEmailSenderTests
         var row = new ServiceContractsDigestRow("Ana", "Dominio", 20m, "USD", new DateOnly(2026, 3, 1), null);
 
         var result = await sender.SendDigestAsync(
-            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [row], [], [new CurrencyAmountDto("USD", 20m)], Format),
+            new ServiceContractsDigestEmail("luis@verde.co", "Luis", "Verde SAS", [], [row], [], [new CurrencyAmountDto("USD", 20m)], Format, [], []),
             CancellationToken.None);
 
         Assert.IsType<ServiceContractsSendResult.Sent>(result);

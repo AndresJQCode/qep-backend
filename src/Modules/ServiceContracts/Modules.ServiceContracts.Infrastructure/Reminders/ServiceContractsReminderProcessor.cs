@@ -11,7 +11,8 @@ namespace Modules.ServiceContracts.Infrastructure.Reminders;
 
 /// <summary>
 /// La corrida diaria de un tenant, spec §3.3 pasos 2 a 6 y en ese orden: generar (para que el cobro exista cuando toque su
-/// <c>before_5</c>), el mensaje del día a cada cliente y el email diario a cada encargado. Un error en un servicio, un cliente o
+/// <c>before_5</c>), el mensaje del día a cada cliente y el email diario a cada encargado, con sus cobros de interés y las
+/// revisiones de precio abiertas (spec reajuste §6.6 y §9). Un error en un servicio, un cliente o
 /// un email se registra y no frena a los demás (precedente <c>OutboxDeliveryWorker.DrainAsync</c>); el tracker se limpia después
 /// de cada uno para que una entidad que no se pudo guardar no vuelva a intentarse en el <c>SaveChanges</c> del siguiente.
 /// </summary>
@@ -36,6 +37,9 @@ internal sealed partial class ServiceContractsReminderProcessor(
     CustomerMessageStore messages,
     DailyDigestStore digests,
     OverdueDigestEventPublisher digestEvents,
+    PriceReviewReader reviewReader,
+    IIpcRateRepository ipcRates,
+    PriceReviewDigestEventPublisher reviewEvents,
     IOptions<ServiceContractsOptions> options,
     ILogger<ServiceContractsReminderProcessor> logger) : IServiceContractsReminderProcessor
 {
@@ -380,69 +384,73 @@ internal sealed partial class ServiceContractsReminderProcessor(
             run.Format);
     }
 
-    // Paso 5. Se relee después de los mensajes: el «último aviso falló» de hoy ya tiene que estar en el email.
+    // Paso 5. Se relee después de los mensajes: el «último aviso falló» de hoy ya tiene que estar en el email, y las revisiones se
+    // calculan sobre lo que la generación de hoy dejó retenido.
     private async Task SendDigestsAsync(Run run, CancellationToken cancellationToken)
     {
         var pending = await LoadPendingAsync(run.TenantId, cancellationToken);
-        if (pending.Charges.Count == 0)
-        {
-            return;
-        }
-
         var lastReminders = await charges.ListLastRemindersAsync(pending.Charges.Select(charge => charge.Id).ToArray(), cancellationToken);
         var horizon = run.Today.AddDays(ChargeGenerator.WindowDays);
         var ofInterest = pending.Charges
             .Where(charge => charge.DueDate <= horizon || IsFailed(lastReminders, charge))
             .ToArray();
-        if (ofInterest.Length == 0)
+        var reviews = await LoadReviewsAsync(run, cancellationToken);
+        if (ofInterest.Length == 0 && reviews.Count == 0)
         {
             return;
         }
 
-        var profilesByCustomer = (await profiles.ListByCustomersAsync(
-                run.TenantId, ofInterest.Select(charge => charge.CustomerId).Distinct().ToArray(), cancellationToken))
+        var customerIds = ofInterest.Select(charge => charge.CustomerId)
+            .Concat(reviews.Select(review => review.CustomerId))
+            .Distinct()
+            .ToArray();
+        var profilesByCustomer = (await profiles.ListByCustomersAsync(run.TenantId, customerIds, cancellationToken))
             .ToDictionary(profile => profile.CustomerId);
         dbContext.ChangeTracker.Clear();
         var assigneeIds = profilesByCustomer.Values.Select(profile => profile.AssigneeMemberId).Distinct().ToArray();
         var assignees = (await members.FindAsync(run.TenantId, assigneeIds, cancellationToken)).ToDictionary(member => member.MemberId);
 
-        var recipients = new Dictionary<Guid, ServiceContractsMemberRef>();
-        var rowsByMember = new Dictionary<Guid, List<Charge>>();
-        var orphans = new List<Charge>();
+        // El encargado del perfil, si sigue activo y puede gestionar. Sin él (o sin perfil), lo del cliente va a cada miembro que
+        // sí puede (spec §3.3 y reajuste §6.6).
+        ServiceContractsMemberRef? AssigneeOf(Guid customerId) =>
+            profilesByCustomer.TryGetValue(customerId, out var profile)
+            && assignees.TryGetValue(profile.AssigneeMemberId, out var assignee)
+            && assignee is { IsActive: true, CanManage: true }
+                ? assignee
+                : null;
+
+        var managers = customerIds.Any(customerId => AssigneeOf(customerId) is null)
+            ? await members.ListManagersAsync(run.TenantId, cancellationToken)
+            : [];
+        IEnumerable<ServiceContractsMemberRef> RecipientsOf(Guid customerId) =>
+            AssigneeOf(customerId) is { } assignee ? [assignee] : managers;
+
+        var digestsByMember = new Dictionary<Guid, MemberDigest>();
         foreach (var charge in ofInterest)
         {
-            if (profilesByCustomer.TryGetValue(charge.CustomerId, out var profile)
-                && assignees.TryGetValue(profile.AssigneeMemberId, out var assignee)
-                && assignee is { IsActive: true, CanManage: true })
+            foreach (var member in RecipientsOf(charge.CustomerId))
             {
-                recipients[assignee.MemberId] = assignee;
-                RowsOf(rowsByMember, assignee.MemberId).Add(charge);
-            }
-            else
-            {
-                // Encargado que ya no está activo o no puede gestionar: sus cobros van a cada miembro que sí puede (spec §3.3).
-                orphans.Add(charge);
+                DigestOf(digestsByMember, member).Charges.Add(charge);
             }
         }
 
-        if (orphans.Count > 0)
+        foreach (var review in reviews)
         {
-            foreach (var manager in await members.ListManagersAsync(run.TenantId, cancellationToken))
+            foreach (var member in RecipientsOf(review.CustomerId))
             {
-                recipients[manager.MemberId] = manager;
-                RowsOf(rowsByMember, manager.MemberId).AddRange(orphans);
+                DigestOf(digestsByMember, member).Reviews.Add(review.Row);
             }
         }
 
-        foreach (var (memberId, rows) in rowsByMember)
+        foreach (var digest in digestsByMember.Values)
         {
             try
             {
-                await SendDigestAsync(run, recipients[memberId], rows, pending, lastReminders, cancellationToken);
+                await SendDigestAsync(run, digest, pending, lastReminders, cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                LogDigestFailed(logger, exception, memberId, run.TenantId);
+                LogDigestFailed(logger, exception, digest.Member.MemberId, run.TenantId);
             }
             finally
             {
@@ -451,20 +459,55 @@ internal sealed partial class ServiceContractsReminderProcessor(
         }
     }
 
+    /// <summary>Los contratos en <c>Due</c> o <c>Held</c> del tenant como filas del email, por fecha de generación.</summary>
+    private async Task<IReadOnlyList<CustomerReview>> LoadReviewsAsync(Run run, CancellationToken cancellationToken)
+    {
+        var open = await reviewReader.ListOpenAsync(run.TenantId, run.Today, cancellationToken);
+        dbContext.ChangeTracker.Clear();
+        if (open.Count == 0)
+        {
+            return [];
+        }
+
+        var loadedYears = (await ipcRates.ListAsync(run.TenantId, cancellationToken)).Select(rate => rate.Year).ToHashSet();
+        var customersById = (await customers.FindManyAsync(
+                run.TenantId, open.Select(entry => entry.Service.CustomerId).Distinct().ToArray(), cancellationToken))
+            .ToDictionary(customer => customer.Id);
+
+        // Due y Held son de contratos activos: el período de revisión y su fecha de generación siempre vienen.
+        return open
+            .OrderBy(entry => entry.Review.GenerationDate)
+            .ThenBy(entry => entry.Service.Id.Value)
+            .Select(entry => new CustomerReview(
+                entry.Service.CustomerId,
+                new ServiceContractsPriceReviewRow(
+                    customersById.GetValueOrDefault(entry.Service.CustomerId)?.Name ?? string.Empty,
+                    entry.Service.Name,
+                    entry.Service.Price,
+                    entry.Service.Currency,
+                    entry.Review.ReviewPeriodDate!.Value,
+                    entry.Review.GenerationDate!.Value,
+                    entry.Review.State.ToString(),
+                    entry.Review.IpcYear,
+                    entry.Review.IpcYear is { } year && !loadedYears.Contains(year),
+                    entry.Service.HeldSince)))
+            .ToArray();
+    }
+
     private async Task SendDigestAsync(
         Run run,
-        ServiceContractsMemberRef member,
-        IReadOnlyList<Charge> rows,
+        MemberDigest content,
         PendingSnapshot pending,
         IReadOnlyDictionary<Guid, ReminderDto> lastReminders,
         CancellationToken cancellationToken)
     {
+        var member = content.Member;
         if (!await digests.TryClaimAsync(run.TenantId, member.MemberId, run.Today, run.Now, cancellationToken))
         {
             return;
         }
 
-        var ordered = rows.Distinct().OrderBy(charge => charge.DueDate).ThenBy(charge => charge.Id).ToArray();
+        var ordered = content.Charges.Distinct().OrderBy(charge => charge.DueDate).ThenBy(charge => charge.Id).ToArray();
         var overdue = ordered.Where(charge => charge.DueDate < run.Today).ToArray();
 
         // Spec 2026-11-22 D-17: the bell hears about the overdue charges as soon as the digest is claimed and before the email is looked at,
@@ -473,6 +516,15 @@ internal sealed partial class ServiceContractsReminderProcessor(
         if (overdue.Length > 0)
         {
             await digestEvents.PublishAsync(run.TenantId, member.MemberId, run.Today, overdue.Length, run.Now, cancellationToken);
+        }
+
+        var due = content.Reviews.Where(row => row.State == nameof(ReviewState.Due)).ToArray();
+        var held = content.Reviews.Where(row => row.State == nameof(ReviewState.Held)).ToArray();
+        // Spec reajuste §6.6: la campana de las revisiones, con la misma regla: apenas se gana el claim y antes de mirar el correo.
+        if (content.Reviews.Count > 0)
+        {
+            await reviewEvents.PublishAsync(
+                run.TenantId, member.MemberId, run.Today, due.Length, held.Length, run.Now, cancellationToken);
         }
 
         if (member.Email is not { Length: > 0 } email)
@@ -492,7 +544,9 @@ internal sealed partial class ServiceContractsReminderProcessor(
             overdue.Select(charge => DigestRow(charge, pending, lastReminders)).ToArray(),
             ordered.Where(charge => IsFailed(lastReminders, charge)).Select(charge => DigestRow(charge, pending, lastReminders)).ToArray(),
             TotalsByCurrency(overdue),
-            run.Format);
+            run.Format,
+            due,
+            held);
 
         ServiceContractsSendResult result;
         try
@@ -546,15 +600,15 @@ internal sealed partial class ServiceContractsReminderProcessor(
     private static bool IsFailed(IReadOnlyDictionary<Guid, ReminderDto> lastReminders, Charge charge) =>
         lastReminders.TryGetValue(charge.Id, out var reminder) && reminder.Status == FailedStatus;
 
-    private static List<Charge> RowsOf(Dictionary<Guid, List<Charge>> rowsByMember, Guid memberId)
+    private static MemberDigest DigestOf(Dictionary<Guid, MemberDigest> digestsByMember, ServiceContractsMemberRef member)
     {
-        if (!rowsByMember.TryGetValue(memberId, out var rows))
+        if (!digestsByMember.TryGetValue(member.MemberId, out var digest))
         {
-            rows = [];
-            rowsByMember[memberId] = rows;
+            digest = new MemberDigest(member);
+            digestsByMember[member.MemberId] = digest;
         }
 
-        return rows;
+        return digest;
     }
 
     private static ServiceContractsDigestRow DigestRow(
@@ -588,6 +642,18 @@ internal sealed partial class ServiceContractsReminderProcessor(
         IReadOnlyList<Charge> Charges,
         ServiceContractsCustomerRef? Customer,
         CustomerMessage? TodaysMessage);
+
+    private sealed record CustomerReview(Guid CustomerId, ServiceContractsPriceReviewRow Row);
+
+    /// <summary>Lo que le toca a un miembro en el digest del día.</summary>
+    private sealed class MemberDigest(ServiceContractsMemberRef member)
+    {
+        public ServiceContractsMemberRef Member { get; } = member;
+
+        public List<Charge> Charges { get; } = [];
+
+        public List<ServiceContractsPriceReviewRow> Reviews { get; } = [];
+    }
 
     private sealed record PendingSnapshot(
         IReadOnlyList<Charge> Charges,

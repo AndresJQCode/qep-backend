@@ -515,6 +515,102 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
     }
 
+    // Spec reajuste §6.6: el digest sale aunque no haya un solo cobro de interés.
+    [Fact]
+    public async Task AMemberWithOnlyPriceReviewsGetsTheDigest()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedReviewAsync(customer, Today.AddDays(10));
+
+        await ProcessAsync();
+
+        var digest = Assert.Single(staffEmail.Sent);
+        Assert.Equal("owner@example.com", digest.ToAddress);
+        Assert.Equal(
+            new ServiceContractsPriceReviewRow(
+                "Acme", "Hosting", 100000m, "COP", Today.AddDays(10), Today.AddDays(5), "Due", 2025, true, null),
+            Assert.Single(digest.PriceReviews));
+        Assert.Empty(digest.HeldCharges);
+        Assert.Empty(digest.DueSoon);
+        Assert.Empty(digest.Overdue);
+        Assert.Empty(digest.FailedReminders);
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+    }
+
+    [Fact]
+    public async Task HeldContractsGoToTheHeldSection()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await WithDbAsync(async db =>
+        {
+            db.IpcRates.Add(IpcRate.Create(Tenant, 2025, 5.2m, null, NineLocal));
+            return await db.SaveChangesAsync(Ct);
+        });
+        var review = new DateOnly(2026, 2, 5);
+        var heldOn = new DateOnly(2026, 2, 1);
+        await SeedReviewAsync(customer, review, heldOn);
+
+        await ProcessAsync();
+
+        var digest = Assert.Single(staffEmail.Sent);
+        Assert.Equal(
+            new ServiceContractsPriceReviewRow(
+                "Acme", "Hosting", 100000m, "COP", review, review.AddDays(-5), "Held", 2025, false, heldOn),
+            Assert.Single(digest.HeldCharges));
+        Assert.Empty(digest.PriceReviews);
+    }
+
+    [Fact]
+    public async Task AContractWithoutProfileGoesToEveryManager()
+    {
+        await SeedMemberAsync(factory, "admin@example.com", "Admin", "admin");
+        await SeedMemberAsync(factory, "billing@example.com", "Billing", "billing");
+        await SeedMemberAsync(factory, "advisor@example.com", "Advisor", "advisor");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedReviewAsync(customer, Today.AddDays(10), name: "Acme hosting");
+
+        await ProcessAsync();
+
+        Assert.Equal(["admin@example.com", "billing@example.com"], staffEmail.Sent.Select(digest => digest.ToAddress).Order());
+        Assert.All(staffEmail.Sent, digest => Assert.Equal(["Acme hosting"], digest.PriceReviews.Select(row => row.ServiceName)));
+    }
+
+    // Un cambio que cubre la revisión ya la resolvió: no pide nada.
+    [Fact]
+    public async Task ScheduledContractsAreNotInTheDigest()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        var service = await SeedReviewAsync(customer, Today.AddDays(10));
+        await SeedScheduleAsync(service, ipc: true, 107000m);
+
+        await ProcessAsync();
+
+        Assert.Empty(staffEmail.Sent);
+        Assert.Empty(await DigestsAsync());
+    }
+
+    [Fact]
+    public async Task TheDigestIsSentOncePerDayWithReviews()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedReviewAsync(customer, Today.AddDays(10));
+
+        await ProcessAsync();
+        clock.UtcNow = NineLocal.AddHours(2);
+        await ProcessAsync();
+
+        Assert.Single(staffEmail.Sent);
+        Assert.Single(await DigestsAsync());
+    }
+
     [Fact]
     public async Task AFailingCustomerSendDoesNotStopTheOthers()
     {
@@ -1023,6 +1119,19 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             await db.SaveChangesAsync(Ct);
             return service.Id;
         });
+
+    /// <summary>
+    /// Un contrato <c>Ipc</c> cuyo siguiente período es el de revisión, con el anterior pagado. Con
+    /// <paramref name="heldOn"/> queda retenido desde ese día.
+    /// </summary>
+    private Task<ServiceContractId> SeedReviewAsync(
+        Guid customerId, DateOnly reviewDate, DateOnly? heldOn = null, string name = "Hosting")
+    {
+        var previous = reviewDate.AddMonths(-1);
+        return SeedServiceAsync(
+            customerId, previous, lastGenerated: previous, paidDueDates: [previous], name: name, mode: AdjustmentMode.Ipc,
+            reviewDate: reviewDate, heldOn: heldOn);
+    }
 
     /// <summary>
     /// Un cambio pendiente: confirmado con el IPC (sobre el período de revisión) o programado a mano desde
