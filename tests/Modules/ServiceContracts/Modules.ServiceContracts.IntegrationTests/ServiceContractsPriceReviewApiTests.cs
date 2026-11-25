@@ -1074,6 +1074,103 @@ public sealed class ServiceContractsPriceReviewApiTests
         Assert.Equal(1, await world.CountSchedulesAsync());
     }
 
+    // Una falla de base en un ítem no puede responder 500 con los anteriores ya confirmados.
+    [Fact]
+    public async Task ADatabaseFailureSavingOneItemFailsOnlyThatItem()
+    {
+        await using var world = await World.OpenAsync();
+        var (before, period) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Antes");
+        var (refused, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Rechazado");
+        var (after, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Después");
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        // La base rechaza el guardado sólo del ítem que escribe ese precio.
+        await world.WithDbAsync(db => db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE FUNCTION billing.test_refuse_schedule() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''schedule refused''; END';
+            CREATE TRIGGER test_refuse_schedule BEFORE INSERT ON billing.service_price_schedules
+                FOR EACH ROW WHEN (NEW.new_price = 106000) EXECUTE FUNCTION billing.test_refuse_schedule();
+            """,
+            Ct));
+
+        var results = await world.ConfirmAsync(
+            year,
+            new { serviceId = before, version = await world.VersionAsync(before), expectedPrice = 105200m },
+            new
+            {
+                serviceId = refused,
+                version = await world.VersionAsync(refused),
+                expectedPrice = 105200m,
+                newPrice = 106000m,
+                reason = "Acordado con el cliente",
+            },
+            new { serviceId = after, version = await world.VersionAsync(after), expectedPrice = 105200m });
+
+        Assert.Equal(
+            new (Guid, string, string?)[]
+            {
+                (before, "Confirmed", null),
+                (refused, "Failed", "concurrency.conflict"),
+                (after, "Confirmed", null),
+            },
+            results.Select(result => (result.ServiceId, result.Outcome, result.Code)));
+        Assert.Equal(2, await world.CountSchedulesAsync());
+        Assert.Equal(1, (await world.StoredAsync(refused)).Version);
+    }
+
+    // La de Npgsql tal cual, y envuelta por la estrategia de ejecución de EF cuando es transitoria.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ADatabaseFailureReadingOneItemFailsOnlyThatItem(bool wrapped)
+    {
+        var fault = new ScheduleReadFault();
+        await using var world = await World.OpenAsync(services => FailScheduleReads(services, fault));
+        var (before, period) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Antes");
+        var (broken, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Sin base");
+        var (after, _) = await world.SeedDueAsync(AdjustmentMode.Ipc, name: "Después");
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var items = new object[]
+        {
+            new { serviceId = before, version = await world.VersionAsync(before), expectedPrice = 105200m },
+            new { serviceId = broken, version = await world.VersionAsync(broken), expectedPrice = 105200m },
+            new { serviceId = after, version = await world.VersionAsync(after), expectedPrice = 105200m },
+        };
+        var lost = new NpgsqlException("connection lost");
+        fault.Arm(broken, wrapped ? new InvalidOperationException("transient failure", lost) : lost);
+
+        var results = await world.ConfirmAsync(year, items);
+
+        Assert.Equal(
+            new (Guid, string, string?)[]
+            {
+                (before, "Confirmed", null),
+                (broken, "Failed", "concurrency.conflict"),
+                (after, "Confirmed", null),
+            },
+            results.Select(result => (result.ServiceId, result.Outcome, result.Code)));
+        Assert.Equal(2, await world.CountSchedulesAsync());
+    }
+
+    // Un error que no es de la base no se disfraza de conflicto.
+    [Fact]
+    public async Task AFailureThatIsNotTheDatabaseStillAnswers500()
+    {
+        var fault = new ScheduleReadFault();
+        await using var world = await World.OpenAsync(services => FailScheduleReads(services, fault));
+        var (broken, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var version = await world.VersionAsync(broken);
+        fault.Arm(broken, new InvalidOperationException("a bug"));
+
+        var response = await world.Manager.PostAsJsonAsync(
+            ConfirmUrl(), new { year, items = new[] { new { serviceId = broken, version, expectedPrice = 105200m } } }, Ct);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+    }
+
     private static string RateUrl(int year) => $"{ServiceContractsUrl()}/ipc-rates/{year}";
 
     private static string ConfirmUrl() => $"{ServiceContractsUrl()}/price-reviews/confirm-ipc";
@@ -1175,6 +1272,58 @@ public sealed class ServiceContractsPriceReviewApiTests
 
         public Task<IReadOnlyList<IpcRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
             inner.ListAsync(tenantId, cancellationToken);
+    }
+
+    /// <summary>Hace fallar la lectura del programado pendiente de un contrato.</summary>
+    private sealed class ScheduleReadFault
+    {
+        private Guid serviceId;
+        private Exception? failure;
+
+        public void Arm(Guid id, Exception exception) => (serviceId, failure) = (id, exception);
+
+        public void ThrowFor(ServiceContractId id)
+        {
+            if (failure is { } exception && id.Value == serviceId)
+            {
+                throw exception;
+            }
+        }
+    }
+
+    /// <summary>Envuelve el repositorio de programados para meter la falla armada en <paramref name="fault"/>.</summary>
+    private static void FailScheduleReads(IServiceCollection services, ScheduleReadFault fault)
+    {
+        var schedules = services.Single(descriptor => descriptor.ServiceType == typeof(IServicePriceScheduleRepository));
+        services.Remove(schedules);
+        services.AddScoped<IServicePriceScheduleRepository>(provider => new FailingScheduleRepository(
+            (IServicePriceScheduleRepository)ActivatorUtilities.CreateInstance(provider, schedules.ImplementationType!), fault));
+    }
+
+    private sealed class FailingScheduleRepository(IServicePriceScheduleRepository inner, ScheduleReadFault fault)
+        : IServicePriceScheduleRepository
+    {
+        public void Add(ServicePriceSchedule schedule) => inner.Add(schedule);
+
+        public Task<ServicePriceSchedule?> FindPendingAsync(
+            Guid tenantId, ServiceContractId serviceId, CancellationToken cancellationToken)
+        {
+            fault.ThrowFor(serviceId);
+            return inner.FindPendingAsync(tenantId, serviceId, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<ServicePriceSchedule>> ListPendingByServicesAsync(
+            Guid tenantId, IReadOnlyCollection<ServiceContractId> serviceIds, CancellationToken cancellationToken) =>
+            inner.ListPendingByServicesAsync(tenantId, serviceIds, cancellationToken);
+
+        public Task<IReadOnlyList<ServicePriceSchedule>> ListPendingByTenantAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            inner.ListPendingByTenantAsync(tenantId, cancellationToken);
+
+        public Task<IReadOnlyList<int>> ListPendingIpcYearsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            inner.ListPendingIpcYearsAsync(tenantId, cancellationToken);
+
+        public Task RemoveByServiceAsync(Guid tenantId, ServiceContractId serviceId, CancellationToken cancellationToken) =>
+            inner.RemoveByServiceAsync(tenantId, serviceId, cancellationToken);
     }
 
     /// <summary>Base, fábrica, un cliente con perfil y el encargado <c>Ana Admin</c>.</summary>

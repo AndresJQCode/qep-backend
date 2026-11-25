@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.ServiceContracts.Application;
 using Modules.ServiceContracts.Domain;
 using Modules.ServiceContracts.Infrastructure.Persistence;
@@ -160,7 +161,7 @@ public sealed class ServiceContractsRepositoryTests
             Assert.Null(settings.WhatsAppConnectionId);
             settings.ChangeWhatsAppConnection(connectionId, Now);
             repository.Upsert(settings);
-            await new ServiceContractsUnitOfWork(db).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await UnitOfWork(db).SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var read = factory.Services.CreateAsyncScope();
@@ -196,10 +197,10 @@ public sealed class ServiceContractsRepositoryTests
             .FindAsync(Tenant, service.Id, TestContext.Current.CancellationToken);
         firstCopy!.Pause(Today, Now);
         secondCopy!.Cancel(Now);
-        await new ServiceContractsUnitOfWork(firstDb).SaveChangesAsync(TestContext.Current.CancellationToken);
+        await UnitOfWork(firstDb).SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
-            () => new ServiceContractsUnitOfWork(secondDb).SaveChangesAsync(TestContext.Current.CancellationToken));
+            () => UnitOfWork(secondDb).SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -293,6 +294,9 @@ public sealed class ServiceContractsRepositoryTests
         Assert.All(found, profile => Assert.Equal(Tenant, profile.TenantId));
         Assert.Empty(none);
     }
+
+    private static ServiceContractsUnitOfWork UnitOfWork(ServiceContractsDbContext db) =>
+        new(db, NullLogger<ServiceContractsUnitOfWork>.Instance);
 
     private static ServiceContract Service(Guid customerId, string currency, decimal price) =>
         ServiceContract.Create(

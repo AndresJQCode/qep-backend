@@ -1,13 +1,16 @@
+using System.Data.Common;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Modules.ServiceContracts.Application;
 using Modules.ServiceContracts.Domain;
 using Modules.ServiceContracts.Infrastructure.Reminders;
 
 namespace Modules.ServiceContracts.Infrastructure.Persistence;
 
-internal sealed class ServiceContractsUnitOfWork(ServiceContractsDbContext dbContext) : IServiceContractsUnitOfWork
+internal sealed partial class ServiceContractsUnitOfWork(
+    ServiceContractsDbContext dbContext, ILogger<ServiceContractsUnitOfWork> logger) : IServiceContractsUnitOfWork
 {
     /// <summary>PK de customer_profiles (InitialBilling): el primer PUT del perfil y el primer servicio de un cliente sin perfil.</summary>
     private const string ProfilePrimaryKey = "PK_customer_profiles";
@@ -25,6 +28,42 @@ internal sealed class ServiceContractsUnitOfWork(ServiceContractsDbContext dbCon
     private const string PendingScheduleIndex = "IX_service_price_schedules_pending";
 
     public void Clear() => dbContext.ChangeTracker.Clear();
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Billing batch item failed on the database and was answered as a conflict.")]
+    private static partial void LogBatchItemFailed(ILogger logger, Exception exception);
+
+    public async Task<T> RunBatchItemAsync<T>(Func<Task<T>> item, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await item();
+        }
+        // El conflicto que SaveChangesAsync ya tradujo pasa como está. Npgsql avisa una cancelación con la excepción de la base
+        // adentro de un OperationCanceledException: por eso se mira también el token.
+        catch (Exception exception) when (exception is not (OperationCanceledException or RequestConcurrencyException)
+            && !cancellationToken.IsCancellationRequested
+            && IsDatabaseFailure(exception))
+        {
+            // El ítem responde como conflicto: sin este registro la falla de verdad no quedaría en ningún lado.
+            LogBatchItemFailed(logger, exception);
+            throw ConcurrencyConflict(exception);
+        }
+    }
+
+    // En cualquier nivel: EF envuelve la de Npgsql en DbUpdateException al guardar, y la estrategia de ejecución envuelve las
+    // transitorias (deadlock, conexión caída) en InvalidOperationException. Sin una DbException adentro no es de la base.
+    private static bool IsDatabaseFailure(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DbException)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     // Borrar clientes (spec 2026-11-10, P1/P2): guardar un servicio o un perfil de cobro es escribir una referencia a customers.customers, que no
     // tiene FK. CustomerReferenceWrites toma el candado compartido de cada cliente y, ya con él, comprueba que la fila exista,

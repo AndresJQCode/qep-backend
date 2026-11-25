@@ -116,7 +116,7 @@ public sealed class ConfirmIpcReviewsHandler(
             string? code;
             try
             {
-                code = await ConfirmAsync(batch, item, cancellationToken);
+                code = await unitOfWork.RunBatchItemAsync(() => ConfirmAsync(batch, item, cancellationToken), cancellationToken);
             }
             catch (ServiceContractsDomainException exception)
             {
