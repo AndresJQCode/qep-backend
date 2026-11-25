@@ -333,10 +333,23 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
      `UPDATE siigo.invoices SET unanswered_at = updated_at, last_unanswered_at = updated_at WHERE status = 'Pending' AND unanswered_at IS NULL AND (error_code IN ('siigo.invoice.timeout','siigo.invoice.network','siigo.invoice.rate_limited','siigo.invoice.unavailable','siigo.invoice.siigo_service') OR sending_since IS NOT NULL);`
   5. La etapa *contract* (quitar la emisión síncrona y subir la creación a 120 s, en `develop` con `d2b85a1e3`) no
      sale a `main` antes de que el frontend por tandas esté desplegado.
-- **Migración de ServiceContracts pendiente en `develop` (2026-11-25):** el merge `edc5b1dfc` trajo cambios de modelo
-  sin `AddPriceAdjustment`, que sigue en `feature/contract-price-adjustment` (`330fed277`). Hasta que esa rama se
-  mergee, las pruebas que levantan el host completo fallan con `PendingModelChangesWarning`. No lleves `develop` a
-  `main` así; después corre la compuerta y la integración que quedó sin correr.
+- **Reajuste de precio de contratos (2026-11-25, en `develop` con `9e57559cc`, sin push).** Cierra la migración de
+  ServiceContracts que había quedado pendiente tras `edc5b1dfc`: sobre `9e57559cc` la API compila y los 30 contextos
+  no tienen cambios de modelo pendientes. Las ramas que partieron de `develop` entre esos dos merges traen `develop`;
+  **no crean otra migración**.
+  1. **Se mergeó sin pruebas en verde** (orden del owner: no correrlas). Antes de `main`:
+     `.\scripts	est-feature.ps1 -Base 3906398e6`, y por clase las integraciones de ServiceContracts,
+     `InAppBillingTests`, `BillingEmailTemplatesTests` y `ArchitectureTests`.
+  2. **Un solo despliegue, con corte** (backend a cero réplicas o `Recreate`; `k8s/prod-deployment.yaml` es
+     `RollingUpdate`): la migración `AddPriceAdjustment` no es compatible con pods viejos.
+  3. **Respaldo previo del esquema `billing`. Sin rollback** una vez liberado un cobro retenido: `Down` falla y borra
+     programaciones y tasas.
+  4. Los contratos existentes quedan `Manual` (nunca se retienen), con revisión en el primer aniversario de
+     `first_due_date` a partir de hoy + 15. Los que caen justo en +15 salen en la campana y el resumen el primer día.
+  5. Una base local que aplicó la versión anterior de la migración (sin `carried_held_periods`) la revierte a
+     `20261031034952_AddServiceDescription` y la aplica de nuevo.
+  Backend antes que frontend (el frontend ya está en `main` y tolera un backend viejo). Prueba manual en el navegador:
+  pendiente.
 - **Marca de aceptación iniciada (2026-11-24):** migración aditiva de Wholesale `AddDistributorAcceptanceStartedAt`. Durante el rollout los pods viejos ignoran la marca: no edites documentos de invitados hasta que no queden pods viejos.
 - **Datos del distribuidor y su empresa al aceptar (2026-11-24):** migración aditiva de Wholesale `AddDistributorCityAndAddress`. **Backend y frontend juntos:** con la ciudad obligatoria, el formulario viejo no puede invitar con país `CO` (422). Las invitaciones vivas sin ciudad aceptan, pero sin empresa. Prueba manual: invitar con ciudad y dirección, aceptar con tenant nuevo y revisar que la empresa exista en el tenant del distribuidor y el cliente en el del mayorista con teléfono.
 - **Regalo al crear y editar un pedido (2026-11-23):** sin migraciones. Correr antes la integración completa de Quotations por clase (nunca cerró) y `ArchitectureTests`, y confirmar contra `develop` las tres fallas anotadas en «Trabajo en curso». **Backend antes que frontend:** el frontend nuevo manda `gifts` siempre al editar (incluso `[]`) y un backend viejo lo ignora, así que los regalos no se guardarían ni se quitarían sin avisar. Con el backend nuevo, un frontend viejo sigue bien: no manda `gifts`, así que se conservan los regalos guardados. Las rutas `…/orders/{id}/gifts` ya no existen: un frontend anterior a `6012dd74` que las llame recibe 404. Prueba manual: crear un pedido con un producto pagado y el mismo como regalo, editarlo cambiando la cantidad del regalo y quitándolo, y abrir el detalle (sólo insignia, sin «Agregar regalo»); un pedido mayorista no ofrece regalos.
