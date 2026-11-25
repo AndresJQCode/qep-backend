@@ -16,13 +16,19 @@ public sealed record ListSiigoCallFailuresQuery(
     Guid TenantId, string? Operation, string? Status, string? From, string? To, string? Page, string? PageSize)
     : IQuery<SiigoCallFailurePageDto>;
 
+/// <summary>La paginación de las listas de Siigo: las fallas y las tandas. Un valor fuera de rango se recorta, y la respuesta devuelve el
+/// que se usó.</summary>
 public static class SiigoCallFailurePaging
 {
     public const int DefaultPageSize = 25;
 
     public const int MaxPageSize = 100;
 
-    public static int NormalizePage(int page) => page < 1 ? 1 : page;
+    /// <summary>La última página cuyo desplazamiento (<c>(page - 1) * pageSize</c>) cabe en un <c>int</c> con el tamaño máximo. Una mayor
+    /// se recorta a ésta: sin el tope el producto se desborda y la consulta sale con un desplazamiento negativo (500).</summary>
+    public const int MaxPage = int.MaxValue / MaxPageSize;
+
+    public static int NormalizePage(int page) => Math.Clamp(page, 1, MaxPage);
 
     public static int NormalizePageSize(int pageSize) => pageSize switch
     {

@@ -780,6 +780,20 @@ public sealed class SiigoInvoiceBatchApiTests
         }
     }
 
+    // (page - 1) * pageSize no cabe en un int: la página se recorta en vez de mandar un desplazamiento negativo.
+    [Fact]
+    public async Task AHugePageIsClampedAndComesBackEmpty()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await CreateBatchAsync(world, world.OrderId);
+
+        var page = await ReadAsync(await world.Client.GetAsync($"{BatchesRoute(world)}?page={int.MaxValue}", Ct));
+
+        Assert.Equal((1, int.MaxValue / 100, 25), PageOf(page));
+        Assert.Empty(Ids(page));
+    }
+
     [Fact]
     public async Task ABadPageIs422WithItsField()
     {
