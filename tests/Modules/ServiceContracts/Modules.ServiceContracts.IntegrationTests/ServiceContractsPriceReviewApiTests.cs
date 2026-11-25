@@ -713,6 +713,27 @@ public sealed class ServiceContractsPriceReviewApiTests
         Assert.True(errors.TryGetProperty("PageSize", out _));
     }
 
+    // Un esquema que JsonSchemaExporter no puede armar tumba el documento entero, y expectedRate es un JsonElement.
+    [Fact]
+    public async Task TheOpenApiDocumentStillBuildsWithTheRateAndReviewRoutes()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/openapi/v1.json", Ct);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var document = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var paths = document.GetProperty("paths").EnumerateObject().Select(path => path.Name).ToArray();
+        const string billing = "/api/v1/tenants/{tenantId}/billing";
+        Assert.Contains($"{billing}/ipc-rates", paths);
+        Assert.Contains($"{billing}/ipc-rates/{{year}}", paths);
+        Assert.Contains($"{billing}/price-reviews", paths);
+        Assert.Contains($"{billing}/price-reviews/confirm-ipc", paths);
+    }
+
     [Fact]
     public async Task SavingTheFirstRateNeedsANullExpectedRate()
     {
