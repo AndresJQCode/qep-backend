@@ -377,6 +377,12 @@ internal static class QuotationsApiHarness
         var registered = await response.Content.ReadFromJsonAsync<RegisterTenantResponseDto>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(registered);
+        // El alta deja los ajustes del tenant recién nacido (compra mínima de 1 unidad, decisión del owner 2026-11-23). Estas
+        // pruebas parten de un tenant sin fila, con el por defecto de Quotations (6 unidades o 500.000 COP / 200 USD); el
+        // alta con sus ajustes la cubre QuotationsNewTenantProvisioningTests.
+        await ExecuteSqlAsync(
+            factory,
+            $"DELETE FROM quotations.tenant_quotation_settings WHERE tenant_id = '{registered.TenantId}'");
 
         var client = CreateClient(
             factory, registered.OwnerUserId.ToString(), registered.TenantId.ToString(), permissions);
