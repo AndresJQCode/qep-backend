@@ -63,8 +63,10 @@ mayorista ya sabía.
   (`CompleteCustomerData.AddressLabel`; sólo con ciudad colombiana y calle). Sin teléfono o si Customers rechaza la ficha completa,
   cae al incompleto de antes. Un cliente existente por documento no se actualiza.
 - No se crean cuentas bancarias ni retenciones, y no se cambia `ChargesVat` (queda en `true`, el valor por defecto de Companies).
-- No se agrega edición de los datos del distribuidor mientras está invitado (`ChangeTerms` sólo cambia lista, asesor y empresa
-  facturadora). Un error en ciudad o dirección se corrige borrando la invitación y creando otra.
+- ~~No se agrega edición de los datos del distribuidor mientras está invitado (`ChangeTerms` sólo cambia lista, asesor y empresa
+  facturadora). Un error en ciudad o dirección se corrige borrando la invitación y creando otra.~~
+  **Decisión del owner 2026-11-24: se pueden editar mientras está invitado.** El `PUT` del distribuidor acepta razón social, país,
+  tipo y número de documento, contacto, correo, ciudad y dirección (`Distributor.ChangeProfile`); ver «Contrato HTTP».
 - El formulario del frontend (`qep-frontend`) lleva su propio spec; este documento sólo fija el contrato.
 
 ## Anti-objetivos
@@ -158,6 +160,25 @@ mayorista ya sabía.
   con otro país), `address` (opcional). Errores nuevos: 422 `validation.failed` con `errors.CityId` / `errors.CityName` /
   `errors.Address`, y 422 `wholesale.distributor.city_not_found`.
 - `GET …/wholesale/distributors/{id}`: `city` (`{ id, name }` o `null`) y `address`.
+- `PUT …/wholesale/distributors/{id}` (decisión del owner 2026-11-24): suma `businessName`, `country`, `identificationType`,
+  `identificationNumber`, `contactName`, `email`, `cityId`, `cityName` y `address`, todos opcionales; ausente conserva lo guardado
+  y `address: ""` borra la dirección. Sólo en `Invited`, con las reglas de invitar (422 `validation.failed` por campo, 422
+  `wholesale.distributor.city_not_found`, 409 `wholesale.distributor.identification_taken` contra los demás); la ciudad se exige a
+  una invitación vieja sin ella sólo si se manda la ciudad o cambia el país. En `Active` o `Blocked`, un valor distinto del
+  guardado es 409 `wholesale.distributor.invalid_transition`. Cambiar el correo no reenvía la invitación ni rota el token.
+  - Nota (2026-11-24): en `Invited`, cambiar el tipo o el número de documento cuando el tenant reservado de la invitación ya
+    existe (aceptación a medias) es 409 `wholesale.distributor.acceptance_in_progress` y no escribe nada, porque el reintento es
+    idempotente por documento y duplicaría la empresa y el cliente. Los demás campos siguen editables. Límite conocido: una
+    aceptación a medias vinculando un tenant existente no se detecta.
+  - Nota (2026-11-24, marca de aceptación iniciada): ese límite, y el del `PUT` que confirmaba antes de que la aceptación
+    creara el tenant, se cierran con `wholesale.distributors.acceptance_started_at` (columna nullable, migración aditiva
+    `AddDistributorAcceptanceStartedAt`). `AcceptAsync` la confirma después de las validaciones que rechazan sin escribir y
+    antes de la primera escritura en otro módulo; sube `version`, así que un `PUT` simultáneo pierde con 412 o ve la marca, y si
+    el `PUT` confirmó primero, la aceptación relee y vuelve a validar (hasta 3 veces; después 412 `concurrency.conflict`). El 409
+    sale con la marca **o** con el tenant reservado existente (aceptaciones a medias anteriores a la columna). La invitación se
+    sigue consumiendo sólo en el último commit. Límites: la marca no se borra (para corregir el documento tras un fallo posterior
+    hay que borrar la invitación e invitar de nuevo), durante el rollout un pod viejo ni la pone ni la mira, y una vinculación a
+    medias anterior a la migración no se detecta hasta que se reintente.
 - Al exigir la ciudad, **el formulario actual deja de poder invitar en Colombia** hasta que salga el frontend: backend y frontend se
   despliegan juntos (decisión pendiente del owner).
 
@@ -179,7 +200,8 @@ mayorista ya sabía.
 ## Decisiones pendientes del owner
 
 1. ~~¿Se amplía `RegisterCustomerData` para copiar también ciudad, dirección y contacto al cliente?~~ Resuelta el 2026-11-24: sí, ver la nota de arriba.
-2. ¿Se permite editar los datos del distribuidor (ciudad, dirección, razón social) mientras está invitado?
+2. ~~¿Se permite editar los datos del distribuidor (ciudad, dirección, razón social) mientras está invitado?~~ Resuelta el
+   2026-11-24: sí, ver la nota de arriba.
 3. ~~¿Aceptar vinculando un tenant existente crea la empresa?~~ Resuelta por el owner (2026-11-24): sólo si el tenant no tiene ninguna.
 4. ¿Backend y frontend se despliegan juntos, o se abre una ventana con la ciudad opcional al invitar (las invitaciones sin ciudad
    aceptarían sin empresa, como las viejas)?

@@ -63,7 +63,8 @@ public static class GraphQlOrderParser
         OptionalString(address, "provinceCode", $"{field}.provinceCode"),
         OptionalString(address, "countryCodeV2", $"{field}.countryCodeV2"),
         OptionalString(address, "phone", $"{field}.phone"),
-        OptionalString(address, "company", $"{field}.company"));
+        OptionalString(address, "company", $"{field}.company"),
+        OptionalString(address, "zip", $"{field}.zip"));
 
     private static ShopifyLine[] Lines(JsonElement order) =>
         Items(order, "lineItems", "lineItems", connection: true)

@@ -41,7 +41,9 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
         var outcome = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CorrectShippingCityAsync(
             tenantId,
             orderId,
-            new ExternalShippingParty(expected.Name, expected.Phone, expected.Email, expected.Address, expected.DepartmentId, expected.CityId),
+            new ExternalShippingParty(
+                expected.Name, expected.Phone, expected.Email, expected.Address, expected.DepartmentId, expected.CityId,
+                expected.PostalCode),
             departmentId,
             cityId,
             cancellationToken);

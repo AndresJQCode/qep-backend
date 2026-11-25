@@ -9,11 +9,11 @@ public sealed class InteractiveSendTests
         Enumerable.Range(start, count).Select(i => new ListRow($"r{i}", $"Fila {i}")).ToArray();
 
     [Fact] public void ThreeButtonsOfTwentyCharactersAreValid() => Assert.Empty(InteractiveSendValidation.Validate(new ButtonsSend("¿Qué necesitas?", [new("a", new string('x', 20)), new("b", "Dos"), new("c", "Tres")])));
-    [Fact] public void FourButtonsFail() => Assert.Contains("interactive.buttons.too_many", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a","1"),new("b","2"),new("c","3"),new("d","4")])));
+    [Fact] public void FourButtonsFail() => Assert.Contains("interactive.buttons.too_many", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", "1"), new("b", "2"), new("c", "3"), new("d", "4")])));
     [Fact] public void AButtonTitleOfTwentyOneFails() => Assert.Contains("interactive.buttons.title_too_long", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", new string('x', 21))])));
     [Fact] public void ElevenRowsFail() => Assert.Contains("interactive.list.too_many_rows", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, Rows(11))])));
     [Fact] public void RowsAreCountedAcrossSections() => Assert.Contains("interactive.list.too_many_rows", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new("A", Rows(6)), new("B", Rows(5, 6))])));
-    [Fact] public void DuplicatedRowIdsFail() => Assert.Contains("interactive.list.id_duplicated", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, [new("r","a"), new("r","b")])])));
+    [Fact] public void DuplicatedRowIdsFail() => Assert.Contains("interactive.list.id_duplicated", InteractiveSendValidation.Validate(new ListSend("x", "Ver", [new(null, [new("r", "a"), new("r", "b")])])));
     // Los topes que faltaban (revisión final): encabezado, pie, largo de los ids y las piezas vacías que Graph rechaza al enviar.
     [Fact] public void AHeaderOfSixtyOneFails() => Assert.Contains("interactive.header.too_long", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", "1")], Header: new string('h', 61))));
     [Fact] public void AFooterOfSixtyOneFails() => Assert.Contains("interactive.footer.too_long", InteractiveSendValidation.Validate(new ButtonsSend("x", [new("a", "1")], Footer: new string('f', 61))));

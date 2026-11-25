@@ -132,7 +132,11 @@ public sealed class FlowValidatorTests
         var buttons = Buttons(new FlowButton("a", "Sí")) with { Fallback = "handoff", FallbackMemberId = Gone, Outputs = Out(("a", "end")) };
         var list = FixedList([new ListFixedRow("r1", "Ventas", null)]) with
         {
-            Id = "n2", Title = "Equipo", Fallback = "handoff", FallbackMemberId = Gone, Outputs = Out(("chosen", "end")),
+            Id = "n2",
+            Title = "Equipo",
+            Fallback = "handoff",
+            FallbackMemberId = Gone,
+            Outputs = Out(("chosen", "end")),
         };
 
         var issues = FlowValidator.Validate(Flow(buttons, list, End()), Ctx(members: Agent));

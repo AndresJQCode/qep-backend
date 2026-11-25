@@ -97,6 +97,10 @@ namespace Modules.Wholesale.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("AcceptanceStartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("acceptance_started_at");
+
                     b.Property<DateTimeOffset?>("ActivatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("activated_at");

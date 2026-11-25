@@ -161,6 +161,16 @@ function Test-StepPassed {
     return [bool]($null -ne $Result -and $Result.Total -gt 0 -and $Result.Failed -eq 0 -and $ExitCode -eq 0)
 }
 
+# El parámetro de hilos pisa el [assembly: CollectionBehavior(MaxParallelThreads = n)] del proyecto: sólo se manda si
+# el proyecto no declara el suyo o si quien corre lo pidió.
+function Get-ThreadArguments {
+    param([string[]]$Sources, [int]$MaxThreads, [bool]$Explicit)
+
+    $declares = @($Sources) -match '(?m)^\s*\[assembly:\s*(Xunit\.)?CollectionBehavior\([^\]]*MaxParallelThreads\s*='
+    if ($declares -and -not $Explicit) { return @() }
+    return @("--", "xUnit.MaxParallelThreads=$MaxThreads")
+}
+
 # Sobre qué se corrió: un reporte en verde sólo vale para ese commit.
 function Get-GitStamp {
     $branch = git rev-parse --abbrev-ref HEAD
@@ -169,4 +179,4 @@ function Get-GitStamp {
     return "Rama $branch · commit $sha · $tree"
 }
 
-Export-ModuleMember -Function Get-TestPlan, Read-TrxResult, Test-StepPassed, Get-GitStamp
+Export-ModuleMember -Function Get-TestPlan, Read-TrxResult, Test-StepPassed, Get-ThreadArguments, Get-GitStamp

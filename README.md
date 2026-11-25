@@ -554,6 +554,19 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Código postal de la entrega
+
+La parte de **envío** de cotizaciones y pedidos tiene un `postalCode` opcional, en Colombia y fuera: se recorta, vacío es
+`null` y el tope son 20 caracteres, sin formato por país (spec 2026-11-24).
+
+- **Escritura:** `parties.shipping.postalCode` en las rutas que reciben partes. Omitirlo lo borra, como `regionId`. En
+  facturación se descarta. Más largo es `422 quotations.party.postal_code_too_long` con
+  `errors["Parties.Shipping.PostalCode"]`.
+- **Lectura:** cada parte responde `postalCode` (en facturación siempre `null`), y la cotización y el pedido (`order`)
+  traen `postalCodeSupported: true`, que es lo que el frontend mira para pintar el campo.
+- La conversión lo copia al pedido, el PDF lo imprime en la ubicación tras la dirección y el envío a Shopify lo manda
+  como `zip` (ver [El envío](#integración-con-shopify)). La libreta de direcciones del cliente todavía no lo tiene.
+
 ## Regiones y ciudades por país
 
 El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. Colombia guarda `CityId` y deriva su
@@ -1397,7 +1410,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog` | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive` | `purchases.order.manage` |
 | `/api/v1/tenants/{tenantId}/wholesale/price-lists/preview` | `POST` (la lista sin guardar, `{ adjustmentPercent, visibility, categoryIds, exclusions }`: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe). Las listas mismas están en `/catalog/price-lists` desde el spec 2026-11-22. Módulo `wholesale` | `catalog.price_list.manage` + `wholesale.distributor.read` |
 | `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `catalog.price_list.manage` + `wholesale.distributor.read` |
-| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone` y `whatsAppConnectionId`; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
+| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone`, `whatsAppConnectionId` y los datos del distribuidor: `businessName`, `country`, `identificationType`, `identificationNumber`, `contactName`, `email`, `cityId`, `cityName`, `address`, todos opcionales; `If-Match`; ver [Editar un distribuidor](#editar-un-distribuidor)), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
 | `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `email-code` (`POST`, anónimo, `credentials`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
@@ -2601,6 +2614,33 @@ prueba el buzón, y el correo no tiene que ser el invitado.
   `wholesale.invitation.not_tenant_owner`; `401 identity.credentials.invalid`; `422 wholesale.invitation.self_link`,
   `identity.terms.unavailable`, `identity.terms.version_mismatch`, los de `register-tenant` y `validation.failed` (`Mode`,
   `TenantId`, `TermsVersion`, `Password`).
+
+#### Editar un distribuidor
+
+`PUT …/wholesale/distributors/{id}` (`If-Match`; cuerpo `{ priceListId, advisorId, billingCompanyId, phone?,
+whatsAppConnectionId?, businessName?, country?, identificationType?, identificationNumber?, contactName?, email?, cityId?,
+cityName?, address? }`). Decisión del owner 2026-11-24: mientras está `Invited` se editan los datos que se llenaron al invitar.
+
+- Lista, asesor y empresa facturadora se editan en cualquier estado. `phone` y `whatsAppConnectionId` sólo cuentan invitado
+  (afuera se ignoran) y `phone` ausente **borra** los dos.
+- Los datos del distribuidor son opcionales: ausente o `null` **conserva** lo guardado. No se puede borrar el nombre ni la
+  ciudad; la dirección se borra con `""`.
+- Invitado, rigen las reglas de invitar: `422 validation.failed` con `errors` por campo (`Email`, `BusinessName`, `Country`,
+  `IdentificationType`, `IdentificationNumber`, `ContactName`, `CityId`, `CityName`, `Address`),
+  `422 wholesale.distributor.city_not_found` y `409 wholesale.distributor.identification_taken` contra los demás
+  distribuidores. Al cambiar de país hay que mandar el tipo de documento y la ciudad válidos para el nuevo. Una invitación
+  vieja sin ciudad no la exige mientras no se mande la ciudad ni cambie el país.
+- Invitado, cambiar el tipo o el número de documento cuando la aceptación ya empezó (creando el tenant o vinculando uno
+  existente) es `409 wholesale.distributor.acceptance_in_progress` y no escribe nada; los demás campos se siguen editando.
+  La aceptación confirma esa marca antes de escribir en otros módulos y con ella sube `version`: un `PUT` con el `If-Match`
+  anterior es `412 concurrency.conflict`. Un accept rechazado en sus validaciones no deja marca. La marca no se borra.
+- El detalle devuelve `city` como `{ id, name, departmentId, departmentName }`, para que la edición preseleccione la cascada
+  departamento → ciudad. Afuera de Colombia `id`, `departmentId` y `departmentName` son `null` y `name` es el texto escrito;
+  `city` es `null` en una invitación sin ciudad. El `PUT` sigue recibiendo sólo `cityId` o `cityName`.
+- `Active` o `Blocked`: un dato distinto del guardado es `409 wholesale.distributor.invalid_transition`. Reenviar los mismos
+  valores se acepta (en Colombia `cityName` no cuenta, y afuera `cityId` tampoco).
+- Cambiar el correo **no** reenvía la invitación ni rota el token: para que llegue al correo nuevo, usa `resend-invitation`.
+- La auditoría (`wholesale.distributor.updated`) nombra los campos que cambiaron, nunca sus valores.
 
 #### Aviso por WhatsApp de la invitación
 
@@ -5217,7 +5257,9 @@ atributos) viaja a Shopify.
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
   (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
   `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
-  dirección entera; la nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  dirección entera. El `zip` es el `postalCode` de la parte de QEP; sin él, el del último snapshot sólo si país y provincia de
+  la parte son los del snapshot; si no, no viaja. La corrección del panel no recibe código postal y conserva el que tenga el
+  pedido. La nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
   `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro
@@ -5469,7 +5511,8 @@ consola de operador, como `pos`), esquema `siigo` (`settings`, los vínculos de 
 `invoices`), y del lado de Integrations el proveedor `siigo`. Recibos de caja y notas crédito quedan fuera (fase 2).
 
 **Conexión.** El tenant crea la conexión `siigo` en Integrations con su usuario y su clave de acceso (cifrada, como las demás); el
-probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage`, bajo
+probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage` (de
+fábrica `admin` y `billing`; crear, editar o desconectar la conexión exige `integrations.connection.manage`, sólo `admin`), bajo
 `/api/v1/tenants/{tenantId}/siigo/connections/{connectionId}`: tipo de documento, vendedor, centro de costo, bodega, empresa de QEP
 que factura, impuestos, formas de pago y vínculos de productos. Los `PUT` llevan `If-Match` (sin él, 428; con una versión vieja,
 412). El asistente propone cada paso con lo que lee de Siigo (`/options/{lista}`) y el auto-vínculo casa variantes y productos por
@@ -6672,6 +6715,9 @@ Postgres con Testcontainers y se agotan puertos y memoria. Usa el script, que co
 .\scripts\run-all-tests.ps1 -Filter Quotations       # sólo los proyectos cuya ruta contenga el texto
 .\scripts\run-all-tests.ps1 -Filter Quotations -NoBuild -MaxThreads 2
 ```
+
+Los proyectos que declaran `[assembly: CollectionBehavior(MaxParallelThreads = n)]` (comparten un solo contenedor) corren
+con ese número; los demás, con 4. `-MaxThreads` pisa los dos casos: úsalo si una corrida agota puertos o conexiones.
 
 Antes de correrlo:
 

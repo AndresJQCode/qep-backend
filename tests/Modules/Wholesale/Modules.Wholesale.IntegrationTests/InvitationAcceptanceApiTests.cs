@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Api;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Wholesale.Application;
@@ -836,6 +837,79 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.True(race.Calls >= 3, $"Only {race.Calls} suggestions: nobody retried.");
     }
 
+    // Una aceptación a medias vinculando un tenant existente no deja tenant reservado: la marca, confirmada antes de prender
+    // módulos, es lo que le cierra el documento al mayorista. Host propio: cambia el aprovisionamiento de clientes.
+    [Fact]
+    public async Task AHalfDoneLinkLocksTheDocumentAndStalesTheVersionFromBeforeTheStart()
+    {
+        await using var database = await WholesaleApiHarness.StartDatabaseAsync();
+        await using var factory = new WholesaleApiHarness.QepApiFactory(
+            database.GetConnectionString(),
+            configureServices: services =>
+            {
+                services.RemoveAll<IWholesaleCustomerProvisioning>();
+                services.AddScoped<IWholesaleCustomerProvisioning, CustomersDown>();
+            });
+        var mine = await WholesaleApiHarness.NewTenantAsync(factory);
+        var (wholesaler, invited, token) = await WholesaleApiHarness.InvitedAsync(factory, WholesaleApiHarness.EmailOf(mine));
+        using var session = WholesaleApiHarness.CreateSession(factory, mine.SubjectId, mine.TenantId);
+
+        var halfDone = await session.PostAsJsonAsync(
+            $"{WholesaleApiHarness.InvitationUrl(token)}/accept", new { mode = "LinkTenant", tenantId = mine.TenantId }, Ct);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, halfDone.StatusCode);
+        var reserved = await WholesaleApiHarness.RowsAsync<int>(
+            factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM tenancy.tenants t
+            JOIN wholesale.distributor_invitations i ON i.reserved_tenant_id = t.id WHERE i.distributor_id = {invited.Id}
+            """);
+        Assert.Equal(0, reserved[0]);
+        using var manager = WholesaleApiHarness.CreateManager(factory, wholesaler);
+        var stale = await ChangeDocumentAsync(manager, wholesaler, invited, invited.Version);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+        Assert.Equal("concurrency.conflict", await WholesaleApiHarness.CodeOfAsync(stale));
+        var url = $"{WholesaleApiHarness.DistributorsUrl(wholesaler.TenantId)}/{invited.Id}";
+        var marked = (await manager.GetFromJsonAsync<DistributorDetailDto>(url, Ct))!;
+        Assert.Equal(("Invited", invited.Version + 1), (marked.Status, marked.Version));
+
+        var refused = await ChangeDocumentAsync(manager, wholesaler, marked, marked.Version);
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Equal("wholesale.distributor.acceptance_in_progress", await WholesaleApiHarness.CodeOfAsync(refused));
+        var stored = (await manager.GetFromJsonAsync<DistributorDetailDto>(url, Ct))!;
+        Assert.Equal((invited.IdentificationNumber, marked.Version), (stored.IdentificationNumber, stored.Version));
+    }
+
+    // La marca va después de todo lo que rechaza sin escribir: un accept rechazado no le bloquea el documento a nadie.
+    [Fact]
+    public async Task AnAcceptRejectedByValidationLeavesTheDocumentEditable()
+    {
+        var mine = await WholesaleApiHarness.NewTenantAsync(Factory);
+        var (wholesaler, invited, token) = await WholesaleApiHarness.InvitedAsync(Factory, NewEmail());
+        var userId = await WholesaleApiHarness.PasswordSessionAsync(Factory, token, Password);
+        var takenSlug = (await WholesaleApiHarness.RowsAsync<string>(
+            Factory, $"""SELECT slug AS "Value" FROM tenancy.tenants WHERE id = {mine.TenantId}"""))[0];
+        using var session = WholesaleApiHarness.CreateSession(Factory, userId);
+        var url = $"{WholesaleApiHarness.InvitationUrl(token)}/accept";
+
+        var notOwner = await session.PostAsJsonAsync(url, new { mode = "LinkTenant", tenantId = mine.TenantId }, Ct);
+        var slugTaken = await session.PostAsJsonAsync(url, new { mode = "NewTenant", slug = takenSlug }, Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, notOwner.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, slugTaken.StatusCode);
+        var marked = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM wholesale.distributors
+            WHERE id = {invited.Id} AND acceptance_started_at IS NOT NULL
+            """);
+        Assert.Equal(0, marked[0]);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
+        var changed = await ChangeDocumentAsync(manager, wholesaler, invited, invited.Version);
+        Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
+    }
+
     // Spec 2026-11-19 §4: siempre 202, exista o no el correo o la invitación; sólo emite con la invitación pendiente.
     [Fact]
     public async Task EmailCodeAlwaysAnswers202()
@@ -914,6 +988,43 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
     }
 
     private static string NewEmail() => $"distri-{Guid.NewGuid():N}@distri.co";
+
+    private static Task<HttpResponseMessage> ChangeDocumentAsync(
+        HttpClient manager, WholesaleTestTenant wholesaler, DistributorDetailDto distributor, long version) =>
+        manager.SendAsync(
+            WholesaleApiHarness.WithIfMatch(
+                new HttpRequestMessage(
+                    HttpMethod.Put, $"{WholesaleApiHarness.DistributorsUrl(wholesaler.TenantId)}/{distributor.Id}")
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        priceListId = distributor.PriceList.Id,
+                        advisorId = distributor.Advisor.MemberId,
+                        billingCompanyId = distributor.BillingCompany.Id,
+                        identificationNumber = "800111222",
+                    }),
+                },
+                version),
+            Ct);
+
+    // Customers caído: la aceptación se corta después de haber escrito en otros módulos.
+    private sealed class CustomersDown : IWholesaleCustomerProvisioning
+    {
+        public Task<Guid> EnsureCustomerAsync(
+            Guid wholesalerTenantId,
+            Guid actorUserId,
+            string businessName,
+            string country,
+            string identificationType,
+            string identificationNumber,
+            string email,
+            string? phone,
+            Guid? cityId,
+            string? cityName,
+            string? address,
+            string contactName,
+            CancellationToken cancellationToken) => throw new InvalidOperationException("Customers is down.");
+    }
 
     // Slug de 30: dentro del tope de Tenancy y único por prueba.
     private static string NewSlug() => $"distri-{Guid.NewGuid():N}"[..30];

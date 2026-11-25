@@ -316,8 +316,12 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19,
-            ProductsTotal = 209000m, Total = 220900m, NetTotal = 220900m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            ProductsTotal = 209000m,
+            Total = 220900m,
+            NetTotal = 220900m,
         };
 
         var drafts = Assert.IsType<SiigoBuildResult.Ready>(Build(input)).Drafts;
@@ -350,8 +354,12 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19,
-            Total = 220900m, RetentionAmount = 2500m, NetTotal = 218400m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            Total = 220900m,
+            RetentionAmount = 2500m,
+            NetTotal = 218400m,
             Withholdings = [ReteFuente(), ReteIca()],
         };
 
@@ -468,7 +476,11 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19, Total = 220900m, NetTotal = 220900m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            Total = 220900m,
+            NetTotal = 220900m,
             PaymentProofs = [new SiigoPaymentProofInput(ProofA, 215000m)],
         };
 
@@ -490,7 +502,9 @@ public sealed class SiigoInvoiceBuilderTests
         Order() with
         {
             Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 102m, 7666285.71m, 35m, 19, 1456594.29m)],
-            ProductsTotal = 9122880.00m, Total = 9122880.00m, NetTotal = 9122880.00m,
+            ProductsTotal = 9122880.00m,
+            Total = 9122880.00m,
+            NetTotal = 9122880.00m,
             PaymentProofs = proofs,
         };
 
@@ -529,7 +543,10 @@ public sealed class SiigoInvoiceBuilderTests
                 new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 1m, 100.20m, 0m, 19, 19.04m),
                 new SiigoInvoiceLineInput(Line2Variant, "Producto dos", 1m, 100.20m, 0m, 19, 19.04m),
             ],
-            ProductsTotal = 238.48m, Total = 238.48m, RetentionAmount = qepRetention, NetTotal = 238.48m - qepRetention,
+            ProductsTotal = 238.48m,
+            Total = 238.48m,
+            RetentionAmount = qepRetention,
+            NetTotal = 238.48m - qepRetention,
             Withholdings = [new SiigoWithholdingInput(ReteFuenteRate, "Retefuente 2,5 %", TaxCountries.RetefuenteType, qepRetention, 2.5m)],
             PaymentProofs = [new SiigoPaymentProofInput(ProofA, proof)],
         };

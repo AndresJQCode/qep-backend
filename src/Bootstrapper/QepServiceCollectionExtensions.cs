@@ -3182,8 +3182,14 @@ public static class QepServiceCollectionExtensions
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
                 // Spec 2026-11-18 (integración Siigo) §5.7: facturación emite la factura en Siigo, como marca el pedido facturado
-                // (quotations.order.invoice). Configurar la conexión es de admin.
+                // (quotations.order.invoice).
                 SiigoPermissions.InvoiceIssue,
+                // Decisión del owner (2026-11-24): facturación ve las empresas y configura la conexión de Siigo. De Integraciones
+                // sólo lee: integrations.connection.manage daría también WhatsApp, Instagram y Shopify, así que crear, editar la
+                // credencial y desconectar siguen siendo de admin.
+                CompaniesPermissions.CompanyRead,
+                IntegrationsPermissions.ConnectionRead,
+                SiigoPermissions.SettingsManage,
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
             ]));

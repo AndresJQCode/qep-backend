@@ -1148,6 +1148,23 @@ public sealed class ShopifyAdaptersTests
             state.ShippingParty);
     }
 
+    // Spec 2026-11-24 §5: el estado del pedido para Shopify lleva el código postal de la parte, que es lo que el envío manda.
+    [Fact]
+    public async Task ReadStateCarriesTheShippingPostalCode()
+    {
+        var orderId = Guid.CreateVersion7();
+        var orders = new FakeExternalOrderWriter();
+        var source = EditState(orderId);
+        orders.EditStates[(TenantId, orderId)] = source with
+        {
+            ShippingParty = source.ShippingParty! with { PostalCode = "050021" },
+        };
+
+        var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
+
+        Assert.Equal("050021", state!.ShippingParty!.PostalCode);
+    }
+
     // ---- Armado ----
 
     private static ShopifyCityCorrectionWriter CityCorrectionWriter(

@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Wholesale.Domain;
 
 /// <summary>
@@ -72,6 +74,13 @@ public sealed class Distributor
     public DateTimeOffset UpdatedAt { get; private set; }
 
     public DateTimeOffset? ActivatedAt { get; private set; }
+
+    /// <summary>
+    /// Cuándo empezó la primera aceptación que llegó a escribir en otro módulo (<see cref="StartAcceptance"/>). No consume la
+    /// invitación ni cambia el estado, y no se borra: lo que ese intento haya creado sigue existiendo. Mientras esté puesta no
+    /// se cambia el documento. <c>null</c> también en las aceptaciones a medias anteriores a la columna.
+    /// </summary>
+    public DateTimeOffset? AcceptanceStartedAt { get; private set; }
 
     public long Version { get; private set; }
 
@@ -170,7 +179,7 @@ public sealed class Distributor
             CityId = cityId == Guid.Empty ? null : cityId,
             CityName = NullIfBlank(cityName),
             Address = NullIfBlank(address),
-            Invitation =DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
+            Invitation = DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
         };
     }
 
@@ -211,6 +220,55 @@ public sealed class Distributor
         }
 
         Invitation.SetNotice(status, failureCode);
+        return true;
+    }
+
+    /// <summary>
+    /// Decisión del owner 2026-11-24: los datos que el mayorista llenó al invitar (correo, razón social, país, documento,
+    /// contacto, ciudad y dirección) se editan sólo mientras está invitado; afuera no hace nada y devuelve <c>false</c>, como
+    /// <see cref="ChangeNoticeTarget"/>. Recibe los valores finales (Application ya mezcló lo que el cuerpo no trae con lo
+    /// guardado) y los recorta como <see cref="Invite"/>. Con otro país, el tipo de documento tiene que seguir siendo válido
+    /// para él. Cambiar el correo <b>no</b> reenvía la invitación ni rota el token: eso es «Reenviar». No sube
+    /// <see cref="Version"/>: lo hace <see cref="ChangeTerms"/>, que corre en el mismo <c>PUT</c>.
+    /// </summary>
+    public bool ChangeProfile(
+        string email,
+        string businessName,
+        string country,
+        string identificationType,
+        string identificationNumber,
+        string contactName,
+        Guid? cityId,
+        string? cityName,
+        string? address)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        ArgumentException.ThrowIfNullOrWhiteSpace(businessName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(country);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identificationType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identificationNumber);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contactName);
+        if (Status != DistributorStatus.Invited)
+        {
+            return false;
+        }
+
+        var normalizedCountry = country.Trim().ToUpperInvariant();
+        var normalizedType = identificationType.Trim().ToUpperInvariant();
+        if (!DocumentTypesByCountry.IsAllowed(normalizedType, normalizedCountry))
+        {
+            throw new ArgumentException("The identification type is not valid for the country.", nameof(identificationType));
+        }
+
+        Email = NormalizeEmail(email);
+        BusinessName = businessName.Trim();
+        Country = normalizedCountry;
+        IdentificationType = normalizedType;
+        IdentificationNumber = identificationNumber.Trim();
+        ContactName = contactName.Trim();
+        CityId = cityId == Guid.Empty ? null : cityId;
+        CityName = NullIfBlank(cityName);
+        Address = NullIfBlank(address);
         return true;
     }
 
@@ -307,6 +365,24 @@ public sealed class Distributor
     /// <summary>Si el correo de la sesión es el de la invitación, sin importar mayúsculas ni espacios alrededor.</summary>
     public bool InvitedEmailMatches(string? email) =>
         !string.IsNullOrWhiteSpace(email) && string.Equals(email.Trim(), Email, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Deja constancia de que una aceptación va a escribir en otros módulos; se confirma <b>antes</b> de esa primera escritura.
+    /// La primera vez sube <see cref="Version"/> —un <c>PUT</c> con la anterior pierde por concurrencia— y devuelve
+    /// <c>true</c>; después no cambia nada. Sólo mientras está invitada; el vencimiento lo revisa quien acepta.
+    /// </summary>
+    public bool StartAcceptance(DateTimeOffset now)
+    {
+        EnsureStatus(DistributorStatus.Invited);
+        if (AcceptanceStartedAt is not null)
+        {
+            return false;
+        }
+
+        AcceptanceStartedAt = now;
+        Touch(now);
+        return true;
+    }
 
     /// <summary>
     /// Consume la invitación y activa la relación. Sólo invitada y sin vencer: una relación ya aceptada (activa o bloqueada)

@@ -1,7 +1,7 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
 using FluentValidation;
-using System.Globalization;
 using FluentValidation.Results;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;

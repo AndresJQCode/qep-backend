@@ -139,7 +139,11 @@ public sealed class EmployerContributionsRuleTests
         {
             Prior = MonthAccumulators.Empty with
             {
-                WorkedDays = 15, SalaryRaw = 25_000_000m, Salary = 25_000_000m, Arl = 130_500m, CompensationFund = 1_000_000m,
+                WorkedDays = 15,
+                SalaryRaw = 25_000_000m,
+                Salary = 25_000_000m,
+                Arl = 130_500m,
+                CompensationFund = 1_000_000m,
             },
         };
 
@@ -160,9 +164,15 @@ public sealed class EmployerContributionsRuleTests
         {
             Prior = MonthAccumulators.Empty with
             {
-                WorkedDays = 15, SalaryRaw = 875_452.5m, Salary = 875_453m,
-                HealthEmployer = 74_500m, PensionEmployer = 105_100m, Arl = 4_600m, CompensationFund = 35_100m,
-                Icbf = 26_300m, Sena = 17_600m,
+                WorkedDays = 15,
+                SalaryRaw = 875_452.5m,
+                Salary = 875_453m,
+                HealthEmployer = 74_500m,
+                PensionEmployer = 105_100m,
+                Arl = 4_600m,
+                CompensationFund = 35_100m,
+                Icbf = 26_300m,
+                Sena = 17_600m,
             },
         };
 

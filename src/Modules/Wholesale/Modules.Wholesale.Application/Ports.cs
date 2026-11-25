@@ -174,9 +174,14 @@ public interface IDistributorRepository
     /// <summary>Por el SHA-256 del token (nunca el token plano). Un token rotado o un distribuidor borrado dan <c>null</c>.</summary>
     Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken);
 
-    /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13).</summary>
+    /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13). Al editar,
+    /// <paramref name="excluding"/> es el propio distribuidor; al invitar, <c>null</c>.</summary>
     Task<bool> IdentificationExistsAsync(
-        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken);
+        Guid tenantId,
+        string identificationType,
+        string identificationNumber,
+        DistributorId? excluding,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Fase 3: la relación entre los dos tenants, en cualquier estado, o <c>null</c>. Va acotada al mayorista: quien pregunta
@@ -296,8 +301,9 @@ public interface IWholesaleCompanyLookup
     Task<IReadOnlyList<WholesaleCompanyRef>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
-/// <summary>Una ciudad de Geography: su id y su nombre, sin departamento (Wholesale sólo la valida y la nombra).</summary>
-public sealed record WholesaleCityRef(Guid Id, string Name);
+/// <summary>Una ciudad de Geography con su departamento: Wholesale la valida y la nombra, y el detalle necesita el
+/// departamento para que la edición preseleccione la cascada.</summary>
+public sealed record WholesaleCityRef(Guid Id, string Name, Guid DepartmentId, string? DepartmentName);
 
 /// <summary>Las ciudades de Colombia; adaptador en Bootstrapper sobre Geography. Sirve para rechazar al invitar una ciudad
 /// que después haría fallar cada aceptación y para nombrarla en el detalle.</summary>

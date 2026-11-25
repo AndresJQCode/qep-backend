@@ -128,7 +128,7 @@ public sealed class DistributorComposer(
         if (distributor.CityId is { } cityId)
         {
             var city = await cities.FindAsync(cityId, cancellationToken);
-            return new DistributorCityDto(cityId, city?.Name ?? UnknownName);
+            return new DistributorCityDto(cityId, city?.Name ?? UnknownName, city?.DepartmentId, city?.DepartmentName);
         }
 
         return distributor.CityName is { } cityName ? new DistributorCityDto(null, cityName) : null;

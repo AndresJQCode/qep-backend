@@ -69,6 +69,7 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal(0, _world.UnitOfWork.Saves);
         Assert.Empty(_world.Audit.Entries);
         Assert.Equal(DistributorStatus.Invited, _invitation.Status);
+        Assert.Null(_invitation.AcceptanceStartedAt);
     }
 
     [Fact]
@@ -134,7 +135,7 @@ public sealed class DistributorInvitationServiceTests
         var audit = Assert.Single(_world.Audit.Entries);
         Assert.Equal((_world.Tenant, _user, "wholesale.distributor.accepted", "distributor"),
             (audit.TenantId, audit.ActorId, audit.Action, audit.ResourceType));
-        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(2, _world.UnitOfWork.Saves); // la marca y el commit final
     }
 
     // Spec 2026-11-23 §3: al aceptar sobre el tenant reservado nace la empresa del distribuidor, con lo que escribió el mayorista.
@@ -233,8 +234,9 @@ public sealed class DistributorInvitationServiceTests
 
         Assert.Empty(_suppliers.Calls);
         Assert.Empty(_customers.Calls);
-        Assert.Equal(0, _world.UnitOfWork.Saves);
+        Assert.Equal(1, _world.UnitOfWork.Saves); // sólo la marca
         Assert.Equal(DistributorStatus.Invited, _invitation.Status);
+        Assert.NotNull(_invitation.AcceptanceStartedAt);
     }
 
     // Spec 2026-11-23 §4: el cliente del mayorista nace con el celular del aviso, si lo hay.
@@ -320,7 +322,7 @@ public sealed class DistributorInvitationServiceTests
         Assert.DoesNotContain(_world.Audit.Entries, entry => entry.ChangedFields.Any(field => field.Contains('@')));
         // El cliente nace en el mayorista con el correo que queda en el distribuidor, no con el que se reemplazó.
         Assert.Equal("compras@norte.co", Assert.Single(_customers.Calls).Email);
-        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(2, _world.UnitOfWork.Saves); // la marca y el commit final
     }
 
     // Spec 2026-11-19, Pruebas: el correo del mayorista no cambia si falla el commit. Cambio, auditoría y evento van en el
@@ -331,12 +333,13 @@ public sealed class DistributorInvitationServiceTests
         var stored = _world.SeedInvited("333", tokenHash: _invitation.Invitation.TokenHash);
         _world.Distributors.Distributors.Remove(stored);
         _world.UnitOfWork.FailNextSaveWith = new RequestConcurrencyException("concurrency.conflict", "lost");
+        _world.UnitOfWork.FailAfterSaves = 1;
         _world.UnitOfWork.OnDiscard = () => _world.Distributors.Replace(_invitation, stored);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(() =>
             AcceptAsync(new NewTenantChoice(NewTenantData), "compras@norte.co"));
 
-        Assert.Equal(0, _world.UnitOfWork.Saves);
+        Assert.Equal(1, _world.UnitOfWork.Saves); // sólo la marca
         Assert.Equal(1, _world.UnitOfWork.Discards);
         var row = Assert.Single(_world.Distributors.Distributors);
         Assert.Equal((DistributorStatus.Invited, "ana@distri.co"), (row.Status, row.Email));
@@ -525,7 +528,7 @@ public sealed class DistributorInvitationServiceTests
 
         Assert.Equal("wholesale.relationship.inactive", error.Code);
         Assert.Single(_tenancy.Registered);
-        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(2, _world.UnitOfWork.Saves);
         Assert.Equal(DistributorStatus.Blocked, _invitation.Status);
     }
 
@@ -544,7 +547,7 @@ public sealed class DistributorInvitationServiceTests
         Assert.Single(_tenancy.Registered);
         Assert.Single(_suppliers.Calls);
         Assert.Single(_customers.Calls);
-        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(2, _world.UnitOfWork.Saves);
         Assert.Single(_world.Audit.Entries);
     }
 
@@ -572,7 +575,8 @@ public sealed class DistributorInvitationServiceTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
         Assert.Equal(DistributorStatus.Invited, _invitation.Status);
         Assert.Equal(InvitationViewState.Pending, _invitation.InvitationState(_world.Clock.UtcNow));
-        Assert.Equal(0, _world.UnitOfWork.Saves);
+        Assert.Equal(1, _world.UnitOfWork.Saves); // la marca quedó confirmada
+        Assert.Equal(DistributorWorld.Now, _invitation.AcceptanceStartedAt);
 
         var retry = await AcceptAsync(new NewTenantChoice(NewTenantData));
 
@@ -583,7 +587,7 @@ public sealed class DistributorInvitationServiceTests
         Assert.Equal(WholesaleModuleSets.InvitedDistributor.Select(key => key.Value), retry.EnabledModules);
         Assert.Equal(2, _suppliers.Calls.Count); // idempotente: el enlazador devuelve el mismo proveedor
         Assert.Equal(DistributorStatus.Active, _invitation.Status);
-        Assert.Equal(1, _world.UnitOfWork.Saves);
+        Assert.Equal(2, _world.UnitOfWork.Saves); // el reintento no vuelve a guardar la marca
     }
 
     // D-17: un intento anterior ya creó el tenant reservado; aunque ahora pida vincular otro, termina sobre el reservado.
@@ -651,6 +655,7 @@ public sealed class DistributorInvitationServiceTests
         _world.Distributors.Distributors.Remove(winner);
         winner.Accept(_user, _invitation.Invitation.ReservedTenantId, Guid.CreateVersion7(), DistributorWorld.Now);
         _world.UnitOfWork.FailNextSaveWith = new RequestConcurrencyException("concurrency.conflict", "lost");
+        _world.UnitOfWork.FailAfterSaves = 1;
         _world.UnitOfWork.OnDiscard = () => _world.Distributors.Replace(_invitation, winner);
 
         var result = await AcceptAsync(new NewTenantChoice(NewTenantData));
@@ -667,12 +672,103 @@ public sealed class DistributorInvitationServiceTests
         var fresh = _world.SeedInvited("222", tokenHash: _invitation.Invitation.TokenHash);
         _world.Distributors.Distributors.Remove(fresh);
         _world.UnitOfWork.FailNextSaveWith = new ResourceConflictException("wholesale.distributor.already_linked", "index");
+        _world.UnitOfWork.FailAfterSaves = 1;
         _world.UnitOfWork.OnDiscard = () => _world.Distributors.Replace(_invitation, fresh);
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() => AcceptAsync(new LinkTenantChoice(mine)));
 
         Assert.Equal("wholesale.distributor.already_linked", error.Code);
         Assert.Equal(1, _world.UnitOfWork.Discards);
+    }
+
+    // La marca se confirma antes de la primera escritura en otro módulo, en las tres ramas del destino.
+    [Theory]
+    [InlineData("new")]
+    [InlineData("link")]
+    [InlineData("reserved")]
+    public async Task TheStartIsCommittedBeforeTheFirstWriteInAnotherModule(string path)
+    {
+        var mine = _tenancy.AddTenant("Mi Tienda", _user, TenantStatus.Active, TenantModuleKeys.Catalog);
+        if (path == "reserved")
+        {
+            _tenancy.AddTenant(
+                _invitation.Invitation.ReservedTenantId, "Distri Norte", _user, TenantStatus.Active,
+                [.. WholesaleModuleSets.InvitedDistributor]);
+        }
+
+        var seen = new List<(int Saves, DateTimeOffset? StartedAt)>();
+        void Observe() => seen.Add((_world.UnitOfWork.Saves, _invitation.AcceptanceStartedAt));
+        _tenancy.BeforeWrite = Observe;
+        _companies.BeforeWrite = Observe;
+
+        await AcceptAsync(path == "link" ? new LinkTenantChoice(mine) : new NewTenantChoice(NewTenantData));
+
+        Assert.NotEmpty(seen);
+        Assert.All(seen, write => Assert.Equal((1, (DateTimeOffset?)DistributorWorld.Now), write));
+    }
+
+    // Un PUT confirmó entre la carga y la marca: la aceptación relee y termina con los datos nuevos, nunca con los viejos.
+    [Fact]
+    public async Task ALostStartRaceReloadsBeforeWritingInAnotherModule()
+    {
+        var edited = _world.SeedInvited(
+            "800111222", tokenHash: _invitation.Invitation.TokenHash, cityId: _world.MedellinId);
+        _world.Distributors.Distributors.Remove(edited);
+        _world.UnitOfWork.FailNextSaveWith = new RequestConcurrencyException("concurrency.conflict", "lost");
+        _world.UnitOfWork.OnDiscard = () => _world.Distributors.Replace(_invitation, edited);
+
+        var result = await AcceptAsync(new NewTenantChoice(NewTenantData));
+
+        Assert.Equal(edited.Invitation.ReservedTenantId, result.TenantId);
+        Assert.Equal(edited.Invitation.ReservedTenantId, Assert.Single(_tenancy.Registered).TenantId);
+        Assert.Equal("800111222", Assert.Single(_companies.Calls).Draft.TaxId);
+        Assert.Equal("800111222", Assert.Single(_customers.Calls).Identification);
+        Assert.Equal(DistributorStatus.Active, edited.Status);
+        Assert.Equal((2, 1), (_world.UnitOfWork.Saves, _world.UnitOfWork.Discards));
+    }
+
+    // La relectura vuelve a validar: lo que dejó de ser aceptable se rechaza sin escribir en ningún módulo.
+    [Fact]
+    public async Task ALostStartRaceRevalidatesAndRejectsWithoutWriting()
+    {
+        _world.UnitOfWork.FailNextSaveWith = new RequestConcurrencyException("concurrency.conflict", "lost");
+        _world.UnitOfWork.OnDiscard = () => _world.Distributors.Distributors.Remove(_invitation);
+
+        var error = await Assert.ThrowsAsync<ResourceNotFoundException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+
+        Assert.Equal("wholesale.invitation.not_found", error.Code);
+        Assert.Equal(0, _tenancy.Writes);
+        Assert.Empty(_companies.Calls);
+        Assert.Empty(_customers.Calls);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
+    }
+
+    // Si la fila no deja de cambiar, se rinde con el 412 de siempre y sin haber escrito en otro módulo.
+    [Fact]
+    public async Task AStartThatKeepsLosingTheRaceIsAConcurrencyConflictAndWritesNothing()
+    {
+        var current = _invitation;
+        void LoseAgain() => _world.UnitOfWork.FailNextSaveWith = new RequestConcurrencyException("concurrency.conflict", "lost");
+        LoseAgain();
+        _world.UnitOfWork.OnDiscard = () =>
+        {
+            // Cada relectura trae una fila sin la marca, y su guardado vuelve a perder.
+            var fresh = _world.SeedInvited(
+                $"7{_world.UnitOfWork.Discards}", tokenHash: current.Invitation.TokenHash, cityId: _world.MedellinId);
+            _world.Distributors.Distributors.Remove(fresh);
+            _world.Distributors.Replace(current, fresh);
+            current = fresh;
+            LoseAgain();
+        };
+
+        var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() => AcceptAsync(new NewTenantChoice(NewTenantData)));
+
+        Assert.Equal("concurrency.conflict", error.Code);
+        Assert.Equal(3, _world.UnitOfWork.Discards);
+        Assert.Equal(0, _tenancy.Writes);
+        Assert.Empty(_companies.Calls);
+        Assert.Empty(_customers.Calls);
+        Assert.Equal(0, _world.UnitOfWork.Saves);
     }
 
     [Fact]

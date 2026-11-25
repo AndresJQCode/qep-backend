@@ -1,10 +1,10 @@
-using Modules.Siigo.Application;
-using Modules.Siigo.Infrastructure.Batches;
+using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using System.Net;
-using System.Text.Json;
+using Modules.Siigo.Application;
+using Modules.Siigo.Infrastructure.Batches;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
 using static Modules.Siigo.IntegrationTests.SiigoInvoicingHarness;
 

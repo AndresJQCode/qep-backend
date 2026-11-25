@@ -1,9 +1,9 @@
 using System.Diagnostics.Metrics;
-using BuildingBlocks.Application;
-using BuildingBlocks.Observability;
 using Bootstrapper.Observability;
 using Bootstrapper.UnitTests.Valkey;
 using Bootstrapper.Valkey;
+using BuildingBlocks.Application;
+using BuildingBlocks.Observability;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;

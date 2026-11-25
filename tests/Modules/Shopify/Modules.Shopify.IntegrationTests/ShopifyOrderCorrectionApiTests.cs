@@ -91,6 +91,27 @@ public sealed class ShopifyOrderCorrectionApiTests
         Assert.Equal("1", await flow.ScalarAsync("SELECT count(*)::text FROM audit.entries WHERE action = 'shopify.order.corrected'"));
     }
 
+    // Spec 2026-11-24 §5: la corrección del panel no recibe código postal, así que al reescribir la parte lo conserva; si no,
+    // cada corrección lo borraría. El pedido se siembra a mano: todavía ningún camino le pone uno a un pedido de Shopify.
+    [Fact]
+    public async Task ACorrectionKeepsThePostalCode()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        await flow.ScalarAsync(
+            "UPDATE quotations.order_parties SET postal_code = '055422' WHERE role = 'Shipping' RETURNING postal_code");
+
+        var response = await PutAsync(client, flow, await CorrectionBodyAsync(flow));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var (_, envigado) = await EnvigadoAsync(flow);
+        Assert.Equal(
+            $"{envigado}|055422",
+            await flow.ScalarAsync(
+                "SELECT city_id::text || '|' || coalesce(postal_code, '') FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
     // Owner, 2026-11-14: con la conexión operativa, la respuesta dice que el cambio quedó encolado para Shopify.
     [Fact]
     public async Task ACorrectionOnAnActiveConnectionSaysItWasQueued()

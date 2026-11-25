@@ -1,7 +1,7 @@
 using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
-using Modules.Customers.Application;
 using Modules.Automations.Infrastructure.Persistence;
+using Modules.Customers.Application;
 using Modules.Customers.Infrastructure.Persistence;
 using Modules.Messaging.Domain;
 

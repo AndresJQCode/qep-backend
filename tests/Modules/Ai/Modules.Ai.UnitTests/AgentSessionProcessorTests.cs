@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Ai.Application;
 using Modules.Ai.Domain;

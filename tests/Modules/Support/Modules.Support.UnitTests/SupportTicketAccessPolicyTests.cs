@@ -37,11 +37,11 @@ public sealed class SupportTicketAccessPolicyTests
     {
         var data = new TheoryData<bool, bool, bool>();
         foreach (var read in new[] { false, true })
-        foreach (var manage in new[] { false, true })
-        foreach (var taskUse in new[] { false, true })
-        {
-            data.Add(read, manage, taskUse);
-        }
+            foreach (var manage in new[] { false, true })
+                foreach (var taskUse in new[] { false, true })
+                {
+                    data.Add(read, manage, taskUse);
+                }
 
         return data;
     }

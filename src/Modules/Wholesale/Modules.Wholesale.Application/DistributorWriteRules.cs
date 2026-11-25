@@ -33,6 +33,26 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
 {
     public InviteDistributorValidator()
     {
+        Include(new DistributorProfileValidator());
+        RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);
+        RuleFor(command => command.AdvisorId).NotEqual(Guid.Empty);
+        RuleFor(command => command.BillingCompanyId).NotEqual(Guid.Empty);
+        RuleFor(command => command.Phone).NoticePhone();
+        RuleFor(command => command.WhatsAppConnectionId)
+            .NotEqual(Guid.Empty)
+            .When(command => !string.IsNullOrWhiteSpace(command.Phone));
+    }
+}
+
+/// <summary>
+/// Las reglas de los datos del distribuidor, las mismas al invitar y al editarlo invitado. <c>internal</c> para que el registro
+/// por ensamblado no la inscriba como un validador más. <paramref name="demandCity"/> es <c>false</c> sólo al editar una
+/// invitación anterior a la ciudad sin tocar país ni ciudad: exigírsela dejaría sin editar a quien no la manda.
+/// </summary>
+internal sealed class DistributorProfileValidator : AbstractValidator<IDistributorProfile>
+{
+    public DistributorProfileValidator(bool demandCity = true)
+    {
         RuleFor(command => command.Email)
             .Must(email => !string.IsNullOrWhiteSpace(email))
             .WithMessage("The email is required.")
@@ -54,13 +74,6 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
             .WithMessage("The identification type is not valid for the country.");
         RuleFor(command => command.IdentificationNumber).TrimmedText(DistributorTextLimits.IdentificationNumber);
         RuleFor(command => command.ContactName).TrimmedText(DistributorTextLimits.ContactName);
-        RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);
-        RuleFor(command => command.AdvisorId).NotEqual(Guid.Empty);
-        RuleFor(command => command.BillingCompanyId).NotEqual(Guid.Empty);
-        RuleFor(command => command.Phone).NoticePhone();
-        RuleFor(command => command.WhatsAppConnectionId)
-            .NotEqual(Guid.Empty)
-            .When(command => !string.IsNullOrWhiteSpace(command.Phone));
 
         // La ciudad se exige con las mismas reglas y los mismos nombres de propiedad que CompanyWriteRules (Companies): de ahí
         // nace la empresa del distribuidor al aceptar, y lo que Companies rechazaría ahí se rechaza acá, al invitar. Se replica
@@ -69,11 +82,11 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
         RuleFor(command => command.CityId)
             .Must(cityId => cityId is { } value && value != Guid.Empty)
             .WithMessage("The city is required.")
-            .When(command => IsCountryCode(command.Country) && IsColombian(command.Country));
+            .When(command => demandCity && IsCountryCode(command.Country) && IsColombian(command.Country));
         RuleFor(command => command.CityName)
             .Must(cityName => !string.IsNullOrWhiteSpace(cityName))
             .WithMessage("The city is required.")
-            .When(command => IsCountryCode(command.Country) && !IsColombian(command.Country));
+            .When(command => demandCity && IsCountryCode(command.Country) && !IsColombian(command.Country));
         RuleFor(command => command.CityName)
             .Must(cityName => cityName!.Trim().Length <= DistributorTextLimits.CityName)
             .WithMessage($"The city has at most {DistributorTextLimits.CityName} characters.")
@@ -84,7 +97,7 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
             .When(command => !string.IsNullOrWhiteSpace(command.Address));
     }
 
-    private static bool IsColombian(string country) => string.Equals(country.Trim(), "CO", StringComparison.OrdinalIgnoreCase);
+    internal static bool IsColombian(string country) => string.Equals(country.Trim(), "CO", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCountryCode(string? country) =>
         country is not null && country.Trim() is { Length: 2 } code && code.All(char.IsAsciiLetter);

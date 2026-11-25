@@ -579,7 +579,7 @@ public sealed class LinkShopifyStoreHandlerTests
         var bed = new Bed();
         var existing = bed.SeedLinked();
         var old = new ShopifyShopProfile(null, null, "USD", null, false, null).Serialize();
-        existing.ApplyProviderFields(IntegrationProviders.Shopify,new Dictionary<string, string> { [ShopifyFieldKeys.ShopProfile] = old });
+        existing.ApplyProviderFields(IntegrationProviders.Shopify, new Dictionary<string, string> { [ShopifyFieldKeys.ShopProfile] = old });
         bed.Gateway.FailAt = "shop";
         bed.Gateway.Failure = ShopifyGatewayFailure.Unreachable;
         var install = bed.SeedExchanged();

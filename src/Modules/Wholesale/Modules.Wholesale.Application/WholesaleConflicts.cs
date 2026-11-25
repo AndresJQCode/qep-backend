@@ -53,6 +53,12 @@ internal static class WholesaleConflicts
     public static ResourceConflictException IdentificationTaken() =>
         new(WholesaleErrorCodes.DistributorIdentificationTaken, "Another distributor already has that identification number.");
 
+    /// <summary>La aceptación ya empezó (la marca, o el tenant reservado ya creado) con la invitación pendiente: cambiar el
+    /// documento duplicaría lo que ese intento creó.</summary>
+    public static ResourceConflictException AcceptanceInProgress() =>
+        new(WholesaleErrorCodes.DistributorAcceptanceInProgress,
+            "El distribuidor ya empezó a aceptar la invitación: no puedes cambiar el tipo ni el número de documento.");
+
     public static WholesaleDomainException AdvisorInvalid() =>
         new(WholesaleErrorCodes.DistributorAdvisorInvalid, "El asesor no es un miembro activo de la organización.");
 
