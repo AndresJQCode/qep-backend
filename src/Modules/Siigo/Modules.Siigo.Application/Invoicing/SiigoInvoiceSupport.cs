@@ -97,6 +97,11 @@ internal static class SiigoInvoiceSupport
                 .OrderBy(row => row.Kind),
         ];
 
+    /// <summary>Si es la de flete y la del pedido sigue abierta (<c>Pending</c> o <c>Unknown</c>): sólo sale después de que la del pedido
+    /// existe, así que nunca salió y no hay nada que mirar en Siigo.</summary>
+    public static bool IsFreightWaitingForTheOrder(SiigoInvoice row, IEnumerable<SiigoInvoice> rows) =>
+        row.Kind == SiigoInvoiceKind.Freight && rows.Any(value => value is { Kind: SiigoInvoiceKind.Order, IsOpen: true });
+
     /// <summary>El código <c>siigo.invoice.*</c> de un intento que no se sabe cómo terminó (<c>SiigoInvoiceOutcome.Transient.Reason</c>). Lo que
     /// el tenant no puede corregir (Partner-Id o token que faltan) cae en <c>unavailable</c>: quien lo arregla lo ve en Grafana.</summary>
     public static string TransientCodeOf(string reason) => reason switch

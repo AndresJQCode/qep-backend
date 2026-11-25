@@ -307,6 +307,55 @@ public sealed class IssueSiigoInvoiceHandlerTests
         Assert.Equal(warns, resolved.OrderMarkFailed);
     }
 
+    // La de flete nunca salió mientras la del pedido siga abierta: no hay nada que mirar en Siigo, ni para decir que existe.
+    [Theory]
+    [InlineData("missing", false)]
+    [InlineData("exists", false)]
+    [InlineData("missing", true)]
+    [InlineData("exists", true)]
+    public async Task TheFreightCannotBeResolvedWhileTheOrderInvoiceIsOpen(string outcome, bool expired)
+    {
+        var sentAt = expired ? Now.AddHours(-25) : Now.AddMinutes(-11);
+        var order = Unanswered(SiigoInvoiceKind.Order, sentAt);
+        var freight = Unanswered(SiigoInvoiceKind.Freight, sentAt);
+        var harness = new Harness([order, freight]);
+
+        var exception = await Assert.ThrowsAsync<SiigoDomainException>(
+            () => harness.Resolve(outcome, "FV-1-777", "Freight"));
+
+        Assert.Equal(SiigoErrorCodes.InvoiceStateInvalid, exception.Code);
+        Assert.True(freight.IsOpen);
+        Assert.Empty(harness.Audit.Actions);
+    }
+
+    [Theory]
+    [InlineData("Created")]
+    [InlineData("Rejected")]
+    [InlineData("Failed")]
+    public async Task ALiveFreightCanBeResolvedOnceTheOrderInvoiceIsSettled(string orderStatus)
+    {
+        var order = PendingRow();
+        switch (orderStatus)
+        {
+            case "Created":
+                order.MarkCreated("siigo-1", "FV-1-123", 100m, null, Now.AddMinutes(-11));
+                break;
+            case "Rejected":
+                order.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now.AddMinutes(-11));
+                break;
+            default:
+                order.MarkFailed("siigo.invoice.order_rejected", "Discarded.", Now.AddMinutes(-11));
+                break;
+        }
+
+        var freight = Unanswered(SiigoInvoiceKind.Freight, Now.AddMinutes(-11));
+        Assert.Equal(orderStatus, order.Status.ToString());
+
+        await new Harness([order, freight]).Resolve("missing", kind: "Freight");
+
+        Assert.Equal(SiigoInvoiceStatus.Failed, freight.Status);
+    }
+
     private static SiigoInvoice Unanswered(SiigoInvoiceKind kind, DateTimeOffset sentAt)
     {
         var row = PendingRow(kind, sentAt);
@@ -372,10 +421,10 @@ public sealed class IssueSiigoInvoiceHandlerTests
         public Task<IReadOnlyList<SiigoInvoiceDto>> Issue() =>
             _handler.HandleAsync(new IssueSiigoInvoiceCommand(TenantId, OrderId, null), TestContext.Current.CancellationToken);
 
-        /// <summary>Una persona resuelve la factura del pedido.</summary>
-        public Task<SiigoInvoiceDto> Resolve(string outcome, string? number = null) =>
+        /// <summary>Una persona resuelve una factura: la del pedido si no dice cuál.</summary>
+        public Task<SiigoInvoiceDto> Resolve(string outcome, string? number = null, string? kind = null) =>
             _resolver.HandleAsync(
-                new ResolveSiigoInvoiceCommand(TenantId, OrderId, null, outcome, number), TestContext.Current.CancellationToken);
+                new ResolveSiigoInvoiceCommand(TenantId, OrderId, kind, outcome, number), TestContext.Current.CancellationToken);
     }
 
     private sealed class ExecutionContext : IExecutionContext

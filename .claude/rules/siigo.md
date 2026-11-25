@@ -46,6 +46,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   aunque tenga `unanswered_at` o ya sea `Unknown`. Un camino nuevo que mande la de flete antes rompe las dos reglas y puede duplicar. La
   espera de «no existe» vale también para una `Unknown`: `ExpireIfStale` no expira una que se está mandando y conserva el último envío sin
   respuesta (incluido un `sending_since` vencido).
+- **La de flete no se resuelve mientras la del pedido siga abierta** (`Pending` o `Unknown`): nunca salió, así que el endpoint responde
+  422 `siigo.invoice.state_invalid` y sus filas llevan `canResolve` en `false` (`SiigoInvoiceSupport.IsFreightWaitingForTheOrder`; una
+  respuesta nueva con filas del pedido tiene que cruzarlo). Con la del pedido facturada, rechazada o `Failed`, sí se resuelve.
 - **Durante el despliegue de la facturación en segundo plano hay filas sin `unanswered_at`** (el pod anterior escribe después del relleno de
   `AddSiigoBackgroundInvoicing`). El dominio trata como sin respuesta, desde `updated_at`, una `Pending` con `timeout`, `network`,
   `rate_limited` o `siigo_service`; `unavailable` no, porque también lo deja un envío que nunca salió. **Terminado el rollout, el owner corre

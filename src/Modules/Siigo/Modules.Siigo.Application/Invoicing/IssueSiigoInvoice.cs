@@ -88,10 +88,14 @@ public sealed class IssueSiigoInvoiceHandler(
 
         await EnsureOrderMarkedAsync(prepared, cancellationToken);
         var now = clock.UtcNow;
+        var current = SiigoInvoiceSupport.Current(prepared.Rows);
         return
         [
-            .. SiigoInvoiceSupport.Current(prepared.Rows)
-                .Select(row => SiigoInvoiceDto.From(row, now, prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order)),
+            .. current.Select(row => SiigoInvoiceDto.From(
+                row,
+                now,
+                prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order,
+                waitsForOrder: SiigoInvoiceSupport.IsFreightWaitingForTheOrder(row, current))),
         ];
     }
 

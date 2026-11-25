@@ -36,6 +36,8 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 /// <c>Failed</c> y el pedido queda libre para facturar de nuevo; antes de los 10 minutos del último envío sin respuesta es 422
 /// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete sin
 /// resolver (<c>Pending</c> o <c>Unknown</c>) se descarta en el mismo guardado, porque nunca salió; al declarar que existe, no se toca.
+/// La de flete no se resuelve, ni <c>exists</c> ni <c>missing</c>, mientras la del pedido siga abierta (<c>Pending</c> o <c>Unknown</c>):
+/// nunca salió (422 <c>siigo.invoice.state_invalid</c>). Con la del pedido facturada, rechazada o descartada, sí.
 /// Mientras una tanda tenga el pedido (ítem <c>Pending</c> o <c>Sending</c>), <c>missing</c> es 409
 /// <c>siigo.invoice_batch.order_in_progress</c>; <c>exists</c> sí se acepta, porque no manda nada.
 /// Audita quién la resolvió, cómo y desde qué estado.
@@ -77,6 +79,13 @@ public sealed class ResolveSiigoInvoiceHandler(
             // La transición perezosa va primero: una Pending de más de un día es Unknown aunque nadie la haya leído todavía.
             row.ExpireIfStale(now);
             var fromStatus = row.Status.ToString();
+            if (SiigoInvoiceSupport.IsFreightWaitingForTheOrder(row, rows))
+            {
+                throw new SiigoDomainException(
+                    SiigoErrorCodes.InvoiceStateInvalid,
+                    "The freight invoice has not been sent: resolve it only after the order invoice is settled.");
+            }
+
             if (command.Outcome == ResolveSiigoInvoiceValidator.Exists)
             {
                 row.ResolveExists(command.Number!, now);

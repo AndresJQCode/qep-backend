@@ -167,6 +167,10 @@ de flete sólo sale después de que la del pedido existe, así que nunca salió 
 haberla marcado igual). Si no, quedaría viva, bloqueando el pedido para siempre. Al declarar `exists`, o con la del pedido ya facturada,
 la de flete no se toca y se resuelve o se reenvía aparte (decidido durante la implementación, 2026-11-24).
 
+**La de flete espera a la del pedido** (decidido el 2026-11-25). Mientras la fila `Order` siga abierta (`Pending` o `Unknown`), la de
+flete nunca salió: resolverla, con `exists` o con `missing`, es 422 `siigo.invoice.state_invalid`, y sus filas viajan con `canResolve` en
+`false`. Con la del pedido facturada, rechazada o `Failed`, una de flete vigente se resuelve como cualquier otra.
+
 **Espera de 10 minutos para `missing`.** `ResolveMissing` exige que hayan pasado **10 minutos desde el último intento sin respuesta**:
 QEP corta a los 120 s, pero Siigo puede seguir procesando, y «No existe» es la única acción que libera el pedido para facturar con otra
 clave. Para eso la fila guarda además **`last_unanswered_at`** (`LastUnansweredAt`, nuevo, nullable), que **cada** intento sin respuesta

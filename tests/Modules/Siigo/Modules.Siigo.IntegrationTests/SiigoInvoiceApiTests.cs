@@ -362,6 +362,31 @@ public sealed class SiigoInvoiceApiTests
         Assert.Single(InvoiceCalls(world.Siigo));
     }
 
+    // La de flete nunca salió: mientras la del pedido siga abierta no se ofrece ni se acepta resolverla.
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("exists")]
+    public async Task TheFreightCannotBeResolvedWhileTheOrderInvoiceIsOpen(string outcome)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        await LeaveAwaitingConfirmationAsync(world);
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE siigo.invoices SET unanswered_at = now(), last_unanswered_at = now() WHERE kind = 'Freight'");
+        await AgeTheUnansweredSendAsync(world);
+
+        var row = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[1];
+        var response = await PostAsync(world, "/resolve", new { kind = "Freight", outcome, number = "FV-1-777" });
+
+        Assert.False(row.GetProperty("canResolve").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("missingAvailableAt").ValueKind);
+        AssertRejectedCode(
+            response, HttpStatusCode.UnprocessableEntity, "siigo.invoice.state_invalid", await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("Pending", await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoices WHERE kind = 'Freight'"));
+    }
+
     // La de flete sólo sale después de que la del pedido existe: aunque haya quedado marcada sin respuesta (o ya venció a las 24 h), si la
     // del pedido no existe, nunca salió y se descarta con ella. Viva, dejaría el pedido bloqueado.
     [Theory]
