@@ -149,8 +149,9 @@ public static class RegistrationEndpoints
             string.IsNullOrWhiteSpace(culture) ? DefaultCulture : culture,
             string.IsNullOrWhiteSpace(timeZone) ? DefaultTimeZone : timeZone,
             string.IsNullOrWhiteSpace(dateFormat) ? DefaultDateFormat : dateFormat,
-            // Vacío cuenta como ausente: el selector del registro puede mandar "" sin elegir.
-            string.IsNullOrWhiteSpace(language) ? null : language);
+            // Vacío cuenta como ausente: el selector del registro puede mandar "" sin elegir. Va con
+            // nombre: el parámetro posicional que sigue a DateFormat es Country.
+            Language: string.IsNullOrWhiteSpace(language) ? null : language);
 }
 
 public sealed record RegistrationPolicyResponse(bool PublicTenantSignupEnabled);
