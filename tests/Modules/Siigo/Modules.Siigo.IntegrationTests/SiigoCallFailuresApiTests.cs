@@ -118,7 +118,8 @@ public sealed class SiigoCallFailuresApiTests
         // Hora local de Colombia (-05:00): Npgsql rechaza un offset distinto de cero en timestamptz, así que el repositorio convierte a UTC.
         var colombian = TimeSpan.FromHours(-5);
         Assert.Equal(1, await TotalAsync($"?to={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-25).ToOffset(colombian).ToString("O"))}"));
-        Assert.Equal(2, await TotalAsync($"?from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-15).ToOffset(colombian).ToString("O"))}"));
+        // Desde hace 25 minutos: las de hace 10 y 20, el complemento exacto del `to` de arriba (con -15 sólo entraba la de hace 10).
+        Assert.Equal(2, await TotalAsync($"?from={Uri.EscapeDataString(DateTimeOffset.UtcNow.AddMinutes(-25).ToOffset(colombian).ToString("O"))}"));
     }
 
     [Fact]

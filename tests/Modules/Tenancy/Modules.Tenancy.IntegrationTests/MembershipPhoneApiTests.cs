@@ -315,7 +315,7 @@ public sealed class MembershipPhoneApiTests(SharedTenancyHost host) : IClassFixt
         await connection.OpenAsync(Ct);
         await using var command = new NpgsqlCommand(
             """
-            SELECT changed_fields, row_to_json(e)::text
+            SELECT changed_fields::text, row_to_json(e)::text
             FROM audit.entries e
             WHERE resource_id = @a AND action IN ('tenancy.membership.phone_updated', 'tenancy.membership.profile_updated')
             ORDER BY occurred_at
@@ -326,7 +326,8 @@ public sealed class MembershipPhoneApiTests(SharedTenancyHost host) : IClassFixt
         await using var reader = await command.ExecuteReaderAsync(Ct);
         while (await reader.ReadAsync(Ct))
         {
-            rows.Add((reader.GetFieldValue<string[]>(0), reader.GetString(1)));
+            // changed_fields es un arreglo jsonb, no text[]: Npgsql no lo lee como string[] sin JSON dinámico.
+            rows.Add((System.Text.Json.JsonSerializer.Deserialize<string[]>(reader.GetString(0))!, reader.GetString(1)));
         }
 
         return rows;

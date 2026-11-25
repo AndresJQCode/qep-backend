@@ -31,6 +31,21 @@ public sealed class SchedulingPersistenceTests
     private static Session NewSession(Seed seed, ResourceId resource, DateTimeOffset start, int buffer = 0, int capacity = 1, bool published = false) =>
         Session.Create(SessionId.New(), Tenant, resource, seed.Service.Id, start, start.AddMinutes(30), buffer, capacity, published, Now);
 
+    // Esta base sólo migra la Agenda, pero desde ad8479522 SchedulingUnitOfWork comprueba que el cliente de una cita nueva exista en
+    // customers.customers (borrar clientes, spec 2026-11-10, P1/P2). Igual que CustomerReferenceReplica en Quotations: la tabla con las dos
+    // columnas que lee esa comprobación y el cliente dado de alta.
+    private static async Task<Guid> SeedCustomerAsync(SchedulingDatabase database)
+    {
+        var customerId = Guid.CreateVersion7();
+        await using var context = database.CreateContext();
+        await context.Database.ExecuteSqlRawAsync(
+            "CREATE SCHEMA IF NOT EXISTS customers; CREATE TABLE IF NOT EXISTS customers.customers (id uuid PRIMARY KEY, tenant_id uuid NOT NULL);",
+            TestContext.Current.CancellationToken);
+        await context.Database.ExecuteSqlAsync(
+            $"INSERT INTO customers.customers (id, tenant_id) VALUES ({customerId}, {Tenant})", TestContext.Current.CancellationToken);
+        return customerId;
+    }
+
     private static async Task SaveAsync(SchedulingDatabase database, params Session[] sessions)
     {
         await using var context = database.CreateContext();
@@ -198,8 +213,9 @@ public sealed class SchedulingPersistenceTests
         var session = NewSession(seed, seed.Resource.Id, Start);
         session.Reserve(Now);
         var actor = Guid.CreateVersion7();
+        var customerId = await SeedCustomerAsync(database);
         var appointment = Appointment.Create(
-            AppointmentId.New(), Tenant, seed.Location.Id, seed.Resource.Id, seed.Service.Id, Guid.CreateVersion7(), session.Id,
+            AppointmentId.New(), Tenant, seed.Location.Id, seed.Resource.Id, seed.Service.Id, customerId, session.Id,
             blockId: null, Start, Start.AddMinutes(30), AppointmentStatus.Pending, AppointmentSource.Channel,
             conversationId: Guid.CreateVersion7(), note: "Primera vez", actor, Now);
         appointment.Confirm(actor, Now.AddMinutes(5));
