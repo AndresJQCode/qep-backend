@@ -44,7 +44,7 @@ public sealed record SiigoCustomerRequest(
     string CountryCode,
     string StateCode,
     string CityCode,
-    string? Phone,
+    SiigoPhone? Phone,
     string? ContactFirstName,
     string? ContactLastName,
     string? ContactEmail)

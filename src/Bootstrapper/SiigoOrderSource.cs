@@ -59,7 +59,7 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
                 codes?.CityCode,
                 codes?.StateCode,
                 party.Email,
-                party.Phone),
+                string.IsNullOrWhiteSpace(party.Phone) ? null : new SiigoPhone(null, party.Phone)),
             order.CompanyId,
             order.Version,
             order.AdvisorMembershipId,

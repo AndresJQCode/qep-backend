@@ -11,6 +11,9 @@ public static class SiigoCustomerMapper
     private const string FinalConsumerCity = "11001";
     private const string FinalConsumerState = "11";
 
+    /// <summary>El máximo de dígitos del indicativo y del número en la documentación de Siigo (crear cliente).</summary>
+    private const int PhonePartMaxLength = 10;
+
     /// <summary><c>null</c> si no se puede armar: sin identificación, con un tipo sin código de Siigo o sin ciudad con código DANE. Quien
     /// llama ya reportó cada caso como faltante.</summary>
     public static SiigoCustomerRequest? Map(SiigoBilledPartyInput party)
@@ -27,7 +30,7 @@ public static class SiigoCustomerMapper
                 "Co",
                 Clean(party.StateCode) ?? FinalConsumerState,
                 Clean(party.CityCode) ?? FinalConsumerCity,
-                Clean(party.Phone),
+                Phone(party.Phone),
                 "Consumidor",
                 "Final",
                 Clean(party.Email));
@@ -53,7 +56,7 @@ public static class SiigoCustomerMapper
             "Co",
             state,
             city,
-            Clean(party.Phone),
+            Phone(party.Phone),
             first,
             rest,
             Clean(party.Email));
@@ -89,6 +92,24 @@ public static class SiigoCustomerMapper
             1 => (tokens[0], tokens[0]),
             _ => (tokens[0], string.Join(' ', tokens.Skip(1))),
         };
+    }
+
+    // El teléfono nunca tumba la creación: lo que Siigo no aceptaría se omite en vez de mandarse.
+    private static SiigoPhone? Phone(SiigoPhone? phone)
+    {
+        if (phone is null || PhonePart(phone.Number) is not { } number)
+        {
+            return null;
+        }
+
+        return new SiigoPhone(PhonePart(phone.Indicative), number);
+    }
+
+    // Sólo los dígitos ASCII; null si no queda ninguno o si pasan del máximo.
+    private static string? PhonePart(string? value)
+    {
+        var digits = new string((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+        return digits.Length is 0 or > PhonePartMaxLength ? null : digits;
     }
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

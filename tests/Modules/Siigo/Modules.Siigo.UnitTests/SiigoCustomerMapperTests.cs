@@ -8,7 +8,8 @@ namespace Modules.Siigo.UnitTests;
 public sealed class SiigoCustomerMapperTests
 {
     private static SiigoBilledPartyInput Person(string name = "Ana María Gómez Pérez") =>
-        new(false, SiigoPersonKind.Natural, SiigoIdentificationKind.Cc, "1020304050", name, "Carrera 7 # 1-2", "05001", "05", "ana@test.co", "3109998877");
+        new(false, SiigoPersonKind.Natural, SiigoIdentificationKind.Cc, "1020304050", name, "Carrera 7 # 1-2", "05001", "05", "ana@test.co",
+            new SiigoPhone("57", "3109998877"));
 
     [Theory]
     [InlineData("900.123.456-7", "900123456")]
@@ -67,9 +68,42 @@ public sealed class SiigoCustomerMapperTests
         var request = SiigoCustomerMapper.Map(Person())!;
 
         Assert.Equal(("Co", "05", "05001"), (request.CountryCode, request.StateCode, request.CityCode));
-        Assert.Equal("3109998877", request.Phone);
+        Assert.Equal(new SiigoPhone("57", "3109998877"), request.Phone);
         Assert.Equal("ana@test.co", request.ContactEmail);
     }
+
+    [Theory]
+    [InlineData("57", "300 123-4567", "57", "3001234567")]
+    [InlineData("+57", "3001234567", "57", "3001234567")]
+    [InlineData(null, "12345", null, "12345")]
+    [InlineData("12345678901", "3001234567", null, "3001234567")] // indicativo de más de 10: viaja el número solo
+    [InlineData("", "3001234567", null, "3001234567")]
+    public void ThePhoneIsCleanedToDigits(string? indicative, string number, string? expectedIndicative, string expectedNumber) =>
+        Assert.Equal(
+            new SiigoPhone(expectedIndicative, expectedNumber),
+            SiigoCustomerMapper.Map(Person() with { Phone = new SiigoPhone(indicative, number) })!.Phone);
+
+    [Theory]
+    [InlineData("+57573001234567")] // no partido: 14 dígitos
+    [InlineData("584121234567")]
+    [InlineData("sin número")]
+    [InlineData("  ")]
+    public void ANumberThatIsEmptyOrLongerThanTenDigitsSendsNoPhone(string number) =>
+        Assert.Null(SiigoCustomerMapper.Map(Person() with { Phone = new SiigoPhone(null, number) })!.Phone);
+
+    [Fact]
+    public void AFinalConsumerFollowsTheSamePhoneRules()
+    {
+        var party = new SiigoBilledPartyInput(
+            true, null, null, "", "", null, null, null, null, new SiigoPhone("57", "+57 300 123 4567"));
+
+        Assert.Null(SiigoCustomerMapper.Map(party)!.Phone); // «57300…» son 12 dígitos en el número
+        Assert.Null(SiigoCustomerMapper.Map(party with { Phone = null })!.Phone);
+    }
+
+    [Fact]
+    public void ThePhoneNeverPrints() =>
+        Assert.DoesNotContain("3001234567", new SiigoPhone("57", "3001234567").ToString(), StringComparison.Ordinal);
 
     [Theory]
     [InlineData(SiigoIdentificationKind.Cc, "13")]
@@ -103,7 +137,8 @@ public sealed class SiigoCustomerMapperTests
     [Fact]
     public void TheRequestToStringIsRedactedEvenWithoutTheMapper()
     {
-        var request = new SiigoCustomerRequest("Person", "13", "123", ["Ana", "Gomez"], "Calle", "Co", "11", "11001", "300", "Ana", "Gomez", "a@b.co");
+        var request = new SiigoCustomerRequest(
+            "Person", "13", "123", ["Ana", "Gomez"], "Calle", "Co", "11", "11001", new SiigoPhone(null, "300"), "Ana", "Gomez", "a@b.co");
 
         Assert.DoesNotContain("123", request.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("Gomez", request.ToString(), StringComparison.Ordinal);
