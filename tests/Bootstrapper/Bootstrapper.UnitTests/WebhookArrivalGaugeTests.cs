@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
+using Bootstrapper.Observability;
 using BuildingBlocks.Application;
 using BuildingBlocks.Observability;
-using Bootstrapper.Observability;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Bootstrapper.UnitTests;

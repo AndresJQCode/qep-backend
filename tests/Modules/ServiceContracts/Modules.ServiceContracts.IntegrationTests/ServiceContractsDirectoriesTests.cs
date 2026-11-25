@@ -1,7 +1,7 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Modules.ServiceContracts.Application;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
+using Modules.ServiceContracts.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using static Modules.ServiceContracts.IntegrationTests.ServiceContractsApiHarness;

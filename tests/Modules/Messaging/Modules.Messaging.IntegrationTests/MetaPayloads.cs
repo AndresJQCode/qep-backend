@@ -175,8 +175,12 @@ internal static class MetaPayloads
     {
         JsonObject Message((string Wamid, string Body) item) => new()
         {
-            ["from"] = waId, ["from_user_id"] = UserIdFor(waId), ["id"] = item.Wamid, ["timestamp"] = Seconds(timestamp),
-            ["type"] = "text", ["text"] = new JsonObject { ["body"] = item.Body },
+            ["from"] = waId,
+            ["from_user_id"] = UserIdFor(waId),
+            ["id"] = item.Wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "text",
+            ["text"] = new JsonObject { ["body"] = item.Body },
         };
         var value = new JsonObject
         {

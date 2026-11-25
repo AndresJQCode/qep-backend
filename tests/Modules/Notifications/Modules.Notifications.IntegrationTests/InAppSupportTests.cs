@@ -26,7 +26,11 @@ public sealed class InAppSupportTests
             RepliedEvent,
             JsonSerializer.Serialize(new
             {
-                tenantId, ticketId, ticketNumber = "SOP-000127", assigneeMemberId = owner, occurredAt = DateTimeOffset.UtcNow,
+                tenantId,
+                ticketId,
+                ticketNumber = "SOP-000127",
+                assigneeMemberId = owner,
+                occurredAt = DateTimeOffset.UtcNow,
             }));
 
         await DrainAsync(factory, Consumer);
@@ -58,8 +62,13 @@ public sealed class InAppSupportTests
             UnassignedEvent,
             JsonSerializer.Serialize(new
             {
-                tenantId, ticketId, ticketNumber = "SOP-000127", recipientMemberIds = new[] { owner, second }, thresholdHours = 4,
-                unassignedSince = since, occurredAt = DateTimeOffset.UtcNow,
+                tenantId,
+                ticketId,
+                ticketNumber = "SOP-000127",
+                recipientMemberIds = new[] { owner, second },
+                thresholdHours = 4,
+                unassignedSince = since,
+                occurredAt = DateTimeOffset.UtcNow,
             }));
 
         await DrainAsync(factory, Consumer);
@@ -91,8 +100,13 @@ public sealed class InAppSupportTests
         var now = DateTimeOffset.UtcNow;
         var payload = JsonSerializer.Serialize(new
         {
-            tenantId, ticketId, ticketNumber = "SOP-000127", recipientMemberIds = new[] { owner }, thresholdHours = 4,
-            unassignedSince = since, occurredAt = now,
+            tenantId,
+            ticketId,
+            ticketNumber = "SOP-000127",
+            recipientMemberIds = new[] { owner },
+            thresholdHours = 4,
+            unassignedSince = since,
+            occurredAt = now,
         });
         await InsertOutboxAsync(database.GetConnectionString(), UnassignedEvent, payload, now.AddMinutes(-10));
         await InsertOutboxAsync(database.GetConnectionString(), UnassignedEvent, payload, now.AddMinutes(-5));

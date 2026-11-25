@@ -58,7 +58,10 @@ public sealed class OrderParty
         && !string.IsNullOrWhiteSpace(Address)
         && new QuotationPartyDetails
         {
-            Country = Country, DepartmentId = DepartmentId, CityId = CityId, CityName = CityName
+            Country = Country,
+            DepartmentId = DepartmentId,
+            CityId = CityId,
+            CityName = CityName
         }.HasCompleteCity;
 
     public static OrderParty Create(OrderId orderId, QuotationPartyRole role, QuotationPartyDetails details) =>

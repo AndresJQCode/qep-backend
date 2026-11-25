@@ -9,8 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Ai.Application;
 using Modules.Ai.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
-using TenancyDomain = Modules.Tenancy.Domain;
 using static Modules.Ai.IntegrationTests.AiApiHarness;
+using TenancyDomain = Modules.Tenancy.Domain;
 
 namespace Modules.Ai.IntegrationTests;
 

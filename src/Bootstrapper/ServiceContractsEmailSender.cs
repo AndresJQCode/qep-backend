@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
-using Modules.ServiceContracts.Application;
 using Modules.Notifications.Application;
 using Modules.Quotations.Application;
+using Modules.ServiceContracts.Application;
 using Modules.Tenancy.Application;
 
 namespace Bootstrapper;

@@ -41,9 +41,16 @@ public sealed class BuyerAccountDeletionApiTests
         {
             billing = new
             {
-                name = "Ana Pérez", identificationType = "CC", identificationNumber = "1020304050", phone = "3001234567",
-                email = "facturas@empresa.com", address = "Cra 1 # 2-3", country = "CO", departmentId = Guid.NewGuid(),
-                cityId = Guid.NewGuid(), cityName = (string?)null,
+                name = "Ana Pérez",
+                identificationType = "CC",
+                identificationNumber = "1020304050",
+                phone = "3001234567",
+                email = "facturas@empresa.com",
+                address = "Cra 1 # 2-3",
+                country = "CO",
+                departmentId = Guid.NewGuid(),
+                cityId = Guid.NewGuid(),
+                cityName = (string?)null,
             },
             shipping = (object?)null,
             shippingSameAsBilling = true,

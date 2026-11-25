@@ -181,7 +181,7 @@ public sealed class OrderTests
         });
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation,null,
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(PartyPersonType.Natural, order.Billing?.PersonType);
@@ -399,7 +399,7 @@ public sealed class OrderTests
         var quotation = ConvertedQuotation();
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation,"Pago verificado",
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, "Pago verificado",
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal((OrderSource.Quotation, (QuotationId?)quotation.Id), (order.Source, order.QuotationId));
@@ -416,7 +416,7 @@ public sealed class OrderTests
     public void FromQuotationInheritsTheQuotationNotesWhenTheRequestOmitsThem()
     {
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(),null,
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), null,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal("Entregar en portería", order.Notes);
@@ -428,7 +428,7 @@ public sealed class OrderTests
     public void FromQuotationWithEmptyNotesLeavesTheOrderWithoutNotes(string notes)
     {
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(),notes,
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), notes,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Null(order.Notes);

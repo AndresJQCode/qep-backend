@@ -1,10 +1,10 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Modules.Automations.Infrastructure.Persistence;
 using Modules.Automations.Application;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
+using Modules.Automations.Infrastructure.Persistence;
 using static Modules.Automations.IntegrationTests.AutomationsApiHarness;
 
 namespace Modules.Automations.IntegrationTests;

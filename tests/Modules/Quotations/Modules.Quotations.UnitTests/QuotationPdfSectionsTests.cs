@@ -141,7 +141,12 @@ public sealed class QuotationPdfSectionsTests
     {
         var cop = QuotationPdfSectionsBuilder.ValuesOf(Document() with
         {
-            Currency = "COP", Symbol = "$", Decimals = 0, Total = 1_250_000m, ThousandsSeparator = ".", DecimalSeparator = ",",
+            Currency = "COP",
+            Symbol = "$",
+            Decimals = 0,
+            Total = 1_250_000m,
+            ThousandsSeparator = ".",
+            DecimalSeparator = ",",
         });
         var usd = QuotationPdfSectionsBuilder.ValuesOf(Document() with
         {

@@ -63,7 +63,8 @@ public sealed class OptionalBillingAccountApiTests(SharedQuotationsHost sharedHo
             $"/api/v1/tenants/{tenantId}/orders/preview",
             new PreviewOrderRequest(
                 clientId, "Transferencia", null, false, null, null, null,
-                [new OrderEditItemRequest(productId, 1m)], []) with { BillingCompanyId = company.CompanyId },
+                [new OrderEditItemRequest(productId, 1m)], []) with
+            { BillingCompanyId = company.CompanyId },
             TestContext.Current.CancellationToken);
 
         var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);

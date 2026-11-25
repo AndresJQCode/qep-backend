@@ -755,7 +755,12 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
 
         var response = await PostTaxRateAsync(client, new
         {
-            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", minimumBase = 4, cityId = city.Id,
+            name = "ReteICA Bogotá",
+            percentage = 0.966m,
+            type = "ReteICA",
+            country = "CO",
+            minimumBase = 4,
+            cityId = city.Id,
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -813,7 +818,11 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
 
         var response = await PostTaxRateAsync(client, new
         {
-            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId = Guid.NewGuid(),
+            name = "ReteICA Bogotá",
+            percentage = 0.966m,
+            type = "ReteICA",
+            country = "CO",
+            cityId = Guid.NewGuid(),
         });
 
         await AssertProblemCodeAsync(response, "catalog.tax_rate.city_invalid");
@@ -830,7 +839,11 @@ public sealed class TaxRateApiTests(SharedCatalogHost sharedHost) : IClassFixtur
         var cities = await FindSeededCitiesAsync(factory, 2);
         var created = await ReadTaxRateAsync(await PostTaxRateAsync(client, new
         {
-            name = "ReteICA Bogotá", percentage = 0.966m, type = "ReteICA", country = "CO", cityId = cities[0].Id,
+            name = "ReteICA Bogotá",
+            percentage = 0.966m,
+            type = "ReteICA",
+            country = "CO",
+            cityId = cities[0].Id,
         }));
 
         var response = await PutTaxRateAsync(

@@ -48,9 +48,9 @@ internal sealed class PipelineUnitOfWork(PipelineDbContext dbContext) : IPipelin
         // dos para que la carrera no salga como 500; el nombre de la restricción sigue siendo lo que decide.
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException
-                  {
-                      SqlState: PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.RestrictViolation,
-                  } postgres &&
+            {
+                SqlState: PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.RestrictViolation,
+            } postgres &&
                   string.Equals(postgres.ConstraintName, PipelineDbContext.DealStageForeignKey, StringComparison.Ordinal))
         {
             throw new PipelineDomainException(

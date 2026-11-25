@@ -736,8 +736,13 @@ public sealed partial class ChatbotsApiTests
             setup, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}",
             new
             {
-                name = "Servicio técnico", description = "", trigger = "NewConversation", keywords = Array.Empty<string>(),
-                restartKeyword = "reiniciar", maxAttempts = 3, connectionIds = new[] { setup.WhatsAppId },
+                name = "Servicio técnico",
+                description = "",
+                trigger = "NewConversation",
+                keywords = Array.Empty<string>(),
+                restartKeyword = "reiniciar",
+                maxAttempts = 3,
+                connectionIds = new[] { setup.WhatsAppId },
             },
             handoff.Chatbot.Version);
 
@@ -873,7 +878,9 @@ public sealed partial class ChatbotsApiTests
             """;
         var file = export with
         {
-            Flow = JsonDocument.Parse(flow).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = stranger,
+            Flow = JsonDocument.Parse(flow).RootElement,
+            ExhaustedAction = "Handoff",
+            ExhaustedMemberId = stranger,
         };
 
         var response = await setup.Client.PostAsJsonAsync(
@@ -936,7 +943,9 @@ public sealed partial class ChatbotsApiTests
         var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
         var file = export with
         {
-            Flow = JsonDocument.Parse(HandoffFlow(advisor.MembershipId)).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = advisor.MembershipId,
+            Flow = JsonDocument.Parse(HandoffFlow(advisor.MembershipId)).RootElement,
+            ExhaustedAction = "Handoff",
+            ExhaustedMemberId = advisor.MembershipId,
         };
 
         var response = await setup.Client.PostAsJsonAsync(

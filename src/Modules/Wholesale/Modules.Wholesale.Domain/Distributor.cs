@@ -170,7 +170,7 @@ public sealed class Distributor
             CityId = cityId == Guid.Empty ? null : cityId,
             CityName = NullIfBlank(cityName),
             Address = NullIfBlank(address),
-            Invitation =DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
+            Invitation = DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
         };
     }
 

@@ -6,9 +6,9 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Companies.Application;
-using Modules.Tenancy.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
+using Modules.Tenancy.Application;
 using Npgsql;
 using Testcontainers.PostgreSql;
 

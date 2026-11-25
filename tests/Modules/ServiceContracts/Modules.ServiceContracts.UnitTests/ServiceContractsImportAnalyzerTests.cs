@@ -166,7 +166,7 @@ public sealed class ServiceContractsImportAnalyzerTests
     {
         private readonly List<(ServiceContractsCustomerRef Customer, (string Type, string Number)? Document)> customers = [];
 
-        public Guid[] Ids =>customers.Select(entry => entry.Customer.Id).ToArray();
+        public Guid[] Ids => customers.Select(entry => entry.Customer.Id).ToArray();
 
         public FakeCustomers With(string name, string? phone = null, string? email = null, (string, string)? document = null)
         {

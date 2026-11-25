@@ -158,14 +158,14 @@ public sealed record CustomerAddressDetails
 
         return new()
         {
-        Name = NormalizeRequired(
+            Name = NormalizeRequired(
             Name,
             NameMaxLengthOf(),
             "customers.address.name_required",
             "The address name is required.",
             "customers.address.name_too_long",
             $"The address name cannot exceed {CustomerAddress.NameMaxLength} characters."),
-        Address = NormalizeRequired(
+            Address = NormalizeRequired(
             Address,
             CustomerAddress.AddressMaxLength,
             "customers.address.address_required",

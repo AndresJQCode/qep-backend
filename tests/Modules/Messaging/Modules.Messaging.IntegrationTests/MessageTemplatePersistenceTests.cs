@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Messaging.Application;
-using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Persistence;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
