@@ -149,7 +149,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                         shipping.FreightTaxPercentage, shipping.CashOnDelivery),
             draft.ShippingParty is not { } party
                 ? null
-                : new ExternalShippingParty(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId),
+                : new ExternalShippingParty(
+                    party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode),
             draft.ReplaceBuyerNotes,
             draft.BuyerNotes,
             ShopifyOrderImporter.RawAddressLabel,
@@ -208,7 +209,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             ? null
             : new QuotationPartyRequest(
                 shippingParty.Name, null, shippingParty.Phone, shippingParty.Email, shippingParty.Address,
-                shippingParty.DepartmentId, shippingParty.CityId);
+                shippingParty.DepartmentId, shippingParty.CityId, PostalCode: shippingParty.PostalCode);
 
         return new ExternalOrderDraft(
             draft.TenantId,

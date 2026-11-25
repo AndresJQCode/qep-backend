@@ -4,10 +4,9 @@ namespace Modules.Shopify.Domain;
 /// La parte de envío de un pedido de QEP tal como la guardó Quotations (spec 2026-10-26 D-C4): es la huella con que se decide si
 /// alguien la editó después de que un sinónimo la escribiera. Vive en Domain (y no en los puertos) porque la guarda
 /// <see cref="ShopifyCityCorrection"/>, y Domain no ve Application (ShopifyLayerTests).
-/// <para><see cref="PostalCode"/> (spec 2026-11-24) lo lleva el estado del pedido para que el envío a Shopify lo mande. La huella
-/// de <c>shopify.city_corrections</c> no lo guarda, y la comparación de ediciones (<c>ShopifyOrderProjection.SameParty</c>) no lo
-/// mira: hoy ningún camino le pone un código postal a un pedido de Shopify. El que empiece a hacerlo tiene que sumarlo a esas
-/// dos.</para>
+/// <para><see cref="PostalCode"/> (spec 2026-11-24) es parte de la dirección: lo guardan el estado del pedido, la huella de
+/// <c>shopify.city_corrections</c> y la proyección, y la comparación de ediciones (<c>ShopifyOrderProjection.SameParty</c>) lo
+/// mira.</para>
 /// </summary>
 public sealed record ShopifyShippingFingerprint(
     string? Name, string? Phone, string? Email, string? Address, Guid DepartmentId, Guid CityId, string? PostalCode = null);
@@ -41,6 +40,7 @@ public sealed class ShopifyCityCorrection
     public const int PartyPhoneMaxLength = 32;
     public const int PartyEmailMaxLength = 254;
     public const int PartyAddressMaxLength = 255;
+    public const int PartyPostalCodeMaxLength = 20;
 
     private ShopifyCityCorrection()
     {
@@ -80,6 +80,9 @@ public sealed class ShopifyCityCorrection
 
     public string? PartyAddress { get; private set; }
 
+    /// <summary><c>null</c> en una huella sin código postal, incluidas las de antes de que se guardara.</summary>
+    public string? PartyPostalCode { get; private set; }
+
     public long? CustomerVersion { get; private set; }
 
     public DateTimeOffset AppliedAt { get; private set; }
@@ -89,7 +92,7 @@ public sealed class ShopifyCityCorrection
     /// <summary>La huella de la parte de envío; <c>null</c> en la de un cliente.</summary>
     public ShopifyShippingFingerprint? Party =>
         Target == ShopifyCityCorrectionTarget.Order
-            ? new ShopifyShippingFingerprint(PartyName, PartyPhone, PartyEmail, PartyAddress, DepartmentId, CityId)
+            ? new ShopifyShippingFingerprint(PartyName, PartyPhone, PartyEmail, PartyAddress, DepartmentId, CityId, PartyPostalCode)
             : null;
 
     public static ShopifyCityCorrection ForOrder(
@@ -190,6 +193,7 @@ public sealed class ShopifyCityCorrection
         PartyPhone = party.Phone;
         PartyEmail = party.Email;
         PartyAddress = party.Address;
+        PartyPostalCode = party.PostalCode;
         DepartmentId = party.DepartmentId;
         CityId = party.CityId;
     }

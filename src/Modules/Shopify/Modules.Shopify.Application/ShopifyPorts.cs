@@ -428,9 +428,11 @@ public interface IShopifyShippingLookup
 public sealed record ShopifyOrderLineDraft(
     Guid VariantId, Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage);
 
-/// <summary>La parte de envío del pedido (§6.2.3 paso 2, H25), sólo cuando la dirección de Shopify quedó completa.</summary>
+/// <summary>La parte de envío del pedido (§6.2.3 paso 2, H25), sólo cuando la dirección de Shopify quedó completa.
+/// <paramref name="PostalCode"/> es el zip de la dirección (<see cref="ShopifyOrderImporter.ShippingPostalCode"/>): sin él, una
+/// edición de dirección hecha en Shopify borraría el código postal del pedido.</summary>
 public sealed record ShopifyPartyDraft(
-    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId);
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null);
 
 /// <summary>
 /// El envío resuelto por el importador (§6.2.2). <see cref="ChargeMode"/> es el nombre del modo de Quotations (<c>Charged</c>,

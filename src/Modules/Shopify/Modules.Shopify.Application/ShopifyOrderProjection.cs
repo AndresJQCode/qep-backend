@@ -86,7 +86,7 @@ public sealed record ShopifyOrderProjection(
     }
 
     /// <summary>La misma parte de envío: textos recortados, el teléfono sólo por sus dígitos y sin el indicativo de país
-    /// (<see cref="SamePhone"/>) y la misma ciudad y departamento. El
+    /// (<see cref="SamePhone"/>), la misma ciudad y departamento y el mismo código postal. El
     /// correo no cuenta: Shopify no lo trae en la dirección (sale del comprador) y no se corrige desde ahí.</summary>
     public static bool SameParty(ShopifyShippingFingerprint? a, ShopifyShippingFingerprint? b)
     {
@@ -99,7 +99,8 @@ public sealed record ShopifyOrderProjection(
             && SamePhone(a.Phone, b.Phone)
             && string.Equals(Text(a.Address), Text(b.Address), StringComparison.Ordinal)
             && a.DepartmentId == b.DepartmentId
-            && a.CityId == b.CityId;
+            && a.CityId == b.CityId
+            && string.Equals(Text(a.PostalCode), Text(b.PostalCode), StringComparison.Ordinal);
     }
 
     /// <summary>

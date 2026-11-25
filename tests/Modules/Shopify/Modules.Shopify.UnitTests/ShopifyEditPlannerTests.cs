@@ -97,6 +97,52 @@ public sealed class ShopifyEditPlannerTests
     }
 
     [Fact]
+    public async Task AZipOnlyShopifyEditIsAShippingAddressChange()
+    {
+        var world = new ShopifyEditTestWorld();
+
+        var plan = await world.PlanAsync(Snapshot(address: Address with { Zip = " 050021 " }));
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal(
+            (ShopifyEditGroupKind.ShippingAddress, ShopifyEditGroupOutcome.Apply, (string?)null),
+            (group.Kind, group.Outcome, group.Reason));
+        Assert.Equal("zip", Assert.Single(group.Rows).Field);
+        Assert.Equal("050021", plan.Draft!.ShippingParty!.PostalCode);
+    }
+
+    // El eco de un envío sin código postal propio: Shopify conserva el zip que ya tenía, que no es una novedad aunque el pedido
+    // no lo guarde.
+    [Fact]
+    public async Task AZipShopifyAlreadyHadDoesNotCountWhenTheOrderHasNone()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.Applied = Snapshot(address: Address with { Zip = "050021" });
+        var projection = world.Projection;
+        world.Order = world.Order with { ShippingParty = Party(EnvigadoId) };
+
+        var plan = await world.Planner.PlanAsync(
+            world.World.Store, world.ImportedRow(), world.Applied, projection,
+            Snapshot(address: Address with { City = "Envigado", Zip = "050021" }),
+            world.Order, null, TestContext.Current.CancellationToken);
+
+        Assert.Equal([ShopifyEditGroupKind.ShippingAddress], plan.Echoes);
+        Assert.Empty(plan.Groups);
+    }
+
+    // Más largo que lo que Quotations guarda: no se recorta (sería otro código) ni frena el pedido.
+    [Fact]
+    public async Task AZipLongerThanTheOrderStoresDoesNotTravel()
+    {
+        var world = new ShopifyEditTestWorld();
+
+        var plan = await world.PlanAsync(
+            Snapshot(address: Address with { City = "Envigado", Zip = new string('1', ShopifyCityCorrection.PartyPostalCodeMaxLength + 1) }));
+
+        Assert.Null(plan.Draft!.ShippingParty!.PostalCode);
+    }
+
+    [Fact]
     public async Task ACustomLineEditMatchesThroughItsMapping()
     {
         var world = new ShopifyEditTestWorld();

@@ -520,7 +520,7 @@ internal sealed class FakeOrderWriter(FakeUnitOfWork unitOfWork) : IShopifyOrder
 
     private static ShopifyShippingFingerprint? Fingerprint(ShopifyPartyDraft? party) =>
         party is { DepartmentId: { } department, CityId: { } city }
-            ? new ShopifyShippingFingerprint(party.Name, party.Phone, party.Email, party.Address, department, city)
+            ? new ShopifyShippingFingerprint(party.Name, party.Phone, party.Email, party.Address, department, city, party.PostalCode)
             : null;
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

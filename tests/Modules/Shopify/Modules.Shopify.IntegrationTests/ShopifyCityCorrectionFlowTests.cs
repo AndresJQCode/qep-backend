@@ -159,6 +159,59 @@ public sealed class ShopifyCityCorrectionFlowTests
                 ("order", shop.OrderId.ToString())));
     }
 
+    // La huella guarda el código postal: sin él, la recorrección tomaría el del pedido por una edición de otra persona
+    // (shipping_changed) y la ciudad quedaría en la vieja.
+    [Fact]
+    public async Task ARecorrectionOfAnOrderWithPostalCodeIsApplied()
+    {
+        await using var shop = await CalliShop.StartAsync(zip: "760001");
+        await shop.SeedResolveAsync();
+        await shop.DrainCorrectionsAsync();
+        var buenaventura = await ScalarAsync<Guid>(
+            shop.ConnectionString, "SELECT id FROM geography.cities WHERE divipola_code = '76109'");
+        await ExecuteAsync(
+            shop.ConnectionString,
+            "UPDATE geography.city_synonyms SET city_id = @city, version = version + 1 WHERE id = @synonym",
+            ("city", buenaventura),
+            ("synonym", shop.SynonymId));
+        var valle = await ScalarAsync<Guid>(
+            shop.ConnectionString, "SELECT department_id FROM geography.cities WHERE id = @id", ("id", buenaventura));
+        await InsertOutboxAsync(
+            shop.ConnectionString,
+            Guid.CreateVersion7(),
+            CitySynonymEventsProcessor.CorrectedEvent,
+            $$"""
+            {"synonymId":"{{shop.SynonymId}}","departmentId":"{{valle}}","previousCityId":"{{shop.CaliId}}","cityId":"{{buenaventura}}","operatorSubjectId":"{{shop.OperatorId}}","operatorTenantId":"{{Guid.CreateVersion7()}}","occurredAt":"2026-10-26T15:00:00+00:00"}
+            """);
+        await shop.Factory.Services.GetRequiredService<CitySynonymEventsProcessor>().ProcessBatchAsync(Ct);
+
+        await shop.DrainCorrectionsAsync();
+
+        Assert.Equal(
+            "Applied|none",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                "SELECT status || '|' || coalesce(skip_reason, 'none') FROM shopify.city_correction_jobs WHERE kind = 'Recorrect'"));
+        Assert.Equal(
+            $"{buenaventura}|760001",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                """
+                SELECT city_id || '|' || coalesce(postal_code, 'none') FROM quotations.order_parties
+                WHERE order_id = @order AND role = 'Shipping'
+                """,
+                ("order", shop.OrderId)));
+        Assert.Equal(
+            $"{buenaventura}|760001",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                """
+                SELECT city_id || '|' || coalesce(postal_code, 'none') FROM shopify.city_corrections
+                WHERE target = 'Order' AND target_id = @order
+                """,
+                ("order", shop.OrderId)));
+    }
+
     // D-C6: lo que lanza deja el reclamo vivo y vuelve al vencer el lease (acá vencido por SQL entre pasadas). Al quinto intento
     // el trabajo termina Failed con la causa de fondo (GetBaseException: la de la base, no la que la envuelve), y una pasada más no
     // lo vuelve a tomar.
@@ -535,7 +588,7 @@ public sealed class ShopifyCityCorrectionFlowTests
         /// <summary>Con <paramref name="withSibling"/>, otro pedido «CALLI» del mismo comprador, importado también antes de confirmar
         /// el sinónimo (después, la importación ya casaría CALLI y le pondría la parte).</summary>
         public static async Task<CalliShop> StartAsync(
-            Action<IServiceCollection>? configure = null, bool withSibling = false, Guid? operatorTenantId = null)
+            Action<IServiceCollection>? configure = null, bool withSibling = false, Guid? operatorTenantId = null, string? zip = null)
         {
             var database = await StartDatabaseAsync();
             var factory = new QepApiFactory(database.GetConnectionString())
@@ -545,7 +598,7 @@ public sealed class ShopifyCityCorrectionFlowTests
             };
             var world = await ShopifyWorld.ArrangeAsync(factory, database.GetConnectionString());
             await world.ConfigureStoreAsync(factory);
-            var shop = new CalliShop(database, factory, world);
+            var shop = new CalliShop(database, factory, world) { Zip = zip };
             (shop.MirrorId, shop.OrderId) = await shop.ImportCalliAsync(5550000000001, "#1001", "wh-calli");
             if (withSibling)
             {
@@ -604,6 +657,9 @@ public sealed class ShopifyCityCorrectionFlowTests
             await database.DisposeAsync();
         }
 
+        /// <summary>El zip con que Shopify manda los pedidos «CALLI»; <c>null</c> es el de la fixture (sin zip).</summary>
+        private string? Zip { get; init; }
+
         private async Task<(Guid MirrorId, Guid OrderId)> ImportCalliAsync(long shopifyOrderId, string name, string webhookId)
         {
             var order = (JsonObject)JsonNode.Parse(OrderFixture("taxes-included"))!;
@@ -614,6 +670,11 @@ public sealed class ShopifyCityCorrectionFlowTests
             address["city"] = "CALLI";
             address["province"] = "Valle del Cauca";
             address["province_code"] = "VAC";
+            if (Zip is not null)
+            {
+                address["zip"] = Zip;
+            }
+
             using var webhooks = Factory.CreateClient();
             var response = await PostWebhookAsync(webhooks, "orders/create", webhookId, Encoding.UTF8.GetBytes(order.ToJsonString()));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);

@@ -92,7 +92,7 @@ public sealed class ShopifyOrderCorrectionApiTests
     }
 
     // Spec 2026-11-24 §5: la corrección del panel no recibe código postal, así que al reescribir la parte lo conserva; si no,
-    // cada corrección lo borraría. El pedido se siembra a mano: todavía ningún camino le pone uno a un pedido de Shopify.
+    // cada corrección lo borraría. El código postal se siembra a mano: la fixture no trae zip.
     [Fact]
     public async Task ACorrectionKeepsThePostalCode()
     {
@@ -110,6 +110,29 @@ public sealed class ShopifyOrderCorrectionApiTests
             $"{envigado}|055422",
             await flow.ScalarAsync(
                 "SELECT city_id::text || '|' || coalesce(postal_code, '') FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
+    // El formulario de la corrección no tiene código postal: reenviar la misma parte de un pedido que lo guarda no es un cambio.
+    [Fact]
+    public async Task ResendingThePartyOfAnOrderWithPostalCodeSendsNothing()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage);
+        await flow.ScalarAsync(
+            "UPDATE quotations.order_parties SET postal_code = '055422' WHERE role = 'Shipping' RETURNING postal_code");
+        var body = await CorrectionBodyAsync(flow);
+        var stored = (await flow.ScalarAsync(
+            "SELECT department_id::text || '|' || city_id::text FROM quotations.order_parties WHERE role = 'Shipping'")).Split('|');
+        body["shippingParty"]!["departmentId"] = stored[0];
+        body["shippingParty"]!["cityId"] = stored[1];
+
+        var response = await PutAsync(client, flow, body);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var dto = await response.Content.ReadFromJsonAsync<JsonObject>(Ct);
+        Assert.Equal("NothingToSend", dto!["shopifySync"]?.GetValue<string>());
+        Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_pushes"));
     }
 
     // Owner, 2026-11-14: con la conexión operativa, la respuesta dice que el cambio quedó encolado para Shopify.

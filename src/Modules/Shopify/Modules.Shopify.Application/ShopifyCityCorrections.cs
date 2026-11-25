@@ -345,7 +345,9 @@ public sealed class ShopifyCityCorrectionProcessor(
                 return (null, ShopifyCityCorrectionSkipReasons.PartyIncomplete);
             }
 
-            var party = new ShopifyPartyDraft(fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId);
+            var party = new ShopifyPartyDraft(
+                fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId,
+                ShopifyOrderImporter.ShippingPostalCode(snapshot));
             await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
             return (await writer.AttachShippingAsync(
                 job.TenantId, job.TargetId, party, ShopifyOrderImporter.RawAddressLabel, cancellationToken), null);

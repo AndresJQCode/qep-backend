@@ -361,6 +361,43 @@ public sealed class ShopifyEditSyncFlowTests
     }
 
     [Fact]
+    public async Task AnImportedColombianOrderKeepsTheZipOnItsParty()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture(order => order["shipping_address"]!["zip"] = "050021"));
+
+        Assert.Equal(
+            "050021|050021",
+            await flow.ScalarAsync(
+                """
+                SELECT coalesce(p.postal_code, 'none') || '|' || coalesce(m.applied_projection -> 'shippingParty' ->> 'postalCode', 'none')
+                FROM shopify.orders m
+                JOIN quotations.order_parties p ON p.order_id = m.qep_order_id AND p.role = 'Shipping'
+                """));
+    }
+
+    // Un pedido sin código postal (importado antes de que viajara) cuya corrección vuelve con el zip que Shopify conservaba: el zip
+    // no es una novedad y el eco sigue sin crear un cambio.
+    [Fact]
+    public async Task AnEchoWithTheZipShopifyAlreadyHadCreatesNoChange()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture(order => order["shipping_address"]!["zip"] = "050021"));
+        await ExecuteAsync(flow.ConnectionString, "UPDATE quotations.order_parties SET postal_code = NULL WHERE role = 'Shipping'");
+        await ExecuteAsync(
+            flow.ConnectionString,
+            "UPDATE shopify.orders SET applied_projection = jsonb_set(applied_projection, '{shippingParty,postalCode}', 'null')");
+        await ShopifyOrderPushWorkerTests.CorrectTheCityToEnvigadoAsync(flow);
+        var echo = EchoOfTheEnvigadoCorrection("2026-10-01T10:30:00-05:00");
+        echo["shipping_address"]!["zip"] = "050021";
+
+        await flow.DeliverAsync("orders/updated", "wh-2", echo);
+
+        Assert.Equal("0", await flow.ScalarAsync("SELECT count(*)::text FROM shopify.order_edits"));
+    }
+
+    [Fact]
     public async Task ListChangesAndSummaryCountPendingAndBlocked()
     {
         await using var flow = await Flow.StartAsync();

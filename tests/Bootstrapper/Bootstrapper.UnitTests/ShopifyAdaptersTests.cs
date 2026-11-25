@@ -1100,6 +1100,23 @@ public sealed class ShopifyAdaptersTests
             (sent.Source, sent.NotesLinePrefix, sent.ExpectedVersion, sent.ReplaceBuyerNotes, sent.BuyerNotes));
     }
 
+    // Una edición de dirección hecha en Shopify llega con su zip: sin él, el pedido perdería el código postal.
+    [Fact]
+    public async Task AShopifyAddressEditKeepsShopifysZip()
+    {
+        var (orderId, departmentId, cityId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var orders = new FakeExternalOrderWriter { OnApplyEdit = _ => EditState(orderId) };
+        var party = new ShopifyPartyDraft(
+            "Laura Gómez", "3001112233", "laura@verde.co", "Cra 5", departmentId, cityId, "050021");
+
+        await OrderWriter(orders).ApplyEditAsync(
+            new ShopifyOrderEditDraft(TenantId, orderId, 3, null, null, party, false, null, Now), Ct);
+
+        Assert.Equal(
+            new ExternalShippingParty("Laura Gómez", "3001112233", "laura@verde.co", "Cra 5", departmentId, cityId, "050021"),
+            Assert.Single(orders.Edits).ShippingParty);
+    }
+
     [Fact]
     public async Task ReadStateMapsThePaymentStatusByName()
     {

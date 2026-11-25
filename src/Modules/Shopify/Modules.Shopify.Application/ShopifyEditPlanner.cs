@@ -112,7 +112,7 @@ public sealed class ShopifyEditPlanner(
 
                     break;
                 case ShopifyEditGroupKind.ShippingAddress:
-                    (group, partyDraft) = await AddressAsync(row, incoming, order, projection, diff, cancellationToken);
+                    (group, partyDraft) = await AddressAsync(row, applied, incoming, order, projection, diff, cancellationToken);
                     break;
                 case ShopifyEditGroupKind.Shipping:
                     (group, shippingDraft) = await ShippingAsync(row, incoming, order, projection, diff, cancellationToken);
@@ -170,13 +170,15 @@ public sealed class ShopifyEditPlanner(
 
     private async Task<(ShopifyEditGroup? Group, ShopifyPartyDraft? Draft)> AddressAsync(
         ShopifyOrderMirror row,
+        ShopifyOrderSnapshot applied,
         ShopifyOrderSnapshot incoming,
         ShopifyOrderState order,
         ShopifyOrderProjection projection,
         ShopifyGroupDiff diff,
         CancellationToken cancellationToken)
     {
-        // Plan D8: el pedido no cambia de recogida después de creado, y el dominio rechaza una parte de envío con recogida.
+        // El dominio rechaza una parte de envío con recogida. El pedido puede ser de recogida desde la tienda o porque «Editar
+        // pedido» lo pasó a recoger (spec 2026-11-24 §10): en los dos casos gana QEP.
         if (order.IsStorePickup)
         {
             return (Conflict(diff, ShopifyEditReasons.StorePickup), null);
@@ -198,15 +200,25 @@ public sealed class ShopifyEditPlanner(
             return (Conflict(diff, ShopifyEditReasons.PartyIncomplete), null);
         }
 
-        var candidate = new ShopifyShippingFingerprint(fields.Name, fields.Phone, fields.Email, fields.Address, city.DepartmentId, city.CityId);
-        if (ShopifyOrderProjection.SameParty(candidate, order.ShippingParty))
+        var postalCode = ShopifyOrderImporter.ShippingPostalCode(incoming);
+        var candidate = new ShopifyShippingFingerprint(
+            fields.Name, fields.Phone, fields.Email, fields.Address, city.DepartmentId, city.CityId, postalCode);
+        // Un zip que Shopify ya tenía en la versión aplicada no es una novedad: si el pedido no guarda código postal (importado
+        // antes de que viajara, o mandado sin uno propio, con el zip que Shopify conservaba), no cuenta como diferencia. Sin esto,
+        // el eco de ese envío saldría como qep_changed. Un zip que Shopify sí cambió cuenta siempre.
+        var compared = order.ShippingParty is { PostalCode: null }
+            && string.Equals(postalCode, ShopifyOrderImporter.ShippingPostalCode(applied), StringComparison.Ordinal)
+                ? candidate with { PostalCode = null }
+                : candidate;
+        if (ShopifyOrderProjection.SameParty(compared, order.ShippingParty))
         {
             return (null, null);
         }
 
         return !ShopifyOrderProjection.SameParty(order.ShippingParty, projection.ShippingParty)
             ? (Conflict(diff, ShopifyEditReasons.QepChanged), null)
-            : (Apply(diff), new ShopifyPartyDraft(fields.Name, fields.Phone, fields.Email, fields.Address, city.DepartmentId, city.CityId));
+            : (Apply(diff), new ShopifyPartyDraft(
+                fields.Name, fields.Phone, fields.Email, fields.Address, city.DepartmentId, city.CityId, postalCode));
     }
 
     // Como la importación (RecordShippingCityAsync): la ciudad de Colombia que no casó, con su departamento resuelto, va a la bandeja

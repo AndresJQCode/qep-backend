@@ -62,6 +62,18 @@ public sealed class ShopifyOrderProjectionTests
         Assert.Equal(expected, ShopifyOrderProjection.SameParty(party with { Phone = b }, party));
     }
 
+    // El código postal es parte de la dirección: una edición de Shopify que sólo lo cambia no es un eco.
+    [Fact]
+    public void SamePartyComparesThePostalCode()
+    {
+        var party = new ShopifyShippingFingerprint("Laura Gómez", "3001112233", "a@x.co", "Cra 5 # 10-20", Department, City, "050021");
+
+        Assert.True(ShopifyOrderProjection.SameParty(party, party with { PostalCode = " 050021 " }));
+        Assert.False(ShopifyOrderProjection.SameParty(party, party with { PostalCode = "055422" }));
+        Assert.False(ShopifyOrderProjection.SameParty(party, party with { PostalCode = null }));
+        Assert.True(ShopifyOrderProjection.SameParty(party with { PostalCode = null }, party with { PostalCode = " " }));
+    }
+
     [Fact]
     public void WriteAndReadRoundTrip()
     {

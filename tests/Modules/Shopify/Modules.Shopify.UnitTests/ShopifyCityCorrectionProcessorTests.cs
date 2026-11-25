@@ -67,6 +67,20 @@ public sealed class ShopifyCityCorrectionProcessorTests
         Assert.Equal(1, world.Shop.UnitOfWork.Saves);
     }
 
+    // Resolver es una importación tardía: la parte lleva el zip de Shopify, y la huella lo guarda para la próxima recorrección.
+    [Fact]
+    public async Task AResolveOrderJobAttachesTheShopifyZip()
+    {
+        var world = new CorrectionWorld(Order(address: Calli with { Zip = "760001" }, attributes: Document));
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        var job = world.Seed(world.ResolveOrder());
+
+        await world.ProcessAsync(job);
+
+        Assert.Equal("760001", Assert.Single(world.Writer.Attached).Party.PostalCode);
+        Assert.Equal(PartyIn(CaliId) with { PostalCode = "760001" }, Assert.Single(world.Shop.Database.CityCorrections).Party);
+    }
+
     // Spec 2026-11-14 §5 y plan D3: la ciudad que corrige el sistema no es del asesor, así que mueve la proyección (una edición
     // posterior de Shopify no es conflicto) y viaja a Shopify en el mismo guardado que la huella.
     [Fact]
@@ -680,7 +694,8 @@ internal sealed class FakeCityCorrectionWriter : IShopifyCityCorrectionWriter
         Attached.Add((tenantId, orderId, party, notesLinePrefix));
         return Task.FromResult(OnAttach?.Invoke(party) ?? new ShopifyCityWriteResult(
             ShopifyCityWriteKind.Applied,
-            new ShopifyShippingFingerprint(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId!.Value, party.CityId!.Value),
+            new ShopifyShippingFingerprint(
+                party.Name, party.Phone, party.Email, party.Address, party.DepartmentId!.Value, party.CityId!.Value, party.PostalCode),
             null,
             null));
     }
