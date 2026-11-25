@@ -184,6 +184,85 @@ public sealed class ShopifyDeliveryEditPushTests
             "SELECT status || '|' || coalesce(failure_code, 'none') || '|' || groups::text FROM shopify.order_pushes"));
     }
 
+    /// <summary>El pedido como lo devuelve Shopify después del <c>orderUpdate</c> de QEP: la dirección entera como se mandó (Shopify
+    /// arma <c>name</c> con <c>firstName</c> y <c>lastName</c> y pone el nombre de la provincia).</summary>
+    private static JsonObject EchoOf(ShopifyAddressUpdate sent, string updatedAt, string? note = null) =>
+        Fixture(order =>
+        {
+            order["updated_at"] = updatedAt;
+            order["note"] = note;
+            order["shipping_address"] = new JsonObject
+            {
+                ["name"] = $"{sent.FirstName} {sent.LastName}".Trim(),
+                ["first_name"] = sent.FirstName,
+                ["last_name"] = sent.LastName,
+                ["address1"] = sent.Address1,
+                ["address2"] = sent.Address2,
+                ["city"] = sent.City,
+                ["province"] = "Madrid",
+                ["province_code"] = sent.ProvinceCode,
+                ["country"] = "Spain",
+                ["country_code"] = sent.CountryCode,
+                ["phone"] = sent.Phone,
+                ["company"] = sent.Company,
+                ["zip"] = sent.Zip,
+            };
+        });
+
+    // El eco de una dirección de fuera de Colombia no es un cambio: si lo fuera, cada envío dejaría un conflicto falso y la tienda
+    // automática dejaría de aplicar lo siguiente.
+    [Theory]
+    [InlineData("28013")]
+    [InlineData(null)]
+    public async Task TheEchoOfAPushedSpanishAddressCreatesNoChange(string? postalCode)
+    {
+        var shopify = new RecordingUpdater();
+        await using var flow = await StartAsync(shopify, order => order["shipping_address"]!["zip"] = "050021");
+        await flow.SetEditSyncAsync("Automatic");
+        await SaveDeliveryAsync(
+            flow,
+            ShopifyOrderDelivery.SpanishParty(await ShopifyOrderDelivery.RegionIdAsync(flow, "ES", "28"), postalCode));
+        await ConsumeAsync(flow);
+        await DrainAsync(flow);
+        var sent = Assert.Single(shopify.Updates).ShippingAddress!;
+
+        await flow.DeliverAsync("orders/updated", "wh-2", EchoOf(sent, "2026-10-01T10:30:00-05:00"));
+
+        Assert.Equal("none", await flow.ScalarAsync(
+            "SELECT coalesce(string_agg(status || '|' || groups::text, ','), 'none') FROM shopify.order_edits"));
+        Assert.Equal("Madrid", await flow.ScalarAsync("SELECT applied_payload -> 'shippingAddress' ->> 'city' FROM shopify.orders"));
+
+        await flow.DeliverAsync("orders/updated", "wh-3", EchoOf(sent, "2026-10-01T11:00:00-05:00", note: "Llamar antes"));
+
+        Assert.Equal("Applied", await flow.ScalarAsync(
+            "SELECT coalesce(string_agg(status, ','), 'none') FROM shopify.order_edits"));
+        Assert.Equal("Llamar antes", await flow.ScalarAsync("SELECT buyer_notes FROM quotations.orders"));
+        Assert.Equal("Calle Mayor 1", await flow.ScalarAsync("SELECT address FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
+    // Otra dirección de fuera de Colombia que no es lo que QEP mandó sigue siendo conflicto: gana QEP.
+    [Fact]
+    public async Task AForeignShopifyEditThatIsNotTheEchoStaysAConflict()
+    {
+        var shopify = new RecordingUpdater();
+        await using var flow = await StartAsync(shopify);
+        await flow.SetEditSyncAsync("Automatic");
+        await SaveDeliveryAsync(
+            flow, ShopifyOrderDelivery.SpanishParty(await ShopifyOrderDelivery.RegionIdAsync(flow, "ES", "28")));
+        await ConsumeAsync(flow);
+        await DrainAsync(flow);
+        var edited = Assert.Single(shopify.Updates).ShippingAddress! with { Address1 = "Calle de Alcalá 20" };
+
+        await flow.DeliverAsync("orders/updated", "wh-2", EchoOf(edited, "2026-10-01T10:30:00-05:00"));
+
+        Assert.Equal("Pending|ShippingAddress|Conflict", await flow.ScalarAsync(
+            """
+            SELECT e.status || '|' || (g ->> 'kind') || '|' || (g ->> 'outcome')
+            FROM shopify.order_edits e, jsonb_array_elements(e.groups) AS g
+            """));
+        Assert.Equal("Calle Mayor 1", await flow.ScalarAsync("SELECT address FROM quotations.order_parties WHERE role = 'Shipping'"));
+    }
+
     // Sin código postal propio y en otra provincia, el zip del pedido de Shopify sería el de otra dirección: no viaja.
     [Fact]
     public async Task ASpanishAddressOnAnotherProvinceWithoutPostalCodeIsPushedWithoutZip()

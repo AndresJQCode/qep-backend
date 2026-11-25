@@ -5290,7 +5290,11 @@ atributos) viaja a Shopify.
 - **El código postal es parte de la dirección.** La importación, las ediciones de Shopify y la corrección de ciudad por
   sinónimo ponen el `zip` en la parte (uno de más de 20 caracteres se omite), la huella (`shopify.city_corrections.postal_code`)
   y la proyección lo guardan, y la comparación lo mira; «Cambios por revisar» trae la fila `zip` en el grupo `ShippingAddress`.
-  Un pedido sin código postal no toma como cambio un `zip` que Shopify no modificó.
+  Un pedido sin código postal no toma como cambio un `zip` que Shopify no modificó. Un payload guardado antes de que el espejo
+  leyera el zip no tiene la clave (distinto de `"zip": null`): de ese zip desconocido no sale ningún cambio.
+- **El eco de una dirección de fuera de Colombia** se reconoce comparando lo que llega con lo que el envío de la parte del pedido
+  mandaría (`ShopifyPushAddress`, la misma regla de los dos lados): si coincide, no hay cambio; si no, es conflicto
+  `city_unresolved`, porque las ciudades de afuera todavía no se importan.
 - **El envío.** `ShopifyOrderPushWorker` corre cada 10 s, en lotes de 50, y manda `orderUpdate` (GraphQL, `shopify.admin`) con
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
   (`lastName` y `address2` vacíos, D12) y la `company` del **último** snapshot, porque `orderUpdate` reemplaza la dirección
@@ -5299,7 +5303,8 @@ atributos) viaja a Shopify.
   `provinceCode` de su región (`SpainProvinceCodes`, INE → ISO 3166-2; un país sin regiones va sin `provinceCode`), con las
   mismas reglas con las que se rechaza el guardado (`ShopifyShippingAddressRules`). El `zip` es el `postalCode` de la parte de
   QEP; sin él, el del último snapshot sólo si país y provincia de la parte son los del snapshot; si no, no viaja. La corrección
-  del panel no recibe código postal y conserva el que tenga el pedido. La nota es `BuyerNotes` y los atributos,
+  del panel no recibe código postal: conserva el del pedido mientras no cambie el departamento y, si cambia, lo borra. La nota es
+  `BuyerNotes` y los atributos,
   `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina

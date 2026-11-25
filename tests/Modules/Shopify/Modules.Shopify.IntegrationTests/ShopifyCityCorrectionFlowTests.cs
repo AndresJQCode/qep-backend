@@ -167,25 +167,8 @@ public sealed class ShopifyCityCorrectionFlowTests
         await using var shop = await CalliShop.StartAsync(zip: "760001");
         await shop.SeedResolveAsync();
         await shop.DrainCorrectionsAsync();
-        var buenaventura = await ScalarAsync<Guid>(
-            shop.ConnectionString, "SELECT id FROM geography.cities WHERE divipola_code = '76109'");
-        await ExecuteAsync(
-            shop.ConnectionString,
-            "UPDATE geography.city_synonyms SET city_id = @city, version = version + 1 WHERE id = @synonym",
-            ("city", buenaventura),
-            ("synonym", shop.SynonymId));
-        var valle = await ScalarAsync<Guid>(
-            shop.ConnectionString, "SELECT department_id FROM geography.cities WHERE id = @id", ("id", buenaventura));
-        await InsertOutboxAsync(
-            shop.ConnectionString,
-            Guid.CreateVersion7(),
-            CitySynonymEventsProcessor.CorrectedEvent,
-            $$"""
-            {"synonymId":"{{shop.SynonymId}}","departmentId":"{{valle}}","previousCityId":"{{shop.CaliId}}","cityId":"{{buenaventura}}","operatorSubjectId":"{{shop.OperatorId}}","operatorTenantId":"{{Guid.CreateVersion7()}}","occurredAt":"2026-10-26T15:00:00+00:00"}
-            """);
-        await shop.Factory.Services.GetRequiredService<CitySynonymEventsProcessor>().ProcessBatchAsync(Ct);
 
-        await shop.DrainCorrectionsAsync();
+        var buenaventura = await RecorrectToBuenaventuraAsync(shop);
 
         Assert.Equal(
             "Applied|none",
@@ -210,6 +193,63 @@ public sealed class ShopifyCityCorrectionFlowTests
                 WHERE target = 'Order' AND target_id = @order
                 """,
                 ("order", shop.OrderId)));
+    }
+
+    // Una huella hecha desde un payload guardado antes de que el espejo leyera el zip (sin la clave) sigue siendo la parte del
+    // pedido: la recorrección se aplica.
+    [Fact]
+    public async Task ARecorrectionFromAPayloadWithoutTheZipKeyStillMatches()
+    {
+        await using var shop = await CalliShop.StartAsync();
+        await ExecuteAsync(
+            shop.ConnectionString,
+            """
+            UPDATE shopify.orders
+            SET payload = payload #- '{shippingAddress,zip}', applied_payload = applied_payload #- '{shippingAddress,zip}'
+            """);
+        await shop.SeedResolveAsync();
+        await shop.DrainCorrectionsAsync();
+
+        var buenaventura = await RecorrectToBuenaventuraAsync(shop);
+
+        Assert.Equal(
+            "Applied|none",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                "SELECT status || '|' || coalesce(skip_reason, 'none') FROM shopify.city_correction_jobs WHERE kind = 'Recorrect'"));
+        Assert.Equal(
+            $"{buenaventura}|none",
+            await ScalarAsync<string>(
+                shop.ConnectionString,
+                """
+                SELECT city_id || '|' || coalesce(postal_code, 'none') FROM quotations.order_parties
+                WHERE order_id = @order AND role = 'Shipping'
+                """,
+                ("order", shop.OrderId)));
+    }
+
+    // El operador corrige CALLI a Buenaventura: el sinónimo por SQL, su evento al consumidor y el worker que recorrige.
+    private static async Task<Guid> RecorrectToBuenaventuraAsync(CalliShop shop)
+    {
+        var buenaventura = await ScalarAsync<Guid>(
+            shop.ConnectionString, "SELECT id FROM geography.cities WHERE divipola_code = '76109'");
+        await ExecuteAsync(
+            shop.ConnectionString,
+            "UPDATE geography.city_synonyms SET city_id = @city, version = version + 1 WHERE id = @synonym",
+            ("city", buenaventura),
+            ("synonym", shop.SynonymId));
+        var valle = await ScalarAsync<Guid>(
+            shop.ConnectionString, "SELECT department_id FROM geography.cities WHERE id = @id", ("id", buenaventura));
+        await InsertOutboxAsync(
+            shop.ConnectionString,
+            Guid.CreateVersion7(),
+            CitySynonymEventsProcessor.CorrectedEvent,
+            $$"""
+            {"synonymId":"{{shop.SynonymId}}","departmentId":"{{valle}}","previousCityId":"{{shop.CaliId}}","cityId":"{{buenaventura}}","operatorSubjectId":"{{shop.OperatorId}}","operatorTenantId":"{{Guid.CreateVersion7()}}","occurredAt":"2026-10-26T15:00:00+00:00"}
+            """);
+        await shop.Factory.Services.GetRequiredService<CitySynonymEventsProcessor>().ProcessBatchAsync(Ct);
+        await shop.DrainCorrectionsAsync();
+        return buenaventura;
     }
 
     // D-C6: lo que lanza deja el reclamo vivo y vuelve al vencer el lease (acá vencido por SQL entre pasadas). Al quinto intento

@@ -104,6 +104,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   (`TheProjectionDoesNotMove`). Y lo que el worker no puede mandar se rechaza en el guardado del pedido: una regla nueva de
   dirección va en `ShopifyShippingAddressRules`, que usan los dos lados (`ShopifyOrderPushProcessor` y
   `ExternalOrderDeliveryCheck`); en uno solo, el envío queda reintentando horas o el guardado deja pasar lo que no sale.
+  La dirección que sale la arma `ShopifyPushAddress`, y con ella el planificador reconoce el eco de una parte de fuera de
+  Colombia: un campo nuevo del envío que no entre en `IsForeignEchoAsync` deja un conflicto falso por cada envío.
+- **Un payload sin la clave `zip` no es lo mismo que `"zip": null`** (`ShopifyAddress.ZipUnrecorded`): es de antes de que el
+  espejo lo leyera, y de ahí no sale ningún cambio. `ReadPayload` lo marca y `WritePayload` vuelve a omitir la clave; serializar
+  un snapshot por otro camino lo convierte en «no tenía zip».
 - **Un envío a Shopify `Held` nunca lo reclama el worker; sólo lo mueven los dos endpoints de sincronización** (owner,
   2026-11-14). Una corrección no se pierde por la conexión: guardada con la conexión no operativa (`connection_inactive`), con la
   conexión caída al mandar (`connection_missing`) o con `access_denied`, el envío queda retenido con el motivo en `failure_code`.

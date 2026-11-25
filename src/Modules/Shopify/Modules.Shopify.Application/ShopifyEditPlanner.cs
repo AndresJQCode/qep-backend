@@ -55,6 +55,7 @@ public sealed class ShopifyEditPlanner(
     ShopifyCustomerResolver customers,
     IShopifyCustomerDirectory customerDirectory,
     IShopifyUnresolvedCityReporter unresolvedCities,
+    IShopifyGeographyLookup geography,
     IClock clock)
 {
     public async Task<ShopifyEditPlan> PlanAsync(
@@ -184,6 +185,16 @@ public sealed class ShopifyEditPlanner(
             return (Conflict(diff, ShopifyEditReasons.StorePickup), null);
         }
 
+        // Una parte de fuera de Colombia no se resuelve contra DIVIPOLA: antes de intentarlo se mira si lo que llegó es lo que el
+        // envío de esa parte mandó. Si no lo es, sigue el camino de siempre (hoy, conflicto: no se importan ciudades de afuera).
+        if (order.ShippingParty is { } own
+            && !ShopifyPushAddress.IsColombia(own.Country)
+            && await ShopifyPushAddress.IsForeignEchoAsync(
+                geography, own, order.ShippingCountry, applied.ShippingAddress, incoming.ShippingAddress, cancellationToken))
+        {
+            return (null, null);
+        }
+
         var resolution = await customers.ResolveCityAsync(incoming.ShippingAddress, cancellationToken);
         if (resolution.City is not { } city)
         {
@@ -200,14 +211,19 @@ public sealed class ShopifyEditPlanner(
             return (Conflict(diff, ShopifyEditReasons.PartyIncomplete), null);
         }
 
-        var postalCode = ShopifyOrderImporter.ShippingPostalCode(incoming);
+        // Un payload que no guardó el zip no dice que Shopify no tenga ninguno: vale el del pedido.
+        var postalCode = incoming.ShippingAddress is { ZipUnrecorded: true }
+            ? order.ShippingParty?.PostalCode
+            : ShopifyOrderImporter.ShippingPostalCode(incoming);
         var candidate = new ShopifyShippingFingerprint(
             fields.Name, fields.Phone, fields.Email, fields.Address, city.DepartmentId, city.CityId, postalCode);
         // Un zip que Shopify ya tenía en la versión aplicada no es una novedad: si el pedido no guarda código postal (importado
         // antes de que viajara, o mandado sin uno propio, con el zip que Shopify conservaba), no cuenta como diferencia. Sin esto,
-        // el eco de ese envío saldría como qep_changed. Un zip que Shopify sí cambió cuenta siempre.
+        // el eco de ese envío saldría como qep_changed. Tampoco cuenta si la versión aplicada no guardó el zip: no se sabe si
+        // cambió. Un zip que Shopify sí cambió cuenta siempre.
         var compared = order.ShippingParty is { PostalCode: null }
-            && string.Equals(postalCode, ShopifyOrderImporter.ShippingPostalCode(applied), StringComparison.Ordinal)
+            && (applied.ShippingAddress is { ZipUnrecorded: true }
+                || string.Equals(postalCode, ShopifyOrderImporter.ShippingPostalCode(applied), StringComparison.Ordinal))
                 ? candidate with { PostalCode = null }
                 : candidate;
         if (ShopifyOrderProjection.SameParty(compared, order.ShippingParty))

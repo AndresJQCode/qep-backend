@@ -31,13 +31,8 @@ public static class ShopifyPushFailureCodes
 /// <list type="bullet">
 /// <item>Sólo los grupos del envío (Review Focus 4): un envío de la dirección no pisa la nota de Shopify con un <c>BuyerNotes</c>
 /// vacío (los pedidos importados antes no lo tienen) ni los atributos.</item>
-/// <item>Dirección: la parte de QEP, con el nombre en <c>firstName</c> y la dirección en <c>address1</c>; la empresa del
-/// <b>último</b> snapshot, porque <c>orderUpdate</c> reemplaza la dirección entera (Review Focus 3). En Colombia, la ciudad y el
-/// departamento con los nombres de QEP y su <c>provinceCode</c>; el país, el del último snapshot si es Colombia. Fuera (spec
-/// 2026-11-24 §11.1), el país y la ciudad escrita de la parte y el <c>provinceCode</c> de su región
-/// (<see cref="ShopifyShippingAddressRules"/>; ninguno en un país sin regiones). El código postal (spec 2026-11-24) es el de la
-/// parte de QEP; sin él, el <c>zip</c> del último snapshot sólo si país y provincia de la parte son los del snapshot; si no,
-/// ninguno.</item>
+/// <item>Dirección: la parte de QEP, como la arma <see cref="ShopifyPushAddress"/>, con la que el planificador de cambios
+/// reconoce el eco.</item>
 /// <item>Nota: <c>BuyerNotes</c> (vacía la borra en Shopify). Atributos: los de QEP o, sin corrección, los del último snapshot.</item>
 /// </list>
 /// Conexión ausente o no operativa → <c>Held</c> con <c>connection_missing</c>; token vencido (<c>AccessToken</c> nulo, lo refresca
@@ -55,8 +50,6 @@ public sealed class ShopifyOrderPushProcessor(
     IShopifyUnitOfWork unitOfWork,
     IClock clock)
 {
-    private const string Colombia = "CO";
-
     private static readonly ShopifyOrderUpdateResult RetryLater = new(ShopifyOrderUpdateKind.Retry, null, null);
 
     public async Task<ShopifyOrderUpdateResult> ProcessAsync(ShopifyOrderPush push, CancellationToken cancellationToken)
@@ -109,20 +102,8 @@ public sealed class ShopifyOrderPushProcessor(
         ShopifyAddressUpdate? address = null;
         if (push.Groups.Contains(ShopifyPushGroup.ShippingAddress) && order.ShippingParty is { } party)
         {
-            var (city, provinceCode, countryCode) = IsColombia(party.Country)
-                ? await ColombianCityAsync(party, latest.ShippingAddress, cancellationToken)
-                : await ForeignCityAsync(party, cancellationToken);
-            address = new ShopifyAddressUpdate(
-                party.Name ?? string.Empty,
-                string.Empty,
-                party.Address ?? string.Empty,
-                string.Empty,
-                city,
-                provinceCode,
-                countryCode,
-                party.Phone ?? string.Empty,
-                Blank(latest.ShippingAddress?.Company),
-                Blank(party.PostalCode) ?? KeptZip(latest.ShippingAddress, order.ShippingCountry, provinceCode));
+            address = await ShopifyPushAddress.BuildAsync(
+                geography, party, order.ShippingCountry, latest.ShippingAddress, cancellationToken);
         }
 
         var setNote = push.Groups.Contains(ShopifyPushGroup.Note);
@@ -131,61 +112,6 @@ public sealed class ShopifyOrderPushProcessor(
             : null;
         return new ShopifyOrderUpdate(row.ShopifyOrderId, address, setNote, setNote ? order.BuyerNotes : null, attributes);
     }
-
-    // La ciudad DIVIPOLA por sus nombres de QEP y el código de su departamento. El país, como lo escribe el último snapshot si ya
-    // es Colombia; si el último está en otro país (la entrega editable devolvió el pedido a Colombia), manda el de la parte.
-    private async Task<(string City, string? ProvinceCode, string CountryCode)> ColombianCityAsync(
-        ShopifyShippingFingerprint party, ShopifyAddress? latest, CancellationToken cancellationToken)
-    {
-        var departmentId = party.DepartmentId
-            ?? throw new InvalidOperationException("A Colombian shipping party has no department.");
-        var cityId = party.CityId ?? throw new InvalidOperationException("A Colombian shipping party has no city.");
-        var names = await geography.DescribeCityAsync(departmentId, cityId, cancellationToken)
-            ?? throw new InvalidOperationException("The city of the shipping party is not in Geography.");
-        var latestCountry = Blank(latest?.CountryCode);
-        return (
-            names.City,
-            ColombiaProvinceCodes.CodeFor(names.Department),
-            latestCountry is not null && IsColombia(latestCountry) ? latestCountry : Colombia);
-    }
-
-    // Spec 2026-11-24 §11.1.3: fuera de Colombia, el país y la ciudad escrita de la parte, y su región traducida al código de
-    // Shopify (null en un país sin regiones). Lo que las reglas rechazan no llega acá: el guardado del pedido lo frena antes con
-    // las mismas reglas; si llegara, no se manda una dirección a medias.
-    private async Task<(string City, string? ProvinceCode, string CountryCode)> ForeignCityAsync(
-        ShopifyShippingFingerprint party, CancellationToken cancellationToken)
-    {
-        var country = party.Country!;
-        var region = party.RegionId is { } regionId
-            ? await geography.DescribeRegionAsync(regionId, cancellationToken)
-            : null;
-        // Una región de otro país no es la de esta dirección.
-        var regionCode = region is { } found && string.Equals(found.CountryCode, country, StringComparison.OrdinalIgnoreCase)
-            ? found.Code
-            : null;
-        var issue = ShopifyShippingAddressRules.Check(country, regionCode);
-        if (issue != ShopifyShippingAddressIssue.None)
-        {
-            throw new InvalidOperationException($"The shipping party cannot be sent to Shopify: {issue}.");
-        }
-
-        var city = Blank(party.CityName)
-            ?? throw new InvalidOperationException("A shipping party outside Colombia has no city name.");
-        return (city, ShopifyShippingAddressRules.ProvinceCodeFor(country, regionCode), country);
-    }
-
-    private static bool IsColombia(string? country) =>
-        Blank(country) is not { } code || string.Equals(code, Colombia, StringComparison.OrdinalIgnoreCase);
-
-    // El zip que Shopify ya tiene sigue valiendo mientras la dirección siga en el mismo país y la misma provincia; en otra sería
-    // el de otra dirección. Sin provincia de un lado no se puede comprobar, y no viaja.
-    private static string? KeptZip(ShopifyAddress? latest, string? partyCountry, string? partyProvinceCode) =>
-        latest is not null
-        && partyProvinceCode is not null
-        && string.Equals(Blank(latest.CountryCode) ?? Colombia, Blank(partyCountry) ?? Colombia, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(Blank(latest.ProvinceCode), partyProvinceCode, StringComparison.OrdinalIgnoreCase)
-            ? Blank(latest.Zip)
-            : null;
 
     // Owner 2026-11-14: un motivo de la conexión no mata la corrección; queda retenida hasta que alguien la suelte.
     private async Task<ShopifyOrderUpdateResult> HoldAsync(ShopifyOrderPush push, string code, CancellationToken cancellationToken)
@@ -200,11 +126,5 @@ public sealed class ShopifyOrderPushProcessor(
         push.MarkFailed(code, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return new ShopifyOrderUpdateResult(ShopifyOrderUpdateKind.Failed, code, null);
-    }
-
-    private static string? Blank(string? value)
-    {
-        var trimmed = value?.Trim();
-        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
     }
 }

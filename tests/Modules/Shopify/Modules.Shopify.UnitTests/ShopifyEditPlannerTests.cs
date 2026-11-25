@@ -142,6 +142,78 @@ public sealed class ShopifyEditPlannerTests
         Assert.Null(plan.Draft!.ShippingParty!.PostalCode);
     }
 
+    // Un payload guardado antes de que el espejo leyera el zip no dice cuál tenía Shopify: el que llega no es un cambio.
+    [Fact]
+    public async Task AZipUnrecordedInTheAppliedVersionIsNotAChange()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.Applied = Snapshot(address: Address with { ZipUnrecorded = true });
+
+        var plan = await world.PlanAsync(Snapshot(address: Address with { Zip = "050021" }));
+
+        Assert.True(plan.IsEmpty);
+        Assert.Null(plan.Draft);
+    }
+
+    private static readonly ShopifyAddress Madrid = new(
+        "Laura Gómez", "Calle Mayor 1", null, "Madrid", "Madrid", "M", "ES", "+34 600 111 222", null, "28013");
+
+    private static async Task<ShopifyEditPlan> PlanOverASpanishPartyAsync(ShopifyAddress incoming)
+    {
+        var world = new ShopifyEditTestWorld();
+        var projection = world.Projection;
+        var regionId = Guid.CreateVersion7();
+        world.World.Geography.Regions[regionId] = ("ES", "28");
+        world.Order = world.Order with
+        {
+            ShippingParty = new ShopifyShippingFingerprint(
+                "Laura Gómez", "600111222", "laura@verde.co", "Calle Mayor 1", null, null, "28013", "ES", "Madrid", regionId),
+            ShippingCountry = "ES",
+        };
+        return await world.Planner.PlanAsync(
+            world.World.Store, world.ImportedRow(), world.Applied, projection, Snapshot(address: incoming), world.Order, null,
+            TestContext.Current.CancellationToken);
+    }
+
+    // El eco de una dirección de fuera de Colombia: lo que Shopify devuelve es lo que el envío mandó.
+    [Fact]
+    public async Task TheEchoOfAPushedForeignAddressIsNotAGroup()
+    {
+        var plan = await PlanOverASpanishPartyAsync(Madrid);
+
+        Assert.Equal([ShopifyEditGroupKind.ShippingAddress], plan.Echoes);
+        Assert.Empty(plan.Groups);
+    }
+
+    [Theory]
+    [InlineData("name")]
+    [InlineData("address")]
+    [InlineData("city")]
+    [InlineData("province")]
+    [InlineData("country")]
+    [InlineData("phone")]
+    [InlineData("zip")]
+    public async Task AForeignAddressThatIsNotTheEchoStaysAConflict(string changed)
+    {
+        var incoming = changed switch
+        {
+            "name" => Madrid with { Name = "Otra Persona" },
+            "address" => Madrid with { Address1 = "Calle de Alcalá 20" },
+            "city" => Madrid with { City = "Getafe" },
+            "province" => Madrid with { ProvinceCode = "B" },
+            "country" => Madrid with { CountryCode = "PT" },
+            "phone" => Madrid with { Phone = "+34600999888" },
+            _ => Madrid with { Zip = "28001" },
+        };
+
+        var plan = await PlanOverASpanishPartyAsync(incoming);
+
+        var group = Assert.Single(plan.Groups);
+        Assert.Equal(
+            (ShopifyEditGroupKind.ShippingAddress, ShopifyEditGroupOutcome.Conflict, "city_unresolved"),
+            (group.Kind, group.Outcome, group.Reason));
+    }
+
     [Fact]
     public async Task ACustomLineEditMatchesThroughItsMapping()
     {
