@@ -410,7 +410,7 @@ public sealed class CustomerMergePreviewApiTests
 
         Assert.Equal(1, Move(preview, "Contacts"));
         Assert.True(preview.GetProperty("companyConflict").GetBoolean());
-        Assert.Equal(9, preview.GetProperty("moves").GetArrayLength());
+        Assert.Equal(EveryMove.Length, preview.GetProperty("moves").GetArrayLength());
 
         var calm = await PreviewAsync(client, arranged.Survivor, arranged.Merged);
         Assert.Equal(0, Move(calm, "Contacts"));
