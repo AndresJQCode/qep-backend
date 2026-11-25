@@ -102,9 +102,9 @@ public sealed class CustomerExportApiTests
         Assert.NotNull(storage.Content);
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
-        // Creado y Actualizado: 13 de la importacion (sin «ReteICA») + Empresa + Activo, y después estas dos.
-        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 16).GetString());
+        // Creado y Actualizado: 13 de la importacion (sin «ReteICA») + Empresa + Etiquetas + Activo, y después estas dos.
         Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 17).GetString());
+        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 18).GetString());
     }
 
     // D-R7 (spec 2026-10-23): las fechas de texto siguen el formato de fecha del tenant, más la hora;
@@ -134,9 +134,9 @@ public sealed class CustomerExportApiTests
         Assert.NotNull(storage.Content);
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
-        // Creado y Actualizado: 13 de la importacion (sin «ReteICA») + Empresa + Activo, y después estas dos.
-        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 16).GetString());
+        // Creado y Actualizado: 13 de la importacion (sin «ReteICA») + Empresa + Etiquetas + Activo, y después estas dos.
         Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 17).GetString());
+        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 18).GetString());
     }
 
     // Spec 2026-10-10 §5.2: el export incluye los incompletos, con celdas vacías, y suma la columna
@@ -225,8 +225,9 @@ public sealed class CustomerExportApiTests
         Assert.Equal("Completa", Value("Estado de la ficha"));
     }
 
-    // 13 de la importacion (sin «ReteICA» desde el spec ReteICA por empresa) + Empresa + Activo, Creado, Actualizado + «Estado de la ficha» (y después «Tipo de persona»).
-    private const int StatusColumnIndex = 18;
+    // 13 de la importacion (sin «ReteICA» desde el spec ReteICA por empresa) + Empresa + Etiquetas + Activo, Creado, Actualizado + «Estado de la ficha» (y después
+    // «Tipo de persona»).
+    private const int StatusColumnIndex = 19;
 
     // Por nombre, como lo hace el importador. Con cabeceras repetidas gana la primera; la prueba de
     // alineacion comprueba aparte que no las haya.
