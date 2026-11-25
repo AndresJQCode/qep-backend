@@ -322,7 +322,9 @@ exija, V-6).
 
 - Tipo de documento de QEP → `id_type` de Siigo, tabla fija en `SiigoIdentificationTypes`, con prueba: CC `13`, NIT `31`,
   CE `22`, TI `12`, PP/PA `41`, PEP `47`, RC `11`. Un tipo de QEP sin código es faltante, no se deduce.
-- **NIT sin dígito de verificación y sólo con números** (lo que va después del guion se corta); Siigo acepta crear sin él.
+- **NIT sin dígito de verificación y sólo con números**; Siigo acepta crear sin él. Cómo se limpia el documento cambió: mira
+  la adición del 2026-11-25 en
+  [`2026-11-25-siigo-telefono-indicativo-design.md`](2026-11-25-siigo-telefono-indicativo-design.md).
 - Ciudad: código DANE de cinco dígitos de Geography (`city_code`) y departamento de dos (`state_code`; Bogotá `11001`/`11`).
   Un cliente sin ciudad con código DANE es `siigo.invoice.customer_city_missing`.
 - Los datos salen de la parte facturada del pedido (`order_parties`) y, lo que falte, del cliente en Customers por puerto

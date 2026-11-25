@@ -2411,6 +2411,23 @@ encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` 
 `quotations.orders_export_layout.updated` sólo si algo cambió. No hay `DELETE`: restaurar es un
 `PUT` con el catálogo en su orden, nombres y visibilidad por defecto, sin fijas.
 
+**Indicativo de los teléfonos** (spec 2026-11-25). El layout lleva un interruptor, `includePhoneDialCode`, que el `GET`
+devuelve siempre (`true` sin nada guardado) y el `PUT` acepta opcional: ausente o `null` conserva el actual. Se guarda con las
+mismas reglas que `sheetName` —permisos, `If-Match`, auditoría y no-op—, y cambiar sólo el interruptor es un cambio. Toda fila
+que ya existía quedó en `true` (migración `AddOrdersExportLayoutPhoneDialCode`, aditiva). Sólo toca las cuatro columnas de
+teléfono del catálogo —`phone`, `customer_phone`, `billing_phone` y `shipping_phone`—; las fijas salen como se escribieron.
+
+| `includePhoneDialCode` | Teléfono guardado                     | Sale en el Excel |
+| ---------------------- | ------------------------------------- | ---------------- |
+| `true`                 | cualquiera                            | como está        |
+| `false`                | `+573001234567`                       | `3001234567`     |
+| `false`                | `+34612345678`                        | `612345678`      |
+| `false`                | sin `+` (`3001234567`, `573001234567`) | como está       |
+| `false`                | con `+` y no se puede partir          | como está        |
+
+El número se parte con `libphonenumber` (`IPhoneNumberSplitter` de Customers, detrás del puerto `IQuotationPhoneNumbers`); lo que
+no es un número válido no se puede partir.
+
 `Observaciones` (`notes`) sale de las notas del pedido (`Order.Notes`, spec 2026-10-15), sin tope de
 largo. Al convertir, las notas del pedido son un solo campo, nunca una concatenación: el `notes` del
 cuerpo la reemplaza tal cual, `null` (o ausente) hereda las de la cotización y `""` la deja sin notas.

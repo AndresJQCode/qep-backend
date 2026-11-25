@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
 
@@ -56,7 +57,8 @@ internal static class InvoiceTestData
     }
 
     public static SiigoBilledPartyInput Company() =>
-        new(false, SiigoPersonKind.Juridica, SiigoIdentificationKind.Nit, "900.123.456-7", "ACME SAS", "Calle 1 # 2-3", "11001", "11", "ana@acme.test", "3001234567");
+        new(false, SiigoPersonKind.Juridica, SiigoIdentificationKind.Nit, "900.123.456-7", "ACME SAS", "Calle 1 # 2-3", "11001", "11", "ana@acme.test",
+            new SiigoPhone("57", "3001234567"));
 
     /// <summary>Dos líneas: 2 × 50.000 con IVA 19 % y 3 × 33.333,333333 con 10 % de descuento y sin IVA. Productos: 209.000.</summary>
     public static SiigoInvoiceInput Order() =>

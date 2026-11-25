@@ -16,13 +16,16 @@ public sealed record OrdersExportColumnInput(
     bool Visible);
 
 /// <summary><c>SheetName</c> (spec 2026-10-05, D6) es opcional: nulo conserva el nombre actual, o
-/// el default si no hay fila. Vacío o sólo espacios no es "ausente": es inválido.</summary>
+/// el default si no hay fila. Vacío o sólo espacios no es "ausente": es inválido.
+/// <c>IncludePhoneDialCode</c> (spec 2026-11-25 indicativo) sigue la misma regla: nulo conserva el
+/// actual, o encendido si no hay fila.</summary>
 public sealed record UpdateOrdersExportLayoutCommand(
     Guid TenantId,
     IReadOnlyList<OrdersExportColumnInput>? Columns,
     long ExpectedVersion,
     string CorrelationId,
-    string? SheetName = null) : ICommand<OrdersExportLayoutDto>;
+    string? SheetName = null,
+    bool? IncludePhoneDialCode = null) : ICommand<OrdersExportLayoutDto>;
 
 /// <summary>El nombre exacto del enum, como viaja en el DTO: ordinal, sin minúsculas ni el número
 /// del miembro, que es lo que <c>Enum.TryParse</c> sí aceptaría.</summary>
@@ -145,8 +148,12 @@ public sealed class UpdateOrdersExportLayoutHandler(
         // El validador ya garantizó que Columns no es nula y que cada Kind es conocido.
         var columns = (command.Columns ?? []).Select(ToSetting).ToArray();
         // D6: sin sheetName se conserva el actual, que en el layout por defecto en memoria ya es
-        // OrdersExportLayout.DefaultSheetName.
-        if (!layout.Replace(columns, command.SheetName ?? layout.SheetName, now))
+        // OrdersExportLayout.DefaultSheetName. El interruptor del indicativo (spec 2026-11-25) igual.
+        if (!layout.Replace(
+                columns,
+                command.SheetName ?? layout.SheetName,
+                command.IncludePhoneDialCode ?? layout.IncludePhoneDialCode,
+                now))
         {
             return OrdersExportLayoutMappings.ToDto(stored, command.TenantId);
         }

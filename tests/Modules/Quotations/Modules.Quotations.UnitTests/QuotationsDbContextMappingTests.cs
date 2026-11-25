@@ -429,7 +429,7 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("PK_orders_export_layouts", layout.FindPrimaryKey()!.GetName());
         Assert.Equal(["TenantId"], layout.FindPrimaryKey()!.Properties.Select(property => property.Name));
         Assert.Equal(
-            ["sheet_name", "tenant_id", "updated_at", "version"],
+            ["include_phone_dial_code", "sheet_name", "tenant_id", "updated_at", "version"],
             layout.GetProperties().Select(property => property.GetColumnName()).Order(StringComparer.Ordinal));
         Assert.True(layout.FindProperty(nameof(OrdersExportLayout.Version))!.IsConcurrencyToken);
 
@@ -439,6 +439,14 @@ public sealed class QuotationsDbContextMappingTests
         Assert.False(sheetName.IsNullable);
         Assert.Equal(OrdersExportLayout.SheetNameMaxLength, sheetName.GetMaxLength());
         Assert.Equal(OrdersExportLayout.DefaultSheetName, sheetName.GetDefaultValue());
+
+        // Spec 2026-11-25 indicativo: toda fila que ya existía sigue exportando el indicativo. EF tiene que
+        // escribir siempre el valor: con un default `true` en la base, omitir un `false` al insertar lo
+        // convertiría en `true`.
+        var includeDialCode = layout.FindProperty(nameof(OrdersExportLayout.IncludePhoneDialCode))!;
+        Assert.False(includeDialCode.IsNullable);
+        Assert.Equal(true, includeDialCode.GetDefaultValue());
+        Assert.Equal(ValueGenerated.Never, includeDialCode.ValueGenerated);
 
         var setting = model.FindEntityType(typeof(OrdersExportColumnSetting));
         Assert.NotNull(setting);
