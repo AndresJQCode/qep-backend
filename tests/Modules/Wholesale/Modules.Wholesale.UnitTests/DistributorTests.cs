@@ -607,6 +607,36 @@ public sealed class DistributorTests
     public void ProvesInvitedMailboxIgnoresCaseAndSpacesOfTheEmail() =>
         Assert.True(Invite(emailProofHash: Proof1).ProvesInvitedMailbox(Proof1, " Ana@Distri.CO "));
 
+    // El correo se normaliza como lo guardan Distributor e Identity (recortar y pasar a minúsculas), no comparando sin
+    // mayúsculas: una dirección que Identity trataría como otra cuenta no queda probada. Los casos son la i sin punto, la s
+    // larga y la sigma final.
+    [Theory]
+    [InlineData("mike@x.com", "mıke@x.com")]
+    [InlineData("sam@x.com", "ſam@x.com")]
+    [InlineData("nikosσ@x.com", "nikosς@x.com")]
+    public void ProvesInvitedMailboxRejectsALookalikeThatIdentityKeepsApart(string invited, string typed) =>
+        Assert.False(Invite(email: invited, emailProofHash: Proof1).ProvesInvitedMailbox(Proof1, typed));
+
+    [Fact]
+    public void ProvesInvitedMailboxAcceptsTheInvitedEmailInUpperCase() =>
+        Assert.True(Invite(email: "mike@x.com", emailProofHash: Proof1).ProvesInvitedMailbox(Proof1, " MIKE@X.COM "));
+
+    // El reemplazo del correo al aceptar anula la prueba igual que la edición: la prueba es del buzón anterior.
+    [Fact]
+    public void ReplaceEmailVoidsTheEmailProofOnlyWhenTheEmailChanges()
+    {
+        var distributor = Invite(emailProofHash: Proof1);
+
+        distributor.ReplaceEmail(" Ana@Distri.CO ", Now.AddHours(1));
+
+        Assert.Equal(Proof1, distributor.Invitation.EmailProofHash);
+
+        distributor.ReplaceEmail("otra@distri.co", Now.AddHours(2));
+
+        Assert.Null(distributor.Invitation.EmailProofHash);
+        Assert.Equal(Hash1, distributor.Invitation.TokenHash);
+    }
+
     // Decisión del owner 2026-11-24: los datos de la invitación se editan mientras está invitado. Recorta como Invite y, igual
     // que ChangeNoticeTarget, no sube Version: lo hace ChangeTerms, que corre en el mismo PUT.
     [Fact]
