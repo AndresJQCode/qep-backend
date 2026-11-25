@@ -857,6 +857,29 @@ public sealed class SiigoInvoiceBatchApiTests
             (row.GetProperty("awaitingConfirmation").GetBoolean(), row.GetProperty("canResend").GetBoolean(), row.GetProperty("canResolve").GetBoolean()));
     }
 
+    // Con el reenvío en cola, «no existe» soltaría la fila y el worker mandaría una factura nueva con otra clave: se rechaza, y el
+    // reenvío sale con la clave del primer envío.
+    [Fact]
+    public async Task AnOrderHeldByAnOpenBatchCannotBeDeclaredMissing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET last_unanswered_at = now() - interval '11 minutes'");
+        await CreateBatchAsync(world, world.OrderId);
+
+        var response = await world.Client.PostAsJsonAsync(world.BaseRoute + "/resolve", new { outcome = "missing" }, Ct);
+
+        await AssertOrderInProgressAsync(response, world.OrderId);
+        Assert.Equal("Pending", await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoices"));
+        await DrainAsync(world);
+        var calls = InvoiceCalls(world.Siigo);
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(calls[0].Header("Idempotency-Key"), calls[1].Header("Idempotency-Key"));
+    }
+
     // El pedido de este ítem ya se cerró por confirmar; que a la tanda le falten otros no lo retiene.
     [Fact]
     public async Task AToConfirmItemOfABatchStillInProgressCanBeResent()

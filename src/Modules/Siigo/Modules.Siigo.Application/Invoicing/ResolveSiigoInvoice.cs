@@ -36,6 +36,8 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 /// <c>Failed</c> y el pedido queda libre para facturar de nuevo; antes de los 10 minutos del último envío sin respuesta es 422
 /// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete sin
 /// resolver (<c>Pending</c> o <c>Unknown</c>) se descarta en el mismo guardado, porque nunca salió; al declarar que existe, no se toca.
+/// Mientras una tanda tenga el pedido (ítem <c>Pending</c> o <c>Sending</c>), <c>missing</c> es 409
+/// <c>siigo.invoice_batch.order_in_progress</c>; <c>exists</c> sí se acepta, porque no manda nada.
 /// Audita quién la resolvió, cómo y desde qué estado.
 /// </summary>
 public sealed class ResolveSiigoInvoiceHandler(
@@ -81,6 +83,13 @@ public sealed class ResolveSiigoInvoiceHandler(
             }
             else
             {
+                // Una tanda ya tiene el pedido: declarar que no existe soltaría esta fila y el worker armaría otra factura con otra
+                // clave, en vez de reenviar la misma. Si la primera sí existía en Siigo, quedaría duplicada.
+                if (await batches.FindOpenBatchIdAsync(command.TenantId, command.OrderId, cancellationToken) is not null)
+                {
+                    throw new SiigoInvoiceBatchOrderInProgressException([command.OrderId]);
+                }
+
                 row.ResolveMissing(now);
                 if (row.Kind == SiigoInvoiceKind.Order)
                 {
