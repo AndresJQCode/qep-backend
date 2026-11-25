@@ -16,11 +16,26 @@ namespace Bootstrapper;
 /// (<see cref="IAuthorizationService.ResolvePermissionsAsync"/>: membresía activa, roles y máscara de módulos). Es el segundo lugar, junto al
 /// ejecutor del copiloto, que instala un <see cref="DelegatedExecutionContext"/> (<c>CompositionRootTests</c> lo amarra). Si la persona perdió el
 /// permiso, el pedido falla con <see cref="SiigoErrorCodes.InvoiceBatchForbidden"/> y no se llama a Siigo. Todo lo que le pasa al pedido sale
-/// como resultado: ni un error del pedido ni de Siigo frena a los demás de la tanda.
+/// como resultado: ni un error del pedido ni de Siigo frena a los demás de la tanda. La excepción a «falla» es un pedido cuya factura ya
+/// está por confirmar o <c>Unknown</c>: que el reenvío no se pueda hacer no dice que no exista, así que sale por confirmar con ese motivo.
 /// </summary>
 internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization, IServiceScopeFactory scopeFactory) : ISiigoBatchItemInvoker
 {
     public async Task<SiigoBatchItemOutcome> InvokeAsync(
+        Guid tenantId,
+        Guid requestedBy,
+        Guid orderId,
+        IReadOnlyList<SiigoPaymentChoice>? payments,
+        CancellationToken cancellationToken)
+    {
+        var outcome = await IssueAsync(tenantId, requestedBy, orderId, payments, cancellationToken);
+        // Sin fila en el resultado, el fallo es de quien pidió o de la conexión: falta mirar si ya hay una factura en el aire.
+        return outcome is SiigoBatchItemOutcome.Failed { InvoiceId: null } failed
+            ? await KeepToConfirmAsync(tenantId, orderId, failed, cancellationToken)
+            : outcome;
+    }
+
+    private async Task<SiigoBatchItemOutcome> IssueAsync(
         Guid tenantId,
         Guid requestedBy,
         Guid orderId,
@@ -81,6 +96,21 @@ internal sealed class SiigoBatchItemInvoker(IAuthorizationService authorization,
         {
             return new SiigoBatchItemOutcome.Failed(upstream.Code);
         }
+    }
+
+    // La fila viva del pedido, leída aparte y sin escribir. Una que nunca salió deja el fallo como está.
+    private async Task<SiigoBatchItemOutcome> KeepToConfirmAsync(
+        Guid tenantId, Guid orderId, SiigoBatchItemOutcome.Failed failed, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var rows = await scope.ServiceProvider.GetRequiredService<ISiigoInvoiceRepository>()
+            .ListByOrderAsync(tenantId, orderId, cancellationToken);
+        var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
+        // Vienen de la más vieja a la más nueva.
+        var row = rows.LastOrDefault(value => value.Kind == SiigoInvoiceKind.Order && value.IsLive);
+        return row is not null && row.OffersResolution(now)
+            ? new SiigoBatchItemOutcome.ToConfirm(row.Id, failed.ErrorCode)
+            : failed;
     }
 
     // La fila del pedido manda: la de flete sola no cambia lo que pasó con el pedido.

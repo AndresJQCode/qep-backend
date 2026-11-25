@@ -994,6 +994,35 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Empty(InvoiceCalls(world.Siigo));
     }
 
+    // La factura pudo haber quedado creada: que el reenvío no se pueda hacer no la da por fallida.
+    [Theory]
+    [InlineData("connection", "siigo.connection_unavailable")]
+    [InlineData("permission", "siigo.invoice_batch.forbidden")]
+    public async Task AResendThatCannotBeMadeLeavesTheAwaitingInvoiceToConfirm(string lost, string code)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        var second = await CreateBatchAsync(world, world.OrderId);
+        await ExecuteAsync(
+            world.ConnectionString,
+            lost == "connection"
+                ? "UPDATE integrations.connections SET status = 'Paused'"
+                : "UPDATE siigo.invoice_batches SET requested_by = gen_random_uuid()");
+
+        await DrainAsync(world);
+
+        Assert.Equal(
+            $"ToConfirm|{code}|{await StoredInvoiceIdAsync(world)}",
+            await ScalarAsync<string>(
+                world.ConnectionString,
+                "SELECT concat(status, '|', error_code, '|', invoice_id) FROM siigo.invoice_batch_items WHERE batch_id = @batch",
+                ("batch", second)));
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
     [Fact]
     public async Task ABadBodyIs422WithItsFieldAndNothingIsCreated()
     {

@@ -114,7 +114,10 @@ que ampliar). Se agrega al final del enum.
 El ítem guarda **`invoice_id`** (nuevo): la fila `Order` de `siigo.invoices` que produjo el intento. `SiigoBatchItemOutcome` pasa a llevar
 el id de la factura en `Invoiced`, `Failed` (cuando hay fila) y el nuevo `ToConfirm(Guid InvoiceId, string? ErrorCode)`.
 `SiigoBatchItemInvoker.Map` cambia: `Pending` o `Unknown` → `ToConfirm` (hoy `Failed`), y copia `orderMarkFailed` de la fila del
-pedido. `SiigoInvoiceBatchItem` suma `MarkToConfirm(invoiceId, errorCode, now)` y guarda `invoice_id` también en `MarkInvoiced` y
+pedido. **Un reenvío que no se puede hacer** (conexión no disponible, permiso perdido o cualquier otro fallo sin fila) no termina
+`Failed` si el pedido ya tiene una factura `Order` vigente `Unknown` o por confirmar: termina `ToConfirm` con el `invoice_id` de esa fila
+y el código del fallo, porque la factura puede existir. Con una fila que nunca salió queda `Failed`, como siempre (decidido el
+2026-11-25). `SiigoInvoiceBatchItem` suma `MarkToConfirm(invoiceId, errorCode, now)` y guarda `invoice_id` también en `MarkInvoiced` y
 `MarkFailed` cuando hay fila.
 
 **El ítem sigue a la factura al leerse, no al escribirse.** El estado guardado es lo que pasó en la tanda; el estado que devuelve la API

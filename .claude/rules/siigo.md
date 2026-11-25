@@ -89,6 +89,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   duplicarla. «Existe» sí se acepta. Crear una tanda no toma ese candado, así que una creada justo entre la consulta y el guardado se
   cuela. El `POST` síncrono no deja ítem, así que esta guarda no lo ve: mientras manda, la protege el reclamo
   (`siigo.invoice.state_invalid`), y uno que espere el candado detrás de un «no existe» arma una factura nueva.
+- **Un ítem no sale `Failed` mientras su factura pueda existir:** si el reenvío no se puede hacer (conexión, permiso) y la fila `Order`
+  vigente es `Unknown` o está por confirmar, `SiigoBatchItemInvoker` lo cierra `ToConfirm` con esa fila y el código del fallo. Al leer
+  manda el `errorCode` de la fila; el del fallo sólo se ve si la fila no tiene.
 - **`canResolve` es el mismo en las filas del pedido y en los ítems de las tandas** (`SiigoInvoice.OffersResolution`: `Unknown`, una
   `Pending` vencida que todavía no se expiró, o por confirmar). El endpoint acepta más (`IsResolvable`: cualquier `Pending` que nadie
   esté mandando); no uses ése para dibujar la acción. `missingAvailableAt` sólo viaja con `canResolve`.
