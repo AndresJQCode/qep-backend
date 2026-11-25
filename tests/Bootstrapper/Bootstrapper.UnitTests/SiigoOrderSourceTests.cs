@@ -1,5 +1,6 @@
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
 
@@ -105,6 +106,23 @@ public sealed class SiigoOrderSourceTests
         Assert.Equal(("siigo", "FV-1-123", "a1b2c3", memberId), invoicing.Marked);
     }
 
+    [Fact]
+    public async Task TheLabelsTravelByOrderId()
+    {
+        var other = Guid.CreateVersion7();
+        var invoicing = new FakeInvoicing(Order());
+        invoicing.Labels[OrderId] = new ExternalInvoicingOrderLabel("PED-1", "Verde SAS");
+        invoicing.Labels[other] = new ExternalInvoicingOrderLabel("PED-2", null);
+        var source = new SiigoOrderSource(invoicing, new FakeGeography());
+
+        var labels = await source.ListLabelsAsync(TenantId, [OrderId, other], TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, labels.Count);
+        Assert.Equal(new SiigoOrderLabel("PED-1", "Verde SAS"), labels[OrderId]);
+        Assert.Equal(new SiigoOrderLabel("PED-2", null), labels[other]);
+        Assert.Equal((TenantId, 2), invoicing.LabelsAsked);
+    }
+
     private static ExternalInvoicingOrder Order() =>
         new(
             OrderId,
@@ -143,6 +161,17 @@ public sealed class SiigoOrderSourceTests
 
         public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<long?>(order.Version);
+
+        public Dictionary<Guid, ExternalInvoicingOrderLabel> Labels { get; } = [];
+
+        public (Guid TenantId, int Orders)? LabelsAsked { get; private set; }
+
+        public Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
+        {
+            LabelsAsked = (tenantId, orderIds.Count);
+            return Task.FromResult<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>>(Labels);
+        }
 
         public Task MarkInvoicedAsync(
             Guid tenantId, Guid orderId, string provider, string number, string externalId, Guid memberId, CancellationToken cancellationToken)

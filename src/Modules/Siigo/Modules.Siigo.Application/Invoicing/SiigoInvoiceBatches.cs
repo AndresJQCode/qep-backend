@@ -3,14 +3,28 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
 using FluentValidation;
 using Modules.Audit.Domain;
+using Modules.Siigo.Application.CallFailures;
 using Modules.Siigo.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Siigo.Application.Invoicing;
 
-/// <summary>Una tanda de facturación con Siigo y el avance de cada pedido. BFF: <c>status</c> es <c>InProgress</c> o <c>Finished</c>, para que la
-/// pantalla sepa cuándo dejar de consultar; los contadores evitan recorrer los ítems para pintar el resumen. Nunca lleva la petición a Siigo ni
-/// datos del cliente: sólo códigos.</summary>
+/// <summary>Cuántos pedidos de una tanda están en un estado. BFF (spec 2026-11-24 §5): viajan los seis, en orden fijo e incluso en cero,
+/// para que la pantalla no tenga que conocer el enum del backend para dibujar el que falta.</summary>
+public sealed record SiigoInvoiceBatchStatusCountDto(string Status, int Count)
+{
+    public static IReadOnlyList<SiigoInvoiceBatchStatusCountDto> From(IReadOnlyCollection<SiigoBatchItemState> states) =>
+        [
+            .. SiigoBatchItemState.CountOrder.Select(status =>
+                new SiigoInvoiceBatchStatusCountDto(status.ToString(), states.Count(state => state.Status == status))),
+        ];
+}
+
+/// <summary>Una tanda de facturación con Siigo y el avance de cada pedido. BFF: <c>status</c> es <c>InProgress</c> o <c>Finished</c>, para que
+/// la pantalla sepa cuándo dejar de consultar; <c>statusCounts</c> trae los seis estados contados para pintar el resumen sin recorrer los
+/// ítems (<c>invoiced</c>, <c>skipped</c> y <c>failed</c> se quedan porque la pantalla publicada los lee). Todo sale del estado
+/// <b>efectivo</b> de cada pedido (spec 2026-11-24 §2): uno que quedó por confirmar sigue a su factura, así que una tanda <c>Finished</c>
+/// puede mostrar uno <c>Sending</c> porque otra lo está reenviando. Nunca lleva la petición a Siigo, la clave ni sus mensajes.</summary>
 public sealed record SiigoInvoiceBatchDto(
     Guid Id,
     string Status,
@@ -20,29 +34,145 @@ public sealed record SiigoInvoiceBatchDto(
     int Failed,
     DateTimeOffset CreatedAt,
     DateTimeOffset? FinishedAt,
-    IReadOnlyList<SiigoInvoiceBatchItemDto> Items)
+    IReadOnlyList<SiigoInvoiceBatchItemDto> Items,
+    IReadOnlyList<SiigoInvoiceBatchStatusCountDto> StatusCounts)
 {
-    public static SiigoInvoiceBatchDto From(SiigoInvoiceBatch batch) =>
-        new(
+    /// <param name="invoices">Las filas de factura enlazadas a los ítems, por id.</param>
+    /// <param name="labels">Número y cliente de los pedidos de la tanda, por id de pedido.</param>
+    public static SiigoInvoiceBatchDto From(
+        SiigoInvoiceBatch batch,
+        IReadOnlyDictionary<Guid, SiigoInvoice> invoices,
+        IReadOnlyDictionary<Guid, SiigoOrderLabel> labels,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        var items = batch.Items
+            .OrderBy(item => item.Position)
+            .Select(item =>
+            {
+                var invoice = SiigoInvoiceBatchViews.Linked(item, invoices);
+                return (Item: item, Invoice: invoice, State: item.Effective(invoice, now));
+            })
+            .ToList();
+        var states = items.Select(row => row.State).ToList();
+        return new(
             batch.Id,
-            batch.IsFinished ? "Finished" : "InProgress",
-            batch.Items.Count,
-            batch.Items.Count(item => item.Status == SiigoInvoiceBatchItemStatus.Invoiced),
-            batch.Items.Count(item => item.Status == SiigoInvoiceBatchItemStatus.Skipped),
-            batch.Items.Count(item => item.Status == SiigoInvoiceBatchItemStatus.Failed),
+            SiigoInvoiceBatchViews.StatusOf(batch),
+            items.Count,
+            states.Count(state => state.Status == SiigoInvoiceBatchItemStatus.Invoiced),
+            states.Count(state => state.Status == SiigoInvoiceBatchItemStatus.Skipped),
+            states.Count(state => state.Status == SiigoInvoiceBatchItemStatus.Failed),
             batch.CreatedAt,
             batch.FinishedAt,
-            [.. batch.Items.OrderBy(item => item.Position).Select(SiigoInvoiceBatchItemDto.From)]);
+            [.. items.Select(row => SiigoInvoiceBatchItemDto.From(row.Item, row.State, row.Invoice, labels.GetValueOrDefault(row.Item.OrderId)))],
+            SiigoInvoiceBatchStatusCountDto.From(states));
+    }
 }
 
-/// <summary>Un pedido de la tanda. <paramref name="Missing"/> trae, para un pedido saltado por <c>siigo.invoice.not_ready</c>, los códigos de lo
-/// que le faltaba (la pantalla los traduce igual que los del <c>preview</c>). <paramref name="OrderNumber"/> no viaja: la pantalla ya lo tiene en
-/// las filas que marcó.</summary>
+/// <summary>
+/// Un pedido de una tanda como la pantalla lo dibuja (spec 2026-11-24 §5). <paramref name="Status"/> y <paramref name="ErrorCode"/> son
+/// los efectivos. <paramref name="OrderNumber"/> y <paramref name="CustomerName"/> son los de <c>/orders</c>, leídos al momento (<c>null</c>
+/// si el pedido no es del tenant): la pantalla de tandas no tiene las filas del listado. <paramref name="SiigoErrors"/> son los códigos que
+/// contestó Siigo, en lista para que la pantalla no parta texto, y nunca sus mensajes. <paramref name="Missing"/> trae, para un pedido
+/// saltado por <c>siigo.invoice.not_ready</c>, los códigos de lo que le faltaba (la pantalla los traduce igual que los del <c>preview</c>).
+/// <paramref name="OrderMarkFailed"/> avisa que la factura existe pero el pedido no se pudo marcar. <paramref name="CanResend"/>,
+/// <paramref name="CanResolve"/> y <paramref name="MissingAvailableAt"/> (desde cuándo se acepta «No existe», si todavía hay que esperar)
+/// van calculados porque la pantalla no ve desde cuándo se está mandando ni el reloj de 24 horas.
+/// </summary>
 public sealed record SiigoInvoiceBatchItemDto(
-    Guid OrderId, string Status, string? ErrorCode, string? InvoiceNumber, IReadOnlyList<string> Missing)
+    Guid OrderId,
+    int Position,
+    string? OrderNumber,
+    string? CustomerName,
+    string Status,
+    string? ErrorCode,
+    IReadOnlyList<string> SiigoErrors,
+    Guid? InvoiceId,
+    string? InvoiceNumber,
+    IReadOnlyList<string> Missing,
+    bool OrderMarkFailed,
+    bool CanResend,
+    bool CanResolve,
+    DateTimeOffset? MissingAvailableAt)
 {
-    public static SiigoInvoiceBatchItemDto From(SiigoInvoiceBatchItem item) =>
-        new(item.OrderId, item.Status.ToString(), item.ErrorCode, item.InvoiceNumber, item.MissingCodes);
+    public static SiigoInvoiceBatchItemDto From(
+        SiigoInvoiceBatchItem item, SiigoBatchItemState state, SiigoInvoice? invoice, SiigoOrderLabel? label)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(state);
+        return new(
+            item.OrderId,
+            item.Position,
+            label?.OrderNumber,
+            label?.CustomerName,
+            state.Status.ToString(),
+            state.ErrorCode,
+            CodesOf(invoice?.ErrorDetail),
+            item.InvoiceId,
+            state.InvoiceNumber,
+            item.MissingCodes,
+            item.OrderMarkFailed,
+            state.CanResend,
+            state.CanResolve,
+            state.MissingAvailableAt);
+    }
+
+    // error_detail va como «codigo; invalid_total_payments: total»: de cada parte sólo el código. Lo que traiga espacios no lo es.
+    private static string[] CodesOf(string? errorDetail) =>
+        errorDetail is null
+            ? []
+            : [.. errorDetail.Split("; ")
+                .Select(part => part.Split(':')[0].Trim())
+                .Where(code => code.Length > 0 && !code.Any(char.IsWhiteSpace))];
+}
+
+/// <summary>Una tanda en la lista (spec 2026-11-24 §5). BFF: <paramref name="StatusCounts"/> trae los seis estados efectivos, incluso en
+/// cero, así la pantalla pinta el avance de cada fila sin pedir el detalle.</summary>
+public sealed record SiigoInvoiceBatchSummaryDto(
+    Guid Id,
+    string Status,
+    int Total,
+    IReadOnlyList<SiigoInvoiceBatchStatusCountDto> StatusCounts,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? FinishedAt)
+{
+    public static SiigoInvoiceBatchSummaryDto From(
+        SiigoInvoiceBatch batch, IReadOnlyDictionary<Guid, SiigoInvoice> invoices, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        var states = batch.Items.Select(item => item.Effective(SiigoInvoiceBatchViews.Linked(item, invoices), now)).ToList();
+        return new(
+            batch.Id,
+            SiigoInvoiceBatchViews.StatusOf(batch),
+            batch.Items.Count,
+            SiigoInvoiceBatchStatusCountDto.From(states),
+            batch.CreatedAt,
+            batch.FinishedAt);
+    }
+}
+
+/// <summary>Las tandas del tenant, de la más nueva a la más vieja. <paramref name="Total"/> las cuenta todas, para el paginador.</summary>
+public sealed record SiigoInvoiceBatchPageDto(
+    IReadOnlyList<SiigoInvoiceBatchSummaryDto> Items, int Total, int Page, int PageSize);
+
+/// <summary>Lo que comparten las tres lecturas de una tanda.</summary>
+internal static class SiigoInvoiceBatchViews
+{
+    public static string StatusOf(SiigoInvoiceBatch batch) => batch.IsFinished ? "Finished" : "InProgress";
+
+    public static SiigoInvoice? Linked(SiigoInvoiceBatchItem item, IReadOnlyDictionary<Guid, SiigoInvoice> invoices) =>
+        item.InvoiceId is { } id ? invoices.GetValueOrDefault(id) : null;
+
+    /// <summary>Las filas de factura enlazadas a esos ítems, por id, en una sola consulta.</summary>
+    public static async Task<IReadOnlyDictionary<Guid, SiigoInvoice>> LinkedInvoicesAsync(
+        ISiigoInvoiceRepository invoices,
+        Guid tenantId,
+        IEnumerable<SiigoInvoiceBatchItem> items,
+        CancellationToken cancellationToken)
+    {
+        Guid[] ids = [.. items.Select(item => item.InvoiceId).OfType<Guid>().Distinct()];
+        return (await invoices.ListByIdsAsync(tenantId, ids, cancellationToken)).ToDictionary(invoice => invoice.Id);
+    }
 }
 
 /// <summary>Las tandas de facturación (<c>siigo.invoice_batches</c>). Con tracking: el llamador guarda con <see cref="ISiigoUnitOfWork"/>.
@@ -156,6 +286,7 @@ public sealed class CreateSiigoInvoiceBatchHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ISiigoInvoiceBatchRepository batches,
+    ISiigoOrderSource orders,
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
@@ -187,6 +318,8 @@ public sealed class CreateSiigoInvoiceBatchHandler(
             batch.Id.ToString(),
             JsonSerializer.Serialize(new { orders = batch.Items.Count, withPayments = paymentsJson is not null }),
             now);
+        // Antes de guardar: si esta lectura falla, no queda una tanda creada detrás de un error.
+        var labels = await orders.ListLabelsAsync(command.TenantId, command.OrderIds!, cancellationToken);
         try
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -198,7 +331,8 @@ public sealed class CreateSiigoInvoiceBatchHandler(
                 await batches.ListOpenOrderIdsAsync(command.TenantId, command.OrderIds!, cancellationToken));
         }
 
-        return SiigoInvoiceBatchDto.From(batch);
+        // Recién creada, ningún pedido tiene factura enlazada.
+        return SiigoInvoiceBatchDto.From(batch, new Dictionary<Guid, SiigoInvoice>(), labels, now);
     }
 }
 
@@ -208,7 +342,12 @@ public sealed record GetSiigoInvoiceBatchQuery(Guid TenantId, Guid BatchId) : IQ
 /// <summary>El avance de una tanda. De otro tenant es 404 como si no existiera (la doble capa ya dio 403 si el tenant de la ruta no es el del
 /// llamador).</summary>
 public sealed class GetSiigoInvoiceBatchHandler(
-    IExecutionContext executionContext, ITenantModules tenantModules, ISiigoInvoiceBatchRepository batches)
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    ISiigoInvoiceBatchRepository batches,
+    ISiigoInvoiceRepository invoices,
+    ISiigoOrderSource orders,
+    IClock clock)
     : IQueryHandler<GetSiigoInvoiceBatchQuery, SiigoInvoiceBatchDto>
 {
     public async Task<SiigoInvoiceBatchDto> HandleAsync(GetSiigoInvoiceBatchQuery query, CancellationToken cancellationToken)
@@ -217,6 +356,65 @@ public sealed class GetSiigoInvoiceBatchHandler(
         await SiigoInvoiceSupport.AuthorizeAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
         var batch = await batches.FindAsync(query.TenantId, query.BatchId, cancellationToken)
             ?? throw new ResourceNotFoundException(SiigoErrorCodes.InvoiceBatchNotFound, "The invoice batch was not found.");
-        return SiigoInvoiceBatchDto.From(batch);
+        var linked = await SiigoInvoiceBatchViews.LinkedInvoicesAsync(invoices, query.TenantId, batch.Items, cancellationToken);
+        var labels = await orders.ListLabelsAsync(query.TenantId, [.. batch.Items.Select(item => item.OrderId)], cancellationToken);
+        return SiigoInvoiceBatchDto.From(batch, linked, labels, clock.UtcNow);
     }
+}
+
+/// <summary><c>GET …/siigo/invoice-batches?page&amp;pageSize</c> (<c>siigo.invoice.issue</c>). Los dos llegan como texto: un valor ilegible
+/// es 422 <c>validation.failed</c> con su campo, como en las fallas de Siigo.</summary>
+public sealed record ListSiigoInvoiceBatchesQuery(Guid TenantId, string? Page, string? PageSize) : IQuery<SiigoInvoiceBatchPageDto>;
+
+public sealed class ListSiigoInvoiceBatchesValidator : AbstractValidator<ListSiigoInvoiceBatchesQuery>
+{
+    public ListSiigoInvoiceBatchesValidator()
+    {
+        RuleFor(query => query.Page)
+            .Must(value => ListSiigoCallFailuresQueryParser.TryInt(value, out _))
+            .When(query => !string.IsNullOrWhiteSpace(query.Page))
+            .WithMessage("The page must be a whole number.")
+            .OverridePropertyName("page");
+        RuleFor(query => query.PageSize)
+            .Must(value => ListSiigoCallFailuresQueryParser.TryInt(value, out _))
+            .When(query => !string.IsNullOrWhiteSpace(query.PageSize))
+            .WithMessage("The page size must be a whole number.")
+            .OverridePropertyName("pageSize");
+    }
+}
+
+/// <summary>
+/// Spec 2026-11-24 §5: todas las tandas del tenant, no sólo las propias, como el <c>GET</c> por id. En orden: tenant, permiso y módulo
+/// (403, nunca 404); la forma (422). Los contadores salen del estado efectivo, así que se leen las filas de los pedidos por confirmar de
+/// la página.
+/// </summary>
+public sealed class ListSiigoInvoiceBatchesHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    ISiigoInvoiceBatchRepository batches,
+    ISiigoInvoiceRepository invoices,
+    IClock clock,
+    IValidator<ListSiigoInvoiceBatchesQuery> validator) : IQueryHandler<ListSiigoInvoiceBatchesQuery, SiigoInvoiceBatchPageDto>
+{
+    public async Task<SiigoInvoiceBatchPageDto> HandleAsync(ListSiigoInvoiceBatchesQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await SiigoInvoiceSupport.AuthorizeAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
+        await validator.ValidateAndThrowAsync(query, cancellationToken);
+
+        var page = SiigoCallFailurePaging.NormalizePage(Int(query.Page) ?? 1);
+        var pageSize = SiigoCallFailurePaging.NormalizePageSize(Int(query.PageSize) ?? 0);
+        var (items, total) = await batches.SearchAsync(query.TenantId, page, pageSize, cancellationToken);
+        // Sólo un pedido guardado por confirmar sigue a su factura: de los demás no hace falta la fila.
+        var linked = await SiigoInvoiceBatchViews.LinkedInvoicesAsync(
+            invoices,
+            query.TenantId,
+            items.SelectMany(batch => batch.Items).Where(item => item.Status == SiigoInvoiceBatchItemStatus.ToConfirm),
+            cancellationToken);
+        var now = clock.UtcNow;
+        return new SiigoInvoiceBatchPageDto(
+            [.. items.Select(batch => SiigoInvoiceBatchSummaryDto.From(batch, linked, now))], total, page, pageSize);
+    }
+
+    private static int? Int(string? value) => ListSiigoCallFailuresQueryParser.TryInt(value, out var parsed) ? parsed : null;
 }

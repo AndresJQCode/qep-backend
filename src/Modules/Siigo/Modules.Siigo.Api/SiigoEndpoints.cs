@@ -203,6 +203,12 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-24 §5: todas las tandas del tenant, paginadas, de la más nueva a la más vieja.
+        batches.MapGet("/", ListInvoiceBatchesAsync)
+            .Produces<SiigoInvoiceBatchPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         batches.MapGet("/{batchId:guid}", GetInvoiceBatchAsync)
             .Produces<SiigoInvoiceBatchDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -235,6 +241,11 @@ public static class SiigoEndpoints
             await dispatcher.SendAsync(
                 new CreateSiigoInvoiceBatchCommand(tenantId, request?.OrderIds, ToPaymentChoices(request?.Payments)), cancellationToken),
             statusCode: StatusCodes.Status202Accepted);
+
+    private static async Task<IResult> ListInvoiceBatchesAsync(
+        Guid tenantId, string? page, string? pageSize, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        // Como texto, igual que en las fallas: un valor ilegible es 422 con su campo.
+        Results.Ok(await dispatcher.QueryAsync(new ListSiigoInvoiceBatchesQuery(tenantId, page, pageSize), cancellationToken));
 
     private static async Task<IResult> GetInvoiceBatchAsync(
         Guid tenantId, Guid batchId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

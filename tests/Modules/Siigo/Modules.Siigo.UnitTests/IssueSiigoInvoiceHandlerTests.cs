@@ -280,6 +280,10 @@ public sealed class IssueSiigoInvoiceHandlerTests
         public Task MarkInvoicedAsync(
             Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class ActiveConnections : ISiigoConnectionDirectory

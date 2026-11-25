@@ -75,6 +75,11 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
         Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
         invoicing.MarkInvoicedAsync(tenantId, orderId, Provider, number, siigoInvoiceId, memberId, cancellationToken);
 
+    public async Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+        (await invoicing.ListLabelsAsync(tenantId, orderIds, cancellationToken)).ToDictionary(
+            label => label.Key, label => new SiigoOrderLabel(label.Value.OrderNumber, label.Value.CustomerName));
+
     // Un país vacío es el de la ficha vieja: Colombia.
     private static bool IsColombian(string? country) =>
         string.IsNullOrWhiteSpace(country) || string.Equals(country, "CO", StringComparison.OrdinalIgnoreCase);

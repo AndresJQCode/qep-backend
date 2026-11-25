@@ -30,6 +30,33 @@ public sealed class SiigoInvoiceBatchApiTests
 
     private static Task<TimeSpan?> DrainAsync(InvoicingWorld world) => Worker(world).DrainAsync(Ct);
 
+    private static async Task<Guid> CreateBatchAsync(InvoicingWorld world, params Guid[] orderIds) =>
+        (await ReadAsync(await PostBatchAsync(world, orderIds))).GetProperty("id").GetGuid();
+
+    private static (string? OrderNumber, string? CustomerName) Label(JsonElement item) =>
+        (item.GetProperty("orderNumber").GetString(), item.GetProperty("customerName").GetString());
+
+    private static string[] SiigoErrors(JsonElement item) =>
+        [.. item.GetProperty("siigoErrors").EnumerateArray().Select(code => code.GetString()!)];
+
+    private static string[] Counts(JsonElement batch) =>
+        [.. batch.GetProperty("statusCounts").EnumerateArray()
+            .Select(count => $"{count.GetProperty("status").GetString()}={count.GetProperty("count").GetInt32()}")];
+
+    private static (int Total, int Page, int PageSize) PageOf(JsonElement page) =>
+        (page.GetProperty("total").GetInt32(), page.GetProperty("page").GetInt32(), page.GetProperty("pageSize").GetInt32());
+
+    private static Guid[] Ids(JsonElement page) =>
+        [.. page.GetProperty("items").EnumerateArray().Select(summary => summary.GetProperty("id").GetGuid())];
+
+    // Un segundo cliente en la misma base, con Siigo prendido y su owner con permiso de facturar.
+    private static async Task<(Guid TenantId, HttpClient Client)> OtherTenantAsync(InvoicingWorld world)
+    {
+        var other = await RegisterTenantAsync(world.Factory);
+        await EnableSiigoAsync(world.ConnectionString, other.TenantId);
+        return (other.TenantId, CreateClient(world.Factory, other.OwnerUserId, other.TenantId, SiigoPermissions.InvoiceIssue));
+    }
+
     // Un worker lo reclamó y murió sin guardar nada: el lease ya venció.
     private static Task AbandonTheItemAsync(InvoicingWorld world) =>
         ExecuteAsync(
@@ -312,6 +339,8 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.DoesNotContain("SENTINEL", text, StringComparison.Ordinal);
         var item = await StoredItemAsync(world);
         Assert.Equal(("Failed", await StoredInvoiceIdAsync(world)), (item.Status, item.InvoiceId));
+        Assert.Equal(item.InvoiceId, Item(batch.RootElement, 0).GetProperty("invoiceId").GetGuid());
+        Assert.Equal(["invalid_item"], SiigoErrors(Item(batch.RootElement, 0)));
     }
 
     // La factura existe pero el pedido quedó marcado a mano en medio: el ítem es Invoiced y lo avisa.
@@ -395,7 +424,7 @@ public sealed class SiigoInvoiceBatchApiTests
         using var world = await ArrangeAsync(database);
         world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
         await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
-        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        var batchId = await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
 
         await DrainAsync(world);
@@ -404,6 +433,7 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Equal(
             ("ToConfirm", "siigo.invoice.unavailable", await StoredInvoiceIdAsync(world)),
             (item.Status, item.ErrorCode, item.InvoiceId));
+        Assert.Equal(item.InvoiceId, Item(await GetBatchAsync(world, batchId), 0).GetProperty("invoiceId").GetGuid());
         Assert.Single(InvoiceCalls(world.Siigo));
     }
 
@@ -413,7 +443,7 @@ public sealed class SiigoInvoiceBatchApiTests
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
         await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
-        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        var batchId = await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
 
         await DrainAsync(world);
@@ -422,6 +452,7 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Equal(
             ("Invoiced", "FV-1-123", await StoredInvoiceIdAsync(world)),
             (item.Status, item.InvoiceNumber, item.InvoiceId));
+        Assert.Equal(item.InvoiceId, Item(await GetBatchAsync(world, batchId), 0).GetProperty("invoiceId").GetGuid());
         Assert.Single(InvoiceCalls(world.Siigo));
     }
 
@@ -437,7 +468,7 @@ public sealed class SiigoInvoiceBatchApiTests
             shutdown.Cancel();
             throw new OperationCanceledException(shutdown.Token);
         });
-        await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        var batchId = await CreateBatchAsync(world, world.OrderId);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Worker(world).DrainAsync(shutdown.Token));
 
@@ -447,8 +478,199 @@ public sealed class SiigoInvoiceBatchApiTests
             (item.Status, item.ErrorCode, item.InvoiceId));
         Assert.True(item.LeaseReleased);
         Assert.True(item.BatchFinished);
+        // Mientras dure el reclamo del envío cortado, la fila se considera en camino; vencido, queda por confirmar.
+        Assert.Equal("Sending", Item(await GetBatchAsync(world, batchId), 0).GetProperty("status").GetString());
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '9 minutes'");
+        Assert.Equal("ToConfirm", Item(await GetBatchAsync(world, batchId), 0).GetProperty("status").GetString());
         await DrainAsync(world);
         Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    // Spec 2026-11-24 §5: el número y el cliente que muestra /orders, y los seis estados contados, en orden fijo e incluso en cero.
+    [Fact]
+    public async Task TheDetailCarriesTheOrderNumberTheCustomerAndFullCounts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var created = await ReadAsync(await PostBatchAsync(world, world.OrderId));
+        await DrainAsync(world);
+        var batch = await GetBatchAsync(world, created.GetProperty("id").GetGuid());
+
+        Assert.Equal((world.OrderNumber, "Verde Esencial S.A.S."), Label(Item(created, 0)));
+        Assert.Equal(["Pending=1", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=0", "Skipped=0"], Counts(created));
+        var item = Item(batch, 0);
+        Assert.Equal((world.OrderNumber, "Verde Esencial S.A.S."), Label(item));
+        Assert.Equal(["Pending=0", "Sending=0", "Invoiced=1", "ToConfirm=0", "Failed=0", "Skipped=0"], Counts(batch));
+        Assert.Equal(
+            (0, "Invoiced", "FV-1-123"),
+            (item.GetProperty("position").GetInt32(), item.GetProperty("status").GetString(), item.GetProperty("invoiceNumber").GetString()));
+        Assert.Equal(await StoredInvoiceIdAsync(world), item.GetProperty("invoiceId").GetGuid());
+        Assert.Empty(SiigoErrors(item));
+        Assert.False(item.GetProperty("orderMarkFailed").GetBoolean());
+        Assert.False(item.GetProperty("canResend").GetBoolean());
+        Assert.False(item.GetProperty("canResolve").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("missingAvailableAt").ValueKind);
+    }
+
+    [Fact]
+    public async Task AForeignOrderHasNoNumberNorCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var (otherTenantId, otherClient) = await OtherTenantAsync(world);
+        using var disposable = otherClient;
+        var route = $"/api/v1/tenants/{otherTenantId}/siigo/invoice-batches";
+
+        // Un pedido de otro tenant y uno que no existe.
+        var created = await ReadAsync(await otherClient.PostAsJsonAsync(route, new { orderIds = new[] { world.OrderId, Guid.NewGuid() } }, Ct));
+        await DrainAsync(world);
+        var batch = await ReadAsync(await otherClient.GetAsync($"{route}/{created.GetProperty("id").GetGuid()}", Ct));
+
+        foreach (var item in created.GetProperty("items").EnumerateArray().Concat(batch.GetProperty("items").EnumerateArray()))
+        {
+            Assert.Equal(((string?)null, (string?)null), Label(item));
+        }
+
+        Assert.Equal(["Pending=0", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=0", "Skipped=2"], Counts(batch));
+        Assert.Empty(InvoiceCalls(world.Siigo));
+    }
+
+    [Fact]
+    public async Task TheListPagesNewestFirstWithFullCounts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var oldest = await CreateBatchAsync(world, Guid.NewGuid());
+        var middle = await CreateBatchAsync(world, Guid.NewGuid());
+        var newest = await CreateBatchAsync(world, world.OrderId);
+
+        var first = await ReadAsync(await world.Client.GetAsync($"{BatchesRoute(world)}?pageSize=2", Ct));
+        await DrainAsync(world);
+        var second = await ReadAsync(await world.Client.GetAsync($"{BatchesRoute(world)}?page=2&pageSize=2", Ct));
+        var byDefault = await ReadAsync(await world.Client.GetAsync(BatchesRoute(world), Ct));
+
+        Assert.Equal((3, 1, 2), PageOf(first));
+        Assert.Equal([newest, middle], Ids(first));
+        Assert.All(
+            first.GetProperty("items").EnumerateArray(),
+            summary =>
+            {
+                Assert.Equal(["Pending=1", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=0", "Skipped=0"], Counts(summary));
+                Assert.Equal(("InProgress", 1), (summary.GetProperty("status").GetString(), summary.GetProperty("total").GetInt32()));
+                Assert.Equal(JsonValueKind.Null, summary.GetProperty("finishedAt").ValueKind);
+            });
+        Assert.Equal((3, 2, 2), PageOf(second));
+        Assert.Equal([oldest], Ids(second));
+        var finished = second.GetProperty("items")[0];
+        Assert.Equal("Finished", finished.GetProperty("status").GetString());
+        Assert.Equal(["Pending=0", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=0", "Skipped=1"], Counts(finished));
+        Assert.Equal((3, 1, 25), PageOf(byDefault));
+        Assert.Equal([newest, middle, oldest], Ids(byDefault));
+    }
+
+    [Fact]
+    public async Task ABadPageIs422WithItsField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var page = await world.Client.GetAsync($"{BatchesRoute(world)}?page=x", Ct);
+        var pageSize = await world.Client.GetAsync($"{BatchesRoute(world)}?pageSize=y", Ct);
+
+        Assert.True((await ReadValidationErrorsAsync(page)).TryGetProperty("page", out _));
+        Assert.True((await ReadValidationErrorsAsync(pageSize)).TryGetProperty("pageSize", out _));
+    }
+
+    [Fact]
+    public async Task TheListIsTheTenantsAndNeedsThePermission()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await CreateBatchAsync(world, world.OrderId);
+        var (otherTenantId, otherClient) = await OtherTenantAsync(world);
+        using var disposable = otherClient;
+        using var withoutPermission = CreateClient(world.Factory, world.Tenant.OwnerUserId, world.TenantId, SiigoPermissions.SettingsManage);
+
+        var forbidden = new[]
+        {
+            await withoutPermission.GetAsync(BatchesRoute(world), Ct),
+            await otherClient.GetAsync(BatchesRoute(world), Ct),
+        };
+        var own = await ReadAsync(await otherClient.GetAsync($"/api/v1/tenants/{otherTenantId}/siigo/invoice-batches", Ct));
+
+        Assert.All(forbidden, response => Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode));
+        Assert.Equal((0, 1, 25), PageOf(own));
+        Assert.Empty(Ids(own));
+    }
+
+    // Spec 2026-11-24 §2: el ítem sigue a la factura al leerse; una resolución desde el pedido se ve en todas las tandas que la tocaron.
+    [Fact]
+    public async Task AResolutionFromTheOrderShowsInEveryBatchThatTouchedTheInvoice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        var first = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        var second = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+
+        var pending = Item(await GetBatchAsync(world, first), 0);
+        Assert.Equal(
+            ("ToConfirm", "siigo.invoice.unavailable"),
+            (pending.GetProperty("status").GetString(), pending.GetProperty("errorCode").GetString()));
+        Assert.True(pending.GetProperty("canResend").GetBoolean());
+        Assert.True(pending.GetProperty("canResolve").GetBoolean());
+        Assert.Equal(JsonValueKind.String, pending.GetProperty("missingAvailableAt").ValueKind);
+
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET last_unanswered_at = now() - interval '11 minutes'");
+        await ReadAsync(await world.Client.PostAsJsonAsync(world.BaseRoute + "/resolve", new { outcome = "missing" }, Ct));
+
+        foreach (var batchId in new[] { first, second })
+        {
+            var batch = await GetBatchAsync(world, batchId);
+            var item = Item(batch, 0);
+            Assert.Equal(
+                ("Failed", "siigo.invoice.resolved_missing"),
+                (item.GetProperty("status").GetString(), item.GetProperty("errorCode").GetString()));
+            Assert.False(item.GetProperty("canResend").GetBoolean());
+            Assert.False(item.GetProperty("canResolve").GetBoolean());
+            Assert.Equal(1, batch.GetProperty("failed").GetInt32());
+            Assert.Equal(["Pending=0", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=1", "Skipped=0"], Counts(batch));
+        }
+
+        var list = await ReadAsync(await world.Client.GetAsync(BatchesRoute(world), Ct));
+        Assert.All(
+            list.GetProperty("items").EnumerateArray(),
+            summary => Assert.Equal(["Pending=0", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=1", "Skipped=0"], Counts(summary)));
+    }
+
+    [Fact]
+    public async Task AResendFromAnotherBatchShowsAsInvoicedInTheFirst()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        var first = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+
+        world.Siigo.OnRequest("/v1/invoices", _ => Created("FV-1-123", "id-1", 0m));
+        await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+
+        var batch = await GetBatchAsync(world, first);
+        var item = Item(batch, 0);
+        Assert.Equal(("Invoiced", "FV-1-123"), (item.GetProperty("status").GetString(), item.GetProperty("invoiceNumber").GetString()));
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("errorCode").ValueKind);
+        Assert.Equal(await StoredInvoiceIdAsync(world), item.GetProperty("invoiceId").GetGuid());
+        Assert.False(item.GetProperty("canResend").GetBoolean());
+        Assert.False(item.GetProperty("canResolve").GetBoolean());
+        Assert.Equal(1, batch.GetProperty("invoiced").GetInt32());
+        Assert.Equal(["Pending=0", "Sending=0", "Invoiced=1", "ToConfirm=0", "Failed=0", "Skipped=0"], Counts(batch));
+        var calls = InvoiceCalls(world.Siigo);
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(calls[0].Header("Idempotency-Key"), calls[1].Header("Idempotency-Key"));
     }
 
     [Fact]

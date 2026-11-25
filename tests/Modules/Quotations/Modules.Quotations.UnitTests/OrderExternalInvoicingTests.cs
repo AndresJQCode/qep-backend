@@ -25,11 +25,15 @@ public sealed class OrderExternalInvoicingTests
     };
 
     // Una línea de 2 × 11.900 con IVA del 19 % → neto 23.800. Por defecto, un comprobante de 100.000 (queda pagado).
-    private static Order NewOrder(IReadOnlyCollection<OrderPaymentProofInput>? proofs = null, ShippingDetails? shipping = null) =>
+    private static Order NewOrder(
+        IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
+        ShippingDetails? shipping = null,
+        Guid? tenantId = null,
+        string number = "PED-2026-0001") =>
         Order.CreateManual(
             OrderId.New(),
-            TenantId,
-            "PED-2026-0001",
+            tenantId ?? TenantId,
+            number,
             new OrderHeader(ClientId, Advisor, "COP", "Transferencia", false, null, false, []),
             QuotationParties.Empty,
             Account,
@@ -154,6 +158,38 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal(["quotation.order.invoiced"], audit.Actions);
         Assert.Equal([OrderHistoryEventType.Invoiced], repository.History.Select(entry => entry.EventType));
         Assert.Equal(["Facturado en Siigo, factura FV-1-123."], repository.History.Select(entry => entry.Details));
+    }
+
+    // Spec 2026-11-24 §5: las tandas de facturación pintan el número y el cliente que muestra /orders, en una consulta de cada uno; un
+    // pedido de otro tenant o que no existe no aparece.
+    [Fact]
+    public async Task ListLabelsReturnsTheNumberAndCustomerNameOfTheTenantOrdersOnly()
+    {
+        var own = NewOrder();
+        var foreign = NewOrder(tenantId: Guid.CreateVersion7(), number: "PED-2026-0009");
+        var customers = new StubQuotationCustomerLookup(new QuotationCustomerRef(
+            ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Calle 1 # 2-3",
+            WithRetention: false, VatSurplus: false));
+        var service = new ExternalOrderInvoicingService(
+            new StubOrderListRepository(own, foreign),
+            new NoOpQuotationsUnitOfWork(),
+            new RecordingQuotationAuditPublisher(),
+            new SubjectExecutionContext(Guid.CreateVersion7(), TenantId),
+            new FixedClock(Now),
+            new FixedTenantClock(Now),
+            new FixedQuotationSettingsStore(),
+            new StubTenantDirectory(),
+            customers,
+            new StubQuotationAdvisorLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
+
+        var labels = await service.ListLabelsAsync(
+            TenantId, [own.Id.Value, foreign.Id.Value, Guid.CreateVersion7()], TestContext.Current.CancellationToken);
+
+        var label = Assert.Single(labels);
+        Assert.Equal(own.Id.Value, label.Key);
+        Assert.Equal(new ExternalInvoicingOrderLabel("PED-2026-0001", "Ferretería El Tornillo"), label.Value);
+        Assert.Equal(1, customers.FindNamesCalls);
     }
 
     // «Los mismos del cliente» no guarda parte de envío: el despacho va a la dirección y ciudad de la ficha del cliente, como la facturación.
