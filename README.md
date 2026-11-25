@@ -2634,6 +2634,9 @@ cityName?, address? }`). Decisión del owner 2026-11-24: mientras está `Invited
   existente) es `409 wholesale.distributor.acceptance_in_progress` y no escribe nada; los demás campos se siguen editando.
   La aceptación confirma esa marca antes de escribir en otros módulos y con ella sube `version`: un `PUT` con el `If-Match`
   anterior es `412 concurrency.conflict`. Un accept rechazado en sus validaciones no deja marca. La marca no se borra.
+- El detalle devuelve `city` como `{ id, name, departmentId, departmentName }`, para que la edición preseleccione la cascada
+  departamento → ciudad. Afuera de Colombia `id`, `departmentId` y `departmentName` son `null` y `name` es el texto escrito;
+  `city` es `null` en una invitación sin ciudad. El `PUT` sigue recibiendo sólo `cityId` o `cityName`.
 - `Active` o `Blocked`: un dato distinto del guardado es `409 wholesale.distributor.invalid_transition`. Reenviar los mismos
   valores se acepta (en Colombia `cityName` no cuenta, y afuera `cityId` tampoco).
 - Cambiar el correo **no** reenvía la invitación ni rota el token: para que llegue al correo nuevo, usa `resend-invitation`.

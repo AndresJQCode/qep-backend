@@ -225,6 +225,9 @@ internal sealed class FakeCityLookup : IWholesaleCityLookup
 
     public List<Guid> Calls { get; } = [];
 
+    /// <summary>Todas las ciudades sembradas quedan en este departamento: ninguna prueba distingue dos.</summary>
+    public Guid DepartmentId { get; } = Guid.CreateVersion7();
+
     public Guid Add(string name)
     {
         var id = Guid.CreateVersion7();
@@ -235,7 +238,9 @@ internal sealed class FakeCityLookup : IWholesaleCityLookup
     public Task<WholesaleCityRef?> FindAsync(Guid cityId, CancellationToken cancellationToken)
     {
         Calls.Add(cityId);
-        return Task.FromResult(Cities.TryGetValue(cityId, out var name) ? new WholesaleCityRef(cityId, name) : null);
+        return Task.FromResult(Cities.TryGetValue(cityId, out var name)
+            ? new WholesaleCityRef(cityId, name, DepartmentId, "Antioquia")
+            : null);
     }
 }
 
