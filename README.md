@@ -5525,11 +5525,17 @@ código, sin distinguir mayúsculas ni espacios.
 **Generar la factura.** `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (permiso `siigo.invoice.issue`, y el
 handler revalida tenant y permiso: 403, nunca 404). `GET …/preview` devuelve la factura armada, los faltantes y la propuesta de
 pagos sin llamar a Siigo.
+Cada fila que devuelven `GET`, `/stamp` y `/resolve` trae `orderMarkFailed`: va en `true` en la factura del pedido que existe en
+Siigo cuando el pedido no lleva su marca (o no se pudo leer) y ninguna tanda sin terminar lo tiene; volver a generar (con ese
+`POST` o con una tanda del pedido) la completa sin crear otra factura. La de flete siempre va en `false`. Mientras una tanda sin
+terminar tenga el pedido, `canResend` va en `false`, en esas filas y en los ítems de las tandas.
 
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
   `Rejected` y `Failed` arman una fila nueva. Una `Pending` de más de 24 h pasa a `Unknown` y la resuelve una persona
-  (`POST …/resolve` con `exists` o `missing`).
+  (`POST …/resolve` con `exists` o `missing`). Mientras una tanda sin terminar tenga el pedido, `missing` es
+  `409 siigo.invoice_batch.order_in_progress`. La de flete no se resuelve mientras la del pedido siga abierta (`Pending` o
+  `Unknown`): `422 siigo.invoice.state_invalid`.
 - Si falta algo (variante sin vínculo, impuesto sin vínculo, cuenta sin forma de pago, cliente sin dato) responde
   `422 siigo.invoice.not_ready` con `details.missing` y nada sale a Siigo.
 - Cada comprobante de pago del pedido es un pago de la factura; el saldo va a contraentrega o a crédito. Los `payments` suman el

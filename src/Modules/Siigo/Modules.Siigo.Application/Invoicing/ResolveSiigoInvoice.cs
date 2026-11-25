@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Siigo.Domain;
 using Modules.Tenancy.Application;
 
@@ -35,6 +36,10 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 /// <c>Failed</c> y el pedido queda libre para facturar de nuevo; antes de los 10 minutos del último envío sin respuesta es 422
 /// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete sin
 /// resolver (<c>Pending</c> o <c>Unknown</c>) se descarta en el mismo guardado, porque nunca salió; al declarar que existe, no se toca.
+/// La de flete no se resuelve, ni <c>exists</c> ni <c>missing</c>, mientras la del pedido siga abierta (<c>Pending</c> o <c>Unknown</c>):
+/// nunca salió (422 <c>siigo.invoice.state_invalid</c>). Con la del pedido facturada, rechazada o descartada, sí.
+/// Mientras una tanda tenga el pedido (ítem <c>Pending</c> o <c>Sending</c>), <c>missing</c> es 409
+/// <c>siigo.invoice_batch.order_in_progress</c>; <c>exists</c> sí se acepta, porque no manda nada.
 /// Audita quién la resolvió, cómo y desde qué estado.
 /// </summary>
 public sealed class ResolveSiigoInvoiceHandler(
@@ -46,7 +51,9 @@ public sealed class ResolveSiigoInvoiceHandler(
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
-    IValidator<ResolveSiigoInvoiceCommand> validator) : ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>
+    IValidator<ResolveSiigoInvoiceCommand> validator,
+    ISiigoInvoiceBatchRepository batches,
+    ILogger<ResolveSiigoInvoiceHandler> logger) : ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>
 {
     public async Task<SiigoInvoiceDto> HandleAsync(ResolveSiigoInvoiceCommand command, CancellationToken cancellationToken)
     {
@@ -72,12 +79,26 @@ public sealed class ResolveSiigoInvoiceHandler(
             // La transición perezosa va primero: una Pending de más de un día es Unknown aunque nadie la haya leído todavía.
             row.ExpireIfStale(now);
             var fromStatus = row.Status.ToString();
+            if (SiigoInvoiceSupport.IsFreightWaitingForTheOrder(row, rows))
+            {
+                throw new SiigoDomainException(
+                    SiigoErrorCodes.InvoiceStateInvalid,
+                    "The freight invoice has not been sent: resolve it only after the order invoice is settled.");
+            }
+
             if (command.Outcome == ResolveSiigoInvoiceValidator.Exists)
             {
                 row.ResolveExists(command.Number!, now);
             }
             else
             {
+                // Una tanda ya tiene el pedido: declarar que no existe soltaría esta fila y el worker armaría otra factura con otra
+                // clave, en vez de reenviar la misma. Si la primera sí existía en Siigo, quedaría duplicada.
+                if (await batches.FindOpenBatchIdAsync(command.TenantId, command.OrderId, cancellationToken) is not null)
+                {
+                    throw new SiigoInvoiceBatchOrderInProgressException([command.OrderId]);
+                }
+
                 row.ResolveMissing(now);
                 if (row.Kind == SiigoInvoiceKind.Order)
                 {
@@ -97,7 +118,9 @@ public sealed class ResolveSiigoInvoiceHandler(
             await orders.MarkInvoicedAsync(command.TenantId, command.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), memberId, cancellationToken);
         }
 
-        return SiigoInvoiceDto.From(row, now);
+        var queued = await batches.FindOpenBatchIdAsync(command.TenantId, command.OrderId, cancellationToken) is not null;
+        var orderMarkFailed = await SiigoOrderMark.IsMissingAsync(orders, row, queued, logger, cancellationToken);
+        return SiigoInvoiceDto.From(row, now, orderMarkFailed, queued: queued);
     }
 
     // La de flete sólo sale después de que la del pedido existe, y acá la del pedido estaba sin resolver: la de flete sin resolver nunca

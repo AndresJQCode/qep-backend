@@ -27,12 +27,13 @@ internal static class SiigoPaymentChoiceRules
     }
 }
 
-/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase).</summary>
+/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase). Un elemento nulo de <c>payments</c> falla en su
+/// propio campo.</summary>
 public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInvoiceCommand>
 {
     public IssueSiigoInvoiceValidator()
     {
-        RuleForEach(command => command.Payments).ChildRules(SiigoPaymentChoiceRules.Configure);
+        RuleForEach(command => command.Payments).NotNull().ChildRules(SiigoPaymentChoiceRules.Configure);
     }
 }
 
@@ -55,7 +56,9 @@ public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInv
 /// <para>Spec 2026-11-24 §3: ante la duda la factura queda <b>por confirmar</b> (<c>Pending</c> con <c>unanswered_at</c>), con la misma
 /// clave, y decide una persona. Pasa con timeout, red, 5xx, 429, una respuesta ilegible, un error de servicio de Siigo (aun en el primer
 /// intento), un rechazo de datos en el reenvío de una que ya tuvo un envío sin respuesta, y al reanudar un envío cuyo reclamo venció sin
-/// resultado. Sin <c>Partner-Id</c> o sin token la factura no salió: sigue <c>Pending</c> sin quedar por confirmar.</para>
+/// resultado. Sin <c>Partner-Id</c> o sin token la factura no salió: sigue <c>Pending</c> sin quedar por confirmar. La de flete cuya
+/// factura del pedido no existe en Siigo (ni <c>Created</c>, ni <c>Stamped</c>, ni <c>StampRejected</c>) nunca se marca sin respuesta:
+/// sólo sale después de ella, así que su reclamo vencido es de un envío que se cortó antes de llegarle.</para>
 /// </summary>
 public sealed class IssueSiigoInvoiceHandler(
     IExecutionContext executionContext,
@@ -87,10 +90,14 @@ public sealed class IssueSiigoInvoiceHandler(
 
         await EnsureOrderMarkedAsync(prepared, cancellationToken);
         var now = clock.UtcNow;
+        var current = SiigoInvoiceSupport.Current(prepared.Rows);
         return
         [
-            .. SiigoInvoiceSupport.Current(prepared.Rows)
-                .Select(row => SiigoInvoiceDto.From(row, now, prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order)),
+            .. current.Select(row => SiigoInvoiceDto.From(
+                row,
+                now,
+                prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order,
+                waitsForOrder: SiigoInvoiceSupport.IsFreightWaitingForTheOrder(row, current))),
         ];
     }
 

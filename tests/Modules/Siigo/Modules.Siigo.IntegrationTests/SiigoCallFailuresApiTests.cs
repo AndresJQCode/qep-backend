@@ -141,6 +141,22 @@ public sealed class SiigoCallFailuresApiTests
         Assert.Equal([oldest], second["items"]!.AsArray().Select(item => item!["id"]!.GetValue<Guid>()));
     }
 
+    // (page - 1) * pageSize no cabe en un int: la página se recorta en vez de mandar un desplazamiento negativo.
+    [Fact]
+    public async Task AHugePageIsClampedAndComesBackEmpty()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (factory, tenant, connectionString) = await ArrangeAsync(database);
+        using var _ = factory;
+        await SeedAsync(connectionString, tenant.TenantId);
+        using var client = Reader(factory, tenant);
+
+        var page = (await client.GetFromJsonAsync<JsonObject>(Route(tenant.TenantId) + $"?page={int.MaxValue}&pageSize=100", Ct))!;
+
+        Assert.Empty(page["items"]!.AsArray());
+        Assert.Equal((1, int.MaxValue / 100), (page["total"]!.GetValue<int>(), page["page"]!.GetValue<int>()));
+    }
+
     [Theory]
     [InlineData("operation=Nonsense", "operation")]
     [InlineData("operation=3", "operation")]

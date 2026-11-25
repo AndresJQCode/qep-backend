@@ -46,6 +46,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   aunque tenga `unanswered_at` o ya sea `Unknown`. Un camino nuevo que mande la de flete antes rompe las dos reglas y puede duplicar. La
   espera de «no existe» vale también para una `Unknown`: `ExpireIfStale` no expira una que se está mandando y conserva el último envío sin
   respuesta (incluido un `sending_since` vencido).
+- **La de flete no se resuelve mientras la del pedido siga abierta** (`Pending` o `Unknown`): nunca salió, así que el endpoint responde
+  422 `siigo.invoice.state_invalid` y sus filas llevan `canResolve` en `false` (`SiigoInvoiceSupport.IsFreightWaitingForTheOrder`; una
+  respuesta nueva con filas del pedido tiene que cruzarlo). Con la del pedido facturada, rechazada o `Failed`, sí se resuelve.
 - **Durante el despliegue de la facturación en segundo plano hay filas sin `unanswered_at`** (el pod anterior escribe después del relleno de
   `AddSiigoBackgroundInvoicing`). El dominio trata como sin respuesta, desde `updated_at`, una `Pending` con `timeout`, `network`,
   `rate_limited` o `siigo_service`; `unavailable` no, porque también lo deja un envío que nunca salió. **Terminado el rollout, el owner corre
@@ -72,7 +75,29 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `tenant_id` compila y deja ambas operaciones en 500.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
-  `Created` y la respuesta lleva `orderMarkFailed`; el siguiente `POST` reintenta sólo la marca. Nunca deja el `POST` fallando.
+  `Created`, y la respuesta del `POST` y el ítem de la tanda llevan `orderMarkFailed`; el siguiente `POST` o la siguiente tanda del
+  pedido reintentan sólo la marca. Nunca deja la emisión fallando.
+- **`orderMarkFailed` de las filas del pedido se calcula al leer** (lista, sellar y resolver; no se guarda en `siigo.invoices`): sólo en
+  la fila `Order` que existe en Siigo y tiene número, y nunca mientras una tanda tenga el pedido (ítem `Pending` o `Sending`), para que un
+  envío en curso no parpadee un aviso. El `POST` síncrono no tiene ítem: una lectura que caiga entre que guarda la factura y marca el
+  pedido puede avisar de paso. Lee la marca con `SiigoOrderMark`, el mismo de la recuperación de una tanda: 5 s de plazo y, si la
+  lectura falla, avisa. Una respuesta nueva que devuelva filas del pedido tiene que calcularlo: sin él la pantalla no ofrece «Generar».
+- **`canResend` va en `false` mientras una tanda tenga el pedido** (en las filas del pedido y en los ítems de las tandas): otra tanda
+  respondería 409. Se pregunta una vez con todos los ids (`ListOpenOrderIdsAsync`), nunca por fila. No lo decide el dominio
+  (`SiigoInvoice.CanResend` y `SiigoInvoiceBatchItem.Effective` no ven las otras tandas): una respuesta nueva que ofrezca reenviar tiene
+  que cruzarlo. `canResolve` no lo mira. La excepción es la respuesta del `POST` síncrono, que no lo cruza: puede traer `canResend` en
+  `true` con el pedido en una tanda.
+- **«No existe» se rechaza mientras una tanda tenga el pedido** (409 `siigo.invoice_batch.order_in_progress`, dentro de la transacción
+  que bloquea el pedido): soltar la fila haría que el worker armara otra factura con otra clave en vez de reenviar la misma, y podría
+  duplicarla. «Existe» sí se acepta. Crear una tanda no toma ese candado, así que una creada justo entre la consulta y el guardado se
+  cuela. El `POST` síncrono no deja ítem, así que esta guarda no lo ve: mientras manda, la protege el reclamo
+  (`siigo.invoice.state_invalid`), y uno que espere el candado detrás de un «no existe» arma una factura nueva.
+- **Un ítem no sale `Failed` mientras su factura pueda existir:** si el reenvío no se puede hacer (conexión, permiso) y la fila `Order`
+  vigente es `Unknown` o está por confirmar, `SiigoBatchItemInvoker` lo cierra `ToConfirm` con esa fila y el código del fallo. Al leer
+  manda el `errorCode` de la fila; el del fallo sólo se ve si la fila no tiene.
+- **`canResolve` es el mismo en las filas del pedido y en los ítems de las tandas** (`SiigoInvoice.OffersResolution`: `Unknown`, una
+  `Pending` vencida que todavía no se expiró, o por confirmar). El endpoint acepta más (`IsResolvable`: cualquier `Pending` que nadie
+  esté mandando); no uses ése para dibujar la acción. `missingAvailableAt` sólo viaja con `canResolve`.
 - **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
   `ListUnitPrice × 100 / (100 + IVA)` a **2 decimales**: la documentación de Siigo da a `tax_base` «máximo 11 enteros y 2 decimales», y con 6
   Siigo rechazó con `invalid_amount` en `items[n].tax_base`; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo
@@ -126,7 +151,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   desde otra tanda o una resolución desde el pedido se ven sin escribir en el ítem. Una tanda de **un** pedido puede llevar las formas de
   pago elegidas (`payments_json`). Un pedido que ya está en un ítem `Pending` o `Sending` es 409 `siigo.invoice_batch.order_in_progress` con
   `details.orderIds` (la consulta antes de guardar y, en la carrera, el índice `IX_invoice_batch_items_tenant_order_open`). El resto de la
-  tanda sigue. El timbre sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre
+  tanda sigue. **`finished_at` puede quedar vacío** si dos réplicas resuelven a la vez los dos últimos pedidos: al leer, la tanda es
+  `Finished` si está cerrada o si ningún pedido guardado le falta, con la hora del último resuelto
+  (`SiigoInvoiceBatch.ReadFinishedAt`); quien filtre por `finished_at` en SQL no ve esas. El timbre sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre
   calla y sólo queda la red de seguridad de 30 s. Tope de 50 pedidos por tanda.
 
 - **`qep_siigo_call_failures_total{operation,reason}` no lleva tenant, conexión ni ruta** (cardinalidad): el tenant se busca en `siigo.call_failures`
