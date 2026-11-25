@@ -228,7 +228,8 @@ public sealed class SiigoInvoiceBatchItem
                 new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Sending, null, null, false, false, null),
             SiigoInvoiceStatus.Pending or SiigoInvoiceStatus.Unknown => new SiigoBatchItemState(
                 SiigoInvoiceBatchItemStatus.ToConfirm,
-                invoice.ErrorCode,
+                // Un primer envío cortado o muerto no deja código en la fila: el del ítem es lo que dice qué pasó.
+                invoice.ErrorCode ?? ErrorCode,
                 null,
                 invoice.CanResend(now),
                 invoice.IsResolvable(now),

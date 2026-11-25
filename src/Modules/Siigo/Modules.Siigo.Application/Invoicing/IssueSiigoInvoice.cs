@@ -147,11 +147,14 @@ public sealed class IssueSiigoInvoiceHandler(
         // Con la conexión no operativa es 409 y la fila no cambia: se resuelve antes de reclamar nada.
         var credentials = await SiigoInvoiceSupport.CredentialsAsync(connections, command.TenantId, pending[0].ConnectionId, cancellationToken);
         var toSend = pending.Where(row => !row.IsBeingSent(now)).ToList();
+        var orderInvoiced = IsInvoiced(rows);
         foreach (var row in toSend)
         {
             // Un reclamo vencido que sigue puesto, o un motivo de envío sin unanswered_at (versión anterior durante el despliegue), es un
-            // envío sin respuesta que falta registrar: se anota antes de reclamar de nuevo.
-            if (row.RecoverInterruptedSend(now))
+            // envío sin respuesta que falta registrar: se anota antes de reclamar de nuevo. Salvo en la de flete mientras la del pedido
+            // no exista: sólo sale después de ella, así que su reclamo vencido es de un envío que se cortó antes de llegarle.
+            var mayHaveLeft = row.Kind != SiigoInvoiceKind.Freight || orderInvoiced;
+            if (mayHaveLeft && row.RecoverInterruptedSend(now))
             {
                 SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceUnanswered, now);
             }

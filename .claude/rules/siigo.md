@@ -41,8 +41,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   ilegible, error de servicio y un `sending_since` vencido sin resultado); `partner_id_missing` y `auth_without_token` no
   (`SiigoInvoiceSupport.LeftQep`). La reenvía una persona con la misma clave o la resuelve («existe» o «no existe», esto último 10 minutos
   después del último intento sin respuesta); mientras tanto bloquea la marca manual y la anulación. La de flete que esperaba a la del
-  pedido suelta su reclamo y no queda por confirmar. La espera de «no existe» vale también para una `Unknown`: `ExpireIfStale` no expira una
-  que se está mandando y conserva el último envío sin respuesta (incluido un `sending_since` vencido).
+  pedido suelta su reclamo y no queda por confirmar. **Mientras la del pedido no exista en Siigo, la de flete nunca salió** (sólo se manda
+  después de ella): al reanudar, su `sending_since` vencido no la marca sin respuesta, y declarar que la del pedido no existe la descarta
+  aunque tenga `unanswered_at` o ya sea `Unknown`. Un camino nuevo que mande la de flete antes rompe las dos reglas y puede duplicar. La
+  espera de «no existe» vale también para una `Unknown`: `ExpireIfStale` no expira una que se está mandando y conserva el último envío sin
+  respuesta (incluido un `sending_since` vencido).
 - **Durante el despliegue de la facturación en segundo plano hay filas sin `unanswered_at`** (el pod anterior escribe después del relleno de
   `AddSiigoBackgroundInvoicing`). El dominio trata como sin respuesta, desde `updated_at`, una `Pending` con `timeout`, `network`,
   `rate_limited` o `siigo_service`; `unavailable` no, porque también lo deja un envío que nunca salió. **Terminado el rollout, el owner corre
@@ -113,8 +116,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   **10 min**, mayor que `SiigoInvoice.SendLease` de 8: un ítem no se recupera mientras su factura se considera en envío). Un pedido que no
   está en condiciones sale `Skipped` con su código (y, si es `not_ready`, los códigos de lo que falta); **no se programan reintentos** (owner,
   2026-11-24; `MaxAttempts` = 1). Siigo sin responder deja el pedido **`ToConfirm`** con el `invoice_id` de su fila, que sigue `Pending`: la
-  reenvía una persona (mismos bytes y clave) o la resuelve, y a las 24 h pasa a `Unknown`. Un rechazo de datos o una conexión caída lo dejan
-  `Failed`. **Un ítem recuperado (lease vencido) o cortado por el apagado nunca llama a Siigo:** toma el estado de la fila `Order` viva del
+  reenvía una persona (mismos bytes y clave) o la resuelve, y a las 24 h pasa a `Unknown`. Un rechazo de datos en un **primer** intento, o
+  una conexión caída, lo dejan `Failed`; un rechazo de datos en el reenvío de una que ya tuvo un envío sin respuesta deja la fila `Pending`
+  y el ítem sale `ToConfirm`. **Un ítem recuperado (lease vencido) o cortado por el apagado nunca llama a Siigo:** toma el estado de la fila `Order` viva del
   pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced`, ninguna → `Failed` con `siigo.invoice.interrupted`). Una creada sale con
   `orderMarkFailed` salvo que el pedido ya lleve la marca de ese número: la recuperación sólo lo lee (5 s de plazo; si la lectura falla,
   también avisa) y reenviar es lo que lo marca. El corte por apagado guarda ese resultado con `CancellationToken.None` y relanza la

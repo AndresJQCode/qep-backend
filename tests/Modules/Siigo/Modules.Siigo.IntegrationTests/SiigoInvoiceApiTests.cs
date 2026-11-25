@@ -362,9 +362,12 @@ public sealed class SiigoInvoiceApiTests
         Assert.Single(InvoiceCalls(world.Siigo));
     }
 
-    // Una de flete con un envío sin respuesta pudo haber salido: no se descarta con la del pedido, se resuelve aparte.
-    [Fact]
-    public async Task ResolvingTheOrderAsMissingKeepsAFreightThatMayHaveLeft()
+    // La de flete sólo sale después de que la del pedido existe: aunque haya quedado marcada sin respuesta (o ya venció a las 24 h), si la
+    // del pedido no existe, nunca salió y se descarta con ella. Viva, dejaría el pedido bloqueado.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResolvingTheOrderAsMissingDiscardsAFreightMarkedUnanswered(bool expired)
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
@@ -373,12 +376,24 @@ public sealed class SiigoInvoiceApiTests
         await ExecuteAsync(
             world.ConnectionString,
             "UPDATE siigo.invoices SET unanswered_at = now(), last_unanswered_at = now() WHERE kind = 'Freight'");
+        if (expired)
+        {
+            await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET created_at = now() - interval '25 hours'");
+            // Leer las del pedido aplica la transición a Unknown.
+            await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct));
+            Assert.Equal(
+                2, await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices WHERE status = 'Unknown'"));
+        }
+
         await AgeTheUnansweredSendAsync(world);
 
         await ReadAsync(await PostAsync(world, "/resolve", new { kind = "Order", outcome = "missing" }));
 
         Assert.Equal("Failed", await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoices WHERE kind = 'Order'"));
-        Assert.Equal("Pending", await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoices WHERE kind = 'Freight'"));
+        Assert.Equal(
+            "Failed|siigo.invoice.order_rejected",
+            await ScalarAsync<string>(
+                world.ConnectionString, "SELECT concat(status, '|', error_code) FROM siigo.invoices WHERE kind = 'Freight'"));
     }
 
     [Fact]

@@ -33,8 +33,9 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 /// pasen 24 horas: una <c>Unknown</c>, o una <c>Pending</c> que no se esté mandando (<c>siigo.invoice.state_invalid</c> si no).
 /// <c>exists</c> con el número: la fila queda <c>Created</c> y el pedido se marca con ese número. <c>missing</c>: la fila pasa a
 /// <c>Failed</c> y el pedido queda libre para facturar de nuevo; antes de los 10 minutos del último envío sin respuesta es 422
-/// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete que nunca salió se descarta en el mismo
-/// guardado; una de flete sin respuesta se resuelve aparte. Audita quién la resolvió, cómo y desde qué estado.
+/// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete sin
+/// resolver (<c>Pending</c> o <c>Unknown</c>) se descarta en el mismo guardado, porque nunca salió; al declarar que existe, no se toca.
+/// Audita quién la resolvió, cómo y desde qué estado.
 /// </summary>
 public sealed class ResolveSiigoInvoiceHandler(
     IExecutionContext executionContext,
@@ -99,12 +100,11 @@ public sealed class ResolveSiigoInvoiceHandler(
         return SiigoInvoiceDto.From(row, now);
     }
 
-    // La de flete sólo sale después de la del pedido: una Pending sin envío sin respuesta nunca salió. Si siguiera viva, bloquearía el
-    // pedido para siempre.
+    // La de flete sólo sale después de que la del pedido existe, y acá la del pedido estaba sin resolver: la de flete sin resolver nunca
+    // salió, aunque tenga anotado un envío sin respuesta o ya haya pasado a Unknown. Si siguiera viva, bloquearía el pedido.
     private static void DiscardFreightThatNeverLeft(IEnumerable<SiigoInvoice> rows, DateTimeOffset now)
     {
-        foreach (var freight in rows.Where(value =>
-            value is { Kind: SiigoInvoiceKind.Freight, Status: SiigoInvoiceStatus.Pending, UnansweredAt: null }))
+        foreach (var freight in rows.Where(value => value.Kind == SiigoInvoiceKind.Freight && value.IsOpen))
         {
             freight.MarkFailed(
                 "siigo.invoice.order_rejected", "The order invoice was declared missing, so the freight invoice was not sent.", now);

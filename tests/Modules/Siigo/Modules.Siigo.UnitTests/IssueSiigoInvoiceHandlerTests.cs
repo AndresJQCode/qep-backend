@@ -196,9 +196,113 @@ public sealed class IssueSiigoInvoiceHandlerTests
             [order.IdempotencyKey, order.IdempotencyKey, freight.IdempotencyKey], harness.Api.Keys);
     }
 
-    private static SiigoInvoice PendingRow(SiigoInvoiceKind kind = SiigoInvoiceKind.Order) =>
+    // Un redespliegue corta el envío de la del pedido con las dos filas reclamadas. La de flete sólo sale después de que la del pedido
+    // existe, así que nunca salió: su reclamo vencido no es un envío sin respuesta.
+    [Fact]
+    public async Task AResumeAfterACutOrderSendLeavesTheFreightWithoutUnansweredAt()
+    {
+        var order = PendingRow();
+        var freight = PendingRow(SiigoInvoiceKind.Freight);
+        order.BeginSend(Now.AddMinutes(-9));
+        freight.BeginSend(Now.AddMinutes(-9));
+        var harness = new Harness([order, freight], Transient("timeout"));
+
+        await harness.Issue();
+
+        Assert.Equal(Now, order.UnansweredAt);
+        Assert.Null(freight.UnansweredAt);
+        Assert.Null(freight.SendingSince);
+        Assert.Equal([SiigoAuditActions.InvoiceUnanswered], harness.Audit.Actions);
+    }
+
+    [Fact]
+    public async Task AFreightWhoseOrderSendWasCutGoesOutWithoutEverHavingBeenUnanswered()
+    {
+        var order = PendingRow();
+        var freight = PendingRow(SiigoInvoiceKind.Freight);
+        order.BeginSend(Now.AddMinutes(-9));
+        freight.BeginSend(Now.AddMinutes(-9));
+
+        await new Harness([order, freight], Created(), Created()).Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Created, freight.Status);
+        Assert.Null(freight.UnansweredAt);
+    }
+
+    // Con la del pedido ya creada, la de flete sí pudo salir: su reclamo vencido sigue siendo un envío sin respuesta.
+    [Fact]
+    public async Task ADeadFreightSendOfAnInvoicedOrderIsStillUnanswered()
+    {
+        var order = PendingRow();
+        order.BeginSend(Now.AddMinutes(-9));
+        order.MarkCreated("siigo-1", "FV-1-123", 100m, null, Now.AddMinutes(-9));
+        var freight = PendingRow(SiigoInvoiceKind.Freight);
+        freight.BeginSend(Now.AddMinutes(-9));
+        var harness = new Harness([order, freight], Transient("timeout"));
+
+        await harness.Issue();
+
+        Assert.Equal(Now, freight.UnansweredAt);
+        Assert.Equal([SiigoAuditActions.InvoiceUnanswered], harness.Audit.Actions);
+    }
+
+    // Si se declara que la del pedido no existe, la de flete nunca salió, tenga lo que tenga anotado (por ejemplo, el relleno de la
+    // migración sobre un reclamo viejo). Viva, dejaría el pedido bloqueado.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeclaringTheOrderMissingDiscardsItsFreightEvenIfItIsMarkedUnanswered(bool expired)
+    {
+        var sentAt = expired ? Now.AddHours(-25) : Now.AddMinutes(-11);
+        var order = Unanswered(SiigoInvoiceKind.Order, sentAt);
+        var freight = Unanswered(SiigoInvoiceKind.Freight, sentAt);
+        Assert.Equal(expired, order.ExpireIfStale(Now));
+        Assert.Equal(expired, freight.ExpireIfStale(Now));
+
+        await new Harness([order, freight]).Resolve("missing");
+
+        Assert.Equal(SiigoInvoiceStatus.Failed, order.Status);
+        Assert.Equal(SiigoInvoiceStatus.Failed, freight.Status);
+        Assert.Equal("siigo.invoice.order_rejected", freight.ErrorCode);
+    }
+
+    [Fact]
+    public async Task DeclaringThatTheOrderInvoiceExistsLeavesItsFreightAlone()
+    {
+        var order = Unanswered(SiigoInvoiceKind.Order, Now.AddMinutes(-11));
+        var freight = Unanswered(SiigoInvoiceKind.Freight, Now.AddMinutes(-11));
+
+        await new Harness([order, freight]).Resolve("exists", "FV-1-777");
+
+        Assert.Equal(SiigoInvoiceStatus.Created, order.Status);
+        Assert.Equal(SiigoInvoiceStatus.Pending, freight.Status);
+    }
+
+    [Fact]
+    public async Task TheFreightOfAnInvoicedOrderIsNotDiscarded()
+    {
+        var order = PendingRow();
+        order.BeginSend(Now.AddMinutes(-11));
+        order.MarkCreated("siigo-1", "FV-1-123", 100m, null, Now.AddMinutes(-11));
+        var freight = Unanswered(SiigoInvoiceKind.Freight, Now.AddMinutes(-11));
+        var harness = new Harness([order, freight]);
+
+        await Assert.ThrowsAsync<SiigoDomainException>(() => harness.Resolve("missing"));
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, freight.Status);
+    }
+
+    private static SiigoInvoice Unanswered(SiigoInvoiceKind kind, DateTimeOffset sentAt)
+    {
+        var row = PendingRow(kind, sentAt);
+        row.BeginSend(sentAt);
+        row.MarkUnanswered("siigo.invoice.timeout", null, sentAt);
+        return row;
+    }
+
+    private static SiigoInvoice PendingRow(SiigoInvoiceKind kind = SiigoInvoiceKind.Order, DateTimeOffset? createdAt = null) =>
         SiigoInvoice.PendingFor(
-            Guid.CreateVersion7(), TenantId, ConnectionId, OrderId, kind, """{"a":1}""", 7, SubjectId, Now.AddHours(-1));
+            Guid.CreateVersion7(), TenantId, ConnectionId, OrderId, kind, """{"a":1}""", 7, SubjectId, createdAt ?? Now.AddHours(-1));
 
     private static SiigoInvoiceOutcome.Transient Transient(string reason) => new(reason);
 
@@ -209,10 +313,21 @@ public sealed class IssueSiigoInvoiceHandlerTests
     private sealed class Harness
     {
         private readonly IssueSiigoInvoiceHandler _handler;
+        private readonly ResolveSiigoInvoiceHandler _resolver;
 
         public Harness(SiigoInvoice[] rows, params SiigoInvoiceOutcome[] script)
         {
             Api = ApiProxy.Create(script);
+            _resolver = new ResolveSiigoInvoiceHandler(
+                new ExecutionContext(),
+                new AllModules(),
+                new FixedMembership(),
+                new OrderSource(),
+                new InMemoryInvoices([.. rows]),
+                new FakeUnitOfWork(),
+                Audit,
+                Clock,
+                new ResolveSiigoInvoiceValidator());
             _handler = new IssueSiigoInvoiceHandler(
                 new ExecutionContext(),
                 new AllModules(),
@@ -237,6 +352,11 @@ public sealed class IssueSiigoInvoiceHandlerTests
 
         public Task<IReadOnlyList<SiigoInvoiceDto>> Issue() =>
             _handler.HandleAsync(new IssueSiigoInvoiceCommand(TenantId, OrderId, null), TestContext.Current.CancellationToken);
+
+        /// <summary>Una persona resuelve la factura del pedido.</summary>
+        public Task<SiigoInvoiceDto> Resolve(string outcome, string? number = null) =>
+            _resolver.HandleAsync(
+                new ResolveSiigoInvoiceCommand(TenantId, OrderId, null, outcome, number), TestContext.Current.CancellationToken);
     }
 
     private sealed class ExecutionContext : IExecutionContext

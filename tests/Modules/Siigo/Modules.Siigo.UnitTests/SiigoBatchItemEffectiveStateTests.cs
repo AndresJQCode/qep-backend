@@ -64,6 +64,21 @@ public sealed class SiigoBatchItemEffectiveStateTests
             state);
     }
 
+    // Un primer envío cortado o muerto: la fila no tiene código, y el del ítem es lo único que dice qué pasó.
+    [Fact]
+    public void AToConfirmWhoseRowHasNoCodeKeepsTheItemCode()
+    {
+        var invoice = NewInvoice();
+        invoice.BeginSend(Now);
+        var item = NewItem();
+        item.MarkToConfirm(invoice.Id, "siigo.invoice.interrupted", Now);
+
+        var state = item.Effective(invoice, Now + SiigoInvoice.SendLease);
+
+        Assert.Null(invoice.ErrorCode);
+        Assert.Equal((SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.interrupted"), (state.Status, state.ErrorCode));
+    }
+
     [Fact]
     public void AToConfirmWhoseInvoiceIsUnknownCanOnlyBeResolved()
     {

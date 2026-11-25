@@ -566,9 +566,56 @@ public sealed class SiigoInvoiceBatchApiTests
         // Mientras dure el reclamo del envío cortado, la fila se considera en camino; vencido, queda por confirmar.
         Assert.Equal("Sending", Item(await GetBatchAsync(world, batchId), 0).GetProperty("status").GetString());
         await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '9 minutes'");
-        Assert.Equal("ToConfirm", Item(await GetBatchAsync(world, batchId), 0).GetProperty("status").GetString());
+        var expired = Item(await GetBatchAsync(world, batchId), 0);
+        Assert.Equal(
+            ("ToConfirm", "siigo.invoice.interrupted"),
+            (expired.GetProperty("status").GetString(), expired.GetProperty("errorCode").GetString()));
         await DrainAsync(world);
         Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
+    // Un redespliegue corta el envío de la del pedido con las dos filas reclamadas. La de flete nunca salió: el reenvío no la deja por
+    // confirmar, y declarar que la del pedido no existe la descarta, así el pedido no queda bloqueado.
+    [Fact]
+    public async Task AfterACutOrderSendTheFreightIsNeverUnansweredAndDeclaringTheOrderMissingFreesTheOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var sends = 0;
+        world.Siigo.OnRequest("/v1/invoices", _ =>
+        {
+            if (Interlocked.Increment(ref sends) > 1)
+            {
+                return FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}");
+            }
+
+            shutdown.Cancel();
+            throw new OperationCanceledException(shutdown.Token);
+        });
+        await CreateBatchAsync(world, world.OrderId);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Worker(world).DrainAsync(shutdown.Token));
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '9 minutes'");
+
+        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+
+        Assert.Equal(
+            1,
+            await ScalarAsync<long>(
+                world.ConnectionString,
+                """
+                SELECT count(*) FROM siigo.invoices
+                WHERE kind = 'Freight' AND status = 'Pending' AND unanswered_at IS NULL AND sending_since IS NULL
+                """));
+
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET last_unanswered_at = now() - interval '11 minutes'");
+        await ReadAsync(await world.Client.PostAsJsonAsync(world.BaseRoute + "/resolve", new { kind = "Order", outcome = "missing" }, Ct));
+
+        Assert.Equal(
+            0,
+            await ScalarAsync<long>(world.ConnectionString, "SELECT count(*) FROM siigo.invoices WHERE status NOT IN ('Rejected', 'Failed')"));
+        Assert.Equal(2, InvoiceCalls(world.Siigo).Count);
     }
 
     // Spec 2026-11-24 §5: el número y el cliente que muestra /orders, y los seis estados contados, en orden fijo e incluso en cero.
