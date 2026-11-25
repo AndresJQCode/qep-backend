@@ -52,6 +52,87 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Equal("Converted", frozen.Status);
     }
 
+    // Perfiles de facturación (spec 2026-11-24 §3.6): la cotización y el pedido los leen en `client` para copiarlos, con la
+    // misma forma y en el mismo orden. Se leen en vivo de la ficha, así que sin perfiles viajan vacíos y no ausentes.
+    [Fact]
+    public async Task TheQuotationAndOrderDetailsCarryTheClientBillingProfiles()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (quotation, order, _) = await CreatePendingOrderAsync(client, factory, tenantId);
+
+        async Task<QuotationClientResponse> QuotationClientAsync() =>
+            (await client.GetFromJsonAsync<QuotationResponse>(
+                $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken))!.Client!;
+
+        var emptyQuotation = await QuotationClientAsync();
+        var emptyOrder = await GetDetailAsync(client, tenantId, order.Id);
+
+        Assert.Empty(emptyQuotation.BillingProfiles);
+        Assert.Equal(50, emptyQuotation.BillingProfileLimit);
+        Assert.Empty(emptyOrder.Client!.BillingProfiles);
+        Assert.Equal(50, emptyOrder.Client.BillingProfileLimit);
+
+        var (home, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+        var rate = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente del perfil", "Retefuente", 2.5m);
+        object[] profiles =
+        [
+            new
+            {
+                name = "Zeta SAS", identificationType = "NIT", identificationNumber = "900123456",
+                address = "Cra 43A # 1-50", cityId = home.CityId, vatSurplus = true
+            },
+            new
+            {
+                name = "Andina Iberia SL", identificationType = "NIF", identificationNumber = "B12345678",
+                address = "Calle Mayor 1", country = "ES", cityName = "Madrid", regionId = madrid,
+                withholdingTaxRateIds = new[] { rate }
+            },
+            new
+            {
+                name = "Beta SAS", identificationType = "NIT", identificationNumber = "900123457",
+                address = "Calle 1 # 2-3", cityId = home.CityId
+            }
+        ];
+        foreach (var profile in profiles)
+        {
+            var posted = await client.PostAsJsonAsync(
+                $"/api/v1/tenants/{tenantId}/customers/{quotation.ClientId}/billing-profiles",
+                profile,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, posted.StatusCode);
+        }
+
+        var fromQuotation = await QuotationClientAsync();
+        var fromOrder = (await GetDetailAsync(client, tenantId, order.Id)).Client!;
+
+        Assert.Equal(50, fromQuotation.BillingProfileLimit);
+        Assert.Equal(50, fromOrder.BillingProfileLimit);
+        // La principal (la primera guardada) y después por nombre.
+        Assert.Equal(
+            ["Zeta SAS", "Andina Iberia SL", "Beta SAS"], fromQuotation.BillingProfiles.Select(profile => profile.Name));
+        Assert.Equal(
+            JsonSerializer.Serialize(fromQuotation.BillingProfiles), JsonSerializer.Serialize(fromOrder.BillingProfiles));
+        var principal = fromOrder.BillingProfiles[0];
+        Assert.True(principal.IsPrincipal);
+        Assert.True(principal.VatSurplus);
+        Assert.Equal(home.CityId, principal.CityId);
+        Assert.Equal(home.DepartmentId, principal.DepartmentId);
+        Assert.False(string.IsNullOrWhiteSpace(principal.CityName));
+        Assert.False(string.IsNullOrWhiteSpace(principal.DepartmentName));
+        var spanish = fromOrder.BillingProfiles[1];
+        Assert.Equal(new QuotationRegionDto(madrid, "Madrid"), spanish.Region);
+        Assert.Equal("Madrid", spanish.CityName);
+        Assert.Null(spanish.CityId);
+        Assert.Null(spanish.DepartmentId);
+        var withholding = Assert.Single(spanish.WithholdingTaxRates);
+        Assert.Equal(
+            new QuotationClientWithholdingRateResponse(rate, "Retefuente del perfil", "Retefuente", "CO", 2.5m, true, "All"),
+            withholding);
+    }
+
     // Decisión 4: el cálculo previo muta el agregado en memoria, así que la lectura no puede dejar
     // nada en el change tracker que un SaveChangesAsync del mismo scope llegue a persistir.
     [Fact]

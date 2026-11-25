@@ -293,7 +293,30 @@ public sealed class QuotationResponseComposer(
                 customer.Country,
                 customer.PersonType,
                 customer.IdentificationType,
-                customer.Region);
+                customer.Region,
+                (customer.BillingProfiles ?? []).Select(ToBillingProfileResponse).ToArray(),
+                customer.BillingProfileLimit);
+
+    private static QuotationClientBillingProfileResponse ToBillingProfileResponse(
+        QuotationCustomerBillingProfileRef profile) =>
+        new(
+            profile.Id,
+            profile.Name,
+            profile.PersonType,
+            profile.IdentificationType,
+            profile.IdentificationNumber,
+            profile.Phone,
+            profile.Email,
+            profile.Address,
+            profile.Country,
+            profile.CityId,
+            profile.CityName,
+            profile.DepartmentId,
+            profile.DepartmentName,
+            profile.Region,
+            profile.WithholdingTaxRates,
+            profile.VatSurplus,
+            profile.IsPrincipal);
 
     // La variante puede no existir más (se borró): la línea conserva lo que la cotización
     // congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único que este lado

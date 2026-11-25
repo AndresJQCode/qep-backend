@@ -50,18 +50,19 @@ internal sealed class QuotationCustomerLookup(
             return null;
         }
 
-        // Las ciudades del domicilio y de toda la libreta de una vez: la cotizacion muestra la
-        // libreta completa en su selector de envio, y cada fila necesita el nombre de su ciudad.
+        // Las ciudades del domicilio, de toda la libreta y de los perfiles de facturación de una vez: la cotizacion muestra
+        // las dos libretas completas, y cada fila necesita el nombre de su ciudad. Regiones y tasas, igual: un lote.
         var citiesById = await geographyLookup.FindCitiesAsync(
             AddressCityIds(customer)
+                .Concat(BillingProfileCityIds(customer))
                 .Concat(DomicileCityIds(customer))
                 .Distinct()
                 .ToArray(),
             cancellationToken);
         var regionsById = await FindRegionsAsync([customer], cancellationToken);
-        var withRetention = await RetefuenteHoldersAsync(tenantId, [customer], cancellationToken);
+        var ratesById = await FindTaxRatesAsync(tenantId, [customer], cancellationToken);
 
-        return ToRef(customer, citiesById, regionsById, withRetention.Contains(customer.Id.Value));
+        return ToRef(customer, citiesById, regionsById, ratesById);
     }
 
     public async Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
@@ -86,38 +87,40 @@ internal sealed class QuotationCustomerLookup(
                 .ToArray(),
             cancellationToken);
         var regionsById = await FindRegionsAsync(customers.Values, cancellationToken);
-        var withRetention = await RetefuenteHoldersAsync(tenantId, customers.Values, cancellationToken);
+        var ratesById = await FindTaxRatesAsync(tenantId, customers.Values, cancellationToken);
 
+        // El lote (el Excel de pedidos) no carga los perfiles de facturación: salen vacíos.
         return customers.Values.ToDictionary(
             customer => customer.Id.Value,
-            customer => ToRef(customer, citiesById, regionsById, withRetention.Contains(customer.Id.Value)));
+            customer => ToRef(customer, citiesById, regionsById, ratesById));
+    }
+
+    // Las tasas de los clientes y de sus perfiles de facturación, con una sola consulta para todo el lote; sin ninguna
+    // asignada no se toca el catálogo.
+    private async Task<IReadOnlyDictionary<Guid, CustomerTaxRateRef>> FindTaxRatesAsync(
+        Guid tenantId, IEnumerable<Customer> customers, CancellationToken cancellationToken)
+    {
+        Guid[] rateIds =
+        [
+            .. customers
+                .SelectMany(customer => customer.WithholdingTaxRateIds.Concat(
+                    customer.BillingProfiles.SelectMany(profile => profile.WithholdingTaxRateIds)))
+                .Distinct()
+        ];
+        return rateIds.Length == 0
+            ? new Dictionary<Guid, CustomerTaxRateRef>()
+            : await taxRateLookup.FindManyAsync(tenantId, rateIds, cancellationToken);
     }
 
     // WithRetention ya no es una columna del cliente: se deriva de sus tasas asignadas (spec impuestos por tipo §9,
     // client.withRetention sigue en la respuesta para el frontend viejo). Es «tiene alguna Retefuente», de cualquier
-    // país. Una consulta para todo el lote; una tasa borrada del catálogo no cuenta.
-    private async Task<IReadOnlySet<Guid>> RetefuenteHoldersAsync(
-        Guid tenantId, IEnumerable<Customer> customers, CancellationToken cancellationToken)
-    {
-        var holders = customers.Where(customer => customer.WithholdingTaxRateIds.Count > 0).ToArray();
-        if (holders.Length == 0)
-        {
-            return new HashSet<Guid>();
-        }
+    // país. Una tasa borrada del catálogo no cuenta, y las de los perfiles de facturación tampoco.
+    private static bool HoldsRetefuente(Customer customer, IReadOnlyDictionary<Guid, CustomerTaxRateRef> ratesById) =>
+        customer.WithholdingTaxRateIds.Any(id =>
+            ratesById.TryGetValue(id, out var rate) && rate.Type == TaxCountries.RetefuenteType);
 
-        var rates = await taxRateLookup.FindManyAsync(
-            tenantId,
-            holders.SelectMany(customer => customer.WithholdingTaxRateIds).Distinct().ToArray(),
-            cancellationToken);
-        return holders
-            .Where(customer => customer.WithholdingTaxRateIds.Any(id =>
-                rates.TryGetValue(id, out var rate) && rate.Type == TaxCountries.RetefuenteType))
-            .Select(customer => customer.Id.Value)
-            .ToHashSet();
-    }
-
-    // The regions of the domiciles and of every address book in one call (provincia guardada): none are asked for when no
-    // customer of the batch has one, which is the normal case for a Colombian tenant.
+    // The regions of the domiciles, of every address book and of the billing profiles in one call (provincia guardada):
+    // none are asked for when no customer of the batch has one, which is the normal case for a Colombian tenant.
     private async Task<IReadOnlyDictionary<Guid, CustomerRegionRef>> FindRegionsAsync(
         IEnumerable<Customer> customers, CancellationToken cancellationToken)
     {
@@ -126,6 +129,7 @@ internal sealed class QuotationCustomerLookup(
             .. customers
                 .SelectMany(customer => customer.Addresses
                     .Select(address => address.RegionId)
+                    .Concat(customer.BillingProfiles.Select(profile => profile.RegionId))
                     .Append(customer.RegionId))
                 .Where(id => id.HasValue)
                 .Select(id => id!.Value)
@@ -148,6 +152,11 @@ internal sealed class QuotationCustomerLookup(
             .Where(address => address.CityId.HasValue)
             .Select(address => address.CityId!.Value);
 
+    private static IEnumerable<Guid> BillingProfileCityIds(Customer customer) =>
+        customer.BillingProfiles
+            .Where(profile => profile.CityId.HasValue)
+            .Select(profile => profile.CityId!.Value);
+
     // La ciudad del domicilio a resolver, o nada: un cliente que no es de Colombia no tiene
     // ciudad DIVIPOLA, la suya es el texto de Customer.CityName.
     private static IEnumerable<Guid> DomicileCityIds(Customer customer) =>
@@ -157,7 +166,7 @@ internal sealed class QuotationCustomerLookup(
         Customer customer,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
         IReadOnlyDictionary<Guid, CustomerRegionRef> regionsById,
-        bool withRetention)
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> ratesById)
     {
         CustomerCityRef? contactCity = null;
         if (customer.CityId is { } domicileCityId)
@@ -177,7 +186,7 @@ internal sealed class QuotationCustomerLookup(
             // la cotizacion y al pedido, y lo que viaja en el WhatsApp. La principal sigue yendo
             // primera en Addresses, que es lo que el selector de envio preselecciona.
             customer.Address,
-            withRetention,
+            HoldsRetefuente(customer, ratesById),
             customer.VatSurplus,
             customer.Email,
             contactCity?.CityId,
@@ -200,7 +209,49 @@ internal sealed class QuotationCustomerLookup(
             customer.PersonType?.ToWireValue(),
             customer.Country,
             customer.IdentificationType?.ToWireValue(),
-            RegionOf(customer.RegionId, regionsById));
+            RegionOf(customer.RegionId, regionsById),
+            customer.BillingProfiles
+                .OrderByDescending(profile => profile.IsPrincipal)
+                .ThenBy(profile => profile.Name)
+                .Select(profile => ToBillingProfileRef(profile, citiesById, regionsById, ratesById))
+                .ToArray(),
+            CustomerBillingProfile.MaxPerCustomer);
+    }
+
+    // La misma forma que la ficha del cliente (CustomerMapping.ToBillingProfileDto): ciudad y departamento resueltos en CO,
+    // la ciudad escrita afuera, y las tasas que el catálogo todavía devuelve, ordenadas por país, tipo y nombre.
+    private static QuotationCustomerBillingProfileRef ToBillingProfileRef(
+        CustomerBillingProfile profile,
+        IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
+        IReadOnlyDictionary<Guid, CustomerRegionRef> regionsById,
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> ratesById)
+    {
+        var city = profile.CityId is { } cityId ? citiesById.GetValueOrDefault(cityId) : null;
+        return new QuotationCustomerBillingProfileRef(
+            profile.Id.Value,
+            profile.Name,
+            profile.PersonType,
+            profile.IdentificationType,
+            profile.IdentificationNumber,
+            profile.Phone,
+            profile.Email,
+            profile.Address,
+            profile.Country,
+            profile.CityId,
+            city?.CityName ?? profile.CityName,
+            city?.DepartmentId,
+            city?.DepartmentName,
+            RegionOf(profile.RegionId, regionsById),
+            [.. profile.WithholdingTaxRateIds
+                .Where(ratesById.ContainsKey)
+                .Select(id => ratesById[id])
+                .OrderBy(rate => rate.Country, StringComparer.Ordinal)
+                .ThenBy(rate => rate.Type, StringComparer.Ordinal)
+                .ThenBy(rate => rate.Name, StringComparer.Ordinal)
+                .Select(rate => new QuotationClientWithholdingRateResponse(
+                    rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive, rate.AppliesTo.ToString()))],
+            profile.VatSurplus,
+            profile.IsPrincipal);
     }
 
     private static QuotationCustomerAddressRef ToAddressRef(
