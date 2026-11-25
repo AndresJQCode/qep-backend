@@ -211,6 +211,25 @@ public sealed class ServiceContractsPersistenceTests
         Assert.Equal("CK_ipc_rates_rate", exception.ConstraintName);
     }
 
+    // Fuera de una transacción el candado se soltaría con su propia sentencia: se rechaza en vez de proteger nada.
+    [Fact]
+    public async Task TheIpcRateLocksNeedAnOpenTransaction()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var ct = TestContext.Current.CancellationToken;
+        await using var scope = factory.Services.CreateAsyncScope();
+        var rates = scope.ServiceProvider.GetRequiredService<IIpcRateRepository>();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rates.FindForShareAsync(Tenant, 2026, ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rates.FindForUpdateAsync(Tenant, 2026, ct));
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IServiceContractsUnitOfWork>();
+        await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
+        Assert.Null(await rates.FindForShareAsync(Tenant, 2026, ct));
+        Assert.Null(await rates.FindForUpdateAsync(Tenant, 2026, ct));
+    }
+
     [Fact]
     public async Task AServiceRoundTripsItsPriceReview()
     {
