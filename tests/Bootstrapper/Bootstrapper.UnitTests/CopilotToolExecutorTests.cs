@@ -58,8 +58,7 @@ public sealed class CopilotToolExecutorTests
     {
         _authorization.Permissions = ["reporting.orders.read"];
         var many = Enumerable.Range(1, 25).Select(index => new ProbeTool($"probe_{index:D2}", "reporting.orders.read", TenantModuleKeys.Reporting));
-        var executor = new CopilotToolExecutor(
-            _authorization, _modules, Services().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), [.. many]);
+        var executor = new CopilotToolExecutor(Services().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), [.. many]);
 
         var available = await executor.ListAvailableAsync(Principal, Ct);
 
@@ -176,6 +175,27 @@ public sealed class CopilotToolExecutorTests
         Assert.Equal(AgentToolErrors.UnknownTool, result.ErrorCode);
     }
 
+    // D-C3 con la resolución real: AuthorizationService y MembershipDirectory son scoped y MembershipDirectory memoiza la membresía por
+    // scope. El trabajo del copiloto corre entero en un scope, así que resolver con los servicios de ese scope dejaba los permisos y la
+    // membresía de la primera llamada para todas las siguientes.
+    [Fact]
+    public async Task EachCallResolvesPermissionsInAFreshScope()
+    {
+        _authorization.Permissions = ["reporting.orders.read"];
+        var services = Services();
+        services.AddScoped<IAuthorizationService>(_ => new ScopeMemoizedPermissions(_authorization));
+        using var provider = services.BuildServiceProvider();
+        using var jobScope = provider.CreateScope();
+        var executor = new CopilotToolExecutor(jobScope.ServiceProvider.GetRequiredService<IServiceScopeFactory>(), Tools());
+
+        var first = await executor.ExecuteAsync(Principal, "who_am_i", "{}", Ct);
+        _authorization.Permissions = null;
+        var second = await executor.ExecuteAsync(Principal, "who_am_i", "{}", Ct);
+
+        Assert.False(first.IsError);
+        Assert.Equal(CopilotToolErrors.MemberInactive, second.ErrorCode);
+    }
+
     // Cada llamada en su scope: el contexto delegado de una no queda en el de la siguiente ni en el scope de quien llama.
     [Fact]
     public async Task EachCallGetsItsOwnDelegatedScope()
@@ -183,7 +203,7 @@ public sealed class CopilotToolExecutorTests
         _authorization.Permissions = ["reporting.orders.read"];
         using var provider = Services().BuildServiceProvider();
         using var outer = provider.CreateScope();
-        var executor = new CopilotToolExecutor(_authorization, _modules, provider.GetRequiredService<IServiceScopeFactory>(), Tools());
+        var executor = new CopilotToolExecutor(provider.GetRequiredService<IServiceScopeFactory>(), Tools());
 
         await executor.ExecuteAsync(Principal, "who_am_i", "{}", Ct);
 
@@ -192,11 +212,13 @@ public sealed class CopilotToolExecutorTests
     }
 
     private CopilotToolExecutor Executor() =>
-        new(_authorization, _modules, Services().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), Tools());
+        new(Services().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), Tools());
 
-    private static ServiceCollection Services()
+    private ServiceCollection Services()
     {
         var services = new ServiceCollection();
+        services.AddSingleton<IAuthorizationService>(_authorization);
+        services.AddSingleton<ITenantModules>(_modules);
         services.AddHttpContextAccessor();
         services.AddQepExecutionContext();
         services.AddScoped<IRequestDispatcher, Bootstrapper.Messaging.RequestDispatcher>();
@@ -279,6 +301,27 @@ public sealed class CopilotToolExecutorTests
         {
             Asked.Add((subjectId, tenantId));
             return Task.FromResult(Permissions);
+        }
+    }
+
+    /// <summary>Como <c>MembershipDirectory</c>: la primera resolución del scope vale para todo el scope.</summary>
+    private sealed class ScopeMemoizedPermissions(MemberPermissions source) : IAuthorizationService
+    {
+        private bool _resolved;
+        private IReadOnlyCollection<string>? _permissions;
+
+        public Task<AuthorizationDecision> AuthorizeAsync(Guid subjectId, Guid tenantId, string permission, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public async Task<IReadOnlyCollection<string>?> ResolvePermissionsAsync(Guid subjectId, Guid tenantId, CancellationToken cancellationToken)
+        {
+            if (!_resolved)
+            {
+                _permissions = await source.ResolvePermissionsAsync(subjectId, tenantId, cancellationToken);
+                _resolved = true;
+            }
+
+            return _permissions;
         }
     }
 
