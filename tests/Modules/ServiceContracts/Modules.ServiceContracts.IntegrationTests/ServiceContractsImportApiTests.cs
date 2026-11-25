@@ -305,6 +305,32 @@ public sealed class ServiceContractsImportApiTests
             + $"AND first_due_date = '{Iso(TenantToday.AddMonths(-2))}'"));
     }
 
+    // Spec reajuste §6.8: la plantilla no trae columnas de reajuste; un importado nace Manual, sin puntos y sin retención, con
+    // la revisión en el aniversario siguiente a lo último que la importación generó.
+    [Fact]
+    public async Task ImportedContractsAreManualWithTheDefaultReview()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        await SeedAnaAsync(factory);
+        // 2025-01-10 mensual con hoy 2026-03-10: genera hasta marzo de 2026, así que la revisión es el 2027-01-10.
+        var file = Workbook(Row(dueDate: TenantToday.AddMonths(-14)));
+
+        var result = await ReadAsync<ImportResultDto>(
+            await CreateManager(factory).PostAsync(ImportUrl, Upload(file), Ct));
+
+        var imported = Assert.Single(result.Imported);
+        Assert.Equal(1, await CountAsync(
+            factory,
+            $"SELECT count(*) FROM billing.services WHERE id = '{imported.ServiceId}' AND adjustment_mode = 'Manual' "
+            + "AND ipc_extra_points = 0 AND next_review_date = '2027-01-10' AND held_since IS NULL AND version = 1"));
+        Assert.Equal(imported.ChargesGenerated, await CountAsync(
+            factory,
+            $"SELECT count(*) FROM billing.charges WHERE service_id = '{imported.ServiceId}' "
+            + "AND period_date = due_date AND NOT price_unreviewed"));
+    }
+
     [Fact]
     public async Task ImportKeepsValidRowsWhenOthersFail()
     {

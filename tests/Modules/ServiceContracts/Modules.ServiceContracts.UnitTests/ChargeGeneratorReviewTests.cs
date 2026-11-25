@@ -218,12 +218,173 @@ public sealed class ChargeGeneratorReviewTests
         var service = NewService();
         Run(service, "2027-01-05");
 
-        service.Pause(Now);
+        service.Pause(Date("2027-01-08"), Now);
         var result = Run(service, "2027-01-08");
 
         Assert.Null(service.HeldSince);
+        Assert.Equal([Date("2027-01-10")], service.CarriedHeldPeriods);
         Assert.Empty(result.Charges);
         Assert.False(result.ServiceChanged);
+    }
+
+    // Spec reajuste §6.4: pausar un retenido conserva los períodos cuyo día de generación ya llegó, incluido el de la pausa.
+    [Theory]
+    [InlineData("2027-02-05", new[] { "2027-01-10", "2027-02-10" })]
+    [InlineData("2027-02-04", new[] { "2027-01-10" })]
+    public void PausingAHeldContractKeepsThePeriodsWhoseGenerationDayHadCome(string pausedOn, string[] carried)
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+
+        service.Pause(Date(pausedOn), Now);
+
+        Assert.Equal(carried.Select(Date), service.CarriedHeldPeriods);
+        Assert.Null(service.HeldSince);
+    }
+
+    // Sin retención al pausar no se arrastra nada, aunque el período de revisión entre en la ventana ese mismo día.
+    [Fact]
+    public void PausingAContractThatWasNotHeldCarriesNothing()
+    {
+        var service = NewService();
+        Assert.Empty(Run(service, "2027-01-04").Charges);
+        Assert.Null(service.HeldSince);
+
+        service.Pause(Date("2027-01-05"), Now);
+        Assert.Empty(service.CarriedHeldPeriods);
+        service.Resume(Date("2027-03-01"), Now);
+        var result = Run(service, "2027-03-05");
+
+        Assert.Empty(result.Charges);
+        Assert.Equal(Date("2027-03-05"), service.HeldSince);
+        // Enero y febrero cayeron en la pausa: nunca se cobran.
+        Assert.Equal(Date("2027-03-10"), PriceReview.ReviewPeriodOf(service));
+    }
+
+    [Fact]
+    public void ResumingKeepsTheCarriedPeriodsHeld()
+    {
+        var service = ResumedHeldService();
+
+        Assert.Equal(Date("2027-04-20"), service.HeldSince);
+        var review = PriceReview.Of(service, null, Date("2027-04-20"));
+        Assert.Equal(
+            (ReviewState.Held, (DateOnly?)Date("2027-01-10"), (int?)2026), (review.State, review.ReviewPeriodDate, review.IpcYear));
+        Assert.Equal([Date("2027-01-10")], service.UpcomingPeriods());
+
+        var result = Run(service, "2027-04-21");
+
+        Assert.Empty(result.Charges);
+        Assert.False(result.ServiceChanged);
+        Assert.Equal(Date("2027-04-20"), service.HeldSince);
+    }
+
+    [Fact]
+    public void ReleasingTheCarriedPeriodsBillsThemAndSkipsThePause()
+    {
+        var service = ResumedHeldService();
+
+        var result = Run(service, "2027-04-21", ConfirmIpc(service));
+
+        Assert.Equal(
+            [(Date("2027-01-10"), Date("2027-04-26")), (Date("2027-02-10"), Date("2027-04-26"))],
+            Dates(result));
+        Assert.All(result.Charges, charge => Assert.Equal(NewPrice, charge.Amount));
+        Assert.Empty(service.CarriedHeldPeriods);
+        Assert.Null(service.HeldSince);
+        Assert.Equal(Date("2028-01-10"), service.NextReviewDate);
+        // Marzo y abril cayeron en la pausa.
+        Assert.Equal(Date("2027-05-10"), service.NextPeriodToGenerate());
+        Assert.Equal([(Date("2027-05-10"), Date("2027-05-10"))], Dates(Run(service, "2027-05-05")));
+    }
+
+    [Fact]
+    public void SeveralPausesKeepEveryHeldGap()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.Pause(Date("2027-01-20"), Now);
+        Assert.Equal([Date("2027-01-10")], service.CarriedHeldPeriods);
+        service.Resume(Date("2027-03-01"), Now);
+        Assert.Empty(Run(service, "2027-03-06").Charges);
+        service.Pause(Date("2027-03-07"), Now);
+        Assert.Equal([Date("2027-01-10"), Date("2027-03-10")], service.CarriedHeldPeriods);
+        service.Resume(Date("2027-06-01"), Now);
+
+        var result = Run(service, "2027-06-02", ConfirmIpc(service));
+
+        Assert.Equal(
+            [(Date("2027-01-10"), Date("2027-06-07")), (Date("2027-03-10"), Date("2027-06-07"))],
+            Dates(result));
+        // Febrero, abril y mayo cayeron en una pausa.
+        Assert.Equal(Date("2027-06-10"), service.NextPeriodToGenerate());
+    }
+
+    [Fact]
+    public void SwitchingToManualWhilePausedBillsTheCarriedPeriodsAtResume()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.Pause(Date("2027-02-05"), Now);
+        service.UpdatePriceReview(AdjustmentMode.Manual, 0m, Date("2027-01-10"), Now);
+        service.Resume(Date("2027-04-20"), Now);
+
+        var result = Run(service, "2027-04-20");
+
+        Assert.Equal(
+            [(Date("2027-01-10"), Date("2027-04-25"), true), (Date("2027-02-10"), Date("2027-04-25"), false)],
+            result.Charges.Select(charge => (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed)));
+        Assert.All(result.Charges, charge => Assert.Equal(OldPrice, charge.Amount));
+        Assert.Equal(Date("2028-01-10"), service.NextReviewDate);
+        Assert.Null(service.HeldSince);
+    }
+
+    // Lo arrastrado conserva su revisión (con el IPC de su año) y lo posterior a la pausa tiene la suya: nunca se componen.
+    [Fact]
+    public void AfterALongPauseTheCarriedReviewAndTheNewYearAreTwoReviews()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.Pause(Date("2027-01-20"), Now);
+        service.Resume(Date("2030-05-03"), Now);
+        Assert.Equal(2026, PriceReview.Of(service, null, Date("2030-05-03")).IpcYear);
+
+        var released = Run(service, "2030-05-06", ConfirmIpc(service));
+
+        Assert.Equal([(Date("2027-01-10"), Date("2030-05-11"))], Dates(released));
+        Assert.Equal(Date("2030-05-06"), service.HeldSince);
+        var review = PriceReview.Of(service, null, Date("2030-05-06"));
+        Assert.Equal(((DateOnly?)Date("2030-05-10"), (int?)2029), (review.ReviewPeriodDate, review.IpcYear));
+
+        var second = ServicePriceSchedule.ConfirmIpc(service, 2029, 7.2m, NewPrice, "IPC 2029 (7,20 %)", null, Now);
+        var result = Run(service, "2030-05-06", second);
+
+        Assert.Equal([(Date("2030-05-10"), Date("2030-05-11"))], Dates(result));
+        Assert.Equal(Date("2031-01-10"), service.NextReviewDate);
+        Assert.Null(service.HeldSince);
+    }
+
+    [Fact]
+    public void CancellingDropsTheCarriedPeriods()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.Pause(Date("2027-02-05"), Now);
+
+        service.Cancel(Now);
+
+        Assert.Empty(service.CarriedHeldPeriods);
+        Assert.Null(service.HeldSince);
+    }
+
+    /// <summary>Retenido el 5 de enero de 2027, pausado el 5 de febrero y reanudado el 20 de abril.</summary>
+    private static ServiceContract ResumedHeldService()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.Pause(Date("2027-02-05"), Now);
+        service.Resume(Date("2027-04-20"), Now);
+        return service;
     }
 
     // Una sola revisión, no una por cada año saltado, y con el IPC de un solo año.
@@ -231,7 +392,7 @@ public sealed class ChargeGeneratorReviewTests
     public void AfterAPauseOfSeveralYearsThereIsOneReview()
     {
         var service = NewService(lastGenerated: "2026-11-10");
-        service.Pause(Now);
+        service.Pause(Date("2026-11-05"), Now);
         service.Resume(Date("2030-05-03"), Now);
         Assert.Equal(2029, PriceReview.Of(service, null, Date("2030-05-03")).IpcYear);
 
@@ -242,6 +403,40 @@ public sealed class ChargeGeneratorReviewTests
         Assert.Equal([(Date("2030-05-10"), Date("2030-05-11"))], Dates(result));
         Assert.Single(result.PriceChanges);
         Assert.Equal(Date("2031-01-10"), service.NextReviewDate);
+        Assert.Null(service.HeldSince);
+    }
+
+    // Spec reajuste §6.4: pasar a Manual un retenido libera por «sin revisar», con el vencimiento corrido.
+    [Fact]
+    public void SwitchingAHeldContractToManualReleasesItUnreviewed()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.UpdatePriceReview(AdjustmentMode.Manual, 0m, service.NextReviewDate, Now);
+
+        var result = Run(service, "2027-01-14");
+
+        var charge = Assert.Single(result.Charges);
+        Assert.Equal((Date("2027-01-10"), Date("2027-01-19"), true), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed));
+        Assert.Equal(OldPrice, charge.Amount);
+        Assert.Equal(Date("2028-01-10"), service.NextReviewDate);
+        Assert.Null(service.HeldSince);
+    }
+
+    // Spec reajuste §6.4: correr la revisión más allá del período retenido es una decisión de una persona: no va «sin revisar».
+    [Fact]
+    public void MovingTheReviewPastTheHeldPeriodReleasesItAsReviewed()
+    {
+        var service = NewService();
+        Run(service, "2027-01-05");
+        service.UpdatePriceReview(AdjustmentMode.Ipc, 0m, Date("2027-06-10"), Now);
+
+        var result = Run(service, "2027-01-14");
+
+        var charge = Assert.Single(result.Charges);
+        Assert.Equal((Date("2027-01-10"), Date("2027-01-19"), false), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed));
+        Assert.Equal(OldPrice, charge.Amount);
+        Assert.Equal(Date("2027-06-10"), service.NextReviewDate);
         Assert.Null(service.HeldSince);
     }
 

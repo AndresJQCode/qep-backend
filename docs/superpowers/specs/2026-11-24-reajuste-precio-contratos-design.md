@@ -128,9 +128,7 @@ precio, y que, cuando el IPC nuevo todavía no se conoce, el cobro **espere** a 
   persona (29 feb → 28 feb). Es **una sola regla de dominio** que usan todos los caminos que resuelven una revisión: aplicar un
   cambio programado (resuelto = el período donde aplicó), generar «sin revisar» (resuelto = ese período), «Mantener precio»
   (resuelto = el período de revisión vigente). Un `PUT …/price-review` no la usa: ahí la fecha la escribe la persona (y pasar a
-  `Manual` un contrato retenido resuelve por «sin revisar», §6.4). Tras una pausa larga hay **una**
-  revisión, no una por cada año saltado, y nunca se componen varios IPC: la revisión usa el IPC de un solo año (§6.7)
-  **(decisión del diseño, revisable)**.
+  `Manual` un contrato retenido resuelve por «sin revisar», §6.4). Tras una pausa larga hay **una** revisión para lo que se genera después de reanudar, no una por cada año saltado, y nunca se componen varios IPC en una revisión: cada revisión usa el IPC de un solo año (§6.7). Si el contrato estaba retenido al pausar, los períodos que arrastra conservan su propia revisión (§6.4); al liberarlos, `AdvanceReview` puede dejar la siguiente revisión en el primer período posterior a la pausa, que se retiene de nuevo **(decisión del diseño, revisable)**.
 
 ## 6. Cómo funciona
 
@@ -219,13 +217,16 @@ es el de hoy (§6.8).
 
   Cada acción que libera corre `ChargeGenerator` en modo `Run` **en la misma transacción** con el `hoy` del tenant, así que los
   cobros nacen al confirmar, no al día siguiente, y `held_since` queda según §6.3 **(decisión del diseño, revisable)**.
-- **Pausar** borra `held_since` (y no hay generación en pausa). **Reanudar** no hace nada especial: si el período de revisión
-  quedó atrás durante la pausa, la revisión aplica al primer período generado después de reanudar, que es el siguiente
-  período sin generar `>= next_review_date`; al resolverse, `AdvanceReview` la deja después de ese período (§5)
-  **(decisión del diseño, revisable)**.
+- **Pausar y reanudar un retenido (owner, 2026-11-25).** Reanudar conserva los períodos que ya estaban retenidos antes de la pausa: siguen retenidos hasta que se decida el precio y entonces se cobran como cobros liberados. Los períodos que caen durante la pausa nunca se cobran, como hoy.
+  - **Qué estaba retenido (decisión del diseño, revisable):** si el contrato estaba retenido al pausar (`held_since` no nulo), todo período sin generar que el cursor alcanza con fecha de generación (`p − 5`) igual o anterior al día de la pausa (hoy del tenant): el período de revisión y los siguientes de la ventana. Cuenta también el período cuya ventana se abrió ese día aunque la corrida diaria todavía no haya pasado: es lo mismo que cobraría una liberación ese día, y no depende de la hora de la corrida. Un contrato que no estaba retenido no arrastra nada, aunque su período de revisión haya entrado en la ventana ese mismo día.
+  - **Pausar** guarda esos períodos en `carried_held_periods` (sin repetir los que ya estaban) y borra `held_since`; no hay generación en pausa.
+  - **Reanudar** escribe `reactivated_on` como hoy. Si hay períodos arrastrados, pone `held_since = hoy` (lo retenido sigue retenido) y corre `ChargeGenerator` en modo `Run` en la misma transacción: en `Ipc` sigue retenido; si mientras estaba pausado se pasó a `Manual` o se corrió `next_review_date` más allá de ellos, se liberan en el acto (§6.3, §6.5).
+  - **Cursor:** el próximo período a generar es el primer período arrastrado; agotados, sigue la regla de hoy (la primera ancla igual o posterior a `reactivated_on`). `MarkGenerated(p)` saca `p` de la lista. Varias pausas seguidas con el contrato retenido acumulan sus huecos en la misma lista.
+  - El período de revisión, `upcomingPeriodDates`, «cubrir la revisión» y la invariante `Ipc` (§5) recorren ese mismo cursor, así que nunca apuntan a un período de la pausa. En el DTO, `heldSince` es el día de la reanudación y `reviewPeriodDate` el período arrastrado más antiguo.
+  - Un contrato que no estaba retenido al pausar sigue igual que hoy: reanudar no hace nada especial; si el período de revisión quedó atrás durante la pausa, la revisión aplica al primer período generado después de reanudar, y al resolverse `AdvanceReview` la deja después de ese período (§5) **(decisión del diseño, revisable)**.
 - **Pausado:** programar un cambio y «Mantener precio» exigen un contrato `Active` (422 `billing.service.not_active`);
   `upcomingPeriodDates` es `[]`. Editar el reajuste (`PUT …/price-review`) sí se permite **(decisión del diseño, revisable)**.
-- **Cancelar** borra `held_since` y cancela el cambio programado pendiente (`status = Cancelled`).
+- **Cancelar** borra `held_since` y `carried_held_periods` (lo retenido no se cobra) y cancela el cambio programado pendiente (`status = Cancelled`).
 - `DELETE /services/{id}` (existe hoy) borra también sus cambios programados.
 
 ### 6.5 Vencimiento de un cobro liberado (owner, decisión 4)
@@ -374,6 +375,7 @@ quien lo programó (la generación tampoco audita hoy).
 | `ipc_extra_points` | numeric(5,2) not null default 0 | CHECK `>= 0 AND <= 50`. Sólo tiene efecto con `Ipc`; con `Manual` se guarda 0. |
 | `next_review_date` | date not null | Relleno §6.8. |
 | `held_since` | date null | §6.4. |
+| `carried_held_periods` | date[] not null default `'{}'` | Períodos retenidos antes de una pausa que siguen pendientes (§6.4). Siempre posteriores a `last_generated_due_date`, en orden. |
 
 ### `billing.charges` (columnas nuevas)
 
@@ -456,7 +458,7 @@ decimales del catálogo al más cercano). Un resultado `<= 0` hace `computedPric
 | `GET /price-reviews?state=due\|held\|all&assignee=me&search=&page=1&pageSize=25` | read | `200 { items: PriceReviewRowDto[], total, page, pageSize, summary: { dueCount, heldCount }, ipcYears: [{ year: int, rate: decimal\|null, contractCount: int }] }`. Default `all` = `Due` + `Held`. Orden por `generationDate` asc. `ipcYears`: los años de IPC que necesitan los contratos `Ipc` en `Due` o `Held` del tenant entero (**sin** los filtros ni la página), con su tasa si está cargada y cuántos contratos la esperan. `summary` es del tenant entero. `assignee` y `search` como `GET /charges`. | 403; 422 `validation.failed` (`State`, `PageSize` > 100) |
 | `GET /ipc-rates` | read | `200 { items: IpcRateDto[] }`, por `year` desc | 403 |
 | `PUT /ipc-rates/{year}` body `{ rate: decimal, expectedRate: decimal\|null }` (`expectedRate` obligatorio, puede ser `null`) | manage | `200 IpcRateDto` (upsert). `expectedRate` es la tasa que mostraba la pantalla; si lo guardado difiere, 409 sin escribir; la misma tasa ya guardada responde 200 sin cambios (§6.11, owner 2026-11-24). Orden: `rate_changed` antes que `in_use`. | 403; 409 `billing.ipc.rate_changed` (lo guardado no es `expectedRate`), `billing.concurrent_first_write` (insert simultáneo del mismo año); 422 `billing.ipc.in_use` (cambia la tasa de un año que usa algún cambio programado `Pending`; la misma tasa no es cambio), `validation.failed` (`Year` fuera de 2000…año actual + 1, `Rate` fuera de −10…100 o con más de 2 decimales, `ExpectedRate` ausente del cuerpo) |
-| `POST /price-reviews/confirm-ipc` body `{ year: int, items: [{ serviceId: guid, version: long, expectedPrice: decimal, newPrice: decimal\|null, reason: string\|null }] }` (1 a 200 ítems, sin repetir `serviceId`) | manage | `200 { results: [{ serviceId, outcome: "Confirmed"\|"Failed", code: string\|null, service: ServiceDto\|null }] }` en el orden pedido. `expectedPrice` es el `computedPrice` que vio la persona; si el backend calcula otro, el ítem falla con `billing.price_review.price_changed` y nada cambia para ese contrato (§6.7). `newPrice` null = el calculado; distinto del calculado exige `reason`. Cada ítem en su transacción. | 403; 422 `billing.ipc.not_set` (el año no tiene tasa), `validation.failed` (`Items` vacío, > 200 o repetido; `Items[i].ExpectedPrice` ausente; `Items[i].NewPrice` <= 0 o > 2 decimales; `Items[i].Reason` > 500). Por ítem (`code`): `billing.service.not_found`, `concurrency.conflict`, `billing.price_review.price_changed`, `billing.price_review.not_ipc`, `billing.price_review.year_mismatch`, `billing.price_review.not_pending` (no está `Due` ni `Held`, o ya está cubierta), `billing.service.price_reason_required` |
+| `POST /price-reviews/confirm-ipc` body `{ year: int, items: [{ serviceId: guid, version: long, expectedPrice: decimal, newPrice: decimal\|null, reason: string\|null }] }` (1 a 200 ítems, sin repetir `serviceId`) | manage | `200 { results: [{ serviceId, outcome: "Confirmed"\|"Failed", code: string\|null, service: ServiceDto\|null }] }` en el orden pedido. `expectedPrice` es el `computedPrice` que vio la persona; si el backend calcula otro, el ítem falla con `billing.price_review.price_changed` y nada cambia para ese contrato (§6.7). `newPrice` null = el calculado; distinto del calculado exige `reason`. Cada ítem en su transacción. | 403; 422 `billing.ipc.not_set` (el año no tiene tasa), `validation.failed` (`Items` vacío, > 200 o repetido; `Items[i].ExpectedPrice` ausente; `Items[i].NewPrice` <= 0 o > 2 decimales; `Items[i].Reason` > 500). Por ítem (`code`): `billing.service.not_found`, `concurrency.conflict`, `billing.price_review.price_changed`, `billing.price_review.not_ipc`, `billing.price_review.year_mismatch`, `billing.price_review.not_pending` (no está `Due` ni `Held`, o ya está cubierta), `billing.price_schedule.already_pending` (está por revisar pero tiene un cambio pendiente que no cubre la revisión: primero se aplica o se cancela), `billing.service.price_reason_required` |
 | `PUT /services/{id}/price-review` body `{ adjustmentMode, ipcExtraPoints: decimal, nextReviewDate: date }`, `If-Match` | manage | `200 ServiceDetailDto`. Se permite con el contrato `Active` o `Paused`. Pasar a `Manual` guarda puntos 0. Con el contrato retenido, libera en la misma transacción si pasa a `Manual` (genera «sin revisar») o si sigue en `Ipc` y corre `nextReviewDate` más allá del período retenido (genera con el precio vigente) (§6.4). | 403; 404; 412; 428; 422 `billing.service.cancelled`, `billing.service.review_date_invalid` (no posterior al último período generado), `billing.price_schedule.after_review` (dejaría en `Ipc` un cambio pendiente posterior al período de revisión, §5), `validation.failed` (`AdjustmentMode`, `IpcExtraPoints` fuera de 0…50 o > 2 decimales) |
 | `POST /services/{id}/price-schedule` body `{ newPrice: decimal, effectiveFrom: date\|null, reason: string }`, `If-Match` | manage | `200 ServiceDetailDto`. `effectiveFrom` null = el período de revisión. `source = Manual`. Si el período al que aplica ya está en la ventana (o el contrato está retenido y lo cubre), genera en la misma transacción. Sólo con el contrato `Active`. | 403; 404; 412; 428; 422 `billing.service.cancelled`, `billing.service.not_active` (pausado), `billing.price_schedule.after_review` (en `Ipc`, aplicaría a un período posterior al de revisión, §5), `billing.price_schedule.already_pending`, `billing.price_schedule.period_generated` (`effectiveFrom` <= último período generado), `billing.price_schedule.same_price` (igual al precio actual: para eso está «Mantener precio»), `billing.service.price_reason_required`, `validation.failed` (`NewPrice`, `Reason` > 500) |
 | `DELETE /services/{id}/price-schedule`, `If-Match` | manage | `200 ServiceDetailDto` (el cambio pasa a `Cancelled`) | 403; 404 `billing.service.not_found`, `billing.price_schedule.not_found`; 412; 428 |
@@ -468,7 +470,7 @@ decimales del catálogo al más cercano). Un resultado `<= 0` hace `computedPric
 | --- | --- |
 | `POST /services` | Cuerpo + `priceReview: { adjustmentMode, ipcExtraPoints, nextReviewDate: date\|null } \| null` (§6.8). Errores + `billing.service.review_date_invalid`, `validation.failed` (`PriceReview.*`). |
 | `PUT /services/{id}` | Errores + `billing.price_schedule.currency_locked`. |
-| `POST /services/{id}/pause` · `/cancel` | Pausar borra `held_since`; cancelar además cancela el programado pendiente (§6.4). |
+| `POST /services/{id}/pause` · `/resume` · `/cancel` | Pausar un retenido guarda sus períodos retenidos y borra `held_since`; reanudar los deja retenidos (`state: Held`, `heldSince` = hoy) o los libera si ya no son de revisión; cancelar los descarta y cancela el programado pendiente (§6.4). Sin campos nuevos. |
 | `GET /services`, `GET /services/{id}`, `GET /charges`, `GET /charges/{id}`, `GET /services/preview-charges` | Campos nuevos de arriba. |
 | `POST /import` | Contratos importados con los valores de §6.8. Plantilla y vista previa sin cambios. |
 
@@ -504,7 +506,9 @@ equivalente) que usan la corrida, los DTO y la confirmación: una sola regla.
 - Verificar que `notifications.notifications.kind` no tenga un CHECK con la lista de valores; si lo tiene, migrarlo.
 - Pruebas: unitarias de `ChargeGenerator` (retención, liberación con vencimiento corrido, varios períodos retenidos, liberación
   que llega a una retención nueva en la misma pasada, `Manual` sin revisar, programado antes de la revisión que no la resuelve,
-  pausa durante retención, una sola revisión tras una pausa de varios años), de `AdvanceReview`, y de `PUT /ipc-rates/{year}`
+  pausa durante retención,
+  pausa y reanudación de un retenido (el período cuya generación cae el día de la pausa se conserva, el de un contrato no retenido no; varias pausas acumulan huecos; pasar a `Manual` en pausa libera al reanudar; pausa de años con períodos arrastrados da dos revisiones),
+  una sola revisión tras una pausa de varios años), de `AdvanceReview`, y de `PUT /ipc-rates/{year}`
   (`expectedRate` que coincide, que no coincide, `null` con una tasa ya guardada, misma tasa ya guardada con `expectedRate`
   viejo, insert simultáneo) y de integración por nombre de
   prueba (regla del workspace).

@@ -54,13 +54,8 @@ public static class PriceReview
     public static DateOnly ReviewPeriodOf(ServiceContract service) => AppliesTo(service, service.NextReviewDate);
 
     /// <summary>El primer período sin generar <c>&gt;= effectiveFrom</c>.</summary>
-    public static DateOnly AppliesTo(ServiceContract service, DateOnly effectiveFrom)
-    {
-        var next = service.NextUngeneratedPeriod();
-        return next >= effectiveFrom
-            ? next
-            : BillingCycles.FirstDueDateOnOrAfter(service.FirstDueDate, service.Cycle, effectiveFrom);
-    }
+    public static DateOnly AppliesTo(ServiceContract service, DateOnly effectiveFrom) =>
+        service.FirstUngeneratedPeriodOnOrAfter(effectiveFrom);
 
     /// <summary>Un cambio programado cubre la revisión si aplica exactamente en el período de revisión.</summary>
     public static bool Covers(ServiceContract service, ServicePriceSchedule pending) =>

@@ -8,6 +8,8 @@ public sealed class ServicePriceScheduleTests
 {
     private static readonly DateTimeOffset Now = new(2026, 3, 10, 12, 0, 0, TimeSpan.Zero);
 
+    private static readonly DateOnly Today = new(2026, 3, 10);
+
     private static DateOnly Date(string text) => DateOnly.ParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private static ServiceContract NewService(AdjustmentMode mode = AdjustmentMode.Manual)
@@ -44,7 +46,7 @@ public sealed class ServicePriceScheduleTests
     public void APausedServiceIsNotActive()
     {
         var service = NewService();
-        service.Pause(Now);
+        service.Pause(Today, Now);
 
         AssertCode(ServiceContractsErrorCodes.ServiceNotActive, () => Schedule(service));
     }
