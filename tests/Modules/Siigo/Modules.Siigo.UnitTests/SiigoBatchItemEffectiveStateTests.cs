@@ -1,3 +1,4 @@
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
 
 namespace Modules.Siigo.UnitTests;
@@ -56,6 +57,74 @@ public sealed class SiigoBatchItemEffectiveStateTests
         Assert.Equal(
             (SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.connection_unavailable"), (state.Status, state.ErrorCode));
     }
+
+    // Los códigos de Siigo de la fila son del envío que dejó su código: junto al motivo de un reenvío que no salió mezclarían dos
+    // intentos.
+    [Theory]
+    [InlineData("siigo.connection_unavailable")]
+    [InlineData("siigo.invoice_batch.forbidden")]
+    public void ACodeOfTheItemThatIsNotTheRowOneTravelsWithoutTheSiigoErrorsOfTheRow(string itemCode)
+    {
+        var invoice = UnansweredByADeadService();
+        var item = ToConfirm(invoice, itemCode, Now.AddMinutes(5));
+
+        var dto = DtoOf(item, invoice, Now.AddMinutes(5));
+
+        Assert.Equal(itemCode, dto.ErrorCode);
+        Assert.Empty(dto.SiigoErrors);
+    }
+
+    // El envío normal copia el código de la fila, y un ítem sin código muestra el de ella: son del mismo intento.
+    [Theory]
+    [InlineData("siigo.invoice.siigo_service")]
+    [InlineData(null)]
+    public void TheCodeOfAnUnchangedRowKeepsItsSiigoErrors(string? itemCode)
+    {
+        var invoice = UnansweredByADeadService();
+        var item = ToConfirm(invoice, itemCode, Now.AddMinutes(5));
+
+        var dto = DtoOf(item, invoice, Now.AddMinutes(5));
+
+        Assert.Equal("siigo.invoice.siigo_service", dto.ErrorCode);
+        Assert.Equal(["documents_service"], dto.SiigoErrors);
+    }
+
+    [Fact]
+    public void ARowThatChangedLaterTravelsWithItsSiigoErrors()
+    {
+        var invoice = UnansweredByADeadService();
+        var item = ToConfirm(invoice, "siigo.connection_unavailable", Now.AddMinutes(-1));
+
+        var dto = DtoOf(item, invoice, Now.AddMinutes(1));
+
+        Assert.Equal("siigo.invoice.siigo_service", dto.ErrorCode);
+        Assert.Equal(["documents_service"], dto.SiigoErrors);
+    }
+
+    // Fuera de por confirmar nada cambia: una que alguien declaró inexistente sigue mostrando lo que contestó Siigo.
+    [Fact]
+    public void AResolvedMissingItemKeepsTheSiigoErrorsOfItsRow()
+    {
+        var invoice = UnansweredByADeadService();
+        var item = ToConfirm(invoice);
+        invoice.ResolveMissing(Now.AddMinutes(10));
+
+        var dto = DtoOf(item, invoice, Now.AddMinutes(10));
+
+        Assert.Equal("siigo.invoice.resolved_missing", dto.ErrorCode);
+        Assert.Equal(["documents_service"], dto.SiigoErrors);
+    }
+
+    private static SiigoInvoice UnansweredByADeadService()
+    {
+        var invoice = NewInvoice();
+        invoice.BeginSend(Now);
+        invoice.MarkUnanswered("siigo.invoice.siigo_service", "documents_service", Now);
+        return invoice;
+    }
+
+    private static SiigoInvoiceBatchItemDto DtoOf(SiigoInvoiceBatchItem item, SiigoInvoice invoice, DateTimeOffset now) =>
+        SiigoInvoiceBatchItemDto.From(item, item.Effective(invoice, now), invoice, null, false);
 
     [Fact]
     public void ARowThatChangesAfterTheItemSettledDecidesTheCode()

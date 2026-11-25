@@ -83,7 +83,9 @@ public sealed record SiigoInvoiceBatchDto(
 /// Un pedido de una tanda como la pantalla lo dibuja (spec 2026-11-24 §5). <paramref name="Status"/> y <paramref name="ErrorCode"/> son
 /// los efectivos. <paramref name="OrderNumber"/> y <paramref name="CustomerName"/> son los de <c>/orders</c>, leídos al momento (<c>null</c>
 /// si el pedido no es del tenant): la pantalla de tandas no tiene las filas del listado. <paramref name="SiigoErrors"/> son los códigos que
-/// contestó Siigo, en lista para que la pantalla no parta texto, y nunca sus mensajes. <paramref name="Missing"/> trae, para un pedido
+/// contestó Siigo, en lista para que la pantalla no parta texto, y nunca sus mensajes; van vacíos en uno por confirmar cuyo
+/// <paramref name="ErrorCode"/> no es el de su fila (el motivo de un reenvío que no salió), para no mezclar dos intentos.
+/// <paramref name="Missing"/> trae, para un pedido
 /// saltado por <c>siigo.invoice.not_ready</c>, los códigos de lo que le faltaba (la pantalla los traduce igual que los del <c>preview</c>).
 /// <paramref name="OrderMarkFailed"/> avisa que la factura existe pero el pedido no se pudo marcar. <paramref name="CanResend"/>,
 /// <paramref name="CanResolve"/> y <paramref name="MissingAvailableAt"/> (desde cuándo se acepta «No existe», si todavía hay que esperar)
@@ -112,6 +114,8 @@ public sealed record SiigoInvoiceBatchItemDto(
     {
         ArgumentNullException.ThrowIfNull(item);
         ArgumentNullException.ThrowIfNull(state);
+        // El detalle de la fila explica el código de la fila: si por confirmar se muestra otro (el del ítem), es de otro intento.
+        var explainsAnotherCode = state.Status == SiigoInvoiceBatchItemStatus.ToConfirm && state.ErrorCode != invoice?.ErrorCode;
         return new(
             item.OrderId,
             item.Position,
@@ -119,7 +123,7 @@ public sealed record SiigoInvoiceBatchItemDto(
             label?.CustomerName,
             state.Status.ToString(),
             state.ErrorCode,
-            CodesOf(invoice?.ErrorDetail),
+            CodesOf(explainsAnotherCode ? null : invoice?.ErrorDetail),
             item.InvoiceId,
             state.InvoiceNumber,
             item.MissingCodes,

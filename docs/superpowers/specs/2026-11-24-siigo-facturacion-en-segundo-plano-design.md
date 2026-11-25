@@ -246,7 +246,7 @@ y conserva `Invoiced`, `Skipped`, `Failed` (aditivo: el frontend publicado los l
 | `orderNumber`, `customerName` | Quotations, nuevo método del puerto | el número y el nombre que muestra `/orders`; `null` si el pedido no es del tenant |
 | `status` | efectivo (§2) | incluye `ToConfirm` |
 | `errorCode` | efectivo (§2) | código `siigo.*`, lo traduce la pantalla |
-| `siigoErrors` | `ErrorDetail` de la fila enlazada | sólo códigos de Siigo (`documents_service`…); nunca mensajes |
+| `siigoErrors` | `ErrorDetail` de la fila enlazada | sólo códigos de Siigo (`documents_service`…); nunca mensajes. Vacío en un `ToConfirm` cuyo `errorCode` no es el de la fila (muestra el del ítem, §2): serían de otro intento (decidido el 2026-11-25) |
 | `invoiceId`, `invoiceNumber` | fila enlazada / ítem | |
 | `missing` | ítem | como hoy |
 | `orderMarkFailed` | ítem (nuevo) | la factura existe pero el pedido no se pudo marcar; hoy sólo lo traía la respuesta del `POST` síncrono |
