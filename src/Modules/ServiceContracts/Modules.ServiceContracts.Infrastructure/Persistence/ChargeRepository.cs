@@ -157,7 +157,9 @@ internal sealed class ChargeRepository(ServiceContractsDbContext dbContext) : IC
             overdue.Sum(row => row.Count),
             failed,
             open.Select(row => new CurrencyAmountDto(row.Currency, row.Amount)).ToList(),
-            overdue.Select(row => new CurrencyAmountDto(row.Currency, row.Amount)).ToList());
+            overdue.Select(row => new CurrencyAmountDto(row.Currency, row.Amount)).ToList(),
+            // Las revisiones no salen de los cobros: las cuenta quien compone la bandeja (PriceReviewReader).
+            PriceReviewCountsDto.Empty);
     }
 
     public async Task<IReadOnlyDictionary<Guid, ReminderDto>> ListLastRemindersAsync(

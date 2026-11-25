@@ -24,6 +24,55 @@ public sealed record ReminderDto(
 
 public sealed record PaymentDto(DateOnly PaidOn, string? Note, MemberRefDto? PaidBy, DateTimeOffset PaidAt);
 
+/// <summary>
+/// El cambio de precio pendiente de un contrato. Viaja completo, con su autor y con el período en que va a aplicar
+/// (<c>AppliesToPeriodDate</c>), porque la pantalla no cuenta anclas del ciclo: «desde» puede caer entre dos períodos, o en una
+/// pausa, y sólo el backend sabe cuál lo alcanza primero.
+/// </summary>
+public sealed record PriceScheduleDto(
+    Guid Id,
+    DateOnly EffectiveFrom,
+    DateOnly AppliesToPeriodDate,
+    decimal NewPrice,
+    string Currency,
+    string Source,
+    int? IpcYear,
+    decimal? IpcRate,
+    decimal? ExtraPoints,
+    string Reason,
+    MemberRefDto? CreatedBy,
+    DateTimeOffset CreatedAt);
+
+/// <summary>
+/// El reajuste de un contrato y la foto de su revisión hoy (spec reajuste §6.1). El período, las fechas, el estado
+/// (<c>None | Upcoming | Due | Held | Scheduled</c>) y el año de IPC los calcula el backend con una sola regla: la pantalla sólo
+/// los pinta. Fuera de <c>Active</c> las fechas y el año van nulos y el estado es <c>None</c>.
+/// </summary>
+public sealed record PriceReviewInfoDto(
+    string AdjustmentMode,
+    decimal IpcExtraPoints,
+    DateOnly NextReviewDate,
+    DateOnly? ReviewPeriodDate,
+    DateOnly? GenerationDate,
+    DateOnly? NoticeFrom,
+    string State,
+    DateOnly? HeldSince,
+    int? IpcYear,
+    PriceScheduleDto? Scheduled);
+
+/// <summary>
+/// Cuántos contratos del tenant entero esperan una decisión. Viajan los dos conteos siempre, también en cero: la bandeja de
+/// cobros dibuja su aviso sin pedir la lista de revisiones ni sumar páginas.
+/// </summary>
+public sealed record PriceReviewCountsDto(int DueCount, int HeldCount)
+{
+    public static PriceReviewCountsDto Empty { get; } = new(0, 0);
+}
+
+/// <summary>
+/// <c>PeriodDate</c> es el período que el cobro paga y <c>DueDate</c> lo que el cliente ve: difieren en un cobro que estuvo
+/// retenido. <c>PriceUnreviewed</c> marca el que salió con el precio viejo porque nadie revisó a tiempo.
+/// </summary>
 public sealed record ChargeDto(
     Guid Id,
     Guid ServiceId,
@@ -37,8 +86,11 @@ public sealed record ChargeDto(
     int DaysOverdue,
     PaymentDto? Payment,
     ReminderDto? LastReminder,
-    long Version);
+    long Version,
+    DateOnly PeriodDate,
+    bool PriceUnreviewed);
 
+/// <summary><c>PriceReview</c> va en cada contrato, también en la lista, para marcar los que esperan revisión sin otra consulta.</summary>
 public sealed record ServiceDto(
     Guid Id,
     CustomerRefDto Customer,
@@ -54,7 +106,8 @@ public sealed record ServiceDto(
     IReadOnlyList<CurrencyAmountDto> OpenAmountByCurrency,
     long Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    PriceReviewInfoDto PriceReview);
 
 /// <summary>
 /// Una fila del historial de precios del contrato: de qué precio y moneda a cuáles, el motivo obligatorio y quién lo cambió
@@ -70,14 +123,20 @@ public sealed record ServicePriceChangeDto(
     string NewCurrency,
     string Reason,
     MemberRefDto? ChangedBy,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    string Origin);
 
 /// <param name="PriceChanges">Del más reciente al más viejo; vacío si el precio nunca cambió.</param>
+/// <param name="UpcomingPeriodDates">
+/// Desde cuáles períodos se puede programar un cambio: hasta 12 sin generar; vacío si el contrato no está <c>Active</c> y, en
+/// <c>Ipc</c>, sólo hasta el de la revisión. Viaja calculado porque el selector no puede conocer las anclas ni la invariante.
+/// </param>
 public sealed record ServiceDetailDto(
     ServiceDto Service,
     ProfileDto Profile,
     IReadOnlyList<ChargeDto> Charges,
-    IReadOnlyList<ServicePriceChangeDto> PriceChanges);
+    IReadOnlyList<ServicePriceChangeDto> PriceChanges,
+    IReadOnlyList<DateOnly> UpcomingPeriodDates);
 
 /// <summary>Deuda acumulada del tenant entero (status=open, sin los demás filtros), un total por moneda sin convertir.</summary>
 public sealed record ChargeSummaryDto(
@@ -85,7 +144,8 @@ public sealed record ChargeSummaryDto(
     int OverdueCount,
     int FailedReminderCount,
     IReadOnlyList<CurrencyAmountDto> OpenAmountByCurrency,
-    IReadOnlyList<CurrencyAmountDto> OverdueAmountByCurrency);
+    IReadOnlyList<CurrencyAmountDto> OverdueAmountByCurrency,
+    PriceReviewCountsDto PriceReviews);
 
 public sealed record ChargePageDto(
     IReadOnlyList<ChargeDto> Items,

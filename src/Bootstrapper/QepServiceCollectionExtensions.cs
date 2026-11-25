@@ -463,6 +463,7 @@ public static class QepServiceCollectionExtensions
             Modules.ServiceContracts.Application.UpdateServiceContractsSettingsHandler>();
         services.AddScoped<Modules.ServiceContracts.Application.ChargeDtoComposer>();
         services.AddScoped<Modules.ServiceContracts.Application.ServiceDetailComposer>();
+        services.AddScoped<Modules.ServiceContracts.Application.PriceReviewReader>();
         // Importación desde Excel (§3.2b): la vista previa y la importación comparten el analizador.
         services.AddScoped<
             ICommandHandler<Modules.ServiceContracts.Application.PreviewServiceContractsImportCommand, Modules.ServiceContracts.Application.ImportPreviewDto>,
