@@ -29,7 +29,8 @@ public sealed record UpdateDistributorCommand(
 /// <summary>
 /// Lista, asesor y empresa facturadora, en cualquier estado. Orden: 403 → 422 → 404 → 412 → 409 datos fuera de
 /// <c>Invited</c> → las tres verificaciones → 422 de los datos → 422 ciudad → 409 documento → 409 aceptación a medias
-/// (sólo si cambia tipo o número y el tenant reservado ya existe) → 422 <c>Phone</c> → 422 conexión.
+/// (sólo si cambia tipo o número y la aceptación ya empezó o el tenant reservado ya existe) → 422 <c>Phone</c> → 422
+/// conexión. Un <c>PUT</c> que cargó antes de la marca de la aceptación pierde el guardado con 412: la marca sube la versión.
 /// Teléfono y conexión del aviso (spec 2026-11-18) sólo cuentan mientras está invitada (P-2): afuera se ignoran sin 422,
 /// porque el formulario reenvía todos los campos. Sin teléfono se borran los dos (P-3). El mismo teléfono con la conexión nula
 /// o igual a la guardada no consulta Integrations (D-9): editar no falla porque la conexión dejó de estar lista. Un cambio deja
@@ -165,10 +166,16 @@ public sealed class UpdateDistributorHandler(
     private static bool ChangesDocument(IReadOnlyList<string> changed) =>
         changed.Contains("identificationType") || changed.Contains("identificationNumber");
 
-    // La aceptación no es atómica entre módulos (D-3): con el tenant reservado ya creado (D-17), la empresa y el cliente pueden
-    // existir con este documento, y como el reintento es idempotente por documento, cambiarlo los duplicaría.
+    // La aceptación no es atómica entre módulos (D-3): si ya empezó, la empresa y el cliente pueden existir con este documento, y
+    // como el reintento es idempotente por documento, cambiarlo los duplicaría. La marca la pone la aceptación antes de escribir
+    // (también al vincular un tenant existente); el tenant reservado (D-17) cubre las que quedaron a medias antes de la marca.
     private async Task EnsureAcceptanceNotStartedAsync(Distributor distributor, CancellationToken cancellationToken)
     {
+        if (distributor.AcceptanceStartedAt is not null)
+        {
+            throw WholesaleConflicts.AcceptanceInProgress();
+        }
+
         var reserved = new TenantId(distributor.Invitation.ReservedTenantId);
         if (await tenants.GetStatusAsync(reserved, cancellationToken) is not null)
         {
