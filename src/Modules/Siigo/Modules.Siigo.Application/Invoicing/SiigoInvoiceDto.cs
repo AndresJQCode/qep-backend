@@ -82,7 +82,7 @@ public sealed record SiigoInvoiceDto(
 }
 
 /// <summary>Un pago de la factura armada. <paramref name="ProofId"/> dice de qué comprobante sale; <c>null</c> es el saldo.</summary>
-public sealed record SiigoDraftPaymentDto(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly? DueDate);
+public sealed record SiigoDraftPaymentDto(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly DueDate);
 
 /// <summary>Una factura armada que todavía no se mandó: su tipo, lo que suman sus pagos y los pagos propuestos.</summary>
 public sealed record SiigoInvoiceDraftDto(string Kind, decimal Total, IReadOnlyList<SiigoDraftPaymentDto> Payments);

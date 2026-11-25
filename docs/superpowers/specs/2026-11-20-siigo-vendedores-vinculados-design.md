@@ -158,6 +158,8 @@ pedido tiene saldo, y la cuenta «Crédito» de la propia empresa ya está vincu
    `Reference = null`.
 3. **Cuenta sin vincular**: `payment_unlinked` con la clave de la cuenta, **una sola vez**, venga el dinero de comprobantes o de saldo.
 4. **Vencimiento del saldo** (`due_date`) = la fecha de la factura (`input.Today`). Los pagos de comprobantes siguen sin `due_date`.
+   **Corregido el 2026-11-25:** los comprobantes también llevan `due_date` = fecha de la factura. La forma de pago de la cuenta de
+   cobro puede manejar vencimiento en Siigo, y entonces rechaza el pago sin él (`parameter_required`, `payments[0].due_date`).
 5. **Readiness del paso Pagos**: completo si hay al menos un vínculo de cuenta con id de Siigo; crédito, contraentrega y por defecto
    ya no cuentan.
 6. **Sin migración ni retiro de campos**: las columnas `credit_*`, `cash_on_delivery_*`, `default_*` y los campos del `PUT` se
