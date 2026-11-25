@@ -41,6 +41,20 @@ public sealed class ShopifyOrderDeliveryEditTests
                  FROM quotations.order_parties WHERE role = 'Shipping'), 'none')
             """);
 
+    /// <summary><c>versión|recoger|historial|partes de envío|eventos de dirección|envíos a Shopify</c>.</summary>
+    private static Task<string> StoredOrderAsync(Flow flow) =>
+        flow.ScalarAsync(
+            """
+            SELECT o.version
+                || '|' || o.is_store_pickup
+                || '|' || (SELECT count(*) FROM quotations.order_history h WHERE h.order_id = o.id)
+                || '|' || (SELECT count(*) FROM quotations.order_parties p WHERE p.order_id = o.id AND p.role = 'Shipping')
+                || '|' || (SELECT count(*) FROM platform.outbox_messages
+                           WHERE event_name = 'quotations.order.shipping-party-changed.v1')
+                || '|' || (SELECT count(*) FROM shopify.order_pushes)
+            FROM quotations.orders o
+            """);
+
     [Fact]
     public async Task ShopifyCustomerAddressIsRejected()
     {
@@ -67,6 +81,26 @@ public sealed class ShopifyOrderDeliveryEditTests
         var response = await ShopifyOrderDelivery.PutAsync(client, flow, isStorePickup: false, shipping: null);
 
         Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
+    }
+
+    // De recoger a enviar con los datos del cliente: no hay parte propia que mandar, pero la entrega cambió y Shopify se quedaría con
+    // la dirección anterior. Se rechaza en el cálculo previo y al guardar, sin escribir nada.
+    [Fact]
+    public async Task SendingAPickupShopifyOrderToTheCustomerAddressIsRejected()
+    {
+        await using var flow = await Flow.StartAsync();
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture());
+        using var client = Client(flow);
+        var pickup = await ShopifyOrderDelivery.PutAsync(client, flow, isStorePickup: true, shipping: null);
+        Assert.True(pickup.StatusCode == HttpStatusCode.OK, await pickup.Content.ReadAsStringAsync(Ct));
+        var before = await StoredOrderAsync(flow);
+
+        var preview = await ShopifyOrderDelivery.PreviewAsync(client, flow, isStorePickup: false, shipping: null);
+        var save = await ShopifyOrderDelivery.PutAsync(client, flow, isStorePickup: false, shipping: null);
+
+        await AssertProblemAsync(preview, "order.delivery.shopify_party_required");
+        await AssertProblemAsync(save, "order.delivery.shopify_party_required");
+        Assert.Equal(before, await StoredOrderAsync(flow));
     }
 
     [Fact]

@@ -180,8 +180,11 @@ internal static class OrderDeliveryEdits
         var previousParty = order.Shipping?.ToDetails();
         var changed = order.SetDelivery(delivery.IsStorePickup, shipping, updatedBy, now, enforceCompleteness: strict);
         // Después del agregado, que ya validó y normalizó la parte: lo que se compara y se pregunta es lo que quedaría guardado.
-        // Quien lanza acá no ha escrito nada.
-        if (OwnShippingPartyChanged(order, previousParty))
+        // Quien lanza acá no ha escrito nada. De recoger a enviar con los datos del cliente la parte propia no cambia (no la
+        // hay), pero la entrega sí: también se pregunta, o Shopify se quedaría con la dirección anterior. Repetir esa entrega
+        // sin cambiarla no cuenta.
+        if (OwnShippingPartyChanged(order, previousParty)
+            || (changed && !order.IsStorePickup && order.Shipping is null))
         {
             await EnsureShopifyCanReceiveAsync(order, externalCheck, tenantId, cancellationToken);
         }
