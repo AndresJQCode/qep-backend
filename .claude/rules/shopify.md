@@ -97,6 +97,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   quedan juntos o no quedan (`AShopifyFailureAfterTheOrderWriteRollsBackBoth`). Después del commit ese contexto apunta a una
   transacción terminada: nada en el scope vuelve a usarlo (el handler arma la respuesta con el estado que devolvió
   `CorrectAsync`, sin releer el pedido). Un camino nuevo que corrija un pedido de Shopify y encole su envío pasa por ahí, nunca por `IShopifyOrderWriter`.
+- **Los envíos a Shopify tienen tres orígenes** (spec 2026-11-24 §11.1): la corrección del panel, la corrección de ciudad por
+  sinónimo y la dirección cambiada en «Editar pedido». La tercera **no** pasa por `ShopifyOrderCorrectionWriter`, porque no
+  escribe el pedido desde Shopify: Quotations publica `quotations.order.shipping-party-changed.v1` en su transacción y
+  `ShopifyShippingPartyChangedApplier` sólo encola. Como la corrección del asesor, no mueve `applied_projection`
+  (`TheProjectionDoesNotMove`). Y lo que el worker no puede mandar se rechaza en el guardado del pedido: una regla nueva de
+  dirección va en `ShopifyShippingAddressRules`, que usan los dos lados (`ShopifyOrderPushProcessor` y
+  `ExternalOrderDeliveryCheck`); en uno solo, el envío queda reintentando horas o el guardado deja pasar lo que no sale.
 - **Un envío a Shopify `Held` nunca lo reclama el worker; sólo lo mueven los dos endpoints de sincronización** (owner,
   2026-11-14). Una corrección no se pierde por la conexión: guardada con la conexión no operativa (`connection_inactive`), con la
   conexión caída al mandar (`connection_missing`) o con `access_denied`, el envío queda retenido con el motivo en `failure_code`.

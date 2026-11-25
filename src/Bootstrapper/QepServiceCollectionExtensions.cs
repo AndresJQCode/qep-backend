@@ -2256,6 +2256,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyCitySynonymLookup, ShopifyCitySynonymLookup>();
         services.AddScoped<IShopifyCityCorrectionWriter, ShopifyCityCorrectionWriter>();
         services.AddShopifyCityCorrections();
+        // Spec 2026-11-24 §11.1.1: la dirección cambiada en «Editar pedido» (evento de Quotations en el outbox) se encola como
+        // envío a Shopify.
+        services.AddShopifyQuotationOrderEvents();
         // Spec 2026-10-26 D-C3b: lo que la consola de ciudades lee de pedidos, clientes, huellas, tenants y usuarios, que
         // Geography no referencia. Scoped como el GeographyDbContext sobre el que corre.
         services.AddScoped<ICityCorrectionInsights, CityCorrectionInsights>();

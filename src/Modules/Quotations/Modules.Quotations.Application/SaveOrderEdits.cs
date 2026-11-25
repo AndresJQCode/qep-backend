@@ -64,7 +64,8 @@ public sealed class SaveOrderEditsHandler(
     IQuotationGeographyLookup geographyLookup,
     IWholesaleLinePricing wholesalePricing,
     IQuotationCustomerLookup customerLookup,
-    IExternalOrderDeliveryCheck deliveryCheck)
+    IExternalOrderDeliveryCheck deliveryCheck,
+    IQuotationLifecycleEventPublisher lifecycleEvents)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -324,6 +325,14 @@ public sealed class SaveOrderEditsHandler(
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.delivery_changed",
                     order.Id.ToString(), "success", now);
+            }
+
+            // Spec 2026-11-24 §11.1.1: la dirección nueva de un pedido de Shopify sale al outbox en la misma transacción que
+            // el pedido, y Shopify encola su envío. Recoger no publica: no hay dirección que mandar.
+            if (order.Source == OrderSource.Shopify
+                && OrderDeliveryEdits.OwnShippingPartyChanged(order, deliveryBefore.Shipping))
+            {
+                lifecycleEvents.PublishShippingPartyChanged(order, now);
             }
 
             if (shippingChanged)

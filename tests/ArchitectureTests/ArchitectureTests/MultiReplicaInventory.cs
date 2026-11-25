@@ -92,6 +92,8 @@ public static class MultiReplicaInventory
             "Modules/Wholesale/Modules.Wholesale.Infrastructure/Persistence/WholesaleInbox.cs:37-42 — ClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
         new("Modules.Shopify.Infrastructure.Workers.CitySynonymEventsWorker", WorkerClassification.Claimed,
             "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyInbox.cs:49-54 — ShopifyClaimedOutboxConsumer, reclamo en el inbox con claimed_until"),
+        new("Modules.Shopify.Infrastructure.Workers.QuotationOrderEventsWorker", WorkerClassification.Claimed,
+            "Modules/Shopify/Modules.Shopify.Infrastructure/Persistence/ShopifyInbox.cs:49-54 — ShopifyClaimedOutboxConsumer, reclamo en el inbox con claimed_until; dos réplicas encolando a la vez sobre la misma fila chocan con IX_order_pushes_mirror_pending y se reintenta"),
         new("Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeWorker", WorkerClassification.Claimed,
             "Modules/Messaging/Modules.Messaging.Infrastructure/CustomerDeletion/CustomerMediaPurgeProcessor.cs:34 — ClaimedOutboxConsumer (MessagingInbox.cs:50)"),
         new("Modules.Messaging.Infrastructure.Coexistence.CoexistenceEventsWorker", WorkerClassification.Claimed,

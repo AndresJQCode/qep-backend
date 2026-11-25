@@ -1656,6 +1656,9 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
     public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
         Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
 
+    public void PublishShippingPartyChanged(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("order.shipping_party_changed", order.Id.Value, order.Total, order.Currency));
+
     /// <summary>Las líneas de cada aprobación, tal como las arma el contrato del evento.</summary>
     public List<IReadOnlyList<WholesaleApprovedLineData>> WholesaleApproved { get; } = [];
 
