@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -953,8 +954,8 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Equal(saved.Order.RetentionAmount, fetched.Order.RetentionAmount);
     }
 
-    // Task 1B de la tienda publica: un pedido no edita su parte de envio (solo la facturacion, ver el DTO), asi que el
-    // editor acepta la parte foranea por el bloque de facturacion; la de envio llega ya foranea desde la cotizacion.
+    // Task 1B de la tienda publica: el editor acepta una parte foranea por el bloque de facturacion; la de envio se prueba
+    // con la entrega editable, mas abajo.
     [Fact]
     public async Task TheOrderEditorAcceptsAForeignShippingParty()
     {
@@ -1205,6 +1206,467 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Equal(0m, fetched.Order.RetentionAmount);
         Assert.Equal(order.Version, fetched.Order.Version);
     }
+
+    // ----- Entrega editable (spec 2026-11-24 §10) -----
+
+    // R-1: con `delivery` en el cuerpo, el motivo exacto gana a `not_editable`, en el guardado y en el cálculo previo.
+    [Fact]
+    public async Task AnInvoicedOrderAnswersAlreadyInvoicedForADelivery()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        // Preparado y además facturado: gana facturado.
+        foreach (var action in new[] { "mark-paid", "prepare", "invoice" })
+        {
+            (await client.PostAsync(
+                $"{OrderByIdUrl(tenantId, order.Id)}/{action}", null, TestContext.Current.CancellationToken))
+                .EnsureSuccessStatusCode();
+        }
+
+        var invoiced = (await GetDetailAsync(client, tenantId, order.Id)).Order;
+        var body = DeliveryBody(productId, new OrderDeliveryEditRequest(true, null));
+
+        var save = await PutEditsAsync(client, tenantId, order.Id, invoiced.Version, body);
+        var preview = await PreviewEditsAsync(client, tenantId, order.Id, body);
+
+        await AssertProblemAsync(save, "order.order.already_invoiced");
+        await AssertProblemAsync(preview, "order.order.already_invoiced");
+    }
+
+    [Fact]
+    public async Task APreparedOrderAnswersAlreadyPreparedForADelivery()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        (await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/prepare", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        var prepared = (await GetDetailAsync(client, tenantId, order.Id)).Order;
+        var body = DeliveryBody(productId, new OrderDeliveryEditRequest(true, null));
+
+        var save = await PutEditsAsync(client, tenantId, order.Id, prepared.Version, body);
+        var preview = await PreviewEditsAsync(client, tenantId, order.Id, body);
+
+        await AssertProblemAsync(save, "order.order.already_prepared");
+        await AssertProblemAsync(preview, "order.order.already_prepared");
+    }
+
+    // Un frontend viejo no manda `delivery`: recoger o enviar y la parte quedan como estaban, sin historial ni auditoría de
+    // entrega.
+    [Fact]
+    public async Task ABodyWithoutDeliveryKeepsIt()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (party, _) = await ColombianShippingPartyAsync(client);
+        var (order, productId) = await ConvertPendingOrderAsync(
+            client, factory, tenantId, new QuotationPartiesRequest(null, party));
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, "Una nota"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadDetailAsync(response);
+        Assert.False(saved.Order.IsStorePickup);
+        Assert.Equal(
+            Assert.Single(order.Parties, candidate => candidate.Role == "Shipping"),
+            Assert.Single(saved.Order.Parties, candidate => candidate.Role == "Shipping"));
+        Assert.DoesNotContain(saved.History, entry => entry.EventType == "PartiesChanged");
+        Assert.DoesNotContain("quotation.order.delivery_changed", await AuditActionsAsync(factory));
+    }
+
+    // Lo mismo que ya está guardado no es un cambio: ni versión, ni historial, ni auditoría.
+    [Fact]
+    public async Task TheSameDeliveryRecordsNothing()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (party, _) = await ColombianShippingPartyAsync(client);
+        var (order, productId) = await ConvertPendingOrderAsync(
+            client, factory, tenantId, new QuotationPartiesRequest(null, party));
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, party)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await ReadDetailAsync(response);
+        Assert.Equal(order.Version, saved.Order.Version);
+        Assert.DoesNotContain(saved.History, entry => entry.EventType == "PartiesChanged");
+        Assert.DoesNotContain("quotation.order.delivery_changed", await AuditActionsAsync(factory));
+    }
+
+    [Fact]
+    public async Task SwitchingToPickupDropsPartyAndFreightAndRecalculates()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, "tenancy.settings.read", "tenancy.settings.update"]);
+        using var _ = client;
+        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
+        (await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/carriers/freight-tax-rate",
+            new { taxRateId }, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var (party, cityName) = await ColombianShippingPartyAsync(client);
+        var (order, productId) = await ConvertPendingOrderAsync(
+            client, factory, tenantId, new QuotationPartiesRequest(null, party));
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        // Primero, un envío cobrado y un comprobante que no alcanza para el neto con el envío.
+        var charged = await ReadDetailAsync(await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)],
+                new OrderEditProofsRequest([new OrderEditProofAddRequest(proofFileId, 100_000m)], null, null), null,
+                Shipping: new ShippingRequest(null, "Charged", 15_000m, false))));
+        Assert.Equal(("PartialPaymentReceived", 115_000m), (charged.Order.PaymentStatus, charged.Order.Total));
+        var body = DeliveryBody(productId, new OrderDeliveryEditRequest(true, null));
+
+        var preview = await PreviewEditsAsync(client, tenantId, order.Id, body);
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var previewed = (await ReadDetailAsync(preview)).Order;
+        Assert.Equal((true, 100_000m, 0m), (previewed.IsStorePickup, previewed.Total, previewed.Shipping.FreightAmount));
+        Assert.Equal(charged.Order.Version, previewed.Version);
+        Assert.DoesNotContain("quotation.order.delivery_changed", await AuditActionsAsync(factory));
+
+        var response = await PutEditsAsync(client, tenantId, order.Id, charged.Order.Version, body);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await ReadDetailAsync(response);
+        var saved = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.True(saved.Order.IsStorePickup);
+        Assert.DoesNotContain(saved.Order.Parties, candidate => candidate.Role == "Shipping");
+        Assert.Null(saved.Order.Shipping.ChargeMode);
+        Assert.Equal((0m, 0m, 0m), (saved.Order.Shipping.FreightAmount, saved.Order.FreightSubtotal, saved.Order.FreightTaxAmount));
+        Assert.Equal(100_000m, saved.Order.Total);
+        Assert.Equal("PendingVerification", saved.Order.PaymentStatus);
+        var partiesChanged = saved.History.Where(entry => entry.EventType == "PartiesChanged")
+            .Select(entry => entry.Details).ToArray();
+        Assert.Contains($"Entrega: Enviar a Cra 7 # 12-30, {cityName} → Recoger en tienda", partiesChanged);
+        // La entrega y el envío cambiaron en el mismo guardado: salen las dos filas (la tercera es el envío del primero).
+        Assert.Equal(3, partiesChanged.Length);
+        var actions = await AuditActionsAsync(factory);
+        Assert.Single(actions, action => action == "quotation.order.delivery_changed");
+        Assert.Equal(2, actions.Count(action => action == "quotation.order.shipping_changed"));
+    }
+
+    [Fact]
+    public async Task SwitchingToSendWithASpanishPartyKeepsItsRegion()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (order, productId) = await ConvertPendingOrderAsync(
+            client, factory, tenantId, new QuotationPartiesRequest(null, null, IsStorePickup: true));
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, SpanishShippingParty("ES", madrid))));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await ReadDetailAsync(response);
+        var saved = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.False(saved.Order.IsStorePickup);
+        var shipping = Assert.Single(saved.Order.Parties, candidate => candidate.Role == "Shipping");
+        Assert.Equal(("ES", "Madrid", "28001"), (shipping.Country, shipping.CityName, shipping.PostalCode));
+        Assert.Equal(new QuotationRegionDto(madrid, "Madrid"), shipping.Region);
+        var entry = Assert.Single(saved.History, history => history.EventType == "PartiesChanged");
+        Assert.Equal("Entrega: Recoger en tienda → Enviar a Calle Mayor 1, Madrid", entry.Details);
+    }
+
+    // R-3: la región la valida PartyRegionRules con la clave de la entrega.
+    [Fact]
+    public async Task ARegionOfAnotherCountryIsRejectedWithTheDeliveryKey()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var body = DeliveryBody(
+            productId,
+            new OrderDeliveryEditRequest(false, SpanishShippingParty("FR", await MadridRegionIdAsync(client))));
+
+        var save = await PutEditsAsync(client, tenantId, order.Id, order.Version, body);
+        var preview = await PreviewEditsAsync(client, tenantId, order.Id, body);
+
+        foreach (var response in new[] { save, preview })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            var problem = await ReadProblemAsync(response);
+            Assert.Equal("quotations.party.region_invalid", problem.Code);
+            Assert.Contains("Delivery.Shipping.RegionId", problem.Errors!.Keys);
+        }
+    }
+
+    [Fact]
+    public async Task SwitchingToSendWithoutPartyAndCustomerWithoutAddressIsRejected()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (order, productId) = await ConvertPendingOrderAsync(
+            client, factory, tenantId, new QuotationPartiesRequest(null, null, IsStorePickup: true));
+        // El alta pide la dirección según la política del tenant: un cliente sin domicilio se arma por SQL.
+        Assert.Equal(1, await ExecuteSqlAsync(
+            factory, $"UPDATE customers.customers SET address = NULL WHERE id = '{order.ClientId}'"));
+        var body = DeliveryBody(productId, new OrderDeliveryEditRequest(false, null));
+
+        var save = await PutEditsAsync(client, tenantId, order.Id, order.Version, body);
+        var preview = await PreviewEditsAsync(client, tenantId, order.Id, body);
+
+        await AssertProblemAsync(save, "order.delivery.address_required");
+        await AssertProblemAsync(preview, "order.delivery.address_required");
+        Assert.True((await GetDetailAsync(client, tenantId, order.Id)).Order.IsStorePickup);
+    }
+
+    [Fact]
+    public async Task PickupWithAShippingPartyIsRejected()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var (party, _) = await ColombianShippingPartyAsync(client);
+        var body = DeliveryBody(productId, new OrderDeliveryEditRequest(true, party));
+
+        var save = await PutEditsAsync(client, tenantId, order.Id, order.Version, body);
+        var preview = await PreviewEditsAsync(client, tenantId, order.Id, body);
+
+        await AssertProblemAsync(save, "order.delivery.shipping_party_on_pickup");
+        await AssertProblemAsync(preview, "order.delivery.shipping_party_on_pickup");
+    }
+
+    // El envío se resuelve después de la entrega, ya sin recogida, y la regla de la contraentrega sigue siendo la misma.
+    [Fact]
+    public async Task CashOnDeliveryWithProofsAfterSwitchingToSendIsRejected()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (order, productId) = await ConvertPendingOrderAsync(
+            client, factory, tenantId, new QuotationPartiesRequest(null, null, IsStorePickup: true));
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var withProof = await ReadDetailAsync(await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)],
+                new OrderEditProofsRequest([new OrderEditProofAddRequest(proofFileId, 50_000m)], null, null), null)));
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, withProof.Order.Version,
+            DeliveryBody(
+                productId, new OrderDeliveryEditRequest(false, null), new ShippingRequest(null, null, 0m, true)));
+
+        await AssertProblemAsync(response, "order.order.cash_on_delivery_pending_only");
+        Assert.True((await GetDetailAsync(client, tenantId, order.Id)).Order.IsStorePickup);
+    }
+
+    // La bandera no depende del origen (owner 2026-11-24): sólo de que el pedido siga editable.
+    [Fact]
+    public async Task TheDetailSaysWhetherTheDeliveryIsEditable()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(
+            factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
+        using var _ = client;
+        var (_, converted, _) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var manualId = await CreateManualOrderAsync(client, tenantId);
+        var shopifyId = await CreateShopifyOrderAsync(client, factory, tenantId, ownerUserId);
+        var (wholesaleId, _) = await CreateWholesaleOrderAsync(client, factory, tenantId, ownerUserId);
+
+        foreach (var orderId in new[] { converted.Id, manualId, shopifyId, wholesaleId })
+        {
+            var raw = await GetRawDetailAsync(client, tenantId, orderId);
+            Assert.True(raw.GetProperty("order").GetProperty("deliveryEditable").GetBoolean(), $"Order {orderId}");
+        }
+
+        async Task ActAsync(Guid orderId, string action)
+        {
+            var response = await client.PostAsync(
+                $"{OrderByIdUrl(tenantId, orderId)}/{action}", null, TestContext.Current.CancellationToken);
+            Assert.True(
+                response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        }
+
+        await ActAsync(converted.Id, "mark-paid");
+        await ActAsync(converted.Id, "invoice");
+        await ActAsync(manualId, "prepare");
+        await ActAsync(wholesaleId, "approve");
+
+        foreach (var orderId in new[] { converted.Id, manualId, wholesaleId })
+        {
+            var raw = await GetRawDetailAsync(client, tenantId, orderId);
+            Assert.False(raw.GetProperty("order").GetProperty("deliveryEditable").GetBoolean(), $"Order {orderId}");
+        }
+
+        Assert.True((await GetDetailAsync(client, tenantId, shopifyId)).Order.DeliveryEditable);
+    }
+
+    [Fact]
+    public async Task AWholesaleOrderAwaitingApprovalChangesItsDelivery()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (orderId, productId) = await CreateWholesaleOrderAsync(client, factory, tenantId, ownerUserId);
+        var order = (await GetDetailAsync(client, tenantId, orderId)).Order;
+
+        var response = await PutEditsAsync(
+            client, tenantId, orderId, order.Version, DeliveryBody(productId, new OrderDeliveryEditRequest(true, null)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await ReadDetailAsync(response);
+        var saved = await GetDetailAsync(client, tenantId, orderId);
+        Assert.True(saved.Order.IsStorePickup);
+        var entry = Assert.Single(saved.History, history => history.EventType == "PartiesChanged");
+        Assert.Equal("Entrega: Enviar a la dirección del cliente → Recoger en tienda", entry.Details);
+    }
+
+    [Fact]
+    public async Task AnApprovedWholesaleOrderAnswersNotEditable()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (orderId, productId) = await CreateWholesaleOrderAsync(client, factory, tenantId, ownerUserId);
+        (await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, orderId)}/approve", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        var approved = (await GetDetailAsync(client, tenantId, orderId)).Order;
+        var body = DeliveryBody(productId, new OrderDeliveryEditRequest(true, null));
+
+        var save = await PutEditsAsync(client, tenantId, orderId, approved.Version, body);
+        var preview = await PreviewEditsAsync(client, tenantId, orderId, body);
+
+        await AssertProblemAsync(save, "order.order.not_editable");
+        await AssertProblemAsync(preview, "order.order.not_editable");
+    }
+
+    private static SaveOrderEditsRequest DeliveryBody(
+        Guid productId, OrderDeliveryEditRequest delivery, ShippingRequest? shipping = null) =>
+        new([new OrderEditItemRequest(productId, 1m)], null, null, Shipping: shipping) { Delivery = delivery };
+
+    /// <summary>Una parte de envío colombiana completa y el nombre DIVIPOLA de su ciudad, que es el que cuenta el
+    /// historial.</summary>
+    private static async Task<(QuotationPartyRequest Party, string CityName)> ColombianShippingPartyAsync(HttpClient client)
+    {
+        var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).Second;
+        var cities = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/cities?departmentId={home.DepartmentId}", TestContext.Current.CancellationToken);
+        var cityName = cities.EnumerateArray()
+            .Single(city => city.GetProperty("id").GetGuid() == home.CityId)
+            .GetProperty("name").GetString()!;
+        return (
+            new QuotationPartyRequest(
+                "Bodega Norte", null, "3001234567", "bodega@correo.co", "Cra 7 # 12-30", home.DepartmentId, home.CityId),
+            cityName);
+    }
+
+    private static QuotationPartyRequest SpanishShippingParty(string country, Guid regionId) =>
+        new(
+            "Lucía Fernández", null, "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null,
+            Country: country, CityName: "Madrid", RegionId: regionId, PostalCode: "28001");
+
+    /// <summary>Como <see cref="CreatePendingOrderAsync"/>, con las partes dadas en la cotización de origen.</summary>
+    private static async Task<(OrderResponse Order, Guid ProductId)> ConvertPendingOrderAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, QuotationPartiesRequest parties)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId, parties: parties);
+        var response = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(null, []),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return (order, productId);
+    }
+
+    private static async Task<Guid> CreateManualOrderAsync(HttpClient client, Guid tenantId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/orders",
+            new CreateOrderRequest(
+                clientId, "Transferencia", null, false, null, null,
+                new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                [new OrderEditItemRequest(productId, 1m)], []),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await ReadDetailAsync(response)).Order.Id;
+    }
+
+    private static async Task<Guid> CreateShopifyOrderAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid ownerUserId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var advisorId = await AdvisorMembershipIdAsync(scope.ServiceProvider, tenantId, ownerUserId);
+        var result = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CreateAsync(
+            new ExternalOrderDraft(
+                tenantId, OrderSource.Shopify, "#4001", clientId, advisorId, null, null, null,
+                new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                [new ExternalOrderLine(productId, productId, 1m, 11_900m, 0m, 19)],
+                OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow, ShippingDetails.None,
+                $"shop-1:{Guid.CreateVersion7()}", null),
+            TestContext.Current.CancellationToken);
+        return result.OrderId;
+    }
+
+    /// <summary>Un pedido mayorista sin aprobar, por el puerto que usa la orden de compra vinculada.</summary>
+    private static async Task<(Guid OrderId, Guid ProductId)> CreateWholesaleOrderAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid ownerUserId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var advisorId = await AdvisorMembershipIdAsync(scope.ServiceProvider, tenantId, ownerUserId);
+        var result = await scope.ServiceProvider.GetRequiredService<IWholesaleOrderGateway>().CreateAsync(
+            new WholesaleOrderDraft(
+                tenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), "OC-0001", clientId, advisorId, billing.CompanyId,
+                billing.Currency, null, [new WholesaleOrderLine(Guid.CreateVersion7(), productId, 1m, 90_000m)]),
+            TestContext.Current.CancellationToken);
+        return (result.OrderId, productId);
+    }
+
+    private static async Task<Guid> AdvisorMembershipIdAsync(IServiceProvider services, Guid tenantId, Guid userId)
+    {
+        var advisorId = await services.GetRequiredService<IMembershipDirectory>()
+            .FindActiveMembershipIdAsync(userId, tenantId, TestContext.Current.CancellationToken);
+        Assert.NotNull(advisorId);
+        return advisorId.Value;
+    }
+
+    private static Task<HttpResponseMessage> PreviewEditsAsync(
+        HttpClient client, Guid tenantId, Guid orderId, SaveOrderEditsRequest body) =>
+        client.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, orderId)}/preview", body, TestContext.Current.CancellationToken);
+
+    private static async Task AssertProblemAsync(HttpResponseMessage response, string code)
+    {
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.UnprocessableEntity, $"Expected 422, got {response.StatusCode}: {text}");
+        Assert.Equal(code, JsonDocument.Parse(text).RootElement.GetProperty("code").GetString());
+    }
+
+    private static async Task<string[]> AuditActionsAsync(QepApiFactory factory) =>
+        (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Select(ActionOf).ToArray();
 
     /// <summary>Una cotización enviada con un producto de 100.000 COP sin impuesto, convertida con el
     /// pago pendiente y sin comprobantes: el total es 100.000 y el estado de pago lo decide cada

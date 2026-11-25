@@ -43,6 +43,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   convertir (el `notes` del cuerpo la reemplaza; `null` hereda las de la cotización; `""` la deja vacía; nunca se
   concatenan). Un `INSERT` a mano en `quotations.orders` (siembras, pruebas) tiene que llenar las columnas propias
   y copiar `order_items`/`order_parties`: son `NOT NULL` desde `AddOrderOwnData`.
+- **La entrega de un pedido se edita; «el pedido no edita sus partes» (H5) quedó revertido sólo para la entrega** (spec
+  2026-11-24 §10, owner). `PUT /orders/{id}` y su preview aceptan `delivery` (ausente conserva), en todo origen y mientras el
+  pedido no esté facturado ni preparado (`deliveryEditable` = `IsEditable`). `Order.SetDelivery` va **antes** de la
+  facturación, las retenciones, el envío y el recálculo del pago: el envío se resuelve contra la recogida nueva, y pasar a
+  recoger limpia el envío y la contraentrega dentro del agregado, así que la fila y la auditoría `shipping_changed` se
+  calculan contra el envío de antes de la entrega. Con `delivery` en el cuerpo, los handlers llaman
+  `EnsureDeliveryEditable` antes de la guarda `not_editable`, o el motivo exacto no sale nunca.
 - **Un `FromSql` crudo debe listar todas las columnas mapeadas de la entidad.** El `SELECT … FOR UPDATE` de
   `QuotationSettingsStore` no se puede componer (EF lo envolvería en una subconsulta), así que EF no completa
   las columnas que falten: al agregar `freight_tax_rate_id` a `tenant_quotation_settings`, guardar el mínimo de

@@ -79,7 +79,8 @@ internal static class OrderMapping
         order.RequiresShipping,
         WholesaleOf(order),
         order.InvoiceProvider,
-        order.InvoiceNumber);
+        order.InvoiceNumber,
+        order.IsEditable);
 
     /// <summary>Mayorista fase 3: el vínculo del pedido con la orden del distribuidor; null fuera de un pedido mayorista.</summary>
     public static OrderWholesaleState? WholesaleOf(Order order) =>

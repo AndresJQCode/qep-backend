@@ -117,7 +117,9 @@ public sealed record OrderDto(
     /// con un proveedor, revertir es una nota crédito y la API responde 422. El id de la factura en el proveedor no viaja.</summary>
     string? InvoiceProvider = null,
     /// <summary>El número de la factura del proveedor (<c>FV-1-123</c>); <c>null</c> en una marca manual.</summary>
-    string? InvoiceNumber = null);
+    string? InvoiceNumber = null,
+    /// <summary>Ver <see cref="OrderResponse.DeliveryEditable"/>: <see cref="Order.IsEditable"/> del pedido.</summary>
+    bool DeliveryEditable = false);
 
 /// <summary>Los dos valores de la aprobación mayorista (D-1), por nombre en el JSON.</summary>
 public static class WholesaleApprovals
@@ -291,7 +293,8 @@ public record SaveOrderEditsRequest(
     int? GlobalScaleFloor = null,
     bool IsRetail = false,
     /// <summary>El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Ausente deja el guardado</b>: un
-    /// frontend viejo no lo borra. No cambia recoger o enviar, que el pedido no edita.</summary>
+    /// frontend viejo no lo borra. No cambia recoger o enviar: eso es <see cref="Delivery"/>, que se aplica antes,
+    /// así que el envío se resuelve contra la recogida ya actualizada.</summary>
     ShippingRequest? Shipping = null,
     /// <summary>A quién se le factura (spec 2026-10-26). <b>Ausente deja la facturación</b>: un frontend viejo
     /// no la borra (Desvío 6). Presente, reemplaza el bloque entero: sin <c>Party</c> ni consumidor final
@@ -327,7 +330,19 @@ public record SaveOrderEditsRequest(
     /// frontend viejo no los borra. Presente —también <c>[]</c>— es la lista <b>entera</b> deseada, por variante: agrega,
     /// cambia la cantidad y quita. <c>Items</c> sigue siendo sólo las líneas pagadas.</summary>
     public IReadOnlyList<OrderGiftLineRequest>? Gifts { get; init; }
+
+    /// <summary>Recoger o enviar y a dónde (owner 2026-11-24, revierte H5 para la entrega). <b>Ausente conserva</b> la
+    /// entrega guardada: un frontend viejo no la toca. Sólo con el pedido sin facturar y sin preparar. Es propiedad y no
+    /// parámetro para que el cálculo previo la herede sin tocar su constructor.</summary>
+    public OrderDeliveryEditRequest? Delivery { get; init; }
 }
+
+/// <summary>El bloque de entrega de «Editar pedido». BFF: es el mismo selector de «Nuevo pedido» —recoger en tienda o una
+/// dirección—, así que viaja junto y con el mismo significado que en <see cref="QuotationPartiesRequest"/>.</summary>
+/// <param name="IsStorePickup">Gana: a recoger se quita la dirección de envío y se limpia el envío, contraentrega incluida.</param>
+/// <param name="Shipping">La parte de envío con datos propios; null = la dirección del cliente. Con recogida debe venir
+/// null (<c>order.delivery.shipping_party_on_pickup</c>). La parte de envío no lleva documento: se ignora.</param>
+public sealed record OrderDeliveryEditRequest(bool IsStorePickup, QuotationPartyRequest? Shipping);
 
 /// <summary>
 /// The body of <c>POST /orders/{orderId}/preview</c>: the edit body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
@@ -487,7 +502,11 @@ public sealed record OrderResponse(
     string? InvoiceNumber = null,
     /// <summary>Ver <see cref="QuotationResponse.PostalCodeSupported"/>. Viaja acá y no en la raíz de
     /// <see cref="OrderDetailResponse"/>, para que también lo traigan /approve, /cancel…</summary>
-    bool PostalCodeSupported = true);
+    bool PostalCodeSupported = true,
+    /// <summary>BFF: el frontend sólo abre la entrega con <c>true</c>; ausente en un backend viejo = sólo lectura; no
+    /// depende del origen (owner 2026-11-24). Es la guarda de edición del pedido, para que la pantalla no la deduzca de los
+    /// estados. Viaja acá, como <see cref="PostalCodeSupported"/>, para que también lo traigan /approve, /cancel…</summary>
+    bool DeliveryEditable = false);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
