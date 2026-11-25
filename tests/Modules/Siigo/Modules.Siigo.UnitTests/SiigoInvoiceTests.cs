@@ -231,6 +231,100 @@ public sealed class SiigoInvoiceTests
         Assert.True(invoice.OrderChanged);
     }
 
+    // Spec 2026-11-25 §1: la factura que una persona anuló en Siigo deja de ser vigente y conserva lo que la identifica allá.
+    [Fact]
+    public void ACreatedInvoiceIsAnnulledKeepingItsSiigoData()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        Assert.Equal(SiigoInvoiceStatus.Annulled, invoice.Status);
+        Assert.False(invoice.IsLive);
+        Assert.False(invoice.IsOpen);
+        Assert.Equal("siigo.invoice.annulled_in_siigo", invoice.ErrorCode);
+        Assert.Equal(("id-1", "FV-1-1", 100m), (invoice.SiigoInvoiceId, invoice.Number, invoice.SiigoTotal));
+        Assert.False(invoice.HasPdf);
+        Assert.False(invoice.CanStamp);
+        Assert.Equal(Now.AddMinutes(1), invoice.UpdatedAt);
+    }
+
+    [Fact]
+    public void ADeletedInvoiceCarriesTheDeletedCode()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+
+        invoice.MarkAnnulled(true, Now.AddMinutes(1));
+
+        Assert.Equal(SiigoInvoiceStatus.Annulled, invoice.Status);
+        Assert.Equal("siigo.invoice.deleted_in_siigo", invoice.ErrorCode);
+    }
+
+    [Fact]
+    public void AStampedInvoiceIsAnnulledKeepingItsCufe()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, "cufe-abc", Now);
+
+        Assert.True(invoice.IsAnnulmentVerifiable);
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        Assert.Equal((SiigoInvoiceStatus.Annulled, "cufe-abc"), (invoice.Status, invoice.Cufe));
+    }
+
+    [Fact]
+    public void AStampRejectedInvoiceIsAnnulledAndLosesTheDianError()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+        invoice.MarkStampRejected("x", "y", Now);
+
+        Assert.True(invoice.IsAnnulmentVerifiable);
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        Assert.Equal(SiigoInvoiceStatus.Annulled, invoice.Status);
+        Assert.Null(invoice.ErrorDetail);
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("unknown")]
+    [InlineData("rejected")]
+    [InlineData("failed")]
+    [InlineData("annulled")]
+    [InlineData("resolved_without_id")]
+    public void OnlyAVerifiableInvoiceCanBeAnnulled(string state)
+    {
+        var invoice = NewPending();
+        switch (state)
+        {
+            case "unknown":
+                invoice.ExpireIfStale(Now.AddDays(2));
+                break;
+            case "rejected":
+                invoice.MarkRejected("x", "y", null, Now);
+                break;
+            case "failed":
+                invoice.MarkFailed("x", "y", Now);
+                break;
+            case "annulled":
+                invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+                invoice.MarkAnnulled(false, Now);
+                break;
+            case "resolved_without_id":
+                invoice.ResolveExists("FV-1-5", Now);
+                break;
+        }
+
+        var before = invoice.Status;
+
+        Assert.False(invoice.IsAnnulmentVerifiable);
+        Assert.Equal("siigo.invoice.state_invalid", CodeOf(() => invoice.MarkAnnulled(false, Now.AddDays(2))));
+        Assert.Equal(before, invoice.Status);
+    }
+
     [Fact]
     public void ToStringNeverPrintsTheBody() =>
         Assert.DoesNotContain("\"a\"", NewPending().ToString(), StringComparison.Ordinal);

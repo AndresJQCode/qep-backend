@@ -248,7 +248,8 @@ public sealed class SiigoInvoiceBatchItem
                 new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, invoice.Number, false, false, null),
             SiigoInvoiceStatus.Failed => new SiigoBatchItemState(
                 SiigoInvoiceBatchItemStatus.Failed, SiigoErrorCodes.InvoiceResolvedMissing, null, false, false, null),
-            SiigoInvoiceStatus.Rejected =>
+            // Una anulada en Siigo (spec 2026-11-25 §1): el pedido ya no está facturado por esta tanda y la fila dice por qué.
+            SiigoInvoiceStatus.Rejected or SiigoInvoiceStatus.Annulled =>
                 new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Failed, invoice.ErrorCode, null, false, false, null),
             _ => throw new InvalidOperationException($"Unknown invoice status '{invoice.Status}'."),
         };

@@ -323,6 +323,22 @@ public sealed class SiigoBatchItemEffectiveStateTests
         Assert.Equal(new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.rejected", null, false, false, null), state);
     }
 
+    // Spec 2026-11-25 §1: se resolvió como existente (o salió) y después se anuló en Siigo: el pedido ya no está facturado por esa tanda.
+    [Fact]
+    public void AToConfirmWhoseInvoiceWasAnnulledLooksFailedWithTheRowCode()
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice);
+        invoice.MarkCreated("id-1", "FV-1-9", 100m, null, Now);
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        var state = item.Effective(invoice, Now.AddMinutes(1));
+
+        Assert.Equal(
+            new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.annulled_in_siigo", null, false, false, null),
+            state);
+    }
+
     [Fact]
     public void AnyOtherStoredStatusIsShownAsStored()
     {
