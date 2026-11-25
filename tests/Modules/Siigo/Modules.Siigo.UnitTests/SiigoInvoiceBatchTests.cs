@@ -76,42 +76,12 @@ public sealed class SiigoInvoiceBatchTests
     }
 
     [Fact]
-    public void ARetryReturnsTheItemToPendingNotBeforeTheGivenTime()
-    {
-        var item = Create(Guid.NewGuid()).Items[0];
-        item.BeginSend(Now, TimeSpan.FromMinutes(2));
-
-        item.Retry("siigo.connection_unavailable", Now.AddMinutes(1), Now);
-
-        Assert.Equal(SiigoInvoiceBatchItemStatus.Pending, item.Status);
-        Assert.Equal(Now.AddMinutes(1), item.AvailableAt);
-        Assert.Null(item.LeaseUntil);
-        Assert.Equal("siigo.connection_unavailable", item.ErrorCode);
-    }
-
-    [Fact]
-    public void AfterTheLastAttemptARetryBecomesAFailure()
-    {
-        var item = Create(Guid.NewGuid()).Items[0];
-        for (var attempt = 0; attempt < SiigoInvoiceBatchItem.MaxAttempts; attempt++)
-        {
-            item.BeginSend(Now, TimeSpan.FromMinutes(2));
-        }
-
-        item.Retry("siigo.unavailable", Now.AddMinutes(1), Now);
-
-        Assert.Equal(SiigoInvoiceBatchItemStatus.Failed, item.Status);
-        Assert.Equal("siigo.unavailable", item.ErrorCode);
-    }
-
-    [Fact]
     public void ASettledItemDoesNotChangeAgain()
     {
         var item = Create(Guid.NewGuid()).Items[0];
         item.MarkInvoiced("FV-1-1", Now);
 
         item.MarkFailed("siigo.invoice.rejected", Now);
-        item.Retry("x", Now, Now);
 
         Assert.Equal(SiigoInvoiceBatchItemStatus.Invoiced, item.Status);
         Assert.Equal("FV-1-1", item.InvoiceNumber);

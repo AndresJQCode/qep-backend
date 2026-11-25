@@ -27,6 +27,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`error_detail` guarda los códigos de error de Siigo, no sus mensajes.** Siigo repite en el mensaje los valores que rechaza
   (documento, dirección, nombre del cliente) y la fila se guarda y se devuelve en el `GET`. La excepción es `invalid_total_payments`,
   cuyo mensaje es el total esperado. Lo amarra `SiigoNoLeakTests` (precedente: encontró que el mensaje se guardaba completo).
+- **Los errores de servicio de Siigo llegan como un 400, no como un 5xx** (catálogo «Manejo de errores» de su documentación; ejemplo real:
+  `{"Status":400,"Errors":[{"Code":"documents_service","Message":"Your request could not be completed…"}]}`). `documents_service`,
+  `payment_types_service`, `general_service`, `service_unavailable` y `request_timeout` son una caída de Siigo, no un dato mal enviado
+  (`SiigoApiErrors.IsServiceUnavailable`: sólo si **todos** los errores son de esos; uno de otro tipo manda). La factura queda `Rejected` con
+  `error_code = siigo.invoice.siigo_service` (la pantalla debe decir que es un problema de Siigo, no de la plataforma, y que reintente en unos
+  minutos); al sellar, es un 503 `siigo.unavailable` y la factura sigue `Created`; una lectura (listas, cliente, PDF) responde 502 con el
+  mismo `siigo.invoice.siigo_service`. **No se reintenta solo** (owner, 2026-11-24): con la API caída el usuario puede crear la factura
+  directamente en Siigo, y un reintento la duplicaría; en una tanda el pedido sale fallido. `unhandled_error` **no** entra: es un fallo sin
+  clasificar.
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
@@ -84,7 +93,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   pedido; si ya no tiene `siigo.invoice.issue`, el pedido falla con `siigo.invoice_batch.forbidden` y no se llama a Siigo. Es, junto al
   copiloto, el único que instala ese contexto (`CompositionRootTests`). El reclamo es un `UPDATE … SKIP LOCKED` de un pedido (lease de 5 min;
   más de 5 reclamos y se da por fallido). Un pedido que no está en condiciones sale `Skipped` con su código (y, si es `not_ready`, los códigos
-  de lo que falta); Siigo sin responder o la conexión caída reintenta (`Retry`) con espera creciente; el resto de la tanda sigue. El timbre
+  de lo que falta); **no se programan reintentos** (owner, 2026-11-24): Siigo sin responder o la conexión caída dejan el pedido fallido con
+  su motivo, y uno cuyo lease vence con el proceso muerto falla sin llamar a Siigo (`MaxAttempts` = 1). La fila de la factura que no se
+  sabe si salió sigue `Pending`: la reanuda una persona desde el pedido (mismos bytes y clave) y a las 24 h pasa a `Unknown` para resolverla.
+  El resto de la tanda sigue. El timbre
   sale solo del `INSERT` en `siigo.invoice_batch_items` (`QueueDoorbellInterceptor`): si renombras la tabla, el timbre calla y sólo queda la
   red de seguridad de 30 s. Tope de 50 pedidos por tanda.
 

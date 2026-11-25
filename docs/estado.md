@@ -547,6 +547,39 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-24 — **Aprobado el spec de facturación con Siigo en segundo plano** (owner; spec
+  `2026-11-24-siigo-facturacion-en-segundo-plano-design`). Toda emisión pasa por una tanda (202), pantalla de tandas, facturas «Por
+  confirmar» en vez de `Rejected` cuando no hubo respuesta, 120 s para crear la factura y 10 min antes de declarar «No existe». **Sin
+  construir:** plan `2026-11-24-siigo-facturacion-en-segundo-plano-backend` escrito y aprobado (D-1 a D-4); el spec del frontend va en
+  `qep-frontend`.
+
+- 2026-11-24 — Mergeado a `develop` (fast-forward hasta `7c174ef76`, sin push) **los dos rojos heredados de
+  `ArchitectureTests`** (`fix/architecture-reds`; owner): `Notifications:TaskNotice:EscalationAfterMinutes` quedó
+  documentada en `appsettings.example.json` e `IAppMemberPresence` en `MultiReplicaInventory.InterfaceFactories`.
+  `ArchitectureTests` 324/324 sobre el commit mergeado; las menciones anteriores a esas dos fallas quedan como
+  historia. Sin correr `Bootstrapper.UnitTests`, que el nivel rápido pide por tocar `src/Api`: había una suite completa
+  en curso y esas pruebas levantan contenedores. Rama y worktree borrados.
+
+- 2026-11-24 — Mergeado a `develop` (fast-forward hasta `109fc1b99`, sin push) **las pruebas en dos niveles**
+  (`feature/test-tiers`; spec y plan `2026-11-24-pruebas-en-dos-niveles`; owner). Para mergear a `develop` basta
+  `scripts/test-feature.ps1` (build, `ArchitectureTests`, unitarias de los módulos tocados y sólo las clases de
+  integración cambiadas); la suite completa (`scripts/run-all-tests.ps1`) corre de noche o antes de `main`. Pruebas del
+  selector en verde. `ArchitectureTests` quedó en 322 de 324 por dos fallas que ya traía `develop`
+  (`Notifications:TaskNotice:EscalationAfterMinutes` sin documentar en `appsettings.example.json` e
+  `IAppMemberPresence` fuera de `MultiReplicaInventory`). Pendiente: `run-all-tests.ps1` sale en 0 aunque un proyecto
+  falle o no deje `.trx`; hay que leer la tabla. Falta registrar la tarea programada nocturna.
+
+- 2026-11-24 — Commit en `develop` (`d5bd6014c`, sin push) **la tanda de facturación de Siigo ya no programa reintentos** (owner). Cada
+  pedido se manda una vez: sin respuesta de Siigo o sin conexión queda fallido con su motivo, y uno cortado por la caída del proceso falla sin
+  volver a llamar. La factura que no se sabe si salió sigue `Pending` (se reanuda a mano desde el pedido; a las 24 h, `Unknown`). Sin migración.
+  Unitarias de Siigo (324) en verde; integración filtrada (4) en verde, la clase completa sin correr.
+
+- 2026-11-24 — Commit en `develop` (`1d7ad3b8d` y `8dc1c83e5`, sin push) **caída de un servicio de Siigo con su propio código** (sin spec;
+  owner). `documents_service`, `payment_types_service`, `general_service`, `service_unavailable` y `request_timeout` llegan como HTTP 400:
+  la factura queda `Rejected` con `siigo.invoice.siigo_service`, una lectura responde 502 con ese código y el sellado, 503
+  `siigo.unavailable` sin marcar rechazo de la DIAN. **Sin reintento** (owner): la factura se puede crear en Siigo mientras su API está
+  caída. Unitarias de Siigo (326) en verde; integración sin correr; sin probar contra Siigo real. **Falta:** frontend (traducción del código).
+
 - 2026-11-24 — Mergeado a `develop` (`eddcfadc8`, `--no-ff`, sin push) **datos del distribuidor y empresa al aceptar la invitación, backend** (`feature/distribuidor-empresa-al-aceptar`, 4 commits de código desde `d6458e063` hasta `420d45c41`, más `05f34d26c`; spec y plan `2026-11-23-datos-del-distribuidor-y-empresa-al-aceptar`). Decisión del owner: el mayorista captura ciudad y dirección al invitar y la empresa se crea dentro del accept. **Conflictos resueltos** en `README.md` y `CreateCompany.cs` (la región de `develop` pasó a `CompanyCreation`); fix al integrar: el doble de `ICompanyGeographyLookup` de las pruebas no implementaba `FindRegionsAsync`. Revisión fuerte de rama sin hallazgos importantes. Verde sobre el merge: Wholesale unitarias 238 e integración 84, Companies unitarias 159 e integración 94, `ArchitectureTests` de capas 215. Decisiones propuestas, sin confirmar por el owner: no copiar ciudad, dirección ni contacto al cliente; sin edición de estos datos mientras está invitado. **Resuelta el 2026-11-24:** al vincular un tenant existente la empresa se crea sólo si no tiene ninguna (`60fe1a3d5`, `--no-ff`, sin push; rama `feature/empresa-al-vincular`, borrada; unitarias Companies 161 y Wholesale 239, integración `InvitationAcceptanceApiTests` y `WholesaleAdaptersTests` 44/44, capas 215; la integración completa de Companies no se repitió: el cambio sólo añade un método a `CompanyProvisioning`).
 - 2026-11-24 — Mergeado a `develop` (`cc8d132d2`, `--no-ff`, sin push) **motivo del respaldo de Valkey como etiqueta** (`fix/valkey-fallback-reason`, `a70cfda94`; owner). `qep_valkey_fallbacks_total` pasa a `{area,reason}`: `reason` es `NotConnected` o el tipo de la excepción (`TimeoutException`, `RedisConnectionException`, `RedisServerException` con un `NOPERM`…), nunca el mensaje. Cierra la «causa no confirmada» del 2026-11-23: antes el motivo sólo salía en un log `Debug`. Sospecha, sin medir: el tope `OperationTimeoutMs` de 100 ms por defecto con Valkey en otro nodo; al desplegar, `sum by (reason) (increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h]))` lo confirma o lo descarta. Sin migraciones ni cambios de contrato. Pruebas: `ValkeyGatewayTests` y `ValkeyMetricsTests` 12/12; no se corrió la suite completa. **Pendiente:** revisar en `migracion-k8s` que la alerta de Valkey no compare series enteras (la etiqueta nueva parte la serie en dos por área).
 
