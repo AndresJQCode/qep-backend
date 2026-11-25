@@ -26,6 +26,24 @@ public sealed class OrderChangeSummaryTests
             OrderChangeSummary.ShippingChanged(with, with with { FreightAmount = 18000m }, Colombian));
     }
 
+    // Entrega editable (spec 2026-11-24 §10.4): la fila dice de dónde a dónde cambió la entrega.
+    [Fact]
+    public void DeliveryChangedDescribesBothSides()
+    {
+        Assert.Equal(
+            "Entrega: Enviar a Cra 7 # 12-30, Medellín → Recoger en tienda",
+            OrderChangeSummary.DeliveryChanged(
+                OrderDeliveryText.To("Cra 7 # 12-30", "Medellín"), OrderDeliveryText.StorePickup));
+        Assert.Equal(
+            "Entrega: Recoger en tienda → Enviar a la dirección del cliente",
+            OrderChangeSummary.DeliveryChanged(OrderDeliveryText.StorePickup, OrderDeliveryText.CustomerAddress));
+        // Una parte a medio llenar dice lo que tiene.
+        Assert.Equal(
+            "Entrega: Enviar a Calle Mayor 1 → Enviar a otros datos",
+            OrderChangeSummary.DeliveryChanged(
+                OrderDeliveryText.To("Calle Mayor 1", null), OrderDeliveryText.To(null, " ")));
+    }
+
     // El historial dice a quién se le mandó: quien factura no siempre es quien recibe.
     [Theory]
     [InlineData(QuotationRecipient.Customer, "Enviado por WhatsApp al cliente.")]

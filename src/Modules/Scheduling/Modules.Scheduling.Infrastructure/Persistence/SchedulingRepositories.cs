@@ -50,6 +50,13 @@ internal sealed class ResourceRepository(SchedulingDbContext dbContext) : IResou
         return await query.OrderBy(resource => resource.DisplayName).ThenBy(resource => resource.Id).ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Resource>> ListByLocationForUpdateAsync(
+        Guid tenantId, LocationId locationId, CancellationToken cancellationToken) =>
+        await dbContext.Resources
+            .Where(resource => resource.TenantId == tenantId && resource.LocationId == locationId)
+            .OrderBy(resource => resource.Id)
+            .ToListAsync(cancellationToken);
+
     public async Task<IReadOnlyList<Guid>> ListIdsByMemberAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken)
     {
         var ids = await dbContext.Resources.AsNoTracking()

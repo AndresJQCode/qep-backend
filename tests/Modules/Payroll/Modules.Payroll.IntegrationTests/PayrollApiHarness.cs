@@ -68,7 +68,7 @@ internal static class PayrollApiHarness
             tenancy.Tenants.Add(Tenant.Create(
                 id,
                 // El slug es único en la base: un segundo tenant necesita el suyo.
-                tenantId == TenantId ? "payroll-api-tests" : $"payroll-api-{tenantId[^2..]}",
+                tenantId == TenantId ? "payroll-api-tests" : $"payroll-api-{tenantId[^12..]}",
                 "Payroll API Tests",
                 "es-CO",
                 "America/Bogota",

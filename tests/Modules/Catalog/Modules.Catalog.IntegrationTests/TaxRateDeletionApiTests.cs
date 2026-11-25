@@ -278,6 +278,40 @@ public sealed class TaxRateDeletionApiTests(SharedCatalogHost sharedHost) : ICla
         Assert.Equal(1, await CountTaxRateAsync(database, taxRateId));
     }
 
+    // Perfiles de facturación (owner, 2026-11-25): una tasa que sólo usa un perfil de un cliente también está «en uso», para
+    // borrar y para desactivar.
+    [Fact]
+    public async Task ARateUsedOnlyByABillingProfileCannotBeDeletedNorDeactivated()
+    {
+        var factory = await sharedHost.StartTestAsync(connectionString => new QepApiFactory(connectionString));
+        var database = sharedHost.Database;
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        using var customers = CreateClient(
+            factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
+            Modules.Customers.Application.CustomersPermissions.CustomerManage);
+        var taxRateId = await TaxRateCustomerFixtures.CreateWithholdingRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente del perfil");
+        await TaxRateCustomerFixtures.AssignToABillingProfileOfANewCustomerAsync(
+            customers, factory.Services, TenantId, taxRateId);
+
+        var delete = await DeleteTaxRateAsync(client, TenantId, taxRateId);
+        var deactivate = await client.PostAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{taxRateId}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        foreach (var response in new[] { delete, deactivate })
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Contains(
+                "catalog.tax_rate.in_use",
+                await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+                StringComparison.Ordinal);
+        }
+
+        Assert.Equal(1, await CountTaxRateAsync(database, taxRateId));
+    }
+
     // Spec ReteICA por empresa §7.2: una empresa con la tasa municipal asignada también la deja «en uso». Sin FK entre los
     // esquemas, la consulta es la única barrera.
     [Fact]

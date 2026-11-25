@@ -13,6 +13,9 @@ internal static class ServiceContractsNotFound
     public static ResourceNotFoundException Charge(Guid chargeId) =>
         new(ServiceContractsErrorCodes.ChargeNotFound, $"Charge '{chargeId}' was not found.");
 
+    public static ResourceNotFoundException PriceSchedule(Guid serviceId) =>
+        new(ServiceContractsErrorCodes.PriceScheduleNotFound, $"Billing service '{serviceId}' has no pending price change.");
+
     public static ResourceNotFoundException Profile(Guid customerId) =>
         new(ServiceContractsErrorCodes.ProfileNotFound, $"Billing profile of customer '{customerId}' was not found.");
 }

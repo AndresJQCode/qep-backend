@@ -18,10 +18,13 @@ public sealed record CreateServiceRequest(
     string? Cycle,
     DateOnly? FirstDueDate,
     ProfileInput? Profile,
-    string? Description);
+    string? Description,
+    PriceReviewInput? PriceReview = null);
 
 /// <summary>
 /// <c>Currency</c> null o en blanco es la moneda del tenant. <c>Profile</c> sólo se usa si el cliente aún no tiene perfil (spec §4).
+/// <c>PriceReview</c> ausente es <c>Manual</c> con la revisión por defecto: un frontend que no lo conoce no cambia de
+/// comportamiento (spec reajuste §6.8).
 /// </summary>
 public sealed record CreateServiceCommand(
     Guid TenantId,
@@ -32,7 +35,8 @@ public sealed record CreateServiceCommand(
     string Cycle,
     DateOnly FirstDueDate,
     ProfileInput? Profile,
-    string? Description)
+    string? Description,
+    PriceReviewInput? PriceReview)
     : ICommand<ServiceDetailDto>
 {
     public static CreateServiceCommand From(Guid tenantId, CreateServiceRequest request) => new(
@@ -44,12 +48,13 @@ public sealed record CreateServiceCommand(
         request.Cycle ?? string.Empty,
         request.FirstDueDate ?? default,
         request.Profile,
-        request.Description);
+        request.Description,
+        request.PriceReview);
 }
 
 public sealed class CreateServiceValidator : AbstractValidator<CreateServiceCommand>
 {
-    public CreateServiceValidator(IClock clock)
+    public CreateServiceValidator(IClock clock, ITenantClock tenantClock)
     {
         RuleFor(command => command.CustomerId).NotEqual(Guid.Empty);
         RuleFor(command => command.Name).MustBeAServiceName();
@@ -58,6 +63,15 @@ public sealed class CreateServiceValidator : AbstractValidator<CreateServiceComm
         RuleFor(command => command.FirstDueDate).MustBeAReasonableFirstDueDate(clock);
         // No rule for Description on purpose: a length rule here would answer validation.failed and hide
         // billing.service.description_too_long, the code the contract promises and the SPA maps to the field.
+        // La cadena de miembros nombra los campos con el prefijo del cuerpo (PriceReview.AdjustmentMode), como los del perfil.
+        When(command => command.PriceReview is not null, () =>
+        {
+            RuleFor(command => command.PriceReview!.AdjustmentMode).MustBeAnAdjustmentMode();
+            RuleFor(command => command.PriceReview!.IpcExtraPoints).MustBeIpcExtraPoints();
+            RuleFor(command => command.PriceReview!.NextReviewDate)
+                .MustBeAReasonableReviewDate(tenantClock, command => command.TenantId)
+                .When(command => command.PriceReview!.NextReviewDate is not null);
+        });
     }
 }
 
@@ -84,6 +98,9 @@ public sealed class CreateServiceHandler(
     : ICommandHandler<CreateServiceCommand, ServiceDetailDto>
 {
     private static readonly string[] CreatedFields = ["customerId", "name", "description", "price", "currency", "cycle", "firstDueDate"];
+
+    // El reajuste sólo figura si vino en el cuerpo: sin él el contrato nace con los valores por defecto, que nadie escribió.
+    private static readonly string[] CreatedWithReviewFields = [.. CreatedFields, "priceReview"];
 
     private static readonly string[] ProfileFields = ["channel", "assigneeMemberId"];
 
@@ -131,6 +148,8 @@ public sealed class CreateServiceHandler(
         // Crear siempre genera el primer cobro (el primero aunque caiga fuera de la ventana): por eso la reactivación nunca
         // se topa con un servicio que no generó nada.
         charges.AddRange(ChargeGenerator.Generate(service, calendar.Today, now));
+        // Después de generar: la revisión por defecto y la validez de la escrita dependen del último período generado.
+        InitializePriceReview(service, command.PriceReview);
 
         if (newProfile is not null)
         {
@@ -138,10 +157,32 @@ public sealed class CreateServiceHandler(
             Audit(command, ServiceContractsAuditActions.ProfileUpdated, ServiceContractsAuditActions.Resources.Profile, command.CustomerId, ProfileFields, now);
         }
 
-        Audit(command, ServiceContractsAuditActions.ServiceCreated, ServiceContractsAuditActions.Resources.Service, service.Id.Value, CreatedFields, now);
+        Audit(
+            command,
+            ServiceContractsAuditActions.ServiceCreated,
+            ServiceContractsAuditActions.Resources.Service,
+            service.Id.Value,
+            command.PriceReview is null ? CreatedFields : CreatedWithReviewFields,
+            now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await composer.ComposeAsync(service, cancellationToken);
+    }
+
+    private static void InitializePriceReview(ServiceContract service, PriceReviewInput? input)
+    {
+        if (input is null)
+        {
+            service.InitializePriceReview(AdjustmentMode.Manual, 0m, null);
+            return;
+        }
+
+        if (!PriceReviewRules.TryParseMode(input.AdjustmentMode, out var mode))
+        {
+            throw new InvalidOperationException($"Mode '{input.AdjustmentMode}' passed validation but is not an adjustment mode.");
+        }
+
+        service.InitializePriceReview(mode, input.IpcExtraPoints!.Value, input.NextReviewDate);
     }
 
     /// <summary>

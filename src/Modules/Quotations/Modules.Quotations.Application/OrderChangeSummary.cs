@@ -3,6 +3,27 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
+/// <summary>La entrega de un pedido como la lee una persona en el historial (spec 2026-11-24 §10.4). Sólo se arma por sus
+/// tres formas, para que el texto no se escriba en otro lado.</summary>
+public sealed record OrderDeliveryText
+{
+    private OrderDeliveryText(string value) => Value = value;
+
+    public string Value { get; }
+
+    public static OrderDeliveryText StorePickup { get; } = new("Recoger en tienda");
+
+    public static OrderDeliveryText CustomerAddress { get; } = new("Enviar a la dirección del cliente");
+
+    /// <summary>Una parte con datos propios: dirección y ciudad, o lo que tenga de las dos.</summary>
+    public static OrderDeliveryText To(string? address, string? city)
+    {
+        var destination = string.Join(
+            ", ", new[] { address, city }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        return new($"Enviar a {(destination.Length == 0 ? "otros datos" : destination)}");
+    }
+}
+
 /// <summary>Los textos del historial del pedido (spec 2026-10-15 §4.6). Son hechos que lee una persona:
 /// en español, y donde se dirigen a alguien, tuteando.</summary>
 public static class OrderChangeSummary
@@ -87,6 +108,14 @@ public static class OrderChangeSummary
         var changes = new List<string>(4);
         QuotationChangeSummary.AppendFreight(changes, before, after, format);
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
+    }
+
+    /// <summary>El cambio de recoger o enviar, o de dirección, de un pedido (spec 2026-11-24 §10.4).</summary>
+    public static string DeliveryChanged(OrderDeliveryText before, OrderDeliveryText after)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(after);
+        return Trim($"Entrega: {before.Value} → {after.Value}");
     }
 
     /// <summary>A quién se le factura, tal como lo lee una persona: el nombre de la parte propia, «consumidor

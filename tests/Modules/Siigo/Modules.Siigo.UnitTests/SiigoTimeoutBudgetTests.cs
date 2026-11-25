@@ -13,19 +13,27 @@ public sealed class SiigoTimeoutBudgetTests
     [Fact]
     public void EveryCallOfAnOrderFitsInsideTheSendLeaseAndTheSendLeaseInsideTheWorkerLease()
     {
-        // El peor caso de un pedido: autenticar, buscar el cliente, crearlo y autenticar de nuevo, la factura y la del flete.
-        var worstCase = (SiigoApiClient.DefaultTimeout * 4) + (SiigoApiClient.InvoiceCreateTimeout * 2);
+        // Lo más que pasa sin renovar un reclamo: autenticar, buscar el cliente, crearlo y autenticar de nuevo, la factura y la del flete.
+        // Un reenvío por redondeo de los pagos renueva los reclamos que quedan.
+        var worstBetweenClaims = (SiigoApiClient.DefaultTimeout * 4) + (SiigoApiClient.InvoiceCreateTimeout * 2);
+        // El lease del worker no se renueva: tiene que cubrir el pedido entero, con cada factura mandada dos veces.
+        var worstOrder = (SiigoApiClient.DefaultTimeout * 4) + (SiigoApiClient.InvoiceCreateTimeout * 4);
 
-        Assert.True(worstCase < SiigoInvoice.SendLease, $"{worstCase} does not fit in the send lease ({SiigoInvoice.SendLease}).");
+        Assert.True(
+            worstBetweenClaims < SiigoInvoice.SendLease,
+            $"{worstBetweenClaims} does not fit in the send lease ({SiigoInvoice.SendLease}).");
         Assert.True(
             SiigoInvoice.SendLease < SiigoInvoiceBatchWorker.Lease,
             $"The send lease ({SiigoInvoice.SendLease}) does not fit in the worker lease ({SiigoInvoiceBatchWorker.Lease}).");
+        Assert.True(
+            worstOrder < SiigoInvoiceBatchWorker.Lease,
+            $"{worstOrder} does not fit in the worker lease ({SiigoInvoiceBatchWorker.Lease}).");
     }
 
-    // Etapa expand: la ruta síncrona sigue viva, así que crear la factura todavía no pasa de 30 s.
+    // Siigo recomienda 120 s o más para crear documentos; todo lo demás sigue en 30 s (spec 2026-11-24 §4).
     [Fact]
-    public void TheProductionDeadlinesAreThirtySecondsInExpand() =>
+    public void TheProductionDeadlinesAreThirtyAndOneHundredTwentySeconds() =>
         Assert.Equal(
-            new SiigoApiTimeouts(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30)),
+            new SiigoApiTimeouts(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(120)),
             SiigoApiTimeouts.Production);
 }

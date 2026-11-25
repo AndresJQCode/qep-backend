@@ -98,7 +98,9 @@ public sealed class CopilotThreadsApiTests
             (await SendAsync(owner, HttpMethod.Put, $"{ThreadsUrl()}/{threadId}", new { title = "Ventas" })).StatusCode);
         var renamed = await SendAsync(owner, HttpMethod.Put, $"{ThreadsUrl()}/{threadId}", new { title = "Ventas" }, ifMatch: 1);
         Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
-        Assert.Equal(("Ventas", 2L), ((await JsonAsync(renamed)).GetProperty("title").GetString(), (await JsonAsync(renamed)).GetProperty("version").GetInt64()));
+        // El cuerpo se lee una vez: una segunda lectura del mismo contenido encuentra el stream cerrado.
+        var renamedBody = await JsonAsync(renamed);
+        Assert.Equal(("Ventas", 2L), (renamedBody.GetProperty("title").GetString(), renamedBody.GetProperty("version").GetInt64()));
 
         Assert.Equal(HttpStatusCode.NoContent, (await owner.DeleteAsync($"{ThreadsUrl()}/{threadId}", Ct)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await owner.GetAsync($"{ThreadsUrl()}/{threadId}", Ct)).StatusCode);

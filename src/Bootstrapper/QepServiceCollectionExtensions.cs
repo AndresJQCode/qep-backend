@@ -443,6 +443,30 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.ServiceContracts.Application.DeleteServiceCommand, bool>,
             Modules.ServiceContracts.Application.DeleteServiceHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.UpdatePriceReviewCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.UpdatePriceReviewHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.SchedulePriceChangeCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.SchedulePriceChangeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.CancelPriceScheduleCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.CancelPriceScheduleHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.KeepPriceCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.KeepPriceHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.ServiceContracts.Application.ListPriceReviewsQuery, Modules.ServiceContracts.Application.PriceReviewPageDto>,
+            Modules.ServiceContracts.Application.ListPriceReviewsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.ConfirmIpcReviewsCommand, Modules.ServiceContracts.Application.ConfirmIpcResponseDto>,
+            Modules.ServiceContracts.Application.ConfirmIpcReviewsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.ServiceContracts.Application.ListIpcRatesQuery, Modules.ServiceContracts.Application.IpcRateListDto>,
+            Modules.ServiceContracts.Application.ListIpcRatesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.SaveIpcRateCommand, Modules.ServiceContracts.Application.IpcRateDto>,
+            Modules.ServiceContracts.Application.SaveIpcRateHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.ServiceContracts.Application.ListChargesQuery, Modules.ServiceContracts.Application.ChargePageDto>,
             Modules.ServiceContracts.Application.ListChargesHandler>();
         services.AddScoped<
@@ -463,6 +487,7 @@ public static class QepServiceCollectionExtensions
             Modules.ServiceContracts.Application.UpdateServiceContractsSettingsHandler>();
         services.AddScoped<Modules.ServiceContracts.Application.ChargeDtoComposer>();
         services.AddScoped<Modules.ServiceContracts.Application.ServiceDetailComposer>();
+        services.AddScoped<Modules.ServiceContracts.Application.PriceReviewReader>();
         // Importación desde Excel (§3.2b): la vista previa y la importación comparten el analizador.
         services.AddScoped<
             ICommandHandler<Modules.ServiceContracts.Application.PreviewServiceContractsImportCommand, Modules.ServiceContracts.Application.ImportPreviewDto>,
@@ -1297,6 +1322,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<MakeCustomerAddressPrincipalCommand, CustomerDto>,
             MakeCustomerAddressPrincipalHandler>();
+        // La libreta de perfiles de facturación (spec 2026-11-24 §3), gemela de la de direcciones.
+        services.AddScoped<
+            ICommandHandler<AddCustomerBillingProfileCommand, CustomerDto>,
+            AddCustomerBillingProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCustomerBillingProfileCommand, CustomerDto>,
+            UpdateCustomerBillingProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveCustomerBillingProfileCommand, CustomerDto>,
+            RemoveCustomerBillingProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<MakeCustomerBillingProfilePrincipalCommand, CustomerDto>,
+            MakeCustomerBillingProfilePrincipalHandler>();
         services.AddScoped<
             ICommandHandler<DeactivateCustomerCommand, CustomerDto>,
             DeactivateCustomerHandler>();
@@ -3032,7 +3070,7 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
                 SiigoPermissions.SettingsManage,
                 SiigoPermissions.InvoiceIssue,
-                // Spec 2026-11-21: ver las llamadas a Siigo que fallaron; el cuerpo lleva datos del cliente, así que sólo admin de fábrica.
+                // Spec 2026-11-21: ver las llamadas a Siigo que fallaron; el cuerpo lleva datos del cliente.
                 SiigoPermissions.CallsRead,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
@@ -3190,6 +3228,9 @@ public static class QepServiceCollectionExtensions
                 CompaniesPermissions.CompanyRead,
                 IntegrationsPermissions.ConnectionRead,
                 SiigoPermissions.SettingsManage,
+                // Decisión del owner (2026-11-25): facturación ve las fallas de las llamadas a Siigo para saber por qué no salió
+                // su factura, aunque la petición y la respuesta lleven datos del cliente.
+                SiigoPermissions.CallsRead,
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
             ]));

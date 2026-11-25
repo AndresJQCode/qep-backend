@@ -51,6 +51,7 @@ public sealed class ListChargesHandler(
     IChargeRepository charges,
     IServiceContractRepository services,
     ChargeDtoComposer composer,
+    PriceReviewReader priceReviews,
     IValidator<ListChargesQuery> validator)
     : IQueryHandler<ListChargesQuery, ChargePageDto>
 {
@@ -84,7 +85,10 @@ public sealed class ListChargesHandler(
         }
 
         var today = (await tenantClock.GetAsync(query.TenantId, cancellationToken)).Today;
-        var summary = await charges.SummaryAsync(query.TenantId, today, cancellationToken);
+        var summary = await charges.SummaryAsync(query.TenantId, today, cancellationToken) with
+        {
+            PriceReviews = PriceReviewReader.Count(await priceReviews.ListOpenAsync(query.TenantId, today, cancellationToken)),
+        };
 
         Guid? assigneeMemberId = null;
         if (query.AssigneeMe)

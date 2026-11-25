@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Infrastructure.Batches;
 using Npgsql;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
@@ -161,9 +162,23 @@ public sealed class SiigoInvoiceBatchApiTests
         var withoutType = await PostBatchWithPaymentsAsync(world, [Payment(Guid.NewGuid(), null)], world.OrderId);
 
         Assert.True((await ReadValidationErrorsAsync(twoOrders)).TryGetProperty("payments", out _));
-        // Las mismas claves por elemento que el POST del pedido.
+        // Las mismas claves por elemento que el comando de emisión.
         Assert.True((await ReadValidationErrorsAsync(withoutType)).TryGetProperty("Payments[0].siigoPaymentTypeId", out _));
         Assert.Equal(0, await BatchCountAsync(world));
+    }
+
+    // Un elemento nulo llegaba al mapeo antes de validar y salía como 500.
+    [Fact]
+    public async Task ANullPaymentIs422OnItsElement()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var batch = await PostBatchWithPaymentsAsync(world, [null!], world.OrderId);
+
+        Assert.True((await ReadValidationErrorsAsync(batch)).TryGetProperty("Payments[0]", out _));
+        Assert.Equal(0, await BatchCountAsync(world));
+        Assert.Empty(InvoiceCalls(world.Siigo));
     }
 
     [Fact]
@@ -367,6 +382,49 @@ public sealed class SiigoInvoiceBatchApiTests
             (item.Status, item.InvoiceNumber, item.InvoiceId, item.OrderMarkFailed));
     }
 
+    // Spec frontend 2026-11-24, H-1: «Generar» es una tanda de ese pedido. La factura ya existe y sólo falta la marca: la tanda se acepta,
+    // marca el pedido y no vuelve a llamar a Siigo. Es el único camino para completar la marca.
+    [Fact]
+    public async Task ABatchOfAnOrderWhoseInvoiceWasNotMarkedMarksItWithoutCallingSiigo()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        // Sólo el primer envío llega a Siigo (se comprueba al final): alguien marca el pedido a mano en medio y la marca de Siigo falla.
+        world.Siigo.OnRequest("/v1/invoices", _ =>
+        {
+            ExecuteAsync(
+                world.ConnectionString,
+                "UPDATE quotations.orders SET invoiced_at = now(), invoiced_by = @by WHERE id = @id",
+                ("by", Guid.CreateVersion7()), ("id", world.OrderId)).GetAwaiter().GetResult();
+            return Created("FV-1-123", "id-1", 0m);
+        });
+        var firstId = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        Assert.True(Item(await GetBatchAsync(world, firstId), 0).GetProperty("orderMarkFailed").GetBoolean());
+
+        // Se quita la marca manual: la factura sigue creada y el pedido, sin marcar.
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE quotations.orders SET invoiced_at = NULL, invoiced_by = NULL WHERE id = @id",
+            ("id", world.OrderId));
+        Assert.False((await GetOrderAsync(world)).GetProperty("invoiced").GetBoolean());
+
+        var response = await PostBatchAsync(world, world.OrderId);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var secondId = (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetGuid();
+        await DrainAsync(world);
+
+        var item = Item(await GetBatchAsync(world, secondId), 0);
+        Assert.Equal(
+            ("Invoiced", "FV-1-123", false),
+            (item.GetProperty("status").GetString(), item.GetProperty("invoiceNumber").GetString(), item.GetProperty("orderMarkFailed").GetBoolean()));
+        var order = await GetOrderAsync(world);
+        Assert.Equal(
+            (true, "FV-1-123"),
+            (order.GetProperty("invoiced").GetBoolean(), order.GetProperty("invoiceNumber").GetString()));
+        Assert.Single(InvoiceCalls(world.Siigo));
+    }
+
     [Fact]
     public async Task DrainingAgainNeverInvoicesAnOrderTwice()
     {
@@ -423,7 +481,7 @@ public sealed class SiigoInvoiceBatchApiTests
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
         world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.ToConfirm>(await IssueWithoutBatchAsync(world));
         var batchId = await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
 
@@ -442,7 +500,7 @@ public sealed class SiigoInvoiceBatchApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.Invoiced>(await IssueWithoutBatchAsync(world));
         var batchId = await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
 
@@ -467,7 +525,7 @@ public sealed class SiigoInvoiceBatchApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.Invoiced>(await IssueWithoutBatchAsync(world));
         var batchId = await CreateBatchAsync(world, world.OrderId);
         await ExecuteAsync(
             world.ConnectionString,
@@ -495,7 +553,7 @@ public sealed class SiigoInvoiceBatchApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.Invoiced>(await IssueWithoutBatchAsync(world));
         await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
         // La lectura del pedido falla en la base: sin confirmación, el ítem avisa y se cierra igual.
@@ -598,7 +656,8 @@ public sealed class SiigoInvoiceBatchApiTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Worker(world).DrainAsync(shutdown.Token));
         await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '9 minutes'");
 
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        // Una persona lo reintenta desde la pantalla: otra tanda del pedido.
+        await IssueRowsThroughBatchAsync(world);
 
         Assert.Equal(
             1,
@@ -701,6 +760,40 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Equal([newest, middle, oldest], Ids(byDefault));
     }
 
+    // La carrera de dos réplicas deja finished_at vacío con todos los pedidos resueltos: se lee terminada, en el detalle y en la lista.
+    [Fact]
+    public async Task ABatchLeftOpenWithEveryItemSettledReadsAsFinished()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        var batchId = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoice_batches SET finished_at = NULL");
+
+        var detail = await GetBatchAsync(world, batchId);
+        var summary = (await ReadAsync(await world.Client.GetAsync(BatchesRoute(world), Ct))).GetProperty("items")[0];
+
+        foreach (var batch in new[] { detail, summary })
+        {
+            Assert.Equal("Finished", batch.GetProperty("status").GetString());
+            Assert.Equal(JsonValueKind.String, batch.GetProperty("finishedAt").ValueKind);
+        }
+    }
+
+    // (page - 1) * pageSize no cabe en un int: la página se recorta en vez de mandar un desplazamiento negativo.
+    [Fact]
+    public async Task AHugePageIsClampedAndComesBackEmpty()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await CreateBatchAsync(world, world.OrderId);
+
+        var page = await ReadAsync(await world.Client.GetAsync($"{BatchesRoute(world)}?page={int.MaxValue}", Ct));
+
+        Assert.Equal((1, int.MaxValue / 100, 25), PageOf(page));
+        Assert.Empty(Ids(page));
+    }
+
     [Fact]
     public async Task ABadPageIs422WithItsField()
     {
@@ -778,6 +871,87 @@ public sealed class SiigoInvoiceBatchApiTests
             summary => Assert.Equal(["Pending=0", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=1", "Skipped=0"], Counts(summary)));
     }
 
+    // Mientras una tanda tiene el pedido, otra respondería 409: no se ofrece reenviar, ni desde el pedido ni desde una tanda anterior.
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Sending")]
+    public async Task AnOrderHeldByAnOpenBatchIsNotOfferedForResend(string itemStatus)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        var first = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+
+        var response = await PostBatchAsync(world, world.OrderId);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var second = created.GetProperty("id").GetGuid();
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE siigo.invoice_batch_items SET status = @status WHERE status = 'Pending'",
+            ("status", itemStatus));
+
+        var older = Item(await GetBatchAsync(world, first), 0);
+        var row = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+
+        Assert.False(Item(created, 0).GetProperty("canResend").GetBoolean());
+        Assert.False(Item(await GetBatchAsync(world, second), 0).GetProperty("canResend").GetBoolean());
+        Assert.Equal(
+            ("ToConfirm", false, true),
+            (older.GetProperty("status").GetString(), older.GetProperty("canResend").GetBoolean(), older.GetProperty("canResolve").GetBoolean()));
+        Assert.Equal(
+            (true, false, true),
+            (row.GetProperty("awaitingConfirmation").GetBoolean(), row.GetProperty("canResend").GetBoolean(), row.GetProperty("canResolve").GetBoolean()));
+    }
+
+    // Con el reenvío en cola, «no existe» soltaría la fila y el worker mandaría una factura nueva con otra clave: se rechaza, y el
+    // reenvío sale con la clave del primer envío.
+    [Fact]
+    public async Task AnOrderHeldByAnOpenBatchCannotBeDeclaredMissing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET last_unanswered_at = now() - interval '11 minutes'");
+        await CreateBatchAsync(world, world.OrderId);
+
+        var response = await world.Client.PostAsJsonAsync(world.BaseRoute + "/resolve", new { outcome = "missing" }, Ct);
+
+        await AssertOrderInProgressAsync(response, world.OrderId);
+        Assert.Equal("Pending", await ScalarAsync<string>(world.ConnectionString, "SELECT status FROM siigo.invoices"));
+        await DrainAsync(world);
+        var calls = InvoiceCalls(world.Siigo);
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(calls[0].Header("Idempotency-Key"), calls[1].Header("Idempotency-Key"));
+    }
+
+    // El pedido de este ítem ya se cerró por confirmar; que a la tanda le falten otros no lo retiene.
+    [Fact]
+    public async Task AToConfirmItemOfABatchStillInProgressCanBeResent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        var waiting = Guid.NewGuid();
+        var batchId = await CreateBatchAsync(world, world.OrderId, waiting);
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE siigo.invoice_batch_items SET available_at = now() + interval '1 hour' WHERE order_id = @order",
+            ("order", waiting));
+        await DrainAsync(world);
+
+        var batch = await GetBatchAsync(world, batchId);
+
+        Assert.Equal(
+            ("InProgress", "ToConfirm", "Pending"),
+            (batch.GetProperty("status").GetString(), Item(batch, 0).GetProperty("status").GetString(), Item(batch, 1).GetProperty("status").GetString()));
+        Assert.True(Item(batch, 0).GetProperty("canResend").GetBoolean());
+        Assert.True((await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0].GetProperty("canResend").GetBoolean());
+    }
+
     [Fact]
     public async Task AResendFromAnotherBatchShowsAsInvoicedInTheFirst()
     {
@@ -818,6 +992,37 @@ public sealed class SiigoInvoiceBatchApiTests
         var batch = await GetBatchAsync(world, created.GetProperty("id").GetGuid());
         Assert.Equal(("Failed", "siigo.invoice_batch.forbidden"), (Item(batch, 0).GetProperty("status").GetString(), Item(batch, 0).GetProperty("errorCode").GetString()));
         Assert.Empty(InvoiceCalls(world.Siigo));
+    }
+
+    // La factura pudo haber quedado creada: que el reenvío no se pueda hacer no la da por fallida.
+    [Theory]
+    [InlineData("connection", "siigo.connection_unavailable")]
+    [InlineData("permission", "siigo.invoice_batch.forbidden")]
+    public async Task AResendThatCannotBeMadeLeavesTheAwaitingInvoiceToConfirm(string lost, string code)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+        var second = await CreateBatchAsync(world, world.OrderId);
+        await ExecuteAsync(
+            world.ConnectionString,
+            lost == "connection"
+                ? "UPDATE integrations.connections SET status = 'Paused'"
+                : "UPDATE siigo.invoice_batches SET requested_by = gen_random_uuid()");
+
+        await DrainAsync(world);
+
+        Assert.Equal(
+            $"ToConfirm|{code}|{await StoredInvoiceIdAsync(world)}",
+            await ScalarAsync<string>(
+                world.ConnectionString,
+                "SELECT concat(status, '|', error_code, '|', invoice_id) FROM siigo.invoice_batch_items WHERE batch_id = @batch",
+                ("batch", second)));
+        // La fila no se tocó: se ve por qué no salió el reenvío, y no el motivo del envío anterior.
+        Assert.Equal(code, Item(await GetBatchAsync(world, second), 0).GetProperty("errorCode").GetString());
+        Assert.Single(InvoiceCalls(world.Siigo));
     }
 
     [Fact]

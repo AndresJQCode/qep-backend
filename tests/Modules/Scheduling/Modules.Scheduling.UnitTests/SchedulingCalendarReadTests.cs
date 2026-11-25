@@ -87,7 +87,8 @@ public sealed class SchedulingCalendarReadTests
                 ValidFrom: null,
                 ValidTo: null,
                 closesOnHolidays,
-                CapacityPerResource: 1,
+                // El modo de sesión sólo existe con cupo > 1 (spec 2026-11-21 de la Agenda): con cupo 1 el dominio lo descarta.
+                CapacityPerResource: mode is null ? 1 : 5,
                 mode,
                 AllowClientChoice: true,
                 AssignmentRule.FirstFree,

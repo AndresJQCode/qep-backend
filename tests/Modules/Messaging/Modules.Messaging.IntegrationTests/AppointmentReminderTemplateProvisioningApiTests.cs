@@ -80,7 +80,8 @@ public sealed class AppointmentReminderTemplateProvisioningApiTests
         Assert.Equal(("qep_agenda_recordatorio", "es", "UTILITY", "PENDING", "AppointmentReminder", "771"), (
             created.GetProperty("name").GetString(), created.GetProperty("language").GetString(), created.GetProperty("category").GetString(),
             created.GetProperty("status").GetString(), created.GetProperty("kind").GetString(), created.GetProperty("metaTemplateId").GetString()));
-        Assert.Equal(["nombre_cliente", "servicio", "fecha_hora"], created.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
+        // Las cinco del texto base (plan 2026-11-21 de la Agenda, punto 38): quién, qué servicio, cuándo, con quién y dónde.
+        Assert.Equal(["nombre_cliente", "servicio", "fecha_hora", "recurso", "sede"], created.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
         Assert.Equal(AppointmentReminderTemplateDefinition.BaseBody, created.GetProperty("body").GetString());
         // Sin encabezado ni botones: no se sube ningún ejemplo, sólo se crea.
         var posts = MetaCalls(f).Where(call => call.Method == HttpMethod.Post).ToArray();

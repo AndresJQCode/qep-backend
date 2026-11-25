@@ -99,9 +99,10 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// ¿Algún cliente del tenant tiene asignada esta tasa de retención? Catalog la usa (por el puerto
-    /// <c>ITaxRateCustomerUsage</c>) para no desactivar ni borrar una tasa «en uso»: sin FK entre esquemas, es la única
-    /// barrera. No cuenta a los fusionados: ya no se editan ni se cotizan, y la fusión no les quita sus tasas.
+    /// ¿Algún cliente del tenant tiene asignada esta tasa de retención, en su ficha o en un perfil de facturación? Catalog
+    /// la usa (por el puerto <c>ITaxRateCustomerUsage</c>) para no desactivar ni borrar una tasa «en uso»: sin FK entre
+    /// esquemas, es la única barrera. No cuenta a los fusionados: ya no se editan ni se cotizan, y la fusión no les quita
+    /// sus tasas.
     /// </summary>
     Task<bool> AnyWithTaxRateAsync(
         Guid tenantId,

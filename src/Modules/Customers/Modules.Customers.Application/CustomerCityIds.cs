@@ -23,6 +23,12 @@ internal static class CustomerCityIds
             .Where(address => address.CityId.HasValue)
             .Select(address => address.CityId!.Value);
 
+    /// <summary>Las ciudades DIVIPOLA de los perfiles de facturación, por lo mismo que <see cref="OfAddresses"/>.</summary>
+    public static IEnumerable<Guid> OfBillingProfiles(Customer customer) =>
+        customer.BillingProfiles
+            .Where(profile => profile.CityId.HasValue)
+            .Select(profile => profile.CityId!.Value);
+
     /// <summary>
     /// La ciudad de domicilio que hay que resolver contra Geography, o nada si el cliente no es
     /// de Colombia. Se devuelve una secuencia y no un <c>Guid?</c> para que los llamadores la

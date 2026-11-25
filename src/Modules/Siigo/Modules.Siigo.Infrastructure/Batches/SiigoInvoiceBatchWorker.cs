@@ -31,11 +31,8 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     ILogger<SiigoInvoiceBatchWorker> logger) : BackgroundService
 {
     /// <summary>Mayor que <see cref="SiigoInvoice.SendLease"/>: un pedido no se recupera mientras su factura todavía se considera en
-    /// envío.</summary>
-    internal static readonly TimeSpan Lease = TimeSpan.FromMinutes(10);
-
-    // Lo más que la recuperación espera por la marca del pedido: en el apagado, el resultado tiene que alcanzar a guardarse.
-    private static readonly TimeSpan MarkReadTimeout = TimeSpan.FromSeconds(5);
+    /// envío. Y mayor que el peor pedido, con cada factura reenviada por redondeo, porque este lease no se renueva.</summary>
+    internal static readonly TimeSpan Lease = TimeSpan.FromMinutes(12);
 
     [LoggerMessage(
         Level = LogLevel.Warning,
@@ -237,25 +234,15 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     // confirmación el ítem avisa que el pedido no quedó marcado; reenviarlo lo marca sin crear otra factura. Que la lectura falle no
     // impide cerrar el pedido.
     private async Task<bool> IsOrderMarkedAsync(
-        IServiceProvider services, Guid tenantId, Guid orderId, string? number, CancellationToken cancellationToken)
-    {
-        if (number is null)
-        {
-            return false;
-        }
-
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(MarkReadTimeout);
-        try
-        {
-            return await services.GetRequiredService<ISiigoOrderSource>().IsMarkedInvoicedAsync(tenantId, orderId, number, limit.Token);
-        }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            LogMarkReadFailed(logger, exception, orderId);
-            return false;
-        }
-    }
+        IServiceProvider services, Guid tenantId, Guid orderId, string? number, CancellationToken cancellationToken) =>
+        number is not null
+        && await SiigoOrderMark.IsConfirmedAsync(
+            services.GetRequiredService<ISiigoOrderSource>(),
+            tenantId,
+            orderId,
+            number,
+            exception => LogMarkReadFailed(logger, exception, orderId),
+            cancellationToken);
 
     private async Task SaveOutcomeAsync(Claim claim, SiigoBatchItemOutcome outcome, CancellationToken cancellationToken)
     {

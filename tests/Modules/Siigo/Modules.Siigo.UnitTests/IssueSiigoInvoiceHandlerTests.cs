@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Audit.Domain;
 using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
@@ -292,6 +295,247 @@ public sealed class IssueSiigoInvoiceHandlerTests
         Assert.Equal(SiigoInvoiceStatus.Pending, freight.Status);
     }
 
+    // La respuesta de resolver trae el mismo aviso que la lectura del pedido: sin confirmar la marca, se avisa.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task TheResolutionSaysWhetherTheOrderCarriesTheInvoice(bool marked, bool warns)
+    {
+        var harness = new Harness([Unanswered(SiigoInvoiceKind.Order, Now.AddMinutes(-11))]);
+        harness.Orders.Marked = marked;
+
+        var resolved = await harness.Resolve("exists", "FV-1-777");
+
+        Assert.Equal(warns, resolved.OrderMarkFailed);
+    }
+
+    // La de flete nunca salió mientras la del pedido siga abierta: no hay nada que mirar en Siigo, ni para decir que existe.
+    [Theory]
+    [InlineData("missing", false)]
+    [InlineData("exists", false)]
+    [InlineData("missing", true)]
+    [InlineData("exists", true)]
+    public async Task TheFreightCannotBeResolvedWhileTheOrderInvoiceIsOpen(string outcome, bool expired)
+    {
+        var sentAt = expired ? Now.AddHours(-25) : Now.AddMinutes(-11);
+        var order = Unanswered(SiigoInvoiceKind.Order, sentAt);
+        var freight = Unanswered(SiigoInvoiceKind.Freight, sentAt);
+        var harness = new Harness([order, freight]);
+
+        var exception = await Assert.ThrowsAsync<SiigoDomainException>(
+            () => harness.Resolve(outcome, "FV-1-777", "Freight"));
+
+        Assert.Equal(SiigoErrorCodes.InvoiceStateInvalid, exception.Code);
+        Assert.True(freight.IsOpen);
+        Assert.Empty(harness.Audit.Actions);
+    }
+
+    [Theory]
+    [InlineData("Created")]
+    [InlineData("Rejected")]
+    [InlineData("Failed")]
+    public async Task ALiveFreightCanBeResolvedOnceTheOrderInvoiceIsSettled(string orderStatus)
+    {
+        var order = PendingRow();
+        switch (orderStatus)
+        {
+            case "Created":
+                order.MarkCreated("siigo-1", "FV-1-123", 100m, null, Now.AddMinutes(-11));
+                break;
+            case "Rejected":
+                order.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now.AddMinutes(-11));
+                break;
+            default:
+                order.MarkFailed("siigo.invoice.order_rejected", "Discarded.", Now.AddMinutes(-11));
+                break;
+        }
+
+        var freight = Unanswered(SiigoInvoiceKind.Freight, Now.AddMinutes(-11));
+        Assert.Equal(orderStatus, order.Status.ToString());
+
+        await new Harness([order, freight]).Resolve("missing", kind: "Freight");
+
+        Assert.Equal(SiigoInvoiceStatus.Failed, freight.Status);
+    }
+
+    // POB959 (2026-11-25): Siigo calculó un centavo menos que QEP y ningún redondeo conocido lo predice.
+    [Theory]
+    [InlineData("38519158.60")]
+    [InlineData("38519158.62")]
+    [InlineData("38519157.61")]
+    public async Task ARoundingDifferenceIsResentOnceWithSiigosTotalAndANewKey(string siigoTotal)
+    {
+        var expected = Amount(siigoTotal);
+        var row = PendingRow(requestJson: Payments(38_519_158.61m));
+        var firstKey = row.IdempotencyKey;
+        var harness = new Harness([row], Mismatch(expected), Created());
+
+        var result = await harness.Issue();
+
+        Assert.Equal("Created", Assert.Single(result).Status);
+        Assert.Equal([expected], PaymentValues(harness.Api.Bodies[1]));
+        Assert.Equal(harness.Api.Bodies[1], row.RequestJson);
+        Assert.Equal([firstKey, row.IdempotencyKey], harness.Api.Keys);
+        Assert.NotEqual(firstKey, row.IdempotencyKey);
+        Assert.Equal(2, row.Attempts);
+        Assert.Equal(["siigo.invoice.payments_adjusted", SiigoAuditActions.InvoiceCreated], harness.Audit.Actions);
+    }
+
+    [Fact]
+    public async Task OnlyTheLastPaymentAbsorbsTheDifference()
+    {
+        var row = PendingRow(requestJson: Payments(30_000_000m, 11_290_811.07m));
+        var harness = new Harness([row], Mismatch(41_290_811.09m), Created());
+
+        await harness.Issue();
+
+        Assert.Equal([30_000_000m, 11_290_811.09m], PaymentValues(row.RequestJson));
+        Assert.Contains("\"observations\":\"Pedido POB893\"", row.RequestJson, StringComparison.Ordinal);
+    }
+
+    // El reenvío sale con la petición ya guardada: si el proceso muere en medio, la reanudación manda estos bytes con esta clave.
+    [Fact]
+    public async Task TheAdjustedRequestIsSavedBeforeItIsSent()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var harness = new Harness([row], Mismatch(100m), Created());
+        var savedKeys = new List<string>();
+        var keysSavedAtEachCall = new List<string[]>();
+        harness.UnitOfWork.OnSave = () => savedKeys.Add(row.IdempotencyKey);
+        harness.Api.OnCall = () => keysSavedAtEachCall.Add([.. savedKeys]);
+
+        await harness.Issue();
+
+        Assert.Equal(2, harness.Api.Keys.Count);
+        Assert.Contains(harness.Api.Keys[1], keysSavedAtEachCall[1]);
+    }
+
+    [Theory]
+    [InlineData("38519157.60")]
+    [InlineData("38519159.62")]
+    [InlineData("38519158.61")]
+    [InlineData("38519158.605")]
+    public async Task ADifferenceThatIsNotRoundingStaysRejected(string siigoTotal)
+    {
+        var expected = Amount(siigoTotal);
+        var json = Payments(38_519_158.61m);
+        var row = PendingRow(requestJson: json);
+        var harness = new Harness([row], Mismatch(expected));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Equal(expected, row.ExpectedPaymentsTotal);
+        Assert.Equal(json, row.RequestJson);
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task APaymentThatWouldEndAtZeroIsNotAdjusted()
+    {
+        var row = PendingRow(requestJson: Payments(100m, 0.50m));
+        var harness = new Harness([row], Mismatch(100m));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task AMismatchAlongWithAnotherErrorIsNotAdjusted()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var outcome = new SiigoInvoiceOutcome.Rejected(
+            [new SiigoError("invalid_total_payments", "message"), new SiigoError("invalid_reference", "message")], 100m);
+        var harness = new Harness([row], outcome);
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task ASecondMismatchIsNotAdjustedAgain()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var harness = new Harness([row], Mismatch(100m), Mismatch(99.99m));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Rejected, row.Status);
+        Assert.Equal(99.99m, row.ExpectedPaymentsTotal);
+        Assert.Equal(2, harness.Api.Keys.Count);
+        Assert.Equal(["siigo.invoice.payments_adjusted", SiigoAuditActions.InvoiceRejected], harness.Audit.Actions);
+    }
+
+    // Con un envío sin respuesta Siigo pudo haber creado la primera: cambiar la clave la duplicaría.
+    [Fact]
+    public async Task AnUnansweredInvoiceIsNeverAdjusted()
+    {
+        var json = Payments(100.01m);
+        var row = PendingRow(requestJson: json);
+        row.BeginSend(Now.AddMinutes(-11));
+        row.MarkUnanswered("siigo.invoice.timeout", null, Now.AddMinutes(-11));
+        var firstKey = row.IdempotencyKey;
+        var harness = new Harness([row], Mismatch(100m));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, row.Status);
+        Assert.Equal((json, firstKey), (row.RequestJson, row.IdempotencyKey));
+        Assert.Single(harness.Api.Keys);
+    }
+
+    [Fact]
+    public async Task ATimeoutOnTheAdjustedSendAwaitsConfirmationWithTheNewKey()
+    {
+        var row = PendingRow(requestJson: Payments(100.01m));
+        var harness = new Harness([row], Mismatch(100m), Transient("timeout"));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, row.Status);
+        Assert.Equal(Now, row.UnansweredAt);
+        Assert.Equal(2, harness.Api.Keys.Count);
+        Assert.Equal(harness.Api.Keys[1], row.IdempotencyKey);
+        Assert.Equal([100m], PaymentValues(row.RequestJson));
+    }
+
+    [Fact]
+    public async Task TheFreightGoesOutAfterItsOrderInvoiceWasAdjusted()
+    {
+        var order = PendingRow(requestJson: Payments(100.01m));
+        var freight = PendingRow(SiigoInvoiceKind.Freight);
+        var harness = new Harness([order, freight], Mismatch(100m), Created(), Created());
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Created, order.Status);
+        Assert.Equal(SiigoInvoiceStatus.Created, freight.Status);
+    }
+
+    // El reenvío alarga la emisión: la de flete que espera su turno sigue reclamada contando desde ahí.
+    [Fact]
+    public async Task AResendRenewsTheClaimOfTheInvoiceStillWaiting()
+    {
+        var order = PendingRow(requestJson: Payments(100.01m));
+        var freight = PendingRow(SiigoInvoiceKind.Freight);
+        var harness = new Harness([order, freight], Mismatch(100m), Created(), Created());
+        var freightClaims = new List<DateTimeOffset?>();
+        harness.Api.OnCall = () =>
+        {
+            freightClaims.Add(freight.SendingSince);
+            harness.Clock.UtcNow = harness.Clock.UtcNow.AddMinutes(2);
+        };
+
+        await harness.Issue();
+
+        Assert.Equal([Now, Now.AddMinutes(2)], freightClaims.Take(2));
+        Assert.Equal(1, freight.Attempts);
+    }
+
     private static SiigoInvoice Unanswered(SiigoInvoiceKind kind, DateTimeOffset sentAt)
     {
         var row = PendingRow(kind, sentAt);
@@ -300,9 +544,28 @@ public sealed class IssueSiigoInvoiceHandlerTests
         return row;
     }
 
-    private static SiigoInvoice PendingRow(SiigoInvoiceKind kind = SiigoInvoiceKind.Order, DateTimeOffset? createdAt = null) =>
+    private static SiigoInvoice PendingRow(
+        SiigoInvoiceKind kind = SiigoInvoiceKind.Order, DateTimeOffset? createdAt = null, string requestJson = """{"a":1}""") =>
         SiigoInvoice.PendingFor(
-            Guid.CreateVersion7(), TenantId, ConnectionId, OrderId, kind, """{"a":1}""", 7, SubjectId, createdAt ?? Now.AddHours(-1));
+            Guid.CreateVersion7(), TenantId, ConnectionId, OrderId, kind, requestJson, 7, SubjectId, createdAt ?? Now.AddHours(-1));
+
+    private static string Payments(params decimal[] values) =>
+        JsonSerializer.Serialize(new
+        {
+            observations = "Pedido POB893",
+            payments = values.Select(value => new { id = 11719, value }),
+        });
+
+    private static decimal Amount(string value) => decimal.Parse(value, CultureInfo.InvariantCulture);
+
+    private static decimal[] PaymentValues(string requestJson)
+    {
+        using var json = JsonDocument.Parse(requestJson);
+        return [.. json.RootElement.GetProperty("payments").EnumerateArray().Select(payment => payment.GetProperty("value").GetDecimal())];
+    }
+
+    private static SiigoInvoiceOutcome.Rejected Mismatch(decimal expected) =>
+        new([new SiigoError("invalid_total_payments", "message")], expected);
 
     private static SiigoInvoiceOutcome.Transient Transient(string reason) => new(reason);
 
@@ -322,23 +585,25 @@ public sealed class IssueSiigoInvoiceHandlerTests
                 new ExecutionContext(),
                 new AllModules(),
                 new FixedMembership(),
-                new OrderSource(),
+                Orders,
                 new InMemoryInvoices([.. rows]),
                 new FakeUnitOfWork(),
                 Audit,
                 Clock,
-                new ResolveSiigoInvoiceValidator());
+                new ResolveSiigoInvoiceValidator(),
+                new NoOpenBatches(),
+                NullLogger<ResolveSiigoInvoiceHandler>.Instance);
             _handler = new IssueSiigoInvoiceHandler(
                 new ExecutionContext(),
                 new AllModules(),
                 new FixedMembership(),
-                new OrderSource(),
+                Orders,
                 // El camino de reanudación no lee la configuración.
                 null!,
                 new ActiveConnections(),
                 Api.Instance,
                 new InMemoryInvoices([.. rows]),
-                new FakeUnitOfWork(),
+                UnitOfWork,
                 Audit,
                 Clock,
                 new IssueSiigoInvoiceValidator());
@@ -346,17 +611,21 @@ public sealed class IssueSiigoInvoiceHandlerTests
 
         public ApiProxy Api { get; }
 
+        public FakeUnitOfWork UnitOfWork { get; } = new();
+
         public RecordingAudit Audit { get; } = new();
+
+        public OrderSource Orders { get; } = new();
 
         public MutableClock Clock { get; } = new() { UtcNow = Now };
 
         public Task<IReadOnlyList<SiigoInvoiceDto>> Issue() =>
             _handler.HandleAsync(new IssueSiigoInvoiceCommand(TenantId, OrderId, null), TestContext.Current.CancellationToken);
 
-        /// <summary>Una persona resuelve la factura del pedido.</summary>
-        public Task<SiigoInvoiceDto> Resolve(string outcome, string? number = null) =>
+        /// <summary>Una persona resuelve una factura: la del pedido si no dice cuál.</summary>
+        public Task<SiigoInvoiceDto> Resolve(string outcome, string? number = null, string? kind = null) =>
             _resolver.HandleAsync(
-                new ResolveSiigoInvoiceCommand(TenantId, OrderId, null, outcome, number), TestContext.Current.CancellationToken);
+                new ResolveSiigoInvoiceCommand(TenantId, OrderId, kind, outcome, number), TestContext.Current.CancellationToken);
     }
 
     private sealed class ExecutionContext : IExecutionContext
@@ -391,6 +660,9 @@ public sealed class IssueSiigoInvoiceHandlerTests
 
     private sealed class OrderSource : ISiigoOrderSource
     {
+        /// <summary>Lo que contesta la lectura de la marca del pedido.</summary>
+        public bool Marked { get; set; } = true;
+
         public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -402,7 +674,7 @@ public sealed class IssueSiigoInvoiceHandlerTests
             Task.CompletedTask;
 
         public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult(Marked);
 
         public Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
@@ -436,9 +708,35 @@ public sealed class IssueSiigoInvoiceHandlerTests
         public void Add(SiigoInvoice invoice) => throw new NotSupportedException();
     }
 
-    private sealed class FakeUnitOfWork : ISiigoUnitOfWork
+    /// <summary>Ninguna tanda tiene el pedido.</summary>
+    private sealed class NoOpenBatches : ISiigoInvoiceBatchRepository
     {
-        public Task<int> SaveChangesAsync(CancellationToken cancellationToken) => Task.FromResult(1);
+        public Task<Guid?> FindOpenBatchIdAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<Guid?>(null);
+
+        public void Add(SiigoInvoiceBatch batch) => throw new NotSupportedException();
+
+        public Task<SiigoInvoiceBatch?> FindAsync(Guid tenantId, Guid batchId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Guid>> ListOpenOrderIdsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<(IReadOnlyList<SiigoInvoiceBatch> Items, int Total)> SearchAsync(
+            Guid tenantId, int page, int pageSize, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    public sealed class FakeUnitOfWork : ISiigoUnitOfWork
+    {
+        public Action? OnSave { get; set; }
+
+        public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            OnSave?.Invoke();
+            return Task.FromResult(1);
+        }
 
         public Task<ISiigoTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
             Task.FromResult<ISiigoTransaction>(new FakeTransaction());
@@ -475,6 +773,10 @@ public sealed class IssueSiigoInvoiceHandlerTests
 
         public List<string> Keys { get; } = [];
 
+        public List<string> Bodies { get; } = [];
+
+        public Action? OnCall { get; set; }
+
         public ISiigoApi Instance => (ISiigoApi)(object)this;
 
         public static ApiProxy Create(IEnumerable<SiigoInvoiceOutcome> script)
@@ -491,7 +793,9 @@ public sealed class IssueSiigoInvoiceHandlerTests
                 throw new NotSupportedException(targetMethod?.Name);
             }
 
-            Keys.Add((string)args![2]!);
+            Bodies.Add(((SiigoInvoiceRequest)args![1]!).Json);
+            Keys.Add((string)args[2]!);
+            OnCall?.Invoke();
             return Task.FromResult(_script.Dequeue());
         }
     }

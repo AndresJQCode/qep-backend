@@ -1,3 +1,5 @@
+using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
 
 namespace Modules.Siigo.UnitTests;
@@ -61,6 +63,35 @@ public sealed class SiigoInvoiceBatchTests
         Assert.Equal(Now.AddMinutes(1), batch.FinishedAt);
         Assert.False(batch.CloseIfFinished(Now.AddMinutes(2)));
         Assert.Equal(Now.AddMinutes(1), batch.FinishedAt);
+    }
+
+    // Dos réplicas resuelven a la vez los dos últimos pedidos y ninguna cierra la tanda: al leerla está terminada.
+    [Fact]
+    public void ABatchLeftOpenWithEveryItemSettledReadsAsFinishedAtTheLastSettlement()
+    {
+        var batch = Create(Guid.NewGuid(), Guid.NewGuid());
+        batch.Items[0].MarkInvoiced("FV-1-1", Now.AddMinutes(2));
+        Assert.Null(batch.ReadFinishedAt());
+
+        batch.Items[1].MarkFailed("siigo.invoice.rejected", Now.AddMinutes(1));
+
+        Assert.Equal(Now.AddMinutes(2), batch.ReadFinishedAt());
+        Assert.Null(batch.FinishedAt);
+        var summary = SiigoInvoiceBatchSummaryDto.From(batch, new Dictionary<Guid, SiigoInvoice>(), Now.AddMinutes(3));
+        Assert.Equal(("Finished", (DateTimeOffset?)Now.AddMinutes(2)), (summary.Status, summary.FinishedAt));
+        var detail = SiigoInvoiceBatchDto.From(
+            batch, new Dictionary<Guid, SiigoInvoice>(), new Dictionary<Guid, SiigoOrderLabel>(), [], Now.AddMinutes(3));
+        Assert.Equal(("Finished", (DateTimeOffset?)Now.AddMinutes(2)), (detail.Status, detail.FinishedAt));
+    }
+
+    [Fact]
+    public void AClosedBatchKeepsItsStoredFinishTime()
+    {
+        var batch = Create(Guid.NewGuid());
+        batch.Items[0].MarkInvoiced("FV-1-1", Now);
+        batch.CloseIfFinished(Now.AddMinutes(1));
+
+        Assert.Equal(Now.AddMinutes(1), batch.ReadFinishedAt());
     }
 
     [Fact]

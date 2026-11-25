@@ -82,7 +82,9 @@ public sealed class SaveOrderEditsGiftTests
             new FixedTenantClock(Now.AddDays(1)),
             new RecordingOrderVariantCostLookup(),
             new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
-            new StubWholesaleLinePricing());
+            new StubWholesaleLinePricing(),
+            new StubQuotationCustomerLookup(
+                new QuotationCustomerRef(Guid.CreateVersion7(), TenantId, "C-1", true, "Cliente", null, null, false, false)));
         return new Harness(orders, audit, handler);
     }
 

@@ -29,6 +29,8 @@ public static class ServiceContractsInfrastructureExtensions
         services.AddScoped<IServiceContractRepository, ServiceContractRepository>();
         services.AddScoped<IChargeRepository, ChargeRepository>();
         services.AddScoped<IServicePriceChangeRepository, ServicePriceChangeRepository>();
+        services.AddScoped<IServicePriceScheduleRepository, ServicePriceScheduleRepository>();
+        services.AddScoped<IIpcRateRepository, IpcRateRepository>();
         services.AddScoped<ICustomerBillingProfileRepository, CustomerBillingProfileRepository>();
         services.AddScoped<IServiceContractsSettingsRepository, ServiceContractsSettingsRepository>();
         services.AddScoped<IServiceContractsUnitOfWork, ServiceContractsUnitOfWork>();
@@ -47,6 +49,7 @@ public static class ServiceContractsInfrastructureExtensions
         services.AddScoped<DailyDigestStore>();
         // Spec 2026-11-22 D-17: the daily overdue count for the bell, written to the platform outbox next to the digest claim.
         services.AddScoped<OverdueDigestEventPublisher>();
+        services.AddScoped<PriceReviewDigestEventPublisher>();
         services.AddScoped<IServiceContractsReminderProcessor, ServiceContractsReminderProcessor>();
         services.AddHostedService<ServiceContractsReminderWorker>();
 

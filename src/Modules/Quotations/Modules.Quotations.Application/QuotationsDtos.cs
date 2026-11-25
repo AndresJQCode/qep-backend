@@ -727,7 +727,54 @@ public sealed record QuotationClientResponse(
     /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) de la ficha del cliente. Null si no lo tiene.</summary>
     string? IdentificationType = null,
     /// <summary>The region of a foreign customer, resolved to its name; null when it has none (provincia guardada).</summary>
-    QuotationRegionDto? Region = null);
+    QuotationRegionDto? Region = null,
+    /// <summary>Los perfiles de facturación del cliente (spec 2026-11-24 §3.6), la principal primero. La pantalla copia uno
+    /// en la facturación del documento sin pedir la ficha (BFF). <c>null</c> se lee como vacío.</summary>
+    IReadOnlyList<QuotationClientBillingProfileResponse>? BillingProfiles = null,
+    /// <summary>Cuántos perfiles admite un cliente: viaja para que la pantalla no ofrezca guardar uno más sin escribir el
+    /// número en el frontend (BFF).</summary>
+    int BillingProfileLimit = 0)
+{
+    /// <summary>Nunca <c>null</c>.</summary>
+    public IReadOnlyList<QuotationClientBillingProfileResponse> BillingProfiles { get; init; } = BillingProfiles ?? [];
+}
+
+/// <summary>
+/// Un perfil de facturación en el bloque <c>client</c>, con la misma forma que en la ficha del cliente (BFF: el frontend
+/// usa el mismo parser en las dos pantallas).
+/// </summary>
+public sealed record QuotationClientBillingProfileResponse(
+    Guid Id,
+    string Name,
+    string? PersonType,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string Address,
+    string Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    QuotationRegionDto? Region,
+    IReadOnlyList<QuotationClientWithholdingRateResponse> WithholdingTaxRates,
+    bool VatSurplus,
+    bool IsPrincipal);
+
+/// <summary>
+/// Una tasa de un perfil de facturación, con la forma de la tasa de la ficha del cliente y no la de la tasa de un documento
+/// (<see cref="WithholdingTaxRateResponse"/>): trae <c>IsActive</c> para que la pantalla descarte la desactivada al copiar
+/// el perfil.
+/// </summary>
+public sealed record QuotationClientWithholdingRateResponse(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    bool IsActive,
+    string AppliesTo);
 
 public sealed record QuotationClientAddressResponse(
     Guid Id,

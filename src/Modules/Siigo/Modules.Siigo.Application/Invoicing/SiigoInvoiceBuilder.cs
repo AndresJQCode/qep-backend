@@ -97,7 +97,8 @@ public static class SiigoInvoiceBuilder
         }
 
         // Los pagos tienen que sumar el total que Siigo calcula (IVA redondeado por línea desde la base ya redondeada), no el de QEP: la
-        // diferencia (hasta un peso, ya validada arriba) se reparte en los pagos y no se pide después con el total que proponga Siigo.
+        // diferencia (hasta un peso, ya validada arriba) se reparte en los pagos. Lo que este cálculo no prediga lo corrige el reenvío
+        // (SiigoPaymentRounding).
         var freightDelta = separateFreight ? freight!.Subtotal + freight.Tax - (input.FreightSubtotal + input.FreightTaxAmount) : 0m;
         plan = PlanPayments(input, separateFreight, computedOrderTotal - qepOrderTotal - RetentionRoundingDelta(input, lines), freightDelta);
 

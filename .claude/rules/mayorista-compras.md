@@ -29,9 +29,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `url.path` de los spans de OpenTelemetry y en el scope `RequestPath` de cada log del request. Una ruta nueva con un secreto en
   un segmento se suma ahí.
 - **El link de la invitación por sí solo no prueba el buzón, y el correo no tiene que coincidir** (spec 2026-11-19; el link del
-  correo sí puede probarlo, abajo). El link identifica la invitación; la acepta cualquier cuenta, una sola vez. Si el correo de la cuenta no es el del distribuidor, lo reemplaza en
-  el commit final, con auditoría (`wholesale.distributor.email_changed`, sin los correos) y aviso a los dos correos por outbox.
-  `email_mismatch` se retiró. No lo vuelvas a exigir: el owner decidió que prevalece el correo de quien acepta.
+  correo sí puede probarlo, abajo). El link identifica la invitación; la acepta cualquier cuenta, una sola vez. Si el correo
+  de la cuenta no es el del distribuidor, lo reemplaza en el commit final, con auditoría
+  (`wholesale.distributor.email_changed`, sin los correos) y aviso a los dos correos por outbox. `email_mismatch` se retiró.
+  No lo vuelvas a exigir: el owner decidió que prevalece el correo de quien acepta.
 - **Sin contraseña hace falta el código o la prueba del link del correo** (foco 1 del spec 2026-11-19; spec 2026-11-24). En
   `session-with-password`, una cuenta que no existe o existe sin contraseña necesita un código válido de `email-code`
   (`IEmailChallenges`) **o** el `emailProof` del link del correo con el correo invitado, y siempre la versión de los términos
@@ -44,15 +45,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   ni en la auditoría. **Riesgo aceptado por el spec:** quien reenvía el correo de invitación entrega ese paso (el destinatario
   puede crear la cuenta del correo invitado mientras la invitación siga pendiente y la cuenta no tenga contraseña); lo acotan
   las 72 h, el uso único y la rotación con «Copiar» o «Reenviar». Para todo lo demás el código es la única llave, así que
-  `IEmailChallenges` sostiene tres invariantes que no se aflojan (revisión final de la rama, hallazgo 1): **a lo sumo un desafío vivo por correo** (la
-  emisión corre bajo `pg_advisory_xact_lock(EmailChallengeIssuanceLock.Namespace, hashtext(email_hash))` e invalida el anterior
-  en la misma transacción), **sólo cuenta el más reciente** (`TryConsumeAsync` actualiza ese y ningún otro; el código de uno
-  anterior es un código errado) y **5 desafíos por correo en 24 h móviles** (`MaxIssuesPerDay`; el sexto no se emite y no falla,
-  igual que dentro de los 60 s, para no revelar si el correo tiene cuenta). Con varios desafíos vivos, cada intento probaba todos
-  sus códigos a la vez. Sin esto, el link más el correo de otra persona bastarían para
-  fijarle una contraseña a su cuenta. Y `ITermsAcceptances.RecordAsync` se confirma en su propia conexión con FK a
-  `identity.users`: se llama **después** de que el usuario quedó guardado, nunca con un usuario de una unidad de trabajo sin
-  guardar (`WholesaleInvitationPasswordSession`).
+  `IEmailChallenges` sostiene tres invariantes que no se aflojan (revisión final de la rama, hallazgo 1): **a lo sumo un
+  desafío vivo por correo** (la emisión corre bajo
+  `pg_advisory_xact_lock(EmailChallengeIssuanceLock.Namespace, hashtext(email_hash))` e invalida el anterior en la misma
+  transacción), **sólo cuenta el más reciente** (`TryConsumeAsync` actualiza ese y ningún otro; el código de uno anterior es
+  un código errado) y **5 desafíos por correo en 24 h móviles** (`MaxIssuesPerDay`; el sexto no se emite y no falla, igual que
+  dentro de los 60 s, para no revelar si el correo tiene cuenta). Con varios desafíos vivos, cada intento probaba todos sus
+  códigos a la vez. Sin esto, el link más el correo de otra persona bastarían para fijarle una contraseña a su cuenta. Y
+  `ITermsAcceptances.RecordAsync` se confirma en su propia conexión con FK a `identity.users`: se llama **después** de que el
+  usuario quedó guardado, nunca con un usuario de una unidad de trabajo sin guardar (`WholesaleInvitationPasswordSession`).
 - **«Copiar» rota el token** (spec 2026-11-19 §1). La base guarda el hash, así que el link sólo existe en la respuesta de invitar
   y en la de `POST .../invitation-link`, que rota (vigencia nueva, el link anterior pasa a 404). `DistributorDetailDto` no imprime
   `InvitationUrl` en su `ToString` (`PrintMembers`): no lo pongas en un log.
