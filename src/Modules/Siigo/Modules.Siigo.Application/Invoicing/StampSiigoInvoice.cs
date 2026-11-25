@@ -77,6 +77,6 @@ public sealed class StampSiigoInvoiceHandler(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return SiigoInvoiceDto.From(row);
+        return SiigoInvoiceDto.From(row, now);
     }
 }

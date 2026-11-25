@@ -48,7 +48,7 @@ public sealed partial class GetSiigoInvoicesHandler(
         // Una sola pregunta por petición, y ninguna si ninguna fila tiene PDF: es el camino caliente de la pantalla del pedido.
         var current = SiigoInvoiceSupport.Current(rows);
         var canSend = current.Any(row => row.HasPdf) && await CanSendAsync(query, cancellationToken);
-        return [.. current.Select(row => SiigoInvoiceDto.From(row, canSendWhatsApp: canSend))];
+        return [.. current.Select(row => SiigoInvoiceDto.From(row, now, canSendWhatsApp: canSend))];
     }
 
     // `canSendWhatsApp` es una pista opcional: si la pregunta falla por lo que sea, la lista sigue entera (con Created y Rejected a la

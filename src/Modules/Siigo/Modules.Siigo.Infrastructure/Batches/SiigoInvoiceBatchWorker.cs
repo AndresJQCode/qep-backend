@@ -18,9 +18,10 @@ namespace Modules.Siigo.Infrastructure.Batches;
 /// campañas, <b>un pedido por vez por réplica</b>: cada factura son varias llamadas a Siigo y su cuenta bloquea al 80 % de fallidas.
 /// Ninguna transacción queda abierta mientras se llama a Siigo: el reclamo es una sentencia sola, la factura la crea el handler de siempre
 /// (con su candado por pedido y su clave de idempotencia) y el resultado se guarda aparte.
-/// Cada pedido se manda una sola vez (<see cref="SiigoInvoiceBatchItem.MaxAttempts"/>): no se programan reintentos, y uno cuyo lease vence
-/// con el proceso muerto se da por fallido sin llamar a Siigo. Lo que pasa con un pedido es un resultado
-/// (<see cref="SiigoBatchItemOutcome"/>), nunca una excepción que frene la tanda.
+/// Cada pedido se manda una sola vez (<see cref="SiigoInvoiceBatchItem.MaxAttempts"/>): no se programan reintentos. Uno que quedó sin
+/// resultado (el lease venció con el proceso muerto, o el apagado cortó el envío) toma el estado de su fila en <c>siigo.invoices</c> sin
+/// llamar a Siigo: por confirmar, facturado o, si no alcanzó a quedar una fila, fallido por interrupción. Lo que pasa con un pedido es un
+/// resultado (<see cref="SiigoBatchItemOutcome"/>), nunca una excepción que frene la tanda.
 /// </summary>
 internal sealed partial class SiigoInvoiceBatchWorker(
     IQueueDoorbell doorbell,
@@ -29,14 +30,30 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     TimeProvider time,
     ILogger<SiigoInvoiceBatchWorker> logger) : BackgroundService
 {
-    /// <summary>Holgado frente a una factura entera: buscar o crear el cliente, la factura y la de flete, a 30 s de timeout cada llamada.</summary>
-    internal static readonly TimeSpan Lease = TimeSpan.FromMinutes(5);
+    /// <summary>Mayor que <see cref="SiigoInvoice.SendLease"/>: un pedido no se recupera mientras su factura todavía se considera en
+    /// envío.</summary>
+    internal static readonly TimeSpan Lease = TimeSpan.FromMinutes(10);
+
+    // Lo más que la recuperación espera por la marca del pedido: en el apagado, el resultado tiene que alcanzar a guardarse.
+    private static readonly TimeSpan MarkReadTimeout = TimeSpan.FromSeconds(5);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Reading whether order {OrderId} carries its Siigo invoice failed; the batch item says the order could not be marked.")]
+    private static partial void LogMarkReadFailed(ILogger logger, Exception exception, Guid orderId);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Siigo invoice batch tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Invoicing batch item {ItemId} threw; it is failed when its lease expires.")]
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Invoicing batch item {ItemId} threw; it takes the state of its invoice when its lease expires.")]
     private static partial void LogItemThrew(ILogger logger, Exception exception, Guid itemId);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Batch item {ItemId} was cut short by the shutdown and could not be saved; it is recovered when its lease expires.")]
+    private static partial void LogCutShortNotSaved(ILogger logger, Exception exception, Guid itemId);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -107,7 +124,7 @@ internal sealed partial class SiigoInvoiceBatchWorker(
         }
         catch (Exception exception)
         {
-            // El lease vence, el pedido vuelve a reclamarse y se da por fallido sin llamar a Siigo otra vez.
+            // El lease vence, el pedido vuelve a reclamarse y toma el estado de su fila sin llamar a Siigo otra vez.
             LogItemThrew(logger, exception, claim.ItemId);
         }
 
@@ -143,6 +160,7 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     private async Task ProcessAsync(Claim claim, CancellationToken cancellationToken)
     {
         Guid requestedBy;
+        IReadOnlyList<SiigoPaymentChoice>? payments;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
             var batch = await scope.ServiceProvider.GetRequiredService<ISiigoInvoiceBatchRepository>()
@@ -154,30 +172,99 @@ internal sealed partial class SiigoInvoiceBatchWorker(
 
             if (claim.Attempts > SiigoInvoiceBatchItem.MaxAttempts)
             {
-                // Ya se reclamó una vez y no quedó resultado (el proceso murió a mitad del envío): no se vuelve a mandar. La fila de la
-                // factura, si alcanzó a quedar, sigue Pending y una persona la reanuda desde el pedido con la misma clave.
-                await SettleAsync(scope, batch, claim.ItemId, new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.Unavailable), cancellationToken);
+                // Ya se reclamó una vez y no quedó resultado (el proceso murió a mitad del envío): no se vuelve a mandar.
+                var recovered = await RecoverAsync(claim.TenantId, claim.OrderId, cancellationToken);
+                await SettleAsync(scope, batch, claim.ItemId, recovered, cancellationToken);
                 return;
             }
 
             requestedBy = batch.RequestedBy;
+            payments = SiigoBatchPayments.Deserialize(batch.Items.Single(value => value.Id == claim.ItemId).PaymentsJson);
         }
 
         SiigoBatchItemOutcome outcome;
-        await using (var scope = scopeFactory.CreateAsyncScope())
+        try
         {
+            await using var scope = scopeFactory.CreateAsyncScope();
             outcome = await scope.ServiceProvider.GetRequiredService<ISiigoBatchItemInvoker>()
-                .InvokeAsync(claim.TenantId, requestedBy, claim.OrderId, cancellationToken);
+                .InvokeAsync(claim.TenantId, requestedBy, claim.OrderId, payments, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await CloseCutShortAsync(claim);
+            throw;
         }
 
-        await using (var scope = scopeFactory.CreateAsyncScope())
+        await SaveOutcomeAsync(claim, outcome, cancellationToken);
+    }
+
+    // El apagado cortó el envío: un último guardado corto, sin el token ya cancelado, para no dejar el pedido Sending hasta que venza
+    // el lease. Si no alcanza, lo cierra esa recuperación; en ningún caso se tapa la cancelación.
+    private async Task CloseCutShortAsync(Claim claim)
+    {
+        try
         {
-            var batch = await scope.ServiceProvider.GetRequiredService<ISiigoInvoiceBatchRepository>()
-                .FindAsync(claim.TenantId, claim.BatchId, cancellationToken);
-            if (batch is not null)
-            {
-                await SettleAsync(scope, batch, claim.ItemId, outcome, cancellationToken);
-            }
+            var recovered = await RecoverAsync(claim.TenantId, claim.OrderId, CancellationToken.None);
+            await SaveOutcomeAsync(claim, recovered, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            LogCutShortNotSaved(logger, exception, claim.ItemId);
+        }
+    }
+
+    // El resultado de un pedido cuyo envío no dejó ninguno: lo dice la fila viva más nueva del pedido en siigo.invoices. Nunca llama a
+    // Siigo (spec 2026-11-24 §4).
+    private async Task<SiigoBatchItemOutcome> RecoverAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var rows = await scope.ServiceProvider.GetRequiredService<ISiigoInvoiceRepository>()
+            .ListByOrderAsync(tenantId, orderId, cancellationToken);
+        // Vienen de la más vieja a la más nueva.
+        var row = rows.LastOrDefault(value => value.Kind == SiigoInvoiceKind.Order && value.IsLive);
+        return row switch
+        {
+            null => new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceInterrupted),
+            { IsOpen: true } => new SiigoBatchItemOutcome.ToConfirm(row.Id, row.ErrorCode ?? SiigoErrorCodes.InvoiceInterrupted),
+            _ => new SiigoBatchItemOutcome.Invoiced(
+                row.Number ?? string.Empty,
+                row.Id,
+                OrderMarkFailed: !await IsOrderMarkedAsync(scope.ServiceProvider, tenantId, orderId, row.Number, cancellationToken)),
+        };
+    }
+
+    // La factura existe, pero el envío pudo morir antes de marcar el pedido, o la marca haber fallado: se pregunta, sin escribir. Sin
+    // confirmación el ítem avisa que el pedido no quedó marcado; reenviarlo lo marca sin crear otra factura. Que la lectura falle no
+    // impide cerrar el pedido.
+    private async Task<bool> IsOrderMarkedAsync(
+        IServiceProvider services, Guid tenantId, Guid orderId, string? number, CancellationToken cancellationToken)
+    {
+        if (number is null)
+        {
+            return false;
+        }
+
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(MarkReadTimeout);
+        try
+        {
+            return await services.GetRequiredService<ISiigoOrderSource>().IsMarkedInvoicedAsync(tenantId, orderId, number, limit.Token);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogMarkReadFailed(logger, exception, orderId);
+            return false;
+        }
+    }
+
+    private async Task SaveOutcomeAsync(Claim claim, SiigoBatchItemOutcome outcome, CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var batch = await scope.ServiceProvider.GetRequiredService<ISiigoInvoiceBatchRepository>()
+            .FindAsync(claim.TenantId, claim.BatchId, cancellationToken);
+        if (batch is not null)
+        {
+            await SettleAsync(scope, batch, claim.ItemId, outcome, cancellationToken);
         }
     }
 
@@ -189,13 +276,16 @@ internal sealed partial class SiigoInvoiceBatchWorker(
         switch (outcome)
         {
             case SiigoBatchItemOutcome.Invoiced invoiced:
-                item.MarkInvoiced(invoiced.Number, now);
+                item.MarkInvoiced(invoiced.Number, now, invoiced.InvoiceId, invoiced.OrderMarkFailed);
                 break;
             case SiigoBatchItemOutcome.Skipped skipped:
                 item.MarkSkipped(skipped.ErrorCode, skipped.Missing, now);
                 break;
             case SiigoBatchItemOutcome.Failed failed:
-                item.MarkFailed(failed.ErrorCode, now);
+                item.MarkFailed(failed.ErrorCode, now, failed.InvoiceId);
+                break;
+            case SiigoBatchItemOutcome.ToConfirm toConfirm:
+                item.MarkToConfirm(toConfirm.InvoiceId, toConfirm.ErrorCode, now);
                 break;
             default:
                 throw new InvalidOperationException("Unknown batch item outcome.");

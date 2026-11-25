@@ -232,6 +232,10 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("kind");
 
+                    b.Property<DateTimeOffset?>("LastUnansweredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_unanswered_at");
+
                     b.Property<string>("Number")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
@@ -277,6 +281,10 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UnansweredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unanswered_at");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -350,6 +358,10 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("error_code");
 
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invoice_id");
+
                     b.Property<string>("InvoiceNumber")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
@@ -368,6 +380,16 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("OrderId")
                         .HasColumnType("uuid")
                         .HasColumnName("order_id");
+
+                    b.Property<bool>("OrderMarkFailed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("order_mark_failed");
+
+                    b.Property<string>("PaymentsJson")
+                        .HasColumnType("text")
+                        .HasColumnName("payments_json");
 
                     b.Property<int>("Position")
                         .HasColumnType("integer")
@@ -396,6 +418,11 @@ namespace Modules.Siigo.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Status", "AvailableAt")
                         .HasDatabaseName("IX_invoice_batch_items_claim")
+                        .HasFilter("status IN ('Pending', 'Sending')");
+
+                    b.HasIndex("TenantId", "OrderId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_invoice_batch_items_tenant_order_open")
                         .HasFilter("status IN ('Pending', 'Sending')");
 
                     b.ToTable("invoice_batch_items", "siigo");

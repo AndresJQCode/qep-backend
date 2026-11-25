@@ -1135,6 +1135,13 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<IReadOnlyDictionary<OrderId, OrderNumberAndClient>> FindNumbersAndClientsAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<OrderId, OrderNumberAndClient>>(
+            rows
+                .Where(row => row.TenantId == tenantId && orderIds.Contains(row.Id))
+                .ToDictionary(row => row.Id, row => new OrderNumberAndClient(row.OrderNumber, row.ClientId)));
+
     // Desde las filas sembradas, que sí traen líneas: la misma regla que la consulta real.
     public Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>

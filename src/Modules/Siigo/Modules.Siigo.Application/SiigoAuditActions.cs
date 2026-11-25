@@ -10,6 +10,10 @@ public static class SiigoAuditActions
 
     public const string InvoiceRejected = "siigo.invoice.rejected";
 
+    /// <summary>La factura quedó por confirmar (spec 2026-11-24): la primera vez que no se sabe si salió, o cuando un rechazo se retiene
+    /// por un envío anterior sin respuesta.</summary>
+    public const string InvoiceUnanswered = "siigo.invoice.unanswered";
+
     public const string InvoiceResolved = "siigo.invoice.resolved";
 
     /// <summary>Se mandó el PDF de la factura al WhatsApp del cliente (spec 2026-11-21). Sólo el pedido, el tipo, el estado y el número:
