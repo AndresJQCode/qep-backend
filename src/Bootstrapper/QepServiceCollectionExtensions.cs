@@ -3032,7 +3032,7 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
                 SiigoPermissions.SettingsManage,
                 SiigoPermissions.InvoiceIssue,
-                // Spec 2026-11-21: ver las llamadas a Siigo que fallaron; el cuerpo lleva datos del cliente, así que sólo admin de fábrica.
+                // Spec 2026-11-21: ver las llamadas a Siigo que fallaron; el cuerpo lleva datos del cliente.
                 SiigoPermissions.CallsRead,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
@@ -3190,6 +3190,9 @@ public static class QepServiceCollectionExtensions
                 CompaniesPermissions.CompanyRead,
                 IntegrationsPermissions.ConnectionRead,
                 SiigoPermissions.SettingsManage,
+                // Decisión del owner (2026-11-25): facturación ve las fallas de las llamadas a Siigo para saber por qué no salió
+                // su factura, aunque la petición y la respuesta lleven datos del cliente.
+                SiigoPermissions.CallsRead,
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
             ]));
