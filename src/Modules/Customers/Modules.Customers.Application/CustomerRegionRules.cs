@@ -17,6 +17,8 @@ internal static class CustomerRegionRules
 
     public const string AddressRegionInvalid = "customers.address.region_invalid";
 
+    public const string BillingProfileRegionInvalid = "customers.billing_profile.region_invalid";
+
     /// <summary>
     /// Devuelve la región resuelta, o <c>null</c> si no vino ninguna. Lanza un 422 con el mapa <c>errors</c> (clave
     /// <c>RegionId</c>) cuando la región no existe o no pertenece al país.

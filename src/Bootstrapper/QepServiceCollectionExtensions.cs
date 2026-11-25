@@ -1297,6 +1297,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<MakeCustomerAddressPrincipalCommand, CustomerDto>,
             MakeCustomerAddressPrincipalHandler>();
+        // La libreta de perfiles de facturación (spec 2026-11-24 §3), gemela de la de direcciones.
+        services.AddScoped<
+            ICommandHandler<AddCustomerBillingProfileCommand, CustomerDto>,
+            AddCustomerBillingProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCustomerBillingProfileCommand, CustomerDto>,
+            UpdateCustomerBillingProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveCustomerBillingProfileCommand, CustomerDto>,
+            RemoveCustomerBillingProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<MakeCustomerBillingProfilePrincipalCommand, CustomerDto>,
+            MakeCustomerBillingProfilePrincipalHandler>();
         services.AddScoped<
             ICommandHandler<DeactivateCustomerCommand, CustomerDto>,
             DeactivateCustomerHandler>();

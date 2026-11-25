@@ -117,14 +117,67 @@ public sealed record CustomerDto(
     /// vacío; el listado no lo trae.</summary>
     IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
     /// <summary>La region (provincia) del domicilio, resuelta. Solo el detalle la llena; el listado y el Excel dejan <c>null</c>.</summary>
-    CustomerRegionDto? Region = null)
+    CustomerRegionDto? Region = null,
+    /// <summary>Spec 2026-11-24 §3.6: la libreta de perfiles de facturación, la principal primero y el resto por nombre.
+    /// <c>null</c> se lee como vacío; el listado y el Excel no los traen.</summary>
+    IReadOnlyList<CustomerBillingProfileDto>? BillingProfiles = null)
 {
     /// <summary>Nunca <c>null</c>: un llamador que no conoce el campo recibe la lista vacía.</summary>
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
 
     /// <summary>Nunca <c>null</c>, por lo mismo que <see cref="WithholdingTaxRates"/>.</summary>
     public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
+
+    /// <summary>Nunca <c>null</c>, por lo mismo que <see cref="WithholdingTaxRates"/>.</summary>
+    public IReadOnlyList<CustomerBillingProfileDto> BillingProfiles { get; init; } = BillingProfiles ?? [];
+
+    /// <summary>Cuántos perfiles admite un cliente. Viaja para que la pantalla no ofrezca guardar uno más sin escribir el
+    /// número en el frontend (BFF).</summary>
+    public int BillingProfileLimit { get; init; } = Domain.CustomerBillingProfile.MaxPerCustomer;
 }
+
+/// <summary>
+/// Un perfil de facturación del cliente como lo pintan la ficha y el documento que lo copia (BFF): ciudad y departamento
+/// resueltos también en <c>CO</c>, la región con nombre y las tasas con lo que se muestra, para no pedir nada más.
+/// </summary>
+public sealed record CustomerBillingProfileDto(
+    Guid Id,
+    string Name,
+    string? PersonType,
+    string IdentificationType,
+    string IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string Address,
+    string Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    CustomerRegionDto? Region,
+    IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates,
+    bool VatSurplus,
+    bool IsPrincipal);
+
+/// <summary>
+/// El cuerpo de <c>POST</c> y <c>PUT …/billing-profiles</c> (spec 2026-11-24 §3.1). El <c>PUT</c> reemplaza: lo que no
+/// venga se borra, salvo <c>IsPrincipal</c> en <c>false</c>, que no desmarca.
+/// </summary>
+public sealed record CustomerBillingProfileRequest(
+    string? Name,
+    string? PersonType,
+    string? IdentificationType,
+    string? IdentificationNumber,
+    string? Phone,
+    string? Email,
+    string? Address,
+    string? Country,
+    Guid? CityId,
+    string? CityName,
+    Guid? RegionId,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds,
+    bool VatSurplus,
+    bool IsPrincipal);
 
 /// <summary>
 /// La referencia de municipio del spec ReteICA por empresa (§9.1): la misma forma en tasas, empresas, clientes y documentos.
@@ -225,11 +278,18 @@ public sealed record CustomerResponse(
     /// <summary>Spec ReteICA por empresa §9.3: viaja siempre, vacía si el cliente no es agente en ningún municipio.</summary>
     IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
     /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): sin region guardada la ficha no preselecciona nada.</summary>
-    CustomerRegionDto? Region = null)
+    CustomerRegionDto? Region = null,
+    /// <summary>Spec 2026-11-24 §3.6: viaja siempre, vacía si el cliente no tiene perfiles.</summary>
+    IReadOnlyList<CustomerBillingProfileDto>? BillingProfiles = null)
 {
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
 
     public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
+
+    public IReadOnlyList<CustomerBillingProfileDto> BillingProfiles { get; init; } = BillingProfiles ?? [];
+
+    /// <summary>El tope de perfiles (BFF): la pantalla no escribe el número, ver <see cref="CustomerDto"/>.</summary>
+    public int BillingProfileLimit { get; init; } = Domain.CustomerBillingProfile.MaxPerCustomer;
 }
 
 /// <summary>
@@ -659,9 +719,14 @@ public sealed record CustomerMergeResponse(
     IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null,
     IReadOnlyList<CustomerWithholdingAgentCityDto>? WithholdingAgentCities = null,
     /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): sin region guardada la ficha no preselecciona nada.</summary>
-    CustomerRegionDto? Region = null)
+    CustomerRegionDto? Region = null,
+    IReadOnlyList<CustomerBillingProfileDto>? BillingProfiles = null)
 {
     public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
 
     public IReadOnlyList<CustomerWithholdingAgentCityDto> WithholdingAgentCities { get; init; } = WithholdingAgentCities ?? [];
+
+    public IReadOnlyList<CustomerBillingProfileDto> BillingProfiles { get; init; } = BillingProfiles ?? [];
+
+    public int BillingProfileLimit { get; init; } = Domain.CustomerBillingProfile.MaxPerCustomer;
 }
