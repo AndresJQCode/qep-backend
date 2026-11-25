@@ -9,13 +9,14 @@ namespace Modules.Siigo.Application.Invoicing;
 /// <summary>La forma de pago que quien factura eligió para un comprobante, en la factura de ese tipo (<c>Order</c> por defecto).</summary>
 public sealed record SiigoPaymentChoice(string? Kind, Guid ProofId, string? SiigoPaymentTypeId);
 
-/// <summary><c>POST …/orders/{orderId}/siigo-invoice</c> (<c>siigo.invoice.issue</c>). <paramref name="Payments"/> es opcional: sin él se
-/// usa la propuesta de la cuenta de cobro.</summary>
+/// <summary>Generar la factura de un pedido (<c>siigo.invoice.issue</c>). No tiene ruta propia: lo corre el worker de las tandas por cada
+/// pedido (<c>SiigoBatchItemInvoker</c>). <paramref name="Payments"/> es opcional: sin él se usa la propuesta de la cuenta de
+/// cobro.</summary>
 public sealed record IssueSiigoInvoiceCommand(Guid TenantId, Guid OrderId, IReadOnlyList<SiigoPaymentChoice>? Payments)
     : ICommand<IReadOnlyList<SiigoInvoiceDto>>;
 
-/// <summary>La forma de cada forma de pago elegida, la misma en el POST del pedido y en la tanda de uno: así los dos devuelven las mismas
-/// claves de error.</summary>
+/// <summary>La forma de cada forma de pago elegida, la misma en la tanda de uno y en el comando que corre el worker: así los dos validan
+/// igual y con las mismas claves de error.</summary>
 internal static class SiigoPaymentChoiceRules
 {
     public static void Configure(InlineValidator<SiigoPaymentChoice> payment)
@@ -27,12 +28,13 @@ internal static class SiigoPaymentChoiceRules
     }
 }
 
-/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase).</summary>
+/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase). Un elemento nulo de <c>payments</c> falla en su
+/// propio campo.</summary>
 public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInvoiceCommand>
 {
     public IssueSiigoInvoiceValidator()
     {
-        RuleForEach(command => command.Payments).ChildRules(SiigoPaymentChoiceRules.Configure);
+        RuleForEach(command => command.Payments).NotNull().ChildRules(SiigoPaymentChoiceRules.Configure);
     }
 }
 
@@ -41,7 +43,7 @@ public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInv
 /// pedido (<c>ExpireIfStale</c> primero) → según la tabla del paso 1:
 /// <list type="bullet">
 /// <item><description><c>Pending</c> → se retoma: se reenvían los <b>mismos bytes</b> con la <b>misma clave</b>, sin rearmar ni validar.
-/// Con la conexión no operativa es 409 y la fila no cambia. Si otra petición la está mandando (el reclamo de
+/// Con la conexión no operativa es un conflicto y la fila no cambia. Si otra emisión la está mandando (el reclamo de
 /// <see cref="SiigoInvoice.SendLease"/>) no se vuelve a mandar: es lo que hace que dos «Generar factura» a la vez creen una sola.</description></item>
 /// <item><description><c>Created</c>, <c>Stamped</c>, <c>StampRejected</c>, <c>Unknown</c> → se devuelve tal cual, sin llamar a Siigo. Una
 /// del pedido ya creada se vuelve a marcar en el pedido (idempotente): cubre el corte entre crear la factura y marcarlo.</description></item>
@@ -55,7 +57,9 @@ public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInv
 /// <para>Spec 2026-11-24 §3: ante la duda la factura queda <b>por confirmar</b> (<c>Pending</c> con <c>unanswered_at</c>), con la misma
 /// clave, y decide una persona. Pasa con timeout, red, 5xx, 429, una respuesta ilegible, un error de servicio de Siigo (aun en el primer
 /// intento), un rechazo de datos en el reenvío de una que ya tuvo un envío sin respuesta, y al reanudar un envío cuyo reclamo venció sin
-/// resultado. Sin <c>Partner-Id</c> o sin token la factura no salió: sigue <c>Pending</c> sin quedar por confirmar.</para>
+/// resultado. Sin <c>Partner-Id</c> o sin token la factura no salió: sigue <c>Pending</c> sin quedar por confirmar. La de flete cuya
+/// factura del pedido no existe en Siigo (ni <c>Created</c>, ni <c>Stamped</c>, ni <c>StampRejected</c>) nunca se marca sin respuesta:
+/// sólo sale después de ella, así que su reclamo vencido es de un envío que se cortó antes de llegarle.</para>
 /// </summary>
 public sealed class IssueSiigoInvoiceHandler(
     IExecutionContext executionContext,
@@ -87,10 +91,14 @@ public sealed class IssueSiigoInvoiceHandler(
 
         await EnsureOrderMarkedAsync(prepared, cancellationToken);
         var now = clock.UtcNow;
+        var current = SiigoInvoiceSupport.Current(prepared.Rows);
         return
         [
-            .. SiigoInvoiceSupport.Current(prepared.Rows)
-                .Select(row => SiigoInvoiceDto.From(row, now, prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order)),
+            .. current.Select(row => SiigoInvoiceDto.From(
+                row,
+                now,
+                prepared.OrderMarkFailed && row.Kind == SiigoInvoiceKind.Order,
+                waitsForOrder: SiigoInvoiceSupport.IsFreightWaitingForTheOrder(row, current))),
         ];
     }
 
@@ -378,7 +386,8 @@ public sealed class IssueSiigoInvoiceHandler(
     }
 
     // La factura ya existe en Siigo: que el pedido no se pueda marcar (se anuló o alguien lo marcó a mano en medio) no deshace nada ni
-    // debe dejar el POST fallando para siempre. La fila queda Created, la respuesta lleva el aviso y el siguiente POST reintenta sólo la marca.
+    // debe dejar la emisión fallando para siempre. La fila queda Created, el resultado lleva el aviso y la siguiente emisión reintenta sólo
+    // la marca.
     private async Task TryMarkAsync(Prepared prepared, SiigoInvoice row, CancellationToken cancellationToken)
     {
         try

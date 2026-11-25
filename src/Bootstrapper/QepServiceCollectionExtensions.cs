@@ -443,6 +443,30 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.ServiceContracts.Application.DeleteServiceCommand, bool>,
             Modules.ServiceContracts.Application.DeleteServiceHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.UpdatePriceReviewCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.UpdatePriceReviewHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.SchedulePriceChangeCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.SchedulePriceChangeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.CancelPriceScheduleCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.CancelPriceScheduleHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.KeepPriceCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.KeepPriceHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.ServiceContracts.Application.ListPriceReviewsQuery, Modules.ServiceContracts.Application.PriceReviewPageDto>,
+            Modules.ServiceContracts.Application.ListPriceReviewsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.ConfirmIpcReviewsCommand, Modules.ServiceContracts.Application.ConfirmIpcResponseDto>,
+            Modules.ServiceContracts.Application.ConfirmIpcReviewsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.ServiceContracts.Application.ListIpcRatesQuery, Modules.ServiceContracts.Application.IpcRateListDto>,
+            Modules.ServiceContracts.Application.ListIpcRatesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.ServiceContracts.Application.SaveIpcRateCommand, Modules.ServiceContracts.Application.IpcRateDto>,
+            Modules.ServiceContracts.Application.SaveIpcRateHandler>();
+        services.AddScoped<
             IQueryHandler<Modules.ServiceContracts.Application.ListChargesQuery, Modules.ServiceContracts.Application.ChargePageDto>,
             Modules.ServiceContracts.Application.ListChargesHandler>();
         services.AddScoped<
@@ -463,6 +487,7 @@ public static class QepServiceCollectionExtensions
             Modules.ServiceContracts.Application.UpdateServiceContractsSettingsHandler>();
         services.AddScoped<Modules.ServiceContracts.Application.ChargeDtoComposer>();
         services.AddScoped<Modules.ServiceContracts.Application.ServiceDetailComposer>();
+        services.AddScoped<Modules.ServiceContracts.Application.PriceReviewReader>();
         // Importación desde Excel (§3.2b): la vista previa y la importación comparten el analizador.
         services.AddScoped<
             ICommandHandler<Modules.ServiceContracts.Application.PreviewServiceContractsImportCommand, Modules.ServiceContracts.Application.ImportPreviewDto>,

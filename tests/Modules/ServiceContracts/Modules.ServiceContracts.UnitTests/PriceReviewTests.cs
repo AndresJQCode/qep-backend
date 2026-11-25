@@ -95,7 +95,7 @@ public sealed class PriceReviewTests
         Assert.Equal(ReviewState.Held, PriceReview.Of(held, heldSchedule, Date("2027-01-05")).State);
 
         var paused = NewService();
-        paused.Pause(Now);
+        paused.Pause(Date("2026-03-10"), Now);
         var none = PriceReview.Of(paused, null, Date("2027-01-05"));
         Assert.Equal(ReviewState.None, none.State);
         Assert.Null(none.ReviewPeriodDate);
@@ -146,7 +146,7 @@ internal static class PriceReviewTestExtensions
     public static ServiceContract Resumed(this ServiceContract service, string today)
     {
         var now = new DateTimeOffset(2026, 3, 10, 12, 0, 0, TimeSpan.Zero);
-        service.Pause(now);
+        service.Pause(DateOnly.FromDateTime(now.UtcDateTime), now);
         service.Resume(DateOnly.ParseExact(today, "yyyy-MM-dd", CultureInfo.InvariantCulture), now);
         return service;
     }

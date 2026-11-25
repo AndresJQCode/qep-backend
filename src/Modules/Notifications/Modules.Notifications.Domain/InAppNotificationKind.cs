@@ -17,4 +17,5 @@ public enum InAppNotificationKind
     SupportTicketAssigned,
     HrMedicalExamsDue,
     HrExitExamRequired,
+    ServicePriceReviewsDue,
 }

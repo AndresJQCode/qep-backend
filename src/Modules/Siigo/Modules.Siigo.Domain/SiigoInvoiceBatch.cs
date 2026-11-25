@@ -31,6 +31,13 @@ public sealed class SiigoInvoiceBatch
 
     public bool IsFinished => FinishedAt is not null;
 
+    /// <summary>Cuándo terminó, para quien la lee: <see cref="FinishedAt"/> o, si quedó sin cerrar con todos sus pedidos resueltos, la hora
+    /// del último que se resolvió; <c>null</c> si todavía falta alguno. Pasa cuando dos réplicas resuelven a la vez los dos últimos
+    /// pedidos: cada una ve el del otro sin terminar, ninguna cierra la tanda y ya no queda quien vuelva a intentarlo. No escribe
+    /// nada.</summary>
+    public DateTimeOffset? ReadFinishedAt() =>
+        FinishedAt ?? (_items.Count > 0 && _items.All(item => item.IsSettled) ? _items.Max(item => item.UpdatedAt) : (DateTimeOffset?)null);
+
     /// <param name="paymentsJson">Las formas de pago que la persona eligió, sólo en una tanda de un pedido: son por comprobante de
     /// ese pedido (el validador lo frena antes con el campo).</param>
     public static SiigoInvoiceBatch Create(
@@ -232,8 +239,9 @@ public sealed class SiigoInvoiceBatchItem
                 invoice.ErrorCode ?? ErrorCode,
                 null,
                 invoice.CanResend(now),
-                invoice.IsResolvable(now),
-                invoice.MissingAvailableAt(now)),
+                // Lo mismo que ofrece la pantalla del pedido: una que nunca salió no se ofrece resolver.
+                invoice.OffersResolution(now),
+                invoice.OffersResolution(now) ? invoice.MissingAvailableAt(now) : null),
             SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected =>
                 new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, invoice.Number, false, false, null),
             SiigoInvoiceStatus.Failed => new SiigoBatchItemState(

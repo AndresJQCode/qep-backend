@@ -114,7 +114,10 @@ que ampliar). Se agrega al final del enum.
 El ítem guarda **`invoice_id`** (nuevo): la fila `Order` de `siigo.invoices` que produjo el intento. `SiigoBatchItemOutcome` pasa a llevar
 el id de la factura en `Invoiced`, `Failed` (cuando hay fila) y el nuevo `ToConfirm(Guid InvoiceId, string? ErrorCode)`.
 `SiigoBatchItemInvoker.Map` cambia: `Pending` o `Unknown` → `ToConfirm` (hoy `Failed`), y copia `orderMarkFailed` de la fila del
-pedido. `SiigoInvoiceBatchItem` suma `MarkToConfirm(invoiceId, errorCode, now)` y guarda `invoice_id` también en `MarkInvoiced` y
+pedido. **Un reenvío que no se puede hacer** (conexión no disponible, permiso perdido o cualquier otro fallo sin fila) no termina
+`Failed` si el pedido ya tiene una factura `Order` vigente `Unknown` o por confirmar: termina `ToConfirm` con el `invoice_id` de esa fila
+y el código del fallo, porque la factura puede existir. Con una fila que nunca salió queda `Failed`, como siempre (decidido el
+2026-11-25). `SiigoInvoiceBatchItem` suma `MarkToConfirm(invoiceId, errorCode, now)` y guarda `invoice_id` también en `MarkInvoiced` y
 `MarkFailed` cuando hay fila.
 
 **El ítem sigue a la factura al leerse, no al escribirse.** El estado guardado es lo que pasó en la tanda; el estado que devuelve la API
@@ -163,6 +166,10 @@ sin resolver (`Pending` o `Unknown`) se descarta con `MarkFailed("siigo.invoice.
 de flete sólo sale después de que la del pedido existe, así que nunca salió (el relleno de la migración o el vencimiento a las 24 h pueden
 haberla marcado igual). Si no, quedaría viva, bloqueando el pedido para siempre. Al declarar `exists`, o con la del pedido ya facturada,
 la de flete no se toca y se resuelve o se reenvía aparte (decidido durante la implementación, 2026-11-24).
+
+**La de flete espera a la del pedido** (decidido el 2026-11-25). Mientras la fila `Order` siga abierta (`Pending` o `Unknown`), la de
+flete nunca salió: resolverla, con `exists` o con `missing`, es 422 `siigo.invoice.state_invalid`, y sus filas viajan con `canResolve` en
+`false`. Con la del pedido facturada, rechazada o `Failed`, una de flete vigente se resuelve como cualquier otra.
 
 **Espera de 10 minutos para `missing`.** `ResolveMissing` exige que hayan pasado **10 minutos desde el último intento sin respuesta**:
 QEP corta a los 120 s, pero Siigo puede seguir procesando, y «No existe» es la única acción que libera el pedido para facturar con otra
@@ -217,6 +224,10 @@ SiigoInvoiceBatchStatusCountDto(Status, Count)
 **`StatusCounts` viaja completo y en orden fijo, incluso en cero**: `Pending, Sending, Invoiced, ToConfirm, Failed, Skipped`. Así la
 pantalla no tiene que conocer el enum para dibujar el que falta (precedente `ReportStatusSliceDto`). Se calcula con el estado efectivo.
 
+**Tanda terminada al leer** (precisión del 2026-11-25): `status` es `Finished` si la tanda quedó cerrada (`finished_at`) o si ningún
+ítem guardado le falta por procesar, en el detalle y en la lista. Cubre la carrera de dos réplicas que resuelven a la vez los dos últimos
+ítems y no la cierran. En ese caso `finishedAt` es la hora del último ítem resuelto (`updated_at`); la columna sigue vacía.
+
 **Detalle enriquecido** (`GET …/invoice-batches/{batchId}`, y la respuesta 202 del `POST`): `SiigoInvoiceBatchDto` suma `StatusCounts`
 y conserva `Invoiced`, `Skipped`, `Failed` (aditivo: el frontend publicado los lee). Cada ítem:
 
@@ -230,12 +241,24 @@ y conserva `Invoiced`, `Skipped`, `Failed` (aditivo: el frontend publicado los l
 | `invoiceId`, `invoiceNumber` | fila enlazada / ítem | |
 | `missing` | ítem | como hoy |
 | `orderMarkFailed` | ítem (nuevo) | la factura existe pero el pedido no se pudo marcar; hoy sólo lo traía la respuesta del `POST` síncrono |
-| `canResend` | calculado | efectivo `ToConfirm` ∧ fila `Pending` ∧ no en envío ∧ no vencida |
-| `canResolve` | calculado | efectivo `ToConfirm` ∧ fila resoluble (§3) |
+| `canResend` | calculado | efectivo `ToConfirm` ∧ fila `Pending` ∧ no en envío ∧ no vencida ∧ pedido sin ítem abierto en ninguna tanda |
+| `canResolve` | calculado | efectivo `ToConfirm` ∧ (factura `Unknown` ∨ factura por confirmar), igual que en `SiigoInvoiceDto`; una `Pending` de más de 24 h cuenta como `Unknown` (decidido el 2026-11-25) |
 
 Los `can*` existen porque la pantalla no ve `SendingSince` ni el reloj de 24 h: sin ellos tendría que adivinar.
 `SiigoInvoiceDto` (lista del pedido) suma igual **`awaitingConfirmation`**, **`canResend`** y **`canResolve`** (aditivos): hoy el frontend
 muestra toda `Pending` como «Enviando…».
+
+**`orderMarkFailed` en las filas del pedido** (precisión de la etapa contract, 2026-11-25): sin la ruta síncrona, lo calculan al leer las
+respuestas que devuelven esas filas (`GET …/siigo-invoice`, `/stamp` y `/resolve`). Va en `true` sólo en la fila `Order` vigente que existe
+en Siigo (`Created`, `Stamped` o `StampRejected`, con número) cuando el pedido no está marcado como facturado con ese número y ninguna tanda
+sin terminar lo tiene (ítem `Pending` o `Sending`): un envío en curso no muestra el aviso de paso. Si la marca no se puede leer (5 s de
+plazo), avisa, igual que la recuperación de una tanda (§4). La de flete va en `false`. «Generar» es una tanda de ese pedido, que sólo
+reintenta la marca.
+
+**`canResend` con el pedido en una tanda** (precisión del 2026-11-25): mientras una tanda tenga el pedido (ítem `Pending` o `Sending`),
+`canResend` va en `false` en las filas del pedido y en los ítems de cualquier tanda, porque una tanda nueva respondería 409
+`order_in_progress`. Un ítem `ToConfirm` de una tanda que todavía está en curso, cuyo pedido ninguna tiene, lo conserva en `true`. Se
+consulta una vez con los ids de los pedidos. `canResolve` no cambia.
 
 El ítem y `SiigoInvoiceDto` suman también **`missingAvailableAt`** (nullable): la hora desde la cual se acepta «No existe»
 (`LastUnansweredAt + 10 min`), `null` si ya se puede o si no aplica `canResolve`. La pantalla deshabilita «No existe» hasta esa hora.

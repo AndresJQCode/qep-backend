@@ -135,6 +135,7 @@ Lo verificado leyendo el código de `develop` (`c9282c9af`), y lo que cambia del
 | `SupportTicketUnassigned` | `support.ticket.unassigned-alert.v1` (nuevo) | los miembros elegidos por el tenant | sí |
 | `WholesaleOrderPendingApproval` | `quotations.order.created.v1` con `source == "Wholesale"`; se resuelve con `quotations.order.wholesale-approved.v1` y `…wholesale-cancelled.v1` | `advisorMemberId` del pedido | sí |
 | `ServiceChargesOverdue` | `billing.charges.overdue-digest.v1` (nuevo) | cada miembro que recibe el digest del día | sí |
+| `ServicePriceReviewsDue` | `billing.price-reviews.digest.v1` (nuevo, spec reajuste §6.6) | cada miembro que recibe el digest del día | sí |
 | `HrMedicalExamsDue` | `hr.medical-exams.due-digest.v1` (nuevo, spec 2026-11-23 §9) | cada miembro con `hr.medical.manage` | sí |
 | `HrExitExamRequired` | `hr.medical-exams.exit-required.v1` (nuevo, spec 2026-11-23 §9) | cada miembro con `hr.medical.manage` | sí |
 | — (`inboundMessageAlert`) | `IMessagingNotifier.InboundMessageAsync` | asignado, o el tenant con lectura de Mensajería | **no** (sólo en vivo) |
@@ -158,6 +159,9 @@ Reglas por tipo:
 - **`ServiceChargesOverdue`**: una entrada por miembro y día, «Tienes N cobros vencidos», sólo si `N > 0`, con los mismos
   destinatarios y el mismo reclamo del digest (`ServiceContractsReminderProcessor.SendDigestsAsync`, `DailyDigestStore.TryClaimAsync`).
   **[owner]**
+- **`ServicePriceReviewsDue`** (spec reajuste §6.6): una entrada por miembro y día, sólo si su digest trae revisiones de precio por
+  decidir o cobros retenidos (`dueCount + heldCount > 0`), con los mismos destinatarios y el mismo reclamo del digest. La llave es el
+  día (`billing-price-review:{runDate}`): una reentrega del mismo día no duplica.
 
 - **`HrMedicalExamsDue`** (spec 2026-11-23 §9): una entrada por miembro y día, «Tienes N exámenes médicos pendientes», sólo si `N > 0`
   (`N = ExitPending + NoExams + Overdue + DueSoon`), para quienes tienen `hr.medical.manage`. La llave es el día
@@ -266,7 +270,7 @@ actualicen la insignia.
 ```json
 {
   "id": "uuid",
-  "kind": "ConversationAssigned | ExportReady | ExportFailed | SupportCustomerReplied | SupportTicketUnassigned | WholesaleOrderPendingApproval | ServiceChargesOverdue | SupportTaskAssigned | SupportTicketAssigned | HrMedicalExamsDue | HrExitExamRequired",
+  "kind": "ConversationAssigned | ExportReady | ExportFailed | SupportCustomerReplied | SupportTicketUnassigned | WholesaleOrderPendingApproval | ServiceChargesOverdue | ServicePriceReviewsDue | SupportTaskAssigned | SupportTicketAssigned | HrMedicalExamsDue | HrExitExamRequired",
   "createdAt": "ISO 8601",
   "readAt": "ISO 8601 | null",
   "resolvedAt": "ISO 8601 | null",
@@ -286,6 +290,7 @@ genérico. `data` según `kind` (los nombres son contrato; `null` es explícito,
 | `SupportTicketUnassigned` | `{ ticketId, ticketNumber, thresholdHours }` |
 | `WholesaleOrderPendingApproval` | `{ orderId, orderNumber, resolution: "Approved" \| "Cancelled" \| null }` |
 | `ServiceChargesOverdue` | `{ overdueCount, runDate: "yyyy-MM-dd" }` |
+| `ServicePriceReviewsDue` | `{ dueCount, heldCount, runDate: "yyyy-MM-dd" }` |
 | `HrMedicalExamsDue` | `{ pendingCount, runDate: "yyyy-MM-dd" }` |
 | `HrExitExamRequired` | `{ employeeId, employeeName, dueDate: "yyyy-MM-dd" }` |
 
@@ -568,6 +573,7 @@ ingesta, la de Meta). Así la regla de 24 h (D-6) mira cuándo se publicó, y un
 | `support.ticket.customer-replied.v1` | `{ tenantId, ticketId, ticketNumber, assigneeMemberId, occurredAt }` | ticket |
 | `support.ticket.unassigned-alert.v1` | `{ tenantId, ticketId, ticketNumber, recipientMemberIds, thresholdHours, unassignedSince, occurredAt }` | ticket |
 | `billing.charges.overdue-digest.v1` | `{ tenantId, memberId, runDate, overdueCount, occurredAt }` | `{tenantId}:{memberId}:{runDate}` |
+| `billing.price-reviews.digest.v1` | `{ tenantId, memberId, runDate, dueCount, heldCount, occurredAt }` | `{tenantId}:{memberId}:{runDate}` |
 | `hr.medical-exams.due-digest.v1` | `{ tenantId, memberId, runDate, pendingCount, occurredAt }` | `{tenantId}:{memberId}:{runDate}` |
 | `hr.medical-exams.exit-required.v1` | `{ tenantId, memberId, employeeId, employeeName, dueDate, occurredAt }` | `{tenantId:N}:{memberId:N}:{contractId:N}` (los tres en 32 hex: con el formato `D` miden 110 y `correlation_id` es `varchar(100)`) |
 
@@ -579,7 +585,7 @@ Consumidores (todos en `Notifications.Infrastructure`, drenados por `Notificatio
 | `notifications.in-app.exports` | los cinco de exportación |
 | `notifications.in-app.support` | `support.ticket.customer-replied.v1`, `support.ticket.unassigned-alert.v1` |
 | `notifications.in-app.wholesale` | `quotations.order.created.v1`, `quotations.order.wholesale-approved.v1`, `quotations.order.wholesale-cancelled.v1` |
-| `notifications.in-app.billing` | `billing.charges.overdue-digest.v1` |
+| `notifications.in-app.billing` | `billing.charges.overdue-digest.v1`, `billing.price-reviews.digest.v1` |
 | `notifications.in-app.hr` | `hr.medical-exams.due-digest.v1`, `hr.medical-exams.exit-required.v1` |
 
 ## 13. Fallas, observabilidad, seguridad y despliegue

@@ -29,6 +29,10 @@ public interface IResourceRepository
     /// <summary>Los recursos del alcance, archivados incluidos, por nombre y luego por id.</summary>
     Task<IReadOnlyList<Resource>> ListAsync(Guid tenantId, ResourceScope scope, CancellationToken cancellationToken);
 
+    /// <summary>Los recursos de una sede, archivados incluidos, <b>con seguimiento</b>: archivar la sede los archiva y lo guarda en la misma
+    /// unidad de trabajo. <see cref="ListAsync"/> lee sin seguimiento y un cambio sobre lo que devuelve no llega a la base.</summary>
+    Task<IReadOnlyList<Resource>> ListByLocationForUpdateAsync(Guid tenantId, LocationId locationId, CancellationToken cancellationToken);
+
     /// <summary>Los recursos vinculados a una membresía: es de donde sale el alcance de quien no tiene «ver todas las agendas».</summary>
     Task<IReadOnlyList<Guid>> ListIdsByMemberAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
 

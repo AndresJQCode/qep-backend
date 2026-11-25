@@ -222,7 +222,8 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
 
         public async Task<IReadOnlyList<SiigoInvoiceDto>> List(CancellationToken? cancellationToken = null) =>
             await new GetSiigoInvoicesHandler(
-                Context, new AllModules(), new StubInvoices(Rows), UnitOfWork, new FixedClock(Now), Delivery, NullLogger<GetSiigoInvoicesHandler>.Instance)
+                Context, new AllModules(), new StubInvoices(Rows), UnitOfWork, new FixedClock(Now), Delivery, new NoOpenBatches(),
+                new MarkedOrders(), NullLogger<GetSiigoInvoicesHandler>.Instance)
                 .HandleAsync(new GetSiigoInvoicesQuery(TenantId, OrderId), cancellationToken ?? TestContext.Current.CancellationToken);
 
         public void AssertNothingCalled()
@@ -280,6 +281,47 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && invoiceIds.Contains(row.Id))]);
 
         public void Add(SiigoInvoice invoice) => throw new NotSupportedException();
+    }
+
+    /// <summary>Ninguna tanda tiene el pedido.</summary>
+    private sealed class NoOpenBatches : ISiigoInvoiceBatchRepository
+    {
+        public Task<Guid?> FindOpenBatchIdAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            Task.FromResult<Guid?>(null);
+
+        public void Add(SiigoInvoiceBatch batch) => throw new NotSupportedException();
+
+        public Task<SiigoInvoiceBatch?> FindAsync(Guid tenantId, Guid batchId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<Guid>> ListOpenOrderIdsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<(IReadOnlyList<SiigoInvoiceBatch> Items, int Total)> SearchAsync(
+            Guid tenantId, int page, int pageSize, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>Todo pedido lleva la marca de su factura.</summary>
+    private sealed class MarkedOrders : ISiigoOrderSource
+    {
+        public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
+
+        public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task MarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed record SentInvoice(Guid TenantId, Guid OrderId, string InvoiceNumber, decimal? InvoiceTotal, byte[] Pdf);

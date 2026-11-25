@@ -125,8 +125,10 @@ internal sealed record SeededSetup(CompanyRef Company, Guid SiteId, Guid Workpla
 
 internal static class PayrollApiSeeds
 {
-    // Los dos últimos dígitos del id deben ser distintos: el slug del tenant sale de ellos.
-    private static int _tenantCounter = 0x10;
+    // El contador es el último grupo completo del id (x12): con dos dígitos, pasado 0xff el Guid
+    // quedaba con un dígito de más. Arranca en 0x1000 para no chocar con los ids fijos del harness
+    // (…01, …02, …f0, …fe, …ff). El slug del tenant sale de ese grupo.
+    private static int _tenantCounter = 0x1000;
 
     public static readonly string[] AllPermissions =
     [
@@ -143,7 +145,7 @@ internal static class PayrollApiSeeds
     {
         fixture.Clock.UtcNow = PayrollApiFixture.DefaultNow;
         fixture.StripAssignmentsOf = null;
-        var idText = $"01900000-0000-7000-8000-0000000000{Interlocked.Increment(ref _tenantCounter):x2}";
+        var idText = $"01900000-0000-7000-8000-{Interlocked.Increment(ref _tenantCounter):x12}";
         await SeedTenantAsync(fixture.Factory, idText, modules);
         var payroll = CreateClient(fixture.Factory, SubjectId, idText, AllPermissions);
         var admin = CreateClient(fixture.Factory, SubjectId, idText, "companies.company.read", "companies.company.manage");

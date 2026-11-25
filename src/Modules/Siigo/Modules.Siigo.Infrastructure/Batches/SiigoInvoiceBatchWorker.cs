@@ -34,9 +34,6 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     /// envío.</summary>
     internal static readonly TimeSpan Lease = TimeSpan.FromMinutes(10);
 
-    // Lo más que la recuperación espera por la marca del pedido: en el apagado, el resultado tiene que alcanzar a guardarse.
-    private static readonly TimeSpan MarkReadTimeout = TimeSpan.FromSeconds(5);
-
     [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "Reading whether order {OrderId} carries its Siigo invoice failed; the batch item says the order could not be marked.")]
@@ -237,25 +234,15 @@ internal sealed partial class SiigoInvoiceBatchWorker(
     // confirmación el ítem avisa que el pedido no quedó marcado; reenviarlo lo marca sin crear otra factura. Que la lectura falle no
     // impide cerrar el pedido.
     private async Task<bool> IsOrderMarkedAsync(
-        IServiceProvider services, Guid tenantId, Guid orderId, string? number, CancellationToken cancellationToken)
-    {
-        if (number is null)
-        {
-            return false;
-        }
-
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(MarkReadTimeout);
-        try
-        {
-            return await services.GetRequiredService<ISiigoOrderSource>().IsMarkedInvoicedAsync(tenantId, orderId, number, limit.Token);
-        }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            LogMarkReadFailed(logger, exception, orderId);
-            return false;
-        }
-    }
+        IServiceProvider services, Guid tenantId, Guid orderId, string? number, CancellationToken cancellationToken) =>
+        number is not null
+        && await SiigoOrderMark.IsConfirmedAsync(
+            services.GetRequiredService<ISiigoOrderSource>(),
+            tenantId,
+            orderId,
+            number,
+            exception => LogMarkReadFailed(logger, exception, orderId),
+            cancellationToken);
 
     private async Task SaveOutcomeAsync(Claim claim, SiigoBatchItemOutcome outcome, CancellationToken cancellationToken)
     {

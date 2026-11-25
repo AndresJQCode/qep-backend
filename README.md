@@ -5508,7 +5508,7 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 
 ### Integración con Siigo
 
-Un pedido de QEP se factura en Siigo con un clic (spec `2026-11-18-integracion-siigo-design.md`): QEP arma la factura de venta
+Un pedido de QEP se factura en Siigo desde la pantalla, en segundo plano (spec `2026-11-18-integracion-siigo-design.md`): QEP arma la factura de venta
 con las líneas, los impuestos, las retenciones y los comprobantes de pago del pedido, la crea en Siigo y marca el pedido como
 facturado con su número (`FV-1-123`). Módulo `siigo` (depende de `orders`, no está en `DefaultForNewTenants`: se prende desde la
 consola de operador, como `pos`), esquema `siigo` (`settings`, los vínculos de impuestos, formas de pago y productos, e
@@ -5522,22 +5522,37 @@ que factura, impuestos, formas de pago y vínculos de productos. Los `PUT` lleva
 412). El asistente propone cada paso con lo que lee de Siigo (`/options/{lista}`) y el auto-vínculo casa variantes y productos por
 código, sin distinguir mayúsculas ni espacios.
 
-**Generar la factura.** `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (permiso `siigo.invoice.issue`, y el
-handler revalida tenant y permiso: 403, nunca 404). `GET …/preview` devuelve la factura armada, los faltantes y la propuesta de
-pagos sin llamar a Siigo.
+**Generar la factura.** Toda emisión es una tanda (spec `2026-11-24-siigo-facturacion-en-segundo-plano-design.md`), también la de un
+solo pedido: `POST /api/v1/tenants/{tenantId}/siigo/invoice-batches` con `orderIds` (de 1 a 50) y, sólo con un pedido, `payments`
+(`kind`, `proofId`, `siigoPaymentTypeId`). Permiso `siigo.invoice.issue`, y el handler revalida tenant y permiso: 403, nunca 404.
+Responde `202` y un worker factura cada pedido como la persona que pidió la tanda; el avance se lee con
+`GET …/siigo/invoice-batches/{batchId}` y todas las tandas con `GET …/siigo/invoice-batches`. Un pedido que ya está en una tanda sin
+terminar es `409 siigo.invoice_batch.order_in_progress`. La factura de un pedido se consulta y se atiende bajo
+`/api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (`GET`, `/availability`, `/preview`, `/{invoiceId}/pdf`,
+`/{invoiceId}/send-whatsapp`, `/stamp` y `/resolve`); esa ruta no genera facturas. `GET …/preview` devuelve la factura armada, los
+faltantes y la propuesta de pagos sin llamar a Siigo. Crear la factura espera a Siigo hasta 120 s; todo lo demás, 30 s.
+Cada fila que devuelven `GET`, `/stamp` y `/resolve` trae `orderMarkFailed`: va en `true` en la factura del pedido que existe en
+Siigo cuando el pedido no lleva su marca (o no se pudo leer) y ninguna tanda sin terminar lo tiene; otra tanda del pedido la completa
+sin crear otra factura. La de flete siempre va en `false`. Mientras una tanda sin terminar tenga el pedido, `canResend` va en `false`,
+en esas filas y en los ítems de las tandas.
 
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
-  `Rejected` y `Failed` arman una fila nueva. Una `Pending` de más de 24 h pasa a `Unknown` y la resuelve una persona
-  (`POST …/resolve` con `exists` o `missing`).
-- Si falta algo (variante sin vínculo, impuesto sin vínculo, cuenta sin forma de pago, cliente sin dato) responde
-  `422 siigo.invoice.not_ready` con `details.missing` y nada sale a Siigo.
+  `Rejected` y `Failed` arman una fila nueva.
+- Si no se sabe si Siigo creó la factura (timeout, red, 5xx, 429 o un error de servicio de Siigo), la fila queda por confirmar
+  (`Pending`) y el ítem `ToConfirm`: una persona la reenvía con otra tanda o la resuelve (`POST …/resolve` con `exists` o `missing`;
+  `missing` espera 10 minutos desde el último envío sin respuesta). No hay reintentos automáticos. Una `Pending` de más de 24 h pasa a
+  `Unknown` y sólo se resuelve. Mientras una tanda sin terminar tenga el pedido, `missing` es
+  `409 siigo.invoice_batch.order_in_progress`. La de flete no se resuelve mientras la del pedido siga abierta (`Pending` o
+  `Unknown`): `422 siigo.invoice.state_invalid`.
+- Si falta algo (variante sin vínculo, impuesto sin vínculo, cuenta sin forma de pago, cliente sin dato) el pedido sale `Skipped` en
+  la tanda con `siigo.invoice.not_ready` y los códigos en `missing`, y nada sale a Siigo.
 - Cada comprobante de pago del pedido es un pago de la factura; el saldo va a contraentrega o a crédito. Los `payments` suman el
   neto (con las retenciones ya descontadas).
 - **Cuadre de totales.** Un pedido cuyos totales no cuadran con los de Siigo no se factura. Antes de enviar, el armador compara
-  subtotal, IVA y total de los ítems con los del pedido (tolerancia de 1 peso: `422 siigo.invoice.totals_mismatch`); en Siigo, si
-  los pagos no suman, rechaza con `invalid_total_payments` y la fila queda `Rejected` con el total esperado en
-  `expectedPaymentsTotal`. **No se reintenta solo con el total que propone Siigo.**
+  subtotal, IVA y total de los ítems con los del pedido (tolerancia de 1 peso: el pedido sale `Skipped` con
+  `siigo.invoice.totals_mismatch`); en Siigo, si los pagos no suman, rechaza con `invalid_total_payments` y la fila queda
+  `Rejected` con el total esperado en `expectedPaymentsTotal`. **No se reintenta solo con el total que propone Siigo.**
 - «Enviar a la DIAN» nace **apagado** en cada conexión. Con el interruptor apagado la factura queda creada y sin emitir, y una
   persona la revisa en Siigo antes de prenderlo. Una factura emitida no se borra, y no hay empresa de pruebas de Siigo: es la única red.
 - El flete va como un ítem de la factura del pedido o, si la conexión lo pide (`freight_separate_invoice`), en su propia factura.
