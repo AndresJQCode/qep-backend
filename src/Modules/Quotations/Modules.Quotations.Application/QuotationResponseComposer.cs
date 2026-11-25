@@ -447,7 +447,8 @@ public sealed class QuotationResponseComposer(
         party.IdentificationType,
         party.Country,
         party.CityName,
-        ToRegionDto(party.RegionId, regionsById));
+        ToRegionDto(party.RegionId, regionsById),
+        party.PostalCode);
 
     // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
     // tiene el frontend y tiene que ser uno solo para los dos módulos. Null también igual que

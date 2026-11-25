@@ -158,4 +158,43 @@ public sealed class OrderPartyTests
     public void ACityNameLongerThanTheLimitIsRejected() =>
         Assert.Throws<QuotationsDomainException>(() => Party(
             Contact() with { Country = "ES", CityName = new string('x', QuotationPartyDetails.CityNameMaxLength + 1) }));
+
+    [Fact]
+    public void AShippingPartyKeepsTheTrimmedPostalCode()
+    {
+        var party = Party(Contact() with { Country = "ES", CityName = "Madrid", PostalCode = " 28013 " });
+
+        Assert.Equal("28013", party.PostalCode);
+        Assert.Equal("28013", party.ToDetails().PostalCode);
+    }
+
+    [Fact]
+    public void APostalCodeMakesTwoShippingPartiesDifferent() =>
+        Assert.NotEqual(
+            Party(Contact() with { PostalCode = "050021" }).ToDetails(),
+            Party(Contact() with { PostalCode = "050022" }).ToDetails());
+
+    [Fact]
+    public void ApplyingDetailsWithoutAPostalCodeClearsIt()
+    {
+        var party = Party(Contact() with { PostalCode = "050021" });
+
+        party.Apply(Contact());
+
+        Assert.Null(party.PostalCode);
+    }
+
+    [Fact]
+    public void AShippingPostalCodeLongerThanTheLimitIsRejectedWithItsField()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => Party(
+            Contact() with { PostalCode = new string('1', QuotationPartyDetails.PostalCodeMaxLength + 1) }));
+
+        Assert.Equal("quotations.party.postal_code_too_long", error.Code);
+        Assert.Contains("Parties.Shipping.PostalCode", error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void ABillingPartyNeverKeepsAPostalCode() =>
+        Assert.Null(Party(Contact() with { PostalCode = "050021" }, QuotationPartyRole.Billing).PostalCode);
 }

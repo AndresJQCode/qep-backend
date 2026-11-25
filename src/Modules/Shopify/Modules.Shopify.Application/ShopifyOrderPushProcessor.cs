@@ -33,7 +33,8 @@ public static class ShopifyPushFailureCodes
 /// vacío (los pedidos importados antes no lo tienen) ni los atributos.</item>
 /// <item>Dirección: la parte de QEP, con el nombre en <c>firstName</c> y la dirección en <c>address1</c>; la ciudad y el departamento
 /// con los nombres de QEP y su <c>provinceCode</c>; la empresa y el país del <b>último</b> snapshot, porque <c>orderUpdate</c>
-/// reemplaza la dirección entera (Review Focus 3).</item>
+/// reemplaza la dirección entera (Review Focus 3). El código postal (spec 2026-11-24) es el de la parte de QEP; sin él, el
+/// <c>zip</c> del último snapshot sólo si país y provincia de la parte son los del snapshot; si no, ninguno.</item>
 /// <item>Nota: <c>BuyerNotes</c> (vacía la borra en Shopify). Atributos: los de QEP o, sin corrección, los del último snapshot.</item>
 /// </list>
 /// Conexión ausente o no operativa → <c>Held</c> con <c>connection_missing</c>; token vencido (<c>AccessToken</c> nulo, lo refresca
@@ -107,16 +108,18 @@ public sealed class ShopifyOrderPushProcessor(
         {
             var names = await geography.DescribeCityAsync(party.DepartmentId, party.CityId, cancellationToken)
                 ?? throw new InvalidOperationException("The city of the shipping party is not in Geography.");
+            var provinceCode = ColombiaProvinceCodes.CodeFor(names.Department);
             address = new ShopifyAddressUpdate(
                 party.Name ?? string.Empty,
                 string.Empty,
                 party.Address ?? string.Empty,
                 string.Empty,
                 names.City,
-                ColombiaProvinceCodes.CodeFor(names.Department),
+                provinceCode,
                 Blank(latest.ShippingAddress?.CountryCode) ?? Colombia,
                 party.Phone ?? string.Empty,
-                Blank(latest.ShippingAddress?.Company));
+                Blank(latest.ShippingAddress?.Company),
+                Blank(party.PostalCode) ?? KeptZip(latest.ShippingAddress, order.ShippingCountry, provinceCode));
         }
 
         var setNote = push.Groups.Contains(ShopifyPushGroup.Note);
@@ -125,6 +128,16 @@ public sealed class ShopifyOrderPushProcessor(
             : null;
         return new ShopifyOrderUpdate(row.ShopifyOrderId, address, setNote, setNote ? order.BuyerNotes : null, attributes);
     }
+
+    // El zip que Shopify ya tiene sigue valiendo mientras la dirección siga en el mismo país y la misma provincia; en otra sería
+    // el de otra dirección. Sin provincia de un lado no se puede comprobar, y no viaja.
+    private static string? KeptZip(ShopifyAddress? latest, string? partyCountry, string? partyProvinceCode) =>
+        latest is not null
+        && partyProvinceCode is not null
+        && string.Equals(Blank(latest.CountryCode) ?? Colombia, Blank(partyCountry) ?? Colombia, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(Blank(latest.ProvinceCode), partyProvinceCode, StringComparison.OrdinalIgnoreCase)
+            ? Blank(latest.Zip)
+            : null;
 
     // Owner 2026-11-14: un motivo de la conexión no mata la corrección; queda retenida hasta que alguien la suelte.
     private async Task<ShopifyOrderUpdateResult> HoldAsync(ShopifyOrderPush push, string code, CancellationToken cancellationToken)

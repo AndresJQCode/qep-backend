@@ -774,6 +774,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
 
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("postal_code");
+
                     b.Property<Guid?>("RegionId")
                         .HasColumnType("uuid")
                         .HasColumnName("region_id");
@@ -1331,6 +1336,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
+
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("postal_code");
 
                     b.Property<Guid>("QuotationId")
                         .HasColumnType("uuid")

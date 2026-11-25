@@ -252,7 +252,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                 party.Email,
                 party.Address,
                 party.DepartmentId ?? throw new InvalidOperationException("A persisted shipping party always has a department."),
-                party.CityId ?? throw new InvalidOperationException("A persisted shipping party always has a city."));
+                party.CityId ?? throw new InvalidOperationException("A persisted shipping party always has a city."),
+                party.PostalCode);
 
     private static string Normalize(string? financialStatus) => financialStatus?.Trim().ToLowerInvariant() ?? string.Empty;
 

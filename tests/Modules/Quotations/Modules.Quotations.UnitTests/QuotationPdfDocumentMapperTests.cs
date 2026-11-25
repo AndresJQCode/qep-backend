@@ -456,6 +456,32 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal("Carrera 7", document.Billing.Location);
     }
 
+    // Spec 2026-11-24: el código postal va después de la dirección, en Colombia y fuera.
+    [Theory]
+    [InlineData("CO", null, "Zona Franca, 050021", "Zona Franca")]
+    [InlineData("ES", "Madrid", "Zona Franca, 050021, Madrid, ES", "Zona Franca, Madrid, ES")]
+    public void TheShippingLocationPrintsThePostalCodeAfterTheAddress(
+        string country, string? cityName, string expected, string withoutIt)
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega", null, null, null,
+            "Zona Franca", null, null, Country: country, CityName: cityName, PostalCode: "050021");
+
+        Assert.Equal(expected, Map(Response() with { Parties = [party] }).Shipping.Location);
+        Assert.Equal(withoutIt, Map(Response() with { Parties = [party with { PostalCode = null }] }).Shipping.Location);
+    }
+
+    // Sin dirección no queda un separador colgando.
+    [Fact]
+    public void APostalCodeWithoutAnAddressPrintsAlone()
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega", null, null, null,
+            null, null, null, Country: "CO", PostalCode: "050021");
+
+        Assert.Equal("050021", Map(Response() with { Parties = [party] }).Shipping.Location);
+    }
+
     [Fact]
     public void MapsTheShippingFields()
     {

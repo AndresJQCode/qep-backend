@@ -214,10 +214,11 @@ public static class QuotationPdfDocumentMapper
                 false,
                 party.Name ?? string.Empty,
                 Join(ContactSeparator, party.Phone, party.Email),
-                // Fuera de Colombia la parte guarda la ciudad como texto: se imprime tras la dirección con el país.
+                // El código postal va tras la dirección (spec 2026-11-24; sólo la entrega lo trae). Fuera de Colombia la
+                // parte guarda la ciudad como texto: se imprime después, con el país.
                 IsForeign(party)
-                    ? Join(LocationSeparator, party.Address, Join(LocationSeparator, party.CityName, party.Country))
-                    : party.Address ?? string.Empty,
+                    ? Join(LocationSeparator, party.Address, party.PostalCode, Join(LocationSeparator, party.CityName, party.Country))
+                    : Join(LocationSeparator, party.Address, party.PostalCode),
                 // Sólo la facturación guarda documento (la entrega lo descarta en el dominio); una
                 // fila anterior a la columna no tiene y queda vacío, que la plantilla no imprime.
                 role == QuotationPartyRole.Billing ? party.IdentificationNumber ?? string.Empty : string.Empty);
