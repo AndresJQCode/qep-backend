@@ -29,10 +29,13 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 }
 
 /// <summary>
-/// Spec 2026-11-18 §5.6: una factura <c>Unknown</c> (una <c>Pending</c> de más de 24 horas, o la que ya se sabe que no hay certeza) la
-/// resuelve una persona que miró en Siigo. <c>exists</c> con el número: la fila queda <c>Created</c> y el pedido se marca con ese número;
-/// <c>missing</c>: la fila pasa a <c>Failed</c> y el pedido queda libre para facturar de nuevo. Sólo desde <c>Unknown</c>
-/// (<c>siigo.invoice.state_invalid</c> si no). Audita quién la resolvió y cómo.
+/// Spec 2026-11-18 §5.6 y 2026-11-24 §3: una factura de la que no hay certeza la resuelve una persona que miró en Siigo, sin esperar a que
+/// pasen 24 horas: una <c>Unknown</c>, o una <c>Pending</c> que no se esté mandando (<c>siigo.invoice.state_invalid</c> si no).
+/// <c>exists</c> con el número: la fila queda <c>Created</c> y el pedido se marca con ese número. <c>missing</c>: la fila pasa a
+/// <c>Failed</c> y el pedido queda libre para facturar de nuevo; antes de los 10 minutos del último envío sin respuesta es 422
+/// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete sin
+/// resolver (<c>Pending</c> o <c>Unknown</c>) se descarta en el mismo guardado, porque nunca salió; al declarar que existe, no se toca.
+/// Audita quién la resolvió, cómo y desde qué estado.
 /// </summary>
 public sealed class ResolveSiigoInvoiceHandler(
     IExecutionContext executionContext,
@@ -59,7 +62,8 @@ public sealed class ResolveSiigoInvoiceHandler(
         await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
             await unitOfWork.LockOrderAsync(command.OrderId, cancellationToken);
-            row = (await invoices.ListByOrderAsync(command.TenantId, command.OrderId, cancellationToken))
+            var rows = await invoices.ListByOrderAsync(command.TenantId, command.OrderId, cancellationToken);
+            row = rows
                 .Where(value => value.Kind == kind && value.IsLive)
                 .OrderByDescending(value => value.CreatedAt)
                 .FirstOrDefault()
@@ -67,6 +71,7 @@ public sealed class ResolveSiigoInvoiceHandler(
 
             // La transición perezosa va primero: una Pending de más de un día es Unknown aunque nadie la haya leído todavía.
             row.ExpireIfStale(now);
+            var fromStatus = row.Status.ToString();
             if (command.Outcome == ResolveSiigoInvoiceValidator.Exists)
             {
                 row.ResolveExists(command.Number!, now);
@@ -74,9 +79,14 @@ public sealed class ResolveSiigoInvoiceHandler(
             else
             {
                 row.ResolveMissing(now);
+                if (row.Kind == SiigoInvoiceKind.Order)
+                {
+                    DiscardFreightThatNeverLeft(rows, now);
+                }
             }
 
-            SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceResolved, now, command.Outcome);
+            SiigoInvoiceSupport.Audit(
+                auditRecorder, executionContext, row, SiigoAuditActions.InvoiceResolved, now, command.Outcome, fromStatus);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
@@ -87,6 +97,17 @@ public sealed class ResolveSiigoInvoiceHandler(
             await orders.MarkInvoicedAsync(command.TenantId, command.OrderId, row.Number!, SiigoInvoiceSupport.ExternalIdOf(row), memberId, cancellationToken);
         }
 
-        return SiigoInvoiceDto.From(row);
+        return SiigoInvoiceDto.From(row, now);
+    }
+
+    // La de flete sólo sale después de que la del pedido existe, y acá la del pedido estaba sin resolver: la de flete sin resolver nunca
+    // salió, aunque tenga anotado un envío sin respuesta o ya haya pasado a Unknown. Si siguiera viva, bloquearía el pedido.
+    private static void DiscardFreightThatNeverLeft(IEnumerable<SiigoInvoice> rows, DateTimeOffset now)
+    {
+        foreach (var freight in rows.Where(value => value.Kind == SiigoInvoiceKind.Freight && value.IsOpen))
+        {
+            freight.MarkFailed(
+                "siigo.invoice.order_rejected", "The order invoice was declared missing, so the freight invoice was not sent.", now);
+        }
     }
 }

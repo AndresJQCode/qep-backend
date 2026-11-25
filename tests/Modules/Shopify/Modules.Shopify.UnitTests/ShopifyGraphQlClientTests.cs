@@ -535,6 +535,7 @@ public sealed class ShopifyGraphQlQueryContractTests
         ("provinceCode", _) => "ANT",
         ("countryCodeV2", _) => "CO",
         ("company", _) => "1036000111",
+        ("zip", _) => "050021",
         ("key", _) => "documento",
         ("value", _) => "1036000111",
         ("sku", _) => "CAM-001",

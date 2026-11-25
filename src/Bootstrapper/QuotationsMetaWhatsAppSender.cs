@@ -46,7 +46,7 @@ internal sealed class QuotationsMetaWhatsAppSender(
                 WhatsAppTemplateValues.Total(message.Total, message.Currency, message.NumberFormat),
                 WhatsAppTemplateValues.ValidUntil(message.ValidUntil),
                 document,
-                WhatsAppTemplateValues.DocumentFileName(message.OrderNumber)),
+                WhatsAppTemplateValues.DocumentFileName(message.OrderNumber, message.Language)),
             cancellationToken);
 
         if (result is not QuotationTemplateSendResult.Sent)

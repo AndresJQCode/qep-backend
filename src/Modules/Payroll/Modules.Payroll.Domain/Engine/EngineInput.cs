@@ -52,4 +52,5 @@ public sealed record EngineInput(
     IReadOnlyList<IncomeInput> Incomes,
     IReadOnlyList<DeductionInput> Deductions,
     IReadOnlyList<RecurringInput> Recurring,
-    MonthAccumulators Prior);
+    MonthAccumulators Prior,
+    IReadOnlyList<VacationInput> Vacations);

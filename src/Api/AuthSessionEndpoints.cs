@@ -184,7 +184,11 @@ public sealed record ActiveTenantResponse(
     string? Country,
     string? PersonTypeRequirement,
     IReadOnlyList<SessionPriceRoundingResponse> PriceRoundings,
-    SessionCustomerFieldPolicyResponse? CustomerFieldPolicy);
+    SessionCustomerFieldPolicyResponse? CustomerFieldPolicy,
+    /// <summary>El idioma **efectivo** de la persona en este tenant (`es-419` | `es-ES`, spec
+    /// 2026-11-22): el suyo si eligió, si no el del tenant. Viaja en la sesión porque la SPA elige el
+    /// diccionario antes de la primera pintura, y `cashier` no puede leer `/settings`.</summary>
+    string Language);
 
 /// <summary>The effective customer field policy of a tenant: when the document and the city are required.</summary>
 public sealed record SessionCustomerFieldPolicyResponse(

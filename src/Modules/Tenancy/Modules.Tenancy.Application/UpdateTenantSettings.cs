@@ -21,7 +21,9 @@ public sealed record UpdateTenantSettingsCommand(
     // Null keeps the stored requirement, same deployment window as Country (spec 2026-10-26).
     string? PersonTypeRequirement = null,
     // Null keeps the stored policy; present means all four flags (spec 2026-11-09 6.7).
-    CustomerFieldPolicyInput? CustomerFieldPolicy = null) : ICommand<TenantSettingsDto>;
+    CustomerFieldPolicyInput? CustomerFieldPolicy = null,
+    // Null keeps the stored language, same deployment window as Country (spec 2026-11-22, i18n).
+    string? Language = null) : ICommand<TenantSettingsDto>;
 
 public sealed class UpdateTenantSettingsValidator
     : AbstractValidator<UpdateTenantSettingsCommand>
@@ -39,6 +41,9 @@ public sealed class UpdateTenantSettingsValidator
         RuleFor(command => command.Country).MaximumLength(2);
         // Only the column limit: an unknown value is a domain rule (PersonTypeRequirementPolicy.Parse).
         RuleFor(command => command.PersonTypeRequirement).MaximumLength(20);
+        // Only the column limit: a value outside the catalogue is a domain rule, and its code
+        // (tenancy.settings.language.invalid) is what the settings form maps to the field.
+        RuleFor(command => command.Language).MaximumLength(10);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
 
         // If the policy comes, all four flags come: a missing one must not read as false.
@@ -109,7 +114,8 @@ public sealed class UpdateTenantSettingsHandler(
                 ? PersonTypeRequirementPolicy.Parse(requirement)
                 : tenant.PersonTypeRequirement,
             clock.UtcNow,
-            command.CustomerFieldPolicy?.ToDomain());
+            command.CustomerFieldPolicy?.ToDomain(),
+            command.Language);
 
         if (!changed)
         {

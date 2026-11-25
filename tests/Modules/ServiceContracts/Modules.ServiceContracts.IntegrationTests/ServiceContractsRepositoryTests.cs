@@ -300,15 +300,15 @@ public sealed class ServiceContractsRepositoryTests
 
     private static CustomerMessage Message(
         Guid customerId, DateOnly runDate, MessageDeliveryStatus status, DateTimeOffset attemptedAt) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = Tenant,
-        CustomerId = customerId,
-        RunDate = runDate,
-        Kind = CustomerMessageKind.Reminder,
-        Channel = BillingChannel.WhatsApp,
-        Status = status,
-        ClaimedUntil = attemptedAt.AddMinutes(5),
-        AttemptedAt = attemptedAt,
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = Tenant,
+            CustomerId = customerId,
+            RunDate = runDate,
+            Kind = CustomerMessageKind.Reminder,
+            Channel = BillingChannel.WhatsApp,
+            Status = status,
+            ClaimedUntil = attemptedAt.AddMinutes(5),
+            AttemptedAt = attemptedAt,
+        };
 }

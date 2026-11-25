@@ -13,6 +13,69 @@ public sealed class IbcRuleTests
         return IbcRule.Compute(input, chain.Worked, chain.Salary.Line.Amount, chain.Month);
     }
 
+    private static IbcOutcome IbcWithVacations(EngineInput input)
+    {
+        var chain = EngineTestData.Earnings(input);
+        return IbcRule.Compute(input, chain.Worked, chain.Vacations, chain.Salary.Line.Amount, chain.Month);
+    }
+
+    private static EngineInput WithVacation(DateOnly periodDay, MonthAccumulators prior, Func<VacationInput, VacationInput>? adjust = null)
+    {
+        var vacation = EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), paidHere: false);
+        return EngineTestData.Input(periodDay, 3_000_000m) with
+        {
+            Prior = prior,
+            Vacations = [adjust?.Invoke(vacation) ?? vacation],
+        };
+    }
+
+    [Fact]
+    public void TheVacationDaysUseThePreviousIbc()
+    {
+        var outcome = IbcWithVacations(WithVacation(new DateOnly(2026, 12, 1), MonthAccumulators.Empty));
+
+        Assert.Equal(1_500_000m, outcome.SocialSecurityIbc);
+        Assert.Equal(1_300_000m, outcome.ArlBase);
+        Assert.Equal(1_500_000m, outcome.ParafiscalBase);
+        Assert.Equal(1_500_000m, outcome.Line.Amount);
+        Assert.Contains(outcome.Line.Trace.Inputs, item => item.Name == "IBC anterior a las vacaciones" && Equals(item.Value, 3_000_000m));
+        Assert.Contains(outcome.Line.Trace.Inputs, item => item.Name == "Días de vacaciones del mes" && Equals(item.Value, 2));
+        Assert.Contains(outcome.Line.Trace.Inputs, item => item.Name == "Parte de vacaciones" && Equals(item.Value, 200_000m));
+    }
+
+    [Fact]
+    public void TheSecondHalfCountsTheFirstHalfsVacationDays()
+    {
+        var prior = MonthAccumulators.Empty with { WorkedDays = 13, SalaryRaw = 1_300_000m, Salary = 1_300_000m };
+
+        var outcome = IbcWithVacations(WithVacation(new DateOnly(2026, 12, 16), prior));
+
+        Assert.Equal(3_000_000m, outcome.SocialSecurityIbc);
+        Assert.Equal(1_300_000m, outcome.ArlBase);
+        Assert.Equal(3_000_000m, outcome.ParafiscalBase);
+    }
+
+    [Fact]
+    public void FallbackSalaryNote()
+    {
+        var outcome = IbcWithVacations(WithVacation(
+            new DateOnly(2026, 12, 1),
+            MonthAccumulators.Empty,
+            vacation => vacation with { PreviousIbcSource = VacationIbcSource.Salary }));
+
+        Assert.Equal("Sin IBC del mes anterior en QEP: se usa el salario", outcome.Line.Trace.Note);
+    }
+
+    [Fact]
+    public void WithoutVacationsAllThreeBasesAgree()
+    {
+        var outcome = IbcWithVacations(EngineTestData.Input(new DateOnly(2026, 11, 1)));
+
+        Assert.Equal(outcome.SocialSecurityIbc, outcome.ArlBase);
+        Assert.Equal(outcome.SocialSecurityIbc, outcome.ParafiscalBase);
+        Assert.DoesNotContain(outcome.Line.Trace.Inputs, item => item.Name == "Parte de vacaciones");
+    }
+
     [Fact]
     public void WithoutNonSalaryTheIbcIsTheSalaryEarnings()
     {

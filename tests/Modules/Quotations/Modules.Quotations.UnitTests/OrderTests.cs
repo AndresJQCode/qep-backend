@@ -181,7 +181,7 @@ public sealed class OrderTests
         });
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation,null,
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal(PartyPersonType.Natural, order.Billing?.PersonType);
@@ -399,7 +399,7 @@ public sealed class OrderTests
         var quotation = ConvertedQuotation();
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation,"Pago verificado",
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, "Pago verificado",
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal((OrderSource.Quotation, (QuotationId?)quotation.Id), (order.Source, order.QuotationId));
@@ -413,10 +413,20 @@ public sealed class OrderTests
     }
 
     [Fact]
+    public void FromQuotationCopiesTheShippingPostalCode()
+    {
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), null,
+            ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
+
+        Assert.Equal("050021", order.Shipping!.PostalCode);
+    }
+
+    [Fact]
     public void FromQuotationInheritsTheQuotationNotesWhenTheRequestOmitsThem()
     {
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(),null,
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), null,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Equal("Entregar en portería", order.Notes);
@@ -428,7 +438,7 @@ public sealed class OrderTests
     public void FromQuotationWithEmptyNotesLeavesTheOrderWithoutNotes(string notes)
     {
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(),notes,
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), notes,
             ConvertedBy, [], Now, orderDate: DateOnly.FromDateTime(Now.UtcDateTime));
 
         Assert.Null(order.Notes);
@@ -447,6 +457,7 @@ public sealed class OrderTests
                 Address = "Cl 1",
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
+                PostalCode = "050021",
             }),
             Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], MunicipalContext.None, Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);

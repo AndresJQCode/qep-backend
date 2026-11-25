@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Modules.Scheduling.Domain;
 using Modules.Tenancy.Application;
 
@@ -19,8 +20,9 @@ public sealed class AppointmentCancellation(
     ISchedulingUnitOfWork unitOfWork)
 {
     public async Task CancelAsync(
-        Guid tenantId, Appointment appointment, string? reason, bool byClient, SchedulingActor actor, CancellationToken cancellationToken)
+        Guid tenantId, Appointment appointment, string? reason, bool byClient, SchedulingActor actor, long? expectedVersion, CancellationToken cancellationToken)
     {
+        var readBeforeTheLock = (appointment.ResourceId, appointment.StartsAt, appointment.LocationId);
         var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
 
         // The cutoff only matters for an appointment that can still be cancelled: a closed one answers invalid_transition on its own.
@@ -41,6 +43,14 @@ public sealed class AppointmentCancellation(
         // The appointment was read before the lock: whoever held it may have cancelled or moved it. Read it again so a closed one answers
         // invalid_transition below instead of releasing a seat that is already free.
         await appointments.RefreshAsync(appointment, cancellationToken);
+        EnsureNotChanged(appointment, expectedVersion);
+
+        // The cutoff used the start read before the lock, and the lock was taken on the resource read then. If the move landed in between,
+        // both decisions are stale: the caller re-reads and decides again.
+        if ((appointment.ResourceId, appointment.StartsAt, appointment.LocationId) != readBeforeTheLock)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The appointment changed after it was read.");
+        }
 
         var session = await sessions.FindAsync(tenantId, appointment.SessionId, cancellationToken)
             ?? throw new InvalidOperationException($"The session of appointment '{appointment.Id.Value}' does not exist.");
@@ -53,5 +63,15 @@ public sealed class AppointmentCancellation(
             appointment.Id.Value, string.IsNullOrWhiteSpace(reason) ? ["status"] : ["status", "cancelReason"], now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>The human path: the version the screen loaded (If-Match) must still be the one under the lock. The refresh reloads the version too, so a
+    /// write that does not move the appointment (a confirmation) would otherwise go unnoticed. The channel path has no If-Match (<c>null</c>).</summary>
+    internal static void EnsureNotChanged(Appointment appointment, long? expectedVersion)
+    {
+        if (expectedVersion is { } expected)
+        {
+            SchedulingIfMatch.EnsureVersion(appointment.Version, expected);
+        }
     }
 }

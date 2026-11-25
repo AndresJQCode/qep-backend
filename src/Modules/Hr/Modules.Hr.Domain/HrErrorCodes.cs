@@ -53,6 +53,15 @@ public static class HrErrorCodes
     public const string FileInvalid = "hr.file.invalid";
     public const string FileRejected = "hr.file.rejected";
 
+    // Exámenes médicos ocupacionales (spec 2026-11-23 §7.3). `not_found` es 404 y está en HrNotFound; el resto es 422, ninguno es conflicto.
+    public const string MedicalExamNotFound = "hr.medical_exam.not_found";
+    public const string MedicalExamDuplicate = "hr.medical_exam.duplicate";
+    public const string MedicalExamFutureDate = "hr.medical_exam.future_date";
+    public const string MedicalExamRestrictionsUntilInvalid = "hr.medical_exam.restrictions_until_invalid";
+    public const string MedicalExamNoPendingExit = "hr.medical_exam.no_pending_exit";
+    public const string MedicalExamStatusInvalid = "hr.medical_exam.status_invalid";
+    public const string ExamFrequencyInvalid = "hr.settings.exam_frequency_invalid";
+
     // 422, importación por Excel (Tarea 10): errores de archivo y confirmación.
     public const string ImportFileRequired = "hr.import.file_required";
     public const string ImportExtensionInvalid = "hr.import.extension_invalid";
@@ -148,6 +157,24 @@ public static class HrErrorCodes
         public const string RetirementReasonInvalid = "hr.import.row.retirement_reason_invalid";
         public const string TextTooLong = "hr.import.row.text_too_long";
         public const string BelowMinimum = "hr.import.row.below_minimum";
+    }
+
+    /// <summary>
+    /// Row codes of the medical exam history import (<c>hr.medical_exam.import.row.*</c>, spec 2026-11-23 §8): they travel in the
+    /// analysis, never as an exception. The file-level errors reuse the <c>hr.import.*</c> codes of the employee import.
+    /// </summary>
+    public static class MedicalExamImportRow
+    {
+        public const string DocumentTypeInvalid = "hr.medical_exam.import.row.document_type_invalid";
+        public const string DocumentNumberRequired = "hr.medical_exam.import.row.document_number_required";
+        public const string EmployeeNotFound = "hr.medical_exam.import.row.employee_not_found";
+        public const string ExamTypeInvalid = "hr.medical_exam.import.row.exam_type_invalid";
+        public const string ExamDateInvalid = "hr.medical_exam.import.row.exam_date_invalid";
+        public const string ExamDateInFuture = "hr.medical_exam.import.row.exam_date_in_future";
+        public const string RestrictionsUntilInvalid = "hr.medical_exam.import.row.restrictions_until_invalid";
+        public const string TextTooLong = "hr.medical_exam.import.row.text_too_long";
+        public const string Duplicate = "hr.medical_exam.import.row.duplicate";
+        public const string DuplicatedInFile = "hr.medical_exam.import.row.duplicated_in_file";
     }
 
     /// <summary>Los seis que se responden 409 (<c>ResourceConflictException</c>): el resto de los de dominio es 422.</summary>

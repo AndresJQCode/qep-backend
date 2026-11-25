@@ -59,8 +59,12 @@ public static class SiigoErrorCodes
     /// <summary>409: el índice único parcial de <c>siigo.invoices</c> (una factura vigente por pedido y tipo).</summary>
     public const string InvoiceAlreadyExists = "siigo.invoice.already_exists";
 
-    /// <summary>422: la factura no está en el estado que la acción exige (resolver sólo desde <c>Unknown</c>, estampar sólo una creada).</summary>
+    /// <summary>422: la factura no está en el estado que la acción exige (resolver sólo desde <c>Unknown</c> o una <c>Pending</c> que no se
+    /// esté mandando, estampar sólo una creada).</summary>
     public const string InvoiceStateInvalid = "siigo.invoice.state_invalid";
+
+    /// <summary>422: se declaró que la factura no existe antes de tiempo; <c>details.availableAt</c> dice desde cuándo se puede.</summary>
+    public const string InvoiceResolveTooEarly = "siigo.invoice.resolve_too_early";
 
     /// <summary>404: el pedido no tiene factura de Siigo de ese tipo.</summary>
     public const string InvoiceNotFound = "siigo.invoice.not_found";
@@ -80,6 +84,16 @@ public static class SiigoErrorCodes
     /// <summary>Siigo falló (5xx) o no se pudo llamar por algo que el tenant no puede corregir (configuración del servidor).</summary>
     public const string InvoiceUnavailable = "siigo.invoice.unavailable";
 
+    /// <summary>Siigo contestó un error de servicio (<c>documents_service</c>, <c>general_service</c>…): la factura no salió por una caída de
+    /// Siigo, no por la plataforma ni por los datos del pedido. Reintenta en unos minutos.</summary>
+    public const string InvoiceSiigoService = "siigo.invoice.siigo_service";
+
+    /// <summary>El envío se cortó sin registrar resultado (el proceso murió o se redesplegó): no se sabe si la factura salió.</summary>
+    public const string InvoiceInterrupted = "siigo.invoice.interrupted";
+
+    /// <summary>Una persona declaró que la factura por confirmar no existe en Siigo (lo dice la tanda que la había dejado así).</summary>
+    public const string InvoiceResolvedMissing = "siigo.invoice.resolved_missing";
+
     /// <summary>404: la falla de llamada a Siigo que se pide no existe en el tenant (o ya expiró a los 7 días).</summary>
     public const string CallFailureNotFound = "siigo.call_failure.not_found";
 
@@ -94,4 +108,7 @@ public static class SiigoErrorCodes
 
     /// <summary>El pedido de una tanda no se facturó porque quien la pidió ya no tiene permiso o membresía al procesarlo.</summary>
     public const string InvoiceBatchForbidden = "siigo.invoice_batch.forbidden";
+
+    /// <summary>409: un pedido ya está en una tanda sin terminar; <c>details.orderIds</c> dice cuáles.</summary>
+    public const string InvoiceBatchOrderInProgress = "siigo.invoice_batch.order_in_progress";
 }

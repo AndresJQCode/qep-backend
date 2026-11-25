@@ -13,8 +13,14 @@ public static class RecurringConceptRule
     private const string Formula =
         "redondeo al peso(mínimo entre el valor del período y el tope restante); el valor proporcional es valor × días trabajados ÷ 15";
 
-    public static RecurringOutcome Compute(EngineInput input, WorkedDays worked)
+    public static RecurringOutcome Compute(EngineInput input, WorkedDays worked) =>
+        Compute(input, worked, VacationDaysOutcome.None);
+
+    public static RecurringOutcome Compute(EngineInput input, WorkedDays worked, VacationDaysOutcome vacations)
     {
+        // Owner ruling (2026-11-23): a proportional concept follows the days actually worked, so vacation days do not pay it.
+        var workedDays = worked.Days - vacations.Days;
+
         var incomeLines = new List<PayrollLine>();
         var deductionLines = new List<PayrollLine>();
         var salaryIncome = 0m;
@@ -28,7 +34,7 @@ public static class RecurringConceptRule
                 throw new InvalidOperationException("A recurring concept is an income or a deduction, never overtime.");
             }
 
-            var value = recurring.Mode == RecurringMode.Proportional ? recurring.Amount * worked.Days / 15m : recurring.Amount;
+            var value = recurring.Mode == RecurringMode.Proportional ? recurring.Amount * workedDays / 15m : recurring.Amount;
             if (recurring.RemainingCap is { } remaining)
             {
                 value = Math.Min(value, remaining);
@@ -45,7 +51,7 @@ public static class RecurringConceptRule
             {
                 new("Valor del concepto", recurring.Amount),
                 new("Modo", recurring.Mode.ToString()),
-                new("Días trabajados", worked.Days),
+                new("Días trabajados", workedDays),
             };
             if (recurring.RemainingCap is { } cap)
             {

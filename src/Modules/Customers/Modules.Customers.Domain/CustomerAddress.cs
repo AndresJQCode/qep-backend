@@ -71,6 +71,10 @@ public sealed class CustomerAddress
     /// </summary>
     public string? CityName { get; private set; }
 
+    /// <summary>La region (provincia) de una direccion de afuera, FK blanda a <c>geography.regions</c>.
+    /// <c>null</c> en Colombia; la base lo respalda con <c>CK_customer_addresses_city_lane</c>.</summary>
+    public Guid? RegionId { get; private set; }
+
     /// <summary>La que la cotizacion propone por defecto. El agregado garantiza que haya
     /// exactamente una mientras el cliente tenga direcciones; la base lo respalda con un indice
     /// unico parcial.</summary>
@@ -96,6 +100,7 @@ public sealed class CustomerAddress
         Country = normalized.Country;
         CityId = normalized.CityId;
         CityName = normalized.CityName;
+        RegionId = normalized.RegionId;
         UpdatedAt = occurredAt;
     }
 
@@ -139,6 +144,9 @@ public sealed record CustomerAddressDetails
     /// <summary>Solo fuera de Colombia; en <c>CO</c> debe ser <c>null</c>.</summary>
     public string? CityName { get; init; }
 
+    /// <summary>Solo fuera de Colombia; en <c>CO</c> se rechaza. Ver <see cref="CustomerContactInfo.RegionId"/>.</summary>
+    public Guid? RegionId { get; init; }
+
     public string? Phone { get; init; }
 
     internal CustomerAddressDetails Normalized()
@@ -146,17 +154,18 @@ public sealed record CustomerAddressDetails
         var country = NormalizeCountry(Country);
         var cityName = NormalizeCityName(CityName);
         var cityId = EnsureCityLane(country, CityId, cityName);
+        var regionId = EnsureRegionLane(country, RegionId);
 
         return new()
         {
-        Name = NormalizeRequired(
+            Name = NormalizeRequired(
             Name,
             NameMaxLengthOf(),
             "customers.address.name_required",
             "The address name is required.",
             "customers.address.name_too_long",
             $"The address name cannot exceed {CustomerAddress.NameMaxLength} characters."),
-        Address = NormalizeRequired(
+            Address = NormalizeRequired(
             Address,
             CustomerAddress.AddressMaxLength,
             "customers.address.address_required",
@@ -166,6 +175,7 @@ public sealed record CustomerAddressDetails
             Country = country,
             CityId = cityId,
             CityName = cityName,
+            RegionId = regionId,
             Phone = NormalizeOptional(Phone)
         };
     }
@@ -227,6 +237,22 @@ public sealed record CustomerAddressDetails
             ? throw new CustomersDomainException(
                 "customers.address.city_required", "The address city is required.")
             : null;
+    }
+
+    // La region solo existe fuera de Colombia, que deriva el departamento de la ciudad. Guid.Empty
+    // es un id roto y cuenta como ausente.
+    private static Guid? EnsureRegionLane(string country, Guid? regionId)
+    {
+        if (regionId is null || regionId == Guid.Empty)
+        {
+            return null;
+        }
+
+        return country == Customer.ColombiaCountryCode
+            ? throw new CustomersDomainException(
+                "customers.address.region_lane_invalid",
+                "A Colombian address takes its region from the city, not from a region id.")
+            : regionId;
     }
 
     private static CustomersDomainException LaneInvalid(string message) =>

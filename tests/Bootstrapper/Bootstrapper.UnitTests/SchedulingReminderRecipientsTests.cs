@@ -94,7 +94,11 @@ public sealed class SchedulingReminderRecipientsTests
     [Fact]
     public async Task ACustomerWithoutAPhoneComesBackWithoutIt()
     {
-        var recipient = await FindAsync(NewCustomer(phone: null));
+        // La ficha completa exige teléfono; sin él sólo existe la incompleta, como la de una venta externa.
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Ana Pérez", phone: null, "ana@correo.co", "CO", Now, new PassThroughPhones());
+
+        var recipient = await FindAsync(customer);
 
         Assert.Null(recipient!.PhoneE164);
     }

@@ -8,8 +8,18 @@ public static class TransportAllowanceRule
     private const string Formula =
         "redondeo al peso(auxilio ÷ 30 × días trabajados, acumulado del mes) − lo pagado en la primera quincena; 0 si el ingreso del mes supera el tope, sin descontar lo pagado";
 
-    public static TransportOutcome Compute(EngineInput input, WorkedDays worked, SalaryOutcome salary, MonthIncome month)
+    public static TransportOutcome Compute(EngineInput input, WorkedDays worked, SalaryOutcome salary, MonthIncome month) =>
+        Compute(input, worked, salary, month, VacationDaysOutcome.None);
+
+    public static TransportOutcome Compute(
+        EngineInput input,
+        WorkedDays worked,
+        SalaryOutcome salary,
+        MonthIncome month,
+        VacationDaysOutcome vacations)
     {
+        // No vacation day accrues the allowance (Ley 15/1959), paid in advance or not: only the days worked count.
+        var workedDays = worked.Days - vacations.Days;
         var legal = input.Legal;
         var connectivity = salary.Teleworker
             && legal.ConnectivityAllowanceSince is { } since
@@ -22,7 +32,7 @@ public static class TransportAllowanceRule
         var paidBefore = input.Prior.Transport;
         var inputs = new List<TraceInput>
         {
-            new("Días trabajados", worked.Days),
+            new("Días trabajados", workedDays),
             new("Ingreso para el tope", month.TransportCapIncome),
             new("Tope", cap),
             new("Pagado en la primera quincena", paidBefore),
@@ -33,7 +43,7 @@ public static class TransportAllowanceRule
 
         // The raw accrues by days whether or not the month qualifies (decision 2): the second half settles the whole month, so a
         // first half over the cap still leaves its days for a month that ends under it.
-        var raw = legal.TransportAllowance.Value * worked.Days / 30m;
+        var raw = legal.TransportAllowance.Value * workedDays / 30m;
 
         if (month.TransportCapIncome > cap)
         {

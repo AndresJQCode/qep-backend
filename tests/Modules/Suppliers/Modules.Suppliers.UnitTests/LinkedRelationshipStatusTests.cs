@@ -166,6 +166,10 @@ public sealed class LinkedRelationshipStatusTests
         public Task<SupplierCityRef?> FindCityAsync(Guid cityId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyDictionary<Guid, SupplierRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, SupplierRegionRef>>(new Dictionary<Guid, SupplierRegionRef>());
+
         public Task<IReadOnlyDictionary<Guid, SupplierCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, SupplierCityRef>>(new Dictionary<Guid, SupplierCityRef>());

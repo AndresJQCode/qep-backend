@@ -26,6 +26,32 @@ public sealed class AgentEditorBuilderTests
     }
 
     [Fact]
+    public async Task TheEditorNamesTheTemplateTheAgentCameFrom()
+    {
+        var templates = new FakeTemplates(new SystemAgentTemplate("asistente-de-citas", "Asistente de citas", "Reserva citas.", [], "{}"));
+
+        var editor = await Builder(new FakeConnections(), templates: templates).BuildAsync(AgentFromTemplate(), Ct);
+
+        Assert.Equal(("asistente-de-citas", "Asistente de citas"), (editor.SourceTemplateId, editor.SourceTemplateName));
+    }
+
+    [Fact]
+    public async Task ATemplateThatNoLongerExistsKeepsTheIdWithoutAName()
+    {
+        var editor = await Builder(new FakeConnections()).BuildAsync(AgentFromTemplate(), Ct);
+
+        Assert.Equal(("asistente-de-citas", (string?)null), (editor.SourceTemplateId, editor.SourceTemplateName));
+    }
+
+    [Fact]
+    public async Task AnAgentWithoutATemplateHasNoSource()
+    {
+        var editor = await Builder(new FakeConnections()).BuildAsync(NewAgent(), Ct);
+
+        Assert.Equal(((string?)null, (string?)null), (editor.SourceTemplateId, editor.SourceTemplateName));
+    }
+
+    [Fact]
     public async Task TheEditorOnlyReturnsLiveConnections()
     {
         var liveId = Guid.CreateVersion7();
@@ -182,7 +208,8 @@ public sealed class AgentEditorBuilderTests
         FakeAdvisors? advisors = null,
         FakeAiProviderCredentials? credentials = null,
         FakeBillingAccounts? billing = null,
-        FakeScheduling? scheduling = null) =>
+        FakeScheduling? scheduling = null,
+        ISystemAgentTemplateCatalog? templates = null) =>
         new(
             connections,
             new FakeSlots(),
@@ -191,7 +218,19 @@ public sealed class AgentEditorBuilderTests
             advisors ?? new FakeAdvisors(canQuote: true),
             credentials ?? new FakeAiProviderCredentials([]),
             billing ?? new FakeBillingAccounts(),
-            scheduling ?? new FakeScheduling(new AgentSchedulingReadiness(true, 1)));
+            scheduling ?? new FakeScheduling(new AgentSchedulingReadiness(true, 1)),
+            templates ?? new FakeTemplates());
+
+    private sealed class FakeTemplates(params SystemAgentTemplate[] templates) : ISystemAgentTemplateCatalog
+    {
+        public IReadOnlyList<SystemAgentTemplate> All => templates;
+
+        public SystemAgentTemplate? Find(string id) => templates.FirstOrDefault(template => string.Equals(template.Id, id, StringComparison.Ordinal));
+    }
+
+    private static Agent AgentFromTemplate() =>
+        Agent.Create(
+            Tenant, "Citas", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now, sourceTemplateId: "asistente-de-citas");
 
     /// <summary>Sólo la lectura de disponibilidad importa acá; el resto del puerto no se toca.</summary>
     private sealed class FakeScheduling(AgentSchedulingReadiness readiness) : IAiScheduling
@@ -211,6 +250,7 @@ public sealed class AgentEditorBuilderTests
         public Task<AiSchedulingResult<AiAppointmentWrite>> BookAsync(AiSchedulingCaller caller, Guid serviceId, DateTime localStartsAt, Guid? resourceId, string? note, string clientRequestId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<AiSchedulingResult<AiStartPreview>> PreviewBookingAsync(AiSchedulingCaller caller, Guid serviceId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<AiSchedulingResult<AiReschedulePreview>> PreviewRescheduleAsync(AiSchedulingCaller caller, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<AiSchedulingResult<AiAppointments>> ListMyAppointmentsAsync(AiSchedulingCaller caller, CancellationToken cancellationToken) => throw new NotSupportedException();
 

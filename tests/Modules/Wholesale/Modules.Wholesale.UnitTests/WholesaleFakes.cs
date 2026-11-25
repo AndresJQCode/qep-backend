@@ -21,78 +21,72 @@ internal sealed class FakeClock(DateTimeOffset now) : IClock
     public DateTimeOffset UtcNow { get; set; } = now;
 }
 
-internal sealed class FakePriceListRepository : IPriceListRepository
+/// <summary>
+/// Spec 2026-11-22: las listas de Catalog vistas desde Mayorista. El precio sigue la regla de Catalog (D-2): precio fijo tal cual,
+/// si no el base con el ajuste y <see cref="Rounding"/>. Una lista sin id es la de la vista previa.
+/// </summary>
+internal sealed class FakeWholesalePriceLists : IWholesalePriceLists
 {
-    public Dictionary<PriceListId, PriceList> Lists { get; } = [];
+    public Dictionary<PriceListId, WholesalePriceList> Lists { get; } = [];
 
-    public List<PriceList> Removed { get; } = [];
+    /// <summary>Por tenant: una lista de otro tenant no se encuentra.</summary>
+    public Dictionary<PriceListId, Guid> Owners { get; } = [];
 
-    /// <summary>Cualquier lectura o escritura: «no tocó el repositorio» es cero.</summary>
+    /// <summary>Precios fijos por lista, variante y moneda.</summary>
+    public Dictionary<(PriceListId, Guid, string), decimal> Fixed { get; } = [];
+
+    public PriceRounding Rounding { get; set; } = new(0, PriceRoundingMode.Nearest);
+
     public int Calls { get; private set; }
 
-    public PriceList Seed(PriceList list)
+    public int ListCalls { get; private set; }
+
+    public WholesalePriceList Seed(
+        Guid tenantId,
+        string name,
+        decimal adjustmentPercent,
+        IReadOnlyCollection<Guid>? visibleCategoryIds = null,
+        bool showPrices = true,
+        IReadOnlyCollection<Guid>? hiddenCategoryIds = null,
+        IReadOnlyCollection<Guid>? hiddenProductIds = null)
     {
+        var list = new WholesalePriceList(
+            new PriceListId(Guid.CreateVersion7()), name, adjustmentPercent, visibleCategoryIds, hiddenCategoryIds ?? [],
+            hiddenProductIds ?? [], showPrices);
         Lists[list.Id] = list;
+        Owners[list.Id] = tenantId;
         return list;
     }
 
-    public Task<PriceList?> GetAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken)
+    public Task<WholesalePriceList?> GetAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken)
     {
         Calls++;
-        return Task.FromResult(Lists.TryGetValue(id, out var list) && list.TenantId == tenantId ? list : null);
+        return Task.FromResult(Lists.TryGetValue(id, out var list) && Owners[id] == tenantId ? list : null);
     }
 
-    public Task<IReadOnlyList<PriceList>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<WholesalePriceList>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         Calls++;
-        IReadOnlyList<PriceList> lists = Lists.Values.Where(list => list.TenantId == tenantId).ToList();
+        ListCalls++;
+        IReadOnlyList<WholesalePriceList> lists = Lists.Values.Where(list => Owners[list.Id] == tenantId).ToList();
         return Task.FromResult(lists);
     }
 
-    public Task<IReadOnlyDictionary<PriceListId, PriceList>> FindManyAsync(
-        Guid tenantId, IReadOnlyCollection<PriceListId> ids, CancellationToken cancellationToken)
+    public Task<IReadOnlyDictionary<Guid, WholesaleListedPrice>> PriceAsync(
+        Guid tenantId,
+        WholesalePriceList list,
+        string currency,
+        IReadOnlyDictionary<Guid, decimal> basePrices,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        FindManyCalls++;
-        IReadOnlyDictionary<PriceListId, PriceList> found = ids
-            .Distinct()
-            .Where(id => Lists.TryGetValue(id, out var list) && list.TenantId == tenantId)
-            .ToDictionary(id => id, id => Lists[id]);
-        return Task.FromResult(found);
+        IReadOnlyDictionary<Guid, WholesaleListedPrice> prices = basePrices.ToDictionary(
+            pair => pair.Key,
+            pair => Fixed.TryGetValue((list.Id, pair.Key, currency), out var amount)
+                ? new WholesaleListedPrice(amount, true)
+                : new WholesaleListedPrice(Rounding.Apply(pair.Value * (1 + (list.AdjustmentPercent / 100m))), false));
+        return Task.FromResult(prices);
     }
-
-    public int FindManyCalls { get; private set; }
-
-    // El índice de la base compara lower(name): acá, sin importar mayúsculas.
-    public Task<bool> NameExistsAsync(Guid tenantId, string name, PriceListId? except, CancellationToken cancellationToken)
-    {
-        Calls++;
-        return Task.FromResult(Lists.Values.Any(list =>
-            list.TenantId == tenantId
-            && list.Id != except
-            && string.Equals(list.Name, name.Trim(), StringComparison.OrdinalIgnoreCase)));
-    }
-
-    public void Add(PriceList list)
-    {
-        Calls++;
-        Lists[list.Id] = list;
-    }
-
-    public void Remove(PriceList list)
-    {
-        Calls++;
-        Lists.Remove(list.Id);
-        Removed.Add(list);
-    }
-}
-
-internal sealed class FakeDistributorUsage : IDistributorUsage
-{
-    public Dictionary<PriceListId, int> Counts { get; } = [];
-
-    public Task<IReadOnlyDictionary<PriceListId, int>> CountByPriceListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<PriceListId, int>>(new Dictionary<PriceListId, int>(Counts));
 }
 
 /// <summary>Un producto con una sola variante: lo que el lector real ya resolvió (vendible, nombre visible, precios).</summary>
@@ -336,9 +330,13 @@ internal sealed class FakeUnitOfWork : IWholesaleUnitOfWork
     /// <summary>Lo que lanza el próximo guardado (una carrera perdida en la base), una sola vez.</summary>
     public Exception? FailNextSaveWith { get; set; }
 
+    /// <summary>Cuántos guardados pasan antes de que <see cref="FailNextSaveWith"/> lance: 1 deja pasar la marca de la
+    /// aceptación y falla el commit final.</summary>
+    public int FailAfterSaves { get; set; }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken)
     {
-        if (FailNextSaveWith is { } failure)
+        if (Saves >= FailAfterSaves && FailNextSaveWith is { } failure)
         {
             FailNextSaveWith = null;
             throw failure;

@@ -29,6 +29,12 @@ public sealed record SupplierContactPayload(string Name, string? Role, string? P
 public sealed record SupplierLinkedTenantDto(Guid Id, string Name);
 
 /// <summary>
+/// La región (provincia) de un proveedor de afuera, ya resuelta (spec 2026-11-23). Colombia no la usa: su departamento sale
+/// de <see cref="SupplierDepartmentDto"/>.
+/// </summary>
+public sealed record SupplierRegionDto(Guid Id, string Name);
+
+/// <summary>
 /// El detalle completo; lo devuelven GET, POST, PUT, activate y deactivate para que la ficha no
 /// tenga que volver a pedirlo tras guardar. La ciudad viaja resuelta (<c>city</c>/<c>department</c>)
 /// en Colombia y como texto (<c>cityName</c>) fuera de ella; los opcionales vuelven siempre como
@@ -59,7 +65,8 @@ public sealed record SupplierResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     SupplierLinkedTenantDto? LinkedTenant,
-    string? LinkedRelationshipStatus);
+    string? LinkedRelationshipStatus,
+    SupplierRegionDto? Region = null);
 
 /// <summary>Sólo banco y número: la grilla muestra dónde pagarle, no la moneda de cada cuenta (como en Empresas).</summary>
 public sealed record SupplierListBankAccount(string BankName, string AccountNumber);
@@ -117,7 +124,8 @@ public sealed record SupplierWriteRequest(
     string? Category,
     string? Notes,
     IReadOnlyList<SupplierBankAccountPayload> BankAccounts,
-    IReadOnlyList<SupplierContactPayload> Contacts);
+    IReadOnlyList<SupplierContactPayload> Contacts,
+    Guid? RegionId = null);
 
 /// <summary>
 /// La respuesta de <c>POST .../suppliers/export</c>. Confirma que el archivo se generó y se subió,

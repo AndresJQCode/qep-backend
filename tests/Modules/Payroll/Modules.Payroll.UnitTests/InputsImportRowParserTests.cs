@@ -43,7 +43,8 @@ public sealed class InputsImportRowParserTests
                     null,
                     [new HrSalarySource(new DateOnly(2025, 1, 1), 25_000_000m, false)],
                     [new HrAssignmentSource(new DateOnly(2025, 1, 1), "Analista", "Principal", "Bodega", Modules.Payroll.Domain.Engine.ArlClass.I, false, null)]),
-            ]);
+            ],
+            [DayOfWeek.Sunday]);
 
     private static InputsImportContext Context(params PayrollConcept[] own)
     {

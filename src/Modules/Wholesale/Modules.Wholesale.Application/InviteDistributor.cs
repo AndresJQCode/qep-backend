@@ -18,13 +18,17 @@ public sealed record InviteDistributorCommand(
     Guid BillingCompanyId,
     string CorrelationId,
     string? Phone = null,
-    Guid? WhatsAppConnectionId = null)
-    : ICommand<DistributorDetailDto>;
+    Guid? WhatsAppConnectionId = null,
+    Guid? CityId = null,
+    string? CityName = null,
+    string? Address = null)
+    : ICommand<DistributorDetailDto>, IDistributorProfile;
 
 /// <summary>
-/// Invita a un distribuidor. Orden: 403 → 422 de validación → 404 lista → 422 asesor → 422 empresa → 409 documento → 422
+/// Invita a un distribuidor. Orden: 403 → 422 de validación → 404 lista → 422 asesor → 422 empresa → 422 ciudad → 409 documento → 422
 /// <c>Phone</c> → 422 conexión. El token plano se genera acá y sólo viaja en el evento hacia el correo; en la base queda su
-/// SHA-256 (D-1). El id del tenant que nacerá si acepta creando uno se reserva ya (D-17). Con teléfono (spec 2026-11-18) sale
+/// SHA-256 (D-1). Igual la prueba de buzón (spec 2026-11-24), que además no va en la respuesta ni en el aviso por WhatsApp.
+/// El id del tenant que nacerá si acepta creando uno se reserva ya (D-17). Con teléfono (spec 2026-11-18) sale
 /// además, en el mismo commit, el evento del aviso por WhatsApp (<c>wholesale.distributor-invitation-link.v1</c>, spec
 /// 2026-11-19 §2), que lleva el token sólo en el payload del outbox; el mensaje de WhatsApp todavía sale sin el link. Sin
 /// teléfono la conexión se ignora. La respuesta
@@ -33,10 +37,11 @@ public sealed record InviteDistributorCommand(
 public sealed class InviteDistributorHandler(
     IExecutionContext executionContext,
     IClock clock,
-    IPriceListRepository priceLists,
+    IWholesalePriceLists priceLists,
     IDistributorRepository distributors,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
+    IWholesaleCityLookup cities,
     ITenantDirectory tenants,
     IWholesalePhoneNormalizer phones,
     IWholesaleWhatsAppConnections whatsAppConnections,
@@ -51,7 +56,7 @@ public sealed class InviteDistributorHandler(
 {
     // Lo que la auditoría nombra: nunca el token ni su hash, ni el teléfono (sólo si hubo aviso, D-8).
     private static readonly string[] WrittenFields =
-        ["email", "businessName", "country", "identificationType", "identificationNumber", "contactName", "priceListId", "advisorId", "billingCompanyId"];
+        ["email", "businessName", "country", "identificationType", "identificationNumber", "contactName", "priceListId", "advisorId", "billingCompanyId", "cityId", "cityName", "address"];
 
     public async Task<DistributorDetailDto> HandleAsync(InviteDistributorCommand command, CancellationToken cancellationToken)
     {
@@ -60,8 +65,12 @@ public sealed class InviteDistributorHandler(
         await DistributorTerms.EnsureValidAsync(
             priceLists, members, companies, command.TenantId, command.PriceListId, command.AdvisorId, command.BillingCompanyId,
             cancellationToken);
+
+        await DistributorTerms.EnsureCityExistsAsync(cities, command.Country, command.CityId, cancellationToken);
+
         if (await distributors.IdentificationExistsAsync(
-                command.TenantId, command.IdentificationType.Trim().ToUpperInvariant(), command.IdentificationNumber.Trim(), cancellationToken))
+                command.TenantId, command.IdentificationType.Trim().ToUpperInvariant(), command.IdentificationNumber.Trim(),
+                excluding: null, cancellationToken))
         {
             throw WholesaleConflicts.IdentificationTaken();
         }
@@ -73,6 +82,7 @@ public sealed class InviteDistributorHandler(
                 whatsAppConnections, command.TenantId, command.WhatsAppConnectionId, cancellationToken);
 
         var token = InvitationTokens.Generate();
+        var (emailProof, emailProofHash) = DistributorEmailProofs.Issue();
         var now = clock.UtcNow;
         var distributor = Distributor.Invite(
             command.TenantId,
@@ -90,7 +100,11 @@ public sealed class InviteDistributorHandler(
             Guid.CreateVersion7(),
             phone,
             connectionId,
-            now);
+            now,
+            command.CityId,
+            command.CityName,
+            command.Address,
+            emailProofHash);
         distributors.Add(distributor);
         auditPublisher.Publish(
             command.TenantId,
@@ -107,6 +121,7 @@ public sealed class InviteDistributorHandler(
             distributor.Email,
             distributor.BusinessName,
             token,
+            emailProof,
             distributor.Invitation.ExpiresAt,
             command.CorrelationId,
             now);
@@ -125,11 +140,27 @@ public sealed class InviteDistributorHandler(
     }
 }
 
-/// <summary>Las tres verificaciones que repiten invitar y editar.</summary>
+/// <summary>Las verificaciones contra otros datos que repiten invitar y editar.</summary>
 internal static class DistributorTerms
 {
+    /// <summary>
+    /// Sólo en Colombia la ciudad es una fila de Geography. Sin esta verificación un <c>CityId</c> inexistente quedaría en la
+    /// invitación y después haría fallar cada aceptación con <c>companies.company.city_not_found</c>. Sin <c>CityId</c> (sólo
+    /// una invitación vieja que se edita sin tocar la ciudad) no hay qué buscar.
+    /// </summary>
+    public static async Task EnsureCityExistsAsync(
+        IWholesaleCityLookup cities, string country, Guid? cityId, CancellationToken cancellationToken)
+    {
+        if (DistributorProfileValidator.IsColombian(country)
+            && cityId is { } id
+            && await cities.FindAsync(id, cancellationToken) is null)
+        {
+            throw WholesaleConflicts.CityNotFound();
+        }
+    }
+
     public static async Task EnsureValidAsync(
-        IPriceListRepository priceLists,
+        IWholesalePriceLists priceLists,
         IWholesaleMemberDirectory members,
         IWholesaleCompanyLookup companies,
         Guid tenantId,

@@ -266,7 +266,8 @@ public sealed class OrderResponseComposerTests
         var accountId = Guid.CreateVersion7();
         var buyers = new StubQuotationBuyerAccountLookup(new QuotationBuyerAccountRef(accountId, "ana@example.com"));
         var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto()
-            with { Source = "Store", BuyerAccountId = accountId };
+            with
+        { Source = "Store", BuyerAccountId = accountId };
 
         var response = await Composer(buyers: buyers).ComposeAsync(
             TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
@@ -279,7 +280,8 @@ public sealed class OrderResponseComposerTests
     {
         var buyers = new StubQuotationBuyerAccountLookup();
         var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto()
-            with { Source = "Store", BuyerAccountId = Guid.CreateVersion7() };
+            with
+        { Source = "Store", BuyerAccountId = Guid.CreateVersion7() };
 
         var response = await Composer(buyers: buyers).ComposeAsync(
             TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
@@ -385,19 +387,44 @@ public sealed class OrderResponseComposerTests
         Assert.All(response.Items, item => Assert.Null(item.FromPurchaseOrder));
     }
 
+    [Fact]
+    public async Task PartyResponseCarriesRegion()
+    {
+        var madrid = Guid.CreateVersion7();
+        var geography = new StubQuotationGeographyLookup(
+            new Dictionary<Guid, string>(),
+            regions: new Dictionary<Guid, QuotationRegionRef> { [madrid] = new(madrid, "ES", "Madrid") });
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with
+        {
+            Parties =
+            [
+                new QuotationPartyDto(
+                    Guid.CreateVersion7(), "Billing", "Bodega", null, null, null, null, null, null,
+                    Country: "ES", CityName: "Madrid", RegionId: madrid),
+            ],
+        };
+
+        var response = await Composer(geography: geography)
+            .ComposeOrderAsync(TenantId, order, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new QuotationRegionDto(madrid, "Madrid"), Assert.Single(response.Parties).Region);
+        Assert.Equal(1, geography.FindRegionsCalls);
+    }
+
     private static OrderResponseComposer Composer(
         StubQuotationCustomerLookup? customers = null,
         StubQuotationBuyerAccountLookup? buyers = null,
         FixedTenantClock? clock = null,
         StubQuotationWithholdingLookup? withholdings = null,
-        StubTenantDirectory? tenants = null) =>
+        StubTenantDirectory? tenants = null,
+        StubQuotationGeographyLookup? geography = null) =>
         new(
             customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             withholdings ?? new StubQuotationWithholdingLookup(),
-            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
+            geography ?? new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
             buyers ?? new StubQuotationBuyerAccountLookup(),
             clock ?? new FixedTenantClock(Now),
             tenants ?? new StubTenantDirectory());

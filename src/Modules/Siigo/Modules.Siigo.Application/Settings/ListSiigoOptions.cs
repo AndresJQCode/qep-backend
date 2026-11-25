@@ -56,6 +56,7 @@ public sealed class ListSiigoOptionsHandler(
         {
             return [.. (await api.ListTaxesAsync(credentials, cancellationToken))
                 .Where(tax => tax.Active)
+                .OrderBy(tax => tax.Name, StringComparer.InvariantCultureIgnoreCase)
                 .Select(tax => new SiigoOptionDto(tax.Id, tax.Name, tax.Type, tax.Percentage))];
         }
 
@@ -67,6 +68,8 @@ public sealed class ListSiigoOptionsHandler(
             SiigoOptionLists.Warehouses => await api.ListWarehousesAsync(credentials, cancellationToken),
             _ => await api.ListPaymentTypesAsync(credentials, cancellationToken),
         };
-        return [.. options.Select(option => new SiigoOptionDto(option.Id, option.Name, null, null, option.Description))];
+        return [.. options
+            .OrderBy(option => option.Name, StringComparer.InvariantCultureIgnoreCase)
+            .Select(option => new SiigoOptionDto(option.Id, option.Name, null, null, option.Description))];
     }
 }

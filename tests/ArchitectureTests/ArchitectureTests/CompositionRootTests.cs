@@ -11,6 +11,7 @@ using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
 using Modules.Catalog.Application;
+using Modules.Companies.Application;
 using Modules.Customers.Application;
 using Modules.Geography.Application;
 using Modules.Hr.Application;
@@ -374,7 +375,8 @@ public sealed class CompositionRootTests
         // + the four payroll.* permissions (spec 2026-11-21).
         // + los cinco de la Agenda (scheduling.*, spec 2026-11-21).
         // + los dos de parámetros legales del operador (operator.legal_parameters.read|manage, spec 2026-11-22).
-        Assert.Equal(112, PermissionConstants().Length);
+        // + the two hr.medical.* permissions (spec 2026-11-23).
+        Assert.Equal(114, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -949,9 +951,14 @@ public sealed class CompositionRootTests
             (HrPermissions.ContractRead, "hr.contract", "Contratos laborales", "read"),
             (HrPermissions.ContractManage, "hr.contract", "Contratos laborales", "manage"),
             (HrPermissions.SettingsManage, "hr.settings", "Configuración de RRHH", "manage"),
+            (HrPermissions.MedicalRead, "hr.medical", "Exámenes médicos", "read"),
+            (HrPermissions.MedicalManage, "hr.medical", "Exámenes médicos", "manage"),
         ];
         Assert.Equal(
-            ["hr.employee.read", "hr.employee.manage", "hr.contract.read", "hr.contract.manage", "hr.settings.manage"],
+            [
+                "hr.employee.read", "hr.employee.manage", "hr.contract.read", "hr.contract.manage", "hr.settings.manage",
+                "hr.medical.read", "hr.medical.manage",
+            ],
             expected.Select(row => row.Permission));
         foreach (var (permission, entity, entityLabel, action) in expected)
         {
@@ -1128,8 +1135,24 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// Spec 2026-11-18 (integración Siigo): los dos permisos exigen el módulo <c>siigo</c>; admin lleva los dos y facturación sólo
-    /// emitir la factura. Configurar la conexión es de admin. Asesor y cajero, ninguno.
+    /// Decisión del owner (2026-11-24): facturación ve las empresas y configura Siigo. De Integraciones sólo lee: crear, editar y
+    /// desconectar una conexión daría también WhatsApp, Instagram y Shopify, así que sigue siendo de admin.
+    /// </summary>
+    [Fact]
+    public void TheBillingRoleReadsCompaniesAndConnectionsWithoutManagingThem()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var billing = provider.GetRequiredService<IRoleCatalog>().PermissionsFor("billing");
+
+        Assert.Contains(CompaniesPermissions.CompanyRead, billing);
+        Assert.DoesNotContain(CompaniesPermissions.CompanyManage, billing);
+        Assert.Contains(IntegrationsPermissions.ConnectionRead, billing);
+        Assert.DoesNotContain(IntegrationsPermissions.ConnectionManage, billing);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-18 (integración Siigo): los permisos exigen el módulo <c>siigo</c>; admin lleva todos y facturación configura
+    /// la conexión (decisión del owner, 2026-11-24) y emite la factura. Asesor y cajero, ninguno.
     /// </summary>
     [Fact]
     public void TheSiigoPermissionsRequireTheSiigoModuleAndGoToAdminAndBilling()
@@ -1150,7 +1173,7 @@ public sealed class CompositionRootTests
         }
 
         Assert.Contains(SiigoPermissions.InvoiceIssue, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(SiigoPermissions.SettingsManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(SiigoPermissions.SettingsManage, catalog.PermissionsFor("billing"));
         // Spec 2026-11-21: el curl y la respuesta llevan datos del cliente; quien factura no los ve de fábrica.
         Assert.DoesNotContain(SiigoPermissions.CallsRead, catalog.PermissionsFor("billing"));
     }
@@ -1166,9 +1189,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
-        var all = new[] { WholesalePermissions.PriceListManage, WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage };
+        var all = new[] { WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage };
 
-        Assert.Equal(["wholesale.price_list.manage", "wholesale.distributor.read", "wholesale.distributor.manage"], all);
+        Assert.Equal(["wholesale.distributor.read", "wholesale.distributor.manage"], all);
         foreach (var permission in all)
         {
             Assert.Equal("Mayorista", definitions[permission].Category);
@@ -1181,6 +1204,31 @@ public sealed class CompositionRootTests
         Assert.Contains(WholesalePermissions.DistributorRead, catalog.PermissionsFor("advisor"));
         Assert.DoesNotContain(WholesalePermissions.DistributorManage, catalog.PermissionsFor("advisor"));
         Assert.DoesNotContain(WholesalePermissions.PriceListManage, catalog.PermissionsFor("advisor"));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 (D-10): las listas de precios son de Catalog. Un solo permiso, sin el módulo mayorista (el POS, la tienda y
+    /// las cotizaciones las usan sin él), sólo en admin, y Mayorista lo nombra con el mismo literal porque no referencia Catalog.
+    /// </summary>
+    [Fact]
+    public void ThePriceListPermissionIsCatalogsAndGoesToAdminOnly()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definition = Assert.Single(
+            RegisteredPermissionDefinitions(), item => item.Permission == CatalogPermissions.PriceListManage);
+
+        Assert.Equal("catalog.price_list.manage", CatalogPermissions.PriceListManage);
+        Assert.Equal(CatalogPermissions.PriceListManage, WholesalePermissions.PriceListManage);
+        Assert.Equal("Catalog", definition.Category);
+        Assert.Equal([ModuleKeys.Catalog], definition.RequiredModules!.ToArray());
+        Assert.Contains(CatalogPermissions.PriceListManage, catalog.PermissionsFor("admin"));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.DoesNotContain(CatalogPermissions.PriceListManage, catalog.PermissionsFor(role));
+        }
+
+        Assert.DoesNotContain(RegisteredPermissionDefinitions(), item => item.Permission == "wholesale.price_list.manage");
     }
 
     /// <summary>

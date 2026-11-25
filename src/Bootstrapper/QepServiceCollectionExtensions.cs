@@ -315,6 +315,21 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ReplacePosQuickAccessCommand, IReadOnlyList<CategoryDto>>,
             ReplacePosQuickAccessHandler>();
+        // Spec 2026-11-22 (listas de precios por canal). Los validadores entran con AddValidatorsFromAssemblyContaining del módulo.
+        services.AddScoped<IQueryHandler<ListPriceListsQuery, PriceListsResponse>, ListPriceListsHandler>();
+        services.AddScoped<IQueryHandler<GetPriceListQuery, PriceListDetailDto>, GetPriceListHandler>();
+        services.AddScoped<ICommandHandler<CreatePriceListCommand, PriceListDetailDto>, CreatePriceListHandler>();
+        services.AddScoped<ICommandHandler<UpdatePriceListCommand, PriceListDetailDto>, UpdatePriceListHandler>();
+        services.AddScoped<ICommandHandler<DeletePriceListCommand, bool>, DeletePriceListHandler>();
+        services.AddScoped<
+            IQueryHandler<ListPriceListOverridesQuery, PriceListOverridesPageDto>, ListPriceListOverridesHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdatePriceListOverridesCommand, PriceListOverridesWriteDto>, UpdatePriceListOverridesHandler>();
+        services.AddScoped<IQueryHandler<GetChannelPricesQuery, ChannelPricesDto>, GetChannelPricesHandler>();
+        services.AddScoped<ICommandHandler<UpdateChannelPricesCommand, ChannelPricesDto>, UpdateChannelPricesHandler>();
+        services.AddScoped<IPriceListUsage, CatalogPriceListUsage>();
+        services.AddScoped<IPriceListPricing, PriceListPricing>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesalePriceLists, WholesalePriceLists>();
         // EMP. Los siete van aca por la misma razon que los de tasas: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
@@ -534,6 +549,49 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Hr.Application.UpdateNamedSettingCommand, object>,
             Modules.Hr.Application.UpdateNamedSettingHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.SetPositionExamFrequencyCommand, Modules.Hr.Application.PositionDto>,
+            Modules.Hr.Application.MedicalExams.SetPositionExamFrequencyHandler>();
+        // Exámenes médicos (spec 2026-11-23): lo que comparten las lecturas y escrituras, y un handler por ruta.
+        services.AddScoped<Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsComposer>();
+        services.AddScoped<Modules.Hr.Application.MedicalExams.MedicalExamWrites>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.MedicalExams.GetEmployeeMedicalExamsQuery, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.GetEmployeeMedicalExamsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.MedicalExams.GetMedicalExamOverviewQuery, Modules.Hr.Application.MedicalExams.MedicalExamOverviewDto>,
+            Modules.Hr.Application.MedicalExams.GetMedicalExamOverviewHandler>();
+        services.AddScoped<Modules.Hr.Application.MedicalExams.MedicalExamImportAnalyzer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.MedicalExams.GetMedicalExamImportTemplateQuery, Modules.Hr.Application.MedicalExams.MedicalExamImportTemplateFile>,
+            Modules.Hr.Application.MedicalExams.GetMedicalExamImportTemplateHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.PreviewMedicalExamImportCommand, Modules.Hr.Application.MedicalExams.MedicalExamImportPreviewDto>,
+            Modules.Hr.Application.MedicalExams.PreviewMedicalExamImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.ImportMedicalExamsCommand, Modules.Hr.Application.MedicalExams.MedicalExamImportResultDto>,
+            Modules.Hr.Application.MedicalExams.ImportMedicalExamsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.OpenMedicalExamUploadSessionCommand, Modules.Hr.Application.HrUploadSessionDto>,
+            Modules.Hr.Application.MedicalExams.OpenMedicalExamUploadSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.SetMedicalExamDocumentCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.SetMedicalExamDocumentHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Hr.Application.MedicalExams.GetMedicalExamDocumentQuery, Modules.Hr.Application.HrDownloadUrlDto>,
+            Modules.Hr.Application.MedicalExams.GetMedicalExamDocumentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.RecordMedicalExamCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.RecordMedicalExamHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.UpdateMedicalExamCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.UpdateMedicalExamHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.DeleteMedicalExamCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.DeleteMedicalExamHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Hr.Application.MedicalExams.MarkExitNotAttendedCommand, Modules.Hr.Application.MedicalExams.EmployeeMedicalExamsDto>,
+            Modules.Hr.Application.MedicalExams.MarkExitNotAttendedHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Hr.Application.ArchiveSettingCommand, object>,
             Modules.Hr.Application.ArchiveSettingHandler>();
         services.AddScoped<
@@ -715,6 +773,26 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Payroll.Application.ToggleRecurringConceptCommand, IReadOnlyList<Modules.Payroll.Application.RecurringConceptDto>>,
             Modules.Payroll.Application.ToggleRecurringConceptHandler>();
+        services.AddScoped<Modules.Payroll.Application.VacationInputBuilder>();
+        services.AddScoped<Modules.Payroll.Application.VacationRules>();
+        services.AddScoped<Modules.Payroll.Application.VacationComposer>();
+        services.AddScoped<Modules.Payroll.Application.VacationLocks>();
+        services.AddScoped<Modules.Payroll.Application.VacationPayments>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.CreateVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.CreateVacationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.UpdateVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.UpdateVacationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Payroll.Application.DeleteVacationCommand, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.DeleteVacationHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.ListVacationsQuery, IReadOnlyList<Modules.Payroll.Application.VacationDto>>,
+            Modules.Payroll.Application.ListVacationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Payroll.Application.PreviewVacationQuery, Modules.Payroll.Application.VacationPreviewDto>,
+            Modules.Payroll.Application.PreviewVacationHandler>();
         services.AddScoped<Modules.Payroll.Application.LiquidationPlanner>();
         services.AddScoped<Modules.Payroll.Application.PeriodApprovals>();
         services.AddScoped<
@@ -919,21 +997,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Purchases.Application.WholesaleOrderEventApplier>();
 
         // Wholesale, spec 2026-11-17. A mano: un handler olvidado responde 500.
-        services.AddScoped<
-            IQueryHandler<Modules.Wholesale.Application.ListPriceListsQuery, Modules.Wholesale.Application.PriceListsResponse>,
-            Modules.Wholesale.Application.ListPriceListsHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Wholesale.Application.GetPriceListQuery, Modules.Wholesale.Application.PriceListDetailDto>,
-            Modules.Wholesale.Application.GetPriceListHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Wholesale.Application.CreatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
-            Modules.Wholesale.Application.CreatePriceListHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Wholesale.Application.UpdatePriceListCommand, Modules.Wholesale.Application.PriceListDetailDto>,
-            Modules.Wholesale.Application.UpdatePriceListHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Wholesale.Application.DeletePriceListCommand, bool>,
-            Modules.Wholesale.Application.DeletePriceListHandler>();
+        // Spec 2026-11-22: las listas pasaron a Catalog; queda la vista previa del distribuidor.
         services.AddScoped<
             ICommandHandler<Modules.Wholesale.Application.PreviewPriceListCommand, Modules.Wholesale.Application.PriceListPreviewDto>,
             Modules.Wholesale.Application.PreviewPriceListHandler>();
@@ -1491,13 +1555,6 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<AddOrderItemsCommand, OrderDetailDto>,
             AddOrderItemsHandler>();
-        // Regalos del pedido (spec 2026-11-21); el validador entra con AddValidatorsFromAssemblyContaining.
-        services.AddScoped<
-            ICommandHandler<AddOrderGiftCommand, OrderDetailDto>,
-            AddOrderGiftHandler>();
-        services.AddScoped<
-            ICommandHandler<RemoveOrderGiftCommand, OrderDetailDto>,
-            RemoveOrderGiftHandler>();
         services.AddScoped<
             ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>,
             RemoveOrderPaymentProofHandler>();
@@ -1537,6 +1594,7 @@ public static class QepServiceCollectionExtensions
         // distribuidor para la línea que el mayorista agrega al editar (D-5).
         services.AddScoped<IWholesaleOrderGateway, WholesaleOrderGateway>();
         services.AddScoped<IWholesaleLinePricing, QuotationsWholesaleLinePricing>();
+        services.AddScoped<Modules.Tenancy.Application.INewTenantProvisioning, QuotationsNewTenantProvisioning>();
         // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
         services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
         // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de
@@ -1892,7 +1950,7 @@ public static class QepServiceCollectionExtensions
         // Scheduling: igual que Hr, por ensamblado (SchedulingPermissions es estática y no sirve de argumento de tipo).
         services.AddValidatorsFromAssembly(typeof(SchedulingPermissions).Assembly);
         services.AddValidatorsFromAssemblyContaining<Modules.Purchases.Application.CreatePurchaseOrderValidator>();
-        services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.CreatePriceListValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Wholesale.Application.PreviewPriceListValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Support.Application.UpdateSupportSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
@@ -1966,11 +2024,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAiProviderCredentials, AiProviderCredentials>();
         // Spec 2026-10-29 §5: los agentes. Los validadores entran con AddValidatorsFromAssemblyContaining.
         services.AddScoped<IQueryHandler<ListAgentsQuery, AgentListResponse>, ListAgentsHandler>();
+        services.AddScoped<IQueryHandler<ListAgentTemplatesQuery, IReadOnlyList<AgentTemplateDto>>, ListAgentTemplatesHandler>();
         services.AddScoped<IQueryHandler<GetAgentQuery, AgentEditorDto>, GetAgentHandler>();
         services.AddScoped<IQueryHandler<ExportAgentQuery, AgentExportDto>, ExportAgentHandler>();
         services.AddScoped<IQueryHandler<ListAiConnectionsQuery, IReadOnlyList<AiConnectionDto>>, ListAiConnectionsHandler>();
         services.AddScoped<ICommandHandler<CreateAgentCommand, AgentEditorDto>, CreateAgentHandler>();
         services.AddScoped<ICommandHandler<ImportAgentCommand, AgentEditorDto>, ImportAgentHandler>();
+        services.AddScoped<ICommandHandler<CreateAgentFromTemplateCommand, AgentEditorDto>, CreateAgentFromTemplateHandler>();
         services.AddScoped<ICommandHandler<UpdateAgentCommand, AgentEditorDto>, UpdateAgentHandler>();
         services.AddScoped<ICommandHandler<SaveAgentDraftCommand, AgentDraftSavedDto>, SaveAgentDraftHandler>();
         services.AddScoped<ICommandHandler<PublishAgentCommand, AgentEditorDto>, PublishAgentHandler>();
@@ -2083,6 +2143,7 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-21: la tanda de facturación. El invocador corre el handler de arriba como quien la pidió.
         services.AddScoped<ICommandHandler<CreateSiigoInvoiceBatchCommand, SiigoInvoiceBatchDto>, CreateSiigoInvoiceBatchHandler>();
         services.AddScoped<IQueryHandler<GetSiigoInvoiceBatchQuery, SiigoInvoiceBatchDto>, GetSiigoInvoiceBatchHandler>();
+        services.AddScoped<IQueryHandler<ListSiigoInvoiceBatchesQuery, SiigoInvoiceBatchPageDto>, ListSiigoInvoiceBatchesHandler>();
         services.AddScoped<ISiigoBatchItemInvoker, SiigoBatchItemInvoker>();
         // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
         services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
@@ -2216,6 +2277,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.ILegalParameterUsage, LegalParameterUsage>();
         // Empresas, empleados y contratos de Hr, y el nombre de quien actúa, también por puertos propios de Payroll.
         services.AddScoped<Modules.Payroll.Application.IPayrollHrDirectory, PayrollHrDirectory>();
+        services.AddScoped<Modules.Payroll.Application.IPayrollHolidayCalendar, PayrollHolidayCalendar>();
         services.AddScoped<Modules.Payroll.Application.IPayrollMemberDirectory, PayrollMemberDirectory>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
         services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();
@@ -2402,6 +2464,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Hr.Application.IHrGeographyLookup, HrGeographyLookup>();
         // Hr: las membresías (la persona de un empleado y el actor del historial) por su propio puerto.
         services.AddScoped<Modules.Hr.Application.IHrMemberDirectory, HrMemberDirectory>();
+        services.AddScoped<Modules.Hr.Application.MedicalExams.IHrBusinessCalendar, HrBusinessCalendarSource>();
         // Scheduling: las membresías (el vínculo de un recurso y el alcance de quien no ve todas las agendas) y el nombre del tenant, por sus puertos.
         services.AddScoped<ISchedulingMemberDirectory, SchedulingMemberDirectory>();
         services.AddScoped<ISchedulingTenantDirectory, SchedulingTenantDirectory>();
@@ -2455,10 +2518,12 @@ public static class QepServiceCollectionExtensions
         // Wholesale, spec 2026-11-17: Catalog, Companies, Tenancy, Suppliers y Customers entran por puertos del módulo.
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCatalogReader, WholesaleCatalogReader>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCompanyLookup, WholesaleCompanyLookup>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCityLookup, WholesaleCityLookup>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleMemberDirectory, WholesaleMemberDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleTenantDirectory, WholesaleTenantDirectory>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleSupplierLinker, WholesaleSupplierLinker>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleCustomerProvisioning, WholesaleCustomerProvisioning>();
+        services.AddScoped<Modules.Wholesale.Application.IWholesaleCompanyProvisioning, WholesaleCompanyProvisioning>();
         // Spec 2026-11-18: el aviso por WhatsApp de la invitación; Customers (teléfono), Integrations y Mensajería por puertos.
         services.AddScoped<Modules.Wholesale.Application.IWholesalePhoneNormalizer, WholesalePhoneNormalizer>();
         services.AddScoped<Modules.Wholesale.Application.IWholesaleWhatsAppConnections, WholesaleWhatsAppConnections>();
@@ -2960,8 +3025,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-17 (compras): las órdenes de compra las administra quien administra la empresa (P-3, propuesta).
                 PurchasesPermissions.OrderRead,
                 PurchasesPermissions.OrderManage,
-                // Spec 2026-11-17 (mayorista), P-3 aprobada: listas de precios y distribuidores las administra quien administra la empresa.
-                WholesalePermissions.PriceListManage,
+                // Spec 2026-11-17 (mayorista), P-3 aprobada: distribuidores los administra quien administra la empresa. Las listas de
+                // precios son catalog.price_list.manage desde el spec 2026-11-22 (más abajo).
                 WholesalePermissions.DistributorRead,
                 WholesalePermissions.DistributorManage,
                 // Spec 2026-11-18 (integración Siigo) §5.7: configurar las conexiones de Siigo y emitir la factura.
@@ -2982,6 +3047,9 @@ public static class QepServiceCollectionExtensions
                 HrPermissions.ContractRead,
                 HrPermissions.ContractManage,
                 HrPermissions.SettingsManage,
+                // Spec 2026-11-23 (exámenes médicos): datos de salud; sólo admin los lleva de fábrica.
+                HrPermissions.MedicalRead,
+                HrPermissions.MedicalManage,
                 // Spec 2026-11-21 (nómina): los cuatro permisos ven plata; sólo admin los lleva de fábrica.
                 PayrollPermissions.PeriodRead,
                 PayrollPermissions.PeriodManage,
@@ -3008,6 +3076,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-10 §5: el costo y el margen son dato comercial sensible; de fábrica sólo en admin.
                 CatalogPermissions.ProductCostRead,
                 CatalogPermissions.ProductCostManage,
+                // Spec 2026-11-22 (D-10): listas de precios por canal; las administra quien administra el catálogo.
+                CatalogPermissions.PriceListManage,
                 ReportingPermissions.MarginRead
             ]));
         services.AddSingleton(new RoleDefinition(
@@ -3112,8 +3182,14 @@ public static class QepServiceCollectionExtensions
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
                 // Spec 2026-11-18 (integración Siigo) §5.7: facturación emite la factura en Siigo, como marca el pedido facturado
-                // (quotations.order.invoice). Configurar la conexión es de admin.
+                // (quotations.order.invoice).
                 SiigoPermissions.InvoiceIssue,
+                // Decisión del owner (2026-11-24): facturación ve las empresas y configura la conexión de Siigo. De Integraciones
+                // sólo lee: integrations.connection.manage daría también WhatsApp, Instagram y Shopify, así que crear, editar la
+                // credencial y desconectar siguen siendo de admin.
+                CompaniesPermissions.CompanyRead,
+                IntegrationsPermissions.ConnectionRead,
+                SiigoPermissions.SettingsManage,
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
             ]));
@@ -3312,6 +3388,17 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [ModuleKeys.Catalog])
         {
             Shape = new("catalog.product_cost", "Costos", "read"),
+        });
+        // Spec 2026-11-22 (D-10): sin [wholesale]: el POS, la tienda y las cotizaciones usan listas sin el módulo mayorista.
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.PriceListManage,
+            "Gestionar listas de precios",
+            "Permite crear, editar y borrar listas de precios, sus precios fijos y asignarlas a los canales.",
+            "Catalog",
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog])
+        {
+            Shape = new("catalog.price_list", "Listas de precios", "manage"),
         });
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductCostManage,
@@ -4031,16 +4118,6 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-11-17 (mayorista): con [wholesale], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
         // roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
         services.AddSingleton(new PermissionDefinition(
-            WholesalePermissions.PriceListManage,
-            "Gestionar listas de precios",
-            "Permite crear, editar y borrar las listas de precios de distribuidores.",
-            "Mayorista",
-            "medium",
-            RequiredModules: [ModuleKeys.Wholesale])
-        {
-            Shape = new("wholesale.price_list", "Listas de precios", "manage"),
-        });
-        services.AddSingleton(new PermissionDefinition(
             WholesalePermissions.DistributorRead,
             "Ver distribuidores",
             "Permite ver los distribuidores, su lista de precios y su asesor.",
@@ -4200,6 +4277,27 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [ModuleKeys.Hr])
         {
             Shape = new("hr.settings", "Configuración de RRHH", "manage"),
+        });
+        // Spec 2026-11-23 (exámenes médicos): restricciones y recomendaciones son datos de salud (Ley 1581), así que ver la ficha no basta.
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.MedicalRead,
+            "Ver exámenes médicos",
+            "Permite ver los exámenes médicos ocupacionales de los empleados, con sus restricciones, recomendaciones y certificados.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.medical", "Exámenes médicos", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            HrPermissions.MedicalManage,
+            "Gestionar exámenes médicos",
+            "Permite registrar, editar y eliminar exámenes médicos, adjuntar certificados, marcar egresos sin asistir e importar el historial.",
+            "Recursos humanos",
+            "high",
+            RequiredModules: [ModuleKeys.Hr])
+        {
+            Shape = new("hr.medical", "Exámenes médicos", "manage"),
         });
         // Spec 2026-11-21 (nómina): con [payroll], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo
         // ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled. Todos ven plata: riesgo alto.
@@ -4516,6 +4614,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CatalogPermissions.ProductCostManage,
                 policy => AddPermissionRequirement(policy, CatalogPermissions.ProductCostManage))
+            // Spec 2026-11-22: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                CatalogPermissions.PriceListManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.PriceListManage))
             .AddPolicy(
                 CompaniesPermissions.CompanyRead,
                 policy => AddPermissionRequirement(policy, CompaniesPermissions.CompanyRead))
@@ -4792,9 +4894,6 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, PurchasesPermissions.OrderManage))
             // Spec 2026-11-17 (mayorista): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
-                WholesalePermissions.PriceListManage,
-                policy => AddPermissionRequirement(policy, WholesalePermissions.PriceListManage))
-            .AddPolicy(
                 WholesalePermissions.DistributorRead,
                 policy => AddPermissionRequirement(policy, WholesalePermissions.DistributorRead))
             .AddPolicy(
@@ -4840,6 +4939,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 HrPermissions.SettingsManage,
                 policy => AddPermissionRequirement(policy, HrPermissions.SettingsManage))
+            // Spec 2026-11-23 (exámenes médicos): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                HrPermissions.MedicalRead,
+                policy => AddPermissionRequirement(policy, HrPermissions.MedicalRead))
+            .AddPolicy(
+                HrPermissions.MedicalManage,
+                policy => AddPermissionRequirement(policy, HrPermissions.MedicalManage))
             // Spec 2026-11-21 (nómina): sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 PayrollPermissions.PeriodRead,

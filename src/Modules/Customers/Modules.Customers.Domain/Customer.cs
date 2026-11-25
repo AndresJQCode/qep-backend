@@ -258,6 +258,13 @@ public sealed class Customer
     public string? CityName { get; private set; }
 
     /// <summary>
+    /// La region (provincia) del domicilio, FK blanda a <c>geography.regions</c>. Solo con un pais
+    /// distinto de Colombia; nula en Colombia, que deriva el departamento de <see cref="CityId"/>.
+    /// Ver <see cref="CustomerContactInfo.RegionId"/>.
+    /// </summary>
+    public Guid? RegionId { get; private set; }
+
+    /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
     /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado. Reemplaza al
     /// viejo enum fijo <c>CustomerClassification</c>, que no tenia relacion con este catalogo y ya
@@ -1050,6 +1057,7 @@ public sealed class Customer
         Country = location.Country;
         CityId = location.CityId;
         CityName = location.CityName;
+        RegionId = location.RegionId;
     }
 
     private void Assign(CustomerCommercialInfo commercial)
@@ -1381,7 +1389,7 @@ public sealed class Customer
     /// pero no corre hasta el SaveChanges, y fallar rapido con un codigo de dominio es mejor que
     /// dejar que un Guid.Empty vuelva como una violacion de FK que no dice nada util.
     /// </summary>
-    private static (string Country, Guid? CityId, string? CityName) EnsureValidLocation(
+    private static (string Country, Guid? CityId, string? CityName, Guid? RegionId) EnsureValidLocation(
         CustomerContactInfo normalized)
     {
         // Normalized() ya rechazo un pais ausente o que no sean dos letras.
@@ -1389,17 +1397,29 @@ public sealed class Customer
 
         if (country == ColombiaCountryCode)
         {
+            // Red del dominio: el validador ya rechaza la region con CO con un error por campo.
+            if (normalized.RegionId is not null)
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.region_lane_invalid",
+                    "A Colombian customer takes its region from the city, not from a region id.");
+            }
+
             // Solo null es "sin ciudad"; un Guid.Empty es un id roto y se sigue rechazando (G5).
             return normalized.CityId is { } cityId
                 ? (country, cityId != Guid.Empty
                     ? cityId
                     : throw new CustomersDomainException(
                         "customers.customer.city_required",
-                        "The customer city is required."), null)
-                : (country, null, null);
+                        "The customer city is required."), null, null)
+                : (country, null, null, null);
         }
 
-        return (country, null, string.IsNullOrWhiteSpace(normalized.CityName) ? null : normalized.CityName);
+        return (
+            country,
+            null,
+            string.IsNullOrWhiteSpace(normalized.CityName) ? null : normalized.CityName,
+            normalized.RegionId);
     }
 
     // Con documento corren las dos reglas de pais; sin documento no hay nada que comprobar.

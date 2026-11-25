@@ -22,6 +22,8 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
     private static readonly ValueConverter<SalaryRecordId, Guid> SalaryIdConverter = new(id => id.Value, value => new SalaryRecordId(value));
     private static readonly ValueConverter<AssignmentRecordId, Guid> AssignmentIdConverter = new(id => id.Value, value => new AssignmentRecordId(value));
     private static readonly ValueConverter<ContractRenewalId, Guid> RenewalIdConverter = new(id => id.Value, value => new ContractRenewalId(value));
+    private static readonly ValueConverter<MedicalExamId, Guid> MedicalExamIdConverter = new(id => id.Value, value => new MedicalExamId(value));
+    private static readonly ValueConverter<ExitExamRequirementId, Guid> ExitRequirementIdConverter = new(id => id.Value, value => new ExitExamRequirementId(value));
 
     public DbSet<LegalParameterValue> LegalParameters => Set<LegalParameterValue>();
 
@@ -46,7 +48,18 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
 
     public DbSet<ContractRenewal> ContractRenewals => Set<ContractRenewal>();
 
+    public DbSet<MedicalExam> MedicalExams => Set<MedicalExam>();
+
+    public DbSet<ExitExamRequirement> ExitExamRequirements => Set<ExitExamRequirement>();
+
     internal DbSet<EmployeeActivityRow> Activity => Set<EmployeeActivityRow>();
+
+    // Write projection of platform.outbox_messages (ExcludeFromMigrations): Tenancy owns the table. Spec 2026-11-23 §9.2.
+    internal DbSet<HrOutboxMessage> Outbox => Set<HrOutboxMessage>();
+
+    internal DbSet<TenantRun> TenantRuns => Set<TenantRun>();
+
+    internal DbSet<DailyDigest> DailyDigests => Set<DailyDigest>();
 
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -64,7 +77,12 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         ConfigureSalary(modelBuilder);
         ConfigureAssignment(modelBuilder);
         ConfigureRenewal(modelBuilder);
+        ConfigureMedicalExam(modelBuilder);
+        ConfigureExitRequirement(modelBuilder);
         ConfigureActivity(modelBuilder);
+        ConfigureOutboxProjection(modelBuilder);
+        ConfigureTenantRun(modelBuilder);
+        ConfigureDailyDigest(modelBuilder);
     }
 
     // `column IN ('A','B')` para un enum guardado como texto: la base no depende de quien escribe.
@@ -193,10 +211,14 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
     private static void ConfigurePosition(ModelBuilder modelBuilder)
     {
         var position = modelBuilder.Entity<Position>();
-        position.ToTable("positions", Schema);
+        position.ToTable("positions", Schema, table =>
+            table.HasCheckConstraint(
+                "CK_positions_exam_frequency_months",
+                $"exam_frequency_months IS NULL OR exam_frequency_months BETWEEN {Position.MinExamFrequencyMonths} AND {Position.MaxExamFrequencyMonths}"));
         position.HasKey(value => value.Id);
         position.Property(value => value.Id).HasColumnName("id").HasConversion(PositionIdConverter).ValueGeneratedNever();
         ConfigureSetting(position);
+        position.Property(value => value.ExamFrequencyMonths).HasColumnName("exam_frequency_months");
         position.HasIndex(value => new { value.TenantId, value.NormalizedName })
             .IsUnique()
             .HasDatabaseName("IX_positions_tenant_normalized_name");
@@ -381,6 +403,108 @@ public sealed class HrDbContext(DbContextOptions<HrDbContext> options)
         renewal.Property(value => value.DocumentFileId).HasColumnName("document_file_id");
         renewal.Property(value => value.DocumentFileName).HasColumnName("document_file_name").HasMaxLength(255);
         renewal.Property(value => value.CreatedAt).HasColumnName("created_at");
+    }
+
+    // Spec 2026-11-23 §5.1. Own version (concurrency token) so that recording an exam never collides with a ficha edit. The unique
+    // index is what makes "the same exam is not recorded twice" true for the import and for a double click; its name is the one
+    // HrUnitOfWork translates to hr.medical_exam.duplicate.
+    internal const string MedicalExamUniqueIndex = "IX_medical_exams_tenant_employee_type_date";
+
+    private static void ConfigureMedicalExam(ModelBuilder modelBuilder)
+    {
+        var exam = modelBuilder.Entity<MedicalExam>();
+        exam.ToTable("medical_exams", Schema, table =>
+            table.HasCheckConstraint("CK_medical_exams_type", In<MedicalExamType>("type")));
+        exam.HasKey(value => value.Id);
+        exam.Property(value => value.Id).HasColumnName("id").HasConversion(MedicalExamIdConverter).ValueGeneratedNever();
+        exam.Property(value => value.TenantId).HasColumnName("tenant_id");
+        exam.Property(value => value.EmployeeId).HasColumnName("employee_id").HasConversion(EmployeeIdConverter);
+        exam.Property(value => value.Type).HasColumnName("type").HasConversion<string>().HasMaxLength(32);
+        exam.Property(value => value.ExamDate).HasColumnName("exam_date");
+        exam.Property(value => value.Provider).HasColumnName("provider").HasMaxLength(200);
+        exam.Property(value => value.Restrictions).HasColumnName("restrictions").HasMaxLength(2000);
+        exam.Property(value => value.Recommendations).HasColumnName("recommendations").HasMaxLength(2000);
+        exam.Property(value => value.RestrictionsUntil).HasColumnName("restrictions_until");
+        // The certificate lives in the HR document store, referenced by id like every other Hr PDF.
+        exam.Property(value => value.DocumentFileId).HasColumnName("document_file_id");
+        exam.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
+        exam.Property(value => value.CreatedAt).HasColumnName("created_at");
+        exam.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        exam.HasOne<Employee>().WithMany().HasForeignKey(value => value.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+        exam.HasIndex(value => new { value.TenantId, value.EmployeeId, value.Type, value.ExamDate })
+            .IsUnique()
+            .HasDatabaseName(MedicalExamUniqueIndex);
+        exam.HasIndex(value => new { value.EmployeeId, value.ExamDate }).HasDatabaseName("IX_medical_exams_employee_exam_date");
+    }
+
+    // Spec 2026-11-23 §5.3: one row per terminated contract. Written in the same unit of work as the termination.
+    private static void ConfigureExitRequirement(ModelBuilder modelBuilder)
+    {
+        var requirement = modelBuilder.Entity<ExitExamRequirement>();
+        requirement.ToTable("exit_exam_requirements", Schema, table =>
+            table.HasCheckConstraint("CK_exit_exam_requirements_status", In<ExitExamStatus>("status")));
+        requirement.HasKey(value => value.Id);
+        requirement.Property(value => value.Id).HasColumnName("id").HasConversion(ExitRequirementIdConverter).ValueGeneratedNever();
+        requirement.Property(value => value.TenantId).HasColumnName("tenant_id");
+        requirement.Property(value => value.EmployeeId).HasColumnName("employee_id").HasConversion(EmployeeIdConverter);
+        requirement.Property(value => value.ContractId).HasColumnName("contract_id").HasConversion(ContractIdConverter);
+        requirement.Property(value => value.TerminatedOn).HasColumnName("terminated_on");
+        requirement.Property(value => value.DueDate).HasColumnName("due_date");
+        requirement.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(32);
+        requirement.Property(value => value.ExamId).HasColumnName("exam_id").HasConversion(MedicalExamIdConverter);
+        requirement.Property(value => value.NotifiedOn).HasColumnName("notified_on");
+        requirement.Property(value => value.Notes).HasColumnName("notes").HasMaxLength(500);
+        requirement.Property(value => value.CreatedAt).HasColumnName("created_at");
+        requirement.HasOne<Employee>().WithMany().HasForeignKey(value => value.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+        requirement.HasOne<EmploymentContract>().WithMany().HasForeignKey(value => value.ContractId).OnDelete(DeleteBehavior.Cascade);
+        // If the exam is deleted behind the aggregate's back the link is dropped; MedicalExamRules.Recalculate reopens the row.
+        requirement.HasOne<MedicalExam>().WithMany().HasForeignKey(value => value.ExamId).OnDelete(DeleteBehavior.SetNull);
+        requirement.HasIndex(value => value.ContractId).IsUnique().HasDatabaseName("IX_exit_exam_requirements_contract_id");
+        requirement.HasIndex(value => new { value.TenantId, value.EmployeeId }).HasDatabaseName("IX_exit_exam_requirements_tenant_employee");
+        requirement.HasIndex(value => new { value.TenantId, value.Status }).HasDatabaseName("IX_exit_exam_requirements_tenant_status");
+    }
+
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<HrOutboxMessage>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
+    }
+
+    // Spec 2026-11-23 §9.1: the claim of the daily run of a tenant. Written and read with raw SQL by TenantRunStore.
+    private static void ConfigureTenantRun(ModelBuilder modelBuilder)
+    {
+        var run = modelBuilder.Entity<TenantRun>();
+        run.ToTable("tenant_runs", Schema);
+        run.HasKey(value => new { value.TenantId, value.RunDate });
+        run.Property(value => value.TenantId).HasColumnName("tenant_id");
+        run.Property(value => value.RunDate).HasColumnName("run_date");
+        run.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        run.Property(value => value.FinishedAt).HasColumnName("finished_at");
+    }
+
+    // One row per manager and day: its deduplication. Written and read with raw SQL by DailyDigestStore.
+    private static void ConfigureDailyDigest(ModelBuilder modelBuilder)
+    {
+        var digest = modelBuilder.Entity<DailyDigest>();
+        digest.ToTable("daily_digests", Schema, table =>
+            table.HasCheckConstraint("CK_daily_digests_status", "status IN ('Sending','Sent','Failed')"));
+        digest.HasKey(value => new { value.TenantId, value.MemberId, value.RunDate });
+        digest.Property(value => value.TenantId).HasColumnName("tenant_id");
+        digest.Property(value => value.MemberId).HasColumnName("member_id");
+        digest.Property(value => value.RunDate).HasColumnName("run_date");
+        digest.Property(value => value.Status).HasColumnName("status").HasMaxLength(16);
+        digest.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+        digest.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        digest.Property(value => value.SentAt).HasColumnName("sent_at");
     }
 
     private static void ConfigureActivity(ModelBuilder modelBuilder)

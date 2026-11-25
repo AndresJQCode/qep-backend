@@ -266,6 +266,77 @@ public sealed class UserPreferenceApiTests
         Assert.Equal(new FullBody("indigo", "dark", false), read);
     }
 
+    // Spec 2026-11-22 (i18n). El tenant del stub no tiene fila en Tenancy, así que su idioma es el
+    // valor por defecto (es-419): el efectivo de quien nunca eligió es ése.
+    private sealed record LanguageBody(string? Language, string EffectiveLanguage);
+
+    [Fact]
+    public async Task SomeoneWhoNeverChoseFollowsTheTenantLanguage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedUserAsync(factory, SubjectId);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var read = await client.GetFromJsonAsync<LanguageBody>(Endpoint, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new LanguageBody(null, "es-419"), read);
+    }
+
+    [Fact]
+    public async Task ALanguageIsSavedOnItsOwnAndTheThemeIsKept()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedUserAsync(factory, SubjectId);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        await client.PutAsJsonAsync(Endpoint, new { colorScheme = "ocean", mode = "dark" }, TestContext.Current.CancellationToken);
+
+        var saved = await client.PutAsJsonAsync(Endpoint, new { language = "es-es" }, TestContext.Current.CancellationToken);
+        var language = await client.GetFromJsonAsync<LanguageBody>(Endpoint, TestContext.Current.CancellationToken);
+        var theme = await client.GetFromJsonAsync<FullBody>(Endpoint, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.Equal(new LanguageBody("es-ES", "es-ES"), language);
+        Assert.Equal(new FullBody("ocean", "dark", true), theme);
+    }
+
+    // Un PUT sin idioma no lo toca; uno con "" vuelve al del tenant.
+    [Fact]
+    public async Task AnEmptyLanguageGoesBackToTheTenantAndAMissingOneIsKept()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedUserAsync(factory, SubjectId);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        await client.PutAsJsonAsync(Endpoint, new { language = "es-ES" }, TestContext.Current.CancellationToken);
+
+        await client.PutAsJsonAsync(Endpoint, new { messageSound = false }, TestContext.Current.CancellationToken);
+        var kept = await client.GetFromJsonAsync<LanguageBody>(Endpoint, TestContext.Current.CancellationToken);
+        var cleared = await client.PutAsJsonAsync(Endpoint, new { language = "" }, TestContext.Current.CancellationToken);
+        var clearedBody = await cleared.Content.ReadFromJsonAsync<LanguageBody>(TestContext.Current.CancellationToken);
+
+        Assert.Equal(new LanguageBody("es-ES", "es-ES"), kept);
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        Assert.Equal(new LanguageBody(null, "es-419"), clearedBody);
+    }
+
+    [Fact]
+    public async Task AnUnsupportedLanguageIsA422WithTheDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedUserAsync(factory, SubjectId);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var response = await client.PutAsJsonAsync(Endpoint, new { language = "es-CO" }, TestContext.Current.CancellationToken);
+        var problem = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("identity.preference.language.invalid", problem.GetProperty("code").GetString());
+    }
+
     /// <summary>
     /// La preferencia tiene FK a <c>identity.users</c>, y el subject que inventa el stub no
     /// existe en la base. Sin esto, todo <c>PUT</c> revienta contra la clave foránea con un

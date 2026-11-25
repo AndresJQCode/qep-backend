@@ -1,4 +1,4 @@
-﻿using Modules.Quotations.Domain;
+using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
@@ -121,7 +121,8 @@ public sealed class StoreOrderGateway(
 
         var currency = Currencies.Normalize(request.Currency);
         var lines = await drafts.PriceLinesAsync(
-            request.TenantId, MergeRepeated(request.Lines), currency, request.IsRetail, cancellationToken);
+            request.TenantId, MergeRepeated(request.Lines), currency, request.IsRetail, cancellationToken,
+            QuotationPriceChannel.Store);
         var calendar = await tenantClock.GetAsync(request.TenantId, cancellationToken);
         var now = calendar.UtcNow;
 
@@ -178,7 +179,8 @@ public sealed class StoreOrderGateway(
                 "order.billing.account_required", "An order needs a billing company.");
 
         var lines = await drafts.PriceLinesAsync(
-            draft.TenantId, MergeRepeated(draft.Lines), billingAccount.Currency, draft.IsRetail, cancellationToken);
+            draft.TenantId, MergeRepeated(draft.Lines), billingAccount.Currency, draft.IsRetail, cancellationToken,
+            QuotationPriceChannel.Store);
         var advisor = new MemberId(draft.AdvisorMembershipId);
         // Excepción de D16 (spec impuestos por tipo §7.5): el pedido de la tienda siempre trae parte de facturación propia,
         // pero congela las tasas del cliente del país de su empresa, no selectores vacíos. El pedido nace hoy en la zona del

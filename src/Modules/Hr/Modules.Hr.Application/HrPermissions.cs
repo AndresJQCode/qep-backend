@@ -13,4 +13,9 @@ public static class HrPermissions
     public const string ContractManage = "hr.contract.manage";
 
     public const string SettingsManage = "hr.settings.manage";
+
+    // Spec 2026-11-23 (medical exams): health data. Every medical endpoint also requires EmployeeRead; writing requires both.
+    public const string MedicalRead = "hr.medical.read";
+
+    public const string MedicalManage = "hr.medical.manage";
 }

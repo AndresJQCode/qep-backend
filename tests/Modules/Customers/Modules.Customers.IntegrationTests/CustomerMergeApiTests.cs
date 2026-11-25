@@ -1086,4 +1086,26 @@ public sealed class CustomerMergeApiTests
             Guid tenantId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
             Task.FromResult(new CustomerMergeReferenceCounts(0, 0, 0, 0, 0));
     }
+
+    // Review Focus 5: CustomerMergeResponse es otro Response a mano, aparte de CustomerResponse; el campo nuevo tiene que llegar
+    // por los dos.
+    [Fact]
+    public async Task MergeResponseCarriesRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var madrid = await MadridRegionIdAsync(client);
+        await ExecuteAsync(
+            arranged.ConnectionString,
+            "UPDATE customers.customers SET country = 'ES', city_id = NULL, city_name = 'Madrid', "
+            + $"region_id = '{madrid}' WHERE id = '{arranged.Survivor}'");
+
+        var body = await MergeAsync(client, arranged.Survivor, arranged.Merged);
+
+        var region = body.GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
 }

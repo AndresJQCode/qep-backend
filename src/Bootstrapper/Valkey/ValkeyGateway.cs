@@ -147,7 +147,7 @@ internal sealed partial class ValkeyGateway(
 
     private void RecordFallback(ValkeyArea area, string reason)
     {
-        metrics.RecordFallback(area);
+        metrics.RecordFallback(area, reason);
         LogFallback(logger, area, reason);
     }
 

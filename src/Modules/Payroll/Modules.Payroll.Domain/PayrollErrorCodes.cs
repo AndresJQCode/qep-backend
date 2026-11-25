@@ -13,6 +13,7 @@ public static class PayrollErrorCodes
     public const string EmployeeNotInPeriod = "payroll.employee.not_in_period";
     public const string ConceptNotFound = "payroll.concept.not_found";
     public const string RecurringNotFound = "payroll.recurring.not_found";
+    public const string VacationNotFound = "payroll.vacation.not_found";
 
     // 409
     public const string ConceptNameTaken = "payroll.concept.name_taken";
@@ -20,6 +21,7 @@ public static class PayrollErrorCodes
     public const string ConceptNotArchived = "payroll.concept.not_archived";
     public const string RecurringAlreadyActive = "payroll.recurring.already_active";
     public const string RecurringAlreadyInactive = "payroll.recurring.already_inactive";
+    public const string VacationOverlap = "payroll.vacation.overlap";
 
     // 422
     public const string CompanyInactive = "payroll.company.inactive";
@@ -39,6 +41,14 @@ public static class PayrollErrorCodes
     public const string LiquidationBlocked = "payroll.liquidation.blocked";
     public const string LiquidationNobodyToLiquidate = "payroll.liquidation.nobody_to_liquidate";
     public const string LegalParameterMissing = "payroll.legal_parameter.missing";
+
+    // 422 de las vacaciones disfrutadas (spec 2026-11-23): los dos primeros sólo con origen Qep.
+    public const string VacationStartsOnRestDay = "payroll.vacation.starts_on_rest_day";
+    public const string VacationNoBusinessDays = "payroll.vacation.no_business_days";
+    public const string VacationOutsideContract = "payroll.vacation.outside_contract";
+    public const string VacationBeforeFirstPeriod = "payroll.vacation.before_first_period";
+    public const string VacationNotPaidYet = "payroll.vacation.not_paid_yet";
+    public const string VacationPaidPeriodLocked = "payroll.vacation.paid_period_locked";
 
     // Interno: el índice único de períodos lo traduce `PayrollUnitOfWork` y `EnsureCurrentPeriods` lo atrapa; nunca sale por HTTP.
     public const string PeriodAlreadyExists = "payroll.period.already_exists";
@@ -79,5 +89,6 @@ public static class PayrollErrorCodes
         ConceptNotArchived,
         RecurringAlreadyActive,
         RecurringAlreadyInactive,
+        VacationOverlap,
     };
 }

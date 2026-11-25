@@ -118,7 +118,7 @@ public sealed class AgentSchedulingToolsTests
     }
 
     [Fact]
-    public async Task ChangeBlockedHandsOffToTheConfiguredDestination()
+    public async Task ChangeBlockedOnCancelReturnsTheHandoffCode()
     {
         _scheduling.CancelResult = AiSchedulingResult<AiAppointmentWrite>.HandedOff(
             AgentToolErrors.AppointmentChangeBlocked, AgentHandoffCodes.AppointmentChangeBlocked);
@@ -296,11 +296,11 @@ public sealed class AgentSchedulingToolsTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal("appointment_change_blocked", result.Handoff?.Code);
-        Assert.Equal(0, _scheduling.PreviewCalls);
+        Assert.Equal(0, _scheduling.RescheduleCheckCalls);
     }
 
     [Fact]
-    public async Task SimulatedRescheduleChecksTheNewStartWithTheAppointmentsService()
+    public async Task SimulatedRescheduleChecksTheMoveOfThatAppointment()
     {
         _scheduling.FindResult = AiSchedulingResult<AiAppointment>.Ok(Stored().Appointment);
 
@@ -310,7 +310,27 @@ public sealed class AgentSchedulingToolsTests
             TestContext.Current.CancellationToken);
 
         Assert.False(result.IsError);
-        Assert.Equal((Service, 1, 0), (_scheduling.LastPreviewService, _scheduling.PreviewCalls, _scheduling.RescheduleCalls));
+        Assert.Equal((Appointment, new DateTime(2026, 11, 25, 10, 0, 0), (Guid?)null), _scheduling.LastRescheduleCheck);
+        Assert.Equal((1, 0, 0), (_scheduling.RescheduleCheckCalls, _scheduling.PreviewCalls, _scheduling.RescheduleCalls));
+    }
+
+    [Fact]
+    public async Task SimulatedRescheduleToTheSameTimeSaysAlreadyDone()
+    {
+        _scheduling.FindResult = AiSchedulingResult<AiAppointment>.Ok(Stored().Appointment);
+        _scheduling.ReschedulePreviewResult = AiSchedulingResult<AiReschedulePreview>.Ok(
+            new AiReschedulePreview(
+                new AiStartPreview(
+                    "Confirmed", new DateTimeOffset(2026, 11, 24, 9, 0, 0, Bogota), new DateTimeOffset(2026, 11, 24, 9, 30, 0, Bogota),
+                    "America/Bogota", "Consulta general", "Dra. Pérez", "Sede principal"),
+                AlreadyDone: true));
+
+        var result = await new SimulatedRescheduleAppointmentTool(_scheduling).ExecuteAsync(
+            Invocation(isTest: true),
+            Json($$"""{"appointmentId":"{{Appointment}}","startsAt":"2026-11-24T09:00","resourceId":null}"""),
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains("\"alreadyDone\":true", result.ResultJson);
     }
 
     [Fact]
@@ -332,7 +352,18 @@ public sealed class AgentSchedulingToolsTests
         using var document = JsonDocument.Parse(result.ResultJson);
         var first = document.RootElement.GetProperty("appointments")[0];
         Assert.True(first.GetProperty("canChangeByChat").GetBoolean());
+        Assert.True(first.GetProperty("canRescheduleByChat").GetBoolean());
         Assert.Equal("2026-11-23T09:00", first.GetProperty("changeByChatUntil").GetString());
+    }
+
+    [Fact]
+    public async Task ListMyAppointmentsCarriesTheServiceIdForCheckAvailability()
+    {
+        var result = await new ListMyAppointmentsTool(_scheduling).ExecuteAsync(Invocation(), Json("{}"), TestContext.Current.CancellationToken);
+
+        using var document = JsonDocument.Parse(result.ResultJson);
+        var first = document.RootElement.GetProperty("appointments")[0];
+        Assert.Equal(Service, first.GetProperty("serviceId").GetGuid());
     }
 
     // §3: Anthropic acepta a lo sumo 20 herramientas estrictas, 24 parámetros opcionales y 16 uniones por request.
@@ -424,16 +455,24 @@ public sealed class AgentSchedulingToolsTests
 
         public Guid LastPreviewService { get; private set; }
 
+        public int RescheduleCheckCalls { get; private set; }
+
+        public (Guid AppointmentId, DateTime Start, Guid? ResourceId)? LastRescheduleCheck { get; private set; }
+
         public AiAvailability Availability { get; set; } = new("America/Bogota", Service, [Slot(9, 0)], false);
 
         public AiSchedulingResult<AiAppointmentWrite> BookResult { get; set; } = AiSchedulingResult<AiAppointmentWrite>.Ok(Stored());
 
         public AiSchedulingResult<AiAppointmentWrite> CancelResult { get; set; } = AiSchedulingResult<AiAppointmentWrite>.Ok(Stored());
 
-        public AiSchedulingResult<AiStartPreview> PreviewResult { get; set; } = AiSchedulingResult<AiStartPreview>.Ok(
-            new AiStartPreview(
-                "Pending", new DateTimeOffset(2026, 11, 24, 9, 0, 0, Bogota), new DateTimeOffset(2026, 11, 24, 9, 30, 0, Bogota),
-                "America/Bogota", "Consulta general", "Dra. Pérez", "Sede principal"));
+        private static readonly AiStartPreview DefaultPreview = new(
+            "Pending", new DateTimeOffset(2026, 11, 24, 9, 0, 0, Bogota), new DateTimeOffset(2026, 11, 24, 9, 30, 0, Bogota),
+            "America/Bogota", "Consulta general", "Dra. Pérez", "Sede principal");
+
+        public AiSchedulingResult<AiStartPreview> PreviewResult { get; set; } = AiSchedulingResult<AiStartPreview>.Ok(DefaultPreview);
+
+        public AiSchedulingResult<AiReschedulePreview> ReschedulePreviewResult { get; set; } =
+            AiSchedulingResult<AiReschedulePreview>.Ok(new AiReschedulePreview(DefaultPreview, false));
 
         public AiSchedulingResult<AiAppointment> FindResult { get; set; } = AiSchedulingResult<AiAppointment>.Ok(Stored().Appointment);
 
@@ -470,6 +509,15 @@ public sealed class AgentSchedulingToolsTests
             PreviewCalls++;
             LastPreviewService = serviceId;
             return Task.FromResult(PreviewResult);
+        }
+
+        public Task<AiSchedulingResult<AiReschedulePreview>> PreviewRescheduleAsync(
+            AiSchedulingCaller caller, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken)
+        {
+            Calls++;
+            RescheduleCheckCalls++;
+            LastRescheduleCheck = (appointmentId, localStartsAt, resourceId);
+            return Task.FromResult(ReschedulePreviewResult);
         }
 
         public Task<AiSchedulingResult<AiAppointments>> ListMyAppointmentsAsync(AiSchedulingCaller caller, CancellationToken cancellationToken)

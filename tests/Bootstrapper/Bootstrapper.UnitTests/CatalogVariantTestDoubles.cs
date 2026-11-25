@@ -272,3 +272,38 @@ internal sealed record VariantWorld(Product Product, OptionDefinition Size, Guid
         return Product.Variants.Single(variant => variant.OptionValueIds.Contains(valueId));
     }
 }
+
+/// <summary>
+/// Spec 2026-11-22: el resolutor de precios de canal. Sin <paramref name="listedChannel"/> todo canal vende al base; con él, ese
+/// canal tiene una lista que multiplica el base por <paramref name="factor"/> (sin redondeo: la regla real la prueban
+/// <c>PriceListTests</c> y la integración de Catalog). Anota qué canales se pidieron.
+/// </summary>
+internal sealed class FakePriceListPricing(PriceChannel? listedChannel = null, decimal factor = 1m) : IPriceListPricing
+{
+    private readonly PriceList _list = PriceList.Create(
+        Guid.CreateVersion7(), "Lista de prueba", 0m, PriceListVisibility.AllActive, [], DateTimeOffset.UnixEpoch);
+
+    public List<PriceChannel> RequestedChannels { get; } = [];
+
+    public Task<PriceList?> ListForChannelAsync(Guid tenantId, PriceChannel channel, CancellationToken cancellationToken)
+    {
+        RequestedChannels.Add(channel);
+        return Task.FromResult(channel == listedChannel ? _list : null);
+    }
+
+    public Task<PriceList?> FindAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken) =>
+        Task.FromResult<PriceList?>(id == _list.Id ? _list : null);
+
+    public Task<PriceBook> BookAsync(
+        Guid tenantId, PriceList? list, IReadOnlyCollection<PricedVariant> variants, CancellationToken cancellationToken) =>
+        Task.FromResult(PriceBook.BasePrices(list is null
+            ? variants
+            : variants.Select(variant => variant with
+            {
+                BasePrices = variant.BasePrices.ToDictionary(pair => pair.Key, pair => pair.Value * factor),
+            })));
+
+    public Task<PriceBook> BookForAdjustmentAsync(
+        Guid tenantId, decimal adjustmentPercent, IReadOnlyCollection<PricedVariant> variants, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Ningún adaptador de estas pruebas lo usa.");
+}

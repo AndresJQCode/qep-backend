@@ -900,6 +900,48 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         Assert.Equal("ES", Assert.Single(fetched.Order.Parties, candidate => candidate.Role == "Billing").Country);
     }
 
+    // Provincia guardada (spec 2026-11-23): el PUT reemplaza la parte entera, así que guardar sin `regionId` borra la
+    // provincia guardada, igual que `cityName`. Se lee del JSON de la respuesta, no del DTO.
+    [Fact]
+    public async Task SavingBillingWithoutRegionClearsIt()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var madrid = await MadridRegionIdAsync(client);
+        OrderBillingEditRequest Foreign(Guid? regionId) => new(
+            new QuotationPartyRequest(
+                "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
+                PersonType: "Natural", IdentificationType: "NIE", Country: "ES", CityName: "Madrid", RegionId: regionId),
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+        var items = new[] { new OrderEditItemRequest(productId, 1m) };
+
+        var first = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version, new SaveOrderEditsRequest(items, null, null, Billing: Foreign(madrid)));
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        var firstDetail = await ReadDetailAsync(first);
+        var firstJson = await GetRawDetailAsync(client, tenantId, order.Id);
+        Assert.Equal("Madrid", BillingJson(firstJson).GetProperty("region").GetProperty("name").GetString());
+
+        var second = await PutEditsAsync(
+            client, tenantId, order.Id, firstDetail.Order.Version,
+            new SaveOrderEditsRequest(items, null, null, Billing: Foreign(null)));
+
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var secondJson = await second.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal(JsonValueKind.Null, BillingJson(secondJson).GetProperty("region").ValueKind);
+    }
+
+    private static async Task<JsonElement> GetRawDetailAsync(HttpClient client, Guid tenantId, Guid orderId) =>
+        await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{tenantId}/orders/{orderId}", TestContext.Current.CancellationToken);
+
+    private static JsonElement BillingJson(JsonElement detail) =>
+        detail.GetProperty("order").GetProperty("parties").EnumerateArray()
+            .Single(party => party.GetProperty("role").GetString() == "Billing");
+
     [Fact]
     public async Task AnOrderBillingPartyWithACcAbroadIsA422OnItsType()
     {

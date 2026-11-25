@@ -37,7 +37,8 @@ public sealed class HrSettingsComposer(
                 .OrderBy(dto => dto.Name, StringComparer.CurrentCultureIgnoreCase).ThenBy(dto => dto.Id)
                 .ToList(),
             snapshot.Positions
-                .Select(position => new PositionDto(position.Id.Value, position.Name, position.Archived, snapshot.InUse.Contains(position.Id.Value), position.Version))
+                .Select(position => new PositionDto(
+                    position.Id.Value, position.Name, position.Archived, snapshot.InUse.Contains(position.Id.Value), position.Version, position.ExamFrequencyMonths))
                 .OrderBy(dto => dto.Name, StringComparer.CurrentCultureIgnoreCase).ThenBy(dto => dto.Id)
                 .ToList(),
             await setup.IsCompleteAsync(tenantId, cancellationToken),
@@ -68,7 +69,9 @@ public sealed class HrSettingsComposer(
         new(area.Id.Value, area.Name, area.Archived, await settings.IsInUseAsync(tenantId, area.Id.Value, cancellationToken), area.Version);
 
     public async Task<PositionDto> PositionAsync(Guid tenantId, Position position, CancellationToken cancellationToken) =>
-        new(position.Id.Value, position.Name, position.Archived, await settings.IsInUseAsync(tenantId, position.Id.Value, cancellationToken), position.Version);
+        new(
+            position.Id.Value, position.Name, position.Archived, await settings.IsInUseAsync(tenantId, position.Id.Value, cancellationToken),
+            position.Version, position.ExamFrequencyMonths);
 
     /// <summary>La configuración que sea, como el DTO de su tipo: lo usan archivar y desarchivar, que responden el recurso.</summary>
     public async Task<object> ComposeAsync(Guid tenantId, OrganizationSetting setting, CancellationToken cancellationToken) =>

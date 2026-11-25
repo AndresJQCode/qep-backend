@@ -554,11 +554,35 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Código postal de la entrega
+
+La parte de **envío** de cotizaciones y pedidos tiene un `postalCode` opcional, en Colombia y fuera: se recorta, vacío es
+`null` y el tope son 20 caracteres, sin formato por país (spec 2026-11-24).
+
+- **Escritura:** `parties.shipping.postalCode` en las rutas que reciben partes. Omitirlo lo borra, como `regionId`. En
+  facturación se descarta. Más largo es `422 quotations.party.postal_code_too_long` con
+  `errors["Parties.Shipping.PostalCode"]`.
+- **Lectura:** cada parte responde `postalCode` (en facturación siempre `null`), y la cotización y el pedido (`order`)
+  traen `postalCodeSupported: true`, que es lo que el frontend mira para pintar el campo.
+- La conversión lo copia al pedido, el PDF lo imprime en la ubicación tras la dirección y el envío a Shopify lo manda
+  como `zip` (ver [El envío](#integración-con-shopify)). La libreta de direcciones del cliente todavía no lo tiene.
+
 ## Regiones y ciudades por país
 
-El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. La región (departamento,
-provincia) **sólo sirve para filtrar ciudades: no se guarda**. Colombia guarda `CityId`; el resto de países
-guarda el nombre de la ciudad como texto (`CityName`).
+El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. Colombia guarda `CityId` y deriva su
+departamento de la ciudad (nunca guarda una región). El resto de países guarda el nombre de la ciudad como texto
+(`CityName`) y, **si el país tiene catálogo de regiones distinto de Colombia (hoy sólo España), también la región**: una
+referencia blanda `region_id` a `geography.regions`, sin llave foránea entre esquemas.
+
+- **Qué entidades la guardan:** el domicilio y las direcciones del cliente, la empresa facturadora, el proveedor y las
+  partes de facturación y entrega de cotizaciones y pedidos (la copia al convertir también la lleva).
+- **Escritura:** `regionId` opcional junto con `country` y `cityName`. Con Colombia (o sin país) es `422`; una región
+  inexistente, de otro país o un id de departamento colombiano es `422 <módulo>.<entidad>.region_invalid`. Un `PUT` sin
+  `regionId` la borra, igual que `cityName`.
+- **Lectura:** el detalle responde `region: { id, name } | null`; las listas y los Excel no cambian. La vista del cliente
+  dentro de la cotización y el pedido (`client`, `client.addresses[*]`) también la trae.
+- **Datos existentes:** ninguna fila se migra; las anteriores quedan con `region_id = null`.
+- El selector sigue leyendo el catálogo de abajo: la región elegida filtra las ciudades y ahora además viaja al guardar.
 
 | Ruta | Respuesta |
 | --- | --- |
@@ -1373,6 +1397,8 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/categories`    | `GET`, `POST`; por categoría `PUT` y `DELETE` (`If-Match`); `PUT pos-quick-access`           | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/catalog/price-lists`   | `GET` (todas, por nombre), `POST` (201 + `Location`), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `catalog.price_list.in_use` si un canal o un distribuidor la usa), `overrides` (`GET` paginado con `search`; `PUT` por lote `{ set, remove }`, `If-Match`, hasta 500 filas). Ver [Listas de precios por canal](#listas-de-precios-por-canal) | `catalog.price_list.manage` |
+| `/api/v1/tenants/{tenantId}/catalog/channel-prices` | `GET` y `PUT` (la lista de `Pos`, `Store` y `Quotations`; `null` = precio base; sin `If-Match`) | `catalog.price_list.manage` |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
@@ -1382,9 +1408,9 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
 | `/api/v1/tenants/{tenantId}/purchases/orders` | `GET` (`status`=`Draft`\|`Sent`\|`Confirmed`\|`Received`\|`Cancelled` sin importar mayúsculas, `supplierId`, `search` en el número o el nombre del proveedor, `page`, `pageSize` por defecto 50, tope 200; de la más nueva a la más vieja; `counts` por estado más `all` con los mismos filtros salvo `status`), `POST` (201 + `Location`, en `Draft` con número `OC-0001` por tenant; un alta rechazada no gasta número), `preview` (`POST`, mismo cuerpo, no escribe; `purchases.order.manage`), y por orden `GET`, `pdf` (`GET`, `application/pdf`, `OC-0001.pdf`, en cualquier estado), `PUT` y `DELETE` (sólo `Draft`, `If-Match`), `send`, `confirm` (cuerpo `{ lines: [{ lineId, confirmedQuantity, confirmedUnitCost }] }` con cada línea una vez), `receive` y `cancel` (`POST`, `If-Match`). Costos sin IVA; el IVA se suma en `totals` con la tasa que la línea copió del catálogo al guardar el borrador. Módulo `purchases` (apagado por defecto). Errores propios: `purchases.order.not_found` (404), `.not_draft` y `.invalid_transition` (409), `.empty`, `.line_not_in_catalog`, `.supplier_inactive`, `.invalid_currency`, `.confirm_lines_mismatch` (422), `.pdf_render_failed` (502); proveedor inexistente: `suppliers.supplier.not_found` (404) | `purchases.order.read` (`GET`, `pdf`) / `purchases.order.manage` (`POST`, `preview`, `PUT`, `DELETE`, `send`, `confirm`, `receive`, `cancel`) |
 | `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog` | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive` | `purchases.order.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/price-lists` | `GET` (todas, por nombre, sin paginar), `POST` (201 + `Location`), `preview` (`POST`, la lista sin guardar: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `wholesale.price_list.in_use` si algún distribuidor la usa). Módulo `wholesale` | `wholesale.price_list.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `wholesale.price_list.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`, manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone` y `whatsAppConnectionId`; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
+| `/api/v1/tenants/{tenantId}/wholesale/price-lists/preview` | `POST` (la lista sin guardar, `{ adjustmentPercent, visibility, categoryIds, exclusions }`: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe). Las listas mismas están en `/catalog/price-lists` desde el spec 2026-11-22. Módulo `wholesale` | `catalog.price_list.manage` + `wholesale.distributor.read` |
+| `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `catalog.price_list.manage` + `wholesale.distributor.read` |
+| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone`, `whatsAppConnectionId` y los datos del distribuidor: `businessName`, `country`, `identificationType`, `identificationNumber`, `contactName`, `email`, `cityId`, `cityName`, `address`, todos opcionales; `If-Match`; ver [Editar un distribuidor](#editar-un-distribuidor)), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
 | `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `email-code` (`POST`, anónimo, `credentials`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
@@ -1540,6 +1566,28 @@ Respuesta:
 ```
 
 Formatos de fecha admitidos: `yyyy-MM-dd`, `dd/MM/yyyy` y `MM/dd/yyyy`.
+
+#### Idioma del producto (`es-419` / `es-ES`)
+
+Spec: [2026-11-22 i18n](docs/superpowers/specs/2026-11-22-i18n-espanol-espana-y-latinoamerica-design.md). El idioma no es el
+formato regional: `defaultCulture`, `numberFormat` y `dateFormat` no cambian con él. El catálogo es
+`SupportedLanguages` (`BuildingBlocks.Domain.Localization`), y el diccionario de cada idioma lo tiene el frontend.
+
+| Dónde | Campo | Qué es |
+| ----- | ----- | ------ |
+| `GET`/`PUT /tenants/{tenantId}/settings` | `language` | El idioma del tenant, para quien no eligió uno: `es-419` (por defecto) o `es-ES`. Si el `PUT` no lo trae, se conserva; un valor fuera del catálogo responde `422 tenancy.settings.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `language` | Lo que eligió la persona en este tenant, o `null` para seguir al tenant. En el `PUT`: ausente o `null` conserva, `""` vuelve al del tenant, y un valor fuera del catálogo responde `422 identity.preference.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `effectiveLanguage` | El diccionario que tiene que cargar la pantalla: el elegido, si no el del tenant. |
+| `/auth/me`, `POST /auth/session` | `activeTenants[].language` | El idioma **efectivo** de la persona en cada tenant, disponible antes de la primera pintura. |
+| `POST /auth/register-tenant`, `POST /auth/password/register-tenant` | `language` | Opcional; ausente o `""` es `es-419`. |
+
+Los correos ya están en español neutro con tuteo, y solo cambian los términos que en España se dicen distinto: «cotización»
+es «presupuesto» (correos de exportación, en el idioma efectivo de quien exportó) y «radicado» es «número de caso» (correo de apertura
+de Soporte, en el idioma del tenant). El parámetro `radicado` del enlace de consulta no se traduce.
+
+El PDF de cotización y de pedido y el Excel de cotizaciones van en el idioma del tenant: en `es-ES` dicen «Presupuesto» y
+«Comercial», y los archivos se llaman `Presupuesto-N.pdf` y `presupuestos-….xlsx`. Pasar un tenant a `es-ES` regenera sus PDF guardados
+en el siguiente export, porque el idioma entra a la huella; el despliegue no regenera ninguno.
 
 ### Invitación de memberships
 
@@ -2499,25 +2547,39 @@ Ni este token ni el del mayorista quedan en el servidor: `platform.request_failu
 `SensitivePaths.Mask` (`/api/v1/invitations/***/accept`). La telemetría usa la misma regla (`SensitivePathTelemetry`): el
 `url.path` de los spans de OpenTelemetry y el scope `RequestPath` de los logs del request.
 
+### Listas de precios por canal
+
+Spec `docs/superpowers/specs/2026-11-22-listas-de-precios-por-canal-design.md`. Una lista de Catalog tiene un ajuste con signo
+sobre el precio base (−100 a 999,99 %, redondeado con la regla del tenant para cada moneda) y precios fijos por variante y
+moneda, que ganan tal cual. Un precio fijo sólo reemplaza: sin precio base en la moneda, la variante no tiene precio en ningún
+canal. «Precios por canal» asigna una lista a `Pos`, `Store` y `Quotations` (sin lista, el precio base); cada distribuidor del
+mayorista tiene la suya. El canal se deriva del documento: la caja usa `Pos`; el catálogo, el carrito y los pedidos de la tienda
+(también al editarlos) usan `Store`; cotizaciones, pedidos manuales y convertidos y regalos usan `Quotations`; un pedido de
+Shopify conserva el precio de Shopify. Las escalas siguen en la variante y su descuento se calcula sobre el precio del canal,
+donde el canal ya las aplicaba. Las líneas guardadas no cambian al cambiar una lista. Visibilidad, exclusiones y
+`showPrices` de la lista sólo los usa el catálogo del distribuidor.
+
 ### Mayorista: listas de precios, distribuidores e invitación
 
 Módulo `wholesale` (spec `docs/superpowers/specs/2026-11-17-compras-y-mayorista-design.md`, plan
-`docs/superpowers/plans/2026-11-17-mayorista-fase-2-backend.md`, «Contrato HTTP»). El mayorista arma listas de precios
-(descuento sobre el precio del catálogo en su moneda por defecto, redondeado con su regla) e invita distribuidores por correo.
-El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}` (72 horas; reenviar rota el token y el link viejo
-pasa a `404`).
+`docs/superpowers/plans/2026-11-17-mayorista-fase-2-backend.md`, «Contrato HTTP»). El mayorista asigna a cada distribuidor
+una lista de precios de Catalog (ver [Listas de precios por canal](#listas-de-precios-por-canal); su ajuste se aplica en la moneda
+por defecto del mayorista, redondeado con su regla) e invita distribuidores por correo.
+El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}?ev={prueba}` (72 horas; reenviar rota el token y el
+link viejo pasa a `404`). `ev` es la prueba de buzón (spec `2026-11-24-invitacion-distribuidor-prueba-de-correo-design.md`): sólo
+la lleva el link del correo; el de «Copiar», `invitationUrl` y el aviso de WhatsApp van sin ella.
 
 | Método | Ruta                                                   | Autenticación                        | Límite        |
 | ------ | ------------------------------------------------------ | ------------------------------------ | ------------- |
 | `GET`  | `/api/v1/wholesale-invitations/{token}`                | Anónimo                              | `public`      |
 | `POST` | `/api/v1/wholesale-invitations/{token}/email-code`     | Anónimo, `{ email }`, siempre `202`  | `credentials` |
 | `POST` | `/api/v1/wholesale-invitations/{token}/session`        | Bearer de Google (o stub)            | `credentials` |
-| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ email, password, code, termsVersion }` | `credentials` |
+| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ email, password, code?, termsVersion, emailProof? }` | `credentials` |
 | `GET`  | `/api/v1/wholesale-invitations/{token}/linkable-tenants` | Sesión QEP                         | `public`      |
 | `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
 
-Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.md`: el link identifica la invitación, no
-prueba el buzón, y el correo no tiene que ser el invitado.
+Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.md`: el link identifica la invitación y el
+correo no tiene que ser el invitado. Por sí solo no prueba el buzón; el del correo sí puede, con su `ev` (spec 2026-11-24).
 
 - `email-code` manda un código de 6 dígitos al correo que escribió el distribuidor (vence a los 10 minutos, 5 intentos; uno
   nuevo cada 60 s como mucho y 5 por correo en 24 h móviles). Cada código nuevo invalida el anterior y sólo cuenta el más
@@ -2525,9 +2587,12 @@ prueba el buzón, y el correo no tiene que ser el invitado.
   sólo emite con la invitación pendiente.
 - `session-with-password` (sin `email`, el invitado): si ese correo ya tiene contraseña, es un login normal
   (`IPasswordLogin`: `401 identity.credentials.invalid`, o `403 identity.email.not_verified` con el correo sin verificar; el
-  link no lo verifica). Si no tiene usuario o no tiene contraseña, exige un `code` válido de `email-code`: sin él es el mismo
-  `401` que una contraseña errada, así que la respuesta no dice si el correo tiene cuenta. Con el código ya gastado exige
-  `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla cerrado con
+  link no lo verifica, y `emailProof` se ignora). Si no tiene usuario o no tiene contraseña, exige un `code` válido de
+  `email-code` **o** `emailProof`, el valor de `?ev=` del link del correo: sin ninguno de los dos es el mismo `401` que una
+  contraseña errada, así que la respuesta no dice si el correo tiene cuenta ni si falló la prueba o el código. `emailProof`
+  sólo vale con la invitación pendiente, la prueba vigente y el correo invitado (sin mayúsculas ni espacios de más); la anulan
+  «Copiar», «Reenviar» (que manda una nueva) y cambiar el correo del distribuidor. Con el buzón probado o el código ya gastado
+  exige `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla cerrado con
   `identity.terms.unavailable`), y entonces aprovisiona, crea la contraseña y registra los términos.
 - `session` abre la sesión del correo **verificado** de Google (`403` si no está verificado), sea o no el invitado: usa el
   usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
@@ -2535,11 +2600,17 @@ prueba el buzón, y el correo no tiene que ser el invitado.
 - `accept` recibe `{ mode: "NewTenant", termsVersion? }` o `{ mode: "LinkTenant", tenantId }`. `NewTenant` crea el tenant del
   distribuidor con la razón social de la invitación como nombre y un slug que sugiere el servidor (con sufijo si está tomado;
   si se lo ganan en una carrera, reintenta hasta 3 veces), con `catalog, customers, companies, quotations, orders, reporting,
-  suppliers, purchases`, aunque el alta pública esté apagada; un `displayName` o `slug` en el cuerpo se ignora. Quien no aceptó
+  suppliers, purchases`, aunque el alta pública esté apagada; un `displayName` o `slug` en el cuerpo se usan si vienen (el país es
+  siempre el del distribuidor). Quien no aceptó
   la versión vigente de los términos manda `termsVersion` (`422` en `TermsVersion` sin ella). `LinkTenant` vincula un tenant
   donde la sesión es owner o tiene el rol de sistema `admin` en una membresía activa; prende `catalog`, `suppliers` y
-  `purchases` si faltan. En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista y deja la
-  relación `Active`; si el correo de la cuenta no es el del distribuidor, lo reemplaza en el mismo guardado y avisa a los dos
+  `purchases` si faltan. Sobre el tenant reservado (el que nace de la invitación, también en un reintento con cuerpo
+  `LinkTenant`) crea además la **empresa del distribuidor** con su razón social, documento, ciudad y dirección, idempotente por
+  tipo y número exactos (una invitación sin la ciudad que su país exige acepta sin empresa); vincular un tenant existente la crea sólo si ese
+  tenant no tiene ninguna empresa. En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista (con el celular del
+  aviso, la ciudad, la dirección y el contacto del distribuidor: con teléfono y ciudad nace completo, y el contacto es la etiqueta
+  de su dirección principal si hay ciudad colombiana y calle; sin teléfono, o si Customers rechaza la ficha completa, nace incompleto
+  como antes) y deja la relación `Active`; si el correo de la cuenta no es el del distribuidor, lo reemplaza en el mismo guardado y avisa a los dos
   correos. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
 - Errores: `404 wholesale.invitation.not_found`, `410 wholesale.invitation.expired`, `409 wholesale.invitation.already_accepted`,
   `.unavailable` (el mayorista no está activo, apagó `wholesale` o su empresa facturadora no sirve) y
@@ -2547,6 +2618,33 @@ prueba el buzón, y el correo no tiene que ser el invitado.
   `wholesale.invitation.not_tenant_owner`; `401 identity.credentials.invalid`; `422 wholesale.invitation.self_link`,
   `identity.terms.unavailable`, `identity.terms.version_mismatch`, los de `register-tenant` y `validation.failed` (`Mode`,
   `TenantId`, `TermsVersion`, `Password`).
+
+#### Editar un distribuidor
+
+`PUT …/wholesale/distributors/{id}` (`If-Match`; cuerpo `{ priceListId, advisorId, billingCompanyId, phone?,
+whatsAppConnectionId?, businessName?, country?, identificationType?, identificationNumber?, contactName?, email?, cityId?,
+cityName?, address? }`). Decisión del owner 2026-11-24: mientras está `Invited` se editan los datos que se llenaron al invitar.
+
+- Lista, asesor y empresa facturadora se editan en cualquier estado. `phone` y `whatsAppConnectionId` sólo cuentan invitado
+  (afuera se ignoran) y `phone` ausente **borra** los dos.
+- Los datos del distribuidor son opcionales: ausente o `null` **conserva** lo guardado. No se puede borrar el nombre ni la
+  ciudad; la dirección se borra con `""`.
+- Invitado, rigen las reglas de invitar: `422 validation.failed` con `errors` por campo (`Email`, `BusinessName`, `Country`,
+  `IdentificationType`, `IdentificationNumber`, `ContactName`, `CityId`, `CityName`, `Address`),
+  `422 wholesale.distributor.city_not_found` y `409 wholesale.distributor.identification_taken` contra los demás
+  distribuidores. Al cambiar de país hay que mandar el tipo de documento y la ciudad válidos para el nuevo. Una invitación
+  vieja sin ciudad no la exige mientras no se mande la ciudad ni cambie el país.
+- Invitado, cambiar el tipo o el número de documento cuando la aceptación ya empezó (creando el tenant o vinculando uno
+  existente) es `409 wholesale.distributor.acceptance_in_progress` y no escribe nada; los demás campos se siguen editando.
+  La aceptación confirma esa marca antes de escribir en otros módulos y con ella sube `version`: un `PUT` con el `If-Match`
+  anterior es `412 concurrency.conflict`. Un accept rechazado en sus validaciones no deja marca. La marca no se borra.
+- El detalle devuelve `city` como `{ id, name, departmentId, departmentName }`, para que la edición preseleccione la cascada
+  departamento → ciudad. Afuera de Colombia `id`, `departmentId` y `departmentName` son `null` y `name` es el texto escrito;
+  `city` es `null` en una invitación sin ciudad. El `PUT` sigue recibiendo sólo `cityId` o `cityName`.
+- `Active` o `Blocked`: un dato distinto del guardado es `409 wholesale.distributor.invalid_transition`. Reenviar los mismos
+  valores se acepta (en Colombia `cityName` no cuenta, y afuera `cityId` tampoco).
+- Cambiar el correo **no** reenvía la invitación ni rota el token: para que llegue al correo nuevo, usa `resend-invitation`.
+- La auditoría (`wholesale.distributor.updated`) nombra los campos que cambiaron, nunca sus valores.
 
 #### Aviso por WhatsApp de la invitación
 
@@ -2962,7 +3060,7 @@ El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Pl
 | Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
 | ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
 | `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
-| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area}` | `area`   | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch` |
+| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area,reason}` | `area`, `reason` | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
 
 La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
@@ -3010,12 +3108,17 @@ Mientras las áreas estén apagadas hay dos exposiciones que antes no existían,
 
 **El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
 producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
-el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día
+el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiquetas `area` y `reason`). En Grafana, durante el día
 que pasa entre un área y la siguiente:
 
 ```promql
-increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h])
+sum by (reason) (increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h]))
 ```
+
+Si da distinto de cero, `reason` dice por qué: `TimeoutException` apunta a latencia hacia Valkey (el tope es
+`OperationTimeoutMs`, 100 ms), `NotConnected` a una reconexión del cliente, y `RedisServerException` a un comando que la
+ACL de producción rechaza. Antes de la etiqueta los respaldos de horario laboral del 2026-11-23 (Presence 23 y RateLimiting
+11 en un pod de 18 h) no se podían atribuir. La serie vieja sin `reason` sigue en Prometheus hasta que vence su retención.
 
 tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
 secretos; nunca `get secret -o yaml` ni `-o json`):
@@ -5158,7 +5261,9 @@ atributos) viaja a Shopify.
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
   (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
   `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
-  dirección entera; la nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  dirección entera. El `zip` es el `postalCode` de la parte de QEP; sin él, el del último snapshot sólo si país y provincia de
+  la parte son los del snapshot; si no, no viaja. La corrección del panel no recibe código postal y conserva el que tenga el
+  pedido. La nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
   `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro
@@ -5410,7 +5515,8 @@ consola de operador, como `pos`), esquema `siigo` (`settings`, los vínculos de 
 `invoices`), y del lado de Integrations el proveedor `siigo`. Recibos de caja y notas crédito quedan fuera (fase 2).
 
 **Conexión.** El tenant crea la conexión `siigo` en Integrations con su usuario y su clave de acceso (cifrada, como las demás); el
-probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage`, bajo
+probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage` (de
+fábrica `admin` y `billing`; crear, editar o desconectar la conexión exige `integrations.connection.manage`, sólo `admin`), bajo
 `/api/v1/tenants/{tenantId}/siigo/connections/{connectionId}`: tipo de documento, vendedor, centro de costo, bodega, empresa de QEP
 que factura, impuestos, formas de pago y vínculos de productos. Los `PUT` llevan `If-Match` (sin él, 428; con una versión vieja,
 412). El asistente propone cada paso con lo que lee de Siigo (`/options/{lista}`) y el auto-vínculo casa variantes y productos por
@@ -6568,6 +6674,68 @@ dotnet format --verify-no-changes
 dotnet build --no-restore
 dotnet test --no-build
 ```
+
+### Pruebas en dos niveles
+
+| Nivel | Comando | Cuándo |
+| --- | --- | --- |
+| Rápido: sólo lo que cambió la rama | `.\scripts\test-feature.ps1` | Antes de mergear a `develop` |
+| Completo: todos los proyectos | `.\scripts\run-all-tests.ps1` | De noche, o antes de llevar `develop` a `main` |
+
+```powershell
+.\scripts\test-feature.ps1                 # compara contra develop
+.\scripts\test-feature.ps1 -DryRun         # muestra el plan sin compilar ni probar
+.\scripts\test-feature.ps1 -Base HEAD~3    # compara contra otra referencia
+.\scripts\test-feature.ps1 -NoBuild        # usa la compilación que ya existe
+```
+
+El nivel rápido toma lo cambiado desde el punto en que la rama se separó de la base, commiteado o no, y corre:
+compilación (con `--no-restore`: restaura antes en un worktree nuevo), `ArchitectureTests`, las unitarias de cada módulo
+tocado, `Bootstrapper.UnitTests` si tocaste `Bootstrapper` o `Api`, y **sólo las clases de integración nuevas o
+modificadas**. No corre las demás clases de integración que tu cambio pueda romper; esas aparecen en la corrida
+completa. Lee los avisos: dicen qué quedó sin probar. El reporte queda en `TestResults\feature\report.md`, y sale con 1
+si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
+
+Un reporte completo en verde vale para el commit que dice su encabezado, con el árbol limpio. Para programarlo todas las
+noches (se registra una vez, desde la raíz del checkout que quieras probar):
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -File `"$PWD\scripts\run-all-tests.ps1`""
+Register-ScheduledTask -TaskName "qep-backend-pruebas" -Action $action -Trigger (New-ScheduledTaskTrigger -Daily -At 1am)
+```
+
+Necesita el equipo encendido, Docker Desktop abierto y ningún `Api.exe` ni `testhost` vivo. Si algo de eso falta no hay
+reporte nuevo: se nota en la fecha y el commit del encabezado. Las pruebas del propio selector se corren con
+`powershell -NoProfile -File scripts\tests\TestSelection.Tests.ps1`.
+
+### Correr todas las pruebas y sacar el reporte de fallas
+
+`dotnet test` sobre toda la solución en paralelo no sirve en Windows: cada clase de integración levanta un
+Postgres con Testcontainers y se agotan puertos y memoria. Usa el script, que corre **un proyecto a la vez**:
+
+```powershell
+.\scripts\run-all-tests.ps1                          # todo: unitarias primero, luego integración
+.\scripts\run-all-tests.ps1 -Kind Unit               # sólo unitarias (no necesita Docker)
+.\scripts\run-all-tests.ps1 -Filter Quotations       # sólo los proyectos cuya ruta contenga el texto
+.\scripts\run-all-tests.ps1 -Filter Quotations -NoBuild -MaxThreads 2
+```
+
+Los proyectos que declaran `[assembly: CollectionBehavior(MaxParallelThreads = n)]` (comparten un solo contenedor) corren
+con ese número; los demás, con 4. `-MaxThreads` pisa los dos casos: úsalo si una corrida agota puertos o conexiones.
+
+Antes de correrlo:
+
+- **Docker Desktop debe estar corriendo** (`docker info` responde). Sin daemon, todas las pruebas de integración
+  fallan por conexión y el resumen de `dotnet test` muestra miles de "errores" aunque el build esté limpio.
+- No debe haber `Api.exe` ni `testhost` vivos; el script se detiene si los encuentra. El build host de C# Dev Kit
+  (`dotnet.exe` de VS Code) no estorba.
+- `Modules.Ai.Eval` queda fuera: es la evaluación con IA real y se corre aparte (ver su sección).
+
+Salida, en `TestResults/` (ignorada por git y borrada en cada corrida):
+
+- `report.md`: tabla por proyecto (total, pasan, fallan, segundos), las causas de falla más repetidas y la lista de
+  pruebas que fallan por proyecto.
+- `<proyecto>/<proyecto>.trx`: el detalle completo. Ábrelo con `Get-Content -LiteralPath` (los nombres llevan corchetes).
 
 La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones

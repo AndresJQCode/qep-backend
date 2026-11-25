@@ -14,7 +14,8 @@ public sealed record LiquidatePeriodCommand(Guid TenantId, Guid PeriodId, Liquid
 /// <summary>
 /// Liquida (o vuelve a liquidar) un período. Orden: autorizar, <c>If-Match</c>, cargar, versión (412), estado, confirmación de
 /// ausencias, la primera quincena (R-14), el plan (bloqueados y nadie que liquidar), el motor por empleado, los resultados, el
-/// período y, en una primera, la segunda desactualizada. Un solo <c>SaveChanges</c>: o queda todo o no queda nada.
+/// período y, en una primera, la segunda desactualizada. Las vacaciones pagadas en otra quincena se esperan antes del motor (
+/// <c>not_paid_yet</c>) y las fotos nuevas se aplican a las siguientes antes de guardar. Un solo <c>SaveChanges</c>: o queda todo o no queda nada.
 /// </summary>
 public sealed class LiquidatePeriodHandler(
     IExecutionContext executionContext,
@@ -23,6 +24,7 @@ public sealed class LiquidatePeriodHandler(
     IPayrollPeriodRepository periods,
     IPayrollResultStore resultStore,
     LiquidationPlanner planner,
+    VacationPayments vacationPayments,
     PeriodApprovals approvals,
     PeriodActors actors,
     PeriodComposer composer,
@@ -67,6 +69,9 @@ public sealed class LiquidatePeriodHandler(
                 PayrollErrorCodes.LiquidationBlocked, "Some employees lack data the calculation needs: fix them and liquidate again.");
         }
 
+        // A quincena with days of a vacation paid elsewhere waits for the paying one (spec rule 5), before the engine reads a missing photo.
+        await vacationPayments.EnsurePaidAsync(plan, command.TenantId, period.CompanyId, cancellationToken);
+
         if (plan.Liquidable.Count == 0)
         {
             throw new PayrollDomainException(
@@ -97,6 +102,9 @@ public sealed class LiquidatePeriodHandler(
                 command.TenantId, period.CompanyId, new DateOnly(period.StartDate.Year, period.StartDate.Month, 16), cancellationToken);
             second?.MarkOutdated(actor, now);
         }
+
+        // The photos just written are what the following quincenas read: refuse if an Approved one would change (rule 4), outdate the rest.
+        await vacationPayments.ApplyNewPhotosAsync(period, liquidated, actor, now, cancellationToken);
 
         PayrollSupport.PublishAudit(
             auditPublisher, executionContext, command.TenantId, PayrollAuditActions.PeriodLiquidated,

@@ -45,7 +45,7 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
             order.Total,
             order.RetentionAmount,
             order.NetTotal,
-            [.. order.Withholdings.Select(value => new SiigoWithholdingInput(value.TaxRateId, value.Name, value.Type, value.Amount))],
+            [.. order.Withholdings.Select(value => new SiigoWithholdingInput(value.TaxRateId, value.Name, value.Type, value.Amount, value.Percentage))],
             [.. order.PaymentProofs.Select(proof => new SiigoPaymentProofInput(proof.ProofId, proof.Amount))],
             BankAccountKey.Normalize(order.BillingAccountBankName, order.BillingAccountNumber),
             order.BuyerNotes,
@@ -74,6 +74,14 @@ internal sealed class SiigoOrderSource(IExternalOrderInvoicing invoicing, ISiigo
     public Task MarkInvoicedAsync(
         Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken) =>
         invoicing.MarkInvoicedAsync(tenantId, orderId, Provider, number, siigoInvoiceId, memberId, cancellationToken);
+
+    public Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken) =>
+        invoicing.IsMarkedAsync(tenantId, orderId, Provider, number, cancellationToken);
+
+    public async Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+        (await invoicing.ListLabelsAsync(tenantId, orderIds, cancellationToken)).ToDictionary(
+            label => label.Key, label => new SiigoOrderLabel(label.Value.OrderNumber, label.Value.CustomerName));
 
     // Un país vacío es el de la ficha vieja: Colombia.
     private static bool IsColombian(string? country) =>

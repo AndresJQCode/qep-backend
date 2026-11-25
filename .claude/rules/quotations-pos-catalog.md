@@ -108,3 +108,10 @@ validation.failed` por el `VariantId` vacío, con la clave según la ruta: `Vari
 - **El saneador de HTML vive en `BuildingBlocks.Infrastructure/RichText` y lo comparten Soporte y Quotations.** La lista de
   etiquetas y esquemas existe una sola vez: ensancharla cambia lo que aceptan los documentos legales del portal **y** el PDF de
   cotizaciones, y el lector de bloques tiene que saber pintar toda etiqueta nueva o la plantilla la pierde en silencio.
+- **Un precio de venta se lee por `IPriceListPricing`, nunca de `variant.Prices`** (spec 2026-11-22, listas de precios por canal).
+  `variant.Prices` es el precio **base**; el que cobra cada canal sale de la lista asignada (`catalog.channel_price_lists`) con
+  `PriceList.PriceFor`. `PosProductLookup`, `StoreCatalogReader` y `QuotationProductPricingLookup` arman un `PriceBook` por
+  request. Un adaptador nuevo que lea `CatalogVariantReads.PricesOf` o `variant.PriceIn` para vender compila, pasa sus pruebas sin
+  lista y cobra el base en un tenant con lista. El canal de Quotations sale del origen del pedido (`QuotationPriceChannels.For`):
+  la tienda y la edición de un pedido `Store` usan `Store`; el resto, `Quotations`. Y un precio fijo sólo reemplaza (D-2): sin
+  precio base en la moneda no hay precio, por eso los filtros SQL «tiene precio en la moneda» siguen valiendo.

@@ -49,7 +49,7 @@ public sealed class OrderPdfProvider(
 
         // Sin caché no hay huella que guardar: las secciones se leen en cada envío (spec 2026-11-16 §5.4).
         var pdfContent = await pdfContentStore.GetAsync(tenantId, cancellationToken);
-        var mapped = QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat);
+        var mapped = QuotationPdfDocumentMapper.FromOrder(detail, calendar, pdfLogo, regional?.NumberFormat, regional?.Language);
         var content = await renderer.RenderAsync(
             mapped with { Sections = QuotationPdfSectionsBuilder.Build(pdfContent, mapped, richTextReader) }, cancellationToken);
         return await storage.SaveOrderAsync(tenantId, orderId, content, cancellationToken);

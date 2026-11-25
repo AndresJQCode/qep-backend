@@ -152,6 +152,9 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.Property(value => value.CityName)
             .HasColumnName("city_name")
             .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        // La region (provincia) del domicilio de afuera: referencia blanda a geography.regions, sin
+        // FK entre esquemas (igual que city_id antes de que se agregara a mano). Nula en Colombia.
+        customer.Property(value => value.RegionId).HasColumnName("region_id");
         // La clasificacion, FK compuesta (tenant_id, classification_id) a
         // customers.client_classifications(tenant_id, id) — compuesta y no simple sobre id, para
         // que un cliente no pueda referenciar la clasificacion de otro tenant. A diferencia de la
@@ -353,7 +356,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         var address = modelBuilder.Entity<CustomerAddress>();
         address.ToTable("customer_addresses", "customers", table => table.HasCheckConstraint(
             "CK_customer_addresses_city_lane",
-            "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) " +
+            "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) " +
             "OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)"));
         address.HasKey(value => value.Id);
         address.Property(value => value.Id)
@@ -387,6 +390,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         address.Property(value => value.CityName)
             .HasColumnName("city_name")
             .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
+        // Referencia blanda a geography.regions; solo fuera de Colombia (lo respalda el CHECK de arriba).
+        address.Property(value => value.RegionId).HasColumnName("region_id");
         address.Property(value => value.IsPrincipal).HasColumnName("is_principal");
         address.Property(value => value.CreatedAt).HasColumnName("created_at");
         address.Property(value => value.UpdatedAt).HasColumnName("updated_at");

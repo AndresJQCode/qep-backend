@@ -115,13 +115,18 @@ internal static class QuotationEditsApplication
             ? await shippingResolver.FreightTaxPercentageAsync(tenantId, "quotation.quotation", cancellationToken)
             : null;
 
+        // The region of a foreign party must exist and belong to its country; checked before the aggregate changes, so a bad
+        // region is a 422 with nothing half-written.
+        var parties = edits.Parties.ToDomain();
+        await PartyRegionRules.EnsureAsync(withholdings.Geography, parties, cancellationToken);
+
         // El encabezado va antes que las líneas y no al revés: es el que fija la moneda, y las
         // líneas nuevas del diff se valorizan contra la que quede.
         var reResolution = quotation.UpdateDetails(
             edits.ValidUntil,
             edits.PaymentMethod,
             edits.Notes,
-            edits.Parties.ToDomain(),
+            parties,
             billingAccount,
             repricing,
             edits.IsRetail,

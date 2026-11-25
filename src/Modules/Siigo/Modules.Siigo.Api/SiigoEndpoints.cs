@@ -200,6 +200,13 @@ public static class SiigoEndpoints
         batches.MapPost("/", CreateInvoiceBatchAsync)
             .Produces<SiigoInvoiceBatchDto>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec 2026-11-24 §5: todas las tandas del tenant, paginadas, de la más nueva a la más vieja.
+        batches.MapGet("/", ListInvoiceBatchesAsync)
+            .Produces<SiigoInvoiceBatchPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         batches.MapGet("/{batchId:guid}", GetInvoiceBatchAsync)
@@ -231,8 +238,14 @@ public static class SiigoEndpoints
     private static async Task<IResult> CreateInvoiceBatchAsync(
         Guid tenantId, SiigoInvoiceBatchRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Json(
-            await dispatcher.SendAsync(new CreateSiigoInvoiceBatchCommand(tenantId, request?.OrderIds), cancellationToken),
+            await dispatcher.SendAsync(
+                new CreateSiigoInvoiceBatchCommand(tenantId, request?.OrderIds, ToPaymentChoices(request?.Payments)), cancellationToken),
             statusCode: StatusCodes.Status202Accepted);
+
+    private static async Task<IResult> ListInvoiceBatchesAsync(
+        Guid tenantId, string? page, string? pageSize, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        // Como texto, igual que en las fallas: un valor ilegible es 422 con su campo.
+        Results.Ok(await dispatcher.QueryAsync(new ListSiigoInvoiceBatchesQuery(tenantId, page, pageSize), cancellationToken));
 
     private static async Task<IResult> GetInvoiceBatchAsync(
         Guid tenantId, Guid batchId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -268,11 +281,11 @@ public static class SiigoEndpoints
     private static async Task<IResult> IssueInvoiceAsync(
         Guid tenantId, Guid orderId, SiigoIssueInvoiceRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
-            new IssueSiigoInvoiceCommand(
-                tenantId,
-                orderId,
-                request?.Payments?.Select(payment => new SiigoPaymentChoice(payment.Kind, payment.ProofId ?? Guid.Empty, payment.SiigoPaymentTypeId)).ToArray()),
-            cancellationToken));
+            new IssueSiigoInvoiceCommand(tenantId, orderId, ToPaymentChoices(request?.Payments)), cancellationToken));
+
+    // Un comprobante que falta viaja vacío: lo rechaza el validador con su campo.
+    private static SiigoPaymentChoice[]? ToPaymentChoices(IReadOnlyList<SiigoPaymentChoiceRequest>? payments) =>
+        payments?.Select(payment => new SiigoPaymentChoice(payment.Kind, payment.ProofId ?? Guid.Empty, payment.SiigoPaymentTypeId)).ToArray();
 
     private static async Task<IResult> StampInvoiceAsync(
         Guid tenantId, Guid orderId, string? kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
@@ -513,8 +526,9 @@ public sealed record SiigoPaymentChoiceRequest(string? Kind, Guid? ProofId, stri
 public sealed record SiigoIssueInvoiceRequest(IReadOnlyList<SiigoPaymentChoiceRequest>? Payments);
 
 /// <summary>El cuerpo de <c>POST …/siigo/invoice-batches</c>: los pedidos de la tanda (de 1 a 50, sin repetir). Opcional en el binding: lo que falta
-/// es un 422 con <c>errors.orderIds</c>.</summary>
-public sealed record SiigoInvoiceBatchRequest(IReadOnlyList<Guid>? OrderIds);
+/// es un 422 con <c>errors.orderIds</c>. <c>payments</c> es opcional, con la misma forma que el del POST del pedido, y sólo con un
+/// pedido.</summary>
+public sealed record SiigoInvoiceBatchRequest(IReadOnlyList<Guid>? OrderIds, IReadOnlyList<SiigoPaymentChoiceRequest>? Payments = null);
 
 /// <summary>El cuerpo de <c>POST …/siigo-invoice/resolve</c>: <c>exists</c> (con el número) o <c>missing</c>.</summary>
 public sealed record SiigoResolveInvoiceRequest(string? Kind, string? Outcome, string? Number);

@@ -20,6 +20,22 @@ public sealed class ProvisionsRuleTests
         Assert.Equal(83_300m, Line(lines, "premium").Amount);
     }
 
+    // Spec «Provisiones»: the days count as service time, the money paid in advance does not.
+    [Fact]
+    public void VacationDaysAreServiceTimeButThePayIsNot()
+    {
+        var lines = ProvisionsRule.Compute(Input, 0m, 0m, 0m, 0m, 1_500_000m);
+
+        Assert.Equal(124_950m, Line(lines, "severance").Amount);
+        Assert.Equal(15_000m, Line(lines, "severance_interest").Amount);
+        Assert.Equal(124_950m, Line(lines, "premium").Amount);
+        Assert.Equal(62_550m, Line(lines, "vacation").Amount);
+        Assert.Contains(Line(lines, "severance").Trace.Inputs, item => item.Name == "Días de vacaciones como tiempo de servicio");
+        Assert.DoesNotContain(
+            ProvisionsRule.Compute(Input, 0m, 0m, 0m, 0m).SelectMany(line => line.Trace.Inputs),
+            item => item.Name == "Días de vacaciones como tiempo de servicio");
+    }
+
     [Fact]
     public void InterestIsOnePercentOfTheSeveranceBase()
     {

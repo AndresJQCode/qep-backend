@@ -25,4 +25,8 @@ public sealed class WhatsAppTemplateValuesTests
     [Fact]
     public void DocumentFileNameCarriesTheQuotationNumber() =>
         Assert.Equal("Cotizacion-COT-000123.pdf", WhatsAppTemplateValues.DocumentFileName("COT-000123"));
+
+    [Fact]
+    public void InSpainTheDocumentIsABudget() =>
+        Assert.Equal("Presupuesto-COT-000123.pdf", WhatsAppTemplateValues.DocumentFileName("COT-000123", "es-ES"));
 }

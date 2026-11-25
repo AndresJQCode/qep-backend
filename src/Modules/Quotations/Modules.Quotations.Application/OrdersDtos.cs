@@ -196,7 +196,17 @@ public record CreateOrderRequest(
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
     /// <c>CashOnDelivery</c> no puede llevar comprobantes (spec 2026-10-17 §6).</summary>
-    ShippingRequest? Shipping = null);
+    ShippingRequest? Shipping = null)
+{
+    /// <summary>Los regalos del pedido (spec 2026-11-23): lista aparte de <c>Items</c>, que sigue siendo sólo las
+    /// líneas pagadas. Ausente o null es «sin regalos». Una propiedad y no un parámetro posicional, para que
+    /// <see cref="PreviewOrderRequest"/> la herede sin tocar su constructor.</summary>
+    public IReadOnlyList<OrderGiftLineRequest>? Gifts { get; init; }
+}
+
+/// <summary>Un regalo del pedido (spec 2026-11-23): variante y cantidad; el precio es el de lista y el descuento el fijo
+/// del 100 %.</summary>
+public sealed record OrderGiftLineRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>
 /// The body of <c>POST /orders/preview</c>: the manual order body plus <see cref="BillingCompanyId"/> (spec 2026-11-16
@@ -235,9 +245,6 @@ public sealed record AddOrderPaymentProofsRequest(
 public sealed record OrderItemAdditionRequest(Guid VariantId, decimal Quantity);
 
 public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
-
-/// <summary>Cuerpo de <c>POST …/orders/{id}/gifts</c> (spec 2026-11-21): la variante a regalar y cuántas unidades.</summary>
-public sealed record AddOrderGiftRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>Cuerpo de <c>PUT …/orders/{id}/buyer-account</c> (spec 2026-11-15 §4): el correo de la cuenta verificada.</summary>
 public sealed record OrderBuyerAccountRequest(string? Email);
@@ -315,6 +322,11 @@ public record SaveOrderEditsRequest(
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement OperationCityId { get; init; }
+
+    /// <summary>Los regalos del pedido pendiente (spec 2026-11-23). <b>Ausente o null conserva</b> los guardados: un
+    /// frontend viejo no los borra. Presente —también <c>[]</c>— es la lista <b>entera</b> deseada, por variante: agrega,
+    /// cambia la cantidad y quita. <c>Items</c> sigue siendo sólo las líneas pagadas.</summary>
+    public IReadOnlyList<OrderGiftLineRequest>? Gifts { get; init; }
 }
 
 /// <summary>
@@ -472,7 +484,10 @@ public sealed record OrderResponse(
     /// <summary>Ver <see cref="OrderDto.InvoiceProvider"/>.</summary>
     string? InvoiceProvider = null,
     /// <summary>Ver <see cref="OrderDto.InvoiceNumber"/>.</summary>
-    string? InvoiceNumber = null);
+    string? InvoiceNumber = null,
+    /// <summary>Ver <see cref="QuotationResponse.PostalCodeSupported"/>. Viaja acá y no en la raíz de
+    /// <see cref="OrderDetailResponse"/>, para que también lo traigan /approve, /cancel…</summary>
+    bool PostalCodeSupported = true);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y

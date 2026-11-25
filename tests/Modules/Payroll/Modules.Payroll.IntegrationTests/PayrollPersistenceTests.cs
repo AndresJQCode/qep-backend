@@ -87,7 +87,8 @@ public sealed class PayrollPersistenceTests : IClassFixture<PayrollPersistenceTe
     private Task<PayrollPeriod?> LoadAsync(Guid tenantId, PayrollPeriodId id) =>
         InScopeAsync(provider => provider.GetRequiredService<IPayrollPeriodRepository>().FindAsync(tenantId, id, Ct));
 
-    private static EmployeeResult ResultOf(Guid employeeId, string name, decimal salary)
+    private static EmployeeResult ResultOf(
+        Guid employeeId, string name, decimal salary, int vacationDays = 0, IReadOnlyList<VacationPhoto>? photos = null)
     {
         PayrollLine[] lines =
         [
@@ -98,11 +99,25 @@ public sealed class PayrollPersistenceTests : IClassFixture<PayrollPersistenceTe
                 new LineTrace("techo100(IBC × 4 %)", [], [], "Exonerado")),
         ];
         var liquidation = new EmployeeLiquidation(
-            employeeId, 15, true, false, lines, PayrollSummary.From(lines), MonthAccumulators.Empty with { WorkedDays = 15 }, "2026.11.1");
+            employeeId, 15, true, false, lines, PayrollSummary.From(lines), MonthAccumulators.Empty with { WorkedDays = 15 }, "2026.11.1", vacationDays, photos ?? []);
         return new EmployeeResult(
             employeeId, "CC", "1020304050", name, "Analista", "Bodega - Principal", liquidation, "fp-" + name,
             new Dictionary<Guid, decimal> { [Commissions] = 100_000m });
     }
+
+    private Vacation NewVacation(
+        Guid tenantId, Guid employeeId, DateOnly start, DateOnly end, VacationOrigin origin = VacationOrigin.Qep,
+        decimal? previousIbc = null, IReadOnlyList<ExternalVacationMonth>? months = null) =>
+        Vacation.Create(
+            VacationId.New(), tenantId, _world.CompanyId, employeeId, origin, start, end,
+            origin == VacationOrigin.External ? 12 : 15, end.AddDays(1), previousIbc, months ?? [], Now);
+
+    private async Task AddAsync(Vacation vacation) =>
+        await InScopeAsync(async provider =>
+        {
+            provider.GetRequiredService<IVacationRepository>().Add(vacation);
+            await SaveAsync(provider);
+        });
 
     [Fact]
     public async Task APeriodWithInputsAndEventsRoundTrips()
@@ -294,5 +309,205 @@ public sealed class PayrollPersistenceTests : IClassFixture<PayrollPersistenceTe
 
         var postgres = Assert.IsType<PostgresException>(exception.InnerException);
         Assert.Equal("FK_company_settings_companies_company_id", postgres.ConstraintName);
+    }
+
+    [Fact]
+    public async Task AVacationRoundTripsWithItsExternalMonths()
+    {
+        var tenant = Guid.NewGuid();
+        var employee = Guid.NewGuid();
+        ExternalVacationMonth[] months =
+        [
+            new(new DateOnly(2026, 11, 1), 400_000.50m, 16_000m, 16_000m, 0m),
+            new(new DateOnly(2026, 12, 1), null, 0m, 0m, 1_000m),
+        ];
+        var external = NewVacation(
+            tenant, employee, new DateOnly(2026, 11, 23), new DateOnly(2026, 12, 4), VacationOrigin.External, 2_800_000.25m, months);
+        var qep = NewVacation(tenant, employee, new DateOnly(2027, 1, 12), new DateOnly(2027, 2, 1));
+        await AddAsync(external);
+        await AddAsync(qep);
+
+        var listed = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>()
+            .ListByEmployeeAsync(tenant, _world.CompanyId, employee, Ct));
+        var found = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>().FindAsync(tenant, external.Id, Ct));
+        var otherTenant = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>().FindAsync(Guid.NewGuid(), external.Id, Ct));
+
+        Assert.Equal(2, listed.Count);
+        Assert.Null(otherTenant);
+        Assert.NotNull(found);
+        Assert.Equal(VacationOrigin.External, found.Origin);
+        Assert.Equal((new DateOnly(2026, 11, 23), new DateOnly(2026, 12, 4)), (found.StartDate, found.EndDate));
+        Assert.Equal(12, found.BusinessDays);
+        Assert.Equal(new DateOnly(2026, 12, 5), found.ReturnDate);
+        Assert.Equal(2_800_000.25m, found.PreviousMonthIbc);
+        Assert.Equal(1, found.Version);
+        Assert.Equal(months, found.ExternalMonths);
+        Assert.Empty(listed.Single(item => item.Id == qep.Id).ExternalMonths);
+        Assert.Null(listed.Single(item => item.Id == qep.Id).PreviousMonthIbc);
+    }
+
+    [Fact]
+    public async Task AnUpdateAndARemoveAreSaved()
+    {
+        var tenant = Guid.NewGuid();
+        var employee = Guid.NewGuid();
+        var vacation = NewVacation(tenant, employee, new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5));
+        await AddAsync(vacation);
+
+        await InScopeAsync(async provider =>
+        {
+            var tracked = (await provider.GetRequiredService<IVacationRepository>().FindAsync(tenant, vacation.Id, Ct))!;
+            tracked.Update(VacationOrigin.Qep, tracked.StartDate, new DateOnly(2027, 1, 8), 17, new DateOnly(2027, 1, 12), 2_900_000m, [], Now.AddHours(1));
+            await SaveAsync(provider);
+        });
+        var updated = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>().FindAsync(tenant, vacation.Id, Ct));
+        await InScopeAsync(async provider =>
+        {
+            var repository = provider.GetRequiredService<IVacationRepository>();
+            repository.Remove((await repository.FindAsync(tenant, vacation.Id, Ct))!);
+            await SaveAsync(provider);
+        });
+        var removed = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>().FindAsync(tenant, vacation.Id, Ct));
+
+        Assert.Equal(2, updated!.Version);
+        Assert.Equal(new DateOnly(2027, 1, 8), updated.EndDate);
+        Assert.Equal(2_900_000m, updated.PreviousMonthIbc);
+        Assert.Null(removed);
+    }
+
+    [Fact]
+    public async Task OverlappingListsTheVacationsThatShareAnyDayOfTheRange()
+    {
+        var tenant = Guid.NewGuid();
+        var one = NewVacation(tenant, Guid.NewGuid(), new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5));
+        var other = NewVacation(tenant, Guid.NewGuid(), new DateOnly(2027, 1, 12), new DateOnly(2027, 2, 1));
+        await AddAsync(one);
+        await AddAsync(other);
+
+        var december = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>()
+            .ListOverlappingAsync(tenant, _world.CompanyId, new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 15), Ct));
+        var touchingTheEnd = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>()
+            .ListOverlappingAsync(tenant, _world.CompanyId, new DateOnly(2027, 1, 5), new DateOnly(2027, 1, 11), Ct));
+        var nothing = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>()
+            .ListOverlappingAsync(tenant, _world.CompanyId, new DateOnly(2027, 1, 6), new DateOnly(2027, 1, 11), Ct));
+        var otherTenant = await InScopeAsync(provider => provider.GetRequiredService<IVacationRepository>()
+            .ListOverlappingAsync(Guid.NewGuid(), _world.CompanyId, new DateOnly(2026, 12, 1), new DateOnly(2027, 3, 1), Ct));
+
+        Assert.Equal([one.Id], december.Select(item => item.Id));
+        Assert.Equal([one.Id], touchingTheEnd.Select(item => item.Id));
+        Assert.Empty(nothing);
+        Assert.Empty(otherTenant);
+    }
+
+    [Fact]
+    public async Task TwoOverlappingVacationsOfTheSameEmployeeConflict()
+    {
+        var tenant = Guid.NewGuid();
+        var employee = Guid.NewGuid();
+        await AddAsync(NewVacation(tenant, employee, new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5)));
+
+        // The handler's check cannot see a concurrent insert: the database constraint is the one that stops it (Review Focus 5).
+        var exception = await Assert.ThrowsAsync<ResourceConflictException>(
+            () => AddAsync(NewVacation(tenant, employee, new DateOnly(2027, 1, 5), new DateOnly(2027, 1, 10))));
+
+        Assert.Equal(PayrollErrorCodes.VacationOverlap, exception.Code);
+        // The day after the end does not overlap.
+        await AddAsync(NewVacation(tenant, employee, new DateOnly(2027, 1, 6), new DateOnly(2027, 1, 10)));
+    }
+
+    [Fact]
+    public async Task ADifferentEmployeeDoesNotConflict()
+    {
+        var tenant = Guid.NewGuid();
+        await AddAsync(NewVacation(tenant, Guid.NewGuid(), new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5)));
+
+        await AddAsync(NewVacation(tenant, Guid.NewGuid(), new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5)));
+        await AddAsync(NewVacation(Guid.NewGuid(), Guid.NewGuid(), new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5)));
+    }
+
+    [Fact]
+    public async Task AVacationOfAnUnknownCompanyViolatesTheForeignKey()
+    {
+        var vacation = Vacation.Create(
+            VacationId.New(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), VacationOrigin.Qep,
+            new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), 15, new DateOnly(2027, 1, 6), null, [], Now);
+
+        var exception = await Assert.ThrowsAsync<DbUpdateException>(() => AddAsync(vacation));
+
+        var postgres = Assert.IsType<PostgresException>(exception.InnerException);
+        Assert.Equal("FK_vacations_companies_company_id", postgres.ConstraintName);
+    }
+
+    [Fact]
+    public async Task AResultKeepsItsVacationDaysAndPhotos()
+    {
+        var tenant = Guid.NewGuid();
+        var period = NewPeriod(tenant);
+        await AddAsync(period);
+        var employee = Guid.NewGuid();
+        var vacationId = Guid.NewGuid();
+        VacationPhoto[] photos =
+        [
+            new(
+                vacationId, 3_000_000m, new DateOnly(2026, 1, 15), 2_800_000m, VacationIbcSource.Typed,
+                [
+                    new VacationQuincenaDays(new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 15), 2),
+                    new VacationQuincenaDays(new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 31), 9),
+                ],
+                [new VacationMonthAdvance(new DateOnly(2026, 12, 1), 900_000m, 36_000m, 36_000m, 0m)]),
+        ];
+
+        await InScopeAsync(async provider =>
+        {
+            await provider.GetRequiredService<IPayrollResultStore>()
+                .ReplaceAllAsync(tenant, period.Id, [ResultOf(employee, "Ana Pérez", 875_453m, vacationDays: 2, photos: photos)], Ct);
+            await SaveAsync(provider);
+        });
+        var read = await InScopeAsync(provider => provider.GetRequiredService<IPayrollResultStore>().FindAsync(tenant, period.Id, employee, Ct));
+
+        // Block A left `0, []` placeholders when the row is read: a result with days and a photo must come back identical.
+        Assert.NotNull(read);
+        Assert.Equal(2, read.Liquidation.VacationDays);
+        var photo = Assert.Single(read.Liquidation.VacationPhotos);
+        Assert.Equal(vacationId, photo.VacationId);
+        Assert.Equal(3_000_000m, photo.SalaryAtStart);
+        Assert.Equal(new DateOnly(2026, 1, 15), photo.SalaryRecordDate);
+        Assert.Equal(2_800_000m, photo.PreviousMonthIbc);
+        Assert.Equal(VacationIbcSource.Typed, photo.PreviousIbcSource);
+        Assert.Equal(
+            [(new DateOnly(2026, 12, 1), 2), (new DateOnly(2026, 12, 16), 9)],
+            photo.Quincenas.Select(item => (item.Start, item.Days)));
+        var month = Assert.Single(photo.Months);
+        Assert.Equal(new VacationMonthAdvance(new DateOnly(2026, 12, 1), 900_000m, 36_000m, 36_000m, 0m), month);
+    }
+
+    [Fact]
+    public async Task AResultSavedBeforeVacationsReadsZeroAndNoPhotos()
+    {
+        var tenant = Guid.NewGuid();
+        var period = NewPeriod(tenant);
+        await AddAsync(period);
+        var employee = Guid.NewGuid();
+        await InScopeAsync(async provider =>
+        {
+            await provider.GetRequiredService<IPayrollResultStore>()
+                .ReplaceAllAsync(tenant, period.Id, [ResultOf(employee, "Ana Pérez", 875_453m)], Ct);
+            await SaveAsync(provider);
+        });
+        // The row as a pod from before this change wrote it: the new columns at their defaults and a summary without vacationPay.
+        await InScopeAsync(async provider =>
+        {
+            var context = provider.GetRequiredService<Modules.Payroll.Infrastructure.Persistence.PayrollDbContext>();
+            await context.Database.ExecuteSqlAsync(
+                $"UPDATE payroll.employee_results SET vacation_photos = '[]'::jsonb, vacation_days = 0, summary = summary - 'vacationPay' WHERE period_id = {period.Id.Value}",
+                Ct);
+        });
+
+        var read = await InScopeAsync(provider => provider.GetRequiredService<IPayrollResultStore>().FindAsync(tenant, period.Id, employee, Ct));
+
+        Assert.NotNull(read);
+        Assert.Equal(0, read.Liquidation.VacationDays);
+        Assert.Empty(read.Liquidation.VacationPhotos);
+        Assert.Equal(0m, read.Liquidation.Summary.VacationPay);
     }
 }

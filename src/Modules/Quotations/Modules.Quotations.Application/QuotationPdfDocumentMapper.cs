@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Localization;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -27,7 +28,11 @@ public static class QuotationPdfDocumentMapper
     /// se imprime en su día, no en el de UTC (spec 2026-09-17, punto 7). El <paramref name="numberFormat"/>
     /// es el del tenant y sólo decide los separadores (spec 2026-10-23, D-R1).</summary>
     public static QuotationPdfDocument From(
-        QuotationResponse quotation, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
+        QuotationResponse quotation,
+        TenantCalendar calendar,
+        QuotationPdfLogo? logo,
+        string? numberFormat = null,
+        string? language = null)
     {
         var currency = Currencies.Get(quotation.Currency);
         var (thousands, decimals) = RegionalNumberFormat.Separators(numberFormat);
@@ -67,7 +72,8 @@ public static class QuotationPdfDocumentMapper
             quotation.FreightTaxAmount,
             quotation.Shipping.CashOnDelivery,
             ThousandsSeparator: thousands,
-            DecimalSeparator: decimals);
+            DecimalSeparator: decimals,
+            Language: SupportedLanguages.OrDefault(language));
     }
 
     /// <summary>
@@ -80,7 +86,11 @@ public static class QuotationPdfDocumentMapper
     /// no vence, y la plantilla omite el renglón con <see cref="QuotationPdfKind.Order"/>.
     /// </summary>
     public static QuotationPdfDocument FromOrder(
-        OrderDetailResponse order, TenantCalendar calendar, QuotationPdfLogo? logo, string? numberFormat = null)
+        OrderDetailResponse order,
+        TenantCalendar calendar,
+        QuotationPdfLogo? logo,
+        string? numberFormat = null,
+        string? language = null)
     {
         ArgumentNullException.ThrowIfNull(order);
         ArgumentNullException.ThrowIfNull(calendar);
@@ -127,7 +137,8 @@ public static class QuotationPdfDocumentMapper
             header.Shipping.CashOnDelivery,
             QuotationPdfKind.Order,
             thousands,
-            decimals);
+            decimals,
+            Language: SupportedLanguages.OrDefault(language));
     }
 
     /// <summary>Las respuestas ya traen sólo las que aplicaron (<c>AppliedWithholdings</c>), en su orden: una fila
@@ -175,7 +186,8 @@ public static class QuotationPdfDocumentMapper
             item.DiscountPercentage,
             item.DiscountedUnitPrice,
             item.Subtotal + item.TaxAmount,
-            withUnit ? SalesUnitLabels.Spanish(Enum.Parse<SalesUnit>(item.SalesUnit), item.Quantity) : null);
+            withUnit ? SalesUnitLabels.Spanish(Enum.Parse<SalesUnit>(item.SalesUnit), item.Quantity) : null,
+            item.ProductCode);
 
     /// <summary>
     /// Spec 2026-11-18 §6: con todas las líneas en <c>Unit</c> ninguna lleva unidad, para que el PDF de un tenant que no
@@ -202,10 +214,11 @@ public static class QuotationPdfDocumentMapper
                 false,
                 party.Name ?? string.Empty,
                 Join(ContactSeparator, party.Phone, party.Email),
-                // Fuera de Colombia la parte guarda la ciudad como texto: se imprime tras la dirección con el país.
+                // El código postal va tras la dirección (spec 2026-11-24; sólo la entrega lo trae). Fuera de Colombia la
+                // parte guarda la ciudad como texto: se imprime después, con el país.
                 IsForeign(party)
-                    ? Join(LocationSeparator, party.Address, Join(LocationSeparator, party.CityName, party.Country))
-                    : party.Address ?? string.Empty,
+                    ? Join(LocationSeparator, party.Address, party.PostalCode, Join(LocationSeparator, party.CityName, party.Country))
+                    : Join(LocationSeparator, party.Address, party.PostalCode),
                 // Sólo la facturación guarda documento (la entrega lo descarta en el dominio); una
                 // fila anterior a la columna no tiene y queda vacío, que la plantilla no imprime.
                 role == QuotationPartyRole.Billing ? party.IdentificationNumber ?? string.Empty : string.Empty);

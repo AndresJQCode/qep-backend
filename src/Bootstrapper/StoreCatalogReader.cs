@@ -16,7 +16,8 @@ internal sealed class StoreCatalogReader(
     ICurrenciesInUse currenciesInUse,
     IProductRepository products,
     IOptionDefinitionRepository options,
-    IProductImageLookup images)
+    IProductImageLookup images,
+    IPriceListPricing pricing)
     : IStoreCatalogReader
 {
     public async Task<IReadOnlyDictionary<Guid, string>> CategoryNamesAsync(
@@ -60,6 +61,9 @@ internal sealed class StoreCatalogReader(
             tenantId, currency, string.IsNullOrWhiteSpace(q) ? null : q, categoryIds, page, pageSize, cancellationToken);
         var files = await CatalogVariantReads.LoadImagesAsync(
             images, found.Select(product => product.ImageFileId), cancellationToken);
+        var book = await StoreBookAsync(
+            tenantId, found.SelectMany(product => product.Variants.Where(variant => IsSellableIn(product, variant, currency))),
+            cancellationToken);
 
         var cards = new List<StoreProductCard>(found.Count);
         foreach (var product in found)
@@ -71,7 +75,7 @@ internal sealed class StoreCatalogReader(
                 continue;
             }
 
-            var prices = sellable.Select(variant => variant.PriceIn(currency)!.Value).ToList();
+            var prices = sellable.Select(variant => book.PriceIn(variant, currency)!.Value).ToList();
             var hasVariants = sellable.Count > 1;
 
             // Con una sola vendible la grilla agrega sin pasar por la ficha; es la misma que el carrito acepta al cotizar.
@@ -135,9 +139,10 @@ internal sealed class StoreCatalogReader(
             .Select(image => CatalogVariantReads.ImageUrlOf(image.FileId, files, tenantId))
             .OfType<string>()
             .ToList();
+        var book = await StoreBookAsync(tenantId, sellable, cancellationToken);
         var variants = sellable.Select(variant =>
         {
-            var price = variant.PriceIn(currency)!.Value;
+            var price = book.PriceIn(variant, currency)!.Value;
             return new StoreVariantView(
                 variant.Id.Value,
                 CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
@@ -229,6 +234,18 @@ internal sealed class StoreCatalogReader(
         return selected.ToDictionary(
             pair => pair.Variant.Id.Value,
             pair => CatalogVariantReads.DisplayNameOf(pair.Product, pair.Variant, valueNames));
+    }
+
+    /// <summary>
+    /// Spec 2026-11-22 (D-5, D-12): el precio que ve el visitante es el de la lista del canal <c>Store</c>; sin lista, el base. Un
+    /// precio fijo sólo reemplaza (D-2), así que «vendible en la moneda» sigue siendo «tiene precio base en ella», como filtra la
+    /// consulta. El carrito y el pedido pasan por Quotations con el mismo canal.
+    /// </summary>
+    private async Task<PriceBook> StoreBookAsync(
+        Guid tenantId, IEnumerable<ProductVariant> variants, CancellationToken cancellationToken)
+    {
+        var list = await pricing.ListForChannelAsync(tenantId, PriceChannel.Store, cancellationToken);
+        return await pricing.BookAsync(tenantId, list, variants.Select(PricedVariant.Of).ToList(), cancellationToken);
     }
 
     private static bool IsSellableIn(Product product, ProductVariant variant, string currency) =>

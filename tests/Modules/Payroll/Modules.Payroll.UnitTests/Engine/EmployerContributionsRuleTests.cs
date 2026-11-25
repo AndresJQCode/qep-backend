@@ -15,6 +15,34 @@ public sealed class EmployerContributionsRuleTests
     private static PayrollLine Line(IReadOnlyList<PayrollLine> lines, string code) => lines.Single(line => line.Code == code);
 
     [Fact]
+    public void ArlIgnoresVacationDays()
+    {
+        var prior = MonthAccumulators.Empty with
+        {
+            WorkedDays = 13,
+            SalaryRaw = 1_300_000m,
+            Salary = 1_300_000m,
+            PensionEmployer = 180_000m,
+            Arl = 6_800m,
+            CompensationFund = 60_000m,
+        };
+        var input = EngineTestData.Input(new DateOnly(2026, 12, 16), 3_000_000m) with
+        {
+            Prior = prior,
+            Vacations = [EngineTestData.Vacation(new DateOnly(2026, 12, 14), new DateOnly(2027, 1, 5), paidHere: false)],
+        };
+        var chain = EngineTestData.Earnings(input);
+        var ibc = IbcRule.Compute(input, chain.Worked, chain.Vacations, chain.Salary.Line.Amount, chain.Month);
+
+        var lines = EmployerContributionsRule.Compute(input, ibc, chain.Month);
+
+        Assert.Equal(0m, Line(lines, "arl").Amount);
+        Assert.Equal(180_000m, Line(lines, "pension_employer").Amount);
+        Assert.Equal(60_000m, Line(lines, "compensation_fund").Amount);
+        Assert.Contains(Line(lines, "arl").Trace.Inputs, item => item.Name == "IBC del mes sin vacaciones" && Equals(item.Value, 1_300_000m));
+    }
+
+    [Fact]
     public void AnExoneratedCompanyBelowTenMinimumsPaysNoHealthIcbfOrSena()
     {
         var lines = Contributions(EngineTestData.Input(new DateOnly(2026, 11, 1)));
@@ -111,7 +139,11 @@ public sealed class EmployerContributionsRuleTests
         {
             Prior = MonthAccumulators.Empty with
             {
-                WorkedDays = 15, SalaryRaw = 25_000_000m, Salary = 25_000_000m, Arl = 130_500m, CompensationFund = 1_000_000m,
+                WorkedDays = 15,
+                SalaryRaw = 25_000_000m,
+                Salary = 25_000_000m,
+                Arl = 130_500m,
+                CompensationFund = 1_000_000m,
             },
         };
 
@@ -132,9 +164,15 @@ public sealed class EmployerContributionsRuleTests
         {
             Prior = MonthAccumulators.Empty with
             {
-                WorkedDays = 15, SalaryRaw = 875_452.5m, Salary = 875_453m,
-                HealthEmployer = 74_500m, PensionEmployer = 105_100m, Arl = 4_600m, CompensationFund = 35_100m,
-                Icbf = 26_300m, Sena = 17_600m,
+                WorkedDays = 15,
+                SalaryRaw = 875_452.5m,
+                Salary = 875_453m,
+                HealthEmployer = 74_500m,
+                PensionEmployer = 105_100m,
+                Arl = 4_600m,
+                CompensationFund = 35_100m,
+                Icbf = 26_300m,
+                Sena = 17_600m,
             },
         };
 

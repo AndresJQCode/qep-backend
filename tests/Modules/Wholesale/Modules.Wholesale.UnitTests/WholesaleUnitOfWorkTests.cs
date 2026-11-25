@@ -12,7 +12,6 @@ public sealed class WholesaleUnitOfWorkTests
         new("save", new PostgresException("violation", "ERROR", "ERROR", sqlState, constraintName: constraint));
 
     [Theory]
-    [InlineData("IX_price_lists_tenant_name", "wholesale.price_list.name_taken")]
     [InlineData("IX_distributors_tenant_identification", "wholesale.distributor.identification_taken")]
     [InlineData("IX_distributors_tenant_distributor_tenant", "wholesale.distributor.already_linked")]
     public void UniqueIndexesAre409ByName(string index, string code)
@@ -23,13 +22,13 @@ public sealed class WholesaleUnitOfWorkTests
         Assert.Equal(code, translated.Code);
     }
 
+    // Spec 2026-11-22: la lista vive en Catalog; ni el índice del nombre ni la FK de la lista son de este esquema.
     [Fact]
-    public void ThePriceListForeignKeyIs409InUse()
+    public void ThePriceListConstraintsAreNotTranslatedAnymore()
     {
-        var translated = Assert.IsType<ResourceConflictException>(WholesaleUnitOfWork.Translate(
+        Assert.Null(WholesaleUnitOfWork.Translate(Violation(PostgresErrorCodes.UniqueViolation, "IX_price_lists_tenant_name")));
+        Assert.Null(WholesaleUnitOfWork.Translate(
             Violation(PostgresErrorCodes.ForeignKeyViolation, "FK_distributors_price_lists_price_list_id")));
-
-        Assert.Equal("wholesale.price_list.in_use", translated.Code);
     }
 
     [Fact]

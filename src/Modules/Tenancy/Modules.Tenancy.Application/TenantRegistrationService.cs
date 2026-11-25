@@ -13,7 +13,8 @@ public sealed class TenantRegistrationService(
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
     IClock clock,
-    ITenantSlugAvailability slugAvailability)
+    ITenantSlugAvailability slugAvailability,
+    INewTenantProvisioning provisioning)
     : ITenantRegistration
 {
     private static readonly string[] AdminRoles = [Membership.AdminRole];
@@ -23,7 +24,7 @@ public sealed class TenantRegistrationService(
     {
         // Mismas reglas y códigos que Tenant.Create: el formato falla antes de tocar la base.
         var slug = Tenant.EnsureValidRegistration(
-            data.Slug, data.DisplayName, data.DefaultCulture, data.TimeZone, data.DateFormat, data.Country);
+            data.Slug, data.DisplayName, data.DefaultCulture, data.TimeZone, data.DateFormat, data.Country, data.Language);
 
         if (await slugAvailability.IsTakenAsync(slug, cancellationToken))
         {
@@ -54,7 +55,8 @@ public sealed class TenantRegistrationService(
             data.DateFormat,
             membershipId,
             now,
-            data.Country);
+            data.Country,
+            data.Language);
         tenantRepository.Add(tenant);
 
         // Spec 2026-10-07, «Alta por signup»: los módulos del tenant se commitean con el tenant y la
@@ -90,6 +92,7 @@ public sealed class TenantRegistrationService(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await provisioning.ProvisionAsync(tenant.Id, cancellationToken);
         return tenant.Id.Value;
     }
 
@@ -132,7 +135,8 @@ public sealed class TenantRegistrationService(
             data.DateFormat,
             membershipId,
             now,
-            data.Country);
+            data.Country,
+            data.Language);
         tenantRepository.Add(tenant);
 
         foreach (var key in modules)
@@ -160,6 +164,7 @@ public sealed class TenantRegistrationService(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await scope.CommitAsync(cancellationToken);
+        await provisioning.ProvisionAsync(tenant.Id, cancellationToken);
         return true;
     }
 

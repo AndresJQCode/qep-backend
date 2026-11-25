@@ -12,9 +12,10 @@ namespace Modules.Wholesale.Application;
 public sealed class DistributorComposer(
     IExecutionContext executionContext,
     IClock clock,
-    IPriceListRepository priceLists,
+    IWholesalePriceLists priceLists,
     IWholesaleMemberDirectory members,
     IWholesaleCompanyLookup companies,
+    IWholesaleCityLookup cities,
     IWholesaleTenantDirectory tenants,
     IWholesaleWhatsAppConnections whatsAppConnections)
 {
@@ -25,11 +26,12 @@ public sealed class DistributorComposer(
     {
         ArgumentNullException.ThrowIfNull(distributor);
 
-        var lists = await priceLists.FindManyAsync(distributor.TenantId, [distributor.PriceListId], cancellationToken);
+        var lists = await ListsAsync(distributor.TenantId, cancellationToken);
         var names = await members.FindNamesAsync(distributor.TenantId, [distributor.AdvisorMemberId], cancellationToken);
         var company = await companies.FindAsync(distributor.TenantId, distributor.BillingCompanyId, cancellationToken);
         var tenantNames = await TenantNamesAsync([distributor], cancellationToken);
         var notice = await NoticeOfAsync(distributor, cancellationToken);
+        var city = await CityOfAsync(distributor, cancellationToken);
         var now = clock.UtcNow;
         var invitation = distributor.Invitation;
 
@@ -53,7 +55,9 @@ public sealed class DistributorComposer(
                 invitation.SentAt, invitation.ExpiresAt, IsExpired(distributor, now), invitation.AcceptedAt, notice),
             distributor.CreatedAt,
             distributor.ActivatedAt,
-            AllowedActions(distributor));
+            AllowedActions(distributor),
+            City: city,
+            Address: distributor.Address);
     }
 
     public async Task<IReadOnlyList<DistributorSummaryDto>> SummariesAsync(
@@ -65,8 +69,7 @@ public sealed class DistributorComposer(
             return [];
         }
 
-        var lists = await priceLists.FindManyAsync(
-            tenantId, distributors.Select(item => item.PriceListId).Distinct().ToArray(), cancellationToken);
+        var lists = await ListsAsync(tenantId, cancellationToken);
         var names = await members.FindNamesAsync(
             tenantId, distributors.Select(item => item.AdvisorMemberId).Distinct().ToArray(), cancellationToken);
         var tenantNames = await TenantNamesAsync(distributors, cancellationToken);
@@ -119,14 +122,35 @@ public sealed class DistributorComposer(
         return new DistributorWhatsAppNoticeDto(status.ToString(), distributor.Invitation.NoticeFailureCode, label ?? UnknownName);
     }
 
+    // La ciudad resuelta de Colombia, o la escrita afuera; nula en una invitación anterior a la migración.
+    private async Task<DistributorCityDto?> CityOfAsync(Distributor distributor, CancellationToken cancellationToken)
+    {
+        if (distributor.CityId is { } cityId)
+        {
+            var city = await cities.FindAsync(cityId, cancellationToken);
+            return new DistributorCityDto(cityId, city?.Name ?? UnknownName, city?.DepartmentId, city?.DepartmentName);
+        }
+
+        return distributor.CityName is { } cityName ? new DistributorCityDto(null, cityName) : null;
+    }
+
     private static bool IsExpired(Distributor distributor, DateTimeOffset now) =>
         distributor.InvitationState(now) == InvitationViewState.Expired;
 
+    /// <summary>Un tenant tiene un puñado de listas: se leen todas una vez, en vez de una consulta por id contra Catalog.</summary>
+    private async Task<IReadOnlyDictionary<PriceListId, WholesalePriceList>> ListsAsync(
+        Guid tenantId, CancellationToken cancellationToken) =>
+        (await priceLists.ListAsync(tenantId, cancellationToken)).ToDictionary(list => list.Id);
+
+    /// <summary>
+    /// Spec 2026-11-22 (D-8): un distribuidor cuya lista ya no existe —o que viene de antes de la unificación— sale con
+    /// <see cref="UnknownName"/> y <c>Exists = false</c>, para que la pantalla le pida elegir una.
+    /// </summary>
     private static DistributorPriceListDto PriceListOf(
-        Distributor distributor, IReadOnlyDictionary<PriceListId, PriceList> lists) =>
+        Distributor distributor, IReadOnlyDictionary<PriceListId, WholesalePriceList> lists) =>
         lists.TryGetValue(distributor.PriceListId, out var list)
-            ? new DistributorPriceListDto(list.Id.Value, list.Name, list.DiscountPercent)
-            : new DistributorPriceListDto(distributor.PriceListId.Value, UnknownName, 0m);
+            ? new DistributorPriceListDto(list.Id.Value, list.Name, list.AdjustmentPercent)
+            : new DistributorPriceListDto(distributor.PriceListId.Value, UnknownName, 0m, Exists: false);
 
     private static DistributorAdvisorDto AdvisorOf(Distributor distributor, IReadOnlyDictionary<Guid, string> names) =>
         new(distributor.AdvisorMemberId,

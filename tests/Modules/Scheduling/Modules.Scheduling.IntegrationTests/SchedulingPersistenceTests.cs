@@ -275,4 +275,5 @@ public sealed class SchedulingPersistenceTests
             () => new SchedulingUnitOfWork(context).SaveChangesAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(SchedulingErrorCodes.ResourceMemberAlreadyLinked, exception.Code);
-    }}
+    }
+}

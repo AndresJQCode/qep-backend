@@ -99,7 +99,7 @@ public static class SiigoInvoiceBuilder
         // Los pagos tienen que sumar el total que Siigo calcula (IVA redondeado por línea desde la base ya redondeada), no el de QEP: la
         // diferencia (hasta un peso, ya validada arriba) se reparte en los pagos y no se pide después con el total que proponga Siigo.
         var freightDelta = separateFreight ? freight!.Subtotal + freight.Tax - (input.FreightSubtotal + input.FreightTaxAmount) : 0m;
-        plan = PlanPayments(input, separateFreight, computedOrderTotal - qepOrderTotal, freightDelta);
+        plan = PlanPayments(input, separateFreight, computedOrderTotal - qepOrderTotal - RetentionRoundingDelta(input, lines), freightDelta);
 
         if (plan.Exceeds)
         {
@@ -117,6 +117,29 @@ public static class SiigoInvoiceBuilder
         }
 
         return new SiigoBuildResult.Ready(drafts);
+    }
+
+    /// <summary>
+    /// Lo que la retención por ítem de Siigo se aparta de la de QEP. ReteFuente viaja en los <c>taxes</c> de cada ítem y Siigo la redondea
+    /// ítem por ítem (<c>round(base × % / 100, 2)</c>); QEP la saca sobre la base entera, así que pueden diferir unos centavos y los pagos
+    /// rechazan con <c>invalid_total_payments</c>. Como con el IVA, sólo se corrige el redondeo (hasta <see cref="Tolerance"/>): una
+    /// diferencia mayor es otra base o un porcentaje distinto, y se deja a la vista en vez de taparla. Sin porcentaje (0) no se corrige.
+    /// </summary>
+    private static decimal RetentionRoundingDelta(SiigoInvoiceInput input, IReadOnlyList<ResolvedItem> lines)
+    {
+        var delta = 0m;
+        foreach (var withholding in input.Withholdings.Where(value =>
+                     SiigoWithholdingPlacement.For(value.Type) == SiigoWithholdingTarget.ItemTax && value.Percentage > 0m))
+        {
+            var perItem = lines.Sum(line => Math.Round(line.Subtotal * withholding.Percentage / 100m, 2, MidpointRounding.AwayFromZero));
+            var difference = perItem - withholding.Amount;
+            if (Math.Abs(difference) <= Tolerance)
+            {
+                delta += difference;
+            }
+        }
+
+        return delta;
     }
 
     private static SiigoInvoiceDraft Draft(
@@ -372,8 +395,9 @@ public static class SiigoInvoiceBuilder
         if (line.IsGift)
         {
             // Un obsequio va con precio 0 y no suma al total: Siigo calcula su IVA sobre `tax_base`, que es el precio de lista sin IVA
-            // (el de lista viene con IVA incluido).
-            var taxBase = Math.Round(line.ListUnitPrice * 100m / (100m + line.TaxPercentage), 6, MidpointRounding.AwayFromZero);
+            // (el de lista viene con IVA incluido). Siigo documenta `tax_base` con «máximo 11 enteros y 2 decimales» (`price` admite 6): con más
+            // decimales rechaza con `invalid_amount` en `items[n].tax_base` (observado el 2026-11-24 con 30168,067227).
+            var taxBase = Math.Round(line.ListUnitPrice * 100m / (100m + line.TaxPercentage), 2, MidpointRounding.AwayFromZero);
             return new ResolvedItem(
                 VariantLink(settings, line.VariantId)!.SiigoProductCode,
                 line.Name,

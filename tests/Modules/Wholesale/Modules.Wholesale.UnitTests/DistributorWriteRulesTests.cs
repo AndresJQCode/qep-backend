@@ -16,7 +16,60 @@ public sealed class DistributorWriteRulesTests
         string country = "CO",
         string identificationType = "NIT") =>
         new(Tenant, email, businessName, country, identificationType, identificationNumber, contactName, Guid.CreateVersion7(), Guid.CreateVersion7(),
-            Guid.CreateVersion7(), "trace");
+            Guid.CreateVersion7(), "trace")
+        {
+            // La ciudad que el país exige: así los casos que no hablan de ella no fallan por ella.
+            CityId = Guid.CreateVersion7(),
+            CityName = "Madrid",
+        };
+
+    [Fact]
+    public void AColombianInvitationNeedsTheCityId()
+    {
+        Assert.Equal(["CityId"], Failed(Invite() with { CityId = null }));
+    }
+
+    [Fact]
+    public void AnEmptyCityIdIsMissing()
+    {
+        Assert.Equal(["CityId"], Failed(Invite() with { CityId = Guid.Empty }));
+    }
+
+    [Fact]
+    public void AnInvitationOutsideColombiaNeedsTheCityName()
+    {
+        Assert.Equal(["CityName"], Failed(Invite(country: "ES", identificationType: "NIF") with { CityName = null }));
+        Assert.Equal(["CityName"], Failed(Invite(country: "ES", identificationType: "NIF") with { CityName = "  " }));
+        Assert.Empty(Failed(Invite(country: "ES", identificationType: "NIF") with { CityId = null }));
+    }
+
+    [Fact]
+    public void TheCityNameHasAtMost120()
+    {
+        Assert.Empty(Failed(Invite() with { CityName = new string('a', 120) }));
+        Assert.Equal(["CityName"], Failed(Invite() with { CityName = new string('a', 121) }));
+    }
+
+    [Fact]
+    public void TheAddressIsOptionalAndHasAtMost200()
+    {
+        Assert.Empty(Failed(Invite() with { Address = null }));
+        Assert.Empty(Failed(Invite() with { Address = new string('a', 200) }));
+        Assert.Equal(["Address"], Failed(Invite() with { Address = new string('a', 201) }));
+    }
+
+    [Fact]
+    public void AColombianInvitationDoesNotNeedTheCityName()
+    {
+        Assert.Empty(Failed(Invite() with { CityName = null }));
+    }
+
+    [Fact]
+    public void ABadCountryOnlyFailsOnCountry()
+    {
+        // Sin un país válido no hay carril de ciudad que exigir (igual que CompanyWriteRules).
+        Assert.Equal(["Country"], Failed(Invite(country: "C") with { CityId = null, CityName = null }));
+    }
 
     private static string[] Failed(InviteDistributorCommand command) =>
         new InviteDistributorValidator().Validate(command).Errors.Select(error => error.PropertyName).Distinct().ToArray();
@@ -66,7 +119,8 @@ public sealed class DistributorWriteRulesTests
     public void InviteAndUpdateRequireTheThreeReferences()
     {
         var invite = new InviteDistributorCommand(
-            Tenant, "ana@distri.co", "Norte", "CO", "NIT", "900123456", "Ana", Guid.Empty, Guid.Empty, Guid.Empty, "trace");
+            Tenant, "ana@distri.co", "Norte", "CO", "NIT", "900123456", "Ana", Guid.Empty, Guid.Empty, Guid.Empty, "trace",
+            CityId: Guid.CreateVersion7());
         var update = new UpdateDistributorCommand(Tenant, Guid.CreateVersion7(), 1, Guid.Empty, Guid.Empty, Guid.Empty);
 
         Assert.Equal(["PriceListId", "AdvisorId", "BillingCompanyId"], Failed(invite));

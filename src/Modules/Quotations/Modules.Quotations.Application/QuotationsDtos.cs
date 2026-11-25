@@ -320,7 +320,11 @@ public sealed record QuotationPartyDto(
     /// <summary>ISO alfa-2. Siempre viaja: una parte sin país es <c>CO</c>.</summary>
     string? Country = null,
     /// <summary>La ciudad escrita, sólo fuera de Colombia; null en Colombia.</summary>
-    string? CityName = null);
+    string? CityName = null,
+    /// <summary>The region id of a party outside Colombia; the composers resolve it to a name.</summary>
+    Guid? RegionId = null,
+    /// <summary>Only on the shipping party; always null on billing.</summary>
+    string? PostalCode = null);
 
 /// <summary>La cuenta con la que se factura, tal como sale hacia el cliente HTTP. Es la copia
 /// guardada, no lo que la empresa tenga hoy.</summary>
@@ -379,7 +383,15 @@ public sealed record QuotationPartyRequest(
     /// otro país lleva <c>CityName</c> y ningún id (<c>quotations.party.city_lane_invalid</c> si se mezclan).</summary>
     string? Country = null,
     /// <summary>La ciudad como texto (≤ 120), sólo fuera de Colombia.</summary>
-    string? CityName = null);
+    string? CityName = null,
+    /// <summary>The region (province) of a party in a country with a region catalogue other than Colombia; replace
+    /// semantics, like <c>CityName</c>: omitting it clears the stored one. With Colombia it is a 422.</summary>
+    Guid? RegionId = null,
+    /// <summary>The postal code of the delivery party (≤ 20, trimmed, no per-country format), in Colombia and abroad
+    /// (spec 2026-11-24). Replace semantics, like <c>RegionId</c>: omitting it clears the stored one. Ignored on
+    /// billing. Over the limit it is a 422 <c>quotations.party.postal_code_too_long</c> on
+    /// <c>Parties.Shipping.PostalCode</c>.</summary>
+    string? PostalCode = null);
 
 /// <summary>Las dos partes de la cotización en el request. <b>Null es el caso normal</b>: "factura
 /// (o entrega) a los datos del cliente" — el switch prendido de la UI. Como
@@ -713,7 +725,9 @@ public sealed record QuotationClientResponse(
     /// <summary>"Natural" o "Juridica", tal como está en la ficha del cliente. Null si no lo tiene.</summary>
     string? PersonType = null,
     /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) de la ficha del cliente. Null si no lo tiene.</summary>
-    string? IdentificationType = null);
+    string? IdentificationType = null,
+    /// <summary>The region of a foreign customer, resolved to its name; null when it has none (provincia guardada).</summary>
+    QuotationRegionDto? Region = null);
 
 public sealed record QuotationClientAddressResponse(
     Guid Id,
@@ -726,7 +740,9 @@ public sealed record QuotationClientAddressResponse(
     string? DepartmentName,
     bool IsPrincipal,
     /// <summary>ISO alfa-2 de la dirección. Fuera de Colombia no hay ids de DIVIPOLA y la ciudad es el texto.</summary>
-    string Country = "CO");
+    string Country = "CO",
+    /// <summary>The region of a foreign address, resolved to its name; null when it has none.</summary>
+    QuotationRegionDto? Region = null);
 
 /// <summary>
 /// La escala viaja con su restricción, no sólo con su descuento: es lo único con lo que el
@@ -866,7 +882,11 @@ public sealed record QuotationResponse(
     /// ninguna línea. BFF: con false la pantalla oculta la sección de envío sin conocer el tipo de cada línea ni la
     /// regla del documento vacío. El backend no pone ni borra el envío por esto. Con default para no tocar las
     /// construcciones que ya existen; el compositor lo llena siempre.</summary>
-    bool RequiresShipping = true);
+    bool RequiresShipping = true,
+    /// <summary>This backend stores the delivery postal code (spec 2026-11-24). BFF: a new document has no party to look
+    /// at, and the screen only draws the field, and only sends it, when the document says so; a backend without it would
+    /// silently drop what the person typed. Always true.</summary>
+    bool PostalCodeSupported = true);
 
 /// <summary>Una referencia de municipio (spec ReteICA por empresa §9.1): la misma forma en tasas, empresas, clientes y
 /// documentos.</summary>
@@ -983,7 +1003,10 @@ public sealed record QuotationPartyResponse(
     string? PersonType = null,
     string? IdentificationType = null,
     string? Country = null,
-    string? CityName = null);
+    string? CityName = null,
+    QuotationRegionDto? Region = null,
+    /// <summary>Only on the shipping party; always null on billing.</summary>
+    string? PostalCode = null);
 
 public sealed record QuotationListItemResponse(
     Guid Id,

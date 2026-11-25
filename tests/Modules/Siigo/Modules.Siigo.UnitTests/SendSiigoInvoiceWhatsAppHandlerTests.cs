@@ -105,7 +105,7 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
         var json = Assert.Single(harness.Audit.Entries).ChangedFieldsJson;
         using var document = JsonDocument.Parse(json);
         Assert.Equal(
-            ["errorCode", "kind", "number", "orderId", "outcome", "status"],
+            ["errorCode", "fromStatus", "kind", "number", "orderId", "outcome", "status"],
             [.. document.RootElement.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal)]);
         Assert.DoesNotContain(Convert.ToBase64String(Pdf), json, StringComparison.Ordinal);
         Assert.DoesNotContain("phone", json, StringComparison.OrdinalIgnoreCase);
@@ -274,6 +274,10 @@ public sealed class SendSiigoInvoiceWhatsAppHandlerTests
     {
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && row.OrderId == orderId)]);
+
+        public Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<SiigoInvoice>>([.. rows.Where(row => row.TenantId == tenantId && invoiceIds.Contains(row.Id))]);
 
         public void Add(SiigoInvoice invoice) => throw new NotSupportedException();
     }

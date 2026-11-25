@@ -316,8 +316,12 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19,
-            ProductsTotal = 209000m, Total = 220900m, NetTotal = 220900m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            ProductsTotal = 209000m,
+            Total = 220900m,
+            NetTotal = 220900m,
         };
 
         var drafts = Assert.IsType<SiigoBuildResult.Ready>(Build(input)).Drafts;
@@ -350,8 +354,12 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19,
-            Total = 220900m, RetentionAmount = 2500m, NetTotal = 218400m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            Total = 220900m,
+            RetentionAmount = 2500m,
+            NetTotal = 218400m,
             Withholdings = [ReteFuente(), ReteIca()],
         };
 
@@ -468,7 +476,11 @@ public sealed class SiigoInvoiceBuilderTests
     {
         var input = Order() with
         {
-            FreightSubtotal = 10000m, FreightTaxAmount = 1900m, FreightTaxPercentage = 19, Total = 220900m, NetTotal = 220900m,
+            FreightSubtotal = 10000m,
+            FreightTaxAmount = 1900m,
+            FreightTaxPercentage = 19,
+            Total = 220900m,
+            NetTotal = 220900m,
             PaymentProofs = [new SiigoPaymentProofInput(ProofA, 215000m)],
         };
 
@@ -490,7 +502,9 @@ public sealed class SiigoInvoiceBuilderTests
         Order() with
         {
             Lines = [new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 102m, 7666285.71m, 35m, 19, 1456594.29m)],
-            ProductsTotal = 9122880.00m, Total = 9122880.00m, NetTotal = 9122880.00m,
+            ProductsTotal = 9122880.00m,
+            Total = 9122880.00m,
+            NetTotal = 9122880.00m,
             PaymentProofs = proofs,
         };
 
@@ -517,6 +531,43 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal(1, payments.GetArrayLength());
         Assert.Equal(9122879.99m, payments[0].GetProperty("value").GetDecimal());
         Assert.False(payments[0].TryGetProperty("due_date", out _));
+    }
+
+    // Siigo aplica ReteFuente por ítem y redondea cada una (2,5 % de 100,20 = 2,505 → 2,51; dos líneas: 5,02); QEP la saca sobre la base
+    // entera (2,5 % de 200,40 = 5,01). Caso real: pedido de 8 líneas, QEP 20.595.927,31 contra 20.595.927,33 de Siigo.
+    private static SiigoInvoiceInput PerLineRetentionOrder(decimal qepRetention, decimal proof) =>
+        Order() with
+        {
+            Lines =
+            [
+                new SiigoInvoiceLineInput(Line1Variant, "Producto uno", 1m, 100.20m, 0m, 19, 19.04m),
+                new SiigoInvoiceLineInput(Line2Variant, "Producto dos", 1m, 100.20m, 0m, 19, 19.04m),
+            ],
+            ProductsTotal = 238.48m,
+            Total = 238.48m,
+            RetentionAmount = qepRetention,
+            NetTotal = 238.48m - qepRetention,
+            Withholdings = [new SiigoWithholdingInput(ReteFuenteRate, "Retefuente 2,5 %", TaxCountries.RetefuenteType, qepRetention, 2.5m)],
+            PaymentProofs = [new SiigoPaymentProofInput(ProofA, proof)],
+        };
+
+    [Fact]
+    public void ThePaymentsFollowTheRetentionSiigoRoundsPerItem()
+    {
+        // El comprobante es el neto de QEP (238,48 − 5,01 = 233,47); Siigo espera 238,48 − 5,02 = 233,46 y el pago se recorta a él.
+        using var json = Json(Ready(Build(PerLineRetentionOrder(5.01m, 233.47m))));
+
+        Assert.Equal([(9001, 233.46m)], PaymentsOf(json));
+    }
+
+    [Fact]
+    public void ARetentionThatDiffersByMoreThanRoundingIsNotAdjusted()
+    {
+        // 8,00 contra 5,02 son casi 3 pesos: no es redondeo (la retención aplica a otra base): no se maquilla, y el pago sigue siendo el
+        // neto de QEP (238,48 − 8,00).
+        using var json = Json(Ready(Build(PerLineRetentionOrder(8m, 230.48m))));
+
+        Assert.Equal([(9001, 230.48m)], PaymentsOf(json));
     }
 
     [Fact]
@@ -704,7 +755,8 @@ public sealed class SiigoInvoiceBuilderTests
         Assert.Equal(1m, item.GetProperty("quantity").GetDecimal());
         Assert.Equal(0m, item.GetProperty("price").GetDecimal());
         Assert.Equal(0m, item.GetProperty("discount").GetDecimal());
-        Assert.Equal(840.336134m, item.GetProperty("tax_base").GetDecimal());
+        // Siigo documenta `tax_base` con «máximo 11 enteros y 2 decimales» (a diferencia de `price`, que admite 6): 840,336134 → 840,34.
+        Assert.Equal(840.34m, item.GetProperty("tax_base").GetDecimal());
         Assert.Equal("Company", item.GetProperty("taxpayer").GetString());
         var taxes = item.GetProperty("taxes");
         Assert.Equal(1, taxes.GetArrayLength());

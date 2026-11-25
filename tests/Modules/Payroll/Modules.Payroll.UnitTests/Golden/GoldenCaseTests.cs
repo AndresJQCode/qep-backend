@@ -36,6 +36,11 @@ public sealed class GoldenCaseTests
         Compare("workedDays", golden.Expected.WorkedDays, result.WorkedDays);
         Compare("finalSettlementPending", golden.Expected.FinalSettlementPending, result.FinalSettlementPending);
         Compare("negativeNet", golden.Expected.NegativeNet, result.NegativeNet);
+        if (golden.Expected.VacationDays is { } vacationDays)
+        {
+            Compare("vacationDays", vacationDays, result.VacationDays);
+        }
+
         Compare("net", golden.Expected.Net, result.Summary.Net);
         Compare("employerCost", golden.Expected.EmployerCost, result.Summary.EmployerCost);
 
@@ -67,11 +72,12 @@ public sealed class GoldenCaseTests
     }
 
     [Fact]
-    public void ThereAreTwentyNineSyntheticFilesWithUniqueNames()
+    public void ThereAreFortySyntheticFilesWithUniqueNames()
     {
         var cases = GoldenCaseLoader.All();
 
-        Assert.Equal(29, cases.Count(golden => golden.Source == "synthetic"));
+        // 29 from the first project and 11 of enjoyed vacations.
+        Assert.Equal(40, cases.Count(golden => golden.Source == "synthetic"));
         Assert.Equal(cases.Count, cases.Select(golden => golden.Name).Distinct().Count());
     }
 }

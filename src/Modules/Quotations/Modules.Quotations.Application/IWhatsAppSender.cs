@@ -52,7 +52,10 @@ public sealed record WhatsAppQuotationMessage(
     /// <summary>El cliente destinatario; <c>null</c> si el mensaje va a los datos de facturación, que no son un cliente.</summary>
     Guid? CustomerId = null,
     /// <summary>El tenant de la cotización: el envío por Meta pasa por Mensajería, que aísla por tenant, y el puerto no recibe más contexto.</summary>
-    Guid? TenantId = null);
+    Guid? TenantId = null,
+    /// <summary>El idioma del tenant (spec 2026-11-22, i18n): sólo decide el nombre del PDF adjunto («Presupuesto-…» en España).
+    /// El texto de la plantilla es de Meta, aprobado por idioma, y no cambia.</summary>
+    string? Language = null);
 
 /// <summary>
 /// Los campos de la plantilla del pedido: los de <see cref="WhatsAppQuotationMessage"/> menos la

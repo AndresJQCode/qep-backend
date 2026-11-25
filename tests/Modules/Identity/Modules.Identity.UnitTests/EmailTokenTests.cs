@@ -1,4 +1,4 @@
-﻿using Modules.Identity.Domain;
+using Modules.Identity.Domain;
 
 namespace Modules.Identity.UnitTests;
 

@@ -169,6 +169,16 @@ public sealed class AiSchedulingTests
     }
 
     [Fact]
+    public async Task PreviewRescheduleChecksTheMoveForTheConversationCustomer()
+    {
+        var result = await Adapter().PreviewRescheduleAsync(Caller(ConversationId), AppointmentId, Start, null, Ct);
+
+        Assert.False(result.Value!.AlreadyDone);
+        Assert.Equal((CustomerA, AppointmentId), _channel.LastRescheduleCheck);
+        Assert.Equal(0, _channel.WriteCalls);
+    }
+
+    [Fact]
     public async Task CancelWithoutCustomerIsNotFound()
     {
         _row = Row(customerId: null);
@@ -177,9 +187,11 @@ public sealed class AiSchedulingTests
         var cancel = await adapter.CancelAsync(Caller(ConversationId), AppointmentId, null, Ct);
         var move = await adapter.RescheduleAsync(Caller(ConversationId), AppointmentId, Start, null, Ct);
         var find = await adapter.FindMyAppointmentAsync(Caller(ConversationId), AppointmentId, Ct);
+        var preview = await adapter.PreviewRescheduleAsync(Caller(ConversationId), AppointmentId, Start, null, Ct);
 
-        Assert.All([cancel.ErrorCode, move.ErrorCode, find.ErrorCode], code => Assert.Equal("appointment_not_found", code));
+        Assert.All([cancel.ErrorCode, move.ErrorCode, find.ErrorCode, preview.ErrorCode], code => Assert.Equal("appointment_not_found", code));
         Assert.Equal(0, _channel.WriteCalls);
+        Assert.Null(_channel.LastRescheduleCheck);
     }
 
     [Fact]
@@ -251,6 +263,8 @@ public sealed class AiSchedulingTests
 
         public int WriteCalls { get; private set; }
 
+        public (Guid CustomerId, Guid AppointmentId)? LastRescheduleCheck { get; private set; }
+
         private void MaybeThrow()
         {
             if (Throws is { } error)
@@ -288,6 +302,15 @@ public sealed class AiSchedulingTests
         {
             MaybeThrow();
             return Task.FromResult<ChannelAppointment?>(Stored);
+        }
+
+        public Task<ChannelRescheduleCheck> CheckRescheduleAsync(
+            Guid tenantId, Guid customerId, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken)
+        {
+            MaybeThrow();
+            LastRescheduleCheck = (customerId, appointmentId);
+            return Task.FromResult(new ChannelRescheduleCheck(
+                new ChannelStartCheck("Confirmed", Stored.StartsAt, Stored.EndsAt, "America/Bogota", "Consulta", "Dra. Pérez", "Sede"), false));
         }
 
         public Task<ChannelStartCheck> CheckStartAsync(

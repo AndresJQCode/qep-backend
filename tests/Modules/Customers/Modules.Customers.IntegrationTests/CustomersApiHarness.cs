@@ -295,6 +295,17 @@ internal static class CustomersApiHarness
         string CityName,
         string DepartmentName);
 
+    /// <summary>El id de Madrid (codigo 28) en el catalogo de regiones de Espana que siembra Geography: la region que las
+    /// pruebas de provincia guardada mandan como <c>regionId</c>.</summary>
+    public static async Task<Guid> MadridRegionIdAsync(HttpClient client)
+    {
+        var regions = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/countries/ES/regions", TestContext.Current.CancellationToken);
+        return regions.EnumerateArray()
+            .Single(region => region.GetProperty("code").GetString() == "28")
+            .GetProperty("id").GetGuid();
+    }
+
     public static async Task<CityFixture> EnsureCityAsync(HttpClient client) =>
         (await EnsureCitiesAsync(client, 1))[0];
 

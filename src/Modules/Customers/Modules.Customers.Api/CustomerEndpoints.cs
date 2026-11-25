@@ -340,7 +340,8 @@ public static class CustomerEndpoints
             survivor.ContactCount,
             result.DroppedTags,
             survivor.WithholdingTaxRates,
-            survivor.WithholdingAgentCities));
+            survivor.WithholdingAgentCities,
+            survivor.Region));
     }
 
     private static async Task<IResult> CreateCustomerAsync(
@@ -367,7 +368,8 @@ public static class CustomerEndpoints
                 request.PersonType,
                 request.WithholdingTaxRateIds,
                 request.WithholdingAgentCities,
-                CompanyId: request.CompanyId),
+                CompanyId: request.CompanyId,
+                RegionId: request.RegionId),
             cancellationToken);
 
         return Results.Created(
@@ -400,7 +402,8 @@ public static class CustomerEndpoints
                 request.VatSurplus,
                 request.PersonType,
                 request.WithholdingTaxRateIds,
-                request.WithholdingAgentCities),
+                request.WithholdingAgentCities,
+                request.RegionId),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -524,8 +527,8 @@ public static class CustomerEndpoints
                 request.Phone,
                 request.IsPrincipal,
                 request.Country,
-                request.CityName),
-            cancellationToken);
+                request.CityName,
+                request.RegionId), cancellationToken);
 
         return Results.Ok(ToResponse(customer));
     }
@@ -549,8 +552,8 @@ public static class CustomerEndpoints
                 request.Phone,
                 request.IsPrincipal,
                 request.Country,
-                request.CityName),
-            cancellationToken);
+                request.CityName,
+                request.RegionId), cancellationToken);
 
         return Results.Ok(ToResponse(customer));
     }
@@ -645,7 +648,8 @@ public static class CustomerEndpoints
         customer.Contacts ?? [],
         customer.ContactCount,
         customer.WithholdingTaxRates,
-        customer.WithholdingAgentCities);
+        customer.WithholdingAgentCities,
+        customer.Region);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,

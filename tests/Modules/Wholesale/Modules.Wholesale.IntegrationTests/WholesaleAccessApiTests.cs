@@ -72,9 +72,9 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
             Factory, TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Wholesale));
         using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
 
+        // Spec 2026-11-22: las listas de precios son de Catalog y no exigen el módulo; las rutas del distribuidor sí.
         foreach (var url in new[]
         {
-            WholesaleApiHarness.PriceListsUrl(tenant.TenantId),
             WholesaleApiHarness.DistributorsUrl(tenant.TenantId),
             $"{WholesaleApiHarness.DistributorsUrl(tenant.TenantId)}/options",
             WholesaleApiHarness.CategoriesUrl(tenant.TenantId),

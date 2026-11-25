@@ -75,7 +75,7 @@ public sealed class ExternalOrderInvoicingService(
             order.RetentionAmount,
             order.NetTotal,
             [.. order.AppliedWithholdings.Select(withholding => new ExternalInvoicingWithholding(
-                withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Amount))],
+                withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Amount, withholding.Percentage))],
             [.. order.PaymentProofs.OrderBy(proof => proof.UploadedAt).ThenBy(proof => proof.Id.Value)
                 .Select(proof => new ExternalInvoicingProof(proof.Id.Value, proof.Amount))],
             order.BillingAccount?.CompanyId,
@@ -136,6 +136,30 @@ public sealed class ExternalOrderInvoicingService(
 
     public async Task<long?> GetVersionAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
         (await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken))?.Version;
+
+    public async Task<bool> IsMarkedAsync(
+        Guid tenantId, Guid orderId, string provider, string number, CancellationToken cancellationToken) =>
+        await orders.FindUntrackedByIdAsync(tenantId, new OrderId(orderId), cancellationToken) is { IsInvoiced: true } order
+        && string.Equals(order.InvoiceProvider, provider, StringComparison.Ordinal)
+        && string.Equals(order.InvoiceNumber, number, StringComparison.Ordinal);
+
+    public async Task<IReadOnlyDictionary<Guid, ExternalInvoicingOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
+    {
+        var rows = await orders.FindNumbersAndClientsAsync(
+            tenantId, [.. orderIds.Distinct().Select(id => new OrderId(id))], cancellationToken);
+        if (rows.Count == 0)
+        {
+            return new Dictionary<Guid, ExternalInvoicingOrderLabel>();
+        }
+
+        // El nombre, como en la lista de pedidos (OrderListing): una sola consulta para todos los clientes.
+        var names = await customerLookup.FindNamesAsync(
+            tenantId, [.. rows.Values.Select(row => row.ClientId).Distinct()], cancellationToken);
+        return rows.ToDictionary(
+            row => row.Key.Value,
+            row => new ExternalInvoicingOrderLabel(row.Value.OrderNumber, names.GetValueOrDefault(row.Value.ClientId)));
+    }
 
     public async Task MarkInvoicedAsync(
         Guid tenantId,

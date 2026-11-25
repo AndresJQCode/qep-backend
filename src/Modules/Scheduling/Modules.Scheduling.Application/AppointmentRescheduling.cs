@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Modules.Scheduling.Domain;
 using Modules.Tenancy.Application;
 
@@ -61,46 +62,37 @@ public sealed class AppointmentRescheduling(
         SchedulingActor actor,
         bool byClient,
         bool requireClientChoice,
+        long? expectedVersion,
         CancellationToken cancellationToken)
     {
         EnsureOpen(appointment);
+        var readBeforeTheLock = (appointment.ResourceId, appointment.StartsAt, appointment.LocationId);
 
-        var service = (await services.FindManyAsync(tenantId, [appointment.ServiceId], cancellationToken)).SingleOrDefault()
-            ?? throw SchedulingNotFound.Service(appointment.ServiceId.Value);
-        var loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
-        if (byClient)
-        {
-            EnsureClientMayMove(appointment, service, loaded.Rules, loaded.Calendar.UtcNow);
-        }
-
-        var sameLocation = loaded.OfferedResources.Where(resource => resource.LocationId == appointment.LocationId).Select(resource => resource.Id).ToHashSet();
-        var rulesSessions = await loader.SessionsAsync(tenantId, loaded, loaded.OfferedResourceIds, onlyActive: false, cancellationToken);
-        var candidates = AppointmentStarts.RulesCandidates(loaded, service, rulesSessions, startsAt, resourceId, sameLocation.Contains);
-        if (requireClientChoice && resourceId is { } mustBeChoosable)
-        {
-            AppointmentStarts.EnsureClientChoice(loaded, service, rulesSessions, startsAt, mustBeChoosable);
-        }
+        var (service, loaded, candidates) = await RulesAsync(
+            tenantId, appointment, scope, resourceId, startsAt, byClient, requireClientChoice, cancellationToken);
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         await appointments.LockResourcesAsync(tenantId, [.. candidates, appointment.ResourceId], cancellationToken);
 
         // Read before the lock, so read again: a cancel or a move that committed in between is visible only now.
         await appointments.RefreshAsync(appointment, cancellationToken);
+        AppointmentCancellation.EnsureNotChanged(appointment, expectedVersion);
         EnsureOpen(appointment);
         if (appointment.StartsAt == startsAt && (resourceId is null || resourceId == appointment.ResourceId))
         {
             return false;
         }
 
+        // The cutoff used the old start, the lock the old resource and the candidates the old location. If another write moved the
+        // appointment in between, those decisions are stale: the caller re-reads and decides again.
+        if ((appointment.ResourceId, appointment.StartsAt, appointment.LocationId) != readBeforeTheLock)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The appointment changed after it was read.");
+        }
+
         // Same reason as in booking: closures committed while the candidates were computed are visible only after the lock.
         loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
-        var oldSession = await sessions.FindAsync(tenantId, appointment.SessionId, cancellationToken)
-            ?? throw new InvalidOperationException($"The session of appointment '{appointment.Id.Value}' does not exist.");
-        // The seat the appointment holds is about to be released: if it is the only one of an ad-hoc session, that session leaves and
-        // its range must not block the new start (it would, for a service with margin, or for a move to the next start).
-        var fresh = (await loader.SessionsAsync(tenantId, loaded, candidates, onlyActive: true, cancellationToken))
-            .Where(session => !(session.Id == oldSession.Id && session.BookedCount == 1 && !session.IsPublished))
-            .ToList();
+        var (oldSession, fresh) = await SeatsWithoutTheReleasedOneAsync(tenantId, loaded, candidates, appointment, cancellationToken);
         var option = AppointmentStarts.PickFree(loaded, service, fresh, startsAt, candidates, preferred: resourceId ?? appointment.ResourceId);
 
         var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
@@ -118,5 +110,73 @@ public sealed class AppointmentRescheduling(
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return true;
+    }
+
+    /// <summary>
+    /// Lo que <see cref="RescheduleAsync"/> comprueba sin escribir ni tomar el candado: las mismas reglas y el mismo cupo libre, sin contar el que
+    /// la propia cita ocupa (spec 2026-11-23 menores, M1). Es la vista previa del playground; el cupo puede perderse antes del cambio real.
+    /// </summary>
+    public async Task<(Service Service, LoadedAvailability Loaded, SlotOption Option)> CheckAsync(
+        Guid tenantId,
+        Appointment appointment,
+        ResourceScope scope,
+        ResourceId? resourceId,
+        DateTimeOffset startsAt,
+        bool byClient,
+        bool requireClientChoice,
+        CancellationToken cancellationToken)
+    {
+        EnsureOpen(appointment);
+        var (service, loaded, candidates) = await RulesAsync(
+            tenantId, appointment, scope, resourceId, startsAt, byClient, requireClientChoice, cancellationToken);
+        var (_, fresh) = await SeatsWithoutTheReleasedOneAsync(tenantId, loaded, candidates, appointment, cancellationToken);
+        var option = AppointmentStarts.PickFree(loaded, service, fresh, startsAt, candidates, preferred: resourceId ?? appointment.ResourceId);
+        return (service, loaded, option);
+    }
+
+    private async Task<(Service Service, LoadedAvailability Loaded, IReadOnlyList<ResourceId> Candidates)> RulesAsync(
+        Guid tenantId,
+        Appointment appointment,
+        ResourceScope scope,
+        ResourceId? resourceId,
+        DateTimeOffset startsAt,
+        bool byClient,
+        bool requireClientChoice,
+        CancellationToken cancellationToken)
+    {
+        var service = (await services.FindManyAsync(tenantId, [appointment.ServiceId], cancellationToken)).SingleOrDefault()
+            ?? throw SchedulingNotFound.Service(appointment.ServiceId.Value);
+        var loaded = await loader.LoadForStartAsync(tenantId, scope, startsAt, cancellationToken);
+        if (byClient)
+        {
+            EnsureClientMayMove(appointment, service, loaded.Rules, loaded.Calendar.UtcNow);
+        }
+
+        var sameLocation = loaded.OfferedResources.Where(resource => resource.LocationId == appointment.LocationId).Select(resource => resource.Id).ToHashSet();
+        var rulesSessions = await loader.SessionsAsync(tenantId, loaded, loaded.OfferedResourceIds, onlyActive: false, cancellationToken);
+        var candidates = AppointmentStarts.RulesCandidates(loaded, service, rulesSessions, startsAt, resourceId, sameLocation.Contains);
+        if (requireClientChoice && resourceId is { } mustBeChoosable)
+        {
+            AppointmentStarts.EnsureClientChoice(loaded, service, rulesSessions, startsAt, mustBeChoosable);
+        }
+
+        return (service, loaded, candidates);
+    }
+
+    private async Task<(Session OldSession, IReadOnlyList<Session> Fresh)> SeatsWithoutTheReleasedOneAsync(
+        Guid tenantId,
+        LoadedAvailability loaded,
+        IReadOnlyList<ResourceId> candidates,
+        Appointment appointment,
+        CancellationToken cancellationToken)
+    {
+        var oldSession = await sessions.FindAsync(tenantId, appointment.SessionId, cancellationToken)
+            ?? throw new InvalidOperationException($"The session of appointment '{appointment.Id.Value}' does not exist.");
+        // The seat the appointment holds is about to be released: if it is the only one of an ad-hoc session, that session leaves and
+        // its range must not block the new start (it would, for a service with margin, or for a move to the next start).
+        var fresh = (await loader.SessionsAsync(tenantId, loaded, candidates, onlyActive: true, cancellationToken))
+            .Where(session => !(session.Id == oldSession.Id && session.BookedCount == 1 && !session.IsPublished))
+            .ToList();
+        return (oldSession, fresh);
     }
 }

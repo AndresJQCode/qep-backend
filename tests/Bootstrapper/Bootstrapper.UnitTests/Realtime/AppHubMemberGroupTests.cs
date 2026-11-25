@@ -1,7 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
-using BuildingBlocks.Application.Realtime;
 using Bootstrapper.Realtime;
+using BuildingBlocks.Application.Realtime;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;

@@ -97,7 +97,7 @@ Las decisiones que tomé yo van marcadas **[decisión del diseño]**.
   **Autenticación (contrato observado):** `POST https://api.siigo.com/auth` con `{ "username", "access_key" }` →
   `{ "access_token", "expires_in", "token_type", "scope" }`, y de ahí `Authorization: Bearer <token>`. `expires_in` dice la
   vida del token. **Sigue sin saberse:** el límite de peticiones y cuánto recuerda Siigo una `Idempotency-Key` (la
-  referencia de Apiary respondió 502).
+  referencia oficial, <https://developers.siigo.com/docs/siigoapi/>, no lo documenta).
 - **No hay sandbox ni empresa de prueba** (owner, 2026-11-18): se va directo a producción, con envíos normales. Nada de
   este diseño supone una cuenta de pruebas. Las pruebas automáticas usan un fake (§11); lo que no se pueda saber de antemano
   se descubre con las primeras facturas reales, que salen con el interruptor «Enviar a la DIAN» apagado (§9).
@@ -428,8 +428,8 @@ protege para que ninguna de ellas pueda salir mal sin que se vea:
 - Toda respuesta o error inesperado de Siigo se guarda recortado en la fila (sin datos del cliente) para poder ajustar el
   armado de la petición sin volver a facturar.
 
-- **V-1** Límite de peticiones. (La autenticación y `expires_in` ya salen del contrato observado, §3; la referencia de
-  Apiary respondió 502.)
+- **V-1** Límite de peticiones. (La autenticación y `expires_in` ya salen del contrato observado, §3; la referencia oficial,
+  <https://developers.siigo.com/docs/siigoapi/>, no lo documenta.)
 - **V-2** Redondeo de Siigo por ítem con descuento y cuándo conviene `price` y cuándo `taxed_price`. (Que los pagos suman
   con las retenciones descontadas ya salió del contrato observado, §3.)
 - **V-3** Documento del consumidor final. (Los códigos de tipo de documento ya salen del contrato observado, §6.2.)

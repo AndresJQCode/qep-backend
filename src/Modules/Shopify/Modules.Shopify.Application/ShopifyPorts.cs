@@ -319,7 +319,8 @@ public enum ShopifyCityCheck
 /// <summary>Spec 2026-11-14 §5 y plan D12: la dirección de envío de <c>orderUpdate</c> (<c>MailingAddressInput</c>, que no tiene
 /// <c>name</c>): el nombre de QEP en <see cref="FirstName"/> y la dirección en <see cref="Address1"/>, con <see cref="LastName"/> y
 /// <see cref="Address2"/> vacíos. <c>orderUpdate</c> reemplaza la dirección entera, así que <see cref="Company"/> y
-/// <see cref="CountryCode"/> salen del último snapshot (Review Focus 3).</summary>
+/// <see cref="CountryCode"/> salen del último snapshot (Review Focus 3). <see cref="Zip"/> es el código postal de la parte de
+/// QEP o, sin él, el del último snapshot si país y provincia no cambiaron (spec 2026-11-24); en <c>null</c> no viaja.</summary>
 public sealed record ShopifyAddressUpdate(
     string FirstName,
     string LastName,
@@ -329,7 +330,8 @@ public sealed record ShopifyAddressUpdate(
     string? ProvinceCode,
     string CountryCode,
     string Phone,
-    string? Company);
+    string? Company,
+    string? Zip = null);
 
 /// <summary>Lo que viaja en un <c>orderUpdate</c>: cada grupo en <c>null</c> (la nota, con <see cref="SetNote"/> en
 /// <c>false</c>) no se manda, y Shopify lo conserva.</summary>

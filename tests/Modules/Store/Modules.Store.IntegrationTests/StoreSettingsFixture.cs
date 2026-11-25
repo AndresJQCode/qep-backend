@@ -5,10 +5,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
-using TenantModuleKey = Modules.Tenancy.Domain.TenantModuleKey;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using static Modules.Store.IntegrationTests.StoreApiHarness;
+using TenantModuleKey = Modules.Tenancy.Domain.TenantModuleKey;
 
 namespace Modules.Store.IntegrationTests;
 

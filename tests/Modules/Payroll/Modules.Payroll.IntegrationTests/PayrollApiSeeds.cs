@@ -240,7 +240,8 @@ internal static class PayrollApiSeeds
         bool foreignPensionExempt = false,
         Guid? workplaceId = null,
         string firstName = "Ana",
-        string lastName = "Pérez") => new()
+        string lastName = "Pérez",
+        string[]? restDays = null) => new()
         {
             ["firstName"] = firstName,
             ["lastName"] = lastName,
@@ -248,6 +249,7 @@ internal static class PayrollApiSeeds
             ["documentNumber"] = documentNumber,
             ["country"] = null,
             ["foreignPensionExempt"] = foreignPensionExempt,
+            ["restDays"] = restDays,
             ["cityId"] = null,
             ["memberId"] = null,
             ["payment"] = null,

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -523,6 +524,56 @@ internal static class QuotationsApiHarness
                 withRetention,
                 vatSurplus,
                 withholdingTaxRateIds = withholdingTaxRateIds ?? []
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CustomerResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body.Id;
+    }
+
+    /// <summary>El id de Madrid (código 28) en el catálogo de regiones de España que siembra Geography: la región que las
+    /// pruebas de provincia guardada mandan como <c>regionId</c>.</summary>
+    public static async Task<Guid> MadridRegionIdAsync(HttpClient client)
+    {
+        var regions = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/countries/ES/regions", TestContext.Current.CancellationToken);
+        return regions.EnumerateArray()
+            .Single(region => region.GetProperty("code").GetString() == "28")
+            .GetProperty("id").GetGuid();
+    }
+
+    /// <summary>Un id de departamento colombiano tal como lo devuelve <c>GET /countries/CO/regions</c>: el que el frontend
+    /// puede conservar al cambiar de país.</summary>
+    public static async Task<Guid> ColombianDepartmentRegionIdAsync(HttpClient client)
+    {
+        var regions = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/countries/CO/regions", TestContext.Current.CancellationToken);
+        return regions.EnumerateArray().First().GetProperty("id").GetGuid();
+    }
+
+    /// <summary>Un cliente de España con su provincia, creado por <c>POST /customers</c> como lo haría la pantalla: país, ciudad
+    /// escrita y <c>regionId</c>. Es el que lee el cliente embebido de la cotización.</summary>
+    public static async Task<Guid> CreateForeignCustomerWithRegionAsync(
+        HttpClient client, Guid tenantId, Guid regionId)
+    {
+        var classificationId = await CreateClassificationAsync(client, tenantId);
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers",
+            new
+            {
+                name = "Verde Esencial S.L.",
+                identificationType = "NIF",
+                identificationNumber = $"B-{Random.Shared.Next(10000000, 99999999)}",
+                phone = "+34 910 000 000",
+                email = "compras@verde.es",
+                address = "Calle Gran Via 28",
+                country = "ES",
+                cityName = "Madrid",
+                regionId,
+                classificationId,
+                vatSurplus = false
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();

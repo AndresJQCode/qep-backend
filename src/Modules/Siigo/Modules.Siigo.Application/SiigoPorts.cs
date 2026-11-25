@@ -108,6 +108,10 @@ public interface ISiigoInvoiceRepository
     /// <summary>Todas las filas del pedido (de los dos tipos y de todos los estados), de la más vieja a la más nueva.</summary>
     Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 
+    /// <summary>Las filas del tenant con esos ids, en cualquier estado; las de otro tenant no salen. Sin ids, ninguna.</summary>
+    Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken);
+
     void Add(SiigoInvoice invoice);
 }
 
@@ -161,6 +165,9 @@ public interface ISiigoVariantCatalog
     Task<IReadOnlyList<SiigoVariantRef>> ListAllActiveCodesAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>El número de un pedido y el nombre de su cliente, como los muestra <c>/orders</c>.</summary>
+public sealed record SiigoOrderLabel(string OrderNumber, string? CustomerName);
+
 /// <summary>
 /// Quotations. El pedido tal como el armador de la factura lo necesita, y la marca de «facturado» una vez que Siigo la creó (spec
 /// 2026-11-18 §5.5). El adaptador (<c>SiigoOrderSource</c>, Bootstrapper) llena <see cref="Invoicing.SiigoInvoiceInput"/> desde el
@@ -180,6 +187,15 @@ public interface ISiigoOrderSource
     /// <summary>Marca el pedido como facturado en Siigo con el número de la factura y su id. Idempotente.</summary>
     Task MarkInvoicedAsync(
         Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken);
+
+    /// <summary>Si el pedido ya está marcado como facturado en Siigo con ese número. Sólo lee: la tanda lo pregunta al recuperar un envío
+    /// que no dejó resultado.</summary>
+    Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken);
+
+    /// <summary>El número y el cliente de estos pedidos, en lote, para pintar una tanda (spec 2026-11-24 §5). Un id que no es del tenant
+    /// no aparece. No se guardan en Siigo: un pedido puede cambiar de cliente y la tanda mostraría el viejo.</summary>
+    Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
 }
 
 /// <summary>

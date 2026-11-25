@@ -33,9 +33,14 @@ internal sealed class FakeDistributorRepository : IDistributorRepository
         Task.FromResult(Distributors.FirstOrDefault(item => item.Invitation.TokenHash == tokenHash));
 
     public Task<bool> IdentificationExistsAsync(
-        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken) =>
+        Guid tenantId,
+        string identificationType,
+        string identificationNumber,
+        DistributorId? excluding,
+        CancellationToken cancellationToken) =>
         Task.FromResult(Distributors.Any(item =>
             item.TenantId == tenantId
+            && item.Id != excluding
             && item.IdentificationType == identificationType
             && item.IdentificationNumber == identificationNumber.Trim()));
 
@@ -73,12 +78,6 @@ internal sealed class FakeDistributorRepository : IDistributorRepository
             .GroupBy(item => item.Status)
             .ToDictionary(group => group.Key, group => group.Count()));
 
-    public Task<IReadOnlyDictionary<PriceListId, int>> CountByPriceListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<PriceListId, int>>(Distributors
-            .Where(item => item.TenantId == tenantId)
-            .GroupBy(item => item.PriceListId)
-            .ToDictionary(group => group.Key, group => group.Count()));
-
     public void Add(Distributor distributor)
     {
         Writes++;
@@ -106,6 +105,7 @@ internal sealed record PublishedInvitation(
     string Email,
     string BusinessName,
     string Token,
+    string EmailProof,
     DateTimeOffset ExpiresAt,
     string CorrelationId,
     DateTimeOffset OccurredAt);
@@ -174,11 +174,12 @@ internal sealed class FakeEventPublisher : IWholesaleEventPublisher
         string email,
         string businessName,
         string token,
+        string emailProof,
         DateTimeOffset expiresAt,
         string correlationId,
         DateTimeOffset occurredAt) =>
         Invitations.Add(new PublishedInvitation(
-            tenantId, distributorId, email, businessName, token, expiresAt, correlationId, occurredAt));
+            tenantId, distributorId, email, businessName, token, emailProof, expiresAt, correlationId, occurredAt));
 }
 
 /// <summary>El link de la invitación con una base fija; <see cref="TokenOf"/> saca el token de vuelta.</summary>
@@ -217,6 +218,32 @@ internal sealed class FakeCompanyLookup : IWholesaleCompanyLookup
 
     public Task<IReadOnlyList<WholesaleCompanyRef>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<WholesaleCompanyRef>>(Companies.Where(company => company.IsActive).ToList());
+}
+
+/// <summary>Geografía en memoria: sólo las ciudades que se siembran existen; <c>Calls</c> anota cada búsqueda.</summary>
+internal sealed class FakeCityLookup : IWholesaleCityLookup
+{
+    public Dictionary<Guid, string> Cities { get; } = [];
+
+    public List<Guid> Calls { get; } = [];
+
+    /// <summary>Todas las ciudades sembradas quedan en este departamento: ninguna prueba distingue dos.</summary>
+    public Guid DepartmentId { get; } = Guid.CreateVersion7();
+
+    public Guid Add(string name)
+    {
+        var id = Guid.CreateVersion7();
+        Cities[id] = name;
+        return id;
+    }
+
+    public Task<WholesaleCityRef?> FindAsync(Guid cityId, CancellationToken cancellationToken)
+    {
+        Calls.Add(cityId);
+        return Task.FromResult(Cities.TryGetValue(cityId, out var name)
+            ? new WholesaleCityRef(cityId, name, DepartmentId, "Antioquia")
+            : null);
+    }
 }
 
 internal sealed class FakeMemberDirectory : IWholesaleMemberDirectory
@@ -281,6 +308,9 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
 
     public List<TenantRegistrationData> Checked { get; } = [];
 
+    /// <summary>Corre justo antes de cada escritura de Tenancy: mira qué estaba confirmado en ese momento.</summary>
+    public Action? BeforeWrite { get; set; }
+
     /// <summary>Cualquier escritura de Tenancy: «no escribió nada» es cero.</summary>
     public int Writes => Registered.Count + Grants.Count;
 
@@ -296,8 +326,14 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
     public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult(Tenants.TryGetValue(tenantId.Value, out var tenant) ? tenant.Name : null);
 
-    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult(Tenants.TryGetValue(tenantId.Value, out var tenant) ? (TenantStatus?)tenant.Status : null);
+    /// <summary>Los tenants por cuyo estado se preguntó.</summary>
+    public List<Guid> StatusQueries { get; } = [];
+
+    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        StatusQueries.Add(tenantId.Value);
+        return Task.FromResult(Tenants.TryGetValue(tenantId.Value, out var tenant) ? (TenantStatus?)tenant.Status : null);
+    }
 
     public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult(Tenants.TryGetValue(tenantId, out var tenant) ? TenantModuleSet.FromStored(tenant.Modules) : null);
@@ -332,6 +368,7 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
                 : throw new InvalidOperationException("Another owner.");
         }
 
+        BeforeWrite?.Invoke();
         Registered.Add((tenantId.Value, ownerUserId, data, modules));
         Tenants[tenantId.Value] = (data.DisplayName, TenantStatus.Active, ownerUserId, modules.ToHashSet());
         return Task.FromResult(true);
@@ -340,6 +377,7 @@ internal sealed class FakeTenancy : ITenantDirectory, ITenantModules, ITenantReg
     public Task<IReadOnlyList<TenantModuleKey>> EnsureActiveAsync(
         TenantId tenantId, IReadOnlyList<TenantModuleKey> keys, Guid actorUserId, string note, CancellationToken cancellationToken)
     {
+        BeforeWrite?.Invoke();
         Grants.Add((tenantId.Value, keys, actorUserId, note));
         var tenant = Tenants[tenantId.Value];
         IReadOnlyList<TenantModuleKey> enabled = TenantModuleKeys.All
@@ -497,9 +535,57 @@ internal sealed class FakeSupplierLinker : IWholesaleSupplierLinker
     }
 }
 
+internal sealed class FakeCompanyProvisioning : IWholesaleCompanyProvisioning
+{
+    public List<(Guid Tenant, Guid Actor, WholesaleCompanyDraft Draft)> Calls { get; } = [];
+
+    public Guid CompanyId { get; } = Guid.CreateVersion7();
+
+    /// <summary>Lo que Companies rechazaría (un <c>ValidationException</c>, por ejemplo).</summary>
+    public Exception? Fail { get; set; }
+
+    /// <summary>Corre justo antes de cada escritura de Companies.</summary>
+    public Action? BeforeWrite { get; set; }
+
+    /// <summary>Las llamadas de «sólo si el tenant no tiene ninguna»; la decisión de saltarla es de Companies, no de Wholesale.</summary>
+    public List<(Guid Tenant, Guid Actor, WholesaleCompanyDraft Draft)> FirstCalls { get; } = [];
+
+    public Task<Guid?> EnsureFirstCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken)
+    {
+        if (Fail is { } failure)
+        {
+            throw failure;
+        }
+
+        BeforeWrite?.Invoke();
+        FirstCalls.Add((distributorTenantId, actorUserId, draft));
+        return Task.FromResult<Guid?>(CompanyId);
+    }
+
+    public Task<Guid> EnsureCompanyAsync(
+        Guid distributorTenantId,
+        Guid actorUserId,
+        WholesaleCompanyDraft draft,
+        CancellationToken cancellationToken)
+    {
+        if (Fail is { } failure)
+        {
+            throw failure;
+        }
+
+        BeforeWrite?.Invoke();
+        Calls.Add((distributorTenantId, actorUserId, draft));
+        return Task.FromResult(CompanyId);
+    }
+}
+
 internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
 {
-    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email)> Calls { get; } = [];
+    public List<(Guid WholesalerTenantId, Guid Actor, string BusinessName, string Country, string IdentificationType, string Identification, string Email, string? Phone, Guid? CityId, string? CityName, string? Address, string ContactName)> Calls { get; } = [];
 
     public Guid CustomerId { get; } = Guid.CreateVersion7();
 
@@ -514,6 +600,11 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
         string identificationType,
         string identificationNumber,
         string email,
+        string? phone,
+        Guid? cityId,
+        string? cityName,
+        string? address,
+        string contactName,
         CancellationToken cancellationToken)
     {
         if (FailTimes > 0)
@@ -522,7 +613,7 @@ internal sealed class FakeCustomerProvisioning : IWholesaleCustomerProvisioning
             throw new InvalidOperationException("Customers is down.");
         }
 
-        Calls.Add((wholesalerTenantId, actorUserId, businessName, country, identificationType, identificationNumber, email));
+        Calls.Add((wholesalerTenantId, actorUserId, businessName, country, identificationType, identificationNumber, email, phone, cityId, cityName, address, contactName));
         return Task.FromResult(CustomerId);
     }
 }

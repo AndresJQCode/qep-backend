@@ -135,6 +135,8 @@ Lo verificado leyendo el código de `develop` (`c9282c9af`), y lo que cambia del
 | `SupportTicketUnassigned` | `support.ticket.unassigned-alert.v1` (nuevo) | los miembros elegidos por el tenant | sí |
 | `WholesaleOrderPendingApproval` | `quotations.order.created.v1` con `source == "Wholesale"`; se resuelve con `quotations.order.wholesale-approved.v1` y `…wholesale-cancelled.v1` | `advisorMemberId` del pedido | sí |
 | `ServiceChargesOverdue` | `billing.charges.overdue-digest.v1` (nuevo) | cada miembro que recibe el digest del día | sí |
+| `HrMedicalExamsDue` | `hr.medical-exams.due-digest.v1` (nuevo, spec 2026-11-23 §9) | cada miembro con `hr.medical.manage` | sí |
+| `HrExitExamRequired` | `hr.medical-exams.exit-required.v1` (nuevo, spec 2026-11-23 §9) | cada miembro con `hr.medical.manage` | sí |
 | — (`inboundMessageAlert`) | `IMessagingNotifier.InboundMessageAsync` | asignado, o el tenant con lectura de Mensajería | **no** (sólo en vivo) |
 
 Reglas por tipo:
@@ -156,6 +158,13 @@ Reglas por tipo:
 - **`ServiceChargesOverdue`**: una entrada por miembro y día, «Tienes N cobros vencidos», sólo si `N > 0`, con los mismos
   destinatarios y el mismo reclamo del digest (`ServiceContractsReminderProcessor.SendDigestsAsync`, `DailyDigestStore.TryClaimAsync`).
   **[owner]**
+
+- **`HrMedicalExamsDue`** (spec 2026-11-23 §9): una entrada por miembro y día, «Tienes N exámenes médicos pendientes», sólo si `N > 0`
+  (`N = ExitPending + NoExams + Overdue + DueSoon`), para quienes tienen `hr.medical.manage`. La llave es el día
+  (`hr-medical-exams:{runDate}`): una reentrega del mismo día no duplica.
+- **`HrExitExamRequired`** (spec 2026-11-23 §9): una entrada por miembro y terminación, «Salió {empleado}: egreso pendiente», que nace
+  con `TerminateContract` y apunta al empleado (`resource_id`). La llave es `hr-exit-exam:{employeeId}:{dueDate}`. Ningún payload ni
+  entrada lleva texto clínico ni el tipo de examen.
 
 ## 7. Ticket sin asignar (aviso nuevo de Soporte)
 
@@ -257,7 +266,7 @@ actualicen la insignia.
 ```json
 {
   "id": "uuid",
-  "kind": "ConversationAssigned | ExportReady | ExportFailed | SupportCustomerReplied | SupportTicketUnassigned | WholesaleOrderPendingApproval | ServiceChargesOverdue",
+  "kind": "ConversationAssigned | ExportReady | ExportFailed | SupportCustomerReplied | SupportTicketUnassigned | WholesaleOrderPendingApproval | ServiceChargesOverdue | SupportTaskAssigned | SupportTicketAssigned | HrMedicalExamsDue | HrExitExamRequired",
   "createdAt": "ISO 8601",
   "readAt": "ISO 8601 | null",
   "resolvedAt": "ISO 8601 | null",
@@ -277,6 +286,8 @@ genérico. `data` según `kind` (los nombres son contrato; `null` es explícito,
 | `SupportTicketUnassigned` | `{ ticketId, ticketNumber, thresholdHours }` |
 | `WholesaleOrderPendingApproval` | `{ orderId, orderNumber, resolution: "Approved" \| "Cancelled" \| null }` |
 | `ServiceChargesOverdue` | `{ overdueCount, runDate: "yyyy-MM-dd" }` |
+| `HrMedicalExamsDue` | `{ pendingCount, runDate: "yyyy-MM-dd" }` |
+| `HrExitExamRequired` | `{ employeeId, employeeName, dueDate: "yyyy-MM-dd" }` |
 
 - `actorName` y `contactName` se resuelven **al leer** (`IInAppNotificationNames`, adaptador en Bootstrapper): un nombre que cambia
   se ve actualizado. `actorName` es `null` en `Inherited` y `Handoff` (lo hizo el sistema o un asistente) y para un miembro que ya
@@ -542,7 +553,7 @@ los permisos (`billing`), que no cambiaron con el renombre a «Contratos de serv
 
 ### Sin migración
 
-Messaging y ServiceContracts sólo **escriben** en `platform.outbox_messages` (proyección `ExcludeFromMigrations`, columnas
+Messaging, ServiceContracts y Hr (spec 2026-11-23: sus tablas `hr.tenant_runs` y `hr.daily_digests` van en la migración de Hr, no en la de Notifications; `kind` es texto sin CHECK, así que los dos kinds nuevos no piden migración) sólo **escriben** en `platform.outbox_messages` (proyección `ExcludeFromMigrations`, columnas
 `correlation_id` y `attempts` NOT NULL como `CatalogOutboxMessage`).
 
 ## 12. Eventos nuevos (contrato entre módulos)
@@ -557,6 +568,8 @@ ingesta, la de Meta). Así la regla de 24 h (D-6) mira cuándo se publicó, y un
 | `support.ticket.customer-replied.v1` | `{ tenantId, ticketId, ticketNumber, assigneeMemberId, occurredAt }` | ticket |
 | `support.ticket.unassigned-alert.v1` | `{ tenantId, ticketId, ticketNumber, recipientMemberIds, thresholdHours, unassignedSince, occurredAt }` | ticket |
 | `billing.charges.overdue-digest.v1` | `{ tenantId, memberId, runDate, overdueCount, occurredAt }` | `{tenantId}:{memberId}:{runDate}` |
+| `hr.medical-exams.due-digest.v1` | `{ tenantId, memberId, runDate, pendingCount, occurredAt }` | `{tenantId}:{memberId}:{runDate}` |
+| `hr.medical-exams.exit-required.v1` | `{ tenantId, memberId, employeeId, employeeName, dueDate, occurredAt }` | `{tenantId:N}:{memberId:N}:{contractId:N}` (los tres en 32 hex: con el formato `D` miden 110 y `correlation_id` es `varchar(100)`) |
 
 Consumidores (todos en `Notifications.Infrastructure`, drenados por `NotificationsDeliveryWorker`):
 
@@ -567,6 +580,7 @@ Consumidores (todos en `Notifications.Infrastructure`, drenados por `Notificatio
 | `notifications.in-app.support` | `support.ticket.customer-replied.v1`, `support.ticket.unassigned-alert.v1` |
 | `notifications.in-app.wholesale` | `quotations.order.created.v1`, `quotations.order.wholesale-approved.v1`, `quotations.order.wholesale-cancelled.v1` |
 | `notifications.in-app.billing` | `billing.charges.overdue-digest.v1` |
+| `notifications.in-app.hr` | `hr.medical-exams.due-digest.v1`, `hr.medical-exams.exit-required.v1` |
 
 ## 13. Fallas, observabilidad, seguridad y despliegue
 

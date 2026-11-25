@@ -1,4 +1,5 @@
 using Bootstrapper.Authentication;
+using BuildingBlocks.Domain.Localization;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Modules.Authorization.Application;
@@ -22,6 +23,7 @@ internal sealed class SessionEstablisher(
     ITenantDirectory tenantDirectory,
     ICurrenciesInUse currenciesInUse,
     ITenantPriceRounding priceRounding,
+    IUserPreferenceService preferences,
     ISessionService sessionService,
     IOptions<QepSessionOptions> sessionOptions,
     IHostEnvironment environment)
@@ -61,7 +63,7 @@ internal sealed class SessionEstablisher(
     {
         var activeTenants = await activeTenantsQuery.ListActiveTenantsAsync(userId, cancellationToken);
         var activeTenantIds = activeTenants.Select(tenant => tenant.TenantId).ToArray();
-        var tenants = await ToActiveTenantResponsesAsync(activeTenants, cancellationToken);
+        var tenants = await ToActiveTenantResponsesAsync(userId, activeTenants, cancellationToken);
         return new SessionResponse(userId, email, activeTenantIds, tenants, Currencies.All);
     }
 
@@ -81,10 +83,16 @@ internal sealed class SessionEstablisher(
     /// membresía sí tiene. El orden es el de la membresía, no el del catálogo.
     /// </remarks>
     private async Task<IReadOnlyCollection<ActiveTenantResponse>> ToActiveTenantResponsesAsync(
+        Guid userId,
         IReadOnlyCollection<ActiveTenantSummary> activeTenants,
         CancellationToken cancellationToken)
     {
         var responses = new List<ActiveTenantResponse>(activeTenants.Count);
+        // Una sola lectura para todos los tenants (spec 2026-11-22, i18n), no una por tenant.
+        var chosenLanguages = await preferences.GetLanguagesAsync(
+            userId,
+            activeTenants.Select(tenant => tenant.TenantId).ToArray(),
+            cancellationToken);
         foreach (var tenant in activeTenants)
         {
             var catalog = await roleCatalog.ListRolesAsync(tenant.TenantId, cancellationToken);
@@ -124,7 +132,10 @@ internal sealed class SessionEstablisher(
                 regional?.Country,
                 regional?.EffectivePersonTypeRequirement.ToString(),
                 roundings,
-                regional is null ? null : ToResponse(regional.EffectiveCustomerFieldPolicy)));
+                regional is null ? null : ToResponse(regional.EffectiveCustomerFieldPolicy),
+                SupportedLanguages.Effective(
+                    chosenLanguages.GetValueOrDefault(tenant.TenantId),
+                    regional?.Language)));
         }
 
         return responses;

@@ -42,12 +42,35 @@ public sealed class QuotationPartyTests
         var incomplete = NewQuotation(null, Foreign() with { Country = null, CityName = null });
         var complete = NewQuotation(null, Foreign() with
         {
-            Country = null, CityName = null, DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+            Country = null,
+            CityName = null,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
         });
 
         Assert.False(incomplete.Shipping!.IsComplete);
         Assert.True(complete.Shipping!.IsComplete);
         Assert.Null(complete.Shipping.Country);
+    }
+
+    [Fact]
+    public void ColombianPartyWithRegionIsLaneInvalid()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewQuotation(null, Foreign() with { Country = null, CityName = null, RegionId = Guid.CreateVersion7() }));
+
+        Assert.Equal("quotations.party.city_lane_invalid", error.Code);
+        Assert.Contains("Parties.Shipping.RegionId", error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void ForeignPartyKeepsRegion()
+    {
+        var regionId = Guid.CreateVersion7();
+        var quotation = NewQuotation(null, Foreign() with { RegionId = regionId });
+
+        Assert.Equal(regionId, quotation.Shipping!.RegionId);
+        Assert.Equal(regionId, quotation.Shipping.ToDetails().RegionId);
     }
 
     [Fact]
@@ -75,5 +98,73 @@ public sealed class QuotationPartyTests
         var details = NewQuotation(null, Foreign()).Shipping!.ToDetails();
 
         Assert.Equal(("ES", "Madrid"), (details.Country, details.CityName));
+    }
+
+    // Código postal de la entrega (spec 2026-11-24): recortado, vacío es null, tope de 20 y sólo en la parte de envío.
+    [Fact]
+    public void TheShippingPostalCodeIsTrimmedAndTravelsWithTheDetails()
+    {
+        var quotation = NewQuotation(null, Foreign() with { PostalCode = "  28013  " });
+
+        Assert.Equal("28013", quotation.Shipping!.PostalCode);
+        Assert.Equal("28013", quotation.Shipping.ToDetails().PostalCode);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ABlankShippingPostalCodeIsNull(string? postalCode) =>
+        Assert.Null(NewQuotation(null, Foreign() with { PostalCode = postalCode }).Shipping!.PostalCode);
+
+    [Fact]
+    public void AColombianShippingPartyKeepsAPostalCode()
+    {
+        var quotation = NewQuotation(null, Foreign() with
+        {
+            Country = null,
+            CityName = null,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+            PostalCode = "050021",
+        });
+
+        Assert.Equal("050021", quotation.Shipping!.PostalCode);
+    }
+
+    [Fact]
+    public void AShippingPostalCodeOfTwentyCharactersIsKept()
+    {
+        var postalCode = new string('1', 20);
+
+        Assert.Equal(20, QuotationPartyDetails.PostalCodeMaxLength);
+        Assert.Equal(postalCode, NewQuotation(null, Foreign() with { PostalCode = $" {postalCode} " }).Shipping!.PostalCode);
+    }
+
+    [Fact]
+    public void AShippingPostalCodeOfTwentyOneCharactersIsRejectedWithItsField()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            NewQuotation(null, Foreign() with { PostalCode = new string('1', 21) }));
+
+        Assert.Equal("quotations.party.postal_code_too_long", error.Code);
+        Assert.Contains("Parties.Shipping.PostalCode", error.FieldErrors.Keys);
+    }
+
+    // La facturación no lo guarda: se descarta antes de normalizar, así que ni siquiera uno largo es un error.
+    [Theory]
+    [InlineData("28013")]
+    [InlineData("123456789012345678901")]
+    public void ABillingPartyDropsThePostalCode(string postalCode)
+    {
+        var quotation = NewQuotation(Foreign() with
+        {
+            IdentificationNumber = "X1234567L",
+            IdentificationType = PartyIdentificationType.Nie,
+            PostalCode = postalCode,
+        });
+
+        Assert.Null(quotation.Billing!.PostalCode);
+        Assert.Null(quotation.Billing.ToDetails().PostalCode);
     }
 }

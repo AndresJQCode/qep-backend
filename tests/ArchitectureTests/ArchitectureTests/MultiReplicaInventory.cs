@@ -1,4 +1,4 @@
-﻿namespace ArchitectureTests;
+namespace ArchitectureTests;
 
 /// <summary>
 /// Cómo convive un hosted service con otro pod que corre el mismo código (spec 2026-10-29, D-6, y la decisión P3 del plan
@@ -104,6 +104,8 @@ public static class MultiReplicaInventory
             "Modules/Messaging/Modules.Messaging.Infrastructure/ScheduledMessages/ScheduledMessageStore.cs:25-28 — FOR UPDATE SKIP LOCKED y locked_until"),
         new("Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker", WorkerClassification.Claimed,
             "Modules/ServiceContracts/Modules.ServiceContracts.Infrastructure/Reminders/TenantRunStore.cs:26 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until"),
+        new("Modules.Hr.Infrastructure.Reminders.HrMedicalExamsReminderWorker", WorkerClassification.Claimed,
+            "Modules/Hr/Modules.Hr.Infrastructure/Reminders/TenantRunStore.cs:19-30 — reclamo por (tenant, día) con ON CONFLICT … DO UPDATE y claimed_until; el digest de cada encargado se reclama aparte en DailyDigestStore.cs"),
         new("Modules.Scheduling.Infrastructure.Reminders.AppointmentReminderWorker", WorkerClassification.Claimed,
             "Modules/Scheduling/Modules.Scheduling.Infrastructure/Reminders/AppointmentReminderProcessor.cs (ClaimAsync) — UPDATE … RETURNING sobre scheduling.appointments con reminder_claimed_until por intento y reminder_attempts; sólo el ganador del reclamo envía, y el envío es idempotente por el clientId derivado de la cita (appointment-reminder:{id}), así que un reintento tras un envío que sí salió devuelve la misma fila de Mensajería"),
         new("Modules.Loans.Infrastructure.Generation.LoansGenerationWorker", WorkerClassification.Claimed,
@@ -254,6 +256,8 @@ public static class MultiReplicaInventory
             "Modules/Authorization/Modules.Authorization.Application/RoleCatalog.cs:72 — tabla inmutable armada del código; igual en cada pod"),
         new("Modules.Automations.Infrastructure.Seed.SystemTemplateCatalog", StateClassification.PerPodByDesign,
             "Modules/Automations/Modules.Automations.Infrastructure/Seed/SystemTemplateCatalog.cs:45 — plantillas embebidas leídas al arrancar; igual en cada pod"),
+        new("Modules.Ai.Infrastructure.Seed.SystemAgentTemplateCatalog", StateClassification.PerPodByDesign,
+            "Modules/Ai/Modules.Ai.Infrastructure/Seed/SystemAgentTemplateCatalog.cs:29 — plantillas embebidas leídas al arrancar; igual en cada pod"),
         new("Modules.Siigo.Infrastructure.Api.SiigoTokenCache", StateClassification.PerPodByDesign,
             "Modules/Siigo/Modules.Siigo.Infrastructure/Api/SiigoTokenCache.cs:17 — caché de token por pod; un token de más por réplica no tiene efecto (Siigo acepta varios vivos y un 401 lo renueva)"),
         new("Modules.Siigo.Infrastructure.Api.SiigoApiClient", StateClassification.PerPodByDesign,
@@ -298,6 +302,8 @@ public static class MultiReplicaInventory
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:65 — reenvía al singleton MessagingPresence (presencia apagada)"),
         new("Bootstrapper.Realtime.IRealtimePresence", "Bootstrapper.Realtime.LocalRealtimePresence",
             "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:157 — reenvía al singleton LocalRealtimePresence (presencia apagada)"),
+        new("Bootstrapper.Realtime.IAppMemberPresence", "Bootstrapper.Realtime.LocalAppMemberPresence",
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:160 — reenvía al singleton LocalAppMemberPresence (presencia apagada), sin estado propio: lee AppHubConnections"),
         new("Modules.Messaging.Infrastructure.CustomerDeletion.ICustomerMediaPurgeProcessor",
             "Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeProcessor",
             "Modules/Messaging/Modules.Messaging.Infrastructure/MessagingInfrastructureExtensions.cs:147 — reenvía al singleton concreto"),

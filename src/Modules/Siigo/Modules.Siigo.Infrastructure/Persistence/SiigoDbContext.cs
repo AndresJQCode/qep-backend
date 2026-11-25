@@ -25,6 +25,11 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
     /// <c>409 siigo.invoice.already_exists</c>.</summary>
     public const string InvoicesTenantOrderKindIndex = "IX_invoices_tenant_order_kind";
 
+    /// <summary>Spec 2026-11-24 §1: un pedido está a lo sumo en un ítem sin terminar (<c>Pending</c> o <c>Sending</c>). El handler
+    /// consulta antes para decir cuáles chocan; este índice cierra la carrera. <c>SiigoUnitOfWork</c> lo traduce por nombre a
+    /// <c>409 siigo.invoice_batch.order_in_progress</c>.</summary>
+    internal const string InvoiceBatchItemsTenantOrderOpenIndex = "IX_invoice_batch_items_tenant_order_open";
+
     internal DbSet<SiigoSettings> Settings => Set<SiigoSettings>();
 
     internal DbSet<SiigoInvoice> Invoices => Set<SiigoInvoice>();
@@ -222,6 +227,11 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
                     codes => codes.Aggregate(0, (hash, code) => HashCode.Combine(hash, code)),
                     codes => codes.ToArray()));
         item.Property(value => value.InvoiceNumber).HasColumnName("invoice_number").HasMaxLength(SiigoInvoiceBatchItem.InvoiceNumberMaxLength);
+        // Referencia blanda a siigo.invoices, como order_id: sin FK.
+        item.Property(value => value.InvoiceId).HasColumnName("invoice_id");
+        item.Property(value => value.PaymentsJson).HasColumnName("payments_json").HasColumnType("text");
+        // Con valor por defecto en la columna: durante el rollout el código anterior inserta ítems sin nombrarla.
+        item.Property(value => value.OrderMarkFailed).HasColumnName("order_mark_failed").HasDefaultValue(false);
         item.Property(value => value.Attempts).HasColumnName("attempts");
         item.Property(value => value.AvailableAt).HasColumnName("available_at");
         item.Property(value => value.LeaseUntil).HasColumnName("lease_until");
@@ -231,6 +241,11 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         // El reclamo del worker: lo pendiente por hora y lo reclamado por vencimiento del lease. Sólo lo no resuelto.
         item.HasIndex(value => new { value.Status, value.AvailableAt })
             .HasDatabaseName("IX_invoice_batch_items_claim")
+            .HasFilter("status IN ('Pending', 'Sending')");
+        // Un pedido en una sola tanda sin terminar.
+        item.HasIndex(value => new { value.TenantId, value.OrderId })
+            .IsUnique()
+            .HasDatabaseName(InvoiceBatchItemsTenantOrderOpenIndex)
             .HasFilter("status IN ('Pending', 'Sending')");
         item.Ignore(value => value.IsSettled);
     }
@@ -260,6 +275,8 @@ public sealed class SiigoDbContext(DbContextOptions<SiigoDbContext> options) : D
         invoice.Property(value => value.OrderVersion).HasColumnName("order_version");
         invoice.Property(value => value.OrderChanged).HasColumnName("order_changed");
         invoice.Property(value => value.SendingSince).HasColumnName("sending_since");
+        invoice.Property(value => value.UnansweredAt).HasColumnName("unanswered_at");
+        invoice.Property(value => value.LastUnansweredAt).HasColumnName("last_unanswered_at");
         invoice.Property(value => value.CreatedBy).HasColumnName("created_by");
         invoice.Property(value => value.CreatedAt).HasColumnName("created_at");
         invoice.Property(value => value.UpdatedAt).HasColumnName("updated_at");

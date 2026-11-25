@@ -32,7 +32,8 @@ public sealed class TenantRegistrationServiceTests
             Assert.Equal(Now, module.EnabledAt);
             Assert.Null(module.Note);
         });
-        Assert.Equal("commit", steps[^1]);
+        // El aprovisionamiento de otros módulos va después del commit, nunca antes.
+        Assert.Equal(["commit", "provision"], steps.TakeLast(2));
         Assert.Single(steps, step => step == "commit");
         Assert.True(steps.IndexOf("tenant") < steps.IndexOf("module:catalog"));
     }
@@ -120,7 +121,7 @@ public sealed class TenantRegistrationServiceTests
         Assert.Equal((reserved.Value, owner, "tenancy.tenant.registered"), (audit.TenantId, audit.ActorId, audit.Action));
         // El candado del tenant reservado va antes de leer, y el commit es el último paso.
         Assert.Equal($"lock:{reserved}", invited.Steps[0]);
-        Assert.Equal(["save", "commit"], invited.Steps.TakeLast(2));
+        Assert.Equal(["save", "commit", "provision"], invited.Steps.TakeLast(3));
     }
 
     [Fact]
@@ -229,11 +230,79 @@ public sealed class TenantRegistrationServiceTests
             new RecordingAuditRecorder(),
             new RecordingOutboxWriter(),
             new FixedClock(Now),
-            new RecordingSlugAvailability());
+            new RecordingSlugAvailability(),
+            new RecordingProvisioning(steps));
 
         await service.RegisterOwnerTenantAsync(Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
 
         Assert.Equal("CO", Assert.Single(tenants.Added).Country);
+    }
+
+    // Spec 2026-11-23: el signup no trae país, así que no se deriva moneda: el tenant queda con la de la columna.
+    [Fact]
+    public async Task SignupWithoutCountryKeepsTheColumnCurrency()
+    {
+        var steps = new List<string>();
+        var tenants = new StoringTenantRepository(steps);
+        var service = new TenantRegistrationService(
+            tenants,
+            new InMemoryMembershipRepository(),
+            new RecordingTenantModuleRepository(steps),
+            new FixedDefaults([]),
+            new StepsUnitOfWork(steps),
+            new RecordingAuditRecorder(),
+            new RecordingOutboxWriter(),
+            new FixedClock(Now),
+            new RecordingSlugAvailability(),
+            new RecordingProvisioning(steps));
+
+        await service.RegisterOwnerTenantAsync(Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Equal("COP", Assert.Single(tenants.Added).DefaultCurrency);
+    }
+
+    // Spec 2026-11-23: el tenant que nace en el signup público recibe sus ajustes de cotizaciones después del commit.
+    [Fact]
+    public async Task SignupProvisionsTheNewTenantAfterTheCommit()
+    {
+        var steps = new List<string>();
+        var provisioning = new RecordingProvisioning(steps);
+        var service = NewService(steps, new RecordingTenantModuleRepository(steps), new FixedDefaults([]), provisioning: provisioning);
+
+        var tenantId = await service.RegisterOwnerTenantAsync(
+            Guid.CreateVersion7(), Data, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Equal([new TenantId(tenantId)], provisioning.Provisioned);
+        Assert.Equal(["commit", "provision"], steps.TakeLast(2));
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantProvisionsTheNewTenantAfterTheCommit()
+    {
+        var invited = new InvitedFixture();
+        var reserved = TenantId.New();
+
+        await invited.Service.RegisterInvitedTenantAsync(
+            reserved, Guid.CreateVersion7(), Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.Equal([reserved], invited.Provisioning.Provisioned);
+        Assert.Equal("provision", invited.Steps[^1]);
+    }
+
+    [Fact]
+    public async Task RegisterInvitedTenantRetryDoesNotProvisionAgain()
+    {
+        var invited = new InvitedFixture();
+        var reserved = TenantId.New();
+        var owner = Guid.CreateVersion7();
+        await invited.Service.RegisterInvitedTenantAsync(
+            reserved, owner, Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        var again = await invited.Service.RegisterInvitedTenantAsync(
+            reserved, owner, Data, InvitedModules, "trace", TestContext.Current.CancellationToken);
+
+        Assert.False(again);
+        Assert.Single(invited.Provisioning.Provisioned);
     }
 
     [Fact]
@@ -320,8 +389,11 @@ public sealed class TenantRegistrationServiceTests
                 Audit,
                 new RecordingOutboxWriter(),
                 new FixedClock(Now),
-                new RecordingSlugAvailability());
+                new RecordingSlugAvailability(),
+                Provisioning = new RecordingProvisioning(Steps));
         }
+
+        public RecordingProvisioning Provisioning { get; }
 
         public List<string> Steps { get; } = [];
         public StoringTenantRepository Tenants { get; }
@@ -369,7 +441,8 @@ public sealed class TenantRegistrationServiceTests
         List<string> steps,
         RecordingTenantModuleRepository modules,
         ITenantModuleDefaults defaults,
-        ITenantSlugAvailability? slugAvailability = null) =>
+        ITenantSlugAvailability? slugAvailability = null,
+        INewTenantProvisioning? provisioning = null) =>
         new(
             new RecordingTenantRepository(steps),
             new InMemoryMembershipRepository(),
@@ -379,7 +452,20 @@ public sealed class TenantRegistrationServiceTests
             new RecordingAuditRecorder(),
             new RecordingOutboxWriter(),
             new FixedClock(Now),
-            slugAvailability ?? new RecordingSlugAvailability());
+            slugAvailability ?? new RecordingSlugAvailability(),
+            provisioning ?? new RecordingProvisioning(steps));
+
+    private sealed class RecordingProvisioning(List<string> steps) : INewTenantProvisioning
+    {
+        public List<TenantId> Provisioned { get; } = [];
+
+        public Task ProvisionAsync(TenantId tenantId, CancellationToken cancellationToken)
+        {
+            steps.Add("provision");
+            Provisioned.Add(tenantId);
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class RecordingSlugAvailability(params string[] takenSlugs) : ITenantSlugAvailability
     {

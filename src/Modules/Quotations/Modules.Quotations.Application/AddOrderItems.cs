@@ -76,7 +76,8 @@ public sealed class AddOrderItemsHandler(
         // Una sola lectura del catálogo para toda la tanda. Los rechazos no se adelantan: siguen
         // abajo, línea por línea, en el mismo orden.
         var products = await QuotationProductPricingResolver.FindVariantsAsync(
-            pricingLookup, command.TenantId, command.ToAdd.Select(addition => addition.VariantId), cancellationToken);
+            pricingLookup, command.TenantId, command.ToAdd.Select(addition => addition.VariantId), cancellationToken,
+            QuotationPriceChannels.For(order.Source));
         // Un pedido pagado sigue editable y lo que entra ya cuenta como vendido: congela al llegar (§4.3).
         var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
             costLookup, command.TenantId, order, command.ToAdd.Select(addition => addition.VariantId), cancellationToken);

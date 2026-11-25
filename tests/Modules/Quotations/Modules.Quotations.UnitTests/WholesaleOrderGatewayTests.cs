@@ -44,7 +44,8 @@ public sealed class WholesaleOrderGatewayTests
         var drafts = new OrderDraftBuilder(
             customers, companies, pricing, products, settings, rounding,
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
-            new FixedTenantDefaultCurrency(), new StubTenantDirectory(), withholdings, clock);
+            new FixedTenantDefaultCurrency(), new StubTenantDirectory(), withholdings, clock,
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
         return new WholesaleOrderGateway(
             drafts, pricing, settings, rounding, customers, companies, orders, new NoOpQuotationsUnitOfWork(), _audit, _events,
             new SequentialOrderNumberGenerator(), new DefaultNumberingFormats(), clock, withholdings);

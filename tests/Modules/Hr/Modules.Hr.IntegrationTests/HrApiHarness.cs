@@ -189,13 +189,13 @@ internal static class HrApiHarness
         return client;
     }
 
-    /// <summary>Los cinco permisos <c>hr.*</c>: el cliente que puede todo en el módulo.</summary>
+    /// <summary>Los siete permisos <c>hr.*</c>: el cliente que puede todo en el módulo.</summary>
     public static HttpClient CreateFullAccess(QepApiFactory factory) =>
         CreateClient(
             factory, SubjectId, TenantId,
             HrPermissions.EmployeeRead, HrPermissions.EmployeeManage,
             HrPermissions.ContractRead, HrPermissions.ContractManage,
-            HrPermissions.SettingsManage);
+            HrPermissions.SettingsManage, HrPermissions.MedicalRead, HrPermissions.MedicalManage);
 
     /// <summary>Abre base, fábrica y tenant sembrado: el arranque que repiten todas las pruebas.</summary>
     public static async Task<(PostgreSqlContainer Database, QepApiFactory Factory)> OpenAsync(

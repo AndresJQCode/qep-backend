@@ -28,8 +28,9 @@ public sealed class WholesaleInvitationPasswordSessionTests
     private WholesaleInvitationPasswordSession Session() =>
         new(_tenancy, _identity, _identity, _identity, _identity, _identity, _identity, _terms, new NewPasswordValidator());
 
-    private Task<AuthenticatedUser> OpenAsync(string email, string password, string? code, string? termsVersion) =>
-        Session().OpenAsync(email, password, code, termsVersion, Correlation, TestContext.Current.CancellationToken);
+    private Task<AuthenticatedUser> OpenAsync(
+        string email, string password, string? code, string? termsVersion, bool emailProven = false) =>
+        Session().OpenAsync(email, password, code, emailProven, termsVersion, Correlation, TestContext.Current.CancellationToken);
 
     [Theory]
     [InlineData("")]
@@ -192,6 +193,79 @@ public sealed class WholesaleInvitationPasswordSessionTests
         Assert.Equal([(provisioned, Terms)], _identity.Recorded);
         Assert.Equal(["consume", "provision", "password", "terms"], _identity.Calls.Where(call => call != "lookup" && call != "has-password"));
         Assert.Equal((1, 1, Email), (_tenancy.Scopes, _tenancy.Commits, _tenancy.LockedEmail));
+    }
+
+    // Spec 2026-11-24: el link del correo prueba el buzón, así que la cuenta nace sin código, con la contraseña y los términos.
+    [Fact]
+    public async Task AnEmailProofCreatesTheAccountWithoutACodeAndRecordsTheTerms()
+    {
+        var user = await OpenAsync(Email, Password, code: null, Terms, emailProven: true);
+
+        var provisioned = Assert.Single(_identity.Provisioned);
+        Assert.Equal(new AuthenticatedUser(provisioned, Email), user);
+        Assert.Empty(_identity.Consumed);
+        Assert.Equal([(provisioned, Password)], _identity.Accepted);
+        Assert.Equal([(provisioned, Terms)], _identity.Recorded);
+        Assert.Equal(["provision", "password", "terms"], _identity.Calls.Where(call => call != "lookup" && call != "has-password"));
+        Assert.Equal((1, 1, Email), (_tenancy.Scopes, _tenancy.Commits, _tenancy.LockedEmail));
+    }
+
+    [Fact]
+    public async Task AnEmailProofGivesAPasswordToAnExistingAccountWithoutOne()
+    {
+        var existing = _identity.AddUser(Email, password: null);
+
+        var user = await OpenAsync(Email, Password, code: null, Terms, emailProven: true);
+
+        Assert.Equal(new AuthenticatedUser(existing, Email), user);
+        Assert.Equal([(existing, Password)], _identity.Accepted);
+        Assert.Empty(_identity.Provisioned);
+    }
+
+    // Anti-objetivo del spec 2026-11-24: con la contraseña ya creada sigue siendo un inicio de sesión; la prueba no la cambia ni
+    // deja entrar con otra.
+    [Fact]
+    public async Task AnEmailProofDoesNotTouchAnAccountThatHasAPassword()
+    {
+        var existing = _identity.AddUser(Email, Password);
+
+        var error = await Assert.ThrowsAsync<RequestUnauthorizedException>(() =>
+            OpenAsync(Email, "Otra-Clave-99", code: null, Terms, emailProven: true));
+
+        Assert.Equal("identity.credentials.invalid", error.Code);
+        Assert.Empty(_identity.Accepted);
+
+        var user = await OpenAsync(Email, Password, code: null, Terms, emailProven: true);
+
+        Assert.Equal(new AuthenticatedUser(existing, Email), user);
+        Assert.Equal([Email, Email], _identity.Logins);
+        Assert.Empty(_identity.Accepted);
+        Assert.Empty(_identity.Recorded);
+        Assert.Empty(_identity.Provisioned);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2025-01-01")]
+    public async Task AnEmailProofStillNeedsTheCurrentTerms(string? termsVersion)
+    {
+        var error = await Record.ExceptionAsync(() =>
+            OpenAsync(Email, Password, code: null, termsVersion, emailProven: true));
+
+        if (termsVersion is null)
+        {
+            var validation = Assert.IsType<ValidationException>(error);
+            Assert.Contains(validation.Errors, failure => failure.PropertyName == "TermsVersion");
+        }
+        else
+        {
+            Assert.Equal(TermsAcceptanceService.VersionMismatchCode, Assert.IsType<IdentityDomainException>(error).Code);
+        }
+
+        Assert.Empty(_identity.Provisioned);
+        Assert.Empty(_identity.Accepted);
+        Assert.Empty(_identity.Recorded);
+        Assert.Equal(0, _tenancy.Commits);
     }
 
     /// <summary>
