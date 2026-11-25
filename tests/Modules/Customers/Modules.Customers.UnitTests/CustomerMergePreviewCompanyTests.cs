@@ -88,7 +88,7 @@ public sealed class CustomerMergePreviewCompanyTests
 
         var move = Assert.Single(preview.Moves, item => item.Kind == "Contacts");
         Assert.Equal(0, move.Count);
-        Assert.Equal(9, preview.Moves.Count);
+        Assert.Equal(10, preview.Moves.Count);
         Assert.Equal("Contacts", preview.Moves[^1].Kind);
         Assert.False(preview.CompanyConflict);
     }
