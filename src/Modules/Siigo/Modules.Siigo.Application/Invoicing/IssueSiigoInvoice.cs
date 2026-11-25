@@ -27,12 +27,13 @@ internal static class SiigoPaymentChoiceRules
     }
 }
 
-/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase).</summary>
+/// <summary>La forma del cuerpo (422 <c>validation.failed</c> con el campo en camelCase). Un elemento nulo de <c>payments</c> falla en su
+/// propio campo.</summary>
 public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInvoiceCommand>
 {
     public IssueSiigoInvoiceValidator()
     {
-        RuleForEach(command => command.Payments).ChildRules(SiigoPaymentChoiceRules.Configure);
+        RuleForEach(command => command.Payments).NotNull().ChildRules(SiigoPaymentChoiceRules.Configure);
     }
 }
 

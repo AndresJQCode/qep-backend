@@ -276,7 +276,7 @@ public sealed class CreateSiigoInvoiceBatchValidator : AbstractValidator<CreateS
             .Must(ids => ids is null || (ids.All(id => id != Guid.Empty) && ids.Distinct().Count() == ids.Count))
             .WithMessage("The orders of a batch are required and cannot repeat.")
             .OverridePropertyName("orderIds");
-        RuleForEach(command => command.Payments).ChildRules(SiigoPaymentChoiceRules.Configure);
+        RuleForEach(command => command.Payments).NotNull().ChildRules(SiigoPaymentChoiceRules.Configure);
         RuleFor(command => command.Payments)
             .Must((command, payments) => payments is not { Count: > 0 } || command.OrderIds is { Count: 1 })
             .WithMessage("Payment choices only travel with a batch of a single order.")

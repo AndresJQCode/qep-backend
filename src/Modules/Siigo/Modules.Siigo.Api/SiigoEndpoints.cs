@@ -284,9 +284,12 @@ public static class SiigoEndpoints
         Results.Ok(await dispatcher.SendAsync(
             new IssueSiigoInvoiceCommand(tenantId, orderId, ToPaymentChoices(request?.Payments)), cancellationToken));
 
-    // Un comprobante que falta viaja vacío: lo rechaza el validador con su campo.
-    private static SiigoPaymentChoice[]? ToPaymentChoices(IReadOnlyList<SiigoPaymentChoiceRequest>? payments) =>
-        payments?.Select(payment => new SiigoPaymentChoice(payment.Kind, payment.ProofId ?? Guid.Empty, payment.SiigoPaymentTypeId)).ToArray();
+    // Un comprobante que falta viaja vacío y un elemento nulo (`payments: [null]`) sigue nulo: los rechaza el validador con su campo.
+    private static SiigoPaymentChoice[]? ToPaymentChoices(IReadOnlyList<SiigoPaymentChoiceRequest?>? payments) =>
+        payments?.Select(payment => payment is null
+                ? null!
+                : new SiigoPaymentChoice(payment.Kind, payment.ProofId ?? Guid.Empty, payment.SiigoPaymentTypeId))
+            .ToArray();
 
     private static async Task<IResult> StampInvoiceAsync(
         Guid tenantId, Guid orderId, string? kind, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

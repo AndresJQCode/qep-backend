@@ -166,6 +166,22 @@ public sealed class SiigoInvoiceBatchApiTests
         Assert.Equal(0, await BatchCountAsync(world));
     }
 
+    // Un elemento nulo llegaba al mapeo antes de validar y salía como 500; en el POST del pedido igual.
+    [Fact]
+    public async Task ANullPaymentIs422OnItsElementInBothRoutes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var batch = await PostBatchWithPaymentsAsync(world, [null!], world.OrderId);
+        var order = await world.Client.PostAsJsonAsync(world.BaseRoute, new { payments = new object?[] { null } }, Ct);
+
+        Assert.True((await ReadValidationErrorsAsync(batch)).TryGetProperty("Payments[0]", out _));
+        Assert.True((await ReadValidationErrorsAsync(order)).TryGetProperty("Payments[0]", out _));
+        Assert.Equal(0, await BatchCountAsync(world));
+        Assert.Empty(InvoiceCalls(world.Siigo));
+    }
+
     [Fact]
     public async Task AnOrderAlreadyInAnOpenBatchIs409WithItsIds()
     {
