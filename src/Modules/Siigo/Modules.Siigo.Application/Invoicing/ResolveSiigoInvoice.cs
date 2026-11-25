@@ -33,7 +33,7 @@ public sealed class ResolveSiigoInvoiceValidator : AbstractValidator<ResolveSiig
 /// pasen 24 horas: una <c>Unknown</c>, o una <c>Pending</c> que no se esté mandando (<c>siigo.invoice.state_invalid</c> si no).
 /// <c>exists</c> con el número: la fila queda <c>Created</c> y el pedido se marca con ese número. <c>missing</c>: la fila pasa a
 /// <c>Failed</c> y el pedido queda libre para facturar de nuevo; antes de los 10 minutos del último envío sin respuesta es 422
-/// <c>siigo.invoice.resolve_too_early</c>. Al declarar que no existe la del pedido, la de flete que nunca salió se descarta en el mismo
+/// <c>siigo.invoice.resolve_too_early</c>, también en una <c>Unknown</c>. Al declarar que no existe la del pedido, la de flete que nunca salió se descarta en el mismo
 /// guardado; una de flete sin respuesta se resuelve aparte. Audita quién la resolvió, cómo y desde qué estado.
 /// </summary>
 public sealed class ResolveSiigoInvoiceHandler(

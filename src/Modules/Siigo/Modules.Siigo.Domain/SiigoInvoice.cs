@@ -142,9 +142,11 @@ public sealed class SiigoInvoice
         };
     }
 
-    /// <summary>Se está por mandar la petición: cuenta el intento y reclama la fila durante <see cref="SendLease"/>.</summary>
+    /// <summary>Se está por mandar la petición: cuenta el intento y reclama la fila durante <see cref="SendLease"/>. Antes anota el envío
+    /// sin respuesta que la fila arrastre sin <see cref="UnansweredAt"/>, para que el resultado de éste no la rechace.</summary>
     public void BeginSend(DateTimeOffset now)
     {
+        AdoptUnrecordedAttempt();
         Attempts++;
         SendingSince = now;
         UpdatedAt = now;
@@ -163,6 +165,7 @@ public sealed class SiigoInvoice
         {
             ErrorCode = Cap(errorCode, ErrorCodeMaxLength);
             ErrorDetail = null;
+            ExpectedPaymentsTotal = null;
         }
 
         SendingSince = null;
@@ -202,6 +205,7 @@ public sealed class SiigoInvoice
         {
             // Siigo sí contestó este reenvío: LastUnansweredAt no se mueve.
             KeepPending(errorCode, errorDetail, now);
+            ExpectedPaymentsTotal = expectedPaymentsTotal;
             return false;
         }
 
@@ -209,23 +213,33 @@ public sealed class SiigoInvoice
         return true;
     }
 
-    /// <summary>Un envío cuyo reclamo venció sin registrar resultado (el proceso murió o se cortó por un redespliegue) cuenta como sin
-    /// respuesta: se marca antes de reenviar.</summary>
+    /// <summary>Antes de reenviar, anota el envío anterior que quedó sin respuesta y sin registrar: uno cuyo reclamo venció sin resultado
+    /// (el proceso murió o se cortó por un redespliegue) o el que la fila arrastra sin <see cref="UnansweredAt"/>.</summary>
     /// <returns>Si con esto la fila pasa a estar por confirmar por primera vez.</returns>
     public bool RecoverInterruptedSend(DateTimeOffset now)
     {
-        if (Status != SiigoInvoiceStatus.Pending || SendingSince is null || IsBeingSent(now))
+        if (Status != SiigoInvoiceStatus.Pending || IsBeingSent(now))
         {
             return false;
         }
 
-        return MarkUnanswered(SiigoErrorCodes.InvoiceInterrupted, null, now);
+        var adopted = AdoptUnrecordedAttempt();
+        if (SendingSince is null)
+        {
+            return adopted;
+        }
+
+        var first = MarkUnanswered(SiigoErrorCodes.InvoiceInterrupted, null, now);
+        return adopted || first;
     }
 
     /// <summary>Por confirmar: <c>Pending</c>, nadie la está mandando y hay un envío sin respuesta, registrado
-    /// (<see cref="UnansweredAt"/>) o con el reclamo vencido sin resultado (<see cref="SendingSince"/>).</summary>
+    /// (<see cref="UnansweredAt"/>), con el reclamo vencido sin resultado (<see cref="SendingSince"/>) o que sólo se ve por el motivo de
+    /// la fila.</summary>
     public bool IsAwaitingConfirmation(DateTimeOffset now) =>
-        Status == SiigoInvoiceStatus.Pending && (UnansweredAt is not null || SendingSince is not null) && !IsBeingSent(now);
+        Status == SiigoInvoiceStatus.Pending
+        && (UnansweredAt is not null || SendingSince is not null || UnrecordedAttemptAt is not null)
+        && !IsBeingSent(now);
 
     /// <summary>La puede resolver una persona: <c>Unknown</c>, o <c>Pending</c> que nadie está mandando.</summary>
     public bool IsResolvable(DateTimeOffset now) =>
@@ -237,16 +251,17 @@ public sealed class SiigoInvoice
         Status == SiigoInvoiceStatus.Pending && !IsBeingSent(now) && now - CreatedAt <= StaleAfter;
 
     /// <summary>Desde cuándo se puede declarar que no existe, si todavía hay que esperar. <c>null</c> si no es resoluble o si ya se
-    /// puede: una <c>Unknown</c> ya pasó las 24 h y una que nunca salió no tiene nada que esperar.</summary>
+    /// puede. Vale también para una <c>Unknown</c>: se reenvió poco antes de las 24 h, Siigo puede seguir procesándola. Una sin ningún
+    /// envío sin respuesta no tiene nada que esperar.</summary>
     public DateTimeOffset? MissingAvailableAt(DateTimeOffset now)
     {
-        if (Status != SiigoInvoiceStatus.Pending || !IsResolvable(now))
+        if (!IsResolvable(now))
         {
             return null;
         }
 
         // El reclamo vencido sin resultado es más reciente que el último envío sin respuesta registrado.
-        var availableAt = (SendingSince ?? LastUnansweredAt) + MissingResolutionDelay;
+        var availableAt = (SendingSince ?? LastUnansweredAt ?? UnrecordedAttemptAt) + MissingResolutionDelay;
         return availableAt > now ? availableAt : null;
     }
 
@@ -306,12 +321,20 @@ public sealed class SiigoInvoice
     }
 
     /// <summary>La transición perezosa de §5.4: una <c>Pending</c> de más de <see cref="StaleAfter"/> pasa a <c>Unknown</c>, sin worker,
-    /// al leerla o reintentarla. Devuelve si cambió.</summary>
+    /// al leerla o reintentarla. Una que se está mandando no expira (se resolvería con la petición en camino). El envío sin respuesta que
+    /// tuviera se conserva: de él depende <see cref="MissingAvailableAt"/>. Devuelve si cambió.</summary>
     public bool ExpireIfStale(DateTimeOffset now)
     {
-        if (Status != SiigoInvoiceStatus.Pending || now - CreatedAt <= StaleAfter)
+        if (Status != SiigoInvoiceStatus.Pending || now - CreatedAt <= StaleAfter || IsBeingSent(now))
         {
             return false;
+        }
+
+        AdoptUnrecordedAttempt();
+        if (SendingSince is { } deadSend)
+        {
+            UnansweredAt ??= deadSend;
+            LastUnansweredAt = deadSend;
         }
 
         Status = SiigoInvoiceStatus.Unknown;
@@ -358,10 +381,34 @@ public sealed class SiigoInvoice
     // el ToString por defecto sólo escribe el tipo: se deja explícito para que nadie lo «mejore».
     public override string ToString() => $"SiigoInvoice {{ Id = {Id}, Kind = {Kind}, Status = {Status} }}";
 
+    // Durante el despliegue la versión anterior sigue escribiendo, después del relleno de la migración, filas Pending con el motivo y sin
+    // unanswered_at. Estos motivos sólo los deja un envío que salió; `unavailable` no entra porque también lo deja uno que nunca salió
+    // (D-2), y esas se cubren corriendo otra vez el relleno. UpdatedAt es el momento de ese envío mientras nadie la vuelva a tocar.
+    private DateTimeOffset? UnrecordedAttemptAt =>
+        Status == SiigoInvoiceStatus.Pending
+        && UnansweredAt is null
+        && ErrorCode is SiigoErrorCodes.InvoiceTimeout or SiigoErrorCodes.InvoiceNetwork
+            or SiigoErrorCodes.InvoiceRateLimited or SiigoErrorCodes.InvoiceSiigoService
+            ? UpdatedAt
+            : null;
+
+    private bool AdoptUnrecordedAttempt()
+    {
+        if (UnrecordedAttemptAt is not { } attemptedAt)
+        {
+            return false;
+        }
+
+        UnansweredAt = attemptedAt;
+        LastUnansweredAt = attemptedAt;
+        return true;
+    }
+
     private void KeepPending(string errorCode, string? errorDetail, DateTimeOffset now)
     {
         ErrorCode = Cap(errorCode, ErrorCodeMaxLength);
         ErrorDetail = errorDetail is null ? null : Cap(errorDetail, ErrorDetailMaxLength);
+        ExpectedPaymentsTotal = null;
         SendingSince = null;
         UpdatedAt = now;
     }

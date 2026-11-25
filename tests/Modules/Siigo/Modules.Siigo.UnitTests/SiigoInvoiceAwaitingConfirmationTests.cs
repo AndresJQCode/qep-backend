@@ -208,6 +208,142 @@ public sealed class SiigoInvoiceAwaitingConfirmationTests
         Assert.Null(invoice.MissingAvailableAt(Now));
     }
 
+    // Lo que escribe la versión anterior durante el despliegue, después del relleno de la migración: el motivo, sin unanswered_at.
+    private static SiigoInvoice LeftByThePreviousVersion(string errorCode, DateTimeOffset at)
+    {
+        var invoice = NewPending();
+        invoice.BeginSend(at);
+        invoice.MarkTransient(errorCode, at);
+        return invoice;
+    }
+
+    [Theory]
+    [InlineData("siigo.invoice.timeout")]
+    [InlineData("siigo.invoice.network")]
+    [InlineData("siigo.invoice.rate_limited")]
+    [InlineData("siigo.invoice.siigo_service")]
+    public void ARowThePreviousVersionLeftWithoutTheAnchorStaysToConfirm(string errorCode)
+    {
+        var invoice = LeftByThePreviousVersion(errorCode, Now);
+
+        Assert.True(invoice.IsAwaitingConfirmation(Now.AddMinutes(1)));
+        Assert.Equal(Now.AddMinutes(10), invoice.MissingAvailableAt(Now.AddMinutes(9)));
+        var tooEarly = Assert.Throws<SiigoResolveTooEarlyException>(() => invoice.ResolveMissing(Now.AddMinutes(9)));
+        Assert.Equal(Now.AddMinutes(10), tooEarly.AvailableAt);
+
+        invoice.BeginSend(Now.AddMinutes(2));
+        var rejected = invoice.RecordRejection(
+            "siigo.invoice.rejected", "invalid_reference", null, serviceOutage: false, Now.AddMinutes(2));
+
+        Assert.False(rejected);
+        Assert.Equal(SiigoInvoiceStatus.Pending, invoice.Status);
+        Assert.Equal(Now, invoice.UnansweredAt);
+        Assert.Equal(Now, invoice.LastUnansweredAt);
+        Assert.Equal(Now.AddMinutes(10), invoice.MissingAvailableAt(Now.AddMinutes(3)));
+        invoice.ResolveMissing(Now.AddMinutes(10));
+        Assert.Equal(SiigoInvoiceStatus.Failed, invoice.Status);
+    }
+
+    [Fact]
+    public void RecoveringARowThePreviousVersionLeftSaysItBecameToConfirm()
+    {
+        var invoice = LeftByThePreviousVersion("siigo.invoice.timeout", Now);
+
+        Assert.True(invoice.RecoverInterruptedSend(Now.AddMinutes(1)));
+
+        Assert.Equal(Now, invoice.UnansweredAt);
+        Assert.Equal("siigo.invoice.timeout", invoice.ErrorCode);
+        Assert.False(invoice.RecoverInterruptedSend(Now.AddMinutes(2)));
+    }
+
+    // D-2: este motivo también lo escriben los envíos que nunca salieron.
+    [Fact]
+    public void AnUnavailableRowWithoutTheAnchorIsNotToConfirm()
+    {
+        var invoice = LeftByThePreviousVersion("siigo.invoice.unavailable", Now);
+
+        Assert.False(invoice.IsAwaitingConfirmation(Now.AddMinutes(1)));
+        Assert.Null(invoice.MissingAvailableAt(Now.AddMinutes(1)));
+        Assert.False(invoice.RecoverInterruptedSend(Now.AddMinutes(1)));
+
+        invoice.BeginSend(Now.AddMinutes(2));
+
+        Assert.True(invoice.RecordRejection(
+            "siigo.invoice.rejected", "invalid_reference", null, serviceOutage: false, Now.AddMinutes(2)));
+        Assert.Equal(SiigoInvoiceStatus.Rejected, invoice.Status);
+    }
+
+    [Fact]
+    public void ARowBeingSentDoesNotExpire()
+    {
+        var invoice = NewPending();
+        var sentAt = Now + SiigoInvoice.StaleAfter - TimeSpan.FromMinutes(1);
+        invoice.BeginSend(sentAt);
+
+        Assert.False(invoice.ExpireIfStale(sentAt.AddMinutes(2)));
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, invoice.Status);
+        Assert.Equal(sentAt, invoice.SendingSince);
+        Assert.Throws<SiigoDomainException>(() => invoice.ResolveMissing(sentAt.AddMinutes(2)));
+    }
+
+    [Fact]
+    public void ExpiringADeadSendKeepsItAsTheAnchor()
+    {
+        var invoice = NewPending();
+        var sentAt = Now + SiigoInvoice.StaleAfter - TimeSpan.FromMinutes(1);
+        invoice.BeginSend(sentAt);
+        var expiredAt = sentAt + SiigoInvoice.SendLease + TimeSpan.FromSeconds(1);
+
+        Assert.True(invoice.ExpireIfStale(expiredAt));
+
+        Assert.Equal(SiigoInvoiceStatus.Unknown, invoice.Status);
+        Assert.Null(invoice.SendingSince);
+        Assert.Equal(sentAt, invoice.UnansweredAt);
+        Assert.Equal(sentAt, invoice.LastUnansweredAt);
+        var tooEarly = Assert.Throws<SiigoResolveTooEarlyException>(() => invoice.ResolveMissing(expiredAt));
+        Assert.Equal(sentAt.AddMinutes(10), tooEarly.AvailableAt);
+        invoice.ResolveMissing(sentAt.AddMinutes(10));
+        Assert.Equal(SiigoInvoiceStatus.Failed, invoice.Status);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnUnknownWithARecentUnansweredSendAlsoWaitsAndExistsDoesNot(bool leftByThePreviousVersion)
+    {
+        var sentAt = Now + SiigoInvoice.StaleAfter - TimeSpan.FromMinutes(1);
+        var invoice = leftByThePreviousVersion ? LeftByThePreviousVersion("siigo.invoice.timeout", sentAt) : Unanswered(sentAt);
+        var expiredAt = sentAt.AddMinutes(2);
+        Assert.True(invoice.ExpireIfStale(expiredAt));
+
+        Assert.Equal(sentAt.AddMinutes(10), invoice.MissingAvailableAt(expiredAt));
+        var tooEarly = Assert.Throws<SiigoResolveTooEarlyException>(() => invoice.ResolveMissing(expiredAt));
+        Assert.Equal(sentAt.AddMinutes(10), tooEarly.AvailableAt);
+
+        invoice.ResolveExists("FV-1-9", expiredAt);
+
+        Assert.Equal(SiigoInvoiceStatus.Created, invoice.Status);
+    }
+
+    [Fact]
+    public void ARetainedRejectionKeepsTheExpectedTotalUntilTheNextOutcome()
+    {
+        var invoice = Unanswered(Now);
+        invoice.BeginSend(Now.AddMinutes(1));
+
+        invoice.RecordRejection(
+            "siigo.invoice.totals_mismatch", "invalid_total_payments: 288490.5", 288490.5m, serviceOutage: false, Now.AddMinutes(1));
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, invoice.Status);
+        Assert.Equal(288490.5m, invoice.ExpectedPaymentsTotal);
+
+        invoice.BeginSend(Now.AddMinutes(2));
+        invoice.MarkUnanswered("siigo.invoice.timeout", null, Now.AddMinutes(2));
+
+        Assert.Null(invoice.ExpectedPaymentsTotal);
+    }
+
     [Fact]
     public void OnlyAPendingNotBeingSentAndNotStaleCanBeResent()
     {

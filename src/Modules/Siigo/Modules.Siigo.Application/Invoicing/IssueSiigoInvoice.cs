@@ -142,7 +142,8 @@ public sealed class IssueSiigoInvoiceHandler(
         var toSend = pending.Where(row => !row.IsBeingSent(now)).ToList();
         foreach (var row in toSend)
         {
-            // Un reclamo vencido que sigue puesto es un envío que murió sin registrar resultado: se anota antes de reclamar de nuevo.
+            // Un reclamo vencido que sigue puesto, o un motivo de envío sin unanswered_at (versión anterior durante el despliegue), es un
+            // envío sin respuesta que falta registrar: se anota antes de reclamar de nuevo.
             if (row.RecoverInterruptedSend(now))
             {
                 SiigoInvoiceSupport.Audit(auditRecorder, executionContext, row, SiigoAuditActions.InvoiceUnanswered, now);

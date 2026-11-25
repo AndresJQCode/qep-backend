@@ -77,6 +77,24 @@ public sealed class SiigoBatchItemEffectiveStateTests
             new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.timeout", null, false, true, null), state);
     }
 
+    [Fact]
+    public void AToConfirmWhoseInvoiceBecameUnknownRightAfterASendStillSaysSinceWhenMissingCanBeDeclared()
+    {
+        var invoice = NewInvoice();
+        var sentAt = Now + SiigoInvoice.StaleAfter - TimeSpan.FromMinutes(1);
+        invoice.BeginSend(sentAt);
+        invoice.MarkUnanswered("siigo.invoice.timeout", null, sentAt);
+        var item = ToConfirm(invoice);
+        invoice.ExpireIfStale(sentAt.AddMinutes(2));
+
+        var state = item.Effective(invoice, sentAt.AddMinutes(2));
+
+        Assert.Equal(
+            new SiigoBatchItemState(
+                SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.timeout", null, false, true, sentAt.AddMinutes(10)),
+            state);
+    }
+
     [Theory]
     [InlineData(SiigoInvoiceStatus.Created)]
     [InlineData(SiigoInvoiceStatus.Stamped)]

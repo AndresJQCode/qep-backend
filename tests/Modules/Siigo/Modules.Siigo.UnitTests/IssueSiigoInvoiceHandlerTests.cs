@@ -132,6 +132,22 @@ public sealed class IssueSiigoInvoiceHandlerTests
         Assert.Equal([SiigoAuditActions.InvoiceUnanswered, SiigoAuditActions.InvoiceCreated], harness.Audit.Actions);
     }
 
+    // Una fila que la versión anterior dejó sin unanswered_at durante el despliegue: el rechazo del reenvío no la libera.
+    [Fact]
+    public async Task ADataRejectionOnARowThePreviousVersionLeftUnansweredStaysPending()
+    {
+        var row = PendingRow();
+        row.BeginSend(Now.AddMinutes(-1));
+        row.MarkTransient("siigo.invoice.timeout", Now.AddMinutes(-1));
+        var harness = new Harness([row], Rejected("invalid_reference"));
+
+        await harness.Issue();
+
+        Assert.Equal(SiigoInvoiceStatus.Pending, row.Status);
+        Assert.Equal(Now.AddMinutes(-1), row.UnansweredAt);
+        Assert.Equal([SiigoAuditActions.InvoiceUnanswered, SiigoAuditActions.InvoiceUnanswered], harness.Audit.Actions);
+    }
+
     [Fact]
     public async Task TheFreightIsDiscardedOnlyWhenTheOrderInvoiceIsReallyRejected()
     {

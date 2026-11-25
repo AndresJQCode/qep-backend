@@ -41,7 +41,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   ilegible, error de servicio y un `sending_since` vencido sin resultado); `partner_id_missing` y `auth_without_token` no
   (`SiigoInvoiceSupport.LeftQep`). La reenvía una persona con la misma clave o la resuelve («existe» o «no existe», esto último 10 minutos
   después del último intento sin respuesta); mientras tanto bloquea la marca manual y la anulación. La de flete que esperaba a la del
-  pedido suelta su reclamo y no queda por confirmar.
+  pedido suelta su reclamo y no queda por confirmar. La espera de «no existe» vale también para una `Unknown`: `ExpireIfStale` no expira una
+  que se está mandando y conserva el último envío sin respuesta (incluido un `sending_since` vencido).
+- **Durante el despliegue de la facturación en segundo plano hay filas sin `unanswered_at`** (el pod anterior escribe después del relleno de
+  `AddSiigoBackgroundInvoicing`). El dominio trata como sin respuesta, desde `updated_at`, una `Pending` con `timeout`, `network`,
+  `rate_limited` o `siigo_service`; `unavailable` no, porque también lo deja un envío que nunca salió. **Terminado el rollout, el owner corre
+  una vez más el `UPDATE` de relleno** (`BackfillSql` de esa migración) para cubrir las `unavailable` del pod anterior. Un camino nuevo que
+  deje una `Pending` con uno de esos cuatro códigos sin `unanswered_at` la vuelve por confirmar.
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
