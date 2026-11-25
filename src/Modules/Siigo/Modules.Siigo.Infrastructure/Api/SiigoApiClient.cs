@@ -36,8 +36,9 @@ internal sealed class SiigoApiClient(
     /// <see cref="SiigoInvoice.SendLease"/> (<c>SiigoTimeoutBudgetTests</c>).</summary>
     internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
-    /// <summary>El plazo de <c>POST v1/invoices</c>. Sigue en 30 s mientras exista la emisión síncrona desde el pedido.</summary>
-    internal static readonly TimeSpan InvoiceCreateTimeout = TimeSpan.FromSeconds(30);
+    /// <summary>El plazo de <c>POST v1/invoices</c>: Siigo recomienda 120 s o más para crear documentos. Ningún request HTTP de QEP lo
+    /// espera: la factura la manda el worker de las tandas.</summary>
+    internal static readonly TimeSpan InvoiceCreateTimeout = TimeSpan.FromSeconds(120);
 
     private readonly SiigoApiTimeouts _timeouts = timeouts ?? SiigoApiTimeouts.Production;
 

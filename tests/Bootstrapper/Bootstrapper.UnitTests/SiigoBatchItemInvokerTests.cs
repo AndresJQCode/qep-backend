@@ -68,7 +68,7 @@ public sealed class SiigoBatchItemInvokerTests
         Assert.Equal(new SiigoBatchItemOutcome.Failed(SiigoErrorCodes.InvoiceBatchForbidden), outcome);
     }
 
-    // El POST síncrono en camino, o uno cortado hace menos de 8 min: no se sabe si Siigo la creará, aunque la fila nunca haya quedado sin
+    // Un envío en camino, o uno cortado hace menos de 8 min: no se sabe si Siigo la creará, aunque la fila nunca haya quedado sin
     // respuesta.
     [Theory]
     [InlineData(false)]

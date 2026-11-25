@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Infrastructure.Batches;
 using Npgsql;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
@@ -161,23 +162,21 @@ public sealed class SiigoInvoiceBatchApiTests
         var withoutType = await PostBatchWithPaymentsAsync(world, [Payment(Guid.NewGuid(), null)], world.OrderId);
 
         Assert.True((await ReadValidationErrorsAsync(twoOrders)).TryGetProperty("payments", out _));
-        // Las mismas claves por elemento que el POST del pedido.
+        // Las mismas claves por elemento que el comando de emisión.
         Assert.True((await ReadValidationErrorsAsync(withoutType)).TryGetProperty("Payments[0].siigoPaymentTypeId", out _));
         Assert.Equal(0, await BatchCountAsync(world));
     }
 
-    // Un elemento nulo llegaba al mapeo antes de validar y salía como 500; en el POST del pedido igual.
+    // Un elemento nulo llegaba al mapeo antes de validar y salía como 500.
     [Fact]
-    public async Task ANullPaymentIs422OnItsElementInBothRoutes()
+    public async Task ANullPaymentIs422OnItsElement()
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
 
         var batch = await PostBatchWithPaymentsAsync(world, [null!], world.OrderId);
-        var order = await world.Client.PostAsJsonAsync(world.BaseRoute, new { payments = new object?[] { null } }, Ct);
 
         Assert.True((await ReadValidationErrorsAsync(batch)).TryGetProperty("Payments[0]", out _));
-        Assert.True((await ReadValidationErrorsAsync(order)).TryGetProperty("Payments[0]", out _));
         Assert.Equal(0, await BatchCountAsync(world));
         Assert.Empty(InvoiceCalls(world.Siigo));
     }
@@ -384,7 +383,7 @@ public sealed class SiigoInvoiceBatchApiTests
     }
 
     // Spec frontend 2026-11-24, H-1: «Generar» es una tanda de ese pedido. La factura ya existe y sólo falta la marca: la tanda se acepta,
-    // marca el pedido y no vuelve a llamar a Siigo. Es la garantía que hace falta antes de quitar la ruta síncrona.
+    // marca el pedido y no vuelve a llamar a Siigo. Es el único camino para completar la marca.
     [Fact]
     public async Task ABatchOfAnOrderWhoseInvoiceWasNotMarkedMarksItWithoutCallingSiigo()
     {
@@ -482,7 +481,7 @@ public sealed class SiigoInvoiceBatchApiTests
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
         world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.ToConfirm>(await IssueWithoutBatchAsync(world));
         var batchId = await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
 
@@ -501,7 +500,7 @@ public sealed class SiigoInvoiceBatchApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.Invoiced>(await IssueWithoutBatchAsync(world));
         var batchId = await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
 
@@ -526,7 +525,7 @@ public sealed class SiigoInvoiceBatchApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.Invoiced>(await IssueWithoutBatchAsync(world));
         var batchId = await CreateBatchAsync(world, world.OrderId);
         await ExecuteAsync(
             world.ConnectionString,
@@ -554,7 +553,7 @@ public sealed class SiigoInvoiceBatchApiTests
     {
         await using var database = await StartDatabaseAsync();
         using var world = await ArrangeAsync(database);
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        Assert.IsType<SiigoBatchItemOutcome.Invoiced>(await IssueWithoutBatchAsync(world));
         await CreateBatchAsync(world, world.OrderId);
         await AbandonTheItemAsync(world);
         // La lectura del pedido falla en la base: sin confirmación, el ítem avisa y se cierra igual.
@@ -657,7 +656,8 @@ public sealed class SiigoInvoiceBatchApiTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Worker(world).DrainAsync(shutdown.Token));
         await ExecuteAsync(world.ConnectionString, "UPDATE siigo.invoices SET sending_since = now() - interval '9 minutes'");
 
-        await ReadAsync(await world.Client.PostAsync(world.BaseRoute, null, Ct));
+        // Una persona lo reintenta desde la pantalla: otra tanda del pedido.
+        await IssueRowsThroughBatchAsync(world);
 
         Assert.Equal(
             1,
