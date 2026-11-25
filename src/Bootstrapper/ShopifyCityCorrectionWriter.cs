@@ -20,7 +20,12 @@ namespace Bootstrapper;
 internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) : IShopifyCityCorrectionWriter
 {
     public async Task<ShopifyCityWriteResult> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ShopifyPartyDraft party,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(party);
         await using var scope = scopes.CreateAsyncScope();
@@ -30,12 +35,19 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
             new ExternalShippingParty(
                 party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode),
             notesLinePrefix,
+            requestedCityIds,
             cancellationToken);
         return FromOrder(outcome);
     }
 
     public async Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ShopifyShippingFingerprint expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(expected);
         // La corrección de ciudad es sólo de Colombia: su huella trae siempre los dos ids.
@@ -52,6 +64,7 @@ internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) :
                 expected.PostalCode),
             departmentId,
             cityId,
+            requestedCityIds,
             cancellationToken);
         return FromOrder(outcome);
     }

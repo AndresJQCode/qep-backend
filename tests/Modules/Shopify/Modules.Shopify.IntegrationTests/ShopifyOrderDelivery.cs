@@ -30,9 +30,15 @@ internal static class ShopifyOrderDelivery
         };
 
     public static async Task<HttpResponseMessage> PutAsync(
-        HttpClient client, Flow flow, bool isStorePickup, JsonObject? shipping)
+        HttpClient client, Flow flow, bool isStorePickup, JsonObject? shipping) =>
+        await PutAsync(client, flow.World.TenantId, await OrderIdAsync(flow), isStorePickup, shipping);
+
+    /// <summary>El mismo guardado sobre un pedido dado, para los mundos que no son un <c>Flow</c> o tienen más de un
+    /// pedido.</summary>
+    public static async Task<HttpResponseMessage> PutAsync(
+        HttpClient client, Guid tenantId, string orderId, bool isStorePickup, JsonObject? shipping)
     {
-        var (route, version, body) = await BodyAsync(client, flow, isStorePickup, shipping);
+        var (route, version, body) = await BodyAsync(client, tenantId, orderId, isStorePickup, shipping);
         var request = new HttpRequestMessage(HttpMethod.Put, route) { Content = JsonContent.Create(body) };
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
         return await client.SendAsync(request, Ct);
@@ -41,14 +47,14 @@ internal static class ShopifyOrderDelivery
     public static async Task<HttpResponseMessage> PreviewAsync(
         HttpClient client, Flow flow, bool isStorePickup, JsonObject? shipping)
     {
-        var (route, _, body) = await BodyAsync(client, flow, isStorePickup, shipping);
+        var (route, _, body) = await BodyAsync(client, flow.World.TenantId, await OrderIdAsync(flow), isStorePickup, shipping);
         return await client.PostAsJsonAsync($"{route}/preview", body, Ct);
     }
 
     private static async Task<(string Route, long Version, JsonObject Body)> BodyAsync(
-        HttpClient client, Flow flow, bool isStorePickup, JsonObject? shipping)
+        HttpClient client, Guid tenantId, string orderId, bool isStorePickup, JsonObject? shipping)
     {
-        var route = $"/api/v1/tenants/{flow.World.TenantId}/orders/{await OrderIdAsync(flow)}";
+        var route = $"/api/v1/tenants/{tenantId}/orders/{orderId}";
         var detail = (await client.GetFromJsonAsync<JsonObject>(route, Ct))!;
         var order = detail["order"]!;
         var body = new JsonObject

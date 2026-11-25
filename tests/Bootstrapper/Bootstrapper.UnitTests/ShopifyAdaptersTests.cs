@@ -953,11 +953,12 @@ public sealed class ShopifyAdaptersTests
                 expected,
                 await CityCorrectionWriter(orders: attach).AttachShippingAsync(
                     TenantId, orderId, new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId),
-                    "Dirección de envío de Shopify: ", Ct));
+                    "Dirección de envío de Shopify: ", [cityId], Ct));
             var correct = new FakeExternalOrderWriter { OnCorrect = _ => outcome };
             Assert.Equal(
                 expected,
-                await CityCorrectionWriter(orders: correct).CorrectShippingCityAsync(TenantId, orderId, fingerprint, departmentId, newCityId, Ct));
+                await CityCorrectionWriter(orders: correct).CorrectShippingCityAsync(
+                    TenantId, orderId, fingerprint, departmentId, newCityId, [newCityId], Ct));
         }
 
         // Lo que se le manda a Quotations, tal cual.
@@ -965,10 +966,19 @@ public sealed class ShopifyAdaptersTests
         var adapter = CityCorrectionWriter(orders: writer);
         await adapter.AttachShippingAsync(
             TenantId, orderId, new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId),
-            "Dirección de envío de Shopify: ", Ct);
-        var corrected = await adapter.CorrectShippingCityAsync(TenantId, orderId, fingerprint, departmentId, newCityId, Ct);
-        Assert.Equal((TenantId, orderId, persisted, "Dirección de envío de Shopify: "), Assert.Single(writer.Attached));
-        Assert.Equal((TenantId, orderId, persisted, departmentId, newCityId), Assert.Single(writer.Corrected));
+            "Dirección de envío de Shopify: ", [cityId], Ct);
+        var corrected = await adapter.CorrectShippingCityAsync(
+            TenantId, orderId, fingerprint, departmentId, newCityId, [cityId, newCityId], Ct);
+        var attached = Assert.Single(writer.Attached);
+        Assert.Equal(
+            (TenantId, orderId, persisted, "Dirección de envío de Shopify: "),
+            (attached.TenantId, attached.OrderId, attached.Shipping, attached.NotesLinePrefix));
+        Assert.Equal([cityId], attached.Requested);
+        var sentCorrection = Assert.Single(writer.Corrected);
+        Assert.Equal(
+            (TenantId, orderId, persisted, departmentId, newCityId),
+            (sentCorrection.TenantId, sentCorrection.OrderId, sentCorrection.Expected, sentCorrection.DepartmentId, sentCorrection.CityId));
+        Assert.Equal([cityId, newCityId], sentCorrection.Requested);
         Assert.Equal(fingerprint with { CityId = newCityId }, corrected.Party);
     }
 

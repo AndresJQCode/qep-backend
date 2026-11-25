@@ -865,17 +865,30 @@ public sealed record ShopifyOrderCityState(
 public interface IShopifyCityCorrectionWriter
 {
     /// <summary>Pone la parte de envío que el pedido no tenía y quita de las notas las líneas que empiezan por
-    /// <paramref name="notesLinePrefix"/>.</summary>
+    /// <paramref name="notesLinePrefix"/>. <paramref name="requestedCityIds"/> como en <see cref="CompleteCustomerAsync"/>: la
+    /// misma parte en una ciudad que este trabajo no pidió la puso una persona.</summary>
     Task<ShopifyCityWriteResult> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid orderId,
+        ShopifyPartyDraft party,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
-    /// <summary>Lleva la parte de envío a la ciudad nueva sólo si sigue siendo <paramref name="expected"/>.</summary>
+    /// <summary>Lleva la parte de envío a la ciudad nueva sólo si sigue siendo <paramref name="expected"/>;
+    /// <paramref name="requestedCityIds"/> como en <see cref="AttachShippingAsync"/>.</summary>
     Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid orderId,
+        ShopifyShippingFingerprint expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
     /// <summary>Completa al cliente que la importación creó incompleto, sólo si sigue en <paramref name="expectedVersion"/>.
-    /// <paramref name="requestedCityIds"/> son las ciudades que este trabajo pidió hasta ahora: con ellas Customers reconoce su
-    /// propio reintento (una ciudad que no pidió la puso una persona).</summary>
+    /// <paramref name="requestedCityIds"/> son las ciudades que este trabajo pidió hasta ahora: con ellas Customers (y
+    /// Quotations, en un pedido) reconoce su propio reintento (una ciudad que no pidió la puso una persona).</summary>
     Task<ShopifyCityWriteResult> CompleteCustomerAsync(
         Guid tenantId,
         Guid customerId,

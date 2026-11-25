@@ -100,7 +100,7 @@ public sealed class OrderStoreFactoryTests
         var order = NewStoreOrder(Parties());
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AttachExternalShipping(Shipping(), "Envío:", Now));
+            order.AttachExternalShipping(Shipping(), "Envío:", [], Now));
 
         Assert.Equal("order.order.source_invalid", error.Code);
     }

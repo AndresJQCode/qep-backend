@@ -182,16 +182,30 @@ public interface IExternalOrderWriter
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-26 §4.4: pone la parte de envío que el pedido no tenía y quita de las notas las líneas
-    /// que empiezan por <paramref name="notesLinePrefix"/>. Las razones por las que no se puede viajan en el
-    /// resultado; la concurrencia (<c>concurrency.conflict</c>) se propaga y el trabajo reintenta.</summary>
+    /// que empiezan por <paramref name="notesLinePrefix"/>. <paramref name="requestedCityIds"/> son las ciudades que el consumidor
+    /// pidió hasta ahora, la de esta llamada incluida: la misma parte en una de ellas es su reintento
+    /// (<c>AlreadyApplied</c>); en otra la puso una persona (<c>ShippingPresent</c>). Las razones por las que no se puede viajan
+    /// en el resultado; la concurrencia (<c>concurrency.conflict</c>) se propaga y el trabajo reintenta.</summary>
     Task<ExternalShippingOutcome> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty shipping,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, si sigue siendo
-    /// <paramref name="expected"/> (la que guardó el consumidor). Mismos resultados y concurrencia que
-    /// <see cref="AttachShippingAsync"/>.</summary>
+    /// <paramref name="expected"/> (la que guardó el consumidor). Si ya sólo difiere en la ciudad y ésa está en
+    /// <paramref name="requestedCityIds"/>, es un reintento (<c>AlreadyApplied</c>); en otra la movió una persona
+    /// (<c>ShippingChanged</c>). Mismos demás resultados y concurrencia que <see cref="AttachShippingAsync"/>.</summary>
     Task<ExternalShippingOutcome> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken);
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-26 D-C12: el estado de envío del pedido, o <c>null</c> si no existe en ese tenant. Sólo lee y sólo ve
     /// el tenant pedido; no mira el origen (el recorrido llega por la fila del espejo, que ya es de una plataforma).</summary>
@@ -372,20 +386,33 @@ public sealed class ExternalOrderService(
     };
 
     public Task<ExternalShippingOutcome> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty shipping,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(shipping);
         return ChangeShippingAsync(
-            tenantId, orderId, (order, now) => order.AttachExternalShipping(ToDetails(shipping), notesLinePrefix, now), cancellationToken);
+            tenantId, orderId,
+            (order, now) => order.AttachExternalShipping(ToDetails(shipping), notesLinePrefix, requestedCityIds, now),
+            cancellationToken);
     }
 
     public Task<ExternalShippingOutcome> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(expected);
         return ChangeShippingAsync(
             tenantId, orderId,
-            (order, now) => order.CorrectExternalShippingCity(ToDetails(expected), departmentId, cityId, now),
+            (order, now) => order.CorrectExternalShippingCity(ToDetails(expected), departmentId, cityId, requestedCityIds, now),
             cancellationToken);
     }
 
