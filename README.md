@@ -3078,15 +3078,16 @@ Meta» la muestra como «hace X»; no hay alerta de silencio (owner, 2026-11-16)
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
-El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Platform`. Valkey **no** entra a
+El cliente de Valkey (spec 2026-11-13) publica tres métricas en el meter `Qep.Platform`. Valkey **no** entra a
 `/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
 
 | Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
 | ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
 | `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
 | `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area,reason}` | `area`, `reason` | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
+| `qep.valkey.operation.duration` | `qep_valkey_operation_duration_seconds` (histograma) | `area`, `outcome` | Cuánto tarda cada operación pedida con `ValkeyGateway.TryAsync`, medida desde el pod. `outcome`: `ok`, `error`, `late` (pasó el tope y después respondió; se mide al terminar) y `late_error` (pasó el tope y después falló). No mide `Publish` ni `Subscribe`, y sin conexión no hay operación que medir |
 
-La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
+La alerta sobre las dos primeras no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
 **Limitadores compartidos (D-3, `Valkey:Areas:RateLimiting`).** Las siete políticas de ventana fija de `Program.cs` y el
 límite por clave de la API externa pasan por `SharedRateLimitPartitions`. Con el área prendida cuentan en Valkey, en la
@@ -3139,12 +3140,22 @@ que pasa entre un área y la siguiente:
 sum by (reason) (increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h]))
 ```
 
-Si da distinto de cero, `reason` dice por qué: `TimeoutException` apunta a latencia hacia Valkey (el tope es
-`OperationTimeoutMs`, 100 ms), `NotConnected` a una reconexión del cliente, y `RedisServerException` a un comando que la
-ACL de producción rechaza. Antes de la etiqueta los respaldos de horario laboral del 2026-11-23 (Presence 23 y RateLimiting
-11 en un pod de 18 h) no se podían atribuir. La serie vieja sin `reason` sigue en Prometheus hasta que vence su retención.
+tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida
+del pod). Si da distinto de cero, `reason` dice por qué: `TimeoutException` es una operación que no respondió en
+`OperationTimeoutMs` (100 ms) —desde el pod no se distingue si tardó Valkey, la red o el propio proceso—,
+`NotConnected` una reconexión del cliente, y `RedisServerException` un comando que la ACL de producción rechaza. La serie
+vieja sin `reason` sigue en Prometheus hasta que vence su retención.
 
-tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+Cuánto tardan de verdad las que pasan el tope se ve en el histograma:
+
+```promql
+sum by (le, area) (increase(qep_valkey_operation_duration_seconds_bucket{outcome=~"late.*"}[24h]))
+sum by (area, outcome) (increase(qep_valkey_operation_duration_seconds_count[24h]))
+histogram_quantile(0.999, sum by (le, area) (rate(qep_valkey_operation_duration_seconds_bucket[1h])))
+```
+
+Si las `late` caben casi todas bajo `le="0.15"` o `le="0.25"`, el tope está corto; si caen en segundos, el problema no se
+arregla subiéndolo. La segunda consulta da la proporción real de operaciones que se pierden. Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
 secretos; nunca `get secret -o yaml` ni `-o json`):
 
 ```powershell
