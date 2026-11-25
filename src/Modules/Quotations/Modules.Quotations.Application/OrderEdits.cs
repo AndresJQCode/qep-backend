@@ -141,13 +141,15 @@ internal sealed record OrderDeliveryState(bool IsStorePickup, QuotationPartyDeta
 internal static class OrderDeliveryEdits
 {
     /// <summary>Devuelve <c>false</c> si no hay bloque o nada cambió. <paramref name="strict"/> exige la parte de envío
-    /// completa, como el guardado de la facturación; el cálculo previo no.</summary>
+    /// completa, como el guardado de la facturación; el cálculo previo no. Las reglas de Shopify (§11.1.4) valen en los dos.
+    /// </summary>
     public static async Task<bool> ApplyAsync(
         Order order,
         OrderDeliveryEditRequest? delivery,
         bool strict,
         IQuotationCustomerLookup customerLookup,
         IQuotationGeographyLookup geographyLookup,
+        IExternalOrderDeliveryCheck externalCheck,
         Guid tenantId,
         MemberId updatedBy,
         DateTimeOffset now,
@@ -175,7 +177,48 @@ internal static class OrderDeliveryEdits
             }
         }
 
-        return order.SetDelivery(delivery.IsStorePickup, shipping, updatedBy, now, enforceCompleteness: strict);
+        var previousParty = order.Shipping?.ToDetails();
+        var changed = order.SetDelivery(delivery.IsStorePickup, shipping, updatedBy, now, enforceCompleteness: strict);
+        // Después del agregado, que ya validó y normalizó la parte: lo que se compara y se pregunta es lo que quedaría guardado.
+        // Quien lanza acá no ha escrito nada. De recoger a enviar con los datos del cliente la parte propia no cambia (no la
+        // hay), pero la entrega sí: también se pregunta, o Shopify se quedaría con la dirección anterior. Repetir esa entrega
+        // sin cambiarla no cuenta.
+        if (OwnShippingPartyChanged(order, previousParty)
+            || (changed && !order.IsStorePickup && order.Shipping is null))
+        {
+            await EnsureShopifyCanReceiveAsync(order, externalCheck, tenantId, cancellationToken);
+        }
+
+        return changed;
+    }
+
+    /// <summary>Si, enviando, la parte de envío propia dejó de ser <paramref name="previous"/>: se agregó, cambió o se quitó
+    /// para volver a los datos del cliente. Pasar a recoger no cuenta: no hay dirección que mandar.</summary>
+    public static bool OwnShippingPartyChanged(Order order, QuotationPartyDetails? previous) =>
+        !order.IsStorePickup && order.Shipping?.ToDetails() != previous;
+
+    // Spec 2026-11-24 §11.1.4: sólo en un pedido de Shopify, para que el envío a la tienda nunca falle por un dato que falta.
+    private static async Task EnsureShopifyCanReceiveAsync(
+        Order order,
+        IExternalOrderDeliveryCheck externalCheck,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        if (order.Source != OrderSource.Shopify)
+        {
+            return;
+        }
+
+        // Con los datos del cliente no hay parte propia que mandar: no hace falta preguntar.
+        var code = order.Shipping?.ToDetails() is { } party
+            ? await externalCheck.CheckAsync(
+                tenantId, order.Id.Value, party.Country ?? QuotationPartyDetails.ColombiaCountryCode, party.RegionId,
+                cancellationToken)
+            : OrderDeliveryErrors.ShopifyPartyRequired;
+        if (code is not null)
+        {
+            throw new QuotationsDomainException(code, "Shopify cannot receive this delivery address.");
+        }
     }
 
     /// <summary>El texto del historial: la ciudad es la de DIVIPOLA en Colombia y la escrita afuera.</summary>

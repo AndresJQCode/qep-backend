@@ -17,6 +17,9 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClassFixture<SharedQuotationsHost>
 {
+    // El literal del contrato: Shopify lo lee por nombre (ShopifyDeliveryEditPushTests).
+    private const string ShippingPartyChanged = "quotations.order.shipping-party-changed.v1";
+
     private static string OrderUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationsUrl(tenantId)}/{quotationId}/order";
 
@@ -1583,6 +1586,83 @@ public sealed class OrderEditsApiTests(SharedQuotationsHost sharedHost) : IClass
         }
 
         Assert.True((await GetDetailAsync(client, tenantId, shopifyId)).Order.DeliveryEditable);
+    }
+
+    // Las reglas de Shopify (spec 2026-11-24 §11.1.4) son sólo de sus pedidos: uno manual manda a España sin región y vuelve a
+    // los datos del cliente.
+    [Fact]
+    public async Task AManualOrderSkipsTheShopifyRules()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var orderId = await CreateManualOrderAsync(client, tenantId);
+        var detail = await GetDetailAsync(client, tenantId, orderId);
+        var productId = Assert.Single(detail.Items).VariantId;
+        var spain = new QuotationPartyRequest(
+            "Lucía Fernández", null, "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null,
+            Country: "ES", CityName: "Madrid");
+
+        var toSpain = await PutEditsAsync(
+            client, tenantId, orderId, detail.Order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, spain)));
+        var saved = await ReadDetailAsync(toSpain);
+        var toCustomer = await PutEditsAsync(
+            client, tenantId, orderId, saved.Order.Version,
+            DeliveryBody(productId, new OrderDeliveryEditRequest(false, null)));
+
+        Assert.Equal(HttpStatusCode.OK, toSpain.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, toCustomer.StatusCode);
+        // Tampoco publica el aviso a Shopify (§11.1.1).
+        Assert.Empty(await OutboxMessagesAsync(factory, ShippingPartyChanged));
+    }
+
+    // Spec 2026-11-24 §11.1.1: la dirección nueva de un pedido de Shopify sale al outbox en la transacción del pedido, y
+    // Shopify encola su envío. El cálculo previo no publica y repetir la misma entrega tampoco.
+    [Fact]
+    public async Task ChangingAShopifyOrderAddressWritesTheOutboxEvent()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var orderId = await CreateShopifyOrderAsync(client, factory, tenantId, ownerUserId);
+        var detail = await GetDetailAsync(client, tenantId, orderId);
+        var (party, _) = await ColombianShippingPartyAsync(client);
+        var body = DeliveryBody(Assert.Single(detail.Items).VariantId, new OrderDeliveryEditRequest(false, party));
+
+        (await PreviewEditsAsync(client, tenantId, orderId, body)).EnsureSuccessStatusCode();
+        Assert.Empty(await OutboxMessagesAsync(factory, ShippingPartyChanged));
+        var saved = await ReadDetailAsync(await PutEditsAsync(client, tenantId, orderId, detail.Order.Version, body));
+        (await PutEditsAsync(client, tenantId, orderId, saved.Order.Version, body)).EnsureSuccessStatusCode();
+
+        var message = Assert.Single(await OutboxMessagesAsync(factory, ShippingPartyChanged));
+        var payload = JsonDocument.Parse(message.PayloadJson).RootElement;
+        Assert.Equal(
+            ["occurredAt", "orderId", "source", "tenantId"],
+            payload.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(
+            (tenantId, orderId, "Shopify"),
+            (payload.GetProperty("tenantId").GetGuid(), payload.GetProperty("orderId").GetGuid(),
+                payload.GetProperty("source").GetString()));
+    }
+
+    // Recoger no cambia nada en Shopify: no hay dirección que mandar.
+    [Fact]
+    public async Task SwitchingAShopifyOrderToPickupPublishesNothing()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var orderId = await CreateShopifyOrderAsync(client, factory, tenantId, ownerUserId);
+        var detail = await GetDetailAsync(client, tenantId, orderId);
+
+        var response = await PutEditsAsync(
+            client, tenantId, orderId, detail.Order.Version,
+            DeliveryBody(Assert.Single(detail.Items).VariantId, new OrderDeliveryEditRequest(true, null)));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True((await GetDetailAsync(client, tenantId, orderId)).Order.IsStorePickup);
+        Assert.Empty(await OutboxMessagesAsync(factory, ShippingPartyChanged));
     }
 
     [Fact]

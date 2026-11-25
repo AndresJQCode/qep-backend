@@ -75,8 +75,8 @@ internal sealed class CityCorrectionInsights(GeographyDbContext geography) : ICi
 
     /// <summary>
     /// «Sigue como se escribió» (§4.6): un pedido conserva su parte <c>Shipping</c> campo por campo como la dejó la huella —nombre,
-    /// teléfono, correo, dirección, departamento y ciudad, con <c>IS NOT DISTINCT FROM</c> porque un campo nulo en los dos lados es
-    /// igual—; un cliente sigue en la versión de la huella. Un pedido o cliente que ya no existe (o sin parte) no sigue igual.
+    /// teléfono, correo, dirección, departamento, ciudad y código postal, con <c>IS NOT DISTINCT FROM</c> porque un campo nulo en
+    /// los dos lados es igual—; un cliente sigue en la versión de la huella. Un pedido o cliente que ya no existe (o sin parte) no sigue igual.
     /// </summary>
     public async Task<IReadOnlyList<CorrectionInsight>> ReadCorrectionsAsync(
         CitySynonymId synonymId, CancellationToken cancellationToken)
@@ -96,6 +96,7 @@ internal sealed class CityCorrectionInsights(GeographyDbContext geography) : ICi
                            AND p.address IS NOT DISTINCT FROM c.party_address
                            AND p.department_id IS NOT DISTINCT FROM c.department_id
                            AND p.city_id IS NOT DISTINCT FROM c.city_id
+                           AND p.postal_code IS NOT DISTINCT FROM c.postal_code
                        ELSE cu.id IS NOT NULL AND cu.version::bigint IS NOT DISTINCT FROM c.customer_version
                    END AS "StillAsWritten"
             FROM shopify.city_corrections c

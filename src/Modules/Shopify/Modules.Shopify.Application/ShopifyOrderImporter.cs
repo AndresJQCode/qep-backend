@@ -294,7 +294,19 @@ public sealed class ShopifyOrderImporter(
             return null;
         }
 
-        return new ShopifyPartyDraft(name, phone, fields.Email, line, city.DepartmentId, city.CityId);
+        return new ShopifyPartyDraft(name, phone, fields.Email, line, city.DepartmentId, city.CityId, ShippingPostalCode(snapshot));
+    }
+
+    /// <summary>
+    /// El código postal de la parte de envío: el zip de la dirección de Shopify, recortado. <c>null</c> sin zip, y también con uno
+    /// más largo que lo que el pedido guarda (<see cref="ShopifyCityCorrection.PartyPostalCodeMaxLength"/>): recortarlo daría otro
+    /// código, y mandarlo entero haría que el pedido se rechazara por un campo opcional. Shopify lo conserva igual: el envío sin
+    /// código postal propio mantiene su zip.
+    /// </summary>
+    public static string? ShippingPostalCode(ShopifyOrderSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        return Blank(snapshot.ShippingAddress?.Zip) is { Length: <= ShopifyCityCorrection.PartyPostalCodeMaxLength } zip ? zip : null;
     }
 
     /// <summary>

@@ -1860,6 +1860,30 @@ Spec 2026-11-15 §4 (`docs/superpowers/specs/2026-11-15-store-order-buyer-link-d
   con ese correo o no está verificada: un solo código para los dos), `422 order.order.source_invalid` (el pedido no es de la tienda), `403`
   (sin permiso o de otro tenant, nunca 404).
 
+#### La entrega editable
+
+Spec 2026-11-24 §10 y §11 (`docs/superpowers/specs/2026-11-24-perfiles-de-facturacion-backend-handoff.md`). En **todo origen**.
+
+- `PUT /orders/{id}` y `POST /orders/{id}/preview` aceptan
+  `delivery: { "isStorePickup": bool, "shipping": QuotationPartyRequest | null }`. **Ausente conserva** la entrega (un frontend
+  viejo no la toca). `shipping: null` con envío es la dirección del cliente. Pasar a recoger quita la dirección y limpia el
+  envío, contraentrega incluida. Al guardar, una parte propia debe venir completa; el cálculo previo la acepta a medias.
+- El pedido responde `order.deliveryEditable`: `true` mientras esté abierto, sin preparar, sin facturar y, si es mayorista, sin
+  aprobar.
+- Un cambio deja en el historial una fila `PartiesChanged` y la auditoría `quotation.order.delivery_changed`.
+- Errores (422): `order.order.already_invoiced`, `order.order.already_prepared` (facturado gana) y `order.order.not_editable`;
+  `order.delivery.shipping_party_on_pickup`, `order.delivery.address_required` (de recoger a los datos de un cliente sin
+  domicilio), `order.shipping.party_incomplete` (sólo al guardar), `quotations.party.region_invalid` con
+  `errors["Delivery.Shipping.RegionId"]` y `quotations.party.postal_code_too_long` con
+  `errors["Delivery.Shipping.PostalCode"]`.
+- **Pedido de Shopify** (§11.1). Cuando, enviando, cambia la parte propia, se rechaza lo que el envío a la tienda no podría
+  mandar, también en el cálculo previo: `order.delivery.shopify_party_required` (volver a la dirección del cliente),
+  `order.delivery.shopify_region_required` (España sin región) y `order.delivery.shopify_region_unmapped`. **El código postal
+  nunca es obligatorio** (owner, 2026-11-25).
+- **Evento** `quotations.order.shipping-party-changed.v1`, payload `{ tenantId, orderId, source, occurredAt }`: al outbox en la
+  transacción del pedido, sólo en un pedido de Shopify, enviando y con la parte propia cambiada. Lo consume Shopify, que encola
+  el envío de la dirección (ver [Integración con Shopify](#integración-con-shopify)). Recoger no publica nada.
+
 #### Los cuatro ejes del pedido
 
 Desde el spec 2026-11-10 el pedido tiene cuatro ejes independientes, al estilo de Shopify. Viajan por
@@ -3054,15 +3078,16 @@ Meta» la muestra como «hace X»; no hay alerta de silencio (owner, 2026-11-16)
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
-El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Platform`. Valkey **no** entra a
+El cliente de Valkey (spec 2026-11-13) publica tres métricas en el meter `Qep.Platform`. Valkey **no** entra a
 `/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
 
 | Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
 | ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
 | `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
 | `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area,reason}` | `area`, `reason` | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
+| `qep.valkey.operation.duration` | `qep_valkey_operation_duration_seconds` (histograma) | `area`, `outcome` | Cuánto tarda cada operación pedida con `ValkeyGateway.TryAsync`, medida desde el pod. `outcome`: `ok`, `error`, `late` (pasó el tope y después respondió; se mide al terminar) y `late_error` (pasó el tope y después falló). No mide `Publish` ni `Subscribe`, y sin conexión no hay operación que medir |
 
-La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
+La alerta sobre las dos primeras no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
 **Limitadores compartidos (D-3, `Valkey:Areas:RateLimiting`).** Las siete políticas de ventana fija de `Program.cs` y el
 límite por clave de la API externa pasan por `SharedRateLimitPartitions`. Con el área prendida cuentan en Valkey, en la
@@ -3115,12 +3140,22 @@ que pasa entre un área y la siguiente:
 sum by (reason) (increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h]))
 ```
 
-Si da distinto de cero, `reason` dice por qué: `TimeoutException` apunta a latencia hacia Valkey (el tope es
-`OperationTimeoutMs`, 100 ms), `NotConnected` a una reconexión del cliente, y `RedisServerException` a un comando que la
-ACL de producción rechaza. Antes de la etiqueta los respaldos de horario laboral del 2026-11-23 (Presence 23 y RateLimiting
-11 en un pod de 18 h) no se podían atribuir. La serie vieja sin `reason` sigue en Prometheus hasta que vence su retención.
+tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida
+del pod). Si da distinto de cero, `reason` dice por qué: `TimeoutException` es una operación que no respondió en
+`OperationTimeoutMs` (100 ms) —desde el pod no se distingue si tardó Valkey, la red o el propio proceso—,
+`NotConnected` una reconexión del cliente, y `RedisServerException` un comando que la ACL de producción rechaza. La serie
+vieja sin `reason` sigue en Prometheus hasta que vence su retención.
 
-tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+Cuánto tardan de verdad las que pasan el tope se ve en el histograma:
+
+```promql
+sum by (le, area) (increase(qep_valkey_operation_duration_seconds_bucket{outcome=~"late.*"}[24h]))
+sum by (area, outcome) (increase(qep_valkey_operation_duration_seconds_count[24h]))
+histogram_quantile(0.999, sum by (le, area) (rate(qep_valkey_operation_duration_seconds_bucket[1h])))
+```
+
+Si las `late` caben casi todas bajo `le="0.15"` o `le="0.25"`, el tope está corto; si caen en segundos, el problema no se
+arregla subiéndolo. La segunda consulta da la proporción real de operaciones que se pierden. Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
 secretos; nunca `get secret -o yaml` ni `-o json`):
 
 ```powershell
@@ -5257,13 +5292,31 @@ atributos) viaja a Shopify.
   (`ShopifyCityCorrectionProcessor`, `Applied` o `AlreadyApplied`), la parte escrita pasa a la proyección (no la tocó el
   asesor) y se encola `[ShippingAddress]` en el mismo guardado de la huella. Si el asesor ya había editado la parte, el trabajo
   sale `Skipped` con `shipping_changed` y nada viaja: gana el asesor.
+- **La dirección cambiada en «Editar pedido» también viaja** (spec 2026-11-24 §11.1, ver [La entrega
+  editable](#la-entrega-editable)). `QuotationOrderEventsWorker` llama cada 10 s al consumidor
+  `shopify.quotation-order-events`, que lee `quotations.order.shipping-party-changed.v1` del outbox y encola
+  `[ShippingAddress]` (fusionado con el envío abierto; `Held` con `connection_inactive` si la conexión no está operativa). No
+  escribe el pedido ni mueve la proyección: una edición posterior de Shopify sobre la dirección es conflicto y gana QEP.
+  Pasar a recoger no viaja: `orderUpdate` no cambia el método de entrega.
+- **El código postal es parte de la dirección.** La importación, las ediciones de Shopify y la corrección de ciudad por
+  sinónimo ponen el `zip` en la parte (uno de más de 20 caracteres se omite), la huella (`shopify.city_corrections.postal_code`)
+  y la proyección lo guardan, y la comparación lo mira; «Cambios por revisar» trae la fila `zip` en el grupo `ShippingAddress`.
+  Un pedido sin código postal no toma como cambio un `zip` que Shopify no modificó. Un payload guardado antes de que el espejo
+  leyera el zip no tiene la clave (distinto de `"zip": null`): de ese zip desconocido no sale ningún cambio.
+- **El eco de una dirección de fuera de Colombia** se reconoce comparando lo que llega con lo que el envío de la parte del pedido
+  mandaría (`ShopifyPushAddress`, la misma regla de los dos lados): si coincide, no hay cambio; si no, es conflicto
+  `city_unresolved`, porque las ciudades de afuera todavía no se importan.
 - **El envío.** `ShopifyOrderPushWorker` corre cada 10 s, en lotes de 50, y manda `orderUpdate` (GraphQL, `shopify.admin`) con
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
-  (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
-  `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
-  dirección entera. El `zip` es el `postalCode` de la parte de QEP; sin él, el del último snapshot sólo si país y provincia de
-  la parte son los del snapshot; si no, no viaja. La corrección del panel no recibe código postal y conserva el que tenga el
-  pedido. La nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  (`lastName` y `address2` vacíos, D12) y la `company` del **último** snapshot, porque `orderUpdate` reemplaza la dirección
+  entera. En Colombia, la ciudad y el departamento con sus nombres de QEP, el `provinceCode` de `ColombiaProvinceCodes` y el
+  `countryCode` del último snapshot si es Colombia (`CO` si no). Fuera de Colombia, el país y la ciudad escrita de la parte y el
+  `provinceCode` de su región (`SpainProvinceCodes`, INE → ISO 3166-2; un país sin regiones va sin `provinceCode`), con las
+  mismas reglas con las que se rechaza el guardado (`ShopifyShippingAddressRules`). El `zip` es el `postalCode` de la parte de
+  QEP; sin él, el del último snapshot sólo si país y provincia de la parte son los del snapshot; si no, no viaja. La corrección
+  del panel no recibe código postal: conserva el del pedido mientras no cambie el departamento y, si cambia, lo borra. La nota es
+  `BuyerNotes` y los atributos,
+  `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
   `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro

@@ -84,7 +84,10 @@ public sealed class SaveOrderEditsGiftTests
             new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),
             new StubWholesaleLinePricing(),
             new StubQuotationCustomerLookup(
-                new QuotationCustomerRef(Guid.CreateVersion7(), TenantId, "C-1", true, "Cliente", null, null, false, false)));
+                new QuotationCustomerRef(Guid.CreateVersion7(), TenantId, "C-1", true, "Cliente", null, null, false, false)),
+            // Los cuerpos de estas pruebas no traen entrega: Shopify no se pregunta.
+            deliveryCheck: null!,
+            lifecycleEvents: new RecordingQuotationLifecycleEventPublisher());
         return new Harness(orders, audit, handler);
     }
 

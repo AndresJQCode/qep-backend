@@ -1406,6 +1406,11 @@ public sealed class CompositionRootTests
             provider.GetServices<IHostedService>(),
             service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyCityCorrectionWorker");
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyCityCorrectionProcessor>());
+        // Spec 2026-11-24 §11.1.1: sin el consumidor, la dirección cambiada en «Editar pedido» se publica y nunca llega a Shopify.
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.QuotationOrderEventsWorker");
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyShippingPartyChangedApplier>());
     }
 
     /// <summary>

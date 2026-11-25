@@ -1,5 +1,5 @@
-using BuildingBlocks.Application;
 using Bootstrapper.Copilot;
+using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Authorization.Application;
 using Modules.Siigo.Application;

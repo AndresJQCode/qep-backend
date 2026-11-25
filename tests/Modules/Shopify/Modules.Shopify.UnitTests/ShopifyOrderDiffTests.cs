@@ -62,6 +62,37 @@ public sealed class ShopifyOrderDiffTests
         Assert.Empty(ShopifyOrderDiff.Compute(Snapshot(), Snapshot(), Store()));
     }
 
+    // Sin la clave "zip" (payload guardado antes de que el espejo la leyera) no se sabe cuál había: no hay fila.
+    [Fact]
+    public void AZipOverAPayloadWithoutTheKeyHasNoRow()
+    {
+        var legacy = Snapshot(address: Address with { ZipUnrecorded = true });
+        var current = Snapshot(address: Address with { Zip = "050021" });
+
+        Assert.Empty(ShopifyOrderDiff.Compute(legacy, current, Store()));
+        Assert.Empty(ShopifyOrderDiff.Compute(current, legacy, Store()));
+        Assert.Equal(
+            "zip",
+            Assert.Single(Assert.Single(ShopifyOrderDiff.Compute(Snapshot(), current, Store())).Rows).Field);
+    }
+
+    [Fact]
+    public void APayloadWithoutTheZipKeyKeepsItThatWay()
+    {
+        var node = JsonNode.Parse(ShopifyOrderIngestion.WritePayload(Snapshot()))!;
+        Assert.True(node["shippingAddress"]!.AsObject().ContainsKey("zip"));
+        var recorded = ShopifyOrderIngestion.ReadPayload(node.ToJsonString());
+        node["shippingAddress"]!.AsObject().Remove("zip");
+
+        var legacy = ShopifyOrderIngestion.ReadPayload(node.ToJsonString());
+        var rewritten = JsonNode.Parse(ShopifyOrderIngestion.WritePayload(legacy))!;
+
+        Assert.False(recorded.ShippingAddress!.ZipUnrecorded);
+        Assert.True(legacy.ShippingAddress!.ZipUnrecorded);
+        Assert.False(rewritten["shippingAddress"]!.AsObject().ContainsKey("zip"));
+        Assert.Equal(legacy.ShippingAddress, ShopifyOrderIngestion.ReadPayload(rewritten.ToJsonString()).ShippingAddress);
+    }
+
     [Fact]
     public void OnlyPaymentCancellationAndUpdatedAtAreNoDiff()
     {

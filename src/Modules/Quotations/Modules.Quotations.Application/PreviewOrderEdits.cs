@@ -52,7 +52,8 @@ public sealed class PreviewOrderEditsHandler(
     IOrderVariantCostLookup costLookup,
     IQuotationGeographyLookup geographyLookup,
     IWholesaleLinePricing wholesalePricing,
-    IQuotationCustomerLookup customerLookup)
+    IQuotationCustomerLookup customerLookup,
+    IExternalOrderDeliveryCheck deliveryCheck)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -131,7 +132,7 @@ public sealed class PreviewOrderEditsHandler(
         // Mismo orden que el guardado: la entrega antes de la facturación y del envío, con las mismas reglas salvo la
         // parte completa, que el preview no exige mientras la persona teclea.
         await OrderDeliveryEdits.ApplyAsync(
-            order, query.Delivery, strict: false, customerLookup, geographyLookup, query.TenantId, updatedBy, now,
+            order, query.Delivery, strict: false, customerLookup, geographyLookup, deliveryCheck, query.TenantId, updatedBy, now,
             cancellationToken);
 
         // Mismo orden que el guardado: la facturación mueve la retención y el excedente de IVA, así que va antes

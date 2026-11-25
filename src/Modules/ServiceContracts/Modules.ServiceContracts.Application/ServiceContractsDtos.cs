@@ -6,7 +6,7 @@ namespace Modules.ServiceContracts.Application;
 
 public sealed record MemberRefDto(Guid MemberId, string DisplayName, bool IsActive);
 
-public sealed record CustomerRefDto(Guid Id, string Name, string? PhoneE164, string? Email);
+public sealed record CustomerRefDto(Guid Id, string Name, string? PhoneE164, string? Email, string? BusinessName = null);
 
 public sealed record CurrencyAmountDto(string Currency, decimal Amount);
 

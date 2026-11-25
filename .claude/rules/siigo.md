@@ -153,6 +153,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   Siigo rechazó con `invalid_total_payments`. `RetentionRoundingDelta` recalcula la retención por ítem con el porcentaje del pedido
   (`SiigoWithholdingInput.Percentage`) y corrige los pagos sólo si la diferencia es de redondeo (hasta `Tolerance`); más que eso es otra base u otro
   porcentaje y se deja rechazar a la vista. ReteICA va en la factura y no se corrige: no se conoce cómo la redondea Siigo.
+- **Todo pago lleva `due_date` = fecha de la factura, comprobantes incluidos** (owner, 2026-11-25). Que una forma de pago maneje
+  vencimiento se configura en Siigo, y sin el campo rechaza con `parameter_required` en `payments[n].due_date` (observado con un
+  comprobante). Se envía siempre, sin leer la marca de `/payment-types`: la forma de pago puede cambiar en Siigo en cualquier momento.
+  **Sin probar contra Siigo:** que una forma sin vencimiento acepte el campo (a la fecha ninguna factura aceptada en producción lo había
+  llevado). La documentación además admite un solo pago cuando la forma maneja vencimiento; QEP no junta pagos, así que un pedido con
+  dos pagos en una de ésas puede salir rechazado.
 - **El PDF de la factura no se guarda: se pide a Siigo en cada descarga** (`GET …/siigo-invoice/{invoiceId}/pdf`, `GetSiigoInvoicePdfHandler`).
   Mismo permiso que generar (`siigo.invoice.issue`: de fábrica `admin` y `billing`), así que un rol con ese permiso también lo ve. Siigo lo
   entrega como `{"base64": "…"}` (campo tomado de la documentación del SDK, no probado contra una cuenta real: si falla, mirar ese campo
