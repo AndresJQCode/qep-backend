@@ -174,9 +174,14 @@ public interface IDistributorRepository
     /// <summary>Por el SHA-256 del token (nunca el token plano). Un token rotado o un distribuidor borrado dan <c>null</c>.</summary>
     Task<Distributor?> FindByTokenHashAsync(string tokenHash, CancellationToken cancellationToken);
 
-    /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13).</summary>
+    /// <summary>Si el documento ya es de otro distribuidor del tenant, en cualquier estado (D-13). Al editar,
+    /// <paramref name="excluding"/> es el propio distribuidor; al invitar, <c>null</c>.</summary>
     Task<bool> IdentificationExistsAsync(
-        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken);
+        Guid tenantId,
+        string identificationType,
+        string identificationNumber,
+        DistributorId? excluding,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Fase 3: la relación entre los dos tenants, en cualquier estado, o <c>null</c>. Va acotada al mayorista: quien pregunta
