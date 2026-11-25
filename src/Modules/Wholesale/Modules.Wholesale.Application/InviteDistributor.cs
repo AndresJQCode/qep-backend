@@ -27,7 +27,8 @@ public sealed record InviteDistributorCommand(
 /// <summary>
 /// Invita a un distribuidor. Orden: 403 → 422 de validación → 404 lista → 422 asesor → 422 empresa → 422 ciudad → 409 documento → 422
 /// <c>Phone</c> → 422 conexión. El token plano se genera acá y sólo viaja en el evento hacia el correo; en la base queda su
-/// SHA-256 (D-1). El id del tenant que nacerá si acepta creando uno se reserva ya (D-17). Con teléfono (spec 2026-11-18) sale
+/// SHA-256 (D-1). Igual la prueba de buzón (spec 2026-11-24), que además no va en la respuesta ni en el aviso por WhatsApp.
+/// El id del tenant que nacerá si acepta creando uno se reserva ya (D-17). Con teléfono (spec 2026-11-18) sale
 /// además, en el mismo commit, el evento del aviso por WhatsApp (<c>wholesale.distributor-invitation-link.v1</c>, spec
 /// 2026-11-19 §2), que lleva el token sólo en el payload del outbox; el mensaje de WhatsApp todavía sale sin el link. Sin
 /// teléfono la conexión se ignora. La respuesta
@@ -81,6 +82,7 @@ public sealed class InviteDistributorHandler(
                 whatsAppConnections, command.TenantId, command.WhatsAppConnectionId, cancellationToken);
 
         var token = InvitationTokens.Generate();
+        var (emailProof, emailProofHash) = DistributorEmailProofs.Issue();
         var now = clock.UtcNow;
         var distributor = Distributor.Invite(
             command.TenantId,
@@ -101,7 +103,8 @@ public sealed class InviteDistributorHandler(
             now,
             command.CityId,
             command.CityName,
-            command.Address);
+            command.Address,
+            emailProofHash);
         distributors.Add(distributor);
         auditPublisher.Publish(
             command.TenantId,
@@ -118,6 +121,7 @@ public sealed class InviteDistributorHandler(
             distributor.Email,
             distributor.BusinessName,
             token,
+            emailProof,
             distributor.Invitation.ExpiresAt,
             command.CorrelationId,
             now);

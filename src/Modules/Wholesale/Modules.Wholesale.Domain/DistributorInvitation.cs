@@ -1,10 +1,11 @@
 namespace Modules.Wholesale.Domain;
 
 /// <summary>
-/// La invitación de un distribuidor, hija 1:1 de <see cref="Distributor"/> (D-1). En base sólo vive el SHA-256 del token:
-/// el token plano viaja únicamente en el payload del outbox hacia el correo. Reenviar rota token y vigencia sobre la misma
-/// fila, así que el link anterior deja de existir. <see cref="ReservedTenantId"/> es el id con que nace el tenant del
-/// distribuidor si acepta creando uno (D-17): no cambia al reenviar.
+/// La invitación de un distribuidor, hija 1:1 de <see cref="Distributor"/> (D-1). En base sólo viven los SHA-256 del token y
+/// de la prueba de buzón (<see cref="EmailProofHash"/>). En claro, el token viaja en los payloads del outbox y la prueba,
+/// sólo en el del correo. Reenviar rota token, prueba y vigencia sobre la misma fila, así que el link anterior deja de
+/// existir. <see cref="ReservedTenantId"/> es el id con que nace el tenant del distribuidor si acepta creando uno (D-17):
+/// no cambia al reenviar.
 /// </summary>
 public sealed class DistributorInvitation
 {
@@ -14,15 +15,24 @@ public sealed class DistributorInvitation
         TokenHash = string.Empty;
     }
 
-    private DistributorInvitation(string tokenHash, Guid reservedTenantId, DateTimeOffset sentAt, DateTimeOffset expiresAt)
+    private DistributorInvitation(
+        string tokenHash, string? emailProofHash, Guid reservedTenantId, DateTimeOffset sentAt, DateTimeOffset expiresAt)
     {
         TokenHash = tokenHash;
+        EmailProofHash = emailProofHash;
         ReservedTenantId = reservedTenantId;
         SentAt = sentAt;
         ExpiresAt = expiresAt;
     }
 
     public string TokenHash { get; private set; }
+
+    /// <summary>
+    /// Spec 2026-11-24: SHA-256 del secreto que sólo lleva el link del correo; con él, quien acepta demuestra que controla el
+    /// buzón invitado. <c>null</c> si no hay prueba vigente: tras «Copiar» o un cambio de correo, y en las invitaciones
+    /// anteriores a la prueba.
+    /// </summary>
+    public string? EmailProofHash { get; private set; }
 
     public DateTimeOffset SentAt { get; private set; }
 
@@ -56,19 +66,24 @@ public sealed class DistributorInvitation
     /// membresías).</summary>
     public bool IsExpiredAt(DateTimeOffset now) => now > ExpiresAt;
 
-    internal static DistributorInvitation Issue(string tokenHash, Guid reservedTenantId, bool withNotice, DateTimeOffset now) =>
-        new(tokenHash, reservedTenantId, now, now + Distributor.InvitationTimeToLive)
+    internal static DistributorInvitation Issue(
+        string tokenHash, string? emailProofHash, Guid reservedTenantId, bool withNotice, DateTimeOffset now) =>
+        new(tokenHash, emailProofHash, reservedTenantId, now, now + Distributor.InvitationTimeToLive)
         {
             NoticeStatus = withNotice ? InvitationNoticeStatus.Pending : null,
         };
 
-    internal void Rotate(string tokenHash, DateTimeOffset now)
+    internal void Rotate(string tokenHash, string? emailProofHash, DateTimeOffset now)
     {
         TokenHash = tokenHash;
+        EmailProofHash = emailProofHash;
         SentAt = now;
         ExpiresAt = now + Distributor.InvitationTimeToLive;
         Generation++;
     }
+
+    /// <summary>La prueba dejó de corresponder al buzón; el token sigue valiendo.</summary>
+    internal void ForgetEmailProof() => EmailProofHash = null;
 
     /// <summary>Una generación nueva sin aviso: el que estaba en curso ya no es de este destino (P-3).</summary>
     internal void ForgetNotice()

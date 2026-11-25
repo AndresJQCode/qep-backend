@@ -36,6 +36,24 @@ public sealed class DistributorHandlersTests
         Assert.Equal(1, _world.UnitOfWork.Saves);
     }
 
+    // Spec 2026-11-24: la prueba del buzón es un secreto aparte del token; en la base queda su hash y sólo viaja al correo.
+    [Fact]
+    public async Task InviteStoresOnlyTheEmailProofHashAndPublishesTheProof()
+    {
+        var detail = await _world.InviteHandler().HandleAsync(_world.InviteCommand(), Ct);
+
+        var published = Assert.Single(_world.Events.Invitations);
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.Equal(InvitationTokens.HashOf(published.EmailProof), stored.Invitation.EmailProofHash);
+        Assert.NotEqual(published.Token, published.EmailProof);
+        var audit = Assert.Single(_world.Audit.Entries);
+        Assert.DoesNotContain(
+            published.EmailProof, string.Join("|", audit.ChangedFields.Append(audit.ResourceId)), StringComparison.Ordinal);
+        Assert.NotNull(detail.InvitationUrl);
+        Assert.DoesNotContain(published.EmailProof, detail.InvitationUrl, StringComparison.Ordinal);
+        Assert.DoesNotContain("ev=", detail.InvitationUrl, StringComparison.Ordinal);
+    }
+
     // Review Focus 5: una ciudad que no existe se rechaza al invitar, no cuando el distribuidor intenta aceptar.
     [Fact]
     public async Task InviteWithAnUnknownCityIsCityNotFound()
@@ -185,6 +203,49 @@ public sealed class DistributorHandlersTests
             (Assert.Single(_world.Audit.Entries).Action, _world.Audit.Entries[0].ResourceType));
         Assert.False(detail.Invitation.Expired);
         Assert.Equal(2L, detail.Version);
+    }
+
+    // Spec 2026-11-24: reenviar pone una prueba nueva y la del correo anterior deja de probar el buzón.
+    [Fact]
+    public async Task ResendPublishesANewEmailProofAndTheOldOneStopsProving()
+    {
+        var invited = await _world.InviteHandler().HandleAsync(_world.InviteCommand(), Ct);
+        var first = Assert.Single(_world.Events.Invitations).EmailProof;
+
+        await _world.TransitionHandler().HandleAsync(
+            new TransitionDistributorCommand(_world.Tenant, invited.Id, invited.Version, DistributorAction.Resend, "trace-2"), Ct);
+
+        var second = _world.Events.Invitations[1].EmailProof;
+        var stored = Assert.Single(_world.Distributors.Distributors);
+        Assert.NotEqual(first, second);
+        Assert.Equal(InvitationTokens.HashOf(second), stored.Invitation.EmailProofHash);
+        Assert.False(DistributorEmailProofs.Proves(stored, first, stored.Email));
+        Assert.True(DistributorEmailProofs.Proves(stored, second, stored.Email));
+    }
+
+    // Spec 2026-11-24: el link de «Copiar» no sale del buzón, así que rotar anula la prueba.
+    [Fact]
+    public async Task RotateVoidsTheEmailProof()
+    {
+        var distributor = _world.SeedInvited(emailProofHash: DistributorEmailProofs.Issue().Hash);
+
+        await _world.RotateHandler().HandleAsync(RotateCommand(distributor), Ct);
+
+        Assert.Null(distributor.Invitation.EmailProofHash);
+    }
+
+    // Spec 2026-11-24: sin esto, quien tiene el correo anterior podría crear la cuenta del nuevo.
+    [Theory]
+    [InlineData("otra@distri.co", false)]
+    [InlineData("ANA@DISTRI.CO", true)]
+    public async Task UpdateWithAnotherEmailVoidsTheEmailProof(string email, bool keepsTheProof)
+    {
+        var hash = DistributorEmailProofs.Issue().Hash;
+        var distributor = _world.SeedInvited(cityId: _world.MedellinId, emailProofHash: hash);
+
+        await _world.UpdateHandler().HandleAsync(UpdateCommand(distributor, null, null) with { Email = email }, Ct);
+
+        Assert.Equal(keepsTheProof ? hash : null, distributor.Invitation.EmailProofHash);
     }
 
     [Fact]

@@ -105,6 +105,7 @@ internal sealed record PublishedInvitation(
     string Email,
     string BusinessName,
     string Token,
+    string EmailProof,
     DateTimeOffset ExpiresAt,
     string CorrelationId,
     DateTimeOffset OccurredAt);
@@ -173,11 +174,12 @@ internal sealed class FakeEventPublisher : IWholesaleEventPublisher
         string email,
         string businessName,
         string token,
+        string emailProof,
         DateTimeOffset expiresAt,
         string correlationId,
         DateTimeOffset occurredAt) =>
         Invitations.Add(new PublishedInvitation(
-            tenantId, distributorId, email, businessName, token, expiresAt, correlationId, occurredAt));
+            tenantId, distributorId, email, businessName, token, emailProof, expiresAt, correlationId, occurredAt));
 }
 
 /// <summary>El link de la invitación con una base fija; <see cref="TokenOf"/> saca el token de vuelta.</summary>
