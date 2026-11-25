@@ -172,6 +172,7 @@ public static class SiigoEndpoints
             .Produces<SiigoInvoiceDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Spec 2026-11-21: las llamadas a Siigo que fallaron, con su curl y la respuesta. Lectura sola; expiran a los 7 días.

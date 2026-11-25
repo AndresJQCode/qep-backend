@@ -84,6 +84,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   (`SiigoInvoice.CanResend` y `SiigoInvoiceBatchItem.Effective` no ven las otras tandas): una respuesta nueva que ofrezca reenviar tiene
   que cruzarlo. `canResolve` no lo mira. La excepción es la respuesta del `POST` síncrono, que no lo cruza: puede traer `canResend` en
   `true` con el pedido en una tanda.
+- **«No existe» se rechaza mientras una tanda tenga el pedido** (409 `siigo.invoice_batch.order_in_progress`, dentro de la transacción
+  que bloquea el pedido): soltar la fila haría que el worker armara otra factura con otra clave en vez de reenviar la misma, y podría
+  duplicarla. «Existe» sí se acepta. Crear una tanda no toma ese candado, así que una creada justo entre la consulta y el guardado se
+  cuela. El `POST` síncrono no deja ítem, así que esta guarda no lo ve: mientras manda, la protege el reclamo
+  (`siigo.invoice.state_invalid`), y uno que espere el candado detrás de un «no existe» arma una factura nueva.
 - **Un regalo viaja como obsequio** (spec 2026-11-21): el ítem lleva `price: 0`, `discount: 0`, `tax_base` (el precio de lista **sin IVA**,
   `ListUnitPrice × 100 / (100 + IVA)` a **2 decimales**: la documentación de Siigo da a `tax_base` «máximo 11 enteros y 2 decimales», y con 6
   Siigo rechazó con `invalid_amount` en `items[n].tax_base`; sin IVA es el precio de lista tal cual) y `taxpayer: "Company"`, con el IVA en `taxes` si lo
