@@ -568,6 +568,14 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`c1177de3c`, `--no-ff`, sin push) **correcciones de la facturación con Siigo en
+  segundo plano** (`fix/siigo-facturacion-pendientes`, hasta `898ead28e`; rama y worktree borrados). Adapta sin la etapa
+  *contract* tres arreglos de `feature/siigo-quitar-emision-sincrona` (aviso de factura sin marcar en el pedido, sin
+  reenvío ni «No existe» mientras una tanda tiene el pedido) y corrige: `payments: [null]` responde 422, una tanda con
+  todos sus ítems resueltos se lee terminada, un `page` enorme se recorta, un reenvío que no se puede hacer queda «por
+  confirmar» si la factura puede existir, el flete no se resuelve mientras la factura del pedido esté abierta y
+  `canResolve` del ítem coincide con el del pedido. **Sin pruebas y sin la compuerta, por decisión del owner:** sólo
+  build sin avisos; las pruebas nuevas y adaptadas no se han corrido. Al mergear la rama *contract* habrá conflictos.
 - 2026-11-25 — Mergeado a `develop` (`22972a869`, `--no-ff`, sin push) el resto de **los arreglos de la corrida completa**
   (`fix/test-reds`, hasta `a1a4618f6`; rama y worktree borrados; otra parte ya había entrado con `53579490d`,
   `052b7fbac` y `d3df88f9a`). Bugs corregidos en este merge: registrar un tenant tomaba el idioma como país (422),
