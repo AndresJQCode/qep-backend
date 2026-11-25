@@ -51,6 +51,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
 - **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
   así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
+- **El cliente de Siigo no corta con `HttpClient.Timeout` (está en `Timeout.InfiniteTimeSpan`): cada llamada lleva su plazo**
+  (`SiigoApiClient.SendAsync`, `CancellationTokenSource` enlazado que cubre el envío y la lectura del cuerpo). `POST v1/invoices` usa
+  `InvoiceCreateTimeout` y todo lo demás, incluido el `/auth` previo a la factura, `DefaultTimeout`; hoy los dos son 30 s y no se
+  configuran. **Una petición nueva tiene que pasar un plazo:** sin él no la corta nada. El vencimiento del plazo es `timeout`; una
+  cancelación de quien llama sube como `OperationCanceledException`. Si subes un plazo, `SiigoTimeoutBudgetTests` exige que cuatro
+  llamadas generales más dos facturas quepan en `SiigoInvoice.SendLease`, y ése en el lease del worker.
 - **Una llamada a Siigo que falla deja su curl y la respuesta en `siigo.call_failures`** (spec 2026-11-21). Una fila por llamada fallida,
   lecturas y escrituras: el `curl.exe` de la petición (token y `access_key` enmascarados, `SiigoCurl.Build`) y lo que contestó Siigo, atada a la
   factura por la `Idempotency-Key` (creación) o el id de Siigo (sellado). **Una llamada buena no se guarda nunca:** la respuesta de `/auth`

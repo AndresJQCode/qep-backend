@@ -40,13 +40,21 @@ public sealed class SiigoApiClientTests : IDisposable
         _cache.Dispose();
     }
 
-    private SiigoApiClient NewClient(HttpMessageHandler handler) =>
+    private SiigoApiClient NewClient(HttpMessageHandler handler, SiigoApiTimeouts? timeouts = null) =>
         new(
             new HttpClient(handler, disposeHandler: false),
             Options.Create(new SiigoOptions { BaseUrl = "https://siigo.test", PartnerId = PartnerId }),
             _tokens,
             _cache,
-            _failures);
+            _failures,
+            timeouts: timeouts);
+
+    // Plazos de la prueba: el corto vence de verdad y el largo no vence mientras dura la prueba.
+    private static readonly TimeSpan ShortDeadline = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan LongDeadline = TimeSpan.FromMinutes(10);
+
+    // Si el plazo propio no cortara, la prueba falla aquí en vez de quedarse colgada.
+    private static readonly TimeSpan HangGuard = TimeSpan.FromSeconds(30);
 
     private readonly RecordingFailureLog _failures = new();
 
@@ -383,6 +391,97 @@ public sealed class SiigoApiClientTests : IDisposable
         var outcome = await _client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken);
 
         Assert.Equal("timeout", Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome).Reason);
+    }
+
+    // --- Plazo propio por llamada (spec 2026-11-24 §4) ---
+
+    [Fact]
+    public async Task TheInvoiceCreationUsesItsOwnDeadline()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        _ = _api.Hang("/v1/invoices");
+        var client = NewClient(_api, new SiigoApiTimeouts(Default: LongDeadline, InvoiceCreate: ShortDeadline));
+
+        var outcome = await client
+            .CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken)
+            .WaitAsync(HangGuard, TestContext.Current.CancellationToken);
+
+        Assert.Equal("timeout", Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome).Reason);
+        Assert.False(TestContext.Current.CancellationToken.IsCancellationRequested);
+        Assert.Equal("v1/invoices", Assert.Single(_failures.Recorded).Path);
+    }
+
+    [Fact]
+    public async Task AReadUsesTheDefaultDeadline()
+    {
+        // Con el token ya puesto, lo único que sale es la lectura: el plazo corto no depende de lo que tarde /auth.
+        _tokens.Set(ConnectionId, "token-vigente", TimeSpan.FromHours(1));
+        _ = _api.Hang("/v1/document-types");
+        var client = NewClient(_api, new SiigoApiTimeouts(Default: ShortDeadline, InvoiceCreate: LongDeadline));
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => client
+            .ListDocumentTypesAsync(Credentials, TestContext.Current.CancellationToken)
+            .WaitAsync(HangGuard, TestContext.Current.CancellationToken));
+
+        Assert.Equal("siigo.unavailable", error.Code);
+        Assert.Equal("timeout", Assert.Single(_failures.Recorded).Reason);
+    }
+
+    // El /auth que antecede a la factura es una llamada como las demás: no hereda el plazo de crearla.
+    [Fact]
+    public async Task TheAuthenticationBeforeAnInvoiceUsesTheDefaultDeadline()
+    {
+        _ = _api.Hang("/auth");
+        var client = NewClient(_api, new SiigoApiTimeouts(Default: ShortDeadline, InvoiceCreate: LongDeadline));
+
+        var outcome = await client
+            .CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", TestContext.Current.CancellationToken)
+            .WaitAsync(HangGuard, TestContext.Current.CancellationToken);
+
+        Assert.Equal("timeout", Assert.IsType<SiigoInvoiceOutcome.Transient>(outcome).Reason);
+        Assert.Equal("auth", Assert.Single(_failures.Recorded).Path);
+        Assert.DoesNotContain(_api.Requests, request => request.Path == "/v1/invoices");
+    }
+
+    [Fact]
+    public async Task TheStampUsesTheDefaultDeadline()
+    {
+        _tokens.Set(ConnectionId, "token-vigente", TimeSpan.FromHours(1));
+        _ = _api.Hang("/v1/invoices/inv-1/stamp");
+        var client = NewClient(_api, new SiigoApiTimeouts(Default: ShortDeadline, InvoiceCreate: LongDeadline));
+
+        var outcome = await client
+            .StampInvoiceAsync(Credentials, "inv-1", TestContext.Current.CancellationToken)
+            .WaitAsync(HangGuard, TestContext.Current.CancellationToken);
+
+        Assert.Equal("timeout", Assert.IsType<SiigoStampOutcome.Transient>(outcome).Reason);
+    }
+
+    [Fact]
+    public void TheClientItselfNeverTimesOut()
+    {
+        using var httpClient = new HttpClient();
+
+        SiigoApiClient.ConfigureClient(httpClient);
+
+        Assert.Equal(Timeout.InfiniteTimeSpan, httpClient.Timeout);
+    }
+
+    [Fact]
+    public async Task ACallerCancellationIsNotATimeout()
+    {
+        _api.On("/auth", HttpStatusCode.OK, Fixture.Read("auth.json"));
+        var hung = _api.Hang("/v1/invoices");
+        var client = NewClient(_api, new SiigoApiTimeouts(Default: LongDeadline, InvoiceCreate: LongDeadline));
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+
+        var call = client.CreateInvoiceAsync(Credentials, new SiigoInvoiceRequest("{}"), "abc123", caller.Token);
+        await hung.WaitAsync(HangGuard, TestContext.Current.CancellationToken);
+        await caller.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => call.WaitAsync(HangGuard, TestContext.Current.CancellationToken));
+        Assert.Empty(_failures.Recorded);
     }
 
     [Fact]
@@ -817,6 +916,7 @@ internal sealed class SiigoHttpStub : HttpMessageHandler
 {
     private readonly ConcurrentDictionary<string, ConcurrentQueue<Func<HttpResponseMessage>>> _routes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Func<HttpResponseMessage>> _last = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> _hanging = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<SiigoStubRequest> _requests = new();
 
     public IReadOnlyCollection<SiigoStubRequest> Requests => _requests;
@@ -837,6 +937,11 @@ internal sealed class SiigoHttpStub : HttpMessageHandler
 
     public void Throw(string path, Exception exception) => _last[path] = () => throw exception;
 
+    /// <summary>La ruta no contesta nunca: espera hasta que se cancele la petición. La tarea que devuelve termina cuando la primera
+    /// petición ya está esperando.</summary>
+    public Task Hang(string path) =>
+        (_hanging[path] = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -844,6 +949,12 @@ internal sealed class SiigoHttpStub : HttpMessageHandler
         var headers = request.Headers.ToDictionary(header => header.Key, header => string.Join(",", header.Value), StringComparer.OrdinalIgnoreCase);
         var path = request.RequestUri!.AbsolutePath;
         _requests.Enqueue(new SiigoStubRequest(request.Method, path, request.RequestUri.Query, headers, body));
+
+        if (_hanging.TryGetValue(path, out var hung))
+        {
+            hung.TrySetResult();
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
 
         if (_routes.TryGetValue(path, out var queue) && queue.TryDequeue(out var next))
         {
