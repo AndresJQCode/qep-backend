@@ -19,6 +19,10 @@ public static class SiigoAuditActions
 
     public const string InvoiceResolved = "siigo.invoice.resolved";
 
+    /// <summary>Se verificó en Siigo que la factura se anuló o se borró (spec 2026-11-25, anulación): una por fila, con <c>outcome</c>
+    /// <c>annulled</c> o <c>deleted</c> y el estado del que venía.</summary>
+    public const string InvoiceAnnulled = "siigo.invoice.annulled";
+
     /// <summary>Se mandó el PDF de la factura al WhatsApp del cliente (spec 2026-11-21). Sólo el pedido, el tipo, el estado y el número:
     /// nunca el teléfono, la URL ni el contenido.</summary>
     public const string InvoiceWhatsAppSent = "siigo.invoice.whatsapp_sent";
