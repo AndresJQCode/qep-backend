@@ -338,7 +338,7 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
   no tienen cambios de modelo pendientes. Las ramas que partieron de `develop` entre esos dos merges traen `develop`;
   **no crean otra migración**.
   1. **Se mergeó sin pruebas en verde** (orden del owner: no correrlas). Antes de `main`:
-     `.\scripts	est-feature.ps1 -Base 3906398e6`, y por clase las integraciones de ServiceContracts,
+     `.\scripts\test-feature.ps1 -Base 3906398e6`, y por clase las integraciones de ServiceContracts,
      `InAppBillingTests`, `BillingEmailTemplatesTests` y `ArchitectureTests`.
   2. **Un solo despliegue, con corte** (backend a cero réplicas o `Recreate`; `k8s/prod-deployment.yaml` es
      `RollingUpdate`): la migración `AddPriceAdjustment` no es compatible con pods viejos.
