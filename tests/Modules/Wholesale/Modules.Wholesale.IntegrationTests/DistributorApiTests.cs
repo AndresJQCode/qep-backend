@@ -155,6 +155,8 @@ public sealed class DistributorApiTests(SharedWholesaleHost host) : IClassFixtur
         var detail = (await response.Content.ReadFromJsonAsync<DistributorDetailDto>(Ct))!;
         Assert.StartsWith("Medell", detail.City!.Name, StringComparison.OrdinalIgnoreCase);
         Assert.NotNull(detail.City.Id);
+        Assert.NotNull(detail.City.DepartmentId);
+        Assert.Equal("Antioquia", detail.City.DepartmentName);
         Assert.Equal("Calle 10 # 40-20", detail.Address);
     }
 
