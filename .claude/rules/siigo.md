@@ -19,6 +19,9 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **«Enviar a la DIAN» (`send_to_dian`) nace apagado y prenderlo lo decide quien configura.** No hay empresa de pruebas de Siigo:
   cada factura sale contra la cuenta real, y una emitida a la DIAN no se borra. Con el interruptor apagado la factura queda creada y
   sin emitir, y una persona la revisa en Siigo. Una prueba o un seed nunca lo prende.
+- **En `POST /v1/customers`, `id_type` es texto (`"13"`), no `{ "code": "13" }`:** el objeto sólo viene en las respuestas. Con el objeto Siigo
+  responde `invalid_type` en `id_type` y no se crea ningún cliente (producción, 2026-11-24 y 25). Una prueba unitaria que fija la forma
+  del cuerpo no la valida contra Siigo: la documentación de la petición es la que manda.
 - **Las retenciones no van todas en el mismo lugar:** ReteFuente se manda en los `taxes` de **cada ítem** (después del IVA) y ReteICA
   en `retentions` de la factura. Sólo se manda el id del vínculo: el monto lo calcula Siigo. ReteIVA y autorretención no se mandan
   (decisión pendiente, V-7).

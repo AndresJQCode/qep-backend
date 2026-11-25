@@ -171,7 +171,7 @@ internal static class SiigoJson
         {
             ["type"] = "Customer",
             ["person_type"] = request.PersonType,
-            ["id_type"] = new { code = request.IdTypeCode },
+            ["id_type"] = request.IdTypeCode,
             ["identification"] = request.Identification,
             ["name"] = request.Name,
             ["active"] = true,

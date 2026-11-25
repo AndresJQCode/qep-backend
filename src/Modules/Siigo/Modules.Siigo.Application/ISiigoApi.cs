@@ -31,7 +31,7 @@ public sealed record SiigoCustomerRef(string Id, string Identification);
 
 /// <summary>
 /// El cliente que se crea en Siigo antes de facturar (spec 2026-11-18 §6.2): <c>type: "Customer"</c>, <c>person_type</c>
-/// (<c>Person</c> | <c>Company</c>), <c>id_type.code</c>, <c>name</c> como lista (<c>[nombres, apellidos]</c> o <c>[razón social]</c>),
+/// (<c>Person</c> | <c>Company</c>), <c>id_type</c> como texto, <c>name</c> como lista (<c>[nombres, apellidos]</c> o <c>[razón social]</c>),
 /// <c>active: true</c>, dirección con los códigos de país, departamento y ciudad (DANE), teléfono y contacto. Lo arma el armador de la
 /// factura; el cliente HTTP sólo lo serializa.
 /// </summary>

@@ -799,7 +799,8 @@ public sealed class SiigoApiClientTests : IDisposable
         var root = body.RootElement;
         Assert.Equal("Customer", root.GetProperty("type").GetString());
         Assert.Equal("Company", root.GetProperty("person_type").GetString());
-        Assert.Equal("31", root.GetProperty("id_type").GetProperty("code").GetString());
+        // En la petición id_type es texto; el objeto {code, name} sólo aparece en las respuestas de Siigo (con él responde invalid_type).
+        Assert.Equal("31", root.GetProperty("id_type").GetString());
         Assert.Equal("900123456", root.GetProperty("identification").GetString());
         Assert.True(root.GetProperty("active").GetBoolean());
         Assert.Equal("ACME SAS", root.GetProperty("name")[0].GetString());
