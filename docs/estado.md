@@ -582,6 +582,17 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`a13fa371a`, `--no-ff`, sin push) **menores de la facturación con Siigo**
+  (`fix/siigo-menores`, hasta `592ba7946`; rama y worktree borrados). Un reenvío por tanda que no se puede hacer no
+  queda `Failed` si la factura se está enviando o ya existe (sí si falta mandar la de flete) y muestra por qué no
+  salió; sellar y resolver no responden error cuando la operación quedó guardada («existe» con el pedido que no se puede
+  marcar responde 200 con `orderMarkFailed`); los elementos nulos en los `PUT` de configuración responden 422 y un
+  `page` enorme se recorta. Antes de integrar `develop`, en la rama: Siigo unitarias 452, `Bootstrapper.UnitTests`
+  1134 (sin las clases con contenedores) y `ArchitectureTests` filtrado 94. **Sobre el merge con `develop`: sólo build
+  sin avisos, sin pruebas (decisión del owner), y la integración no corrió.** Sin corregir: «No existe» se ofrece con
+  el pedido en una tanda y responde 409 (pide un campo nuevo y frontend); el envío normal y la recuperación de una
+  tanda pueden mostrar «Facturado» con el flete pendiente; resolver «existe» desde la tanda no muestra el fallo de la
+  marca (el detalle del pedido sí).
 - 2026-11-25 — Mergeado a `develop` (`d2b85a1e3`, sin push) **facturación con Siigo en segundo plano, etapa *contract***
   (`feature/siigo-quitar-emision-sincrona`, hasta `49bfca66e`). Se quita `POST …/orders/{orderId}/siigo-invoice`, toda
   emisión es una tanda y `InvoiceCreateTimeout` sube a 120 s. Conflictos con las correcciones ya adaptadas en
