@@ -547,6 +547,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-24 — Mergeado a `develop` (fast-forward hasta `db593edda`, sin push) **la corrida completa respeta los hilos
+  de cada proyecto** (`feature/test-threads`; owner; sólo scripts y pruebas). `run-all-tests.ps1` mandaba
+  `xUnit.MaxParallelThreads=4` a todos y pisaba los 16 que declaran Catalog, Customers, Messaging, Quotations y
+  Tenancy; ahora sólo lo manda a quien no declara el suyo, o a todos si se pasa `-MaxThreads`. Además `fsync`,
+  `synchronous_commit` y `full_page_writes` apagados en las bases de prueba de Messaging y Automations.
+  `test-feature.ps1` en verde y una prueba de integración filtrada de cada uno. **La ganancia no está medida**, y falta
+  ver si Messaging con 16 hilos agota puertos o conexiones. Pendiente según lo que se mida: host compartido por clase en
+  Messaging y Automations. Rama y worktree borrados.
+
 - 2026-11-24 — Mergeado a `develop` (`f8e7e8be9`, `--no-ff`, sin push) **edición de los datos del distribuidor invitado, backend** (`feature/editar-distribuidor`, commits `b988cca7a`, `f484a08ac`, `bfb9881a3`; rama y worktree borrados; owner). `scripts/test-feature.ps1` en verde sobre la rama con `develop` integrado (ArchitectureTests 325, Wholesale unitarias 264, `DistributorApiTests` 19) más `WholesaleAdaptersTests`, `DistributorWhatsAppNoticeApiTests` e `InvitationAcceptanceApiTests` 60/60 por el aviso de apoyo de pruebas cambiado. Decisiones del agente sin confirmar: una invitación sin ciudad sólo la exige si se manda ciudad o cambia el país. Sin migración.
 - 2026-11-24 — Mergeado a `develop` (fast-forward `fd7e650c8`, sin push) **el rol `billing` ve las empresas y configura Siigo**
   (owner, `ccbaa79e4`): suma `companies.company.read`, `integrations.connection.read` y `siigo.settings.manage`. No recibe
