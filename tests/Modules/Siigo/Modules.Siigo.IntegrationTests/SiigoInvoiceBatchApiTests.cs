@@ -821,6 +821,64 @@ public sealed class SiigoInvoiceBatchApiTests
             summary => Assert.Equal(["Pending=0", "Sending=0", "Invoiced=0", "ToConfirm=0", "Failed=1", "Skipped=0"], Counts(summary)));
     }
 
+    // Mientras una tanda tiene el pedido, otra respondería 409: no se ofrece reenviar, ni desde el pedido ni desde una tanda anterior.
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Sending")]
+    public async Task AnOrderHeldByAnOpenBatchIsNotOfferedForResend(string itemStatus)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        var first = await CreateBatchAsync(world, world.OrderId);
+        await DrainAsync(world);
+
+        var response = await PostBatchAsync(world, world.OrderId);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var second = created.GetProperty("id").GetGuid();
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE siigo.invoice_batch_items SET status = @status WHERE status = 'Pending'",
+            ("status", itemStatus));
+
+        var older = Item(await GetBatchAsync(world, first), 0);
+        var row = (await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0];
+
+        Assert.False(Item(created, 0).GetProperty("canResend").GetBoolean());
+        Assert.False(Item(await GetBatchAsync(world, second), 0).GetProperty("canResend").GetBoolean());
+        Assert.Equal(
+            ("ToConfirm", false, true),
+            (older.GetProperty("status").GetString(), older.GetProperty("canResend").GetBoolean(), older.GetProperty("canResolve").GetBoolean()));
+        Assert.Equal(
+            (true, false, true),
+            (row.GetProperty("awaitingConfirmation").GetBoolean(), row.GetProperty("canResend").GetBoolean(), row.GetProperty("canResolve").GetBoolean()));
+    }
+
+    // El pedido de este ítem ya se cerró por confirmar; que a la tanda le falten otros no lo retiene.
+    [Fact]
+    public async Task AToConfirmItemOfABatchStillInProgressCanBeResent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.OnRequest("/v1/invoices", _ => FakeSiigoApi.Respond(HttpStatusCode.ServiceUnavailable, "{}"));
+        var waiting = Guid.NewGuid();
+        var batchId = await CreateBatchAsync(world, world.OrderId, waiting);
+        await ExecuteAsync(
+            world.ConnectionString,
+            "UPDATE siigo.invoice_batch_items SET available_at = now() + interval '1 hour' WHERE order_id = @order",
+            ("order", waiting));
+        await DrainAsync(world);
+
+        var batch = await GetBatchAsync(world, batchId);
+
+        Assert.Equal(
+            ("InProgress", "ToConfirm", "Pending"),
+            (batch.GetProperty("status").GetString(), Item(batch, 0).GetProperty("status").GetString(), Item(batch, 1).GetProperty("status").GetString()));
+        Assert.True(Item(batch, 0).GetProperty("canResend").GetBoolean());
+        Assert.True((await ReadAsync(await world.Client.GetAsync(world.BaseRoute, Ct)))[0].GetProperty("canResend").GetBoolean());
+    }
+
     [Fact]
     public async Task AResendFromAnotherBatchShowsAsInvoicedInTheFirst()
     {

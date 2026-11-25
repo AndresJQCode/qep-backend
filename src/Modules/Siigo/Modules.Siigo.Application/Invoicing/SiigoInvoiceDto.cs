@@ -18,7 +18,8 @@ namespace Modules.Siigo.Application.Invoicing;
 /// <para>Spec 2026-11-24 §3: <c>awaitingConfirmation</c> dice que no se sabe si Siigo creó la factura (la pantalla no puede pintarla como
 /// «Enviando…»); <c>canResend</c> y <c>canResolve</c>, si ofrece «Reintentar» y «Existe en Siigo» / «No existe»; y
 /// <c>missingAvailableAt</c>, desde cuándo se puede declarar que no existe, si todavía hay que esperar. Van calculados porque la pantalla
-/// no ve desde cuándo se está mandando ni el reloj de 24 horas. <c>canResolve</c> sólo se ofrece en una <c>Unknown</c> o por confirmar: una
+/// no ve desde cuándo se está mandando ni el reloj de 24 horas. <c>canResend</c> va en <c>false</c> mientras una tanda sin terminar tenga el
+/// pedido (ítem <c>Pending</c> o <c>Sending</c>): otra tanda respondería 409. <c>canResolve</c> sólo se ofrece en una <c>Unknown</c> o por confirmar: una
 /// que nunca salió (la de flete que espera) el endpoint la acepta, pero ofrecer ahí «Existe / No existe» confunde.</para>
 /// </summary>
 public sealed record SiigoInvoiceDto(
@@ -43,7 +44,9 @@ public sealed record SiigoInvoiceDto(
     bool CanResolve = false,
     DateTimeOffset? MissingAvailableAt = null)
 {
-    public static SiigoInvoiceDto From(SiigoInvoice invoice, DateTimeOffset now, bool orderMarkFailed = false, bool canSendWhatsApp = false)
+    /// <param name="queued">Una tanda sin terminar tiene el pedido.</param>
+    public static SiigoInvoiceDto From(
+        SiigoInvoice invoice, DateTimeOffset now, bool orderMarkFailed = false, bool canSendWhatsApp = false, bool queued = false)
     {
         var awaitingConfirmation = invoice.IsAwaitingConfirmation(now);
         var canResolve = invoice.Status == SiigoInvoiceStatus.Unknown || awaitingConfirmation;
@@ -65,7 +68,7 @@ public sealed record SiigoInvoiceDto(
             invoice.HasPdf,
             canSendWhatsApp && invoice.HasPdf,
             awaitingConfirmation,
-            invoice.CanResend(now),
+            !queued && invoice.CanResend(now),
             canResolve,
             canResolve ? invoice.MissingAvailableAt(now) : null);
     }

@@ -39,10 +39,12 @@ public sealed record SiigoInvoiceBatchDto(
 {
     /// <param name="invoices">Las filas de factura enlazadas a los ítems, por id.</param>
     /// <param name="labels">Número y cliente de los pedidos de la tanda, por id de pedido.</param>
+    /// <param name="queuedOrderIds">Los pedidos de la tanda que están en un ítem sin terminar, de ésta o de otra.</param>
     public static SiigoInvoiceBatchDto From(
         SiigoInvoiceBatch batch,
         IReadOnlyDictionary<Guid, SiigoInvoice> invoices,
         IReadOnlyDictionary<Guid, SiigoOrderLabel> labels,
+        IReadOnlyCollection<Guid> queuedOrderIds,
         DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(batch);
@@ -55,6 +57,7 @@ public sealed record SiigoInvoiceBatchDto(
             })
             .ToList();
         var states = items.Select(row => row.State).ToList();
+        var queued = queuedOrderIds.ToHashSet();
         return new(
             batch.Id,
             SiigoInvoiceBatchViews.StatusOf(batch),
@@ -64,7 +67,10 @@ public sealed record SiigoInvoiceBatchDto(
             states.Count(state => state.Status == SiigoInvoiceBatchItemStatus.Failed),
             batch.CreatedAt,
             batch.FinishedAt,
-            [.. items.Select(row => SiigoInvoiceBatchItemDto.From(row.Item, row.State, row.Invoice, labels.GetValueOrDefault(row.Item.OrderId)))],
+            [
+                .. items.Select(row => SiigoInvoiceBatchItemDto.From(
+                    row.Item, row.State, row.Invoice, labels.GetValueOrDefault(row.Item.OrderId), queued.Contains(row.Item.OrderId))),
+            ],
             SiigoInvoiceBatchStatusCountDto.From(states));
     }
 }
@@ -77,7 +83,8 @@ public sealed record SiigoInvoiceBatchDto(
 /// saltado por <c>siigo.invoice.not_ready</c>, los códigos de lo que le faltaba (la pantalla los traduce igual que los del <c>preview</c>).
 /// <paramref name="OrderMarkFailed"/> avisa que la factura existe pero el pedido no se pudo marcar. <paramref name="CanResend"/>,
 /// <paramref name="CanResolve"/> y <paramref name="MissingAvailableAt"/> (desde cuándo se acepta «No existe», si todavía hay que esperar)
-/// van calculados porque la pantalla no ve desde cuándo se está mandando ni el reloj de 24 horas.
+/// van calculados porque la pantalla no ve desde cuándo se está mandando ni el reloj de 24 horas. <paramref name="CanResend"/> va en
+/// <c>false</c> mientras una tanda sin terminar tenga el pedido (otra respondería 409), aunque este ítem siga por confirmar.
 /// </summary>
 public sealed record SiigoInvoiceBatchItemDto(
     Guid OrderId,
@@ -95,8 +102,9 @@ public sealed record SiigoInvoiceBatchItemDto(
     bool CanResolve,
     DateTimeOffset? MissingAvailableAt)
 {
+    /// <param name="queued">Un ítem sin terminar tiene el pedido.</param>
     public static SiigoInvoiceBatchItemDto From(
-        SiigoInvoiceBatchItem item, SiigoBatchItemState state, SiigoInvoice? invoice, SiigoOrderLabel? label)
+        SiigoInvoiceBatchItem item, SiigoBatchItemState state, SiigoInvoice? invoice, SiigoOrderLabel? label, bool queued)
     {
         ArgumentNullException.ThrowIfNull(item);
         ArgumentNullException.ThrowIfNull(state);
@@ -112,7 +120,7 @@ public sealed record SiigoInvoiceBatchItemDto(
             state.InvoiceNumber,
             item.MissingCodes,
             item.OrderMarkFailed,
-            state.CanResend,
+            !queued && state.CanResend,
             state.CanResolve,
             state.MissingAvailableAt);
     }
@@ -331,8 +339,8 @@ public sealed class CreateSiigoInvoiceBatchHandler(
                 await batches.ListOpenOrderIdsAsync(command.TenantId, command.OrderIds!, cancellationToken));
         }
 
-        // Recién creada, ningún pedido tiene factura enlazada.
-        return SiigoInvoiceBatchDto.From(batch, new Dictionary<Guid, SiigoInvoice>(), labels, now);
+        // Recién creada, ningún pedido tiene factura enlazada y la tanda los tiene a todos.
+        return SiigoInvoiceBatchDto.From(batch, new Dictionary<Guid, SiigoInvoice>(), labels, command.OrderIds!, now);
     }
 }
 
@@ -357,8 +365,11 @@ public sealed class GetSiigoInvoiceBatchHandler(
         var batch = await batches.FindAsync(query.TenantId, query.BatchId, cancellationToken)
             ?? throw new ResourceNotFoundException(SiigoErrorCodes.InvoiceBatchNotFound, "The invoice batch was not found.");
         var linked = await SiigoInvoiceBatchViews.LinkedInvoicesAsync(invoices, query.TenantId, batch.Items, cancellationToken);
-        var labels = await orders.ListLabelsAsync(query.TenantId, [.. batch.Items.Select(item => item.OrderId)], cancellationToken);
-        return SiigoInvoiceBatchDto.From(batch, linked, labels, clock.UtcNow);
+        Guid[] orderIds = [.. batch.Items.Select(item => item.OrderId)];
+        var labels = await orders.ListLabelsAsync(query.TenantId, orderIds, cancellationToken);
+        // Una sola pregunta por todos los pedidos, después de leer las facturas.
+        var queued = await batches.ListOpenOrderIdsAsync(query.TenantId, orderIds, cancellationToken);
+        return SiigoInvoiceBatchDto.From(batch, linked, labels, queued, clock.UtcNow);
     }
 }
 
