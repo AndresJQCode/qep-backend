@@ -1,9 +1,10 @@
 namespace Modules.ServiceContracts.Domain;
 
 /// <summary>
-/// Una fila del historial de precios de un servicio: de qué precio y moneda a cuáles, quién lo cambió y por qué. La escribe
-/// sólo <see cref="ServiceContract.Update"/> cuando el precio o la moneda cambian de verdad, y nunca se edita ni se borra: es
-/// la justificación del cambio, que el equipo relee cuando un cliente pregunta por qué paga distinto.
+/// Una fila del historial de precios de un servicio: de qué precio y moneda a cuáles, quién lo cambió y por qué. La escriben
+/// <see cref="ServiceContract.Update"/> cuando el precio o la moneda cambian de verdad y la generación cuando aplica un cambio
+/// programado, y nunca se edita ni se borra: es la justificación del cambio, que el equipo relee cuando un cliente pregunta por
+/// qué paga distinto.
 /// </summary>
 public sealed class ServicePriceChange
 {
@@ -42,12 +43,19 @@ public sealed class ServicePriceChange
 
     public DateTimeOffset OccurredAt { get; private set; }
 
+    public PriceChangeOrigin Origin { get; private set; }
+
+    /// <summary>El cambio programado que se aplicó; nulo en una edición.</summary>
+    public Guid? ScheduleId { get; private set; }
+
     internal static ServicePriceChange Record(
         ServiceContract service,
         decimal previousPrice,
         string previousCurrency,
         string reason,
         Guid? changedByMemberId,
+        PriceChangeOrigin origin,
+        Guid? scheduleId,
         DateTimeOffset now) => new()
         {
             Id = Guid.CreateVersion7(),
@@ -60,5 +68,7 @@ public sealed class ServicePriceChange
             Reason = reason,
             ChangedByMemberId = changedByMemberId,
             OccurredAt = now,
+            Origin = origin,
+            ScheduleId = scheduleId,
         };
 }
