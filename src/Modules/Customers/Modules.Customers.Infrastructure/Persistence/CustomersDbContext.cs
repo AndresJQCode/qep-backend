@@ -82,6 +82,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         });
         customer.HasKey(value => value.Id);
         customer.Ignore(value => value.IsMerged);
+        // Sin tabla todavia: sin esto EF descubre la coleccion por convencion y el modelo no arranca.
+        customer.Ignore(value => value.BillingProfiles);
         customer.Property(value => value.Id)
             .HasColumnName("id")
             .HasConversion(id => id.Value, value => new CustomerId(value))
