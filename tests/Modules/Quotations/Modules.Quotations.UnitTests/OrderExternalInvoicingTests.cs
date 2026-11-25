@@ -6,8 +6,9 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
-/// <summary>Spec 2026-11-18 §5.5: un pedido facturado por un proveedor externo (Siigo) lleva su marca, no exige pagado, es idempotente y
-/// no se revierte desde QEP.</summary>
+/// <summary>Spec 2026-11-18 §5.5: un pedido facturado por un proveedor externo (Siigo) lleva su marca, no exige pagado y es idempotente.
+/// La acción manual (<see cref="Order.RevertInvoicing"/>) no la revierte; sólo se quita cuando la factura se anuló afuera (spec
+/// 2026-11-25 §4, <see cref="Order.RevertExternalInvoicing"/>).</summary>
 public sealed class OrderExternalInvoicingTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
@@ -29,9 +30,10 @@ public sealed class OrderExternalInvoicingTests
         IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
         ShippingDetails? shipping = null,
         Guid? tenantId = null,
-        string number = "PED-2026-0001") =>
+        string number = "PED-2026-0001",
+        OrderId? id = null) =>
         Order.CreateManual(
-            OrderId.New(),
+            id ?? OrderId.New(),
             tenantId ?? TenantId,
             number,
             new OrderHeader(ClientId, Advisor, "COP", "Transferencia", false, null, false, []),
@@ -251,6 +253,65 @@ public sealed class OrderExternalInvoicingTests
         Assert.Equal(("siigo", "FV-1-1"), (details["provider"], details["number"]));
     }
 
+    // La factura ya está anulada afuera: otra escritura del pedido que gana la carrera no lo puede dejar marcado.
+    [Fact]
+    public async Task RevertExternalInvoicingRereadsAndSavesAfterLosingARace()
+    {
+        var (service, unitOfWork, reread) = ServiceLosingRaces(conflicts: 1);
+
+        var released = await service.RevertExternalInvoicingAsync(
+            TenantId, reread.Id.Value, "siigo", "FV-1-1", Biller.Value, TestContext.Current.CancellationToken);
+
+        Assert.True(released);
+        Assert.False(reread.IsInvoiced);
+        Assert.Equal((2, 1, 1), (unitOfWork.Attempts, unitOfWork.Saved, unitOfWork.Discards));
+    }
+
+    [Fact]
+    public async Task RevertExternalInvoicingRethrowsAfterLosingTheRaceTwice()
+    {
+        var (service, unitOfWork, order) = ServiceLosingRaces(conflicts: 2);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => service.RevertExternalInvoicingAsync(
+            TenantId, order.Id.Value, "siigo", "FV-1-1", Biller.Value, TestContext.Current.CancellationToken));
+
+        Assert.Equal((2, 0, 2), (unitOfWork.Attempts, unitOfWork.Saved, unitOfWork.Discards));
+    }
+
+    // Cada lectura entrega una instancia nueva y todavía marcada, como el repositorio real después de DiscardPendingChanges. La última es
+    // la de la relectura.
+    private static (ExternalOrderInvoicingService Service, ConflictingUnitOfWork UnitOfWork, Order Reread) ServiceLosingRaces(
+        int conflicts)
+    {
+        var id = OrderId.New();
+        Order Marked()
+        {
+            var order = NewOrder(id: id);
+            order.InvoiceExternally("siigo", "FV-1-1", "id-1", Biller, Now);
+            return order;
+        }
+
+        var (first, reread) = (Marked(), Marked());
+        var repository = new StubOrderListRepository(reread);
+        repository.QueueIdReads(first, reread);
+        var unitOfWork = new ConflictingUnitOfWork(conflicts);
+        var service = new ExternalOrderInvoicingService(
+            repository,
+            unitOfWork,
+            new RecordingQuotationAuditPublisher(),
+            new SubjectExecutionContext(Guid.CreateVersion7(), TenantId),
+            new FixedClock(Now),
+            new FixedTenantClock(Now),
+            new FixedQuotationSettingsStore(),
+            new StubTenantDirectory(),
+            new StubQuotationCustomerLookup(new QuotationCustomerRef(
+                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo", "3001234567", "Calle 1 # 2-3",
+                WithRetention: false, VatSurplus: false)),
+            new StubQuotationAdvisorLookup(),
+            new StubQuotationGeographyLookup(new Dictionary<Guid, string>()));
+        return (service, unitOfWork, reread);
+    }
+
     // Spec 2026-11-24 §5: las tandas de facturación pintan el número y el cliente que muestra /orders, en una consulta de cada uno; un
     // pedido de otro tenant o que no existe no aparece.
     [Fact]
@@ -426,6 +487,32 @@ public sealed class OrderExternalInvoicingTests
             new StubQuotationCustomerLookup(customer),
             new StubQuotationAdvisorLookup(),
             new StubQuotationGeographyLookup(cityNames));
+
+    // Pierde la carrera las primeras <paramref name="conflicts"/> veces que guarda; después guarda.
+    private sealed class ConflictingUnitOfWork(int conflicts) : IQuotationsUnitOfWork
+    {
+        public int Attempts { get; private set; }
+
+        public int Saved { get; private set; }
+
+        public int Discards { get; private set; }
+
+        public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            if (++Attempts <= conflicts)
+            {
+                throw new RequestConcurrencyException("concurrency.conflict", "The order changed.");
+            }
+
+            Saved++;
+            return Task.FromResult(1);
+        }
+
+        public Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IQuotationsTransaction>(new NoOpQuotationsTransaction());
+
+        public void DiscardPendingChanges() => Discards++;
+    }
 
     private sealed class SubjectExecutionContext(Guid subjectId, Guid tenantId) : IExecutionContext
     {
