@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Api;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -133,6 +134,14 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         var terms = await WholesaleApiHarness.RowsAsync<string>(
             Factory, $"""SELECT version AS "Value" FROM identity.terms_acceptances WHERE user_id = {session.UserId}""");
         Assert.Equal([WholesaleApiHarness.TermsVersion], terms);
+        // La prueba cuenta como un código válido: la cuenta nace con el correo verificado, sin que se emitiera ningún código.
+        var verified = await WholesaleApiHarness.RowsAsync<int>(
+            Factory,
+            $"""
+            SELECT count(*)::int AS "Value" FROM identity.users
+            WHERE id = {session.UserId} AND email = {email} AND email_verified_at IS NOT NULL
+            """);
+        Assert.Equal(1, verified[0]);
         Assert.Null(await WholesaleApiHarness.LatestEmailCodeAsync(Factory, email));
         Assert.Equal(HttpStatusCode.OK, (await AcceptNewTenantAsync(session.UserId, token)).StatusCode);
     }
@@ -1100,7 +1109,6 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         var (wholesaler, distributor, token) = await WholesaleApiHarness.InvitedAsync(Factory, email);
         var emailProof = await WholesaleApiHarness.LatestEmailProofAsync(Factory, distributor.Id);
         Assert.NotNull(emailProof);
-        var failuresBefore = await SessionFailuresAsync();
         using var anonymous = WholesaleApiHarness.CreateAnonymous(Factory);
         using var manager = WholesaleApiHarness.CreateManager(Factory, wholesaler);
         var url = $"{WholesaleApiHarness.InvitationUrl(token)}/session-with-password";
@@ -1126,9 +1134,13 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.All(
             new[] { distributor.InvitationUrl, summary, detail, await WholesaleApiHarness.BodyAsync(accepted) },
             text => Assert.DoesNotContain(emailProof, text, StringComparison.Ordinal));
-        Assert.True(
-            await WholesaleApiHarness.EventuallyAsync(SessionFailuresAsync, count => count >= failuresBefore + 2)
-                >= failuresBefore + 2);
+        // Las dos filas de estos dos requests, por su traceId: la ruta enmascarada es la misma para toda la clase.
+        var withoutTermsTrace = await TraceIdOfAsync(withoutTerms);
+        var anotherEmailTrace = await TraceIdOfAsync(anotherEmail);
+        Assert.Equal(
+            2,
+            await WholesaleApiHarness.EventuallyAsync(
+                () => FailureRowsAsync(withoutTermsTrace, anotherEmailTrace), count => count >= 2));
         var leaks = await WholesaleApiHarness.RowsAsync<int>(
             Factory,
             $"""
@@ -1141,13 +1153,20 @@ public sealed class InvitationAcceptanceApiTests(SharedWholesaleHost host) : ICl
         Assert.Equal(0, leaks[0]);
     }
 
-    private async Task<int> SessionFailuresAsync() =>
+    private async Task<int> FailureRowsAsync(string firstTraceId, string secondTraceId) =>
         (await WholesaleApiHarness.RowsAsync<int>(
             Factory,
             $"""
             SELECT count(*)::int AS "Value" FROM platform.request_failures
-            WHERE path = '/api/v1/wholesale-invitations/***/session-with-password'
+            WHERE trace_id IN ({firstTraceId}, {secondTraceId})
             """))[0];
+
+    /// <summary>El <c>traceId</c> del ProblemDetails, el mismo con el que se guarda la fila de la falla.</summary>
+    private static async Task<string> TraceIdOfAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(await WholesaleApiHarness.BodyAsync(response));
+        return document.RootElement.GetProperty("traceId").GetString()!;
+    }
 
     private static string NewEmail() => $"distri-{Guid.NewGuid():N}@distri.co";
 
