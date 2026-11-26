@@ -622,6 +622,12 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-26 — Mergeado a `develop` (`fd475f77f`, `--no-ff`, sin push) **país de la parte facturada a Siigo**
+  (`fix/siigo-billing-country`, `6536e97b7` y `a202f79bb`). Una facturación colombiana (país `null`) con ficha de cliente
+  extranjera tomaba el país de la ficha y Siigo reportaba la ciudad como faltante; ahora, con ciudad propia, el país sale
+  de la facturación. De paso, el fixture de las cuatro pruebas `WithTheDialCodeSwitch*`, rojas en `develop`, responde el
+  excedente de IVA. `test-feature.ps1` en verde (`ArchitectureTests` 354, `Modules.Quotations.UnitTests` 2507), con el
+  aviso de que no corrió ninguna prueba de integración. Revisión de solo lectura sin hallazgos. Rama y worktree borrados.
 - 2026-11-26 — Mergeado a `develop` (`028ec0c34`, `--no-ff`, sin push) **nombre de sesión en los commits**
   (`feature/claude-session-line`, `aeb659706`; decisión del owner): la línea `Session:` lleva el título de la pestaña,
   leído antes de cada commit; el nombre de `ListAgents` queda de respaldo. Sólo `CLAUDE.md`. Rama y worktree borrados.
