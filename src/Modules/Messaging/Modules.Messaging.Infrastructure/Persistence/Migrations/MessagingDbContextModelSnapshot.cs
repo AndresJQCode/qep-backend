@@ -890,6 +890,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Status" }, "IX_message_templates_status");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_appointment_reminder")
+                        .IsUnique()
+                        .HasFilter("kind = 'AppointmentReminder'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Kind" }, "UX_message_templates_billing")
                         .IsUnique()
                         .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
@@ -897,6 +901,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "HeaderImageFileId" }, "UX_message_templates_header_image")
                         .IsUnique()
                         .HasFilter("header_image_file_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_invoice")
+                        .IsUnique()
+                        .HasFilter("kind = 'Invoice'");
 
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "MetaTemplateId" }, "UX_message_templates_meta_id")
                         .IsUnique();
@@ -924,14 +932,56 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("kind = 'SupportSurvey'");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_task_notice")
+                        .IsUnique()
+                        .HasFilter("kind = 'TaskNotice'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_wholesale_invitation_notice")
                         .IsUnique()
                         .HasFilter("kind = 'WholesaleInvitationNotice'");
 
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply','SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.MessageTemplateRetiredHeaderImage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<string>("PublicUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("public_url");
+
+                    b.Property<DateTimeOffset>("RetiredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retired_at");
+
+                    b.Property<Guid>("TemplateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("template_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TemplateId");
+
+                    b.HasIndex(new[] { "FileId" }, "UX_message_template_retired_header_images_file")
+                        .IsUnique();
+
+                    b.ToTable("message_template_retired_header_images", "messaging");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Domain.QuickReply", b =>
@@ -1509,6 +1559,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_message_media_pending")
                         .HasFilter("stored_at IS NULL");
 
+                    b.HasIndex("StorageFileId")
+                        .HasDatabaseName("IX_message_media_storage_file")
+                        .HasFilter("storage_file_id IS NOT NULL");
+
                     b.ToTable("message_media", "messaging");
                 });
 
@@ -1897,6 +1951,15 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ResolutionReasonId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_conversations_resolution_reasons");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.MessageTemplateRetiredHeaderImage", b =>
+                {
+                    b.HasOne("Modules.Messaging.Domain.MessageTemplate", null)
+                        .WithMany()
+                        .HasForeignKey("TemplateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Messaging.Domain.ScheduledMessage", b =>

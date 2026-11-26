@@ -47,6 +47,26 @@ public sealed class R2ObjectStorageTests
         Assert.True(request.DisablePayloadSigning);
     }
 
+    // Spec 2026-11-21: la copia pública de una factura se sube directo al bucket público, con las mismas
+    // dos banderas que el privado (R2 no implementa el cuerpo firmado en chunks).
+    [Fact]
+    public async Task PublicUploadPutsTheBytesInThePublicBucketWithTheR2Flags()
+    {
+        using var client = new CapturingS3Client();
+        var storage = new R2PublicObjectStorage(client, Options.Create(new StorageOptions
+        {
+            R2 = new R2Options { Bucket = "qep-private", PublicBucket = "qep-public", PublicBaseUrl = "https://assets.example" },
+        }));
+
+        await storage.UploadAsync(
+            "invoices/abc.pdf", new byte[] { 1, 2, 3 }, "application/pdf", TestContext.Current.CancellationToken);
+
+        var request = Assert.IsType<PutObjectRequest>(client.Captured);
+        Assert.Equal(("qep-public", "invoices/abc.pdf", "application/pdf"), (request.BucketName, request.Key, request.ContentType));
+        Assert.False(request.UseChunkEncoding);
+        Assert.True(request.DisablePayloadSigning);
+    }
+
     // Spec 2026-10-09 §6.6: un medio de WhatsApp puede pesar 100 MB; sube por stream con el largo
     // explícito y las mismas dos banderas que el byte[], porque R2 no implementa el cuerpo firmado en chunks.
     [Fact]

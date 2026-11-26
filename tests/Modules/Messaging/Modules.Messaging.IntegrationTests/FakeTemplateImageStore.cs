@@ -46,7 +46,11 @@ public sealed class FakeTemplateImageStore : IMessagingTemplateImageStore
         var fileId = Guid.CreateVersion7();
         Files[fileId] = new StoredImage
         {
-            TenantId = tenantId, State = state, MimeType = mimeType, Size = size ?? bytes.LongLength, Bytes = bytes,
+            TenantId = tenantId,
+            State = state,
+            MimeType = mimeType,
+            Size = size ?? bytes.LongLength,
+            Bytes = bytes,
         };
         return fileId;
     }

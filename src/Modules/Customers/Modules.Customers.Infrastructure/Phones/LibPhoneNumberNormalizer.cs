@@ -1,3 +1,4 @@
+using System.Globalization;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using PhoneNumbers;
@@ -37,16 +38,18 @@ internal sealed class LibPhoneNumberNormalizer : IPhoneNumberNormalizer, IPhoneN
         }
     }
 
-    public PhoneNumberParts? Split(string? e164)
+    public PhoneNumberParts? Split(string? phone, string? defaultRegion = null)
     {
-        if (string.IsNullOrWhiteSpace(e164))
+        if (string.IsNullOrWhiteSpace(phone))
         {
             return null;
         }
 
+        var parseRegion = string.IsNullOrWhiteSpace(defaultRegion) ? UnknownRegion : defaultRegion.Trim().ToUpperInvariant();
+
         try
         {
-            var parsed = Util.Parse(e164.Trim(), UnknownRegion);
+            var parsed = Util.Parse(phone.Trim(), parseRegion);
             if (!Util.IsValidNumber(parsed))
             {
                 return null;
@@ -55,7 +58,10 @@ internal sealed class LibPhoneNumberNormalizer : IPhoneNumberNormalizer, IPhoneN
             var region = Util.GetRegionCodeForNumber(parsed);
             return string.IsNullOrEmpty(region) || region == UnknownRegion
                 ? null
-                : new PhoneNumberParts(region, Util.GetNationalSignificantNumber(parsed));
+                : new PhoneNumberParts(
+                    region,
+                    Util.GetNationalSignificantNumber(parsed),
+                    parsed.CountryCode.ToString(CultureInfo.InvariantCulture));
         }
         catch (NumberParseException)
         {

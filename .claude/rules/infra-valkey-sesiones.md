@@ -24,6 +24,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   arranque dice qué clave usó (`QepDatabaseListener` o `QepDatabase`), nunca el valor. **La causa está inferida, no medida:** se
   verifica tras desplegar con los bytes del WebSocket en el ingress; handshake más pings de 13 bytes y nada más significa que siguen
   sin llegar eventos.
+- **El `AppHub` une cada conexión a un grupo personal del miembro, y ese grupo no se suscribe** (spec 2026-11-22 §9.1). `OnConnectedAsync` agrega la
+  conexión a `RealtimeTopics.MemberGroupOf(tenant, miembro)` (`{tenant}:@member:{miembro}`) con la membresía de las claims; `IRealtimeMemberPublisher`
+  (`PgRealtimePublisher`) entrega ahí por el mismo `pg_notify`, con `MemberId` en el sobre. Es infalsificable por construcción: ningún
+  `IRealtimeTopicAuthorizer` puede declarar un prefijo que empiece por `@` (`NoAuthorizerPrefixStartsWithAt`), `Subscribe` y `Unsubscribe` ignoran o
+  rechazan lo que empieza por `@`, y un pod viejo que lee el sobre sin `MemberId` lo manda a un grupo vacío. El grupo no revisa módulo ni permiso al
+  conectar: quien publica ahí (alerta de entrante, campana) lo revisa antes. Los payloads son ids, nunca texto de un mensaje.
 - **La presencia de la bandeja es compartida sólo con `Valkey:Areas:Presence`, y es condición para subir `replicas`** (spec 2026-11-13, D-2).
   `MessagingHub` escribe en `IMessagingPresence` y el reporte de uso lee por `IMessagingPresenceReader`; los registra `AddQepValkey`. Prendida,
   cada pod escribe a sus conectados en `qep:presence:{tenantId}` (sorted set, latido de 30 s en `PresenceHeartbeatWorker`, ventana de lectura de

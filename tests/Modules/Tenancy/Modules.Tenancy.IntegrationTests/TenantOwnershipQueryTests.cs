@@ -54,14 +54,124 @@ public sealed class TenantOwnershipQueryTests
             .ListOwnedActiveTenantsAsync(Guid.CreateVersion7(), ct));
     }
 
+    // Spec 2026-11-19 (onboarding por link): se vincula un tenant que el usuario administra, como owner o como miembro
+    // activo con el rol de sistema admin. Un rol personalizado o una membresía suspendida no cuentan.
+
+    [Fact]
+    public async Task AnAdminMemberSeesTheTenant()
+    {
+        var user = Guid.CreateVersion7();
+        var tenantId = TenantId.New();
+
+        var administered = await ListAdministeredAsync(user, (dbContext, now) =>
+        {
+            AddOwned(dbContext, tenantId, "ajeno-admin", "Ajeno Admin", Guid.CreateVersion7(), now);
+            dbContext.Memberships.Add(Membership.CreateActive(
+                MembershipId.New(), user, tenantId, [Membership.AdminRole], Membership.RegistrationOrigin, now));
+        });
+
+        Assert.Equal([tenantId.Value], administered);
+    }
+
+    [Fact]
+    public async Task AMemberWithAnotherRoleDoesNotSeeTheTenant()
+    {
+        var user = Guid.CreateVersion7();
+        var tenantId = TenantId.New();
+
+        var administered = await ListAdministeredAsync(user, (dbContext, now) =>
+        {
+            AddOwned(dbContext, tenantId, "ajeno-billing", "Ajeno Billing", Guid.CreateVersion7(), now);
+            dbContext.Memberships.Add(Membership.CreateActive(
+                MembershipId.New(), user, tenantId, ["billing"], Membership.RegistrationOrigin, now));
+        });
+
+        Assert.Empty(administered);
+    }
+
+    [Fact]
+    public async Task AnOwnerSeesTheTenantWithoutTheAdminRole()
+    {
+        var user = Guid.CreateVersion7();
+        var tenantId = TenantId.New();
+
+        var administered = await ListAdministeredAsync(user, (dbContext, now) =>
+            AddOwned(dbContext, tenantId, "propio-billing", "Propio Billing", user, now, ["billing"]));
+
+        Assert.Equal([tenantId.Value], administered);
+    }
+
+    [Fact]
+    public async Task ASuspendedAdminMembershipDoesNotSeeTheTenant()
+    {
+        var user = Guid.CreateVersion7();
+        var tenantId = TenantId.New();
+
+        var administered = await ListAdministeredAsync(user, (dbContext, now) =>
+        {
+            var tenant = AddOwned(dbContext, tenantId, "ajeno-suspendido", "Ajeno Suspendido", Guid.CreateVersion7(), now);
+            var membership = Membership.CreateActive(
+                MembershipId.New(), user, tenantId, [Membership.AdminRole], Membership.RegistrationOrigin, now);
+            membership.Suspend(tenant, now);
+            dbContext.Memberships.Add(membership);
+        });
+
+        Assert.Empty(administered);
+    }
+
+    [Fact]
+    public async Task AnInactiveTenantIsNotListed()
+    {
+        var user = Guid.CreateVersion7();
+        var owned = TenantId.New();
+        var administeredTenant = TenantId.New();
+
+        var administered = await ListAdministeredAsync(user, (dbContext, now) =>
+        {
+            AddOwned(dbContext, owned, "propio-inactivo", "Propio Inactivo", user, now)
+                .Suspend(ChangeReason.Nonpayment, now);
+            var other = AddOwned(dbContext, administeredTenant, "ajeno-inactivo", "Ajeno Inactivo", Guid.CreateVersion7(), now);
+            other.Suspend(ChangeReason.Nonpayment, now);
+            dbContext.Memberships.Add(Membership.CreateActive(
+                MembershipId.New(), user, administeredTenant, [Membership.AdminRole], Membership.RegistrationOrigin, now));
+        });
+
+        Assert.Empty(administered);
+    }
+
+    private static async Task<IReadOnlyList<Guid>> ListAdministeredAsync(
+        Guid user, Action<TenancyDbContext, DateTimeOffset> seed)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var database = await StartDatabaseAsync();
+        using var factory = new OwnershipFactory(database.GetConnectionString());
+        await using (var seedScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            seed(dbContext, DateTimeOffset.UtcNow);
+            await dbContext.SaveChangesAsync(ct);
+        }
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var administered = await scope.ServiceProvider.GetRequiredService<ITenantOwnership>()
+            .ListAdministeredActiveTenantsAsync(user, ct);
+        return [.. administered.Select(tenant => tenant.TenantId)];
+    }
+
     private static Tenant AddOwned(
-        TenancyDbContext dbContext, TenantId tenantId, string slug, string name, Guid owner, DateTimeOffset now)
+        TenancyDbContext dbContext,
+        TenantId tenantId,
+        string slug,
+        string name,
+        Guid owner,
+        DateTimeOffset now,
+        IReadOnlyList<string>? ownerRoles = null)
     {
         var membershipId = MembershipId.New();
         var tenant = Tenant.Create(tenantId, slug, name, "es-CO", "America/Bogota", "yyyy-MM-dd", membershipId, now);
         dbContext.Tenants.Add(tenant);
         dbContext.Memberships.Add(Membership.CreateActive(
-            membershipId, owner, tenantId, [Membership.AdminRole], Membership.RegistrationOrigin, now));
+            membershipId, owner, tenantId, ownerRoles ?? [Membership.AdminRole], Membership.RegistrationOrigin, now));
         return tenant;
     }
 

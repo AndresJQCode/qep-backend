@@ -31,9 +31,7 @@ public sealed class ListTicketMessagesValidator : AbstractValidator<ListTicketMe
 /// expediente vacío.
 /// </summary>
 public sealed class ListTicketMessagesHandler(
-    IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketMessageRepository links,
     ISupportConversationDirectory conversations,
     ISupportMemberDirectory members,
@@ -42,10 +40,9 @@ public sealed class ListTicketMessagesHandler(
 {
     public async Task<SupportTicketMessagesDto> HandleAsync(ListTicketMessagesQuery query, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
+        await scope.EnsureAccessAsync(query.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
-        var ticket = await tickets.FindAsync(query.TenantId, new SupportTicketId(query.TicketId), cancellationToken)
-            ?? throw SupportNotFound.Ticket(query.TicketId);
+        var ticket = await scope.ViewAsync(query.TenantId, query.TicketId, cancellationToken);
         if (ticket.ConversationId is not { } conversationId)
         {
             return new SupportTicketMessagesDto([], null);

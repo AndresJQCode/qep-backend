@@ -116,7 +116,7 @@ local y por variable de entorno en k8s
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
 | `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
-| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`, `LegalParameters`). Un área apagada usa exactamente las clases de antes. `SendBudget` no tiene efecto: el presupuesto de envío se queda en Postgres (decisión del owner, 2026-11-13) |
 | `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
@@ -554,6 +554,57 @@ que se despliega desde `main`:
 > base, aislados por tenant. Además, la carga le concede `admin` a `Seed:OwnerEmail` sobre ese
 > tenant.
 
+## Código postal de la entrega
+
+La parte de **envío** de cotizaciones y pedidos tiene un `postalCode` opcional, en Colombia y fuera: se recorta, vacío es
+`null` y el tope son 20 caracteres, sin formato por país (spec 2026-11-24).
+
+- **Escritura:** `parties.shipping.postalCode` en las rutas que reciben partes. Omitirlo lo borra, como `regionId`. En
+  facturación se descarta. Más largo es `422 quotations.party.postal_code_too_long` con
+  `errors["Parties.Shipping.PostalCode"]`.
+- **Lectura:** cada parte responde `postalCode` (en facturación siempre `null`), y la cotización y el pedido (`order`)
+  traen `postalCodeSupported: true`, que es lo que el frontend mira para pintar el campo.
+- La conversión lo copia al pedido, el PDF lo imprime en la ubicación tras la dirección y el envío a Shopify lo manda
+  como `zip` (ver [El envío](#integración-con-shopify)). La libreta de direcciones del cliente todavía no lo tiene.
+
+## Regiones y ciudades por país
+
+El selector de ubicación del frontend lee un solo flujo, igual para cualquier país. Colombia guarda `CityId` y deriva su
+departamento de la ciudad (nunca guarda una región). El resto de países guarda el nombre de la ciudad como texto
+(`CityName`) y, **si el país tiene catálogo de regiones distinto de Colombia (hoy sólo España), también la región**: una
+referencia blanda `region_id` a `geography.regions`, sin llave foránea entre esquemas.
+
+- **Qué entidades la guardan:** el domicilio y las direcciones del cliente, la empresa facturadora, el proveedor y las
+  partes de facturación y entrega de cotizaciones y pedidos (la copia al convertir también la lleva).
+- **Escritura:** `regionId` opcional junto con `country` y `cityName`. Con Colombia (o sin país) es `422`; una región
+  inexistente, de otro país o un id de departamento colombiano es `422 <módulo>.<entidad>.region_invalid`. Un `PUT` sin
+  `regionId` la borra, igual que `cityName`.
+- **Lectura:** el detalle responde `region: { id, name } | null`; las listas y los Excel no cambian. La vista del cliente
+  dentro de la cotización y el pedido (`client`, `client.addresses[*]`) también la trae.
+- **Datos existentes:** ninguna fila se migra; las anteriores quedan con `region_id = null`.
+- El selector sigue leyendo el catálogo de abajo: la región elegida filtra las ciudades y ahora además viaja al guardar.
+
+| Ruta | Respuesta |
+| --- | --- |
+| `GET /api/v1/countries` | `[{ code, name, regionKind }]`: el catálogo de países por nombre. `regionKind` es `Department` (`CO`), `Province` (`ES`) o `null` si el país no tiene catálogo de regiones: ahí la pantalla cae al texto libre. |
+| `GET /api/v1/countries/{country}/regions` | `[{ id, code, name }]` por nombre. País sin catálogo: `200 []`. |
+| `GET /api/v1/countries/{country}/regions/{regionId}/cities` | `[{ id, code, name }]` por nombre. Región que no es de ese país: `404 geography.region.not_found`. |
+
+- **Colombia** sale de DIVIPOLA (`departments`, `cities`): los `id` son los mismos que sirven `/api/v1/departments`
+  y `/api/v1/cities`, que no cambian.
+- **Los demás países** salen de `geography.regions` y `geography.region_cities`, que `RegionSeeder` siembra desde
+  `Seed/Data/<país>-regions.json` y `<país>-cities.json`. Un arranque normal no lee esas tablas: compara el SHA-256
+  de los dos archivos con el de `geography.seed_state` y, si coincide, termina. Sólo si cambió (primer arranque, o un
+  archivo nuevo) parsea, valida y aplica el país en una transacción con `INSERT … ON CONFLICT` sobre `unnest`, sin
+  cargar filas ni usar el change tracker. Si cambias la **lógica** del importador y no los archivos, sube
+  `RegionSeedHash.SeederVersion`, o las bases que ya coinciden no se enterarán. Hoy sólo España: 52 provincias y 8.132
+  municipios de la «Relación de municipios y sus códigos por provincias» del INE (1 de enero de 2025; el artículo
+  invertido del INE, «Rozas de Madrid, Las», se guarda como se conoce: «Las Rozas de Madrid»,
+  `https://www.ine.es/daco/daco42/codmun/diccionario25.xlsx`). El código del municipio es `CPRO` + `CMUN`.
+- **Un país nuevo** son sus dos JSON, una entrada en `RegionSeeder.EmbeddedSources` y otra en `CountryCatalogs.All`
+  (una prueba unitaria falla si una de las dos listas se queda atrás).
+  Esto no toca `Customer`, Coordinadora, Siigo ni los sinónimos: ninguna ciudad de afuera entra a `geography.cities`.
+
 ## Nombres de ciudad de Coordinadora
 
 Las ciudades de `geography` son los municipios del DANE (`localities.json`), y se importan en cada
@@ -796,7 +847,7 @@ fórmula de la línea es **una sola** para todas las monedas y todos los tenants
 lista     = R(precio de lista)
 unitario  = R(lista × (1 − descuento/100))
 línea     = Round2(cantidad × unitario)               // lo que se cobra, IVA adentro
-descuento = Round2(cantidad × lista) − línea
+descuento = Round2(cantidad × lista) − línea          // con IVA: lo guarda el POS
 IVA       = Round2(línea × tasa / (100 + tasa))       // sólo COP discrimina IVA
 base      = línea − IVA
 ```
@@ -806,6 +857,15 @@ aleja de cero), `Up` (hacia arriba) o `Down` (hacia abajo). Los decimales van de
 catálogo de monedas (COP 0, USD 2, EUR 2). **Por defecto**, una moneda sin configurar usa
 `(decimales del catálogo, Nearest)`: para COP es exactamente lo de antes. Ejemplo de aceptación: USD
 `(2, Up)`, 13,19 con 15 % da unitario 11,22; con 10 unidades, línea 112,20 y descuento 19,70.
+
+**El descuento de cotizaciones y pedidos se guarda sin IVA**, igual que el subtotal de la línea. Con
+`bruto = Round2(cantidad × lista cobrada)` y `t` la tasa de IVA de la línea:
+
+```
+descuento = (bruto − Round2(bruto × t / (100 + t))) − base     // base = Subtotal de la línea, sin IVA
+```
+
+El POS conserva el descuento con IVA de la fórmula de arriba.
 
 La regla aplica sólo al precio con IVA incluido. Los valores sin IVA (los que lee el Excel del ERP),
 los totales del encabezado y los del POS siguen a 2 decimales, al más cercano.
@@ -853,7 +913,7 @@ Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
 `catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans`, `store`, `ai`, `support`, `purchases` y `wholesale`; `quotations` exige
-`catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
+`catalog`, `customers` y `companies`, `orders` exige lo mismo (no `quotations`: un pedido nace sin cotización, así que la consola de plataforma puede ocultar cotizaciones y el tenant sigue vendiendo por pedidos; la configuración de envíos, el contenido del PDF, los canales de WhatsApp y Zenvia los comparten ambos módulos y quedan disponibles con cualquiera de los dos), `pos` exige `catalog` y
 `companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers`, `store` exige `orders` y `ai` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. `support` (los tickets y PQRSF, [Soporte](#soporte); sin dependencias) tampoco viene con el signup y se prende igual. `purchases` (las órdenes de compra a proveedores) exige `suppliers` y `catalog`; no viene con el signup y se prende por tenant. `wholesale` (el mayorista: listas de precios y distribuidores invitados, ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación)) exige `orders`; no viene con el signup y se prende por tenant. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
@@ -1337,6 +1397,8 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/categories`    | `GET`, `POST`; por categoría `PUT` y `DELETE` (`If-Match`); `PUT pos-quick-access`           | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/catalog/price-lists`   | `GET` (todas, por nombre), `POST` (201 + `Location`), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `catalog.price_list.in_use` si un canal o un distribuidor la usa), `overrides` (`GET` paginado con `search`; `PUT` por lote `{ set, remove }`, `If-Match`, hasta 500 filas). Ver [Listas de precios por canal](#listas-de-precios-por-canal) | `catalog.price_list.manage` |
+| `/api/v1/tenants/{tenantId}/catalog/channel-prices` | `GET` y `PUT` (la lista de `Pos`, `Store` y `Quotations`; `null` = precio base; sin `If-Match`) | `catalog.price_list.manage` |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
@@ -1346,10 +1408,10 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
 | `/api/v1/tenants/{tenantId}/purchases/orders` | `GET` (`status`=`Draft`\|`Sent`\|`Confirmed`\|`Received`\|`Cancelled` sin importar mayúsculas, `supplierId`, `search` en el número o el nombre del proveedor, `page`, `pageSize` por defecto 50, tope 200; de la más nueva a la más vieja; `counts` por estado más `all` con los mismos filtros salvo `status`), `POST` (201 + `Location`, en `Draft` con número `OC-0001` por tenant; un alta rechazada no gasta número), `preview` (`POST`, mismo cuerpo, no escribe; `purchases.order.manage`), y por orden `GET`, `pdf` (`GET`, `application/pdf`, `OC-0001.pdf`, en cualquier estado), `PUT` y `DELETE` (sólo `Draft`, `If-Match`), `send`, `confirm` (cuerpo `{ lines: [{ lineId, confirmedQuantity, confirmedUnitCost }] }` con cada línea una vez), `receive` y `cancel` (`POST`, `If-Match`). Costos sin IVA; el IVA se suma en `totals` con la tasa que la línea copió del catálogo al guardar el borrador. Módulo `purchases` (apagado por defecto). Errores propios: `purchases.order.not_found` (404), `.not_draft` y `.invalid_transition` (409), `.empty`, `.line_not_in_catalog`, `.supplier_inactive`, `.invalid_currency`, `.confirm_lines_mismatch` (422), `.pdf_render_failed` (502); proveedor inexistente: `suppliers.supplier.not_found` (404) | `purchases.order.read` (`GET`, `pdf`) / `purchases.order.manage` (`POST`, `preview`, `PUT`, `DELETE`, `send`, `confirm`, `receive`, `cancel`) |
 | `/api/v1/tenants/{tenantId}/purchases/suppliers/{supplierId}/catalog` | `GET` (`search`, `page`, `pageSize` por defecto 50, tope 200): el catálogo del mayorista de un proveedor vinculado en su moneda, con `priceList { name, discountPercent }` y, por variante, base, descuento y precio de lista con IVA más `unitCost` sin IVA (ver [Mayorista: órdenes vinculadas](#mayorista-órdenes-de-compra-vinculadas)). `404 suppliers.supplier.not_found`, `422 purchases.order.supplier_not_linked`, `403 wholesale.relationship.inactive` | `purchases.order.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/price-lists` | `GET` (todas, por nombre, sin paginar), `POST` (201 + `Location`), `preview` (`POST`, la lista sin guardar: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe), y por lista `GET`, `PUT` y `DELETE` (`If-Match`; 409 `wholesale.price_list.in_use` si algún distribuidor la usa). Módulo `wholesale` | `wholesale.price_list.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `wholesale.price_list.manage` |
-| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`, manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone` y `whatsAppConnectionId`; `If-Match`), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
-| `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
+| `/api/v1/tenants/{tenantId}/wholesale/price-lists/preview` | `POST` (la lista sin guardar, `{ adjustmentPercent, visibility, categoryIds, exclusions }`: hasta 20 variantes con precio base y de lista y `totalProducts`; no escribe). Las listas mismas están en `/catalog/price-lists` desde el spec 2026-11-22. Módulo `wholesale` | `catalog.price_list.manage` + `wholesale.distributor.read` |
+| `/api/v1/tenants/{tenantId}/wholesale/categories` | `GET` (las categorías del catálogo como árbol plano `{ id, name, parentId }`, para elegir la visibilidad sin `catalog.product.read`) | `catalog.price_list.manage` + `wholesale.distributor.read` |
+| `/api/v1/tenants/{tenantId}/wholesale/distributors` | `GET` (`status`=`Invited`\|`Active`\|`Blocked`, `search`, `page`, `pageSize` por defecto 50, tope 200; `counts`), `options` (`GET`, listas, asesores, empresas facturadoras y `whatsAppConnections`), `POST` (invita: 201 + `Location`; `cityId` obligatorio con `country = "CO"` y `cityName` con otro país, `address` opcional, `422 wholesale.distributor.city_not_found` si la ciudad no existe; manda el correo y, con `phone`, el aviso por WhatsApp), y por distribuidor `GET` (`phone`, `city` `{ id, name }` o `null`, `address`, `invitation.whatsAppNotice`), `PUT` (lista, asesor, empresa y, invitado, `phone`, `whatsAppConnectionId` y los datos del distribuidor: `businessName`, `country`, `identificationType`, `identificationNumber`, `contactName`, `email`, `cityId`, `cityName`, `address`, todos opcionales; `If-Match`; ver [Editar un distribuidor](#editar-un-distribuidor)), `resend-invitation`, `block`, `unblock` (`POST`, `If-Match`) y `DELETE` (sólo `Invited`, `If-Match`) | `wholesale.distributor.read` (`GET`) / `wholesale.distributor.manage` (el resto) |
+| `/api/v1/wholesale-invitations/{token}` | `GET` (anónimo, límite `public`), `email-code` (`POST`, anónimo, `credentials`), `session` (`POST`, bearer de Google o stub, límite `credentials`), `session-with-password` (`POST`, anónimo, `credentials`), `linkable-tenants` (`GET`, sesión QEP) y `accept` (`POST`, sesión QEP); ver [Mayorista](#mayorista-listas-de-precios-distribuidores-e-invitación) | — |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
@@ -1357,7 +1419,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
-| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)) | `messaging.template.manage` |
+| `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management` | `GET`, `templates` (`POST`), por plantilla `DELETE`, `quotation` (`POST`), `sync` (`POST`), `wholesale-invitation-notice` (`POST`, cuerpo opcional `{ body }`) y `wholesale-invitation-notice/draft` (`GET`), la plantilla del aviso de invitación de mayorista (ver [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep) y [Aviso por WhatsApp de la invitación](#aviso-por-whatsapp-de-la-invitación)); `appointment-reminder` (`POST`, cuerpo opcional `{ body }`) y `appointment-reminder/draft` (`GET`), la plantilla `qep_agenda_recordatorio` del recordatorio de cita de la Agenda | `messaging.template.manage` |
 | `/api/webhooks/whatsapp` | `GET` (verificación), `POST` (firmado por Meta) | anónimo, limitador `webhook`, exento de CSRF |
 
 Toda ruta con `{tenantId}` valida además el tenant en el handler y responde
@@ -1504,6 +1566,28 @@ Respuesta:
 ```
 
 Formatos de fecha admitidos: `yyyy-MM-dd`, `dd/MM/yyyy` y `MM/dd/yyyy`.
+
+#### Idioma del producto (`es-419` / `es-ES`)
+
+Spec: [2026-11-22 i18n](docs/superpowers/specs/2026-11-22-i18n-espanol-espana-y-latinoamerica-design.md). El idioma no es el
+formato regional: `defaultCulture`, `numberFormat` y `dateFormat` no cambian con él. El catálogo es
+`SupportedLanguages` (`BuildingBlocks.Domain.Localization`), y el diccionario de cada idioma lo tiene el frontend.
+
+| Dónde | Campo | Qué es |
+| ----- | ----- | ------ |
+| `GET`/`PUT /tenants/{tenantId}/settings` | `language` | El idioma del tenant, para quien no eligió uno: `es-419` (por defecto) o `es-ES`. Si el `PUT` no lo trae, se conserva; un valor fuera del catálogo responde `422 tenancy.settings.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `language` | Lo que eligió la persona en este tenant, o `null` para seguir al tenant. En el `PUT`: ausente o `null` conserva, `""` vuelve al del tenant, y un valor fuera del catálogo responde `422 identity.preference.language.invalid`. |
+| `GET`/`PUT /auth/preferences` | `effectiveLanguage` | El diccionario que tiene que cargar la pantalla: el elegido, si no el del tenant. |
+| `/auth/me`, `POST /auth/session` | `activeTenants[].language` | El idioma **efectivo** de la persona en cada tenant, disponible antes de la primera pintura. |
+| `POST /auth/register-tenant`, `POST /auth/password/register-tenant` | `language` | Opcional; ausente o `""` es `es-419`. |
+
+Los correos ya están en español neutro con tuteo, y solo cambian los términos que en España se dicen distinto: «cotización»
+es «presupuesto» (correos de exportación, en el idioma efectivo de quien exportó) y «radicado» es «número de caso» (correo de apertura
+de Soporte, en el idioma del tenant). El parámetro `radicado` del enlace de consulta no se traduce.
+
+El PDF de cotización y de pedido y el Excel de cotizaciones van en el idioma del tenant: en `es-ES` dicen «Presupuesto» y
+«Comercial», y los archivos se llaman `Presupuesto-N.pdf` y `presupuestos-….xlsx`. Pasar un tenant a `es-ES` regenera sus PDF guardados
+en el siguiente export, porque el idioma entra a la huella; el despliegue no regenera ninguno.
 
 ### Invitación de memberships
 
@@ -1775,6 +1859,30 @@ Spec 2026-11-15 §4 (`docs/superpowers/specs/2026-11-15-store-order-buyer-link-d
 - Errores: `422 validation.failed` (`Email` vacío, inválido o de más de 254 caracteres), `422 order.buyer_account.not_found` (no hay cuenta
   con ese correo o no está verificada: un solo código para los dos), `422 order.order.source_invalid` (el pedido no es de la tienda), `403`
   (sin permiso o de otro tenant, nunca 404).
+
+#### La entrega editable
+
+Spec 2026-11-24 §10 y §11 (`docs/superpowers/specs/2026-11-24-perfiles-de-facturacion-backend-handoff.md`). En **todo origen**.
+
+- `PUT /orders/{id}` y `POST /orders/{id}/preview` aceptan
+  `delivery: { "isStorePickup": bool, "shipping": QuotationPartyRequest | null }`. **Ausente conserva** la entrega (un frontend
+  viejo no la toca). `shipping: null` con envío es la dirección del cliente. Pasar a recoger quita la dirección y limpia el
+  envío, contraentrega incluida. Al guardar, una parte propia debe venir completa; el cálculo previo la acepta a medias.
+- El pedido responde `order.deliveryEditable`: `true` mientras esté abierto, sin preparar, sin facturar y, si es mayorista, sin
+  aprobar.
+- Un cambio deja en el historial una fila `PartiesChanged` y la auditoría `quotation.order.delivery_changed`.
+- Errores (422): `order.order.already_invoiced`, `order.order.already_prepared` (facturado gana) y `order.order.not_editable`;
+  `order.delivery.shipping_party_on_pickup`, `order.delivery.address_required` (de recoger a los datos de un cliente sin
+  domicilio), `order.shipping.party_incomplete` (sólo al guardar), `quotations.party.region_invalid` con
+  `errors["Delivery.Shipping.RegionId"]` y `quotations.party.postal_code_too_long` con
+  `errors["Delivery.Shipping.PostalCode"]`.
+- **Pedido de Shopify** (§11.1). Cuando, enviando, cambia la parte propia, se rechaza lo que el envío a la tienda no podría
+  mandar, también en el cálculo previo: `order.delivery.shopify_party_required` (volver a la dirección del cliente),
+  `order.delivery.shopify_region_required` (España sin región) y `order.delivery.shopify_region_unmapped`. **El código postal
+  nunca es obligatorio** (owner, 2026-11-25).
+- **Evento** `quotations.order.shipping-party-changed.v1`, payload `{ tenantId, orderId, source, occurredAt }`: al outbox en la
+  transacción del pedido, sólo en un pedido de Shopify, enviando y con la parte propia cambiada. Lo consume Shopify, que encola
+  el envío de la dirección (ver [Integración con Shopify](#integración-con-shopify)). Recoger no publica nada.
 
 #### Los cuatro ejes del pedido
 
@@ -2303,6 +2411,23 @@ encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` 
 `quotations.orders_export_layout.updated` sólo si algo cambió. No hay `DELETE`: restaurar es un
 `PUT` con el catálogo en su orden, nombres y visibilidad por defecto, sin fijas.
 
+**Indicativo de los teléfonos** (spec 2026-11-25). El layout lleva un interruptor, `includePhoneDialCode`, que el `GET`
+devuelve siempre (`true` sin nada guardado) y el `PUT` acepta opcional: ausente o `null` conserva el actual. Se guarda con las
+mismas reglas que `sheetName` —permisos, `If-Match`, auditoría y no-op—, y cambiar sólo el interruptor es un cambio. Toda fila
+que ya existía quedó en `true` (migración `AddOrdersExportLayoutPhoneDialCode`, aditiva). Sólo toca las cuatro columnas de
+teléfono del catálogo —`phone`, `customer_phone`, `billing_phone` y `shipping_phone`—; las fijas salen como se escribieron.
+
+| `includePhoneDialCode` | Teléfono guardado                     | Sale en el Excel |
+| ---------------------- | ------------------------------------- | ---------------- |
+| `true`                 | cualquiera                            | como está        |
+| `false`                | `+573001234567`                       | `3001234567`     |
+| `false`                | `+34612345678`                        | `612345678`      |
+| `false`                | sin `+` (`3001234567`, `573001234567`) | como está       |
+| `false`                | con `+` y no se puede partir          | como está        |
+
+El número se parte con `libphonenumber` (`IPhoneNumberSplitter` de Customers, detrás del puerto `IQuotationPhoneNumbers`); lo que
+no es un número válido no se puede partir.
+
 `Observaciones` (`notes`) sale de las notas del pedido (`Order.Notes`, spec 2026-10-15), sin tope de
 largo. Al convertir, las notas del pedido son un solo campo, nunca una concatenación: el `notes` del
 cuerpo la reemplaza tal cual, `null` (o ausente) hereda las de la cotización y `""` la deja sin notas.
@@ -2381,7 +2506,8 @@ vuelve a subir.
 
 Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.
 
-- **Rutas** (`customers.customer.merge`, riesgo `high`; lo tienen por defecto los roles de sistema `admin` y `advisor`, en código):
+- **Rutas** (`customers.customer.merge`, riesgo `high`; de fábrica lo tienen `admin`, el rol de sistema, y `advisor`, el rol
+  sembrado en cada tenant):
   `GET /customers/{survivorId}/merge-preview?mergedCustomerIds=…` (1 a 10 ids distintos, sin el que queda) y
   `POST /customers/{survivorId}/merge` con `If-Match: "<survivor.version>"` y `{ "mergedCustomerIds": [...] }`. Sin `If-Match`
   responde 428; con una versión vieja, 412 `concurrency.conflict` (la pantalla pide de nuevo la vista previa).
@@ -2463,45 +2589,113 @@ Ni este token ni el del mayorista quedan en el servidor: `platform.request_failu
 `SensitivePaths.Mask` (`/api/v1/invitations/***/accept`). La telemetría usa la misma regla (`SensitivePathTelemetry`): el
 `url.path` de los spans de OpenTelemetry y el scope `RequestPath` de los logs del request.
 
+### Listas de precios por canal
+
+Spec `docs/superpowers/specs/2026-11-22-listas-de-precios-por-canal-design.md`. Una lista de Catalog tiene un ajuste con signo
+sobre el precio base (−100 a 999,99 %, redondeado con la regla del tenant para cada moneda) y precios fijos por variante y
+moneda, que ganan tal cual. Un precio fijo sólo reemplaza: sin precio base en la moneda, la variante no tiene precio en ningún
+canal. «Precios por canal» asigna una lista a `Pos`, `Store` y `Quotations` (sin lista, el precio base); cada distribuidor del
+mayorista tiene la suya. El canal se deriva del documento: la caja usa `Pos`; el catálogo, el carrito y los pedidos de la tienda
+(también al editarlos) usan `Store`; cotizaciones, pedidos manuales y convertidos y regalos usan `Quotations`; un pedido de
+Shopify conserva el precio de Shopify. Las escalas siguen en la variante y su descuento se calcula sobre el precio del canal,
+donde el canal ya las aplicaba. Las líneas guardadas no cambian al cambiar una lista. Visibilidad, exclusiones y
+`showPrices` de la lista sólo los usa el catálogo del distribuidor.
+
 ### Mayorista: listas de precios, distribuidores e invitación
 
 Módulo `wholesale` (spec `docs/superpowers/specs/2026-11-17-compras-y-mayorista-design.md`, plan
-`docs/superpowers/plans/2026-11-17-mayorista-fase-2-backend.md`, «Contrato HTTP»). El mayorista arma listas de precios
-(descuento sobre el precio del catálogo en su moneda por defecto, redondeado con su regla) e invita distribuidores por correo.
-El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}` (72 horas; reenviar rota el token y el link viejo
-pasa a `404`).
+`docs/superpowers/plans/2026-11-17-mayorista-fase-2-backend.md`, «Contrato HTTP»). El mayorista asigna a cada distribuidor
+una lista de precios de Catalog (ver [Listas de precios por canal](#listas-de-precios-por-canal); su ajuste se aplica en la moneda
+por defecto del mayorista, redondeado con su regla) e invita distribuidores por correo.
+El correo lleva `{Notifications:AppBaseUrl}/wholesale-invitations/{token}?ev={prueba}` (72 horas; reenviar rota el token y el
+link viejo pasa a `404`). `ev` es la prueba de buzón (spec `2026-11-24-invitacion-distribuidor-prueba-de-correo-design.md`): sólo
+la lleva el link del correo; el de «Copiar», `invitationUrl` y el aviso de WhatsApp van sin ella.
 
 | Método | Ruta                                                   | Autenticación                        | Límite        |
 | ------ | ------------------------------------------------------ | ------------------------------------ | ------------- |
 | `GET`  | `/api/v1/wholesale-invitations/{token}`                | Anónimo                              | `public`      |
+| `POST` | `/api/v1/wholesale-invitations/{token}/email-code`     | Anónimo, `{ email }`, siempre `202`  | `credentials` |
 | `POST` | `/api/v1/wholesale-invitations/{token}/session`        | Bearer de Google (o stub)            | `credentials` |
-| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ password }`       | `credentials` |
+| `POST` | `/api/v1/wholesale-invitations/{token}/session-with-password` | Anónimo, `{ email, password, code?, termsVersion, emailProof? }` | `credentials` |
 | `GET`  | `/api/v1/wholesale-invitations/{token}/linkable-tenants` | Sesión QEP                         | `public`      |
 | `POST` | `/api/v1/wholesale-invitations/{token}/accept`         | Sesión QEP                           | `public`      |
 
-- Quien no tiene cuenta abre sesión con el link: `session` exige el correo de la invitación verificado por Google y
-  `session-with-password` crea la contraseña (o verifica la que ya existe). `session-with-password` aprovisiona el usuario por
-  ese correo; `session` usa el usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
-  (`WholesaleInvitationGoogleSession`). Una cuenta de Google ya vinculada a un usuario con otro correo es
-  `403 wholesale.invitation.email_mismatch`, sin crear nada.
-- `accept` recibe `{ mode: "NewTenant", displayName, slug }` (crea el tenant del distribuidor con
-  `catalog, customers, companies, quotations, orders, reporting, suppliers, purchases`, aunque el alta pública esté apagada) o
-  `{ mode: "LinkTenant", tenantId }` (un tenant del que la sesión es owner; prende `catalog`, `suppliers` y `purchases` si
-  faltan). En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista y deja la relación
-  `Active`. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
+Spec `docs/superpowers/specs/2026-11-19-onboarding-distribuidor-por-link-design.md`: el link identifica la invitación y el
+correo no tiene que ser el invitado. Por sí solo no prueba el buzón; el del correo sí puede, con su `ev` (spec 2026-11-24).
+
+- `email-code` manda un código de 6 dígitos al correo que escribió el distribuidor (vence a los 10 minutos, 5 intentos; uno
+  nuevo cada 60 s como mucho y 5 por correo en 24 h móviles). Cada código nuevo invalida el anterior y sólo cuenta el más
+  reciente. Responde `202` siempre: no dice si el correo tiene cuenta ni si la invitación sigue pendiente, y
+  sólo emite con la invitación pendiente.
+- `session-with-password` (sin `email`, el invitado): si ese correo ya tiene contraseña, es un login normal
+  (`IPasswordLogin`: `401 identity.credentials.invalid`, o `403 identity.email.not_verified` con el correo sin verificar; el
+  link no lo verifica, y `emailProof` se ignora). Si no tiene usuario o no tiene contraseña, exige un `code` válido de
+  `email-code` **o** `emailProof`, el valor de `?ev=` del link del correo: sin ninguno de los dos es el mismo `401` que una
+  contraseña errada, así que la respuesta no dice si el correo tiene cuenta ni si falló la prueba o el código. `emailProof`
+  sólo vale con la invitación pendiente, la prueba vigente y el correo invitado (sin mayúsculas ni espacios de más); la anulan
+  «Copiar», «Reenviar» (que manda una nueva) y cambiar el correo del distribuidor. Con el buzón probado o el código ya gastado
+  exige `termsVersion` (`422` en `TermsVersion`; la vigente es `Terms:CurrentVersion`, y sin ella falla cerrado con
+  `identity.terms.unavailable`), y entonces aprovisiona, crea la contraseña y registra los términos.
+- `session` abre la sesión del correo **verificado** de Google (`403` si no está verificado), sea o no el invitado: usa el
+  usuario que ya tiene esa cuenta de Google o ese correo y aprovisiona sólo si no hay ninguno
+  (`WholesaleInvitationGoogleSession`).
+- `accept` recibe `{ mode: "NewTenant", termsVersion? }` o `{ mode: "LinkTenant", tenantId }`. `NewTenant` crea el tenant del
+  distribuidor con la razón social de la invitación como nombre y un slug que sugiere el servidor (con sufijo si está tomado;
+  si se lo ganan en una carrera, reintenta hasta 3 veces), con `catalog, customers, companies, quotations, orders, reporting,
+  suppliers, purchases`, aunque el alta pública esté apagada; un `displayName` o `slug` en el cuerpo se usan si vienen (el país es
+  siempre el del distribuidor). Quien no aceptó
+  la versión vigente de los términos manda `termsVersion` (`422` en `TermsVersion` sin ella). `LinkTenant` vincula un tenant
+  donde la sesión es owner o tiene el rol de sistema `admin` en una membresía activa; prende `catalog`, `suppliers` y
+  `purchases` si faltan. Sobre el tenant reservado (el que nace de la invitación, también en un reintento con cuerpo
+  `LinkTenant`) crea además la **empresa del distribuidor** con su razón social, documento, ciudad y dirección, idempotente por
+  tipo y número exactos (una invitación sin la ciudad que su país exige acepta sin empresa); vincular un tenant existente la crea sólo si ese
+  tenant no tiene ninguna empresa. En los dos casos crea el proveedor vinculado en el distribuidor, el cliente en el mayorista (con el celular del
+  aviso, la ciudad, la dirección y el contacto del distribuidor: con teléfono y ciudad nace completo, y el contacto es la etiqueta
+  de su dirección principal si hay ciudad colombiana y calle; sin teléfono, o si Customers rechaza la ficha completa, nace incompleto
+  como antes) y deja la relación `Active`; si el correo de la cuenta no es el del distribuidor, lo reemplaza en el mismo guardado y avisa a los dos
+  correos. Repetirlo con el mismo usuario responde lo mismo, sin escribir.
 - Errores: `404 wholesale.invitation.not_found`, `410 wholesale.invitation.expired`, `409 wholesale.invitation.already_accepted`,
   `.unavailable` (el mayorista no está activo, apagó `wholesale` o su empresa facturadora no sirve) y
-  `wholesale.distributor.already_linked`; `403 wholesale.relationship.inactive` (la relación está bloqueada),
-  `wholesale.invitation.email_mismatch` y
-  `.not_tenant_owner`; `422 wholesale.invitation.self_link`, los de `register-tenant` y `validation.failed`
-  (`Mode`, `DisplayName`, `Slug`, `TenantId`).
+  `wholesale.distributor.already_linked`; `403 wholesale.relationship.inactive` (la relación está bloqueada) y
+  `wholesale.invitation.not_tenant_owner`; `401 identity.credentials.invalid`; `422 wholesale.invitation.self_link`,
+  `identity.terms.unavailable`, `identity.terms.version_mismatch`, los de `register-tenant` y `validation.failed` (`Mode`,
+  `TenantId`, `TermsVersion`, `Password`).
+
+#### Editar un distribuidor
+
+`PUT …/wholesale/distributors/{id}` (`If-Match`; cuerpo `{ priceListId, advisorId, billingCompanyId, phone?,
+whatsAppConnectionId?, businessName?, country?, identificationType?, identificationNumber?, contactName?, email?, cityId?,
+cityName?, address? }`). Decisión del owner 2026-11-24: mientras está `Invited` se editan los datos que se llenaron al invitar.
+
+- Lista, asesor y empresa facturadora se editan en cualquier estado. `phone` y `whatsAppConnectionId` sólo cuentan invitado
+  (afuera se ignoran) y `phone` ausente **borra** los dos.
+- Los datos del distribuidor son opcionales: ausente o `null` **conserva** lo guardado. No se puede borrar el nombre ni la
+  ciudad; la dirección se borra con `""`.
+- Invitado, rigen las reglas de invitar: `422 validation.failed` con `errors` por campo (`Email`, `BusinessName`, `Country`,
+  `IdentificationType`, `IdentificationNumber`, `ContactName`, `CityId`, `CityName`, `Address`),
+  `422 wholesale.distributor.city_not_found` y `409 wholesale.distributor.identification_taken` contra los demás
+  distribuidores. Al cambiar de país hay que mandar el tipo de documento y la ciudad válidos para el nuevo. Una invitación
+  vieja sin ciudad no la exige mientras no se mande la ciudad ni cambie el país.
+- Invitado, cambiar el tipo o el número de documento cuando la aceptación ya empezó (creando el tenant o vinculando uno
+  existente) es `409 wholesale.distributor.acceptance_in_progress` y no escribe nada; los demás campos se siguen editando.
+  La aceptación confirma esa marca antes de escribir en otros módulos y con ella sube `version`: un `PUT` con el `If-Match`
+  anterior es `412 concurrency.conflict`. Un accept rechazado en sus validaciones no deja marca. La marca no se borra.
+- El detalle devuelve `city` como `{ id, name, departmentId, departmentName }`, para que la edición preseleccione la cascada
+  departamento → ciudad. Afuera de Colombia `id`, `departmentId` y `departmentName` son `null` y `name` es el texto escrito;
+  `city` es `null` en una invitación sin ciudad. El `PUT` sigue recibiendo sólo `cityId` o `cityName`.
+- `Active` o `Blocked`: un dato distinto del guardado es `409 wholesale.distributor.invalid_transition`. Reenviar los mismos
+  valores se acepta (en Colombia `cityName` no cuenta, y afuera `cityId` tampoco).
+- Cambiar el correo **no** reenvía la invitación ni rota el token: para que llegue al correo nuevo, usa `resend-invitation`.
+- La auditoría (`wholesale.distributor.updated`) nombra los campos que cambiaron, nunca sus valores.
 
 #### Aviso por WhatsApp de la invitación
 
 Spec `docs/superpowers/specs/2026-11-18-invitacion-distribuidor-whatsapp-design.md`, plan
 `docs/superpowers/plans/2026-11-18-aviso-whatsapp-invitacion-backend.md`, «Contrato HTTP». Con `phone` (y la conexión que
-resuelve el contrato) invitar y «Reenviar» escriben, además del correo, `wholesale.distributor-invitation-notice.v1`: un evento
-**sin token, sin link y sin vencimiento**, que dice que la invitación llegó al correo. Lo consume Mayorista con inbox propio
+resuelve el contrato) invitar y «Reenviar» escriben, además del correo, `wholesale.distributor-invitation-link.v1` (spec
+2026-11-19 §2): un evento **con el token** de la invitación, que viaja sólo en el payload del outbox. Reemplaza a
+`wholesale.distributor-invitation-notice.v1`, sin token, que ya no se escribe y sólo se drena. El mensaje de WhatsApp todavía
+**sale sin el link**: dice que la invitación llegó al correo. Los dos los consume Mayorista con inbox propio
 (`wholesale.inbox_messages`, consumidor `wholesale.invitation-whatsapp-notice`, curva 5 s / 30 s / 5 min) y lo manda por
 `WholesaleInvitationNoticeSender` de Bootstrapper con la plantilla `qep_mayorista_invitacion` (`UTILITY`, `es`, variables
 `nombre_contacto`, `mayorista`, `correo`). El fallo del aviso nunca frena ni cambia el correo.
@@ -2746,9 +2940,17 @@ El tenant se resuelve del claim JWT (no de header ni subdominio en runtime).
 `IExecutionContext.TenantId` lo expone vía `HttpExecutionContext`, que lee el
 `ClaimsPrincipal` actual. La autorización es por claims de permiso
 (`RequireClaim(QepClaimTypes.Permission, permiso)`), con policies armadas
-dinámicamente por módulo. Los roles no están hardcodeados: `RoleDefinition` /
-`RoleCatalog` mapean un rol (p. ej. `admin`, `advisor`) a un
-conjunto de permisos.
+dinámicamente por módulo. El único rol de sistema es `admin` (`RoleDefinition` /
+`RoleCatalog`, en código); los demás son filas de `authorization.roles` de cada
+tenant, que él edita o borra desde `/authorization/roles`.
+
+Cinco de esas filas (`advisor`, `billing`, `cashier`, `scheduling_manager` y
+`scheduling_provider`) nacen de plantillas (`RoleTemplate`) que se siembran una sola
+vez por tenant, con marca en `authorization.role_seeds`: en el alta (si falla, queda
+un log `Error` y el alta sigue) y al arrancar, después de la semilla y bajo el candado
+de arranque (si falla, el arranque falla). Un permiso nuevo en una plantilla sólo
+llega a los tenants nuevos. Un rol no se puede borrar mientras lo tenga una membresía
+`Invited`, `Active` o `Suspended` (`422 authorization.role.in_use`).
 
 ### Acceso cruzado entre módulos, controlado
 
@@ -2902,15 +3104,16 @@ Meta» la muestra como «hace X»; no hay alerta de silencio (owner, 2026-11-16)
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
-El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Platform`. Valkey **no** entra a
+El cliente de Valkey (spec 2026-11-13) publica tres métricas en el meter `Qep.Platform`. Valkey **no** entra a
 `/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
 
 | Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
 | ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
 | `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
-| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area}` | `area`   | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch` |
+| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area,reason}` | `area`, `reason` | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
+| `qep.valkey.operation.duration` | `qep_valkey_operation_duration_seconds` (histograma) | `area`, `outcome` | Cuánto tarda cada operación pedida con `ValkeyGateway.TryAsync`, medida desde el pod. `outcome`: `ok`, `error`, `late` (pasó el tope y después respondió; se mide al terminar) y `late_error` (pasó el tope y después falló). No mide `Publish` ni `Subscribe`, y sin conexión no hay operación que medir |
 
-La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
+La alerta sobre las dos primeras no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
 **Limitadores compartidos (D-3, `Valkey:Areas:RateLimiting`).** Las siete políticas de ventana fija de `Program.cs` y el
 límite por clave de la API externa pasan por `SharedRateLimitPartitions`. Con el área prendida cuentan en Valkey, en la
@@ -2931,8 +3134,9 @@ pasar sin límite. El limitador de concurrencia del webhook se queda en memoria 
 [§ Verificación](docs/superpowers/specs/2026-11-13-valkey-estado-compartido-design.md#verificación); acá va sólo lo que el código fijó.
 Lo hace el owner, un área por commit
 (`chore(k8s): enable valkey <area> area`, el flag en `"true"` en `k8s/prod-configMap.yaml`). Después de `Presence` y
-`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells` y
-`Valkey__Areas__ApiKeyTouch`. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
+`RateLimiting`: `Valkey__Areas__Sessions`, `Valkey__Areas__Permissions`, `Valkey__Areas__Doorbells`,
+`Valkey__Areas__ApiKeyTouch` y `Valkey__Areas__LegalParameters` (la tabla de valores legales de Hr, spec 2026-11-22: contador
+`qep:legalparams:ver` y tabla en `qep:legalparams:{ver}` con TTL de 1 h; apagada, copia del pod de 60 s). Con el área prendida, una migración o un SQL manual sobre `hr.legal_parameters*` no sube la versión: hace falta `INCR qep:legalparams:ver` (o un reinicio, que la sube al arrancar) para verlo antes de que venza la hora. El presupuesto de envío de campañas no está en la lista: se queda en Postgres
 (`messaging.connection_send_budgets`) por decisión del owner del 2026-11-13.
 
 **Con `Sessions` y `Permissions` apagadas hay caché igual, pero por pod** (2026-11-17). Antes, apagada el área era «cada request
@@ -2955,14 +3159,29 @@ Mientras las áreas estén apagadas hay dos exposiciones que antes no existían,
 
 **El chequeo es la métrica, no el log.** El gateway registra cada respaldo en `Debug` («Valkey fallback in area …») y
 producción corre en `Information`: un `logs | Select-String "fallback"` sale vacío aunque haya respaldos. Lo que cuenta es
-el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiqueta `area`). En Grafana, durante el día
+el contador `qep.valkey.fallbacks` (Prometheus `qep_valkey_fallbacks_total`, etiquetas `area` y `reason`). En Grafana, durante el día
 que pasa entre un área y la siguiente:
 
 ```promql
-increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h])
+sum by (reason) (increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h]))
 ```
 
-tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida
+del pod). Si da distinto de cero, `reason` dice por qué: `TimeoutException` es una operación que no respondió en
+`OperationTimeoutMs` (100 ms) —desde el pod no se distingue si tardó Valkey, la red o el propio proceso—,
+`NotConnected` una reconexión del cliente, y `RedisServerException` un comando que la ACL de producción rechaza. La serie
+vieja sin `reason` sigue en Prometheus hasta que vence su retención.
+
+Cuánto tardan de verdad las que pasan el tope se ve en el histograma:
+
+```promql
+sum by (le, area) (increase(qep_valkey_operation_duration_seconds_bucket{outcome=~"late.*"}[24h]))
+sum by (area, outcome) (increase(qep_valkey_operation_duration_seconds_count[24h]))
+histogram_quantile(0.999, sum by (le, area) (rate(qep_valkey_operation_duration_seconds_bucket[1h])))
+```
+
+Si las `late` caben casi todas bajo `le="0.15"` o `le="0.25"`, el tope está corto; si caen en segundos, el problema no se
+arregla subiéndolo. La segunda consulta da la proporción real de operaciones que se pierden. Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
 secretos; nunca `get secret -o yaml` ni `-o json`):
 
 ```powershell
@@ -2975,6 +3194,7 @@ kubectl --context contabo-prod -n prod-qep-backend get configmap qep-backend-con
 | `Permissions` | `permissions`   | `increase(...[1h])` = 0          | Suspende un miembro con su sesión abierta y pide un endpoint del tenant: 403 en el request siguiente     |
 | `Doorbells`   | `doorbells`     | `increase(...[1h])` = 0          | La edad de la cola `automation` baja en el dashboard. Con dos pods, sólo uno publica las métricas de colas por vuelta: el que tiene `qep:leader:queue-sampler`, que también gobierna esta área (plan P14) |
 | `ApiKeyTouch` | `api_key_touch` | `increase(...[1h])` = 0          | Sin comportamiento visible: el contador es la verificación                                               |
+| `LegalParameters` | `legal_parameters` | `increase(...[1h])` = 0     | Cambia un valor legal desde la consola del operador y léelo desde otra réplica: el valor nuevo se ve al instante |
 
 Si el contador sube sin que Valkey esté caído (`qep_valkey_connected` en 1), revisa primero la ACL del usuario `qep`:
 el gateway convierte un `NOPERM` en respaldo. `ValkeyAclCompatibilityTests` dice qué comandos usa cada área.
@@ -3048,6 +3268,12 @@ público de Soporte) no existen para la consola: `GET /files` no los lista ni fi
 storage.file.not_found` (el mismo de otro tenant) y `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`. Se crean,
 completan y bajan sólo por `IStorageSystemUploads`, desde el módulo dueño. Ver [Formulario público de
 Soporte](#formulario-público-de-soporte-fase-3).
+
+**Archivos que piden un permiso extra.** Los tipos de `FileOwnerModules.RequiredPermissionByOwnerType` (hoy `WmsExport`, el Excel de
+saldos de Bodegas, con `wms.stock.export`) exigen ese permiso además del `storage.file.*` de la ruta: sin él, `GET /files` no los lista y
+toda ruta por id (descarga, publicación, despublicación, metadatos, completar, cancelar, borrar) responde `403 authorization.denied`.
+Tampoco los ven Catalog ni Quotations: para ellos el id no existe. `WmsExport` además lo genera el servidor (`ServerGeneratedFiles`), así
+que `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`.
 
 ### Reportes exportados (`exports/`)
 
@@ -3602,7 +3828,7 @@ sobrescribe la misma clave.
 `messaging/staging/{tenantId}/{conversationId}/{memberId}/{uploadId}{ext}`). Después `POST …/messages/media` con
 `{ uploadId, clientId, fileName, caption?, replyTo? }` confirma: revisa tamaño y firma binaria, comprime la imagen, la
 sube a Meta y envía; responde 201 cuando Meta contesta. Imagen jpeg/png hasta 25 MB, recomprimida siempre a JPEG q80 con
-el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls o xlsx hasta 100 MB. `caption`
+el lado mayor en 1600 px y sin EXIF (el original se borra); documento pdf, doc, docx, xls, xlsx, ppt, pptx o txt hasta 100 MB. `caption`
 opcional hasta 1024. Mismas reglas que el texto: ventana, asignado, autoasignación, cita e idempotencia por `clientId`; un
 `Failed` conserva el staging para el reintento. Errores 422: `messaging.media.upload_not_found`, `too_large`,
 `unsupported_format` e `invalid_image`.
@@ -3621,10 +3847,17 @@ bytes de cabecera):
 | Audio | `.aac` → `audio/aac` | 16 MB | 25 MB | ADTS (`FF F1`/`FF F9`) |
 | Audio | `.amr` → `audio/amr` | 16 MB | — | `#!AMR\n` o `#!AMR-WB\n` |
 | Audio | `.ogg` → `audio/ogg` | 16 MB | — | `OggS` con `OpusHead` (Vorbis no) |
+| Documento | `.ppt` → `application/vnd.ms-powerpoint` | 100 MB | — | OLE (`D0CF11E0A1B11AE1`, como `.doc`/`.xls`) |
+| Documento | `.pptx` → `application/vnd.openxmlformats-officedocument.presentationml.presentation` | 100 MB | — | zip (`PK`, como `.docx`/`.xlsx`) |
+| Documento | `.txt` → `text/plain` | 100 MB | — | UTF-8 válido sin bytes de control (sin firma; deja fuera binarios y UTF-16) |
+| Sticker | `.webp` → `image/webp` | 100 KB estático, 500 KB animado | — | `RIFF`…`WEBP` con chunk `VP8 `, `VP8L` o `VP8X` |
 
 **La tabla está en borrador hasta las verificaciones V-1..V-3 con Meta real** (las corre el owner; ver el spec): lo que Meta
 no acepte se quita de `OutboundMediaPolicy` y de esta tabla. No hay transcodificación ni `ffmpeg`: `.mov`, `.webm`, `.avi`,
-`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. El video sale con `type: video` y su `caption`; el audio,
+`.wav`, `.flac`, `.wma` y el `.ogg` Vorbis son `unsupported_format`. **Sticker** (2026-11-22): Meta sólo admite WebP como sticker, no como
+imagen, así que `.webp` sale con `type: sticker`, sin `caption` (422 `validation.failed` en `caption`), sin recomprimir y sólo por WhatsApp.
+El tope depende del contenido: 500 KB si el chunk `VP8X` trae la bandera de animación y 100 KB si no, y por eso el estático se mide al
+leer el archivo (`media_too_large` al confirmar, no al pedir la sesión). El chatbot no lo manda: su flujo no tiene ese tipo. El video sale con `type: video` y su `caption`; el audio,
 con `type: audio` **sin** `voice` (la nota de voz sigue con `voice: true`) y **sin texto**: un `caption` con un audio es 422
 `validation.failed` en `caption`. El multipart a Meta lleva `video{ext}` o `audio{ext}`; el nombre real queda en
 `message_media.file_name` y viaja en `media.fileName`, que en un audio adjunto **no es nulo** y en una nota de voz sí: así
@@ -5008,8 +5241,15 @@ prendido, al importador:
 - El pedido entra por `IExternalOrderWriter` con la clave externa `"{shopId}:{shopifyOrderId}"`: el índice único
   `IX_orders_tenant_external_key` hace que el mismo pedido dos veces (webhook y conciliación a la vez, o el worker que
   cae entre crear el pedido y guardar la fila) deje un solo pedido. Lo que entra con algo que revisar lleva `warnings`
-  (`customer_incomplete`, `shipping_address_unresolved`, `total_difference`, `carrier_unrecognized`,
-  `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
+  (`customer_incomplete`, `shipping_address_unresolved`, `shipping_region_unresolved`, `total_difference`,
+  `carrier_unrecognized`, `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
+- **Dirección de envío de fuera de Colombia.** El pedido nace con su parte de envío: el país del snapshot, la ciudad escrita
+  (`cityName`, máx. 120), el `zip` como `postalCode` y, en España, la región (`regionId`) traducida del `province_code` (ISO →
+  INE). Sin región traducible la parte entra sin ella, con `shipping_region_unresolved`; se elige en «Editar pedido». Sin
+  nombre, teléfono, dirección, correo del comprador o ciudad, o con alguno más largo que lo que guarda el pedido (ciudad 120,
+  nombre y dirección 255, correo 254, teléfono 32), no hay parte:
+  `shipping_address_unresolved` y la dirección cruda en las notas, como en Colombia. El cliente no cambia (el alta completa
+  sigue siendo sólo de Colombia) y los pedidos ya importados no se reescriben.
 - Después de importado, el resto de las ediciones de Shopify (líneas, envío, dirección, nota, atributos) llegan como
   **cambios** (ver «Ediciones del pedido» abajo), y además se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
   contraentrega se prepara y se cobra después; con comprobantes, o anulado o facturado, el rechazo queda en `last_error`;
@@ -5091,11 +5331,33 @@ atributos) viaja a Shopify.
   (`ShopifyCityCorrectionProcessor`, `Applied` o `AlreadyApplied`), la parte escrita pasa a la proyección (no la tocó el
   asesor) y se encola `[ShippingAddress]` en el mismo guardado de la huella. Si el asesor ya había editado la parte, el trabajo
   sale `Skipped` con `shipping_changed` y nada viaja: gana el asesor.
+- **La dirección cambiada en «Editar pedido» también viaja** (spec 2026-11-24 §11.1, ver [La entrega
+  editable](#la-entrega-editable)). `QuotationOrderEventsWorker` llama cada 10 s al consumidor
+  `shopify.quotation-order-events`, que lee `quotations.order.shipping-party-changed.v1` del outbox y encola
+  `[ShippingAddress]` (fusionado con el envío abierto; `Held` con `connection_inactive` si la conexión no está operativa). No
+  escribe el pedido ni mueve la proyección: una edición posterior de Shopify sobre la dirección es conflicto y gana QEP.
+  Pasar a recoger no viaja: `orderUpdate` no cambia el método de entrega.
+- **El código postal es parte de la dirección.** La importación, las ediciones de Shopify y la corrección de ciudad por
+  sinónimo ponen el `zip` en la parte (uno de más de 20 caracteres se omite), la huella (`shopify.city_corrections.postal_code`)
+  y la proyección lo guardan, y la comparación lo mira; «Cambios por revisar» trae la fila `zip` en el grupo `ShippingAddress`.
+  Un pedido sin código postal no toma como cambio un `zip` que Shopify no modificó. Un payload guardado antes de que el espejo
+  leyera el zip no tiene la clave (distinto de `"zip": null`): de ese zip desconocido no sale ningún cambio.
+- **El eco de una dirección de fuera de Colombia** se reconoce comparando lo que llega con lo que el envío de la parte del pedido
+  mandaría (`ShopifyPushAddress`, la misma regla de los dos lados): si coincide, no hay cambio. Lo que no es eco se compara
+  como en Colombia, con la regla de la importación (`ShopifyForeignAddress`): se aplica si el asesor no tocó la parte (sin
+  región traducible, sin región) o es conflicto `qep_changed`. `city_unresolved` queda para una dirección sin ciudad o con una
+  de más de 120 caracteres, y no va a la bandeja de ciudades. El cambio de **sólo** el país no genera fila de diferencia.
 - **El envío.** `ShopifyOrderPushWorker` corre cada 10 s, en lotes de 50, y manda `orderUpdate` (GraphQL, `shopify.admin`) con
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
-  (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
-  `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
-  dirección entera; la nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  (`lastName` y `address2` vacíos, D12) y la `company` del **último** snapshot, porque `orderUpdate` reemplaza la dirección
+  entera. En Colombia, la ciudad y el departamento con sus nombres de QEP, el `provinceCode` de `ColombiaProvinceCodes` y el
+  `countryCode` del último snapshot si es Colombia (`CO` si no). Fuera de Colombia, el país y la ciudad escrita de la parte y el
+  `provinceCode` de su región (`SpainProvinceCodes`, INE → ISO 3166-2; un país sin regiones va sin `provinceCode`), con las
+  mismas reglas con las que se rechaza el guardado (`ShopifyShippingAddressRules`). El `zip` es el `postalCode` de la parte de
+  QEP; sin él, el del último snapshot sólo si país y provincia de la parte son los del snapshot; si no, no viaja. La corrección
+  del panel no recibe código postal: conserva el del pedido mientras no cambie el departamento y, si cambia, lo borra. La nota es
+  `BuyerNotes` y los atributos,
+  `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
   `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro
@@ -5340,44 +5602,118 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 
 ### Integración con Siigo
 
-Un pedido de QEP se factura en Siigo con un clic (spec `2026-11-18-integracion-siigo-design.md`): QEP arma la factura de venta
+Un pedido de QEP se factura en Siigo desde la pantalla, en segundo plano (spec `2026-11-18-integracion-siigo-design.md`): QEP arma la factura de venta
 con las líneas, los impuestos, las retenciones y los comprobantes de pago del pedido, la crea en Siigo y marca el pedido como
 facturado con su número (`FV-1-123`). Módulo `siigo` (depende de `orders`, no está en `DefaultForNewTenants`: se prende desde la
 consola de operador, como `pos`), esquema `siigo` (`settings`, los vínculos de impuestos, formas de pago y productos, e
 `invoices`), y del lado de Integrations el proveedor `siigo`. Recibos de caja y notas crédito quedan fuera (fase 2).
 
 **Conexión.** El tenant crea la conexión `siigo` en Integrations con su usuario y su clave de acceso (cifrada, como las demás); el
-probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage`, bajo
+probador la valida contra `/auth`. Cada conexión es una empresa de Siigo y se configura aparte, con `siigo.settings.manage` (de
+fábrica `admin` y `billing`; crear, editar o desconectar la conexión exige `integrations.connection.manage`, sólo `admin`), bajo
 `/api/v1/tenants/{tenantId}/siigo/connections/{connectionId}`: tipo de documento, vendedor, centro de costo, bodega, empresa de QEP
 que factura, impuestos, formas de pago y vínculos de productos. Los `PUT` llevan `If-Match` (sin él, 428; con una versión vieja,
 412). El asistente propone cada paso con lo que lee de Siigo (`/options/{lista}`) y el auto-vínculo casa variantes y productos por
 código, sin distinguir mayúsculas ni espacios.
 
-**Generar la factura.** `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (permiso `siigo.invoice.issue`, y el
-handler revalida tenant y permiso: 403, nunca 404). `GET …/preview` devuelve la factura armada, los faltantes y la propuesta de
-pagos sin llamar a Siigo.
+**Generar la factura.** Toda emisión es una tanda (spec `2026-11-24-siigo-facturacion-en-segundo-plano-design.md`), también la de un
+solo pedido: `POST /api/v1/tenants/{tenantId}/siigo/invoice-batches` con `orderIds` (de 1 a 50) y, sólo con un pedido, `payments`
+(`kind`, `proofId`, `siigoPaymentTypeId`). Permiso `siigo.invoice.issue`, y el handler revalida tenant y permiso: 403, nunca 404.
+Responde `202` y un worker factura cada pedido como la persona que pidió la tanda; el avance se lee con
+`GET …/siigo/invoice-batches/{batchId}` y todas las tandas con `GET …/siigo/invoice-batches`. Un pedido que ya está en una tanda sin
+terminar es `409 siigo.invoice_batch.order_in_progress`. La factura de un pedido se consulta y se atiende bajo
+`/api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (`GET`, `/availability`, `/preview`, `/{invoiceId}/pdf`,
+`/{invoiceId}/send-whatsapp`, `/stamp`, `/resolve` y `/annulment`); esa ruta no genera facturas. `GET …/preview` devuelve la factura
+armada, los faltantes y la propuesta de pagos sin llamar a Siigo. Crear la factura espera a Siigo hasta 120 s; todo lo demás, 30 s.
+Cada fila que devuelven `GET`, `/stamp` y `/resolve` trae `orderMarkFailed`: va en `true` en la factura del pedido que existe en
+Siigo cuando el pedido no lleva su marca (o no se pudo leer) y ninguna tanda sin terminar lo tiene; otra tanda del pedido la completa
+sin crear otra factura. La de flete siempre va en `false`. Mientras una tanda sin terminar tenga el pedido, `canResend` va en `false`,
+en esas filas y en los ítems de las tandas.
 
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
-  `Rejected` y `Failed` arman una fila nueva. Una `Pending` de más de 24 h pasa a `Unknown` y la resuelve una persona
-  (`POST …/resolve` con `exists` o `missing`).
-- Si falta algo (variante sin vínculo, impuesto sin vínculo, cuenta sin forma de pago, cliente sin dato) responde
-  `422 siigo.invoice.not_ready` con `details.missing` y nada sale a Siigo.
+  `Rejected`, `Failed` y `Annulled` arman una fila nueva.
+- Si no se sabe si Siigo creó la factura (timeout, red, 5xx, 429 o un error de servicio de Siigo), la fila queda por confirmar
+  (`Pending`) y el ítem `ToConfirm`: una persona la reenvía con otra tanda o la resuelve (`POST …/resolve` con `exists` o `missing`;
+  `missing` espera 10 minutos desde el último envío sin respuesta). No hay reintentos automáticos. Una `Pending` de más de 24 h pasa a
+  `Unknown` y sólo se resuelve. Mientras una tanda sin terminar tenga el pedido, `missing` es
+  `409 siigo.invoice_batch.order_in_progress`. La de flete no se resuelve mientras la del pedido siga abierta (`Pending` o
+  `Unknown`): `422 siigo.invoice.state_invalid`.
+- Si falta algo (variante sin vínculo, impuesto sin vínculo, cuenta sin forma de pago, cliente sin dato) el pedido sale `Skipped` en
+  la tanda con `siigo.invoice.not_ready` y los códigos en `missing`, y nada sale a Siigo.
 - Cada comprobante de pago del pedido es un pago de la factura; el saldo va a contraentrega o a crédito. Los `payments` suman el
   neto (con las retenciones ya descontadas).
 - **Cuadre de totales.** Un pedido cuyos totales no cuadran con los de Siigo no se factura. Antes de enviar, el armador compara
-  subtotal, IVA y total de los ítems con los del pedido (tolerancia de 1 peso: `422 siigo.invoice.totals_mismatch`); en Siigo, si
-  los pagos no suman, rechaza con `invalid_total_payments` y la fila queda `Rejected` con el total esperado en
-  `expectedPaymentsTotal`. **No se reintenta solo con el total que propone Siigo.**
+  subtotal, IVA y total de los ítems con los del pedido (tolerancia de 1 peso: el pedido sale `Skipped` con
+  `siigo.invoice.totals_mismatch`); en Siigo, si los pagos no suman, rechaza con `invalid_total_payments` y la fila queda
+  `Rejected` con el total esperado en `expectedPaymentsTotal`. La excepción es una diferencia de redondeo (hasta 1 peso, sin
+  envíos sin respuesta): el último pago se ajusta al total de Siigo y la factura se reenvía una sola vez con otra clave
+  (`siigo.invoice.payments_adjusted` en la auditoría).
 - «Enviar a la DIAN» nace **apagado** en cada conexión. Con el interruptor apagado la factura queda creada y sin emitir, y una
   persona la revisa en Siigo antes de prenderlo. Una factura emitida no se borra, y no hay empresa de pruebas de Siigo: es la única red.
 - El flete va como un ítem de la factura del pedido o, si la conexión lo pide (`freight_separate_invoice`), en su propia factura.
 - Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
-  Un pedido facturado en Siigo no se revierte con QEP (`422 order.order.invoiced_externally`): revertir es una nota crédito.
+  Un pedido facturado en Siigo no se revierte con la acción manual (`422 order.order.invoiced_externally`): el pedido se libera cuando
+  QEP verifica que la factura se anuló en Siigo (`/annulment`, abajo). Una factura aprobada por la DIAN se corrige con una nota
+  crédito, que QEP no maneja.
+
+**Anulada en Siigo** (spec `2026-11-25-siigo-anular-factura-design.md`). QEP no anula facturas: una persona la anula (o la borra) en
+Siigo Nube y después llama `POST …/siigo-invoice/annulment` (sin cuerpo, permiso `siigo.invoice.issue`). QEP lee en Siigo cada factura
+vigente del pedido y, **sólo si todas están anuladas** (la del pedido y la de flete), pasan a `Annulled` (con `errorCode`
+`siigo.invoice.annulled_in_siigo` o `siigo.invoice.deleted_in_siigo`), el pedido pierde la marca de facturado y se puede volver a
+facturar. Responde `200` con las filas actuales. Ante cualquier duda no cambia nada: `422` `siigo.invoice.annulment_unverifiable`
+(una factura `Pending`, `Unknown` o resuelta a mano sin id de Siigo), `siigo.invoice.not_annulled` o
+`siigo.invoice.annulment_unclear` (respuesta no reconocida, o anulada y aprobada por la DIAN a la vez), los tres con
+`details = { kind, number }`; además `404 siigo.invoice.not_found`, `409 siigo.invoice_batch.order_in_progress` o
+`siigo.connection_unavailable`, `502 siigo.invoice.siigo_service`, `503 siigo.unavailable` y `422 siigo.invoice.state_invalid` si no
+hay nada que anular. Hasta verificar qué contesta Siigo con una factura **borrada**, borrarla no libera el pedido: sale como respuesta
+no reconocida y queda en `call_failures` (operación `InvoiceRead`).
+
+`GET …/siigo-invoice` y la respuesta de `/annulment` suman dos campos a cada fila (en `/stamp` y `/resolve` van en `false`):
+
+- `canConfirmAnnulment`: sólo en la fila del pedido; la pantalla ofrece «Ya la anulé en Siigo» cuando va en `true`. Exige que ninguna
+  tanda sin terminar tenga el pedido y que toda factura vigente se pueda verificar, o que haya que reintentar la marca.
+- `orderUnmarkFailed`: la factura del pedido quedó `Annulled` pero el pedido sigue marcado con su número. Repetir la acción reintenta
+  sólo la marca, sin llamar a Siigo.
+
+**Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
+`POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
+`204`) manda el PDF de **una** factura al WhatsApp del cliente del pedido. Es el mismo PDF de la descarga (se pide a Siigo en cada envío y
+viaja en memoria: Siigo no la guarda; el envío por Meta deja una copia privada en el hilo de Mensajería, ver más abajo). Una factura de otro pedido o tenant, o sin PDF (`Rejected`, `Pending`, resuelta a mano sin id), es `404
+siigo.invoice.not_found` sin llamar a Siigo ni al canal; sin permiso o con el tenant de otra ruta es `403`, nunca `404`. El envío lo hace
+Quotations (`IInvoiceWhatsAppDelivery`; Siigo sólo ve el puerto `ISiigoInvoiceWhatsApp`), así que el canal se resuelve como en el pedido
+y los errores son `invoice.whatsapp.*`: `no_channel`, `channel_required`, `no_phone` (el
+cliente del pedido no tiene teléfono; Quotations lo mira dentro del envío, así que el PDF ya se pidió a Siigo) y `send_failed`, más
+`order.order.client_not_found` (el cliente del pedido no existe en el tenant); todos son errores de dominio `422`. `channel_unavailable` y `channel_already_set` no pueden
+salir acá: el envío nunca pide un canal concreto. No
+hay deduplicación: dos clics son dos mensajes y dos entradas de auditoría `siigo.invoice.whatsapp_sent` (sin teléfono, URL ni contenido).
+
+`GET …/siigo-invoice` suma `canSendWhatsApp` a cada fila: la fila tiene PDF **y** hoy se podría entregar (el canal se resuelve igual que en
+el envío y el cliente tiene teléfono). Se calcula una vez por petición, y si ninguna fila tiene PDF no se consulta. **Limitación conocida:**
+un tenant con dos o más canales aptos para facturas y sin elección guardada (la elección se guarda al mandar una cotización o un pedido y
+escoger canal) recibe `canSendWhatsApp = false` hasta que elija uno; mandar una factura nunca guarda la elección.
+
+**Plantilla `Invoice`.** Cada canal necesita su plantilla de factura; sin ella no cuenta como canal para una factura.
+
+- **Meta:** se crea desde QEP con `POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/invoice`
+  (permiso `messaging.template.manage`) y espera la aprobación de Meta. El PDF viaja como encabezado de la plantilla.
+- **Zenvia:** crea la plantilla en Zenvia con las variables **exactamente** `fullname`, `invoice_number` y `total` y el encabezado
+  `documentUrl`, y pon su id en `invoiceTemplateId` de **cada** conexión de Zenvia (Integrations). Zenvia descarga el documento por URL.
+
+**Copia pública (sólo Zenvia).** Para Zenvia el PDF se copia al bucket público bajo `invoices/{guid}.pdf`, con una clave aleatoria que no
+lleva tenant, pedido ni número de factura (la URL queda abierta a quien la tenga). Por Meta Quotations no publica ninguna copia, pero el envío deja una copia **privada** del adjunto en el hilo de la conversación de Mensajería (por tenant y con la retención de cualquier adjunto saliente, como en cotizaciones y pedidos); no es pública. Sin bucket
+público el envío falla, sin caer a una URL firmada. La copia expira con una regla de lifecycle que se crea **a mano** en Cloudflare, y es
+parte del despliegue:
+
+```powershell
+npx wrangler r2 bucket lifecycle add <bucket-publico> expire-invoices "invoices/" --expire-days 1
+npx wrangler r2 bucket lifecycle list <bucket-publico>   # para verificarla
+```
 
 **Seguridad.** La clave de acceso y el token de Siigo no salen a logs, auditoría ni respuestas; `request_json` (con el documento y
 la dirección del cliente) no lo devuelve ningún `GET`, y `error_detail` guarda los códigos de Siigo, no sus mensajes (salvo el
-total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
+total esperado). El PDF, la URL pública y el teléfono del envío por WhatsApp tampoco salen a logs, `siigo.call_failures`, auditoría ni
+respuestas. Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
 
 **Despliegue.**
 
@@ -5388,6 +5724,14 @@ total esperado). Lo amarra `SiigoNoLeakTests` con el host en `Trace`.
    Integrations borra las conexiones `siigo` con sus secretos, y `siigo.invoices` es el registro de un documento legal.
 3. Prende el módulo al tenant desde la consola de operador, crea la conexión, recorre el asistente y deja «Enviar a la DIAN»
    apagado en las primeras facturas.
+
+**Despliegue del envío por WhatsApp**, en este orden:
+
+1. Migración de Messaging (el tipo de plantilla `Invoice`).
+2. Crea y aprueba la plantilla `Invoice` en Meta (`template-management/invoice`) y en Zenvia, y pon `invoiceTemplateId` en cada conexión
+   de Zenvia.
+3. Regla de lifecycle de `invoices/` en el bucket público (comando de arriba).
+4. Backend y después frontend (spec aparte en `qep-frontend`).
 
 **Lo que se mira en las primeras facturas reales** (no hay empresa de pruebas: se resuelve con ellas, y con el interruptor
 apagado ninguna puede salir mal sin que se vea):
@@ -5412,7 +5756,7 @@ Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana 
 como estaban, porque ya estaban desplegados.
 
 **Permisos y roles.** `billing.service.read` (toda lectura de la lista de servicios, cobros y perfil) y `billing.service.manage` (todo
-lo que escribe, y también la configuración). Los llevan `admin` y el rol de sistema `billing` («Facturación»); ningún otro. Ambos
+lo que escribe, y también la configuración). De fábrica los llevan `admin` y el rol sembrado `billing` («Facturación»); ningún otro. Ambos
 declaran `RequiredModules: [billing]`: con el módulo apagado el editor de roles no los ofrece y la API responde un `403` pelado, sin
 el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca se muestran opciones que el tenant no tiene).
 
@@ -5533,7 +5877,7 @@ Soporte](#formulario-público-de-soporte-fase-3)); la encuesta llega después. S
 entran por puertos con adaptador en Bootstrapper (`SupportBusinessCalendarSource`, `SupportCustomerLookup`, `SupportMemberDirectory`).
 
 **Permisos y roles.** `support.ticket.read`, `support.ticket.manage` y `support.settings.manage` (`SupportPermissions`, categoría
-«Soporte», los tres exigen el módulo `support`). `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
+«Soporte», los tres exigen el módulo `support`). De fábrica, `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
 Las lecturas usan dos políticas que aceptan más de un permiso (`SupportPolicies`): `support.ticket.view` (`read` o `manage`) y
 `support.settings.view` (`read`, `manage` o `settings.manage`). Quien ve tickets ve **todos** los del tenant: no hay «sólo los míos».
 Con el módulo apagado, toda ruta responde 403.
@@ -6454,6 +6798,192 @@ réplica lleva su propia cuenta en memoria y el límite efectivo se multiplica p
 `sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí
 se auditan (`api_access.key.created`, `api_access.key.revoked`).
 
+### Módulo Wms (bodegas)
+
+Módulo `Modules.Wms.{Domain,Application,Infrastructure,Api}`, esquema `wms`, clave de módulo `wms` (`Dependencies = [Catalog]`, última de
+`TenantModuleKeys.All`, fuera de `DefaultForNewTenants`: nace apagado). Es la fase 1 de
+[`docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md`](docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md): bodegas,
+árbol de ubicaciones, dueños, unidades de medida y perfil logístico de las variantes. El libro de inventario (WMS-D) está descrito en la subsección «Inventario (WMS): ledger y saldos» más abajo. Rutas bajo
+`/api/v1/tenants/{tenantId}/wms` (`X-Tenant-Id`).
+
+**Cómo se prende.** Por la consola de operador: `POST /api/v1/tenants/{tenantId}/operator/tenants/{targetTenantId}/modules/changes`, que escribe
+la fila de `tenancy.tenant_modules` con `module_key = 'wms'` (con `catalog` ya prendido). Mientras el frontend no conozca la clave `wms`, la
+pantalla del operador oculta el módulo y se prende llamando a la API. Sin la fila, todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la ruta, 403 `authorization.denied`, nunca 404.
+
+**Permisos.** Diecisiete, `wms.<recurso>.<acción>` (`WmsPermissions`), cada uno con su política en `AddAuthorization` y
+`RequiredModules: [wms]`. Sólo el rol de sistema `admin` los trae; ningún otro. Las rutas de Bodegas usan cuatro: `wms.warehouse.manage`,
+`wms.owner.manage`, `wms.profile.manage` y `wms.document.read`; las de inventario suman `wms.stock.read`, `wms.stock.export`,
+`wms.adjustment.propose` y `wms.adjustment.approve`; las de tareas, `wms.task.manage` y `wms.putaway.perform`. El resto es de fases
+posteriores.
+
+**Lo que nace solo.**
+
+- **Con cada bodega:** las ubicaciones virtuales `SUPPLIER`, `CUSTOMER`, `ADJUSTMENT` y `TRANSIT`, y la zona `RECEIVING` con el muelle
+  `REC-01`. Las virtuales son de solo lectura: un `PUT` sobre una con cuerpo válido responde 422 `wms.location.virtual_immutable` (un
+  cuerpo inválido responde antes `validation.failed`, también 422), y no se borran ni se les imprime etiqueta. `RECEIVING` y `REC-01`
+  tampoco se borran (mismo código). Un nodo con hijos o con saldo tampoco se borra.
+- **En el primer acceso del tenant** (los `GET` de bodegas, dueños, unidades y perfiles, y sus `POST`/`PUT`; no `GET …/locations` ni `scannable`, y no al prender el módulo:
+  Tenancy no avisa): el dueño `Self` y las seis
+  unidades `UND, KG, G, L, ML, M`. Lo escribe `IWmsProvisioner` con `INSERT … ON CONFLICT DO NOTHING`; una consulta directa a
+  `wms.owners` de un tenant que nunca entró devuelve cero filas, y no es un error.
+- **Perfil sin fila:** el `GET /variant-profiles` lo calcula en memoria con `version: 0`; el `PUT` con `version: 0` lo crea.
+
+**`scannable` y el `ETag`.** `GET …/locations/scannable` devuelve `{ id, code, path, role }` de las ubicaciones no virtuales de la bodega y
+un `etag` que cambia cuando cambia cualquiera. La app lo guarda y manda `If-None-Match`: igual → 304 sin cuerpo. Es la cache con la que
+el escáner resuelve un código contra su bodega.
+
+**P-1: los identificadores de ubicación no se escriben.** `wms.identifiers` es único por `(tenant_id, value)` y el código de una
+ubicación es único **por bodega**: la segunda bodega repetiría `SUPPLIER` o `REC-01`. La app resuelve el código contra el `scannable` de
+su bodega, no contra `identifiers`. El spec §25 queda por corregir.
+
+**Etiquetas (RF-004).** `POST …/locations/labels` con `{ locationIds }` (1 a 500; uno ajeno a la bodega es 422 `wms.location.not_found`)
+devuelve un PDF con una etiqueta de 60×30 mm por ubicación, en Code 128 (paquete `@preview/tiaoma` de Typst). Sale por `qcode-pdf` con la
+**misma clave de cotizaciones** (`Quotations:Pdf`), desde `WmsPdfGateway` en Bootstrapper: el módulo no ve esa clave. Si el servicio no
+resuelve el paquete o cae, la respuesta es 422 `wms.label.render_failed` con el mensaje del compilador. La prueba contra el servicio real
+es manual (se necesita la clave del developer, nunca en un log); las automáticas sustituyen el renderer.
+
+**Migraciones:** `Tenancy` `AddWmsModuleKey` (el CHECK de `tenant_modules` admite `wms`) y `Wms` `InitialWms` (esquema `wms`).
+
+#### Inventario (WMS): ledger y saldos
+
+Fase 2 del mismo spec (WMS-D). El inventario es un **ledger inmutable**: `wms.stock_movements` guarda cada movimiento con origen y
+destino (par de claves `StockKey`: dueño, ubicación, variante, lote y estado) y `wms.stock_balances` es el saldo derivado, que sólo
+escribe `InventoryLedger` en la misma transacción. Nada se edita: `trg_stock_movements_immutable` lanza `wms.ledger.immutable` ante
+cualquier `UPDATE` o `DELETE`, y un error se corrige con un movimiento de **reverso** (`POST /stock/movements/{id}/reverse`), que apunta
+al original. Quitarle al rol de la aplicación el `TRUNCATE` sobre `wms.stock_movements` y sobre cada una de sus particiones mensuales es
+una tarea **pendiente de la plataforma** (repo `migracion-k8s`), no una migración: hoy nada en `k8s/` lo hace y las migraciones corren con la conexión de la aplicación. Las lecturas salen de `wms.v_stock_rows` y `wms.v_stock_summary`, donde viven las fórmulas de disponible, picking, recibido y
+bloqueado. Las sondas de «con existencias» (`hasStock` del perfil, borrar una ubicación, desactivar un dueño) cuentan saldo físico: una
+ubicación no virtual con `on_hand` o `reserved` distinto de cero. Una variante con movimientos o saldos en el ledger tampoco se borra
+de Catalog (`CatalogVariantUsageChecker`): se desactiva.
+
+La clave del saldo incluye además la **unidad logística** (`handling_unit_id`, caja o palet; D-12): `NULL` es stock suelto, y el
+movimiento guarda la de cada extremo (`from_handling_unit_id`, `to_handling_unit_id`). En WMS-D va siempre en `NULL`, salvo lo que copie
+un reverso: el agregado `HandlingUnit`, su tabla y sus rutas llegan con el corte que confirme recepciones.
+
+**Rutas** (bajo `/api/v1/tenants/{tenantId}/wms`). **IK** exige el header `Idempotency-Key`; **SK** deriva la clave en el servidor.
+
+| Ruta | Permiso | Idempotencia |
+| --- | --- | --- |
+| `GET /stock` | `wms.stock.read` | — |
+| `GET /stock/summary` | `wms.stock.read` | — |
+| `GET /stock/movements` | `wms.stock.read` | — |
+| `POST /stock/export` | `wms.stock.export` | — (entrega por correo) |
+| `POST /stock/movements/{id}/reverse` | `wms.adjustment.approve` | IK |
+| `GET /adjustments` | `wms.document.read` | — |
+| `POST /adjustments` | `wms.adjustment.propose` | IK |
+| `POST /adjustments/{id}/approve` | `wms.adjustment.approve` | — (versión) |
+| `POST /adjustments/{id}/reject` | `wms.adjustment.approve` | — (versión) |
+| `POST /adjustments/{id}/post` | `wms.adjustment.approve` | SK: `adjustment:{id}:post:{version}`; el header se ignora |
+| `POST /imports/initial-balances/preview` | `wms.adjustment.propose` | — (no escribe saldos) |
+| `POST /imports/initial-balances/commit` | `wms.adjustment.propose` | IK |
+
+**`Idempotency-Key`.** Sin header en una ruta IK: 428 `wms.idempotency_key_required`. Misma clave y mismo cuerpo: la respuesta guardada
+con **200** (aunque el original fuera 201). Misma clave con otro cuerpo: 409 `wms.idempotency_key_reused`. El `request_hash` sale del DTO
+enlazado, no del cuerpo crudo. La clave de otro tenant es 403, nunca una respuesta guardada ajena. Los recibos (`wms.operation_receipts`)
+se purgan a los 45 días (`Wms:Workers:ReceiptRetentionDays`). Repetir `post` con una versión vieja devuelve el 200 guardado, no 412.
+
+**Ventana de `occurredAt`.** `[ahora − 30 días, ahora + 5 min]`; fuera de ella, 422 `wms.movement.occurred_at_out_of_range`, también al
+postear un ajuste propuesto hace tiempo con fecha física. La ventana es la que permite purgar los recibos a 45 días.
+
+**Workers** (opciones `Wms:Workers:*`, validadas al arrancar; un cero o un negativo tumba el arranque):
+
+| Worker | Qué hace | Opciones (por defecto) |
+| --- | --- | --- |
+| `BalanceChangePublisher` | Vacía `wms.balance_change_queue` y publica `wms.balance.changed.v1` al outbox | `BalanceChangePublishSeconds` (10) |
+| `BalanceReconciliationWorker` | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige**. Con dos pods, un candado por bodega evita la fila repetida | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30) |
+| `PartitionMaintenanceWorker` | Asegura la partición del mes actual y la del siguiente de `stock_movements` | `PartitionSweepHours` (24) |
+| `WmsHousekeepingWorker` | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`) | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
+| `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`) | — |
+| `TaskLeaseSweeper` | Devuelve al pool (o a su asignado) las tareas con el lease vencido; toma las filas con `FOR UPDATE SKIP LOCKED`, así dos pods reparten trabajo | `TaskLeaseSweepSeconds` (60; de 10 a 600) |
+
+`WorkerStartupSeconds` (30) retrasa la primera pasada de los tres workers del ledger y del barrido de tareas: con un intervalo largo y un
+despliegue por commit, el pod se reiniciaría antes de que el temporizador cumpliera.
+
+**Métricas** (meter `Qep.Wms`, sin etiqueta de tenant): `qep.wms.movements` (contador, etiqueta `reason`), `qep.wms.confirm.duration`
+(histograma, ms), `qep.wms.balance.drift` (claves distintas en la última conciliación), `qep.wms.partition.missing` (1 si falta la
+partición del mes actual o del siguiente) y `qep.wms.reconciliation.failed` (bodegas que la última conciliación no pudo revisar). En
+Prometheus salen como `qep_wms_movements_total`, `qep_wms_balance_drift`, `qep_wms_partition_missing` y `qep_wms_reconciliation_failed`
+(el histograma agrega el sufijo de unidad del exportador). Las alertas viven en el repo de plataforma (`migracion-k8s`), no acá.
+
+**Partición faltante.** `stock_movements` está particionada por mes de `occurred_at`, con límites en UTC. Si `qep_wms_partition_missing`
+vale 1, el worker no pudo crear la partición. Las filas fuera de rango caen en `stock_movements_default` y **se quedan ahí** (el trigger
+impide moverlas). Se **crea** la partición (`CREATE TABLE wms.stock_movements_yYYYYmMM PARTITION OF wms.stock_movements FOR VALUES FROM … TO …`)
+y **nunca se desprende** una existente. Si `DEFAULT` ya tiene filas de ese mes, el `CREATE … PARTITION OF` falla y se resuelve a mano en
+ventana de mantenimiento. Un `SELECT` sin `occurred_at` en el `WHERE` recorre todas las particiones.
+
+**Carga inicial por Excel.** `POST /imports/initial-balances/preview?warehouseId=…&ownerId=…` (multipart, campo `file`) lee la primera hoja
+y ubica por cabecera, no por posición, seis columnas: `code`, `location`, `lot`, `expiration`, `quantity` y `uom`. **Tope de 500 filas
+por archivo** (más es 422 `wms.import.too_many_rows`): la carga es un solo batch del ledger y cada fila un movimiento. El archivo admite
+5 MB comprimido, 20 MB descomprimido y 100 entradas (si no, 422 `wms.import.invalid_file`). El preview responde **200 aunque haya
+problemas**: cada fila lleva sus `issues` y `canCommit` es `false` si hay alguno; si una clave (dueño, ubicación, variante, lote) ya tiene
+saldo, la fila trae el issue bloqueante `wms.import.stock_exists`, así que un complemento va por ajustes. `POST /imports/initial-balances/commit`
+con `{ previewId, version }` y `Idempotency-Key` responde 201, o **422 `wms.import.invalid_file` si queda algún issue**. El preview vive 30 minutos.
+
+**Export.** `POST /stock/export` responde 202 y no devuelve el archivo: arma el Excel, lo guarda en Storage y publica `wms.export-ready.v1`;
+`WmsExportDeliveryWorker` manda el enlace de descarga por correo y la campana de quien lo pidió recibe un `ExportReady` con
+`exportKind: "Stock"`.
+
+**Regla pendiente de confirmación del owner.** Con saldo, además del rastreo, no se puede cambiar la unidad base, bajar la precisión
+ni cambiar el factor de una presentación existente: 422 `wms.profile.base_uom_change_requires_identification`. RF-010 sólo nombra el
+rastreo; si el owner prefiere otra regla, se relaja en `VariantLogisticsProfile.Update`.
+
+**Migraciones:** `Wms` `AddInventoryLedger` (ledger, saldos, vistas, partición y trigger). Su `Down` está vacío a propósito (ver `CLAUDE.md`).
+
+#### Tareas de bodega (motor de tareas)
+
+Spec [`docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md`](docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md)
+§6. Una tarea (`wms.tasks`, con `task_lines` y `task_events`) es una intención; el ledger es el hecho. Crear, asignar, priorizar o
+cancelar nunca mueve stock: sólo la confirmación de una línea, que escribe un movimiento `InternalMove` con documento
+`("Task", taskId, lineId)`. En este corte hay un solo tipo, `Move` (movimiento interno), y ejecutarlo exige `wms.putaway.perform`.
+
+**Estados.** `Planned` (creada sin publicar o retenida), `Ready` (en el pool), `Assigned` (preasignada), `InProgress` (reclamada con lease),
+`Done` y `Cancelled` (terminales). Cada transición sube `version` y deja un evento; el latido no.
+
+**Supervisor** (bajo `/api/v1/tenants/{tenantId}/wms`). Las acciones llevan `version` (412 `concurrency.conflict`), responden la tarea
+sin `events` y se auditan.
+
+| Ruta | Permiso | Cuerpo / idempotencia |
+| --- | --- | --- |
+| `POST /tasks` | `wms.task.manage` | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
+| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | — |
+| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué |
+| `GET /tasks/assignees?warehouseId&type` | `wms.task.manage` | Membresías activas con el permiso del tipo |
+| `GET /tasks/{id}` | `wms.document.read` | La única respuesta con `events` |
+| `POST /tasks/{id}/publish`, `/unassign` | `wms.task.manage` | `{ version }` |
+| `POST /tasks/{id}/hold` | `wms.task.manage` | `{ version, reason? }` |
+| `POST /tasks/{id}/assign` | `wms.task.manage` | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress` |
+| `POST /tasks/{id}/priority` | `wms.task.manage` | `{ priority, urgent, version }` |
+| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel` | `wms.task.manage` | `{ reason, version }` |
+
+**Operario.** La ruta exige `wms.document.read` y el handler, además, el permiso del tipo.
+
+| Ruta | Cuerpo | Respuesta |
+| --- | --- | --- |
+| `GET /tasks/mine?warehouseId` | — | `{ current, assigned }` |
+| `POST /tasks/next` | `{ warehouseId, deviceId }` | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso |
+| `POST /tasks/{id}/claim` | `{ deviceId }` | 200 |
+| `POST /tasks/{id}/heartbeat` | `{ leaseToken }` | 200 `{ leaseExpiresAt }` |
+| `POST /tasks/{id}/unclaim` | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`) | 200 |
+| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200 |
+
+**Lease.** `claimedBy*`, `leaseExpiresAt` y `leaseToken` sólo viajan con la tarea `InProgress`, y `leaseToken` sólo a quien la tiene. El
+lease de `Move` dura 15 minutos; el latido y cada confirmación lo renuevan. Al vencer, el barrido devuelve la tarea y conserva quién la
+reclamó y su token: una **confirmación tardía** con ese token la reanuda si nadie más la tomó (si quien confirma ya tiene otra en curso,
+se aplica sin reanudar). Latir y soltar exigen el lease vigente. La misma persona que retoma desde el mismo celular conserva el token.
+`next` no vuelve a ofrecer durante 15 minutos lo que la persona soltó con `Skipped`, salvo que se lo asignen. Los eventos de una
+confirmación llevan la hora del escaneo (`occurredAt`).
+
+**Códigos.** 404 `wms.task.not_found` (tarea o línea). 409 `wms.task.lease_lost`, `wms.task.member_busy` (con `taskId`; falta cuando lo
+detecta el índice único). 422 `wms.task.invalid_transition` (con `from` y `action`), `wms.task.assigned_to_other`,
+`wms.task.assignee_not_eligible`, `wms.task.location_invalid`, `wms.task.location_mismatch`, `wms.task.lot_mismatch`,
+`wms.task.quantity_exceeds_remaining`, `wms.task.line_invalid`. Al crear llegan además `wms.profile.variant_unknown`,
+`wms.uom.precision_exceeded` y `wms.lot.not_found` (404); al confirmar, los del ledger (`wms.stock.insufficient`,
+`wms.location.blocked`, `wms.lot.required`, `wms.movement.occurred_at_out_of_range`…) tal cual.
+
+Una variante con una línea abierta en una tarea sin terminar no se borra de Catalog.
+
+**Migraciones:** `Wms` `AddWarehouseTasks`.
+
 ## Verificación
 
 ```powershell
@@ -6462,6 +6992,69 @@ dotnet format --verify-no-changes
 dotnet build --no-restore
 dotnet test --no-build
 ```
+
+### Pruebas en dos niveles
+
+| Nivel | Comando | Cuándo |
+| --- | --- | --- |
+| Rápido: sólo lo que cambió la rama | `.\scripts\test-feature.ps1` | Antes de mergear a `develop` |
+| Completo: todos los proyectos | `.\scripts\run-all-tests.ps1` | De noche, o antes de llevar `develop` a `main` |
+
+```powershell
+.\scripts\test-feature.ps1                 # compara contra develop
+.\scripts\test-feature.ps1 -DryRun         # muestra el plan sin compilar ni probar
+.\scripts\test-feature.ps1 -Base HEAD~3    # compara contra otra referencia
+.\scripts\test-feature.ps1 -NoBuild        # usa la compilación que ya existe
+```
+
+El nivel rápido toma lo cambiado desde el punto en que la rama se separó de la base, commiteado o no, y corre:
+compilación (con `--no-restore`: restaura antes en un worktree nuevo), `ArchitectureTests`, las unitarias de cada módulo
+tocado, `Bootstrapper.UnitTests` si tocaste `Bootstrapper` o `Api`, y **sólo las clases de integración nuevas o
+modificadas**. No corre las demás clases de integración que tu cambio pueda romper; esas aparecen en la corrida
+completa. Lee los avisos: dicen qué quedó sin probar y qué «Requiere autorización del owner» antes del merge (una
+prueba de `ArchitectureTests` modificada o una referencia nueva entre módulos). El reporte queda en
+`TestResults\feature\report.md`, y sale con 1 si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
+
+Un reporte completo en verde vale para el commit que dice su encabezado, con el árbol limpio. Para programarlo todas las
+noches (se registra una vez, desde la raíz del checkout que quieras probar):
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -File `"$PWD\scripts\run-all-tests.ps1`""
+Register-ScheduledTask -TaskName "qep-backend-pruebas" -Action $action -Trigger (New-ScheduledTaskTrigger -Daily -At 1am)
+```
+
+Necesita el equipo encendido, Docker Desktop abierto y ningún `Api.exe` ni `testhost` vivo. Si algo de eso falta no hay
+reporte nuevo: se nota en la fecha y el commit del encabezado. Las pruebas del propio selector se corren con
+`powershell -NoProfile -File scripts\tests\TestSelection.Tests.ps1`.
+
+### Correr todas las pruebas y sacar el reporte de fallas
+
+`dotnet test` sobre toda la solución en paralelo no sirve en Windows: cada clase de integración levanta un
+Postgres con Testcontainers y se agotan puertos y memoria. Usa el script, que corre **un proyecto a la vez**:
+
+```powershell
+.\scripts\run-all-tests.ps1                          # todo: unitarias primero, luego integración
+.\scripts\run-all-tests.ps1 -Kind Unit               # sólo unitarias (no necesita Docker)
+.\scripts\run-all-tests.ps1 -Filter Quotations       # sólo los proyectos cuya ruta contenga el texto
+.\scripts\run-all-tests.ps1 -Filter Quotations -NoBuild -MaxThreads 2
+```
+
+Los proyectos que declaran `[assembly: CollectionBehavior(MaxParallelThreads = n)]` (comparten un solo contenedor) corren
+con ese número; los demás, con 4. `-MaxThreads` pisa los dos casos: úsalo si una corrida agota puertos o conexiones.
+
+Antes de correrlo:
+
+- **Docker Desktop debe estar corriendo** (`docker info` responde). Sin daemon, todas las pruebas de integración
+  fallan por conexión y el resumen de `dotnet test` muestra miles de "errores" aunque el build esté limpio.
+- No debe haber `Api.exe` ni `testhost` vivos; el script se detiene si los encuentra. El build host de C# Dev Kit
+  (`dotnet.exe` de VS Code) no estorba.
+- `Modules.Ai.Eval` queda fuera: es la evaluación con IA real y se corre aparte (ver su sección).
+
+Salida, en `TestResults/` (ignorada por git y borrada en cada corrida):
+
+- `report.md`: tabla por proyecto (total, pasan, fallan, segundos), las causas de falla más repetidas y la lista de
+  pruebas que fallan por proyecto.
+- `<proyecto>/<proyecto>.trx`: el detalle completo. Ábrelo con `Get-Content -LiteralPath` (los nombres llevan corchetes).
 
 La suite cubre reglas de los agregados Tenant, Membership y User, dependencias
 entre capas, aislamiento entre tenants, permisos de solo lectura, invitaciones

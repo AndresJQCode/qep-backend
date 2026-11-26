@@ -39,6 +39,8 @@ public static class AutomationsInfrastructureExtensions
         // Auditoría atómica: la entrada viaja en el mismo SaveChanges del cambio (ADR 0019).
         services.AddScoped<IAutomationsAuditRecorder, AutomationsAuditRecorder>();
         services.AddScoped<IAutomationsAuditQueries, AutomationsAuditQueries>();
+        // Spec 2026-11-18: el aviso de los archivos de un chatbot borrado viaja en el guardado del borrado (outbox de plataforma).
+        services.AddScoped<IChatbotMediaReleases, ChatbotMediaReleasePublisher>();
 
         // Spec 2026-10-21 D-H4..D-H8: el bloque HTTP y su registro en http_calls. El cliente nombrado (HttpBlockExecutor.HttpClientName) se
         // registra en el composition root: su handler anti-SSRF es de Integrations.Infrastructure, que este módulo no referencia.

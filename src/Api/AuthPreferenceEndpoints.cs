@@ -1,6 +1,9 @@
 using System.Security.Claims;
 using Bootstrapper.Authentication;
+using BuildingBlocks.Domain.Localization;
 using Modules.Identity.Application;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Api;
 
@@ -47,6 +50,7 @@ public static class AuthPreferenceEndpoints
     private static async Task<IResult> GetAsync(
         HttpContext httpContext,
         IUserPreferenceService preferences,
+        ITenantDirectory tenantDirectory,
         CancellationToken cancellationToken)
     {
         if (!TryResolveScope(httpContext, out var userId, out var tenantId))
@@ -55,14 +59,14 @@ public static class AuthPreferenceEndpoints
         }
 
         var preference = await preferences.GetAsync(userId, tenantId, cancellationToken);
-        return Results.Ok(
-            new UserPreferenceResponse(preference.ColorScheme, preference.Mode, preference.MessageSound));
+        return Results.Ok(await ToResponseAsync(preference, tenantId, tenantDirectory, cancellationToken));
     }
 
     private static async Task<IResult> SaveAsync(
         UserPreferenceRequest request,
         HttpContext httpContext,
         IUserPreferenceService preferences,
+        ITenantDirectory tenantDirectory,
         CancellationToken cancellationToken)
     {
         if (!TryResolveScope(httpContext, out var userId, out var tenantId))
@@ -79,9 +83,26 @@ public static class AuthPreferenceEndpoints
             request.ColorScheme,
             request.Mode,
             request.MessageSound,
+            request.Language,
             cancellationToken);
 
-        return Results.Ok(new UserPreferenceResponse(saved.ColorScheme, saved.Mode, saved.MessageSound));
+        return Results.Ok(await ToResponseAsync(saved, tenantId, tenantDirectory, cancellationToken));
+    }
+
+    /// <summary>El idioma efectivo se resuelve acá porque es la primera capa que ve Identity y Tenancy.</summary>
+    private static async Task<UserPreferenceResponse> ToResponseAsync(
+        UserPreferenceDto preference,
+        Guid tenantId,
+        ITenantDirectory tenantDirectory,
+        CancellationToken cancellationToken)
+    {
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken);
+        return new UserPreferenceResponse(
+            preference.ColorScheme,
+            preference.Mode,
+            preference.MessageSound,
+            preference.Language,
+            SupportedLanguages.Effective(preference.Language, regional?.Language));
     }
 
     private static bool TryResolveScope(
@@ -115,6 +136,15 @@ public static class AuthPreferenceEndpoints
             title: "No active tenant for this session.");
 }
 
-public sealed record UserPreferenceRequest(string? ColorScheme, string? Mode, bool? MessageSound);
+/// <summary><c>Language</c>: ausente o <c>null</c> conserva lo guardado; <c>""</c> vuelve al idioma del
+/// tenant; <c>es-419</c> o <c>es-ES</c> lo fijan (spec 2026-11-22, i18n).</summary>
+public sealed record UserPreferenceRequest(string? ColorScheme, string? Mode, bool? MessageSound, string? Language = null);
 
-public sealed record UserPreferenceResponse(string ColorScheme, string Mode, bool MessageSound);
+/// <summary>
+/// <c>Language</c> es lo guardado (<c>null</c> = «el de la organización»), que es lo que edita el
+/// selector del perfil. <c>EffectiveLanguage</c> viaja resuelto (regla BFF): es el diccionario que la
+/// pantalla tiene que cargar, y sin él el cliente tendría que pedir también el idioma del tenant, que
+/// <c>/settings</c> no le muestra a todo rol.
+/// </summary>
+public sealed record UserPreferenceResponse(
+    string ColorScheme, string Mode, bool MessageSound, string? Language, string EffectiveLanguage);

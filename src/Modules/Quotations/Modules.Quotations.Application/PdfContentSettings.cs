@@ -59,8 +59,8 @@ public sealed class GetPdfContentHandler(
     {
         // Los permisos de settings, como el mínimo de compra (QuotationSettingsEndpoints).
         QuotationsAuthorization.EnsureAuthorized(executionContext, query.TenantId, TenancyPermissions.SettingsRead);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, query.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, query.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
 
         return PdfContentMapping.ToDto(await store.GetAsync(query.TenantId, cancellationToken));
     }
@@ -114,8 +114,8 @@ public sealed class UpdatePdfContentHandler(
     {
         // Autorizar antes de validar: alguien de otro tenant no recibe el mapa de campos.
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, command.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
         // Las fallas del validador y las del saneador van juntas en un solo 422: si el saneador rechaza una sección, el formulario
         // igual tiene que marcar el título demasiado largo de otra.
         var failures = (await validator.ValidateAsync(command, cancellationToken)).Errors.ToList();

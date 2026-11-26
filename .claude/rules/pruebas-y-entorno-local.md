@@ -16,18 +16,21 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **El stub de desarrollo concede sólo los permisos de tenancy por defecto.** Una prueba que
   necesita un permiso de otro módulo tiene que pedirlo por `X-Permissions`, o su 403 va a
   venir del permiso faltante y no de lo que cree estar probando.
+- **Un tenant insertado directo después del arranque no tiene los cinco roles de fábrica** (spec 2026-11-25, roles por
+  tenant): sólo `admin` sale del código; los demás los siembran el alta y el arranque. Si la prueba invita o resuelve uno de
+  ellos, el helper que inserta el tenant llama `ITenantRoleSeeder.SeedAsync` (ejemplo: `SupportApiHarness.SeedTenantAsync`).
+  Sin eso, invitar responde `422 tenancy.membership.role_unknown` y quien ya nombra el rol no recibe ningún permiso, así que una
+  prueba negativa sigue verde por el motivo equivocado.
 - **Probar auth en local tiene dos trampas.** El interruptor y los dos modos están en
-  [README § Activar y desactivar el modo de desarrollo](README.md#activar-y-desactivar-el-modo-de-desarrollo-auth).
+  [README § Activar y desactivar el modo de desarrollo](../../README.md#activar-y-desactivar-el-modo-de-desarrollo-auth).
   Lo que ahí no se dice: (1) `UseDevelopmentStub` es `true` por defecto en `Development`
-  (`QepAuthenticationMode.cs:15`), pero **los dos perfiles de `launchSettings.json` lo fijan en
+  (`QepAuthenticationMode.UseDevelopmentStub`), pero **los dos perfiles de `launchSettings.json` lo fijan en
   `false`**, así que un `dotnet run` normal corre con auth real; para usar los headers `X-*` hay
   que pedir el stub con `$env:Authentication__UseDevelopmentStub = "true"`. (2) En modo stub
-  **no se registra el middleware de CSRF** (`Program.cs:64-67`), así que un `POST` sin
+  **no se registra el middleware de CSRF** (`Program.cs`), así que un `POST` sin
   `X-Qep-Client: web` pasa; ese header sólo se puede probar con el stub apagado.
-- **Los user-secrets se cargan en `Development` sin ayuda de nadie.** Los agrega
-  `WebApplication.CreateBuilder`, que es comportamiento del framework. El
-  `if (IsEnvironment("Local"))` que este archivo describía en `Program.cs:26` ya no existe: era
-  redundante en `Development` y lo eliminó `ccd2eca`.
+- **Los user-secrets se cargan solos en `Development`.** Los agrega
+  `WebApplication.CreateBuilder`; el repo no necesita código propio para eso.
 - **La cadena de conexión no está en `appsettings.json`, y es requerida.** Se quitó el
   2026-08-11: apuntaba a una base inexistente —ni siquiera la del `compose.yaml` de este repo,
   que crea `qep` en `5432`— y llevaba contraseña, que es justo lo que un `appsettings*.json`
@@ -35,7 +38,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   `InvalidOperationException: Connection string 'QepDatabase' is required.` **El guard es
   `?? throw`, o sea sólo contra `null`:** dejar la clave con `""` lo atraviesa y el error lo
   termina tirando Npgsql, que no explica nada. En local se pone por user-secrets (ver
-  [README § Ejecución local](README.md#ejecución-local)); en k8s la fija `prod-secret.yaml`
+  [README § Ejecución local](../../README.md#ejecución-local)); en k8s la fija `prod-secret.yaml`
   como `ConnectionStrings__QepDatabase` — **no** el ConfigMap, que es texto plano para
   cualquiera con `get` sobre ConfigMaps en el namespace.
 - **Endurecer una regla de dominio rompe las pruebas de integración que arman el cuerpo a

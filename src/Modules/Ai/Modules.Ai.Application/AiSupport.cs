@@ -48,6 +48,8 @@ internal static class AiNotFound
 {
     public static ResourceNotFoundException Agent(Guid id) => new(AiErrorCodes.AgentNotFound, $"Agent '{id}' was not found.");
 
+    public static ResourceNotFoundException Template(string id) => new(AiErrorCodes.TemplateNotFound, $"Agent template '{id}' was not found.");
+
     public static ResourceNotFoundException Connection(Guid id) => new(AiErrorCodes.ConnectionNotFound, $"Connection '{id}' was not found.");
 }
 

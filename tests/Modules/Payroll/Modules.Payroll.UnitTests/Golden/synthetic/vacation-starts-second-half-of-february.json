@@ -1,0 +1,182 @@
+{
+  "name": "vacation-starts-second-half-of-february",
+  "source": "synthetic",
+  "description": "Vacaciones que empiezan el 17 de febrero: la segunda de febrero (16..28) paga 14 días de vacaciones y el final del mes absorbe la diferencia.",
+  "legal": "legal/2027-01-01.json",
+  "covers": [
+    "WorkedDaysRule",
+    "SalaryRule",
+    "MonthIncomeRule",
+    "TransportAllowanceRule",
+    "IbcRule",
+    "EmployeeDeductionsRule",
+    "EmployerContributionsRule",
+    "ProvisionsRule",
+    "PayrollEngine",
+    "VacationDaysRule",
+    "VacationPayRule",
+    "VacationAdvanceRule"
+  ],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2027-02-16",
+      "end": "2027-02-28",
+      "half": "Second"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "prior": {
+      "workedDays": 15,
+      "salaryRaw": 1500000,
+      "salary": 1500000,
+      "transportRaw": 124547.5,
+      "transport": 124548,
+      "overtime": 0,
+      "salaryIncome": 0,
+      "nonSalaryIncome": 0,
+      "healthEmployee": 60000,
+      "pensionEmployee": 60000,
+      "solidarityFund": 0,
+      "healthEmployer": 0,
+      "pensionEmployer": 180000,
+      "arl": 7900,
+      "compensationFund": 60000,
+      "icbf": 0,
+      "sena": 0
+    },
+    "vacations": [
+      {
+        "vacationId": "01900000-0000-7000-8000-000000000a03",
+        "origin": "Qep",
+        "startDate": "2027-02-17",
+        "endDate": "2027-03-05",
+        "businessDays": 13,
+        "paidHere": true,
+        "salaryAtStart": 3000000,
+        "salaryRecordDate": "2025-01-01",
+        "previousMonthIbc": 3000000,
+        "previousIbcSource": "Typed",
+        "monthVacationPay": null,
+        "monthAdvance": {
+          "health": 0,
+          "pension": 0,
+          "solidarityFund": 0
+        }
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 1,
+    "vacationDays": 14,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      {
+        "code": "salary",
+        "amount": 100000
+      },
+      {
+        "code": "vacation_pay:01900000-0000-7000-8000-000000000a03",
+        "amount": 1900000
+      },
+      {
+        "code": "transport_allowance",
+        "amount": 8303
+      },
+      {
+        "code": "ibc",
+        "amount": 3000000
+      },
+      {
+        "code": "health_employee",
+        "amount": 60000
+      },
+      {
+        "code": "pension_employee",
+        "amount": 60000
+      },
+      {
+        "code": "health_employee_vacation_advance",
+        "amount": 20000
+      },
+      {
+        "code": "pension_employee_vacation_advance",
+        "amount": 20000
+      },
+      {
+        "code": "health_employer",
+        "amount": 0
+      },
+      {
+        "code": "pension_employer",
+        "amount": 180000
+      },
+      {
+        "code": "arl",
+        "amount": 500
+      },
+      {
+        "code": "compensation_fund",
+        "amount": 60000
+      },
+      {
+        "code": "icbf",
+        "amount": 0
+      },
+      {
+        "code": "sena",
+        "amount": 0
+      },
+      {
+        "code": "severance",
+        "amount": 125642
+      },
+      {
+        "code": "severance_interest",
+        "amount": 15083
+      },
+      {
+        "code": "premium",
+        "amount": 125642
+      },
+      {
+        "code": "vacation",
+        "amount": 62550
+      }
+    ],
+    "net": 1848303,
+    "employerCost": 2577720
+  },
+  "notes": [
+    "prior = Month de una primera de febrero trabajada entera: 15 días, salario 1 500 000, auxilio 124 548 (raw 124 547,5), salud y pensión 60 000, pensión empleador 180 000, ARL techo100(7 830) = 7 900, caja 60 000",
+    "la quincena 16..28 de febrero paga 15 días; vacaciones desde el 17 cubren el último día: 15 − 1 = 14 días; días trabajados = 15 − 14 = 1",
+    "marzo 1..15: 5 días; total de nómina de las vacaciones = 14 + 5 = 19",
+    "salary = round(1 500 000 + 3 000 000 × 1 ÷ 30) − 1 500 000 = 100 000; vacation_pay = 3 000 000 × 19 ÷ 30 = 1 900 000",
+    "transport_allowance = round(124 547,5 + 249 095 × 1 ÷ 30 = 132 850,67) − 124 548 = 132 851 − 124 548 = 8 303",
+    "IBC: base trabajada 1 500 000 + 100 000 = 1 600 000 + parte de vacaciones 3 000 000 × 14 ÷ 30 = 1 400 000 = 3 000 000; piso 1 750 905 × (16 + 14) ÷ 30",
+    "health_employee = round(120 000) − 60 000 (a) = 60 000; pension_employee = 60 000",
+    "anticipo de marzo: 5 días → parte 500 000 → 20 000 de salud y 20 000 de pensión (la otra quincena del mes que paga no tiene días de vacaciones)",
+    "pension_employer = 360 000 − 180 000 = 180 000; arl sobre 1 600 000 = techo100(8 352) − 7 900 = 8 400 − 7 900 = 500; compensation_fund = 120 000 − 60 000 = 60 000",
+    "provisiones: valor de los 14 días = 1 400 000; base cesantías = 100 000 + 8 303 + 1 400 000 = 1 508 303 → 125 642 / 15 083 / 125 642; vacaciones = (100 000 + 1 400 000) × 0,0417 = 62 550",
+    "totalEarned = 100 000 + 1 900 000 + 8 303 = 2 008 303; deducciones = 120 000 + 40 000 = 160 000; net = 1 848 303",
+    "employerCost = 2 008 303 + aportes 240 500 + provisiones 328 917 = 2 577 720"
+  ]
+}

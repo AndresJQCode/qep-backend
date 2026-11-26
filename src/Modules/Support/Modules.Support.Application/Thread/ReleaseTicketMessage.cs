@@ -16,9 +16,7 @@ public sealed record ReleaseTicketMessageCommand(Guid TenantId, Guid TicketId, G
 /// </summary>
 public sealed class ReleaseTicketMessageHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportTicketMessageRepository links,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -30,10 +28,10 @@ public sealed class ReleaseTicketMessageHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(ReleaseTicketMessageCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
+        var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
+        SupportTicketScope.EnsureExternal(ticket);
+        SupportTicketScope.EnsureVersion(ticket, command.ExpectedVersion);
 
         // Block E (E-2): antes que cualquier otra regla y que el no-op de abajo; un cerrado es 422 aunque el mensaje ya esté suelto.
         ticket.EnsureMessagesCanChange();

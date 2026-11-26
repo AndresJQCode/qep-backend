@@ -133,11 +133,16 @@ public static class MessagingAuditActions
     public const string TemplateQuotationProvisioned = "messaging.template.quotation_provisioned";
     public const string TemplateBillingProvisioned = "messaging.template.billing_provisioned";
     public const string TemplateOrderProvisioned = "messaging.template.order_provisioned";
+    public const string TemplateInvoiceProvisioned = "messaging.template.invoice_provisioned";
     public const string TemplateSupportReplyProvisioned = "messaging.template.support_reply_provisioned";
     public const string TemplateSupportFormalReplyProvisioned = "messaging.template.support_formal_reply_provisioned";
     public const string TemplateSupportSurveyProvisioned = "messaging.template.support_survey_provisioned";
     public const string TemplateWholesaleInvitationNoticeProvisioned = "messaging.template.wholesale_invitation_notice_provisioned";
+    public const string TemplateTaskNoticeProvisioned = "messaging.template.task_notice_provisioned";
+    public const string TemplateAppointmentReminderProvisioned = "messaging.template.appointment_reminder_provisioned";
     public const string TemplateDeleted = "messaging.template.deleted";
+    // Spec 2026-11-20: cambiar la imagen fija del encabezado sin pasar por Meta.
+    public const string TemplateHeaderImageReplaced = "messaging.template.header_image_replaced";
 
     public const string HistorySyncResourceType = "history_sync";
     public const string HistorySyncRetried = "messaging.history_sync.retried";

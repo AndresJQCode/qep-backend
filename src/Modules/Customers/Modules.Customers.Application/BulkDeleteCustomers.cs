@@ -37,10 +37,14 @@ public static class CustomerDeletionBlockReasons
 
     /// <summary>D4 del spec de soporte (2026-11-14): cualquier ticket del cliente, en cualquier estado.</summary>
     public const string SupportTickets = "supportTickets";
+
+    /// <summary>PD-6 del plan de la Agenda (2026-11-22): cualquier cita del cliente, en cualquier estado (también la cancelada), bloquea.</summary>
+    public const string SchedulingAppointments = "schedulingAppointments";
     public const string BlockedContact = "blockedContact";
 
     /// <summary>El orden del contrato: así salen los motivos en la respuesta, venga como venga del adaptador.</summary>
-    public static IReadOnlyList<string> Ordered { get; } = [Quotations, Orders, Loans, ServiceContracts, SupportTickets, BlockedContact];
+    public static IReadOnlyList<string> Ordered { get; } =
+        [Quotations, Orders, Loans, ServiceContracts, SupportTickets, SchedulingAppointments, BlockedContact];
 }
 
 public sealed class BulkDeleteCustomersValidator : AbstractValidator<BulkDeleteCustomersCommand>

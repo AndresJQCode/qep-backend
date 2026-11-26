@@ -55,7 +55,10 @@ public sealed class RunUnitJsonTests
     {
         var attachment = new JsonObject
         {
-            ["messageId"] = Guid.NewGuid().ToString(), ["fileName"] = "f.pdf", ["mimeType"] = "application/pdf", ["stored"] = true,
+            ["messageId"] = Guid.NewGuid().ToString(),
+            ["fileName"] = "f.pdf",
+            ["mimeType"] = "application/pdf",
+            ["stored"] = true,
             ["url"] = "https://r2/secret?sig=1",
         };
         var mapped = new JsonObject { ["url"] = "https://api/x" };

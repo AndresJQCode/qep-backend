@@ -105,6 +105,24 @@ public sealed class WholesaleInvitationNoticeSenderTests
         Assert.Equal(2, _outbound.Sends.Count);
     }
 
+    // Spec 2026-11-19 §2: el link llega hasta acá, pero Mensajería guarda el texto armado de la plantilla tal cual
+    // (PlainTemplateOutbound no enmascara), así que el token no se le pasa: ni como variable ni dentro de otra. Cuando Mensajería
+    // pueda enmascararlo, esta prueba cambia con la plantilla nueva.
+    [Fact]
+    public async Task TheStoredMessageNeverContainsTheToken()
+    {
+        const string Token = "Zx0pQ9mW3rT7yU1iO5aS8dF2gH6jK4lZ0xC3vB7nM1q";
+        var notice = Notice() with { Link = $"https://qep.qcode.co/wholesale-invitations/{Token}" };
+
+        var result = await Sender().SendAsync(notice, Ct);
+
+        Assert.IsType<WholesaleNoticeSendResult.Sent>(result);
+        var send = Assert.Single(_outbound.Sends);
+        Assert.Equal(["correo", "mayorista", "nombre_contacto"], send.Values.Keys.Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(send.Values.Values, value => value.Contains(Token, StringComparison.Ordinal));
+        Assert.DoesNotContain(Token, send.ToString(), StringComparison.Ordinal);
+    }
+
     private async Task<string> FailureFor(WholesaleInvitationNoticeSendResult outcome)
     {
         _outbound.Next = outcome;

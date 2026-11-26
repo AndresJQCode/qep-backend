@@ -181,6 +181,26 @@ public sealed class QuotationsExportProcessorTests
         Assert.Equal("cotizaciones-2026-12-31-2300.xlsx", result.FileName);
     }
 
+    // Spec 2026-11-22 (i18n): en España la cotización es «presupuesto» y el asesor, «comercial» (owner,
+    // 2026-11-22). La hoja, el archivo y esa columna siguen el idioma del tenant.
+    [Fact]
+    public async Task InSpainTheSheetAndTheFileSpeakOfBudgets()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var directory = new StubTenantDirectory();
+        directory.Regional = directory.Regional! with { Language = "es-ES" };
+        var processor = NewProcessor(
+            new StubQuotationListRepository(NewQuotation("QUO-2026-0001")), writer, tenantDirectory: directory);
+
+        var result = await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Presupuestos", writer.SheetName);
+        Assert.Equal("presupuestos-2026-09-12-1030.xlsx", result.FileName);
+        Assert.Equal(
+            ["Numero", "Fecha", "Cliente", "Comercial", "Estado", "Moneda", "Total"],
+            writer.Columns.Select(column => column.Header));
+    }
+
     // Había filas al pedir y ya no al procesar: reintentar da lo mismo.
     [Fact]
     public async Task NoRowsWhenItRunsIsDefinitiveAndUploadsNothing()

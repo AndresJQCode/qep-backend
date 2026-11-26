@@ -172,11 +172,26 @@ internal sealed class FakeConversationOpener(MessagingTestBed bed) : IConversati
         return Task.FromResult(new OpenedConversation(row.Id, true));
     }
 
-    /// <summary>Ninguna prueba unitaria la usa: el envío de la cotización se prueba por integración, contra el SQL real.</summary>
+    public List<(string WaId, Guid? CustomerId)> PhoneCalls { get; } = [];
+
+    /// <summary>By phone, as the real one: reuses the conversation of that number on the connection or adds one to the bed's list.</summary>
     public Task<OpenedConversation> OpenByPhoneAsync(
         Guid tenantId, Guid connectionId, string waId, Guid? customerId, string profileName, DateTimeOffset now,
-        CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        CancellationToken cancellationToken)
+    {
+        PhoneCalls.Add((waId, customerId));
+        var existing = bed.Conversations.Rows.FirstOrDefault(row => row.ConnectionId == connectionId && row.WaId == waId);
+        if (existing is not null)
+        {
+            return Task.FromResult(new OpenedConversation(existing.Id, false));
+        }
+
+        var row = new ConversationRow(
+            Guid.CreateVersion7(), tenantId, connectionId, null, waId, null, profileName, customerId, null, ConversationStatus.Open, 0, null, null,
+            null, null, null, null, null, now, 1);
+        bed.Conversations.Rows.Add(row);
+        return Task.FromResult(new OpenedConversation(row.Id, true));
+    }
 
     /// <summary>La misma búsqueda del real, sobre las conversaciones del banco: por teléfono, la de actividad más reciente.</summary>
     public Task<Guid?> FindByPhoneAsync(Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken) =>
@@ -212,6 +227,9 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
     public Task<MessageTemplate?> FindOrderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.Order));
 
+    public Task<MessageTemplate?> FindInvoiceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.Invoice));
+
     public Task<MessageTemplate?> FindSupportReplyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.SupportReply));
 
@@ -221,8 +239,14 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
     public Task<MessageTemplate?> FindSupportSurveyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.SupportSurvey));
 
+    public Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.TaskNotice));
+
     public Task<MessageTemplate?> FindWholesaleInvitationNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.WholesaleInvitationNotice));
+
+    public Task<MessageTemplate?> FindAppointmentReminderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.AppointmentReminder));
 
     public Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<MessageTemplate>>(Ordered(Of(tenantId, connectionId)));
@@ -243,6 +267,14 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
 
     public Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
         Task.FromResult(SavedHeaderImages.Contains((tenantId, fileId)));
+
+    public List<MessageTemplateRetiredHeaderImage> RetiredHeaderImages { get; } = [];
+
+    public void AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage image) => RetiredHeaderImages.Add(image);
+
+    public Task<IReadOnlyList<Guid>> ListRetiredHeaderImageFileIdsAsync(Guid tenantId, Guid templateId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>(
+            RetiredHeaderImages.Where(image => image.TenantId == tenantId && image.TemplateId == templateId).Select(image => image.FileId).ToList());
 
     public Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Syncs.TryGetValue((tenantId, connectionId), out var at) ? at : (DateTimeOffset?)null);

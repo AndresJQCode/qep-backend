@@ -355,6 +355,9 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         correction.Property(value => value.PartyAddress)
             .HasColumnName("party_address")
             .HasMaxLength(ShopifyCityCorrection.PartyAddressMaxLength);
+        correction.Property(value => value.PartyPostalCode)
+            .HasColumnName("postal_code")
+            .HasMaxLength(ShopifyCityCorrection.PartyPostalCodeMaxLength);
         correction.Property(value => value.CustomerVersion).HasColumnName("customer_version");
         correction.Property(value => value.AppliedAt).HasColumnName("applied_at");
         correction.Property(value => value.UpdatedAt).HasColumnName("updated_at");

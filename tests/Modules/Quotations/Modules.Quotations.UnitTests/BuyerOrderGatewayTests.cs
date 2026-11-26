@@ -661,7 +661,11 @@ public sealed class BuyerOrderGatewayTests
             ? ColombianParty() with { IdentificationType = type }
             : ColombianParty() with
             {
-                IdentificationType = type, Country = country, DepartmentId = null, CityId = null, CityName = "Miami"
+                IdentificationType = type,
+                Country = country,
+                DepartmentId = null,
+                CityId = null,
+                CityName = "Miami"
             };
         var order = StoreOrder(Buyer, parties: Parties(billing: party));
 
@@ -718,7 +722,10 @@ public sealed class BuyerOrderGatewayTests
     {
         var foreign = ColombianParty() with
         {
-            Country = "ES", IdentificationType = PartyIdentificationType.Nif, DepartmentId = null, CityId = null,
+            Country = "ES",
+            IdentificationType = PartyIdentificationType.Nif,
+            DepartmentId = null,
+            CityId = null,
             CityName = "Madrid"
         };
         var order = StoreOrder(Buyer, parties: Parties(billing: foreign));
@@ -890,6 +897,10 @@ public sealed class BuyerOrderGatewayTests
 
         public Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
             IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken) => Call();
+
+        public Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationRegionRef>>(new Dictionary<Guid, QuotationRegionRef>());
 
         public async Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)

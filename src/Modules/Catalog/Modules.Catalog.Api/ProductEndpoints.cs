@@ -156,13 +156,15 @@ public static class ProductEndpoints
         int pageSize = ProductPaging.DefaultPageSize,
         bool includeVariants = false,
         string? visibleInStore = null,
-        string? kind = null)
+        string? kind = null,
+        Guid? categoryId = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListProductsQuery(
                 tenantId, search, name, code, isActive, page, pageSize, includeVariants,
                 ParseVisibleInStore(visibleInStore),
-                CatalogEnumParsing.ParseOptional<ProductKind>(kind, "kind")),
+                CatalogEnumParsing.ParseOptional<ProductKind>(kind, "kind"),
+                categoryId),
             cancellationToken);
 
         return Results.Ok(new ProductsResponse(

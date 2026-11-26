@@ -5,9 +5,9 @@ using Modules.Tenancy.Domain;
 namespace Modules.Authorization.Application;
 
 /// <summary>
-/// Un rol acotado al tenant y los permisos que concede. Las definiciones de rol de sistema
-/// se versionan con el código y son propiedad del módulo que protege el caso de uso; se
-/// registran en tiempo de composición. Los roles custom (en base) son un agregado posterior.
+/// Un rol de sistema y los permisos que concede: se versiona con el código y se registra en tiempo de composición. Hoy sólo
+/// hay uno, <c>admin</c> (spec 2026-11-25, roles por tenant). Los demás roles son filas de cada tenant; los que trae de
+/// fábrica se siembran a partir de un <see cref="RoleTemplate"/>.
 /// </summary>
 public sealed record RoleDefinition(
     string Role,

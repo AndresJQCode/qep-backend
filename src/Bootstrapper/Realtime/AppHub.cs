@@ -31,6 +31,7 @@ internal sealed partial class AppHub : Hub
     private readonly AppHubConnections _connections;
     private readonly AppHubDispatcher _dispatcher;
     private readonly IRealtimePresence _presence;
+    private readonly IAppMemberPresence _memberPresence;
     private readonly IRealtimeMemberNames _names;
     private readonly IRealtimePublisher _publisher;
     private readonly ILogger<AppHub> _logger;
@@ -41,6 +42,7 @@ internal sealed partial class AppHub : Hub
         AppHubConnections connections,
         AppHubDispatcher dispatcher,
         IRealtimePresence presence,
+        IAppMemberPresence memberPresence,
         IRealtimeMemberNames names,
         IRealtimePublisher publisher,
         ILogger<AppHub> logger)
@@ -50,6 +52,7 @@ internal sealed partial class AppHub : Hub
         _connections = connections;
         _dispatcher = dispatcher;
         _presence = presence;
+        _memberPresence = memberPresence;
         _names = names;
         _publisher = publisher;
         _logger = logger;
@@ -57,6 +60,9 @@ internal sealed partial class AppHub : Hub
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Clearing the presence of a closed connection on topic {Topic} failed.")]
     private static partial void LogDisconnectCleanupFailed(ILogger logger, string topic, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Announcing the member's app presence failed.")]
+    private static partial void LogMemberPresenceFailed(ILogger logger, Exception exception);
 
     public override async Task OnConnectedAsync()
     {
@@ -78,6 +84,19 @@ internal sealed partial class AppHub : Hub
         Context.Items[TenantItem] = tenantId;
         Context.Items[MemberItem] = memberId.Value;
         _connections.Register(Context.ConnectionId, tenantId, memberId.Value);
+        try
+        {
+            _memberPresence.Connected(tenantId, memberId.Value);
+        }
+        catch (Exception failure)
+        {
+            // Presence only decides whether a task notice waits; it must never refuse the connection.
+            LogMemberPresenceFailed(_logger, failure);
+        }
+
+        // Spec 2026-11-22 D-3: the member's own group is joined from the claims and never through Subscribe, so a reconnect rejoins it
+        // by itself and no client can ask for somebody else's.
+        await Groups.AddToGroupAsync(Context.ConnectionId, RealtimeTopics.MemberGroupOf(tenantId, memberId.Value), Context.ConnectionAborted);
         await base.OnConnectedAsync();
     }
 
@@ -93,6 +112,16 @@ internal sealed partial class AppHub : Hub
             var topics = _connections.Remove(Context.ConnectionId);
             if (TryIdentity(out var tenantId, out var memberId))
             {
+                try
+                {
+                    // After the removal above, so HasMember sees the member's other tabs.
+                    _memberPresence.Disconnected(tenantId, memberId);
+                }
+                catch (Exception failure)
+                {
+                    LogMemberPresenceFailed(_logger, failure);
+                }
+
                 var cleared = new List<(string Topic, IReadOnlyList<Guid> Present)>();
                 foreach (var topic in topics.Where(RealtimePresence.Applies))
                 {
@@ -152,7 +181,11 @@ internal sealed partial class AppHub : Hub
     /// connection never had.</summary>
     public async Task Unsubscribe(string topic)
     {
-        if (string.IsNullOrEmpty(topic) || topic.Length > RealtimeTopics.MaxLength || !TryIdentity(out var tenantId, out var memberId))
+        // Like Subscribe, it leaves the «@» names alone: the member's own group is not the client's to leave, or it could cut its own alerts.
+        if (string.IsNullOrEmpty(topic)
+            || topic.StartsWith('@')
+            || topic.Length > RealtimeTopics.MaxLength
+            || !TryIdentity(out var tenantId, out var memberId))
         {
             return;
         }

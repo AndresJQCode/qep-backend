@@ -35,7 +35,8 @@ public sealed record CreateTicketRequest(
     TicketRequesterRequest? Requester,
     Guid? AssigneeMemberId,
     bool? Anonymous = null,
-    string? Priority = null);
+    string? Priority = null,
+    string? DueOn = null);
 
 /// <param name="Priority">El nombre exacto del cuerpo; <c>null</c> es <c>Medium</c>.</param>
 public sealed record CreateTicketCommand(
@@ -49,7 +50,8 @@ public sealed record CreateTicketCommand(
     TicketRequesterRequest? Requester,
     Guid? AssigneeMemberId,
     bool Anonymous = false,
-    string? Priority = null)
+    string? Priority = null,
+    string? DueOn = null)
     : ICommand<SupportTicketDetailDto>
 {
     /// <summary>El país del tenant, con que se juzga el tipo de documento si el solicitante no trae el suyo. No viaja por el cable:
@@ -67,7 +69,8 @@ public sealed record CreateTicketCommand(
         request.Requester,
         request.AssigneeMemberId,
         request.Anonymous ?? false,
-        request.Priority);
+        request.Priority,
+        request.DueOn);
 }
 
 /// <summary>
@@ -86,8 +89,10 @@ public sealed class CreateTicketValidator : AbstractValidator<CreateTicketComman
             .Must(text => SupportTicketRules.TryParseExact<ManualIntakeMedium>(text, out _))
             .WithMessage("ManualMedium must be Phone, InPerson, Email, Letter or Other.");
         RuleFor(command => command.ReplyChannel)
-            .Must(text => SupportTicketRules.TryParseExact<SupportReplyChannel>(text, out _))
+            .Must(text => SupportTicketRules.TryParseExact<SupportReplyChannel>(text, out var channel) && channel is not SupportReplyChannel.None)
             .WithMessage("ReplyChannel must be Thread, WhatsAppTemplate, Email or Portal.");
+        // Spec 2026-11-22 D5: la fecha de un externo sale del término de su tipo; sólo una tarea la elige.
+        RuleFor(command => command.DueOn).Null().WithMessage("An external ticket takes its due date from its type; only a task has a free one.");
         RuleFor(command => command.Priority).MustBeAPriority();
         // Fase 4a (plan G1): el anónimo se responde sólo por la página de consulta y no lleva cliente ni solicitante; sin anónimo,
         // Portal no es un canal (no habría PIN que dictar).
@@ -298,6 +303,7 @@ public sealed class CreateTicketHandler(
     ISupportTicketNumberGenerator numbers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportIntegrationEvents integrationEvents,
     ISupportRealtime realtime,
     SupportTicketDtoComposer composer,
     SupportOpeningDelivery openingDelivery,
@@ -387,6 +393,8 @@ public sealed class CreateTicketHandler(
                 context.Clock,
                 validated.Anonymous);
             tickets.Add(ticket);
+            // Outbox row in the same transaction: the assignee hears about a ticket created for them, as with a later assignment.
+            SupportAssignmentNotices.PublishOnCreate(integrationEvents, ticket, actor, now);
             // La clave de consulta nace con el ticket, tenga o no a dónde mandarse: sólo su hash, nunca en la auditoría ni en la traza.
             access = SupportTicketAccess.Issue(ticket.Id, validated.TenantId, pinHasher.Hash(pin), now);
             accesses.Add(access);

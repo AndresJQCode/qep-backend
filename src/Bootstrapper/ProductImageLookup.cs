@@ -26,9 +26,10 @@ internal sealed class ProductImageLookup(
         CancellationToken cancellationToken)
     {
         var resource = await repository.GetAsync(new FileResourceId(fileId), cancellationToken);
-        // Un archivo de dueño de sistema (adjunto de Soporte) no existe para Catalog: no puede ser foto de un producto (fix round 1 del
-        // Bloque D de Soporte fase 3). Es filtrar por tipo, no por tenant: la regla de tenant sigue en ProductImageResolver.
-        return resource is null || SystemOwnedFiles.Includes(resource.OwnerType) ? null : ToRef(resource);
+        // Un archivo de dueño de sistema (adjunto de Soporte) o que pide un permiso extra (export de WMS) no existe para Catalog: no
+        // puede ser foto de un producto (FileOwnerModules.IsReferenceableByOtherModules). Es filtrar por tipo, no por tenant: la regla
+        // de tenant sigue en ProductImageResolver.
+        return resource is null || !FileOwnerModules.IsReferenceableByOtherModules(resource.OwnerType) ? null : ToRef(resource);
     }
 
     public async Task<IReadOnlyDictionary<Guid, ProductImageRef>> FindManyAsync(
@@ -46,7 +47,7 @@ internal sealed class ProductImageLookup(
         var ids = fileIds.Distinct().Select(fileId => new FileResourceId(fileId)).ToArray();
         var resources = await repository.ListByIdsAsync(ids, cancellationToken);
         return resources
-            .Where(resource => !SystemOwnedFiles.Includes(resource.OwnerType))
+            .Where(resource => FileOwnerModules.IsReferenceableByOtherModules(resource.OwnerType))
             .ToDictionary(resource => resource.Id.Value, ToRef);
     }
 

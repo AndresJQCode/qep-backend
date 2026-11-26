@@ -240,6 +240,19 @@ public sealed class SupportOpeningSenderTests
         Assert.Empty(_channels.ThreadSends);
     }
 
+    // Spec 2026-11-22 (i18n): quien abre el caso no tiene preferencia propia; el correo va en el idioma del tenant.
+    [Theory]
+    [InlineData("es-419")]
+    [InlineData("es-ES")]
+    public async Task TheOpeningEmailCarriesTheTenantLanguage(string language)
+    {
+        _tenants.Language = language;
+
+        await Sender.SendAsync(Manual(SupportReplyChannel.Email), Pin, Received, ConsultUrl, CancellationToken.None);
+
+        Assert.Equal(language, Assert.Single(_email.Sent).Language);
+    }
+
     private static SupportTicketType Type(int index) => SupportTicketTypeDefaults.For(TenantId, Received)[index];
 
     private static SupportTicket FromConversation(Guid? assignee = null, int typeIndex = 0) =>
@@ -331,6 +344,9 @@ public sealed class SupportOpeningSenderTests
 
         public Task<IReadOnlyList<SupportMemberRef>> ListManagersAsync(Guid tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SupportMemberRef>>(Managers.ToList());
+
+        public Task<IReadOnlyList<SupportMemberRef>> ListTaskMembersAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<SupportMemberRef>>(Managers.ToList());
     }
 
     private sealed class FakeOpeningEmail : ISupportOpeningEmail
@@ -367,7 +383,8 @@ public sealed class SupportOpeningSenderTests
             throw new NotSupportedException();
 
         public Task<SupportInboxTotals> TotalsAsync(
-            Guid tenantId, DateOnly today, DateOnly? dueSoonLimit, CancellationToken cancellationToken) =>
+            Guid tenantId, SupportTicketKind kind, Guid? participantMemberId, DateOnly today, DateOnly? dueSoonLimit,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<SupportTicket>> ListOpenByConversationAsync(
@@ -393,6 +410,8 @@ public sealed class SupportOpeningSenderTests
     {
         public string DateFormat { get; set; } = TenantDateFormats.DayMonthYear;
 
+        public string Language { get; set; } = "es-419";
+
         public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<string?>("tienda");
 
@@ -413,6 +432,7 @@ public sealed class SupportOpeningSenderTests
 
         public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<TenantRegionalSettings?>(
-                new TenantRegionalSettings("America/Bogota", DateFormat, "COP", TenantNumberFormats.CommaDecimal));
+                new TenantRegionalSettings(
+                    "America/Bogota", DateFormat, "COP", TenantNumberFormats.CommaDecimal, Language: Language));
     }
 }

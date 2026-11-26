@@ -151,6 +151,8 @@ public sealed class IssueDownloadUrlHandlerTests
     /// <summary>El bucket público que cuenta cuántas URL se armaron.</summary>
     private sealed class UrlCountingPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public int GetUrlCalls { get; private set; }
 
         public bool IsConfigured => true;

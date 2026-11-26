@@ -19,6 +19,11 @@ public sealed class HeaderImageTakenTests
     public void TheHeaderImageIndexIsATakenImage() =>
         Assert.True(MessagingSaveChanges.IsHeaderImageTaken(Violation(PostgresErrorCodes.UniqueViolation, "UX_message_templates_header_image")));
 
+    // Spec 2026-11-20: la carrera de dos cambios de imagen con el mismo archivo choca en el índice de las retiradas.
+    [Fact]
+    public void TheRetiredImageIndexIsATakenImageToo() =>
+        Assert.True(MessagingSaveChanges.IsHeaderImageTaken(Violation(PostgresErrorCodes.UniqueViolation, MessagingDbContext.MessageTemplateRetiredHeaderImageFileIndex)));
+
     [Theory]
     [InlineData(PostgresErrorCodes.UniqueViolation, "UX_message_templates_name_language")]
     [InlineData(PostgresErrorCodes.UniqueViolation, null)]

@@ -259,6 +259,8 @@ public sealed class TenantLogoStorageTests
 
     private sealed class UnconfiguredPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public bool IsConfigured => false;
 
         public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken) =>

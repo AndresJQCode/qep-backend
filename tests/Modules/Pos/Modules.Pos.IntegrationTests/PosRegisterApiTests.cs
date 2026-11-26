@@ -179,7 +179,7 @@ public sealed class PosRegisterApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    // El rol de sistema `cashier` vende sin descontar (spec, decisión 4).
+    // El rol sembrado `cashier` vende sin descontar (spec, decisión 4).
     [Fact]
     public async Task AnInvitedCashierSellsButCannotDiscount()
     {

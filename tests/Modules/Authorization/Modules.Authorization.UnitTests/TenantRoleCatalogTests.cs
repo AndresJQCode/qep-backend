@@ -19,7 +19,7 @@ public sealed class TenantRoleCatalogTests
                     "high",
                     ["advisorship.invite", "advisorship.manage", "advisorship.read"]),
                 new RoleDefinition(
-                    SystemRoleKeys.Advisor,
+                    "advisor",
                     "Asesor",
                     "Gestiona clientes.",
                     "Tenancy",
@@ -61,7 +61,7 @@ public sealed class TenantRoleCatalogTests
 
         var permissions = await catalog.PermissionsForAsync(
             Tenant,
-            [SystemRoleKeys.Advisor, "ventas-junior"],
+            ["advisor", "ventas-junior"],
             TestContext.Current.CancellationToken);
 
         Assert.Equal(

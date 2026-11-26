@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Storage.Application;
+using Modules.Storage.Infrastructure.ChatbotMedia;
 using Modules.Storage.Infrastructure.Imaging;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
@@ -13,6 +14,7 @@ using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.ProductImages;
 using Modules.Storage.Infrastructure.Scanning;
 using Modules.Storage.Infrastructure.TemplateImages;
+using Modules.Storage.Infrastructure.UnreferencedFiles;
 
 namespace Modules.Storage.Infrastructure;
 
@@ -78,11 +80,20 @@ public static class StorageInfrastructureExtensions
         // Spec 2026-11-17: despublica y borra la imagen de encabezado de una plantilla que Messaging soltó, con reintentos.
         services.AddScoped<ITemplateHeaderImageReleaseProcessor, TemplateHeaderImageReleaseProcessor>();
         services.AddHostedService<TemplateHeaderImageReleaseWorker>();
-        // Spec 2026-11-17, «Closing the residual gaps»: una vez al día suelta las imágenes de más de 24 h que ninguna plantilla usa.
-        // ITemplateImageReferences lo registra Bootstrapper (Storage no conoce a Messaging).
-        services.AddScoped<ITemplateHeaderImageFiles, TemplateHeaderImageFiles>();
-        services.AddScoped<ITemplateHeaderImageSweep, TemplateHeaderImageSweep>();
-        services.AddHostedService<TemplateHeaderImageSweepWorker>();
+        // Spec 2026-11-18 («Lifecycle»): suelta los archivos de los bloques «Mensaje» de un chatbot que Automations borró, salvo los que
+        // otro chatbot, una plantilla guardada o la bandeja todavía usan (IChatbotMediaReferences, de Bootstrapper).
+        services.AddScoped<IChatbotMediaReleaseProcessor, ChatbotMediaReleaseProcessor>();
+        services.AddHostedService<ChatbotMediaReleaseWorker>();
+        // Spec 2026-11-17, «Closing the residual gaps», y 2026-11-18 («Lifecycle»): una vez al día suelta los archivos de sistema de más
+        // de 24 h que ya nadie usa, un barrido por dueño. ITemplateImageReferences e IChatbotMediaReferences los registra Bootstrapper
+        // (Storage no conoce a Messaging ni a Automations). Cada barrido también se registra por su tipo para que las pruebas lo corran solo.
+        services.AddScoped<IUnreferencedFileCandidates, UnreferencedFileCandidates>();
+        services.AddScoped<UnreferencedFileReleaser>();
+        services.AddScoped<TemplateHeaderImageSweep>();
+        services.AddScoped<IUnreferencedFileSweep>(provider => provider.GetRequiredService<TemplateHeaderImageSweep>());
+        services.AddScoped<ChatbotMediaSweep>();
+        services.AddScoped<IUnreferencedFileSweep>(provider => provider.GetRequiredService<ChatbotMediaSweep>());
+        services.AddHostedService<UnreferencedFileSweepWorker>();
         // Spec 2026-09-16, D12: la reconciliación de payment-proofs/, en modo solo-registrar hasta
         // que alguien apague Storage:PaymentProofOrphanCleanup:DryRun.
         services.AddScoped<IPaymentProofOrphanCleanupProcessor, PaymentProofOrphanCleanupProcessor>();

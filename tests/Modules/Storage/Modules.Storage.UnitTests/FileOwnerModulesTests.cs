@@ -69,11 +69,68 @@ public sealed class FileOwnerModulesTests
         Assert.True(SystemOwnedFiles.Includes(FileOwnerType.ChatbotMedia));
     }
 
+    // Spec 2026-11-20 (RRHH): el PDF de un contrato o de un registro es de Recursos humanos.
+    [Fact]
+    public void AnHrDocumentBelongsToHr()
+    {
+        Assert.Equal(TenantModuleKeys.Hr, FileOwnerModules.ModuleOf(FileOwnerType.HrDocument));
+    }
+
+    // Sólo llega por la sesión de Hr (hr.contract.manage): la consola de Storage no lo ve ni lo crea.
+    [Fact]
+    public void AnHrDocumentIsSystemOwned()
+    {
+        Assert.True(SystemOwnedFiles.Includes(FileOwnerType.HrDocument));
+    }
+
     // owner_type es character varying(20) y se persiste por nombre: un nombre más largo no cabe.
     [Fact]
     public void TheOwnerTypeNameFitsItsColumn()
     {
         Assert.All(Enum.GetNames<FileOwnerType>(), name => Assert.True(name.Length <= 20, name));
+    }
+
+    [Fact]
+    public void WmsEvidenceAndExportsBelongToTheWmsModule()
+    {
+        Assert.Same(TenantModuleKeys.Wms, FileOwnerModules.ModuleOf(FileOwnerType.WmsEvidence));
+        Assert.Same(TenantModuleKeys.Wms, FileOwnerModules.ModuleOf(FileOwnerType.WmsExport));
+        Assert.Equal(
+            [FileOwnerType.WmsEvidence, FileOwnerType.WmsExport],
+            FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
+                TenantModuleKeys.All.Except([TenantModuleKeys.Wms]))).Order());
+    }
+
+    // I-2: sólo el export de WMS pide un permiso además de storage.file.read; el resto de tipos no pide nada más.
+    [Fact]
+    public void OnlyTheWmsExportRequiresAnExtraPermission()
+    {
+        Assert.Equal("wms.stock.export", FileOwnerModules.RequiredPermissionOf(FileOwnerType.WmsExport));
+        Assert.Equal([FileOwnerType.WmsExport], FileOwnerModules.RequiredPermissionByOwnerType.Keys);
+        Assert.Null(FileOwnerModules.RequiredPermissionOf(FileOwnerType.WmsEvidence));
+        Assert.Equal([FileOwnerType.WmsExport], FileOwnerModules.OwnerTypesLackingPermission(_ => false));
+        Assert.Empty(FileOwnerModules.OwnerTypesLackingPermission(_ => true));
+    }
+
+    // Un miembro nuevo de FileOwnerType no pasa sin decidir las dos cosas: si un miembro lo sube por POST /files y si otro módulo puede
+    // referenciarlo. Dueño de sistema, generado por el servidor y con permiso extra son las tres razones para que no.
+    [Fact]
+    public void EveryOwnerTypeIsUploadableByMembersOrDeliberatelyNot()
+    {
+        Assert.Equal([FileOwnerType.WmsExport], ServerGeneratedFiles.OwnerTypes);
+        Assert.Equal(
+            [FileOwnerType.User, FileOwnerType.Entity, FileOwnerType.System, FileOwnerType.Product, FileOwnerType.PaymentProof,
+                FileOwnerType.Tenant, FileOwnerType.Store, FileOwnerType.WmsEvidence],
+            Enum.GetValues<FileOwnerType>().Except(SystemOwnedFiles.OwnerTypes).Except(ServerGeneratedFiles.OwnerTypes).Order());
+    }
+
+    [Fact]
+    public void SystemOwnedAndPermissionedFilesAreNotReferenceableByOtherModules()
+    {
+        Assert.Equal(
+            [FileOwnerType.User, FileOwnerType.Entity, FileOwnerType.System, FileOwnerType.Product, FileOwnerType.PaymentProof,
+                FileOwnerType.Tenant, FileOwnerType.Store, FileOwnerType.WmsEvidence],
+            Enum.GetValues<FileOwnerType>().Where(FileOwnerModules.IsReferenceableByOtherModules).Order());
     }
 
     [Fact]
@@ -87,18 +144,20 @@ public sealed class FileOwnerModulesTests
         // support no tiene dependencias: sólo sale con su propio módulo apagado.
         Assert.Equal(
             [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.SupportTicket,
-                FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia],
+                FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia, FileOwnerType.HrDocument, FileOwnerType.WmsEvidence,
+                FileOwnerType.WmsExport],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }
 
-    // Con catalog apagado el listado excluye a los productos, y por las dependencias orders -> catalog y store -> orders
-    // también a los comprobantes y al banner de la tienda: el módulo apagado se propaga.
+    // Con catalog apagado el listado excluye a los productos, y por las dependencias orders -> catalog, store -> orders y
+    // wms -> catalog también a los comprobantes, al banner de la tienda y a los archivos de bodega: el módulo apagado se propaga.
     [Fact]
     public void OwnerTypesDisabledInExcludesProductsWhenCatalogIsOff()
     {
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store, FileOwnerType.WmsEvidence,
+                FileOwnerType.WmsExport],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
                 TenantModuleKeys.All.Except([TenantModuleKeys.Catalog]))).Order());
     }

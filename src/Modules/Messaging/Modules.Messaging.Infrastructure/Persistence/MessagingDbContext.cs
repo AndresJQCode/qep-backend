@@ -139,6 +139,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// a <c>header_image_rejected</c> y su compensación ve la fila de la ganadora y no libera la imagen.</summary>
     public const string MessageTemplateHeaderImageIndex = "UX_message_templates_header_image";
 
+    /// <summary>Spec 2026-11-20: un archivo retirado lo es una sola vez en todo el sistema.</summary>
+    public const string MessageTemplateRetiredHeaderImageFileIndex = "UX_message_template_retired_header_images_file";
+
     /// <summary>Fix de la Task 8 (spec 2026-10-14 §4.5): una sola <c>Quotation</c> por conexión. Parcial sobre <c>kind = 'Quotation'</c>,
     /// que se guarda como texto (<c>CK_message_templates_kind</c>). Dos primeros aprovisionamientos a la vez chocan acá y la unidad de
     /// trabajo lo traduce por nombre a <c>quotation_exists</c>.</summary>
@@ -151,6 +154,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-11-09 D1: una fila <c>Order</c> por conexión.</summary>
     public const string MessageTemplateOrderIndex = "UX_message_templates_order";
 
+    /// <summary>Spec 2026-11-21: una fila <c>Invoice</c> por conexión.</summary>
+    public const string MessageTemplateInvoiceIndex = "UX_message_templates_invoice";
+
     /// <summary>Soporte fase 2: una fila <c>SupportReply</c> por conexión.</summary>
     public const string MessageTemplateSupportReplyIndex = "UX_message_templates_support_reply";
 
@@ -160,8 +166,14 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Soporte fase 4b: una fila <c>SupportSurvey</c> por conexión.</summary>
     public const string MessageTemplateSupportSurveyIndex = "UX_message_templates_support_survey";
 
+    /// <summary>Support task notices: one <c>TaskNotice</c> row per connection.</summary>
+    public const string MessageTemplateTaskNoticeIndex = "UX_message_templates_task_notice";
+
     /// <summary>Mayorista: una fila <c>WholesaleInvitationNotice</c> por conexión.</summary>
     public const string MessageTemplateWholesaleInvitationNoticeIndex = "UX_message_templates_wholesale_invitation_notice";
+
+    /// <summary>Agenda: una fila <c>AppointmentReminder</c> por conexión.</summary>
+    public const string MessageTemplateAppointmentReminderIndex = "UX_message_templates_appointment_reminder";
 
     /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
@@ -211,6 +223,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-14 §4.1: el espejo de plantillas.</summary>
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
 
+    public DbSet<MessageTemplateRetiredHeaderImage> MessageTemplateRetiredHeaderImages => Set<MessageTemplateRetiredHeaderImage>();
+
     internal DbSet<TemplateMirrorSyncRecord> TemplateMirrorSyncs => Set<TemplateMirrorSyncRecord>();
 
     /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
@@ -249,6 +263,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureBotDelegation(modelBuilder);
         ConfigureConnectionBots(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
+        ConfigureMessageTemplateRetiredHeaderImage(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
         ConfigureHistorySync(modelBuilder);
         ConfigureInbox(modelBuilder);
@@ -477,6 +492,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         media.Property(value => value.StorageFileId).HasColumnName("storage_file_id");
         media.Property(value => value.PublicUrl).HasColumnName("public_url").HasMaxLength(2048);
         media.HasIndex(value => value.NextAttemptAt).HasDatabaseName("IX_message_media_pending").HasFilter("stored_at IS NULL");
+        // Spec 2026-11-18, regla 2 del owner: Storage pregunta por estos ids a diario y al borrar un chatbot. Parcial: sólo las filas de bot.
+        media.HasIndex(value => value.StorageFileId).HasDatabaseName("IX_message_media_storage_file").HasFilter("storage_file_id IS NOT NULL");
     }
 
     private static readonly ValueConverter<IReadOnlyList<Guid>, Guid[]> GuidListConverter = new(list => list.ToArray(), array => array);
@@ -810,7 +827,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.ToTable("message_templates", Schema, table =>
             table.HasCheckConstraint(
                 "CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order','SupportReply',"
-                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice')"));
+                + "'SupportFormalReply','SupportSurvey','WholesaleInvitationNotice','Invoice','AppointmentReminder','TaskNotice')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -838,6 +855,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
         // Spec 2026-11-09 D1: la del pedido, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateOrderIndex).IsUnique().HasFilter("kind = 'Order'");
+        // Spec 2026-11-21: la de la factura, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateInvoiceIndex).IsUnique().HasFilter("kind = 'Invoice'");
         // Soporte fase 2: la de «Aviso de respuesta», con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateSupportReplyIndex).IsUnique()
             .HasFilter("kind = 'SupportReply'");
@@ -849,10 +868,32 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Mayorista: el aviso de invitación de distribuidor, con la misma regla.
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateWholesaleInvitationNoticeIndex).IsUnique()
             .HasFilter("kind = 'WholesaleInvitationNotice'");
+        // Support task notices: the assignment notice, same rule.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateTaskNoticeIndex).IsUnique()
+            .HasFilter("kind = 'TaskNotice'");
+        // Agenda: el recordatorio de cita, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateAppointmentReminderIndex).IsUnique()
+            .HasFilter("kind = 'AppointmentReminder'");
         // Cobros recurrentes §5: una fila por tipo de aviso en cada conexión, como la de cotización (dos aprovisionamientos a la vez).
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Kind }, MessageTemplateBillingIndex).IsUnique()
             .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Status }, "IX_message_templates_status");
+    }
+
+    /// <summary>Spec 2026-11-20: las imágenes de encabezado que una plantilla dejó de usar. Se van con la plantilla (cascada).</summary>
+    private static void ConfigureMessageTemplateRetiredHeaderImage(ModelBuilder modelBuilder)
+    {
+        var retired = modelBuilder.Entity<MessageTemplateRetiredHeaderImage>();
+        retired.ToTable("message_template_retired_header_images", Schema);
+        retired.HasKey(value => value.Id);
+        retired.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        retired.Property(value => value.TenantId).HasColumnName("tenant_id");
+        retired.Property(value => value.TemplateId).HasColumnName("template_id");
+        retired.Property(value => value.FileId).HasColumnName("file_id");
+        retired.Property(value => value.PublicUrl).HasColumnName("public_url").HasMaxLength(MessageTemplate.HeaderImageUrlMaxLength);
+        retired.Property(value => value.RetiredAt).HasColumnName("retired_at");
+        retired.HasOne<MessageTemplate>().WithMany().HasForeignKey(value => value.TemplateId).OnDelete(DeleteBehavior.Cascade);
+        retired.HasIndex(value => value.FileId, MessageTemplateRetiredHeaderImageFileIndex).IsUnique();
     }
 
     /// <summary>Spec 2026-10-29: la importación del historial por conexión. Sin FK: la conexión es de Integrations, otro schema.

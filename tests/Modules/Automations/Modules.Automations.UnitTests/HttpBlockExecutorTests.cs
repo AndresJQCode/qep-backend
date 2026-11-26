@@ -987,7 +987,9 @@ public sealed class HttpBlockExecutorTests
         var variables = Variables();
         variables.Set("factura", new System.Text.Json.Nodes.JsonObject
         {
-            ["messageId"] = Guid.CreateVersion7().ToString(), ["stored"] = true, ["url"] = "https://r2.test/k?signed=1",
+            ["messageId"] = Guid.CreateVersion7().ToString(),
+            ["stored"] = true,
+            ["url"] = "https://r2.test/k?signed=1",
         });
         var node = Node("/files", "POST", body: new HttpBody(HttpBodyKinds.Json, """{ "url": "{factura.url}" }""", null, null, null));
 
@@ -1043,7 +1045,10 @@ public sealed class HttpBlockExecutorTests
 
     private static System.Text.Json.Nodes.JsonObject PendingAttachment(Guid messageId) => new()
     {
-        ["messageId"] = messageId.ToString(), ["fileName"] = "f.pdf", ["mimeType"] = "application/pdf", ["stored"] = false,
+        ["messageId"] = messageId.ToString(),
+        ["fileName"] = "f.pdf",
+        ["mimeType"] = "application/pdf",
+        ["stored"] = false,
     };
 
     [Fact]

@@ -38,6 +38,7 @@ public sealed class PublishFileHandler(
         // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
+        FileOwnerPermissionGuard.EnsureCallerMayAccess(executionContext, resource);
         // Spec 2026-09-16, D15: un comprobante sólo llega al público por el movimiento. Por acá
         // copiaría desde su temporal, que después de moverse ya no existe.
         PaymentProofGuard.EnsureNotPaymentProof(resource);
@@ -88,6 +89,7 @@ public sealed class UnpublishFileHandler(
         // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
+        FileOwnerPermissionGuard.EnsureCallerMayAccess(executionContext, resource);
 
         // Spec 2026-09-16, D15: antes de tocar el bucket. La copia pública de un comprobante adjunto
         // es la que enlaza el Excel.

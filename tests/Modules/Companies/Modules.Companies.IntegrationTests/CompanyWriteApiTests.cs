@@ -972,6 +972,122 @@ public sealed class CompanyWriteApiTests
         Assert.NotEqual(JsonValueKind.Null, json.RootElement.GetProperty("department").ValueKind);
     }
 
+    // ---- Region (provincia guardada, spec 2026-11-23) ----
+    //
+    // Toda lectura de `region` sale del JSON de la respuesta HTTP, no del DTO: el Response mapea a mano y se come en
+    // silencio un campo nuevo.
+
+    private static object SpanishBodyWithRegion(Guid? regionId, string country = "ES", string documentType = "NIF") => new
+    {
+        name = "Iberia S.L.",
+        bankAccounts = new[] { BankAccount("ES-000123") },
+        taxId = "B12345678",
+        country,
+        documentType,
+        cityName = "Madrid",
+        regionId
+    };
+
+    [Fact]
+    public async Task ForeignCompanyRoundTripsRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var created = await PostRawAsync(client, SpanishBodyWithRegion(madrid));
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using var createdJson = await ReadJsonAsync(created);
+        var companyId = createdJson.RootElement.GetProperty("id").GetGuid();
+        Assert.Equal(madrid, createdJson.RootElement.GetProperty("region").GetProperty("id").GetGuid());
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{CompaniesUrl()}/{companyId}", TestContext.Current.CancellationToken);
+        var region = json.GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task UpdatingWithoutRegionClearsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+        var created = await PostRawAsync(client, SpanishBodyWithRegion(madrid));
+        using var createdJson = await ReadJsonAsync(created);
+        var companyId = createdJson.RootElement.GetProperty("id").GetGuid();
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{companyId}", SpanishBodyWithRegion(regionId: null), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{CompaniesUrl()}/{companyId}", TestContext.Current.CancellationToken);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("region").ValueKind);
+    }
+
+    [Fact]
+    public async Task ColombianCompanyWithRegionIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = "CO",
+            documentType = "NIT",
+            cityId,
+            regionId = madrid
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("RegionId", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task RegionOfAnotherCountryIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await PostRawAsync(client, SpanishBodyWithRegion(madrid, country: "FR", documentType: "TAX_ID"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "companies.company.region_invalid",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+    }
+
+    // GET /countries/CO/regions devuelve departamentos, asi que el frontend puede conservar uno al cambiar de pais.
+    [Fact]
+    public async Task DepartmentIdAsRegionIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var department = await ColombianDepartmentRegionIdAsync(client);
+
+        var response = await PostRawAsync(client, SpanishBodyWithRegion(department));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "companies.company.region_invalid",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+    }
+
     private static object SpanishBody() => new
     {
         name = "Iberia S.L.",

@@ -16,14 +16,23 @@ internal sealed class DistributorRepository(WholesaleDbContext dbContext) : IDis
             distributor => distributor.Invitation.TokenHash == tokenHash, cancellationToken);
 
     public Task<bool> IdentificationExistsAsync(
-        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken)
+        Guid tenantId,
+        string identificationType,
+        string identificationNumber,
+        DistributorId? excluding,
+        CancellationToken cancellationToken)
     {
         var trimmed = identificationNumber.Trim();
-        return dbContext.Distributors.AsNoTracking().AnyAsync(
+        var matching = dbContext.Distributors.AsNoTracking().Where(
             distributor => distributor.TenantId == tenantId
                 && distributor.IdentificationType == identificationType
-                && distributor.IdentificationNumber == trimmed,
-            cancellationToken);
+                && distributor.IdentificationNumber == trimmed);
+        if (excluding is { } own)
+        {
+            matching = matching.Where(distributor => distributor.Id != own);
+        }
+
+        return matching.AnyAsync(cancellationToken);
     }
 
     // Sin rastreo: la fase 3 sólo lee la relación para decidir acceso y precio; nunca la escribe por acá.
@@ -80,17 +89,6 @@ internal sealed class DistributorRepository(WholesaleDbContext dbContext) : IDis
             .Select(group => new { Status = group.Key, Count = group.Count() })
             .ToListAsync(cancellationToken);
         return rows.ToDictionary(row => row.Status, row => row.Count);
-    }
-
-    // Cualquier estado: una lista con un distribuidor bloqueado tampoco se borra.
-    public async Task<IReadOnlyDictionary<PriceListId, int>> CountByPriceListAsync(Guid tenantId, CancellationToken cancellationToken)
-    {
-        var rows = await dbContext.Distributors.AsNoTracking()
-            .Where(distributor => distributor.TenantId == tenantId)
-            .GroupBy(distributor => distributor.PriceListId)
-            .Select(group => new { PriceListId = group.Key, Count = group.Count() })
-            .ToListAsync(cancellationToken);
-        return rows.ToDictionary(row => row.PriceListId, row => row.Count);
     }
 
     public void Add(Distributor distributor) => dbContext.Distributors.Add(distributor);

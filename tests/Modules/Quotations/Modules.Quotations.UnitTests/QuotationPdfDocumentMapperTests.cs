@@ -265,7 +265,7 @@ public sealed class QuotationPdfDocumentMapperTests
     }
 
     [Fact]
-    public void TheLineTotalIsTheGrossMinusItsDiscountWithTheTaxStillInside()
+    public void TheLineTotalIsTheSubtotalPlusTheTaxWithTheTaxStillInside()
     {
         var document = Map(Response());
 
@@ -276,6 +276,20 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(1169940m, document.Items[1].LineTotal);
     }
 
+    // Spec 2026-11-23: el descuento de línea es sin IVA, así que ya no se resta del bruto con IVA. El total
+    // de línea es lo que la línea cobra, Subtotal + TaxAmount, cualquiera sea el descuento.
+    [Fact]
+    public void TheLineTotalDoesNotDependOnTheDiscount()
+    {
+        var response = Response();
+        var first = response.Items.First() with { DiscountAmount = 1m };
+
+        var document = Map(response with { Items = [first, .. response.Items.Skip(1)] });
+
+        Assert.Equal(366180m, document.Items[0].LineTotal);
+        Assert.Equal(first.Subtotal + first.TaxAmount, document.Items[0].LineTotal);
+    }
+
     // Lo que el mayorista gana si revende a valor publico: la suma de los descuentos de linea.
     // Es el mismo numero que el encabezado ya trae como DiscountAmount, no uno nuevo.
     [Fact]
@@ -283,7 +297,7 @@ public sealed class QuotationPdfDocumentMapperTests
     {
         var document = Map(Response());
 
-        Assert.Equal(271080m, document.DiscountAmount);
+        Assert.Equal(227798.32m, document.DiscountAmount);
     }
 
     [Fact]
@@ -440,6 +454,32 @@ public sealed class QuotationPdfDocumentMapperTests
 
         Assert.Equal("Calle Mayor 1, Madrid, ES", document.Shipping.Location);
         Assert.Equal("Carrera 7", document.Billing.Location);
+    }
+
+    // Spec 2026-11-24: el código postal va después de la dirección, en Colombia y fuera.
+    [Theory]
+    [InlineData("CO", null, "Zona Franca, 050021", "Zona Franca")]
+    [InlineData("ES", "Madrid", "Zona Franca, 050021, Madrid, ES", "Zona Franca, Madrid, ES")]
+    public void TheShippingLocationPrintsThePostalCodeAfterTheAddress(
+        string country, string? cityName, string expected, string withoutIt)
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega", null, null, null,
+            "Zona Franca", null, null, Country: country, CityName: cityName, PostalCode: "050021");
+
+        Assert.Equal(expected, Map(Response() with { Parties = [party] }).Shipping.Location);
+        Assert.Equal(withoutIt, Map(Response() with { Parties = [party with { PostalCode = null }] }).Shipping.Location);
+    }
+
+    // Sin dirección no queda un separador colgando.
+    [Fact]
+    public void APostalCodeWithoutAnAddressPrintsAlone()
+    {
+        var party = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega", null, null, null,
+            null, null, null, Country: "CO", PostalCode: "050021");
+
+        Assert.Equal("050021", Map(Response() with { Parties = [party] }).Shipping.Location);
     }
 
     [Fact]
@@ -652,7 +692,7 @@ public sealed class QuotationPdfDocumentMapperTests
         1290857.15m,
         19m,
         245262.85m,
-        271080m,
+        227798.32m,
         1536120m,
         false,
         0m,
@@ -678,7 +718,7 @@ public sealed class QuotationPdfDocumentMapperTests
         // podria decir que no lo alcanzo.
         new QuotationMinimumPurchaseResponse(true, 24m, 6m, "COP", 500_000m, 0m, 0m),
         [
-            // 12 x 35.900 = 430.800; 15% = 64.620; linea = 366.180 con IVA adentro.
+            // 12 x 35.900 = 430.800; 15% = 64.620 con IVA = 54.302,52 sin IVA; linea = 366.180 con IVA adentro.
             // IVA contenido = 366.180 x 19 / 119 = 58.465,71; base = 307.714,29.
             new QuotationItemResponse(
                 Guid.CreateVersion7(),
@@ -691,7 +731,7 @@ public sealed class QuotationPdfDocumentMapperTests
                 12m,
                 35900m,
                 15m,
-                64620m,
+                54302.52m,
                 30515m,
                 307714.29m,
                 19,
@@ -711,7 +751,7 @@ public sealed class QuotationPdfDocumentMapperTests
                 12m,
                 114700m,
                 15m,
-                206460m,
+                173495.80m,
                 97495m,
                 983142.86m,
                 19,

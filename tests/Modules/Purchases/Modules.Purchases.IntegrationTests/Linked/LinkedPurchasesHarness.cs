@@ -126,8 +126,8 @@ internal static class LinkedPurchasesHarness
 
         var priceList = await PostAsync<PriceListDetailDto>(
             wholesaler,
-            $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists",
-            new { name = PriceListName, discountPercent = DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
+            $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists",
+            new { name = PriceListName, adjustmentPercent = -DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
         var companyId = await CreateCompanyAsync(wholesaler, wholesalerTenant.TenantId);
         var distributor = await PostAsync<DistributorDetailDto>(
             wholesaler,
@@ -136,11 +136,14 @@ internal static class LinkedPurchasesHarness
             {
                 email = EmailOf(buyerTenant),
                 businessName = "Distribuciones Norte SAS",
+                country = "CO",
+                identificationType = "NIT",
                 identificationNumber = $"9{Random.Shared.NextInt64(100_000_000, 999_999_999)}",
                 contactName = "Ana Pérez",
                 priceListId = priceList.Id,
                 advisorId = wholesalerTenant.MemberId,
                 billingCompanyId = companyId,
+                cityId = await MedellinAsync(wholesaler),
             });
 
         var token = await LatestTokenAsync(factory, distributor.Id);
@@ -197,20 +200,6 @@ internal static class LinkedPurchasesHarness
     // Copia de WholesaleApiHarness.CreateCompanyAsync: NIT en Medellín (o la primera ciudad sembrada).
     private static async Task<Guid> CreateCompanyAsync(HttpClient client, Guid tenantId)
     {
-        Guid? first = null;
-        Guid? medellin = null;
-        var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];
-        foreach (var department in departments)
-        {
-            var cities = await client.GetFromJsonAsync<List<GeographyRow>>($"/api/v1/cities?departmentId={department.Id}", Ct) ?? [];
-            first ??= cities.FirstOrDefault()?.Id;
-            medellin = cities.FirstOrDefault(city => city.Name.StartsWith("Medell", StringComparison.OrdinalIgnoreCase))?.Id;
-            if (medellin is not null)
-            {
-                break;
-            }
-        }
-
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/companies",
             new
@@ -223,12 +212,31 @@ internal static class LinkedPurchasesHarness
                 phone = "3001234567",
                 email = "ventas@mayorista.co",
                 address = "Calle 10 # 40-20",
-                cityId = medellin ?? first ?? throw new InvalidOperationException("No seeded DIVIPOLA city."),
+                cityId = await MedellinAsync(client),
             },
             Ct);
         await EnsureSuccessAsync(response);
         using var document = JsonDocument.Parse(await PurchasesApiHarness.BodyAsync(response));
         return document.RootElement.GetProperty("id").GetGuid();
+    }
+
+    // Medellín, o la primera ciudad sembrada si no está.
+    private static async Task<Guid> MedellinAsync(HttpClient client)
+    {
+        Guid? first = null;
+        var departments = await client.GetFromJsonAsync<List<GeographyRow>>("/api/v1/departments", Ct) ?? [];
+        foreach (var department in departments)
+        {
+            var cities = await client.GetFromJsonAsync<List<GeographyRow>>($"/api/v1/cities?departmentId={department.Id}", Ct) ?? [];
+            first ??= cities.FirstOrDefault()?.Id;
+            var medellin = cities.FirstOrDefault(city => city.Name.StartsWith("Medell", StringComparison.OrdinalIgnoreCase));
+            if (medellin is not null)
+            {
+                return medellin.Id;
+            }
+        }
+
+        return first ?? throw new InvalidOperationException("No seeded DIVIPOLA city.");
     }
 
     private sealed record GeographyRow(Guid Id, string Name);
@@ -290,16 +298,56 @@ internal static class LinkedPurchasesHarness
         /// <summary>El mayorista cambia el descuento de la lista del distribuidor.</summary>
         public async Task ChangeDiscountAsync(decimal discountPercent)
         {
-            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/wholesale/price-lists/{priceListId}";
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists/{priceListId}";
             var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
             var response = await PurchasesApiHarness.WriteAsync(
                 wholesaler,
                 HttpMethod.Put,
                 url,
                 list.Version,
-                new { name = PriceListName, discountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
+                new { name = PriceListName, adjustmentPercent = -discountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>() });
             await EnsureSuccessAsync(response);
         }
+
+        /// <summary>Spec 2026-11-20: una categoría del catálogo del mayorista, opcionalmente bajo otra.</summary>
+        public async Task<Guid> CreateWholesalerCategoryAsync(string name, Guid? parentId = null) =>
+            (await PostAsync<CategoryResponse>(
+                wholesaler, $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/categories", new { name, parentId })).Id;
+
+        /// <summary>Spec 2026-11-20: la lista del distribuidor pasa a ver sólo esas categorías (y sus descendientes).</summary>
+        public async Task UseCategoriesAsync(params Guid[] categoryIds)
+        {
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists/{priceListId}";
+            var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
+            var response = await PurchasesApiHarness.WriteAsync(
+                wholesaler,
+                HttpMethod.Put,
+                url,
+                list.Version,
+                new { name = PriceListName, adjustmentPercent = -DiscountPercent, visibility = "Categories", categoryIds });
+            await EnsureSuccessAsync(response);
+        }
+
+        /// <summary>Spec 2026-11-19: el mayorista oculta (o muestra) los precios de la lista del distribuidor.</summary>
+        public async Task SetShowPricesAsync(bool showPrices)
+        {
+            var url = $"/api/v1/tenants/{wholesalerTenant.TenantId}/catalog/price-lists/{priceListId}";
+            var list = (await wholesaler.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
+            var response = await PurchasesApiHarness.WriteAsync(
+                wholesaler,
+                HttpMethod.Put,
+                url,
+                list.Version,
+                new { name = PriceListName, adjustmentPercent = -DiscountPercent, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), showPrices });
+            await EnsureSuccessAsync(response);
+        }
+
+        public Task<string> WholesaleOrderNumberAsync(Guid orderId) =>
+            PurchasesApiHarness.ScalarAsync<string>(
+                factory,
+                $"""
+                SELECT order_number AS "Value" FROM quotations.orders WHERE id = {orderId}
+                """);
 
         public Task DeactivateWholesalerProductAsync(Guid variantId) =>
             PurchasesApiHarness.ExecuteAsync(

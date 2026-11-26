@@ -96,6 +96,7 @@ public sealed class SupportTicketDtoComposer(
         var memberIds = details
             .SelectMany(item => new[] { item.Event.ActorMemberId, item.Details.ToMember })
             .Append(ticket.AssigneeMemberId)
+            .Append(ticket.CreatedByMemberId)
             .Concat(ticketReplies.Select(reply => (Guid?)reply.AuthorMemberId))
             .OfType<Guid>();
         var customerIds = details
@@ -113,7 +114,7 @@ public sealed class SupportTicketDtoComposer(
             ticket.Description,
             ticket.Status.ToString(),
             ticket.Priority.ToString(),
-            SupportTicketStatuses.AllowedFrom(ticket.Status).Select(status => status.ToString()).ToList(),
+            SupportTicketStatuses.AllowedFor(ticket.Status, ticket.IsInternal).Select(status => status.ToString()).ToList(),
             new SupportTicketTypeSnapshotDto(
                 ticket.TypeId.Value, ticket.TypeName, ticket.TermBusinessDays, ticket.TermIsLegal, ticket.RequiresFormalResponse),
             new SupportClockDto(
@@ -130,7 +131,8 @@ public sealed class SupportTicketDtoComposer(
                 await SupportAutoCloser.ForAsync(autoCloseFeed, ticket, context, cancellationToken)),
             ticket.Intake.ToString(),
             ticket.ManualMedium?.ToString(),
-            ticket.ReplyChannel.ToString(),
+            // Una tarea no tiene canal de respuesta: sale null y no «None».
+            ticket.ReplyChannel == SupportReplyChannel.None ? null : ticket.ReplyChannel.ToString(),
             ticket.CustomerId is { } customerId ? ToCustomerDto(customerId, customersById) : null,
             ticket.Requester is { } requester ? ToRequesterDto(requester) : null,
             ticket.AssigneeMemberId is { } assigneeId ? ToMemberDto(assigneeId, membersById, context.ViewerMemberId) : null,
@@ -162,7 +164,9 @@ public sealed class SupportTicketDtoComposer(
             // 200 (spec 2026-11-16, P-6); toda otra lectura los deja en null.
             IssuedPin: null,
             Surveys: (await tickets.ListSurveysAsync(ticket.TenantId, ticket.Id, cancellationToken)).Select(ToSurveyDto).ToList(),
-            ConsultUrl: null);
+            ConsultUrl: null,
+            IsInternal: ticket.IsInternal,
+            CreatedBy: ticket.CreatedByMemberId is { } creatorId ? ToMemberDto(creatorId, membersById, context.ViewerMemberId) : null);
     }
 
     // Plan F21: sin cliente y con documento en la foto, los clientes con ese documento (si customers está prendido): al radicar no se
@@ -231,7 +235,9 @@ public sealed class SupportTicketDtoComposer(
         Guid tenantId, IReadOnlyList<SupportTicket> page, SupportReadContext context, CancellationToken cancellationToken)
     {
         var membersById = await FindMembersAsync(
-            tenantId, page.Select(ticket => ticket.AssigneeMemberId).OfType<Guid>(), cancellationToken);
+            tenantId,
+            page.SelectMany(ticket => new[] { ticket.AssigneeMemberId, ticket.CreatedByMemberId }).OfType<Guid>(),
+            cancellationToken);
         var customersById = await FindCustomersAsync(
             tenantId, page.Select(ticket => ticket.CustomerId).OfType<Guid>(), cancellationToken);
 
@@ -250,7 +256,9 @@ public sealed class SupportTicketDtoComposer(
                     ticket.ReceivedAt,
                     ticket.DueOn,
                     dueState.ToString(),
-                    daysLeft);
+                    daysLeft,
+                    ticket.IsInternal,
+                    ticket.CreatedByMemberId is { } creatorId ? ToMemberDto(creatorId, membersById, context.ViewerMemberId) : null);
             })
             .ToList();
     }
@@ -409,6 +417,11 @@ public sealed class SupportTicketDtoComposer(
                     FromDueOn = Date(root, "fromDueOn"),
                     ToDueOn = Date(root, "toDueOn"),
                     Reason = Text(root, "reason"),
+                },
+                SupportTicketEventKind.DueDateChanged => Empty with
+                {
+                    FromDueOn = Date(root, "fromDueOn"),
+                    ToDueOn = Date(root, "toDueOn"),
                 },
                 SupportTicketEventKind.PriorityChanged => Empty with
                 {

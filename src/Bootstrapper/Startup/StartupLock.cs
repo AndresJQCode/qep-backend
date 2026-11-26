@@ -112,7 +112,8 @@ public static partial class StartupLock
             // CommandTimeout = 0: el de Npgsql es 30 s por defecto y cortaría la espera del segundo pod justo mientras el
             // primero migra. La espera la acota el cancellationToken (el apagado del host) y el startupProbe.
             await using (var acquire = new NpgsqlCommand(
-                "SELECT pg_advisory_xact_lock(@namespace, @key)", connection, transaction) { CommandTimeout = 0 })
+                "SELECT pg_advisory_xact_lock(@namespace, @key)", connection, transaction)
+            { CommandTimeout = 0 })
             {
                 acquire.Parameters.AddWithValue("namespace", Namespace);
                 acquire.Parameters.AddWithValue("key", Key);

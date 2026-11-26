@@ -25,6 +25,60 @@ public sealed class PurchaseOrderEmailTemplateTests
         "OC-0007.pdf",
         Pdf);
 
+    // Decisión del owner (spec 2026-11-19): una orden sin precio sale al proveedor sin la tabla de montos, no con una grilla de «—».
+    private static PurchaseOrderEmailInput PricelessInput() => new(
+        "ventas@textiles.co",
+        "Verde SAS",
+        "OC-0007",
+        "18/11/2026",
+        "Textiles del Valle",
+        "COP",
+        "Entregar en bodega norte",
+        [
+            new PurchaseOrderEmailLine("CAM-M-AZ", "Camiseta básica – M / Azul", "24", "—", "—"),
+            new PurchaseOrderEmailLine("PAN-32", "Pantalón talla 32", "10", "—", "—"),
+        ],
+        "—",
+        "—",
+        "—",
+        "OC-0007.pdf",
+        Pdf,
+        ShowsAmounts: false);
+
+    [Fact]
+    public void AnOrderWithoutAmountsKeepsQuantitiesAndProductsButNoAmountsSection()
+    {
+        var message = PurchaseOrderEmailTemplate.Render(PricelessInput());
+
+        foreach (var body in new[] { message.HtmlBody, message.TextBody })
+        {
+            Assert.Contains("CAM-M-AZ", body, StringComparison.Ordinal);
+            Assert.Contains("PAN-32", body, StringComparison.Ordinal);
+            Assert.Contains("24", body, StringComparison.Ordinal);
+            Assert.Contains("10", body, StringComparison.Ordinal);
+            Assert.Contains("Entregar en bodega norte", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("—", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("Subtotal", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("IVA", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("Total", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("Costo", body, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("Pantal&#243;n talla 32", message.HtmlBody, StringComparison.Ordinal);
+        Assert.Contains("<th>Cantidad</th>", message.HtmlBody, StringComparison.Ordinal);
+        Assert.Contains("- CAM-M-AZ · Camiseta básica – M / Azul: 24", message.TextBody, StringComparison.Ordinal);
+        Assert.Equal("OC-0007.pdf", Assert.Single(message.Attachments!).FileName);
+    }
+
+    [Fact]
+    public void AnOrderWithAmountsStillPrintsTheAmountsSection()
+    {
+        var message = PurchaseOrderEmailTemplate.Render(Input());
+
+        Assert.Contains("<th>Costo</th><th>Subtotal</th>", message.HtmlBody, StringComparison.Ordinal);
+        Assert.Contains("IVA: $ 320.264", message.TextBody, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheSubjectIsTheOrderNumberAndTheTenant()
     {

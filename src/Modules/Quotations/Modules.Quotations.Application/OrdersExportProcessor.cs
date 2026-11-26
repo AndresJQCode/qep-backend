@@ -22,7 +22,8 @@ public sealed class OrdersExportProcessor(
     IPaymentProofPublisher paymentProofPublisher,
     IExportWorkbookWriter writer,
     IExportFileStorage storage,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IQuotationPhoneNumbers phoneNumbers)
     : IExportJobProcessor
 {
     public const string FilePrefix = "pedidos";
@@ -59,6 +60,9 @@ public sealed class OrdersExportProcessor(
         var storedLayout = await layoutRepository.FindAsync(job.TenantId, cancellationToken);
         var layout = OrdersExportLayoutProjection.For(OrdersExportLayout.Effective(storedLayout));
         var sheetName = OrdersExportLayout.EffectiveSheetName(storedLayout);
+        Func<string, string> phoneText = OrdersExportLayout.EffectiveIncludePhoneDialCode(storedLayout)
+            ? stored => stored
+            : WithoutDialCode;
 
         var exportedRows = 0;
         using var workbook = writer.Create(sheetName, layout.Columns);
@@ -84,7 +88,7 @@ public sealed class OrdersExportProcessor(
             {
                 var context = await LoadBatchContextAsync(job.TenantId, batch, ct);
                 var rows = batch
-                    .SelectMany(order => RowsFor(order, context, calendar, paymentProofPublisher))
+                    .SelectMany(order => RowsFor(order, context, calendar, paymentProofPublisher, phoneText))
                     .Select(cells => layout.Project(cells))
                     .ToArray();
                 exportedRows += rows.Length;
@@ -104,6 +108,11 @@ public sealed class OrdersExportProcessor(
             job.TenantId, job.Id, fileName, workbook.Complete(), cancellationToken);
         return new ExportJobResult(fileName, exportedRows, upload.DownloadUrl, upload.ExpiresAt);
     }
+
+    // Spec 2026-11-25 indicativo: sólo se parte lo que empieza por «+»; sin él, o si no se puede partir,
+    // sale como está guardado. El teléfono no va a ningún log.
+    private string WithoutDialCode(string stored) =>
+        stored.StartsWith('+') ? phoneNumbers.NationalNumberOf(stored) ?? stored : stored;
 
     // Un filtro ilegible es definitivo: el trabajo nació con él y reintentar no lo arregla.
     private static (
@@ -223,8 +232,15 @@ public sealed class OrdersExportProcessor(
 
     // Una fila por línea del pedido. Un pedido sin líneas no puede existir (el dominio lo exige),
     // pero el procesador se defiende igual.
+    // `phoneText` escribe las cuatro columnas de teléfono del catálogo (`phone`, `customer_phone`,
+    // `billing_phone`, `shipping_phone`) según el interruptor del indicativo; una columna de teléfono nueva
+    // pasa por él.
     private static IEnumerable<ExportCell[]> RowsFor(
-        Order order, BatchContext context, TenantCalendar calendar, IPaymentProofPublisher publisher)
+        Order order,
+        BatchContext context,
+        TenantCalendar calendar,
+        IPaymentProofPublisher publisher,
+        Func<string, string> phoneText)
     {
         var items = context.ItemsByOrder.TryGetValue(order.Id, out var foundItems)
             ? foundItems
@@ -320,6 +336,9 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfNumber(item.Quantity),
                 ExportCell.OfNumber(item.DiscountedUnitPriceWithoutTax),
                 ExportCell.OfNumber(item.TaxAmount),
+                // Desde 2026-11-23 el descuento de la línea es sin IVA, igual que el unitario y el IVA de la
+                // fila, y la hoja del ERP lo recibe así. Decisión pendiente del owner: confirmar si el ERP
+                // esperaba el descuento con IVA de antes.
                 ExportCell.OfNumber(item.DiscountAmount),
                 ExportCell.OfText(string.Empty), // Nota Detalle: no existe nota por línea.
                 .. Enumerable.Range(0, PaymentDateColumns).Select(index => PaymentDateCell(proofs, index, calendar)),
@@ -328,7 +347,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(order.OrderNumber),
                 ExportCell.OfText(address),
                 ExportCell.OfText(notes),
-                ExportCell.OfText(phone),
+                ExportCell.OfText(phoneText(phone)),
                 ExportCell.OfText(email),
                 advisorCode,
                 ExportCell.OfText(bank),
@@ -359,7 +378,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(customer?.Address ?? string.Empty),
                 ExportCell.OfText(customer?.CityName ?? string.Empty),
                 ExportCell.OfText(customer?.DepartmentName ?? string.Empty),
-                ExportCell.OfText(customer?.Phone ?? string.Empty),
+                ExportCell.OfText(phoneText(customer?.Phone ?? string.Empty)),
                 ExportCell.OfText(customer?.Email ?? string.Empty),
                 // Grupo billing_*: a quién se factura (OrderBilledParty.SourceFor).
                 ExportCell.OfText(billingName),
@@ -369,7 +388,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(billingContact.Address),
                 ExportCell.OfText(billingContact.City),
                 ExportCell.OfText(billingContact.Department),
-                ExportCell.OfText(billingContact.Phone),
+                ExportCell.OfText(phoneText(billingContact.Phone)),
                 ExportCell.OfText(billingContact.Email),
                 // Grupo shipping_*: a quién se despacha; sin parte de envío, la ficha del cliente (ShippingContactFor).
                 ExportCell.OfText(shippingContact.Name),
@@ -380,7 +399,7 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(shippingContact.City),
                 ExportCell.OfText(coordinadoraCity),
                 ExportCell.OfText(shippingContact.Department),
-                ExportCell.OfText(shippingContact.Phone),
+                ExportCell.OfText(phoneText(shippingContact.Phone)),
                 ExportCell.OfText(shippingContact.Email),
                 WithholdingCell(order, TaxCountries.RetefuenteType),
                 WithholdingCell(order, TaxCountries.ReteIcaType),

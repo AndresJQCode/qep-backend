@@ -251,6 +251,79 @@ public sealed class OrdersExportLayoutPersistenceTests(SharedQuotationsHost shar
             await ListAsync(connectionString, ColumnsSql));
     }
 
+    // Spec 2026-11-25 indicativo: el `false` se escribe de verdad, aunque la columna tenga default `true`, tanto
+    // al insertar como al actualizar.
+    [Fact]
+    public async Task ThePhoneDialCodeSwitchRoundTripsThroughItsOwnColumn()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory);
+        using var _ = client;
+        var sql = "SELECT include_phone_dial_code FROM quotations.orders_export_layouts "
+            + $"WHERE tenant_id = '{tenantId}'";
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var layout = OrdersExportLayout.CreateDefault(tenantId, Now);
+            Assert.True(layout.Replace(
+                OrdersExportLayout.Effective(stored: null), layout.SheetName, includePhoneDialCode: false, Now));
+            scope.ServiceProvider.GetRequiredService<IOrdersExportLayoutRepository>().Add(layout);
+            await scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.False(await ScalarAsync<bool>(database.GetConnectionString(), sql));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var reloaded = await scope.ServiceProvider.GetRequiredService<IOrdersExportLayoutRepository>()
+                .FindAsync(tenantId, TestContext.Current.CancellationToken);
+            Assert.NotNull(reloaded);
+            Assert.False(reloaded.IncludePhoneDialCode);
+            Assert.True(reloaded.Replace(
+                OrdersExportLayout.Effective(stored: null), reloaded.SheetName, includePhoneDialCode: true,
+                Now.AddMinutes(1)));
+            await scope.ServiceProvider.GetRequiredService<IQuotationsUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.True(await ScalarAsync<bool>(database.GetConnectionString(), sql));
+    }
+
+    // La migración no le cambia el Excel a nadie: una fila que ya existía queda con el indicativo, y revertir
+    // quita sólo la columna.
+    [Fact]
+    public async Task ThePhoneDialCodeMigrationDefaultsExistingRowsToTrue()
+    {
+        await using var database = await StartEmptyDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        var migrations = context.Database.GetMigrations().ToList();
+        var dialCodeMigration = MigrationId(context, "_AddOrdersExportLayoutPhoneDialCode");
+        var previous = migrations[migrations.IndexOf(dialCodeMigration) - 1];
+        await migrator.MigrateAsync(previous, TestContext.Current.CancellationToken);
+        var tenantId = Guid.CreateVersion7();
+        await ExecuteAsync(
+            connectionString,
+            $"""
+            INSERT INTO quotations.orders_export_layouts (tenant_id, columns, version, updated_at)
+            VALUES ('{tenantId}', '[]', 3, now())
+            """);
+
+        await migrator.MigrateAsync(dialCodeMigration, TestContext.Current.CancellationToken);
+
+        Assert.Contains("include_phone_dial_code:boolean:NO", await ListAsync(connectionString, ColumnsSql));
+        Assert.True(await ScalarAsync<bool>(
+            connectionString,
+            $"SELECT include_phone_dial_code FROM quotations.orders_export_layouts WHERE tenant_id = '{tenantId}'"));
+
+        await migrator.MigrateAsync(previous, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain("include_phone_dial_code:boolean:NO", await ListAsync(connectionString, ColumnsSql));
+    }
+
     private static async Task ExecuteAsync(string connectionString, string sql)
     {
         await using var connection = new NpgsqlConnection(connectionString);

@@ -16,7 +16,8 @@ public sealed class ExportQuotationPdfHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationPdfProvider pdfProvider,
     IQuotationPdfStorage storage,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    ITenantDirectory tenantDirectory)
     : ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>
 {
     public async Task<QuotationPdfExportDto> HandleAsync(
@@ -34,9 +35,12 @@ public sealed class ExportQuotationPdfHandler(
         var pdf = await pdfProvider.EnsureCurrentAsync(quotation, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
+        // El nombre de la descarga en el idioma del tenant, como el membrete (spec 2026-11-22, i18n).
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(
+            new Modules.Tenancy.Domain.TenantId(command.TenantId), cancellationToken);
         var url = await storage.CreateDownloadUrlAsync(
             pdf.StorageKey,
-            $"Cotizacion-{quotation.QuotationNumber}.pdf",
+            QuotationPdfFileName.For(QuotationPdfKind.Quotation, quotation.QuotationNumber, regional?.Language),
             cancellationToken);
 
         return new QuotationPdfExportDto(url, pdf.GeneratedAt);

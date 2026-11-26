@@ -8,8 +8,9 @@ public sealed record PreviewSiigoInvoiceQuery(Guid TenantId, Guid OrderId) : IQu
 
 /// <summary>
 /// Spec 2026-11-18 §6.3: la factura armada, los faltantes y la propuesta de pagos, <b>sin escribir nada y sin llamar a Siigo</b> (ni
-/// siquiera para buscar o crear el cliente). El pedido se valida con las mismas precondiciones de la marca manual, y la moneda, la
-/// empresa y la conexión configurada son 422 como al generar; lo que falta del pedido sale como lista, no como error.
+/// siquiera para buscar o crear el cliente; el vendedor sale del vínculo del asesor, spec 2026-11-20). El pedido se valida con las mismas
+/// precondiciones de la marca manual, y la moneda, la empresa y la conexión configurada son 422 como al generar; lo que falta del pedido
+/// sale como lista, no como error.
 /// </summary>
 public sealed class PreviewSiigoInvoiceHandler(
     IExecutionContext executionContext,

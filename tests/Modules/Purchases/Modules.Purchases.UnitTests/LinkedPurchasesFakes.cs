@@ -133,15 +133,35 @@ internal sealed class FakeWholesaleCatalog : IWholesaleCatalog
         return item;
     }
 
+    /// <summary>Spec 2026-11-20: el árbol que el mayorista le deja ver al comprador, en el orden que lo da.</summary>
+    public List<WholesaleCategory> Categories { get; } = [];
+
+    /// <summary>El <c>categoryId</c> de cada búsqueda, en el mismo orden que <see cref="Searches"/>.</summary>
+    public List<Guid?> SearchCategoryIds { get; } = [];
+
+    public Task<IReadOnlyList<WholesaleCategory>> ListCategoriesAsync(
+        Guid buyerTenantId, Guid wholesalerTenantId, CancellationToken cancellationToken)
+    {
+        EnsureAllowed();
+        return Task.FromResult<IReadOnlyList<WholesaleCategory>>(Categories.ToList());
+    }
+
     public Task<WholesaleCatalogPage> SearchAsync(
-        Guid buyerTenantId, Guid wholesalerTenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
+        Guid buyerTenantId,
+        Guid wholesalerTenantId,
+        string? search,
+        Guid? categoryId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
     {
         EnsureAllowed();
         Searches.Add((buyerTenantId, wholesalerTenantId, search, page, pageSize));
-        return Task.FromResult(new WholesaleCatalogPage(Currency, "Distribuidor estándar", 15m, Items.Values.ToList(), Items.Count));
+        SearchCategoryIds.Add(categoryId);
+        return Task.FromResult(new WholesaleCatalogPage(Currency, "Distribuidor estándar", 15m, Items.Values.ToList(), Items.Count, ShowPrices));
     }
 
-    public Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items)> PriceAsync(
+    public Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items, bool ShowPrices)> PriceAsync(
         Guid buyerTenantId, Guid wholesalerTenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
     {
         EnsureAllowed();
@@ -152,8 +172,11 @@ internal sealed class FakeWholesaleCatalog : IWholesaleCatalog
         }
 
         IReadOnlyDictionary<Guid, WholesaleCatalogItem> found = variantIds.Distinct().ToDictionary(id => id, id => Items[id]);
-        return Task.FromResult((Currency, found));
+        return Task.FromResult((Currency, found, ShowPrices));
     }
+
+    /// <summary>Spec 2026-11-19: el flag vivo de la lista del mayorista (por defecto se muestran).</summary>
+    public bool ShowPrices { get; set; } = true;
 
     private void EnsureAllowed()
     {
@@ -178,6 +201,9 @@ internal sealed class FakeWholesaleOrderIntake : IWholesaleOrderIntake
 
     public Guid OrderId { get; } = Guid.CreateVersion7();
 
+    /// <summary>Spec 2026-11-19: el flag vivo de la lista con que el intake crea el pedido (por defecto se muestran).</summary>
+    public bool ShowPrices { get; set; } = true;
+
     public Task<WholesaleIntakeResult> SubmitAsync(WholesaleIntakeRequest request, CancellationToken cancellationToken)
     {
         Submitted.Add(request);
@@ -191,7 +217,7 @@ internal sealed class FakeWholesaleOrderIntake : IWholesaleOrderIntake
             .Select(line => new LinkedLineSnapshot(
                 line.PurchaseOrderLineId, line.VariantId, "SKU", "Producto", line.Quantity, 10000m, 19m, 12500m, 4.8m, 11900m))
             .ToList();
-        return Task.FromResult(new WholesaleIntakeResult(OrderId, "PED-0042", "USD", lines, AlreadyExisted: false));
+        return Task.FromResult(new WholesaleIntakeResult(OrderId, "PED-0042", "USD", lines, AlreadyExisted: false, ShowPrices));
     }
 
     public Task CancelAsync(
@@ -233,11 +259,25 @@ internal sealed class FakePurchasesCatalogWriter : IPurchasesCatalogWriter
 
         if (Existing.TryGetValue(code, out var existing))
         {
-            return Task.FromResult(new PurchasesCatalogEntry(existing, Created: false));
+            return Task.FromResult(new PurchasesCatalogEntry(existing, Created: false, ProductId: existing));
         }
 
         var created = Guid.CreateVersion7();
         Existing[code] = created;
-        return Task.FromResult(new PurchasesCatalogEntry(created, Created: true));
+        return Task.FromResult(new PurchasesCatalogEntry(created, Created: true, ProductId: created));
+    }
+}
+
+/// <summary>El copiador de imágenes del mayorista: anota lo pedido, o falla si se le indica.</summary>
+internal sealed class FakePurchasesProductImages : IPurchasesProductImages
+{
+    public List<PendingProductImage> Copies { get; } = [];
+
+    public bool Fails { get; set; }
+
+    public Task CopyAsync(PendingProductImage image, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Copies.Add(image);
+        return Fails ? throw new InvalidOperationException("Storage is down.") : Task.CompletedTask;
     }
 }

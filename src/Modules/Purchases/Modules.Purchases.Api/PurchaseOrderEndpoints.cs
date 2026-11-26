@@ -115,6 +115,17 @@ public static class PurchaseOrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-20: el árbol de categorías que la lista del distribuidor le deja ver, para filtrar ese catálogo.
+        endpoints
+            .MapGroup("/api/v1/tenants/{tenantId:guid}/purchases/suppliers")
+            .WithTags("Purchases")
+            .MapGet("/{supplierId:guid}/catalog/categories", ListSupplierCatalogCategoriesAsync)
+            .RequireAuthorization(PurchasesPermissions.OrderManage)
+            .Produces<SupplierCatalogCategoriesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -125,13 +136,21 @@ public static class PurchaseOrderEndpoints
         CancellationToken cancellationToken,
         string? search = null,
         int page = 1,
-        int pageSize = 0)
+        int pageSize = 0,
+        Guid? categoryId = null)
     {
         var result = await dispatcher.QueryAsync(
-            new ListSupplierCatalogQuery(tenantId, supplierId, search, page, pageSize), cancellationToken);
+            new ListSupplierCatalogQuery(tenantId, supplierId, search, page, pageSize, categoryId), cancellationToken);
 
         return Results.Ok(result);
     }
+
+    private static async Task<IResult> ListSupplierCatalogCategoriesAsync(
+        Guid tenantId,
+        Guid supplierId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListSupplierCatalogCategoriesQuery(tenantId, supplierId), cancellationToken));
 
     // Enviar, recibir y cancelar no llevan cuerpo y comparten handler; sólo cambia la acción.
     private static void MapTransition(RouteGroupBuilder group, string pattern, PurchaseOrderAction action) =>

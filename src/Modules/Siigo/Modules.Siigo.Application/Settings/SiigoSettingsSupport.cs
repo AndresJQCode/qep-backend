@@ -13,6 +13,7 @@ internal static class SiigoSettingsSteps
     public const string Document = "document";
     public const string Taxes = "taxes";
     public const string Payments = "payments";
+    public const string Sellers = "sellers";
 }
 
 /// <summary>Lo que comparten los casos de uso de la configuración (spec 2026-11-18 §5.3): la doble capa de autorización, la conexión del
@@ -20,6 +21,15 @@ internal static class SiigoSettingsSteps
 internal static class SiigoSettingsSupport
 {
     private const string ConcurrencyConflict = "concurrency.conflict";
+
+    /// <summary>Si ninguna clave se repite entre los elementos de una lista del cuerpo (los textos, carácter por carácter). Un elemento
+    /// nulo no cuenta: falla aparte, en su propio campo.</summary>
+    public static bool HasNoRepeated<TItem, TKey>(IEnumerable<TItem?> items, Func<TItem, TKey> key)
+        where TItem : class
+    {
+        var keys = items.OfType<TItem>().Select(key).ToList();
+        return keys.Distinct().Count() == keys.Count;
+    }
 
     /// <summary>Tenant de la ruta, permiso <c>siigo.settings.manage</c> y módulo <c>siigo</c> (403, nunca 404).</summary>
     public static Task AuthorizeAsync(
@@ -65,6 +75,7 @@ internal static class SiigoSettingsSupport
         SiigoConnectionInfo connection,
         ISiigoCompanyDirectory companies,
         ISiigoTaxRateDirectory taxRates,
+        ISiigoMemberDirectory members,
         CancellationToken cancellationToken)
     {
         SiigoCompanyRef? company = null;
@@ -112,6 +123,24 @@ internal static class SiigoSettingsSupport
                 .Select(link => new SiigoAccountLinkDto(link.BankAccountKey, null, null, link.SiigoPaymentTypeId, InCompany: false)))
             .ToArray();
 
+        // Los miembros activos y, aparte, los vínculos de quien ya no está (para verlo y poder quitarlo), por nombre o correo.
+        var roster = await members.ListAsync(
+            settings.TenantId, [.. settings.SellerLinks.Select(link => link.MembershipId)], cancellationToken);
+        var sellers = roster
+            .Select(member =>
+            {
+                var link = settings.SellerLinks.FirstOrDefault(value => value.MembershipId == member.MembershipId);
+                return new SiigoSellerDto(
+                    member.MembershipId, member.DisplayName, member.Email, member.Active, link?.SiigoUserId, link?.SiigoUserName);
+            })
+            // Una membresía purgada ya no sale del directorio, pero su vínculo sigue en la base: se muestra como fila inactiva para
+            // poder verlo y quitarlo, en vez de dejarlo huérfano e invisible.
+            .Concat(settings.SellerLinks
+                .Where(link => roster.All(member => member.MembershipId != link.MembershipId))
+                .Select(link => new SiigoSellerDto(link.MembershipId, null, null, Active: false, link.SiigoUserId, link.SiigoUserName)))
+            .OrderBy(seller => seller.Name ?? seller.Email ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
         return new SiigoSettingsDto(
             settings.ConnectionId,
             new SiigoConnectionDto(connection.Name, connection.Status),
@@ -119,13 +148,13 @@ internal static class SiigoSettingsSupport
             company?.Name,
             new SiigoDocumentDto(
                 settings.DocumentTypeId,
-                settings.SellerId,
                 settings.CostCenterId,
                 settings.WarehouseId,
                 settings.SendToDian,
                 settings.SendMail,
                 settings.FreightSeparateInvoice,
-                settings.FreightProductCode),
+                settings.FreightProductCode,
+                settings.PriceMode.ToString()),
             new SiigoTaxesDto(vat, withholdingLinks),
             new SiigoPaymentsDto(
                 accountLinks,
@@ -133,12 +162,16 @@ internal static class SiigoSettingsSupport
                 settings.CreditDays,
                 settings.CashOnDeliveryPaymentTypeId,
                 settings.DefaultPaymentTypeId),
+            sellers,
+            settings.SellersAutoLinkedAt,
+            settings.ProductsAutoLinkedAt,
             settings.Version,
             ReadinessOf(settings, connection));
     }
 
-    // Las credenciales las decide la conexión de Integrations, no la fila: una conexión pausada o con la clave rechazada deja el paso
-    // incompleto, con el estado como código.
+    // Las credenciales las decide la conexión de Integrations, no la fila: una conexión con la clave rechazada deja el paso incompleto,
+    // con el estado como código. Una pausada está configurada: pausar es dejar de facturar, no le quita nada a la credencial, y
+    // connection.status lo sigue diciendo.
     private static IReadOnlyList<SiigoStepReadinessDto> ReadinessOf(SiigoSettings settings, SiigoConnectionInfo connection) =>
         [
             .. SiigoSettingsReadiness.Evaluate(settings).Select(step => step.Step == SiigoSetupStep.Credentials
@@ -147,7 +180,7 @@ internal static class SiigoSettingsSupport
         ];
 
     private static SiigoStepReadinessDto CredentialsStep(SiigoConnectionInfo connection) =>
-        string.Equals(connection.Status, "Active", StringComparison.Ordinal)
+        connection.Status is "Active" or "Paused"
             ? new SiigoStepReadinessDto(SiigoSetupStep.Credentials.ToString(), true, [])
             : new SiigoStepReadinessDto(SiigoSetupStep.Credentials.ToString(), false, [$"connection_{ToSnakeCase(connection.Status)}"]);
 

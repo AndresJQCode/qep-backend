@@ -7,4 +7,7 @@ public enum SupportTicketIntake
     Manual,
     Conversation,
     PublicForm,
+
+    /// <summary>Spec 2026-11-22: una tarea interna entre miembros. Va al final: se persiste por nombre.</summary>
+    Internal,
 }

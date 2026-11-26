@@ -313,7 +313,7 @@ public sealed class FilePublicTicketHandler(
         }
 
         var type = await types.FindAsync(tenant.TenantId, new SupportTicketTypeId(validated.TicketTypeId!.Value), cancellationToken);
-        if (type is not { IsActive: true, IsPublished: true })
+        if (type is not { IsActive: true, IsPublished: true, IsInternal: false })
         {
             throw new SupportDomainException(
                 SupportErrorCodes.TicketTypeUnavailable, "The ticket type does not exist or is not offered in the public form.");

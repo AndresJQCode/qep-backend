@@ -109,6 +109,22 @@ public sealed class SiigoProductLinksApiTests
     }
 
     [Fact]
+    public async Task AutoLinkMarksTheProductsStepEvenWithoutMatches()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.On("/v1/products", HttpStatusCode.OK, SiigoProductsPage(1, 100, 0));
+
+        var response = await world.Client.PostAsync(Route(world.TenantId, world.ConnectionId, "products/auto-link"), content: null, Ct);
+        await EnsureSuccessAsync(response);
+
+        // La marca es la que evita que la pantalla vuelva a vincular sola al abrir el paso (spec 2026-11-20 §9).
+        Assert.Equal(0, (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["linked"]!.GetValue<int>());
+        var settings = (await world.Client.GetFromJsonAsync<JsonObject>(Route(world.TenantId, world.ConnectionId, "settings"), Ct))!;
+        Assert.NotNull(settings["productsAutoLinkedAt"]);
+    }
+
+    [Fact]
     public async Task AutoLinkSkipsAmbiguousCodes()
     {
         await using var database = await StartDatabaseAsync();
@@ -274,6 +290,65 @@ public sealed class SiigoProductLinksApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains("filter", (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["errors"]!.AsObject().Select(pair => pair.Key));
+    }
+
+    private static async Task<JsonObject> GetSiigoProductsAsync(World world, string query = "")
+    {
+        var response = await world.Client.GetAsync(Route(world.TenantId, world.ConnectionId, $"siigo-products{query}"), Ct);
+        await EnsureSuccessAsync(response);
+        return (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+    }
+
+    private static string[] CodesOf(JsonObject page) => [.. page["items"]!.AsArray().Select(item => item!["code"]!.GetValue<string>())];
+
+    // El selector de la modal «Vincular»: los productos activos de Siigo, por código o nombre, y `refresh` para lo recién creado.
+    [Fact]
+    public async Task ThePickerListsActiveSiigoProductsAndSearchesByCodeOrName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.AddProduct("s-1", "AB-1", "Camiseta básica");
+        world.Siigo.AddProduct("s-2", "AB-2", "Pantalón largo");
+        world.Siigo.AddProduct("s-3", "AB-3", "Producto inactivo", active: false);
+
+        var all = await GetSiigoProductsAsync(world);
+        var byName = await GetSiigoProductsAsync(world, "?search=pantalon");
+        var byCode = await GetSiigoProductsAsync(world, "?search=ab-1");
+
+        Assert.Equal(["AB-1", "AB-2"], CodesOf(all));
+        Assert.Equal((1, 20, 2), (all["page"]!.GetValue<int>(), all["pageSize"]!.GetValue<int>(), all["total"]!.GetValue<int>()));
+        Assert.Equal(["AB-2"], CodesOf(byName));
+        Assert.Equal(["AB-1"], CodesOf(byCode));
+        Assert.Equal("s-1", all["items"]![0]!["id"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ThePickerKeepsACopyUntilRefreshAndRefreshShowsWhatWasJustCreated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        world.Siigo.AddProduct("s-1", "AB-1", "Uno");
+        Assert.Equal(["AB-1"], CodesOf(await GetSiigoProductsAsync(world)));
+
+        world.Siigo.AddProduct("s-2", "NEW-2", "Recién creado en Siigo");
+
+        Assert.Equal(["AB-1"], CodesOf(await GetSiigoProductsAsync(world)));
+        Assert.Equal(["AB-1", "NEW-2"], CodesOf(await GetSiigoProductsAsync(world, "?refresh=true")));
+        Assert.Equal(["AB-1", "NEW-2"], CodesOf(await GetSiigoProductsAsync(world)));
+    }
+
+    [Fact]
+    public async Task ThePickerWithAnUnusableConnectionIs409AndAnInvalidPageIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+
+        var invalid = await world.Client.GetAsync(Route(world.TenantId, world.ConnectionId, "siigo-products?page=0"), Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+
+        world.Siigo.On("/auth", HttpStatusCode.Unauthorized, "{}");
+        var unusable = await world.Client.GetAsync(Route(world.TenantId, world.ConnectionId, "siigo-products?refresh=true"), Ct);
+        Assert.Equal(HttpStatusCode.Conflict, unusable.StatusCode);
     }
 
     [Fact]

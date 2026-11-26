@@ -14,5 +14,32 @@ internal sealed class SiigoInvoiceRepository(SiigoDbContext dbContext) : ISiigoI
             .ThenBy(invoice => invoice.Id)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken)
+    {
+        if (invoiceIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.Invoices
+            .Where(invoice => invoice.TenantId == tenantId && invoiceIds.Contains(invoice.Id))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<SiigoInvoice>> ListFreightAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.Invoices
+            .Where(invoice => invoice.TenantId == tenantId && orderIds.Contains(invoice.OrderId)
+                && invoice.Kind == SiigoInvoiceKind.Freight)
+            .ToListAsync(cancellationToken);
+    }
+
     public void Add(SiigoInvoice invoice) => dbContext.Invoices.Add(invoice);
 }

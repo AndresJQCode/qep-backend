@@ -86,7 +86,7 @@ public sealed class UpdatePriceRoundingHandlerTests
         // Siempre viaja el catálogo completo: lo que la prueba no menciona queda en su valor por defecto.
         var inputs = Currencies.All
             .Select(currency => changes.FirstOrDefault(change => change.Currency == currency.Code) is
-                { Currency: not null } change
+            { Currency: not null } change
                 ? new CurrencyPriceRoundingInput(change.Currency, change.Decimals, change.Mode)
                 : new CurrencyPriceRoundingInput(currency.Code, currency.Decimals, "Nearest"))
             .ToArray();

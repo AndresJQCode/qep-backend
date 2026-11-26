@@ -143,7 +143,11 @@ impedir o el handler tratar como `read` [asistente; el builder elige la forma co
     nunca borra el costo [owner].
   - Un objeto = reemplaza los costos de la variante (un `{}` los borra). Requiere `catalog.product_cost.manage`; sin él, `403` con
     código NUEVO `catalog.product_cost.forbidden`. Vale igual en `POST` (crear producto).
-- Las búsquedas del POS, cotizaciones y pedidos **no** exponen costo.
+- Las búsquedas del POS, cotizaciones y pedidos **no** exponen costo. *Corrección 2026-11-19:* el listado
+  `GET /catalog/products?includeVariants=true` (que también es el selector de cotizaciones y pedidos) trae `costs` en cada
+  variante con esta misma semántica, `null` sin el permiso
+  ([`2026-11-19-catalogo-lista-costos-de-variantes.md`](2026-11-19-catalogo-lista-costos-de-variantes.md)). La búsqueda del
+  POS sigue sin costo.
 
 ### 6.2 Pedidos y POS
 

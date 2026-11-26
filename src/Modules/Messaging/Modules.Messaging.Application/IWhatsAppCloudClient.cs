@@ -92,6 +92,11 @@ public interface IWhatsAppCloudClient
     Task<SendResult> SendVideoAsync(
         MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken);
 
+    /// <summary>2026-11-22: <c>type: "sticker"</c> con el id de la subida (un WebP). No lleva <c>caption</c> ni <c>filename</c>;
+    /// <paramref name="contextWamid"/> sólo viaja si viene. Mismo <see cref="SendResult"/> que el texto.</summary>
+    Task<SendResult> SendStickerAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-11 §6.4: <c>type: "audio"</c>. Con <paramref name="voice"/> viaja <c>voice: true</c> y llega como nota de
     /// voz; sin él (un audio adjunto como archivo, spec 2026-10-20 D5) la clave no viaja y WhatsApp lo muestra como archivo. Sin
     /// <c>caption</c>: WhatsApp no lo admite en audio. Devuelve el mismo <see cref="SendResult"/> que el texto.</summary>

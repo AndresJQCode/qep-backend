@@ -12,7 +12,8 @@ namespace Modules.Purchases.Application;
 public sealed record PurchaseOrderLineBuild(
     string Currency,
     Guid? SupplierTenantId,
-    IReadOnlyList<PurchaseOrderLineDraft> Lines);
+    IReadOnlyList<PurchaseOrderLineDraft> Lines,
+    bool ShowPrices = true);
 
 /// <summary>
 /// El armado de líneas que comparten el alta, la edición y la vista previa (D-19): las reglas que miran otros módulos, en el
@@ -106,7 +107,7 @@ public sealed class PurchaseOrderLineBuilder(
     private async Task<PurchaseOrderLineBuild> BuildLinkedAsync(
         Guid tenantId, Guid wholesalerTenantId, IReadOnlyList<PurchaseOrderLineInput> lines, CancellationToken cancellationToken)
     {
-        var (currency, items) = await wholesaleCatalog.PriceAsync(
+        var (currency, items, showPrices) = await wholesaleCatalog.PriceAsync(
             tenantId, wholesalerTenantId, lines.Select(line => line.VariantId).Distinct().ToArray(), cancellationToken);
         var drafts = new List<PurchaseOrderLineDraft>(lines.Count);
         foreach (var line in lines)
@@ -128,6 +129,6 @@ public sealed class PurchaseOrderLineBuilder(
                 new LinkedLinePrice(item.VariantId, item.BasePrice, item.DiscountPercent, item.ListPrice)));
         }
 
-        return new PurchaseOrderLineBuild(currency, wholesalerTenantId, drafts);
+        return new PurchaseOrderLineBuild(currency, wholesalerTenantId, drafts, showPrices);
     }
 }

@@ -107,7 +107,13 @@ internal static class AutomationsApiHarness
             .WithDatabase("qep")
             .WithUsername("qep")
             .WithPassword("qep-integration")
-            .WithCommand("-c", "max_connections=400")
+            // fsync, synchronous_commit y full_page_writes apagados: la base es desechable y lo que se mide es la lógica,
+            // no la durabilidad.
+            .WithCommand(
+                "-c", "max_connections=400",
+                "-c", "fsync=off",
+                "-c", "synchronous_commit=off",
+                "-c", "full_page_writes=off")
             .Build();
         await server.StartAsync(CancellationToken.None);
         await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");

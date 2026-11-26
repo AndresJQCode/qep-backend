@@ -30,6 +30,47 @@ public sealed class CreateOrderValidatorTests
         Assert.Contains(result.Errors, error => error.PropertyName == "Items");
     }
 
+    // Spec 2026-11-23: los regalos viajan en su propia lista; la misma variante puede ir pagada y de regalo.
+    [Fact]
+    public void RejectsTheSameVariantTwiceAsAGift()
+    {
+        var variantId = Guid.CreateVersion7();
+        var result = new CreateOrderValidator().Validate(
+            Valid() with { Gifts = [new OrderItemAddition(variantId, 1m), new OrderItemAddition(variantId, 2m)] });
+        Assert.Contains(result.Errors, error => error.PropertyName == "Gifts");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void RejectsAGiftWithoutQuantity(int quantity)
+    {
+        var result = new CreateOrderValidator().Validate(
+            Valid() with { Gifts = [new OrderItemAddition(Guid.CreateVersion7(), quantity)] });
+        Assert.Contains(result.Errors, error => error.PropertyName == "Gifts[0].Quantity");
+    }
+
+    [Fact]
+    public void AcceptsTheSameVariantPaidAndAsAGift()
+    {
+        var variantId = Guid.CreateVersion7();
+        var result = new CreateOrderValidator().Validate(
+            Valid() with
+            {
+                Items = [new OrderItemAddition(variantId, 10m)],
+                Gifts = [new OrderItemAddition(variantId, 1m)],
+            });
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void RequiresAPaidLineEvenWithGifts()
+    {
+        var result = new CreateOrderValidator().Validate(
+            Valid() with { Items = [], Gifts = [new OrderItemAddition(Guid.CreateVersion7(), 1m)] });
+        Assert.Contains(result.Errors, error => error.PropertyName == "Items");
+    }
+
     [Fact]
     public void RequiresTheBillingAccount()
     {

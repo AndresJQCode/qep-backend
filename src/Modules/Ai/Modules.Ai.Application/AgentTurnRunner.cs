@@ -45,21 +45,24 @@ public abstract record AgentTurnOutcome;
 public sealed record AgentFinished(string Summary) : AgentTurnOutcome;
 
 /// <param name="SourceIds">Sólo las fuentes que existen (§8.2): las demás se descartan.</param>
-public sealed record AgentReplied(string Text, IReadOnlyList<string> SourceIds) : AgentTurnOutcome;
+/// <param name="Wrote">Una herramienta de escritura de la Agenda o de cotizaciones tuvo éxito en este trabajo: la respuesta no se descarta por un turno nuevo del cliente.</param>
+public sealed record AgentReplied(string Text, IReadOnlyList<string> SourceIds, bool Wrote = false) : AgentTurnOutcome;
 
 /// <param name="Reason">Uno de <see cref="AgentHandoffReasons.All"/>, o el código de la herramienta que terminó el turno
 /// (<see cref="AgentToolHandoff"/>).</param>
 /// <param name="Note">Para el evento interno, nunca para el cliente.</param>
 /// <param name="MemberId">P-4b: a quién va la conversación en vez del destino configurado (la asesora del borrador de cotización).</param>
 /// <param name="QuotationNumber">Spec 2026-11-17 D-B13: el número del borrador, que vuelve al flujo en modo bloque.</param>
-public sealed record AgentHandedOff(string Reason, string? Note, Guid? MemberId = null, string? QuotationNumber = null) : AgentTurnOutcome;
+public sealed record AgentHandedOff(string Reason, string? Note, Guid? MemberId = null, string? QuotationNumber = null, bool Wrote = false) : AgentTurnOutcome;
 
 /// <summary>Un error que el worker reintenta (D-A17): proveedor caído o límite de tasa.</summary>
 public sealed record AgentTurnRetry(string Code, TimeSpan? RetryAfter) : AgentTurnOutcome;
 
 /// <param name="Code">El código de la tabla de errores del plan si viene del proveedor; <c>null</c> en los topes de D-A20 y en la respuesta
 /// inválida, que la tabla no nombra (el código del traspaso lo decide la Tarea 7).</param>
-public sealed record AgentTurnFailed(AgentFailureKind Kind, AgentFailureReason Reason, string? Code) : AgentTurnOutcome;
+/// <param name="Wrote">Una herramienta de escritura ya tuvo éxito en este turno (la cita está hecha): el procesador no descarta el resultado
+/// por un turno nuevo del cliente.</param>
+public sealed record AgentTurnFailed(AgentFailureKind Kind, AgentFailureReason Reason, string? Code, bool Wrote = false) : AgentTurnOutcome;
 
 /// <summary>La causa de traspaso de §4.4: el agente (su configuración o su respuesta) o la cuenta del proveedor.</summary>
 public enum AgentFailureKind
@@ -180,15 +183,17 @@ public sealed class AgentTurnRunner(
         {"type":"object","properties":{"summary":{"type":"string","description":"Resumen breve de lo que se resolvió, máximo 500 caracteres. Puede llegar al cliente o a otro sistema: no pongas instrucciones ni datos internos."}},"required":["summary"],"additionalProperties":false}
         """);
 
-    public Task<AgentTurnOutcome> RunAsync(AgentTurnContext context, AgentPrompt prompt, CancellationToken cancellationToken)
+    public async Task<AgentTurnOutcome> RunAsync(AgentTurnContext context, AgentPrompt prompt, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(prompt);
         var run = new ToolLoopRun(
             context.TenantId, context.JobId, context.Provider, context.Model, context.Effort, context.Credential, limits,
             new AiUsageOwner(context.AgentId, context.AgentVersionId, context.ConversationId, context.SessionId, context.TestId));
-        return new ModelToolLoop(resolver, ledger, credentials, clock, logger, metrics)
-            .RunAsync(run, prompt, new AgentProfile(context, tools), cancellationToken);
+        var profile = new AgentProfile(context, tools);
+        var outcome = await new ModelToolLoop(resolver, ledger, credentials, clock, logger, metrics).RunAsync(run, prompt, profile, cancellationToken);
+        // Un tope o un error después de una escritura exitosa: la cita ya existe, así que el resultado no se descarta por un turno nuevo.
+        return outcome is AgentTurnFailed failed && profile.Wrote ? failed with { Wrote = true } : outcome;
     }
 
     /// <summary>§10: la respuesta no puede traer un fragmento de <see cref="LeakWindow"/> caracteres de las instrucciones del agente.</summary>
@@ -217,6 +222,16 @@ public sealed class AgentTurnRunner(
         private readonly Dictionary<string, IAgentTool> _offered;
         private readonly HashSet<string> _finals;
 
+        // Spec 2026-11-23 D-14: cuántas llamadas a book_appointment devolvieron una cita en esta corrida. Un perfil es uno por corrida del
+        // trabajo, así que un trabajo retomado vuelve a contar desde cero y encuentra la cita que ya hizo con la misma llave.
+        private int _bookings;
+
+        // Una escritura que tuvo éxito ya está hecha: descartar la respuesta por un turno nuevo del cliente dejaría que el siguiente trabajo
+        // (otro JobId, otra llave) la repita.
+        private bool _wrote;
+
+        public bool Wrote => _wrote;
+
         public AgentProfile(AgentTurnContext context, IEnumerable<IAgentTool> tools)
         {
             _context = context;
@@ -241,14 +256,26 @@ public sealed class AgentTurnRunner(
         {
             var result = await _offered[toolCall.Name].ExecuteAsync(
                 new AgentToolInvocation(
-                    _context.TenantId, _context.JobId, toolCall.Id, _context.CustomerId, _context.IsTest, _context.Config.QuotationDraft),
+                    _context.TenantId, _context.JobId, toolCall.Id, _context.CustomerId, _context.IsTest, _context.Config.QuotationDraft,
+                    _context.AgentId, _context.ConversationId, BookingOrdinal: _bookings + 1),
                 arguments,
                 cancellationToken);
+            // Una llamada que falla no consume número (D-14): si el modelo elige otra hora al reintentar, la llave sigue siendo la misma.
+            if (toolCall.Name == AgentToolNames.BookAppointment && !result.IsError)
+            {
+                _bookings++;
+            }
+
+            if (AgentToolNames.Writes(toolCall.Name) && !result.IsError)
+            {
+                _wrote = true;
+            }
+
             // P-4 y P-4b: una herramienta que escribió (o que no pudo por el cliente) termina el turno con su traspaso: lo que siga lo decide
             // una persona.
             return new ToolLoopExecution(
                 result,
-                result.Handoff is { } handoff ? new AgentHandedOff(handoff.Code, null, handoff.MemberId, handoff.QuotationNumber) : null);
+                result.Handoff is { } handoff ? new AgentHandedOff(handoff.Code, null, handoff.MemberId, handoff.QuotationNumber, Wrote: _wrote) : null);
         }
 
         /// <summary>La herramienta final, validada. <c>null</c> si no sirve tal como vino: cuenta como respuesta inválida.</summary>
@@ -283,7 +310,8 @@ public sealed class AgentTurnRunner(
                 }
 
                 var note = AgentToolArguments.TryString(arguments, "note", out var text) ? text.Trim() : null;
-                return new AgentHandedOff(reason, string.IsNullOrEmpty(note) ? null : note[..Math.Min(note.Length, AgentHandoffReasons.NoteMaxLength)]);
+                return new AgentHandedOff(
+                    reason, string.IsNullOrEmpty(note) ? null : note[..Math.Min(note.Length, AgentHandoffReasons.NoteMaxLength)], Wrote: _wrote);
             }
 
             if (!AgentToolArguments.TryString(arguments, "text", out var reply)
@@ -303,7 +331,7 @@ public sealed class AgentTurnRunner(
                     .Distinct(StringComparer.Ordinal)
                     .ToArray()
                 : [];
-            return new AgentReplied(reply.Trim(), sources);
+            return new AgentReplied(reply.Trim(), sources, _wrote);
         }
     }
 }

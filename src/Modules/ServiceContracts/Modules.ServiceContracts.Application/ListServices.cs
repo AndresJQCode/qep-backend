@@ -97,7 +97,7 @@ public sealed class ListServicesHandler(
 
         var customerRefs = (await customers.FindManyAsync(
                 query.TenantId, filtered.Select(service => service.CustomerId).Distinct().ToArray(), cancellationToken))
-            .ToDictionary(customer => customer.Id, customer => new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email));
+            .ToDictionary(customer => customer.Id, customer => new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.BusinessName));
 
         // Invariante y con desempates: el orden no depende de la cultura del servidor ni de la base, y paginar es estable. Un
         // cliente que ya no resuelve (nombre vacío) va primero, junto, en vez de desaparecer de la lista.

@@ -91,6 +91,47 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Identity.Domain.EmailChallenge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("code_hash");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("EmailHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("email_hash");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<DateTimeOffset?>("UsedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("used_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmailHash", "UsedAt");
+
+                    b.ToTable("email_challenges", "identity");
+                });
+
             modelBuilder.Entity("Modules.Identity.Domain.EmailToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -248,6 +289,34 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                     b.ToTable("sessions", "identity");
                 });
 
+            modelBuilder.Entity("Modules.Identity.Domain.TermsAcceptance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("accepted_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Version")
+                        .IsUnique();
+
+                    b.ToTable("terms_acceptances", "identity");
+                });
+
             modelBuilder.Entity("Modules.Identity.Domain.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -301,6 +370,11 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("color_scheme");
+
+                    b.Property<string>("Language")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("language");
 
                     b.Property<bool>("MessageSound")
                         .ValueGeneratedOnAdd()
@@ -415,6 +489,15 @@ namespace Modules.Identity.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("Modules.Identity.Domain.User", null)
                         .WithMany("ProviderLinks")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Identity.Domain.TermsAcceptance", b =>
+                {
+                    b.HasOne("Modules.Identity.Domain.User", null)
+                        .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

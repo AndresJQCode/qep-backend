@@ -9,6 +9,9 @@ public interface IServiceContractRepository
 {
     void Add(ServiceContract service);
 
+    /// <summary>Borra el servicio al guardar (borrado duro, spec 2026-11-19); sus cobros e historial de precios los quitan sus repositorios.</summary>
+    void Remove(ServiceContract service);
+
     Task<ServiceContract?> FindAsync(Guid tenantId, ServiceContractId id, CancellationToken cancellationToken);
 
     /// <summary>Los servicios del tenant con esos ids, en un solo viaje: la lista de cobros pinta el nombre del servicio de cada fila.</summary>
@@ -23,6 +26,19 @@ public interface IServiceContractRepository
     /// nombre del cliente que pide el spec §4 lo hace el handler con <c>IServiceContractsCustomerLookup</c> y pagina en memoria: el nombre del cliente no está en este esquema.
     /// </summary>
     Task<IReadOnlyList<ServiceContract>> ListAllAsync(ServiceContractQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// De <paramref name="ids"/>, los del tenant que cumplen el encargado (del perfil del cliente) y la búsqueda (nombre del
+    /// servicio, o cliente entre <paramref name="searchCustomerIds"/>), con la misma regla de la bandeja de cobros. Un filtro nulo
+    /// no filtra. La lista de revisiones se calcula en memoria y le pregunta a la base sólo esto.
+    /// </summary>
+    Task<IReadOnlySet<ServiceContractId>> FilterIdsAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ServiceContractId> ids,
+        Guid? assigneeMemberId,
+        string? searchTerm,
+        IReadOnlyCollection<Guid>? searchCustomerIds,
+        CancellationToken cancellationToken);
 
     /// <summary>Los servicios <c>Active</c> del tenant: sobre ellos corre la generación de cobros del worker (§3.3, paso 3).</summary>
     Task<IReadOnlyList<ServiceContract>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);

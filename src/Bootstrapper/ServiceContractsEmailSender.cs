@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
-using Modules.ServiceContracts.Application;
 using Modules.Notifications.Application;
 using Modules.Quotations.Application;
+using Modules.ServiceContracts.Application;
 using Modules.Tenancy.Application;
 
 namespace Bootstrapper;
@@ -66,7 +66,9 @@ internal sealed partial class ServiceContractsEmailSender(IEmailChannel channel,
                 ToRows(digest.DueSoon, numberFormat),
                 ToRows(digest.Overdue, numberFormat),
                 ToRows(digest.FailedReminders, numberFormat),
-                ToTotals(digest.OverdueTotalByCurrency, numberFormat));
+                ToTotals(digest.OverdueTotalByCurrency, numberFormat),
+                ToReviewRows(digest.PriceReviews, numberFormat),
+                ToReviewRows(digest.HeldCharges, numberFormat));
 
             await channel.SendAsync(BillingDigestEmailTemplate.Render(input, ToFormat(digest.Format)), cancellationToken);
             return new ServiceContractsSendResult.Sent();
@@ -101,5 +103,18 @@ internal sealed partial class ServiceContractsEmailSender(IEmailChannel channel,
     private static BillingDigestEmailRow[] ToRows(IReadOnlyList<ServiceContractsDigestRow> rows, string numberFormat) =>
         rows.Select(row => new BillingDigestEmailRow(
                 row.CustomerName, row.ServiceName, Money(row.Amount, row.Currency, numberFormat), row.DueDate, row.FailureCode))
+            .ToArray();
+
+    private static BillingPriceReviewEmailRow[] ToReviewRows(
+        IReadOnlyList<ServiceContractsPriceReviewRow> rows, string numberFormat) =>
+        rows.Select(row => new BillingPriceReviewEmailRow(
+                row.CustomerName,
+                row.ServiceName,
+                Money(row.CurrentPrice, row.Currency, numberFormat),
+                row.ReviewPeriodDate,
+                row.GenerationDate,
+                row.IpcYear,
+                row.IpcMissing,
+                row.HeldSince))
             .ToArray();
 }

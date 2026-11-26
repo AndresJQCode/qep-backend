@@ -17,7 +17,8 @@ public sealed class GetSiigoSettingsHandler(
     ISiigoConnectionDirectory connections,
     ISiigoSettingsRepository settingsRepository,
     ISiigoCompanyDirectory companies,
-    ISiigoTaxRateDirectory taxRates) : IQueryHandler<GetSiigoSettingsQuery, SiigoSettingsDto>
+    ISiigoTaxRateDirectory taxRates,
+    ISiigoMemberDirectory members) : IQueryHandler<GetSiigoSettingsQuery, SiigoSettingsDto>
 {
     public async Task<SiigoSettingsDto> HandleAsync(GetSiigoSettingsQuery query, CancellationToken cancellationToken)
     {
@@ -26,6 +27,6 @@ public sealed class GetSiigoSettingsHandler(
         var connection = await SiigoSettingsSupport.ConnectionAsync(connections, query.TenantId, query.ConnectionId, cancellationToken);
 
         var settings = await SiigoSettingsSupport.SettingsAsync(settingsRepository, query.TenantId, query.ConnectionId, cancellationToken);
-        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, cancellationToken);
+        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, members, cancellationToken);
     }
 }

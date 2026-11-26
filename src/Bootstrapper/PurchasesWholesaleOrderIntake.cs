@@ -45,7 +45,8 @@ internal sealed partial class PurchasesWholesaleOrderIntake(
             EnsureCurrency(request, existing.Currency);
             var current = await directory.OffersForOrderAsync(
                 request.WholesalerTenantId, request.BuyerTenantId, existing.Currency, variantIds, cancellationToken);
-            return ToIntake(existing, current);
+            // D-14: el reintento usa el flag vivo de la lista; sin lista o sin relación, false (sin precio hasta la aprobación).
+            return ToIntake(existing, current.Offers, current.ShowPrices);
         }
 
         var (terms, offers) = await directory.PriceVisibleAsync(
@@ -84,7 +85,7 @@ internal sealed partial class PurchasesWholesaleOrderIntake(
 
         // Una carrera perdida devuelve el pedido del ganador, que pudo salir con otra moneda.
         EnsureCurrency(request, created.Currency);
-        return ToIntake(created, offers);
+        return ToIntake(created, offers, terms.ShowPrices);
     }
 
     public async Task CancelAsync(
@@ -135,7 +136,10 @@ internal sealed partial class PurchasesWholesaleOrderIntake(
             "El mayorista cambió su moneda desde que armaste la orden. Edítala para volver a preciarla.");
     }
 
-    private static WholesaleIntakeResult ToIntake(WholesaleOrderResult order, IReadOnlyDictionary<Guid, WholesaleOffer> offers) =>
+    // Las líneas siguen trayendo el precio (es la verdad del mayorista, y el pedido siempre se crea a precio de lista); quien
+    // lo descarta con la lista oculta es el dominio de Compras, no este adaptador.
+    private static WholesaleIntakeResult ToIntake(
+        WholesaleOrderResult order, IReadOnlyDictionary<Guid, WholesaleOffer> offers, bool showPrices) =>
         new(
             order.OrderId,
             order.OrderNumber,
@@ -157,7 +161,8 @@ internal sealed partial class PurchasesWholesaleOrderIntake(
                     discount,
                     line.UnitPrice);
             })],
-            order.AlreadyExisted);
+            order.AlreadyExisted,
+            showPrices);
 
     [LoggerMessage(
         Level = LogLevel.Warning,

@@ -16,10 +16,16 @@ internal sealed class DistributorWorld
             permissions.Length == 0
                 ? [WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage]
                 : permissions);
-        PriceList = PriceLists.Seed(Domain.PriceList.Create(Tenant, "Mayoristas", 15m, PriceListVisibility.AllActive, [], Now));
+        PriceList = PriceLists.Seed(Tenant, "Mayoristas", -15m);
         Advisor = Members.AddActive("Ana Mayorista");
         Company = Companies.Add("Mayorista SAS");
+        MedellinId = Cities.Add("Medellín");
     }
+
+    /// <summary>La ciudad colombiana que existe en la geografía falsa.</summary>
+    public Guid MedellinId { get; }
+
+    public FakeCityLookup Cities { get; } = new();
 
     public Guid Tenant { get; } = Guid.CreateVersion7();
 
@@ -27,7 +33,7 @@ internal sealed class DistributorWorld
 
     public FakeClock Clock { get; } = new(Now);
 
-    public FakePriceListRepository PriceLists { get; } = new();
+    public FakeWholesalePriceLists PriceLists { get; } = new();
 
     public FakeDistributorRepository Distributors { get; } = new();
 
@@ -52,7 +58,9 @@ internal sealed class DistributorWorld
 
     public FakeMembershipDirectory Memberships { get; } = new();
 
-    public PriceList PriceList { get; }
+    public FakeInvitationLinks Links { get; } = new();
+
+    public WholesalePriceList PriceList { get; }
 
     public Guid Advisor { get; }
 
@@ -60,15 +68,17 @@ internal sealed class DistributorWorld
 
     public static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public DistributorComposer Composer() => new(Context, Clock, PriceLists, Members, Companies, TenantNames, WhatsApp);
+    public DistributorComposer Composer() => new(Context, Clock, PriceLists, Members, Companies, Cities, TenantNames, WhatsApp);
 
     public InviteDistributorHandler InviteHandler() => new(
-        Context, Clock, PriceLists, Distributors, Members, Companies, Tenancy, Phones, WhatsApp, Memberships, UnitOfWork, Audit,
-        Events, Composer(), new InviteDistributorValidator());
+        Context, Clock, PriceLists, Distributors, Members, Companies, Cities, Tenancy, Phones, WhatsApp, Memberships, UnitOfWork,
+        Audit, Events, Links, Composer(), new InviteDistributorValidator());
+
+    public RotateInvitationLinkHandler RotateHandler() => new(Context, Clock, Distributors, UnitOfWork, Audit, Links, Composer());
 
     public UpdateDistributorHandler UpdateHandler() => new(
-        Context, Clock, PriceLists, Distributors, Members, Companies, Tenancy, Phones, WhatsApp, UnitOfWork, Audit, Composer(),
-        new UpdateDistributorValidator());
+        Context, Clock, PriceLists, Distributors, Members, Companies, Cities, Tenancy, Phones, WhatsApp, UnitOfWork, Audit,
+        Composer(), new UpdateDistributorValidator());
 
     public TransitionDistributorHandler TransitionHandler() =>
         new(Context, Clock, Distributors, WhatsApp, Memberships, UnitOfWork, Audit, Events, Composer(),
@@ -87,7 +97,13 @@ internal sealed class DistributorWorld
         string email = "ana@distri.co",
         string country = "CO",
         string identificationType = "NIT") =>
-        new(Tenant, email, "Distribuciones Norte SAS", country, identificationType, identification, "Ana Pérez", PriceList.Id.Value, Advisor, Company.Id, "trace-1");
+        new(Tenant, email, "Distribuciones Norte SAS", country, identificationType, identification, "Ana Pérez", PriceList.Id.Value, Advisor, Company.Id, "trace-1")
+        {
+            // La ciudad que el país exige, para que los casos que no hablan de ella sigan pasando.
+            CityId = country == "CO" ? MedellinId : null,
+            CityName = country == "CO" ? null : "Madrid",
+            Address = "Calle 10 # 40-20",
+        };
 
     /// <summary>Un distribuidor sembrado sin pasar por el handler, con un hash de token conocido.</summary>
     public Distributor SeedInvited(
@@ -97,7 +113,11 @@ internal sealed class DistributorWorld
         string? phone = null,
         Guid? whatsAppConnectionId = null,
         string identificationType = "NIT",
-        string country = "CO")
+        string country = "CO",
+        Guid? cityId = null,
+        string? cityName = null,
+        string? address = null,
+        string? emailProofHash = null)
     {
         var distributor = Distributor.Invite(
             Tenant,
@@ -115,7 +135,11 @@ internal sealed class DistributorWorld
             Guid.CreateVersion7(),
             phone,
             whatsAppConnectionId,
-            at ?? Now);
+            at ?? Now,
+            cityId,
+            cityName,
+            address,
+            emailProofHash);
         return Distributors.Seed(distributor);
     }
 

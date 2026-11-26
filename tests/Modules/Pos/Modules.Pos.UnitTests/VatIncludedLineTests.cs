@@ -119,6 +119,59 @@ public sealed class VatIncludedLineTests
         Assert.Equal(2.46m, amounts.DiscountAmount);
     }
 
+    // Descuento sin IVA (spec 2026-11-23): bruto sin IVA − descuento sin IVA = Subtotal.
+    [Fact]
+    public void DiscountWithoutTaxClosesTheGrossBase()
+    {
+        var cop = PriceRounding.LegacyFor("COP");
+        var amounts = VatIncludedLine.Compute(200m, 25_000m, 20m, 19, cop);
+
+        var gross = VatIncludedLine.Round(200m * 25_000m);
+        var grossWithoutTax = gross - VatIncludedLine.Round(gross * 19m / 119m);
+
+        Assert.Equal(amounts.Subtotal, grossWithoutTax - amounts.DiscountAmountWithoutTax);
+    }
+
+    [Fact]
+    public void DiscountWithoutTaxEqualsTheOldOneWithoutVat()
+    {
+        var nearest = new PriceRounding(2, PriceRoundingMode.Nearest);
+        var amounts = VatIncludedLine.Compute(10m, 13.19m, 15m, 0, nearest);
+
+        Assert.Equal(amounts.DiscountAmount, amounts.DiscountAmountWithoutTax);
+    }
+
+    [Fact]
+    public void ADiscountOfZeroPercentGivesZeroWithoutTax()
+    {
+        var amounts = VatIncludedLine.Compute(3m, 11_900m, 0m, 19, PriceRounding.LegacyFor("COP"));
+
+        Assert.Equal(0m, amounts.DiscountAmountWithoutTax);
+    }
+
+    [Fact]
+    public void TheWithVatDiscountIsUntouched()
+    {
+        var amounts = VatIncludedLine.Compute(2m, 11_900m, 10m, 19, new PriceRounding(2, PriceRoundingMode.Nearest));
+
+        Assert.Equal(2_380m, amounts.DiscountAmount);
+    }
+
+    [Theory]
+    [InlineData("0", 0)]
+    [InlineData("10", 19)]
+    public void DiscountWithoutTaxClosesWithZeroDecimalsRoundingDown(string discount, int tax)
+    {
+        var down0 = new PriceRounding(0, PriceRoundingMode.Down);
+        var amounts = VatIncludedLine.Compute(
+            100m, 24.63m, decimal.Parse(discount, CultureInfo.InvariantCulture), tax, down0);
+
+        var gross = VatIncludedLine.Round(100m * VatIncludedLine.ChargedListPrice(24.63m, down0));
+        var grossWithoutTax = gross - VatIncludedLine.Round(gross * tax / (100m + tax));
+
+        Assert.Equal(amounts.Subtotal, grossWithoutTax - amounts.DiscountAmountWithoutTax);
+    }
+
     [Fact]
     public void FewerDecimalsThanTheListPriceNeverGiveANegativeDiscount()
     {

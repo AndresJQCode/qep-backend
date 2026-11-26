@@ -114,6 +114,10 @@ data:
   # key vive en prod-secret.yaml.
   Support__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
   Purchases__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
+  # Versión vigente de los términos (spec 2026-11-19, onboarding por link). Sin ella el servicio falla cerrado
+  # (identity.terms.unavailable) y la invitación de mayorista no deja crear cuenta. No es secreto. Cambiarla
+  # obliga a todos a aceptar de nuevo.
+  Terms__CurrentVersion: "#{TERMS_CURRENT_VERSION}#"
   # Spec 2026-10-08 (Integraciones): id (no secreto) de la llave con la que se cifran las credenciales
   # de las conexiones de cada tenant. Rotar = dos despliegues: declarar Keys__k2 con ésta todavía en
   # k1, y después cambiar ésta a k2 (README § Integraciones). La llave vive en prod-secret.yaml.

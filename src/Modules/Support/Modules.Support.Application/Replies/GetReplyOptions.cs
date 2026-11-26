@@ -16,7 +16,7 @@ public sealed record GetReplyOptionsQuery(Guid TenantId, Guid TicketId) : IQuery
 public sealed class GetReplyOptionsHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportReplyChannels channels,
     ITenantClock tenantClock,
     ISupportLetterhead letterhead)
@@ -24,9 +24,10 @@ public sealed class GetReplyOptionsHandler(
 {
     public async Task<SupportReplyOptionsDto> HandleAsync(GetReplyOptionsQuery query, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
-        var ticket = await tickets.FindAsync(query.TenantId, new SupportTicketId(query.TicketId), cancellationToken)
-            ?? throw SupportNotFound.Ticket(query.TicketId);
+        await scope.EnsureAccessAsync(query.TenantId, cancellationToken);
+        var ticket = await scope.ViewAsync(query.TenantId, query.TicketId, cancellationToken);
+        // Spec 2026-11-22 (plan D11): una tarea no tiene a quién responder.
+        SupportTicketScope.EnsureExternal(ticket);
         // Plan F12: un anónimo sólo se responde por la página de consulta; ningún otro canal llega a él.
         if (ticket.IsAnonymous)
         {

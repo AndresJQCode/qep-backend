@@ -14,7 +14,8 @@ internal sealed class PosProductLookup(
     IOptionDefinitionRepository options,
     ITaxRateRepository taxRates,
     IProductImageLookup images,
-    IProductCategoryRepository categories)
+    IProductCategoryRepository categories,
+    IPriceListPricing pricing)
     : IPosProductLookup
 {
     public async Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
@@ -124,6 +125,12 @@ internal sealed class PosProductLookup(
             selected.Select(pair => CatalogVariantReads.ImageFileIdOf(pair.Product, pair.Variant)).Concat(extraFileIds),
             cancellationToken);
 
+        // Spec 2026-11-22 (D-5, D-12): el precio de la caja es el de la lista del canal POS; sin lista, el base. El buscador, la
+        // vista previa y la venta pasan todos por acá, así que el cajero cobra lo mismo que ve.
+        var list = await pricing.ListForChannelAsync(tenantId, PriceChannel.Pos, cancellationToken);
+        var book = await pricing.BookAsync(
+            tenantId, list, selected.Select(pair => PricedVariant.Of(pair.Variant)).ToList(), cancellationToken);
+
         var refs = selected.Select(pair => new PosProductRef(
             pair.Variant.Id.Value,
             pair.Product.Id.Value,
@@ -131,7 +138,7 @@ internal sealed class PosProductLookup(
             pair.Variant.Barcode,
             CatalogVariantReads.DisplayNameOf(pair.Product, pair.Variant, valueNames),
             CatalogVariantReads.IsSellable(pair.Product, pair.Variant),
-            CatalogVariantReads.PricesOf(pair.Variant),
+            book.PricesOf(pair.Variant),
             // Sin tasa, o con una inexistente, cotiza con 0 % (QuotationProductPricingResolver).
             pair.Product.TaxRateId is { } id && percentages.TryGetValue(id, out var percentage) ? percentage : 0,
             // Mismas reglas que QuotationProductLookup: del tenant y disponible (preflight F-16);

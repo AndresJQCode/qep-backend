@@ -8,4 +8,9 @@ namespace Modules.Support.Application;
 public interface ISupportProvisioner
 {
     Task EnsureAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-22: siembra el tipo interno de un tenant que ya estaba aprovisionado (la migración lo hace para los de
+    /// hoy; esto cubre al que se aprovisionó entre tanto). <c>INSERT … ON CONFLICT DO NOTHING</c>, idempotente, con su propia
+    /// transacción como <see cref="EnsureAsync"/>: se llama antes de abrir una unidad de trabajo, nunca dentro.</summary>
+    Task EnsureInternalTypeAsync(Guid tenantId, CancellationToken cancellationToken);
 }

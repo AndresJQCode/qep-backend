@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
@@ -185,6 +186,9 @@ public sealed class AuthSessionApiTests
             await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
+        await SeedRolesAsync(factory, secondTenantId);
+        await SeedRolesAsync(factory, suspendedTenantId);
+
         using (var admin = CreateAdminClient(factory))
         {
             Assert.Equal(HttpStatusCode.Created, (await InviteAsync(admin, email)).StatusCode);
@@ -293,6 +297,23 @@ public sealed class AuthSessionApiTests
 
         Assert.Equal("CO", tenant.GetProperty("country").GetString());
         Assert.Equal("OnCustomerSave", tenant.GetProperty("personTypeRequirement").GetString());
+    }
+
+    // Spec 2026-11-22 (i18n): la SPA elige el diccionario antes de la primera pintura, así que el
+    // idioma efectivo de cada tenant viaja en la sesión. Quien no eligió uno ve el del tenant.
+    [Fact]
+    public async Task SessionCarriesTheEffectiveLanguageOfEachTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+
+        var before = await LoginAndGetSeededTenantAsync(factory);
+        await StoreLanguageAsync(factory, "es-ES");
+        var after = await LoginAndGetSeededTenantAsync(factory);
+
+        Assert.Equal("es-419", before.GetProperty("language").GetString());
+        Assert.Equal("es-ES", after.GetProperty("language").GetString());
     }
 
     // El requisito guardado se publica tal cual en cualquier país.
@@ -430,6 +451,18 @@ public sealed class AuthSessionApiTests
         tenant.UpdateSettings(
             tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
             tenant.DefaultCurrency, tenant.NumberFormat, country, requirement, DateTimeOffset.UtcNow);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task StoreLanguageAsync(QepApiFactory factory, string language)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenant = dbContext.Tenants.Single();
+        tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, tenant.Country, tenant.PersonTypeRequirement,
+            DateTimeOffset.UtcNow, language: language);
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
@@ -574,6 +607,15 @@ public sealed class AuthSessionApiTests
             MembershipId.New(),
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await SeedRolesAsync(factory, Guid.Parse(SeededTenantId));
+    }
+
+    /// <summary>Un tenant insertado directo después del arranque nace sin los roles que el alta le sembraría.</summary>
+    private static async Task SeedRolesAsync(QepApiFactory factory, Guid tenantId)
+    {
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(tenantId, TestContext.Current.CancellationToken);
     }
 
     private static string NewEmail() => $"login-{Guid.NewGuid():N}@example.com";

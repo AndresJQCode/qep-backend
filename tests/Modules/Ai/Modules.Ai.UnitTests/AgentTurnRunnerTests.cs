@@ -250,6 +250,148 @@ public sealed class AgentTurnRunnerTests
         Assert.Contains(AgentToolErrors.CustomerUnknown, result.ContentJson, StringComparison.Ordinal);
     }
 
+    // Spec 2026-11-23 D-14: la llave de la reserva lleva el ordinal de las reservas que ya devolvieron una cita en este trabajo.
+    [Fact]
+    public async Task TwoBookingsInOneJobGetOrdinalsOneAndTwo()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Ok(new { appointmentId = "a" }));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Tools(Call("c2", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Listo."));
+
+        await RunAsync(Context(), tools: [book]);
+
+        Assert.Equal([1, 2], book.Invocations.Select(invocation => invocation.BookingOrdinal));
+    }
+
+    [Fact]
+    public async Task AFailedBookingDoesNotConsumeAnOrdinal()
+    {
+        var book = new ScriptedTool(
+            AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn,
+            AgentToolResult.Error(AgentToolErrors.SlotTaken), AgentToolResult.Ok(new { appointmentId = "a" }));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Tools(Call("c2", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Listo."));
+
+        await RunAsync(Context(), tools: [book]);
+
+        Assert.Equal([1, 1], book.Invocations.Select(invocation => invocation.BookingOrdinal));
+    }
+
+    // La respuesta que sigue a una escritura exitosa de la Agenda sale marcada: el procesador no la descarta por un turno nuevo del cliente.
+    [Fact]
+    public async Task AReplyAfterASuccessfulSchedulingWriteIsMarkedWrote()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Ok(new { appointmentId = "a" }));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Listo."));
+
+        var outcome = await RunAsync(Context(), tools: [book]);
+
+        Assert.True(Assert.IsType<AgentReplied>(outcome).Wrote);
+    }
+
+    [Fact]
+    public async Task AReplyAfterAFailedSchedulingWriteIsNotMarkedWrote()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Error(AgentToolErrors.SlotTaken));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Esa hora ya no está."));
+
+        var outcome = await RunAsync(Context(), tools: [book]);
+
+        Assert.False(Assert.IsType<AgentReplied>(outcome).Wrote);
+    }
+
+    // Revisión final W1: la escritura exitosa ya está hecha aunque el turno termine por un traspaso de otra herramienta o por un tope.
+    [Fact]
+    public async Task AToolHandoffAfterASuccessfulWriteIsMarkedWrote()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Ok(new { appointmentId = "a" }));
+        var cancel = new ScriptedTool(
+            AgentToolNames.CancelAppointment, AiServicePrincipal.SchedulingChangeOwn,
+            AgentToolResult.Error(AgentToolErrors.SlotTaken) with { Handoff = new AgentToolHandoff(AgentHandoffCodes.AppointmentChangeBlocked, null) });
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Tools(Call("c2", AgentToolNames.CancelAppointment, new { })));
+
+        var outcome = await RunAsync(Context(), tools: [book, cancel]);
+
+        Assert.True(Assert.IsType<AgentHandedOff>(outcome).Wrote);
+    }
+
+    [Fact]
+    public async Task AFailureAfterASuccessfulWriteIsMarkedWrote()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Ok(new { appointmentId = "a" }));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Tools(Call("c2", AgentToolNames.SearchCatalog, new { query = "x", limit = 1 })));
+
+        var outcome = await RunAsync(Context(), Limits() with { MaxModelCalls = 2 }, [book, new SearchCatalogTool(_catalog)]);
+
+        var failed = Assert.IsType<AgentTurnFailed>(outcome);
+        Assert.Equal(AgentFailureReason.ModelCallsExceeded, failed.Reason);
+        Assert.True(failed.Wrote);
+    }
+
+    [Fact]
+    public async Task AFailureWithoutAWriteIsNotMarkedWrote()
+    {
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.SearchCatalog, new { query = "x", limit = 1 })));
+
+        var outcome = await RunAsync(Context(), Limits() with { MaxModelCalls = 1 });
+
+        Assert.False(Assert.IsType<AgentTurnFailed>(outcome).Wrote);
+    }
+
+    // Un trabajo retomado corre otra vez con un perfil nuevo: vuelve a contar desde 1 y encuentra la cita que ya hizo.
+    [Fact]
+    public async Task ResumedJobFindsTheBookingItAlreadyMade()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Ok(new { appointmentId = "a" }));
+        var context = Context();
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Listo."));
+        _model.Enqueue(Tools(Call("c9", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Listo."));
+
+        await RunAsync(context, tools: [book]);
+        await RunAsync(context, tools: [book]);
+
+        Assert.Equal([1, 1], book.Invocations.Select(invocation => invocation.BookingOrdinal));
+        Assert.Equal(["ai:" + context.JobId.ToString("N") + ":book:1"], book.Invocations.Select(i => $"ai:{i.JobId:N}:book:{i.BookingOrdinal}").Distinct());
+    }
+
+    [Fact]
+    public async Task ASecondSchedulingWriteInOneResponseIsRejected()
+    {
+        var book = new ScriptedTool(AgentToolNames.BookAppointment, AiServicePrincipal.SchedulingBookOwn, AgentToolResult.Ok(new { appointmentId = "a" }));
+        var cancel = new ScriptedTool(AgentToolNames.CancelAppointment, AiServicePrincipal.SchedulingChangeOwn, AgentToolResult.Ok(new { }));
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.BookAppointment, new { }), Call("c2", AgentToolNames.CancelAppointment, new { })));
+        _model.Enqueue(Tools(Call("c3", AgentToolNames.BookAppointment, new { })));
+        _model.Enqueue(Reply("Listo."));
+
+        await RunAsync(Context(), tools: [book, cancel]);
+
+        Assert.Empty(cancel.Invocations);
+        Assert.Equal(AgentToolErrors.OneWritePerResponse, _ledger.ToolCalls.Single(call => call.CallId == "c2").ErrorCode);
+        Assert.Equal([1, 2], book.Invocations.Select(invocation => invocation.BookingOrdinal));
+    }
+
+    [Fact]
+    public async Task TheInvocationCarriesAgentAndConversation()
+    {
+        var read = new ScriptedTool(AgentToolNames.ListMyAppointments, AiServicePrincipal.SchedulingReadOwn, AgentToolResult.Ok(new { }));
+        var context = Context();
+        _model.Enqueue(Tools(Call("c1", AgentToolNames.ListMyAppointments, new { })));
+        _model.Enqueue(Reply("Listo."));
+
+        await RunAsync(context, tools: [read]);
+
+        var invocation = Assert.Single(read.Invocations);
+        Assert.Equal((context.AgentId, context.ConversationId), (invocation.AgentId, invocation.ConversationId));
+    }
+
     // Spec 2026-11-17 D-B8: finish_objective es una herramienta final sólo en modo bloque.
     [Fact]
     public async Task FinishObjectiveIsOfferedOnlyInBlockMode()
@@ -349,6 +491,24 @@ public sealed class AgentTurnRunnerTests
             new AiModelUsage(1200, 30, null, 1000),
             "claude-opus-5-5",
             "req_2");
+
+    /// <summary>Una herramienta que anota cada invocación y responde según un guion (la última se repite).</summary>
+    private sealed class ScriptedTool(string name, string capability, params AgentToolResult[] script) : IAgentTool
+    {
+        public List<AgentToolInvocation> Invocations { get; } = [];
+
+        public AiToolDefinition Definition { get; } = new(name, "falsa", """{"type":"object","properties":{},"required":[],"additionalProperties":false}""");
+
+        public string Capability => capability;
+
+        public bool IsOfferedTo(AgentTools tools, bool isTest) => true;
+
+        public Task<AgentToolResult> ExecuteAsync(AgentToolInvocation invocation, JsonElement arguments, CancellationToken cancellationToken)
+        {
+            Invocations.Add(invocation);
+            return Task.FromResult(script[Math.Min(Invocations.Count - 1, script.Length - 1)]);
+        }
+    }
 
     private sealed class FakeModelClient : IAiModelClient
     {

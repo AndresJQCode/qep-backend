@@ -13,6 +13,9 @@ public sealed record OrderExportPaymentProof(
     decimal Amount,
     DateOnly? PaidOn = null);
 
+/// <summary>El número de un pedido y su cliente, para quien sólo los va a mostrar.</summary>
+public sealed record OrderNumberAndClient(string OrderNumber, Guid ClientId);
+
 /// <summary>
 /// Spec 2026-10-15 §6: el pedido se lista, filtra y exporta por sus propias columnas (cliente,
 /// asesor, origen, totales), y sus líneas y partes son suyas. Ya no existe la fila
@@ -39,6 +42,11 @@ public interface IOrderRepository
     /// <summary>El número (<c>PED-…</c>) de estos pedidos, en una sola consulta: lo usa la bandeja de Shopify para mostrarlo en
     /// cada fila importada de una página (spec 2026-10-15 §7). Un id que no es del tenant no aparece.</summary>
     Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken);
+
+    /// <summary>El número y el cliente de estos pedidos, en una sola consulta y sin cargarlos: lo usan las tandas de facturación
+    /// (spec 2026-11-24 §5). Un id que no es del tenant no aparece.</summary>
+    Task<IReadOnlyDictionary<OrderId, OrderNumberAndClient>> FindNumbersAndClientsAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken);
 
     /// <summary>De los ids dados, cuáles requieren envío (spec 2026-11-18 §5), con la regla de

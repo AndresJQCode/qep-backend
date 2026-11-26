@@ -19,11 +19,71 @@ public sealed class WholesaleOrderEventApplierTests
     private readonly FakePurchasesCatalogWriter _writer = new();
     private readonly FakePurchasesAudit _audit = new();
     private readonly FakePurchasesUnitOfWork _unitOfWork = new();
+    private readonly FakePurchasesProductImages _images = new();
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private WholesaleOrderEventApplier Applier() =>
-        new(_orders, _writer, _audit, _unitOfWork, NullLogger<WholesaleOrderEventApplier>.Instance);
+        new(_orders, _writer, _images, _audit, _unitOfWork, NullLogger<WholesaleOrderEventApplier>.Instance);
+
+    // Mayorista imagen del producto (spec 2026-11-21): la foto se copia después del commit, sólo a lo que Compras creó.
+    [Fact]
+    public async Task TheImageOfACreatedProductIsCopiedAfterTheApprovalIsApplied()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+        var line = order.Lines[0];
+        var applier = Applier();
+
+        await applier.ApplyApprovedAsync(Approval(order, Final(line, 2m)), Later, Ct);
+        Assert.Empty(_images.Copies);
+
+        await applier.CopyPendingImagesAsync(Later, Ct);
+
+        var copy = Assert.Single(_images.Copies);
+        Assert.Equal(
+            (TenantId, Wholesaler, line.SupplierVariantId!.Value, _writer.Existing["SKU-1"]),
+            (copy.BuyerTenantId, copy.SupplierTenantId, copy.SupplierVariantId, copy.ProductId));
+    }
+
+    [Fact]
+    public async Task AProductThatAlreadyExistedGetsNoImage()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+        _writer.Existing["SKU-1"] = Guid.CreateVersion7();
+        var applier = Applier();
+
+        await applier.ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m)), Later, Ct);
+        await applier.CopyPendingImagesAsync(Later, Ct);
+
+        Assert.Empty(_images.Copies);
+    }
+
+    [Fact]
+    public async Task AFailingImageCopyNeverThrowsAndTheOtherCopiesStillRun()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder(
+            [PurchaseOrderTestData.LinkedLine(code: "SKU-1"), PurchaseOrderTestData.LinkedLine(code: "SKU-2")]));
+        _images.Fails = true;
+        var applier = Applier();
+
+        await applier.ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m), Final(order.Lines[1], 1m)), Later, Ct);
+        await applier.CopyPendingImagesAsync(Later, Ct);
+
+        Assert.Equal(2, _images.Copies.Count);
+    }
+
+    [Fact]
+    public async Task ARepeatedApprovalLeavesNoImageToCopy()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentLinkedOrder());
+        await Applier().ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m)), Later, Ct);
+
+        var repeated = Applier();
+        await repeated.ApplyApprovedAsync(Approval(order, Final(order.Lines[0], 2m)), Later, Ct);
+        await repeated.CopyPendingImagesAsync(Later, Ct);
+
+        Assert.Empty(_images.Copies);
+    }
 
     private static WholesaleApprovedLine Final(PurchaseOrderLine line, decimal quantity, decimal unitPrice = 11900m) =>
         new(line.Id, line.SupplierVariantId!.Value, line.Code, line.Name, quantity, unitPrice, line.TaxRatePercent);
@@ -51,6 +111,27 @@ public sealed class WholesaleOrderEventApplierTests
         Assert.Equal((PurchasesAuditActions.Confirmed, Guid.Empty), (audit.Action, audit.ActorId));
         Assert.Equal(["wholesaler"], audit.ChangedFields);
         Assert.Equal(1, _unitOfWork.Saves);
+    }
+
+    // Spec 2026-11-19 (D-10, D-18): una orden sin precio recibe los costos con la aprobación y crea el producto con ese costo.
+    [Fact]
+    public async Task ApprovingAPricelessOrderGivesItPricesAndCreatesTheProductWithTheConfirmedCost()
+    {
+        var order = _orders.Seed(PurchaseOrderTestData.SentPricelessOrder());
+        var line = order.Lines[0];
+        Assert.False(order.HasPrices);
+
+        var outcome = await Applier().ApplyApprovedAsync(Approval(order, Final(line, 2m)), Later, Ct);
+
+        Assert.Equal(WholesaleEventOutcome.Applied, outcome);
+        Assert.True(order.HasPrices);
+        Assert.Null(line.UnitCost);
+        Assert.Equal((2m, 10000m), (line.ConfirmedQuantity!.Value, line.ConfirmedUnitCost!.Value));
+        Assert.Equal([("SKU-1", line.Name, "COP", (decimal?)10000m)], _writer.Calls);
+        Assert.Equal(PurchaseOrderLineStatus.Unchanged, line.Status);
+        Assert.False(order.ConfirmedWithChanges);
+        Assert.Null(order.RequestedTotals());
+        Assert.Equal(new PurchaseOrderTotals(20000m, 3800m, 23800m), order.Totals());
     }
 
     // Review Focus 4: " ABC-1 " encuentra ABC-1 (inactivo o no) y no lo toca: la línea lo usa y no cuenta como creado.

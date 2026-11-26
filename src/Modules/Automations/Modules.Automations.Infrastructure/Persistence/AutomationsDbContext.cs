@@ -84,6 +84,8 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    internal DbSet<AutomationsOutboxRecord> OutboxMessages => Set<AutomationsOutboxRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureChatbot(modelBuilder);
@@ -95,6 +97,24 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         ConfigureRunUnit(modelBuilder);
         ConfigureSimulation(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+        ConfigureOutboxProjection(modelBuilder);
+    }
+
+    /// <summary>Copia de <c>MessagingDbContext.ConfigureOutboxProjection</c>: la proyección del outbox de plataforma, sólo para escribir el
+    /// aviso de los archivos de un chatbot borrado en la transacción del borrado. La tabla es de <c>platform</c>: no se migra.</summary>
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<AutomationsOutboxRecord>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name");
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
     }
 
     private static void ConfigureChatbot(ModelBuilder modelBuilder)

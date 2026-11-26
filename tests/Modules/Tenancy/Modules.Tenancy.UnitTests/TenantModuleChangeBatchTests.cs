@@ -86,6 +86,36 @@ public sealed class TenantModuleChangeBatchTests
             Rejected(stored, ChangeReason.Contract, [new(Quotations, On)]).Code);
     }
 
+    // Spec 2026-11-20 (RRHH fase 1): hr depende de companies.
+    [Fact]
+    public void EnablingHrWithoutCompaniesIsInconsistent()
+    {
+        var stored = new Dictionary<TenantModuleKey, TenantModuleStatus> { [Catalog] = On, [Companies] = Off };
+
+        Assert.Equal(TenantModuleChangeBatch.InconsistentDependenciesCode,
+            Rejected(stored, ChangeReason.Contract, [new(Hr, On)]).Code);
+    }
+
+    // Spec 2026-11-21 (nómina): payroll depende de hr.
+    [Fact]
+    public void EnablingPayrollWithoutHrIsInconsistent()
+    {
+        var stored = new Dictionary<TenantModuleKey, TenantModuleStatus> { [Companies] = On, [Hr] = Off };
+
+        Assert.Equal(TenantModuleChangeBatch.InconsistentDependenciesCode,
+            Rejected(stored, ChangeReason.Contract, [new(Payroll, On)]).Code);
+    }
+
+    // Spec 2026-11-21 (Agenda): toda cita es de un cliente, así que scheduling depende de customers.
+    [Fact]
+    public void EnablingSchedulingWithoutCustomersIsInconsistent()
+    {
+        var stored = new Dictionary<TenantModuleKey, TenantModuleStatus> { [Catalog] = On, [Customers] = Off };
+
+        Assert.Equal(TenantModuleChangeBatch.InconsistentDependenciesCode,
+            Rejected(stored, ChangeReason.Contract, [new(Scheduling, On)]).Code);
+    }
+
     // §3, ejemplo 3 (D9): un par roto heredado que el lote no toca no bloquea.
     [Fact]
     public void AnInheritedBrokenPairDoesNotBlockActivatingPos()

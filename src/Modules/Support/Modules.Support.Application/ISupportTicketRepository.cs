@@ -23,9 +23,16 @@ public interface ISupportTicketRepository
 
     Task<SupportTicketPage> ListAsync(SupportTicketFilter filter, CancellationToken cancellationToken);
 
-    /// <summary>Los totales del tenant entero. <paramref name="dueSoonLimit"/> es el último vencimiento que cuenta como «por
-    /// vencer»; null cuando el umbral del tenant es 0 (pre-flight R1).</summary>
-    Task<SupportInboxTotals> TotalsAsync(Guid tenantId, DateOnly today, DateOnly? dueSoonLimit, CancellationToken cancellationToken);
+    /// <summary>Los totales del tenant con el mismo alcance que la lista: el <paramref name="kind"/> y, si no es null, sólo los tickets
+    /// que <paramref name="participantMemberId"/> creó o tiene asignados. <paramref name="dueSoonLimit"/> es el último vencimiento que
+    /// cuenta como «por vencer»; null cuando el umbral del tenant es 0 (pre-flight R1).</summary>
+    Task<SupportInboxTotals> TotalsAsync(
+        Guid tenantId,
+        SupportTicketKind kind,
+        Guid? participantMemberId,
+        DateOnly today,
+        DateOnly? dueSoonLimit,
+        CancellationToken cancellationToken);
 
     /// <summary>Los tickets abiertos (no <c>Closed</c>) de la conversación, con tracking: los candidatos de un entrante (plan E5).
     /// Cada uno decide con <see cref="SupportTicket.CoversInbound"/> si la hora del mensaje cae en su ventana.</summary>

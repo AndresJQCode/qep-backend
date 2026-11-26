@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -376,6 +377,12 @@ internal static class QuotationsApiHarness
         var registered = await response.Content.ReadFromJsonAsync<RegisterTenantResponseDto>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(registered);
+        // El alta deja los ajustes del tenant recién nacido (compra mínima de 1 unidad, decisión del owner 2026-11-23). Estas
+        // pruebas parten de un tenant sin fila, con el por defecto de Quotations (6 unidades o 500.000 COP / 200 USD); el
+        // alta con sus ajustes la cubre QuotationsNewTenantProvisioningTests.
+        await ExecuteSqlAsync(
+            factory,
+            $"DELETE FROM quotations.tenant_quotation_settings WHERE tenant_id = '{registered.TenantId}'");
 
         var client = CreateClient(
             factory, registered.OwnerUserId.ToString(), registered.TenantId.ToString(), permissions);
@@ -523,6 +530,56 @@ internal static class QuotationsApiHarness
                 withRetention,
                 vatSurplus,
                 withholdingTaxRateIds = withholdingTaxRateIds ?? []
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<CustomerResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        return body.Id;
+    }
+
+    /// <summary>El id de Madrid (código 28) en el catálogo de regiones de España que siembra Geography: la región que las
+    /// pruebas de provincia guardada mandan como <c>regionId</c>.</summary>
+    public static async Task<Guid> MadridRegionIdAsync(HttpClient client)
+    {
+        var regions = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/countries/ES/regions", TestContext.Current.CancellationToken);
+        return regions.EnumerateArray()
+            .Single(region => region.GetProperty("code").GetString() == "28")
+            .GetProperty("id").GetGuid();
+    }
+
+    /// <summary>Un id de departamento colombiano tal como lo devuelve <c>GET /countries/CO/regions</c>: el que el frontend
+    /// puede conservar al cambiar de país.</summary>
+    public static async Task<Guid> ColombianDepartmentRegionIdAsync(HttpClient client)
+    {
+        var regions = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/countries/CO/regions", TestContext.Current.CancellationToken);
+        return regions.EnumerateArray().First().GetProperty("id").GetGuid();
+    }
+
+    /// <summary>Un cliente de España con su provincia, creado por <c>POST /customers</c> como lo haría la pantalla: país, ciudad
+    /// escrita y <c>regionId</c>. Es el que lee el cliente embebido de la cotización.</summary>
+    public static async Task<Guid> CreateForeignCustomerWithRegionAsync(
+        HttpClient client, Guid tenantId, Guid regionId)
+    {
+        var classificationId = await CreateClassificationAsync(client, tenantId);
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers",
+            new
+            {
+                name = "Verde Esencial S.L.",
+                identificationType = "NIF",
+                identificationNumber = $"B-{Random.Shared.Next(10000000, 99999999)}",
+                phone = "+34 910 000 000",
+                email = "compras@verde.es",
+                address = "Calle Gran Via 28",
+                country = "ES",
+                cityName = "Madrid",
+                regionId,
+                classificationId,
+                vatSurplus = false
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
@@ -1336,6 +1393,8 @@ internal static class QuotationsApiHarness
     /// `QCodePdfRendererTests` contra el contrato del servicio.</summary>
     private sealed class StubPdfStorage : IQuotationPdfStorage
     {
+        public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<string> SaveAsync(
             Guid tenantId,
             QuotationId quotationId,
@@ -1639,6 +1698,8 @@ internal static class QuotationsApiHarness
     /// </summary>
     public sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public const string BaseUrl = "https://assets.qep.test";
 
         // Concurrente desde D19 (spec 2026-09-16): PaymentProofDetachProcessor borra copias desde el hilo

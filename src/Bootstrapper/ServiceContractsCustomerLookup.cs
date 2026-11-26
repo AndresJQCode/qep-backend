@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using Modules.ServiceContracts.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Persistence;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper;
 
@@ -10,7 +10,7 @@ namespace Bootstrapper;
 /// de los dos módulos, mismo criterio que <see cref="QuotationCustomerLookup"/>: ServiceContracts guarda el cliente como id suelto y
 /// el composition root es el único lugar donde ese cruce es legítimo.
 ///
-/// Proyecta sólo las cinco columnas que ServiceContracts usa, sin cargar la libreta de direcciones que trae <c>ICustomerRepository</c>:
+/// Proyecta sólo las seis columnas que ServiceContracts usa, sin cargar la libreta de direcciones que trae <c>ICustomerRepository</c>:
 /// la lista «Por cobrar» resuelve decenas de clientes por página. El teléfono ya es E.164 (<c>phone_e164</c>); ServiceContracts no lo
 /// normaliza de nuevo.
 /// </summary>
@@ -23,7 +23,7 @@ internal sealed class ServiceContractsCustomerLookup(CustomersDbContext customer
         var id = new CustomerId(customerId);
         var row = await customers.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && customer.Id == id)
-            .Select(customer => new Row(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.IsActive))
+            .Select(customer => new Row(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.IsActive, customer.BusinessName))
             .SingleOrDefaultAsync(cancellationToken);
         return row?.ToRef();
     }
@@ -39,7 +39,7 @@ internal sealed class ServiceContractsCustomerLookup(CustomersDbContext customer
         var ids = customerIds.Distinct().Select(id => new CustomerId(id)).ToArray();
         var rows = await customers.Customers.AsNoTracking()
             .Where(customer => customer.TenantId == tenantId && ids.Contains(customer.Id))
-            .Select(customer => new Row(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.IsActive))
+            .Select(customer => new Row(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.IsActive, customer.BusinessName))
             .ToListAsync(cancellationToken);
         return rows.Select(row => row.ToRef()).ToArray();
     }
@@ -105,13 +105,14 @@ internal sealed class ServiceContractsCustomerLookup(CustomersDbContext customer
         IQueryable<Customer> query, CancellationToken cancellationToken)
     {
         var rows = await query
-            .Select(customer => new Row(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.IsActive))
+            .Select(customer => new Row(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.IsActive, customer.BusinessName))
             .ToListAsync(cancellationToken);
         return rows.Select(row => row.ToRef()).ToArray();
     }
 
-    private sealed record Row(CustomerId Id, string Name, string? PhoneE164, string? Email, bool IsActive)
+    private sealed record Row(
+        CustomerId Id, string Name, string? PhoneE164, string? Email, bool IsActive, string? BusinessName)
     {
-        public ServiceContractsCustomerRef ToRef() => new(Id.Value, Name, PhoneE164, Email, IsActive);
+        public ServiceContractsCustomerRef ToRef() => new(Id.Value, Name, PhoneE164, Email, IsActive, BusinessName);
     }
 }

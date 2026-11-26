@@ -33,9 +33,6 @@ internal sealed class WholesaleUnitOfWork(WholesaleDbContext dbContext) : IWhole
         // Antes que DbUpdateException, de la que hereda: al revés saldría como 500 en vez de 412.
         DbUpdateConcurrencyException => new RequestConcurrencyException(
             "concurrency.conflict", "The resource changed while the update was being committed.", exception),
-        DbUpdateException update when IsViolation(update, PostgresErrorCodes.UniqueViolation, WholesaleDbContext.PriceListNameIndex) =>
-            new ResourceConflictException(
-                WholesaleErrorCodes.PriceListNameTaken, "Another price list already has that name.", exception),
         DbUpdateException update when IsViolation(
             update, PostgresErrorCodes.UniqueViolation, WholesaleDbContext.DistributorIdentificationIndex) =>
             new ResourceConflictException(
@@ -48,10 +45,6 @@ internal sealed class WholesaleUnitOfWork(WholesaleDbContext dbContext) : IWhole
                 WholesaleErrorCodes.DistributorAlreadyLinked,
                 "That organization is already a distributor of this wholesaler.",
                 exception),
-        // La carrera entre borrar una lista e invitar (o editar) con ella.
-        DbUpdateException update when IsViolation(
-            update, PostgresErrorCodes.ForeignKeyViolation, WholesaleDbContext.DistributorPriceListForeignKey) =>
-            new ResourceConflictException(WholesaleErrorCodes.PriceListInUse, "A distributor uses this price list.", exception),
         _ => null,
     };
 

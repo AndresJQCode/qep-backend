@@ -47,6 +47,33 @@ public sealed class PurchaseOrderEmailSenderTests
     }
 
     [Fact]
+    public async Task ADocumentWithoutAmountsGoesOutWithoutTheAmountsSection()
+    {
+        var channel = new FakeChannel();
+        var sender = new PurchaseOrderEmailSender(channel, new ListLogger<PurchaseOrderEmailSender>());
+        var request = Request();
+        request = request with
+        {
+            Document = request.Document with
+            {
+                Lines = [new PurchaseOrderPdfLine("CAM-M-AZ", "Camiseta", "24", "—", "19 %", "—")],
+                Subtotal = "—",
+                Tax = "—",
+                Total = "—",
+                ShowsAmounts = false,
+            },
+        };
+
+        var result = await sender.SendAsync(request, CancellationToken.None);
+
+        Assert.Equal(PurchaseOrderEmailResult.Sent, result);
+        var message = Assert.Single(channel.Sent);
+        Assert.Contains("CAM-M-AZ", message.TextBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("—", message.TextBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("Total", message.HtmlBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AChannelExceptionBecomesFailedAndIsLoggedWithoutTheAddress()
     {
         var logger = new ListLogger<PurchaseOrderEmailSender>();

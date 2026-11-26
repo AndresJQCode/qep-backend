@@ -66,16 +66,16 @@ internal sealed class SupportTicketScenario
         string replyChannel = "Email",
         Guid? assignee = null,
         string subject = "No me llegó la factura") => new()
-    {
-        ["ticketTypeId"] = typeId,
-        ["subject"] = subject,
-        ["description"] = "Pedí la factura de octubre y no ha llegado.",
-        ["manualMedium"] = "Phone",
-        ["replyChannel"] = replyChannel,
-        ["customerId"] = customerId,
-        ["requester"] = requester ?? Ana,
-        ["assigneeMemberId"] = assignee,
-    };
+        {
+            ["ticketTypeId"] = typeId,
+            ["subject"] = subject,
+            ["description"] = "Pedí la factura de octubre y no ha llegado.",
+            ["manualMedium"] = "Phone",
+            ["replyChannel"] = replyChannel,
+            ["customerId"] = customerId,
+            ["requester"] = requester ?? Ana,
+            ["assigneeMemberId"] = assignee,
+        };
 
     public static object Ana => new { firstNames = "Ana", lastNames = "Gómez", email = "ana@example.com", mobilePhone = "+573001234567" };
 
@@ -114,7 +114,8 @@ internal sealed class SupportTicketScenario
     public static Guid Id(JsonElement ticket) => ticket.GetProperty("id").GetGuid();
 
     /// <summary>Fase 2: abre un ticket desde una conversación por la API y exige el 201.</summary>
-    public async Task<JsonElement> CreateFromConversationAsync(Guid conversation, string subject = "Pedido sin llegar")
+    public async Task<JsonElement> CreateFromConversationAsync(
+        Guid conversation, string subject = "Pedido sin llegar", Guid? assignee = null)
     {
         var response = await Client.PostAsJsonAsync(
             $"{Url}/conversations/{conversation}/tickets",
@@ -123,6 +124,7 @@ internal sealed class SupportTicketScenario
                 ticketTypeId = await TypeIdAsync("Petición general"),
                 subject,
                 description = "El pedido de la semana pasada no ha llegado.",
+                assigneeMemberId = assignee,
             },
             Ct);
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));

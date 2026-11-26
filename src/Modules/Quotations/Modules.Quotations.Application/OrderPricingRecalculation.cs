@@ -48,23 +48,25 @@ internal static class OrderPricingRecalculation
             return;
         }
 
+        // El regalo no cuenta para las escalas ni para el mínimo de compra (spec 2026-11-21): ni su variante ni su cantidad.
+        var paidItems = order.Items.Where(item => !item.IsGift).ToArray();
         var products = await lookup.FindManyAsync(
             tenantId,
-            order.Items.Select(item => item.VariantId).Distinct().ToArray(),
+            paidItems.Select(item => item.VariantId).Distinct().ToArray(),
             cancellationToken);
         // Por variante, igual que el cotizador (spec 2026-10-20 §4).
         // A diferencia del cotizador, una línea cuya variante el catálogo ya no devuelve queda fuera
         // de la pasada: el pedido ya está vendido y, sin escalas contra las que recalcular, conserva el
         // descuento con el que se vendió. Darle escalas vacías lo bajaría a 0 % al editar otra línea.
         var scalesByVariant = products.ToDictionary(entry => entry.Key, entry => entry.Value.Scales);
-        var lines = order.Items
+        var lines = paidItems
             .Where(item => scalesByVariant.ContainsKey(item.VariantId))
             .Select(item => new QuotationPricingLine(item.Id.Value, item.VariantId, item.Quantity))
             .ToArray();
 
         var discounts = Apply(order, lines, scalesByVariant, order.GlobalScaleFloor, occurredAt);
         var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
-        if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
+        if (QuotationMinimumPurchase.IsMet(paidItems.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
         {
             return;
         }
@@ -72,7 +74,7 @@ internal static class OrderPricingRecalculation
         if (order.GlobalScaleFloor is not null)
         {
             discounts = Apply(order, lines, scalesByVariant, globalFloor: null, occurredAt);
-            if (QuotationMinimumPurchase.IsMet(order.Items.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
+            if (QuotationMinimumPurchase.IsMet(paidItems.Sum(item => item.Quantity), order.ProductsTotal, order.Currency, settings))
             {
                 return;
             }

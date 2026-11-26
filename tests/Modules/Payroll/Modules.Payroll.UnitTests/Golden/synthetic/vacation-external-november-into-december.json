@@ -1,0 +1,143 @@
+{
+  "name": "vacation-external-november-into-december",
+  "source": "synthetic",
+  "description": "Vacaciones que pagó Siigo (2026-11-23 al 2026-12-04) y siguen en diciembre, sin montos tecleados: la primera de diciembre paga salario por los días trabajados, sin vacation_pay.",
+  "legal": "legal/2026-11-01.json",
+  "covers": [
+    "WorkedDaysRule",
+    "SalaryRule",
+    "MonthIncomeRule",
+    "TransportAllowanceRule",
+    "IbcRule",
+    "EmployeeDeductionsRule",
+    "EmployerContributionsRule",
+    "ProvisionsRule",
+    "PayrollEngine",
+    "VacationDaysRule"
+  ],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-12-01",
+      "end": "2026-12-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "vacations": [
+      {
+        "vacationId": "01900000-0000-7000-8000-000000000a07",
+        "origin": "External",
+        "startDate": "2026-11-23",
+        "endDate": "2026-12-04",
+        "businessDays": 10,
+        "paidHere": false,
+        "salaryAtStart": 3000000,
+        "salaryRecordDate": "2025-01-01",
+        "previousMonthIbc": 3000000,
+        "previousIbcSource": "Typed",
+        "monthVacationPay": null,
+        "monthAdvance": {
+          "health": 0,
+          "pension": 0,
+          "solidarityFund": 0
+        }
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 11,
+    "vacationDays": 4,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      {
+        "code": "salary",
+        "amount": 1100000
+      },
+      {
+        "code": "transport_allowance",
+        "amount": 91335
+      },
+      {
+        "code": "ibc",
+        "amount": 1500000
+      },
+      {
+        "code": "health_employee",
+        "amount": 60000
+      },
+      {
+        "code": "pension_employee",
+        "amount": 60000
+      },
+      {
+        "code": "health_employer",
+        "amount": 0
+      },
+      {
+        "code": "pension_employer",
+        "amount": 180000
+      },
+      {
+        "code": "arl",
+        "amount": 5800
+      },
+      {
+        "code": "compensation_fund",
+        "amount": 60000
+      },
+      {
+        "code": "icbf",
+        "amount": 0
+      },
+      {
+        "code": "sena",
+        "amount": 0
+      },
+      {
+        "code": "severance",
+        "amount": 132558
+      },
+      {
+        "code": "severance_interest",
+        "amount": 15913
+      },
+      {
+        "code": "premium",
+        "amount": 132558
+      },
+      {
+        "code": "vacation",
+        "amount": 62550
+      }
+    ],
+    "net": 1071335,
+    "employerCost": 1780714
+  },
+  "notes": [
+    "días de nómina en diciembre: 2026-12-01..04 = 4; noviembre 23..30 = 8 (no es de esta quincena); días trabajados = 15 − 4 = 11",
+    "salary = 3 000 000 × 11 ÷ 30 = 1 100 000; sin vacation_pay (lo pagó Siigo); transport = round(249 095 × 11 ÷ 30) = 91 335",
+    "IBC = 1 100 000 + 3 000 000 × 4 ÷ 30 (400 000) = 1 500 000; health_employee = pension_employee = 60 000; sin anticipo tecleado",
+    "pension_employer = 180 000; arl sobre 1 100 000 = 5 800; compensation_fund = techo100((1 100 000 + 400 000) × 0,04) = 60 000 (valor por día = salario del inicio ÷ 30 porque no se tecleó lo pagado)",
+    "provisiones: 400 000 de días de vacaciones; base cesantías 1 591 335 → 132 558 / 15 913 / 132 558; vacaciones = 1 500 000 × 0,0417 = 62 550",
+    "totalEarned = 1 100 000 + 91 335 = 1 191 335; deducciones 120 000; net = 1 071 335; employerCost = 1 191 335 + aportes 245 800 + provisiones 343 579 = 1 780 714"
+  ]
+}

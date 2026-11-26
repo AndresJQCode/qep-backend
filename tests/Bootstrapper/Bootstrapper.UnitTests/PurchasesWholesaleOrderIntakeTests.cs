@@ -70,6 +70,50 @@ public sealed class PurchasesWholesaleOrderIntakeTests
         Assert.Equal((Line, 12500m, 4.8m, 11900m, 10000m), (line.LineId, line.BasePrice, line.DiscountPercent, line.UnitPrice, line.UnitCost));
     }
 
+    // Spec 2026-11-19: el flag cruza con el resultado; el camino nuevo lo toma de los términos de la relación.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ANewOrderCarriesTheShowPricesOfTheTerms(bool showPrices)
+    {
+        _directory.TermsShowPrices = showPrices;
+
+        var result = await Intake().SubmitAsync(Request(), Ct);
+
+        Assert.Equal(showPrices, result.ShowPrices);
+        // El pedido del mayorista siempre se crea a precio de lista: el flag sólo dice qué guarda el distribuidor.
+        Assert.Equal(11900m, Assert.Single(Assert.Single(_gateway.Drafts).Lines).UnitPrice);
+        Assert.Equal(10000m, Assert.Single(result.Lines).UnitCost);
+    }
+
+    // D-14: el reintento que encuentra el pedido ya creado usa el flag vivo de la lista del distribuidor.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnExistingOrderCarriesTheLiveShowPricesOfTheList(bool showPrices)
+    {
+        _directory.OrderOffersShowPrices = showPrices;
+        _gateway.Existing = _gateway.ResultOf(Line, 11900m, alreadyExisted: true);
+
+        var result = await Intake().SubmitAsync(Request(), Ct);
+
+        Assert.Equal(showPrices, result.ShowPrices);
+    }
+
+    // D-14: sin lista o sin relación no hay información, y sin información la orden queda sin precio.
+    [Fact]
+    public async Task AnExistingOrderWithoutAListHidesThePrices()
+    {
+        _directory.Offers.Clear();
+        _directory.OrderOffersShowPrices = false;
+        _gateway.Existing = _gateway.ResultOf(Line, 11900m, alreadyExisted: true);
+
+        var result = await Intake().SubmitAsync(Request(), Ct);
+
+        Assert.False(result.ShowPrices);
+        Assert.Equal((11900m, 0m), (Assert.Single(result.Lines).BasePrice, Assert.Single(result.Lines).DiscountPercent));
+    }
+
     [Fact]
     public async Task AnExistingOrderWhosePriceChangedShowsThePriceAsTheBase()
     {
@@ -268,6 +312,12 @@ public sealed class PurchasesWholesaleOrderIntakeTests
 
         public string Currency { get; set; } = "COP";
 
+        /// <summary>El flag de la lista en los términos de la relación (camino nuevo).</summary>
+        public bool TermsShowPrices { get; set; } = true;
+
+        /// <summary>El flag que devuelve <see cref="OffersForOrderAsync"/> (camino D-8); sin lista, <c>false</c>.</summary>
+        public bool OrderOffersShowPrices { get; set; } = true;
+
         public int PriceVisibleCalls { get; private set; }
 
         public Task<(WholesaleTerms Terms, IReadOnlyDictionary<Guid, WholesaleOffer> Offers)> PriceVisibleAsync(
@@ -280,19 +330,19 @@ public sealed class PurchasesWholesaleOrderIntakeTests
             }
 
             var terms = new WholesaleTerms(
-                Guid.CreateVersion7(), Customer, Advisor, Company, Currency, 4.8m, null, "Distribuidor estándar");
+                Guid.CreateVersion7(), Customer, Advisor, Company, Currency, 4.8m, null, "Distribuidor estándar", [], [], TermsShowPrices);
             IReadOnlyDictionary<Guid, WholesaleOffer> found = variantIds.ToDictionary(id => id, id => Offers[id]);
             return Task.FromResult((terms, found));
         }
 
-        public Task<IReadOnlyDictionary<Guid, WholesaleOffer>> OffersForOrderAsync(
+        public Task<WholesaleOrderOffers> OffersForOrderAsync(
             Guid wholesalerTenantId,
             Guid buyerTenantId,
             string currency,
             IReadOnlyCollection<Guid> variantIds,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, WholesaleOffer>>(
-                variantIds.Where(Offers.ContainsKey).ToDictionary(id => id, id => Offers[id]));
+            Task.FromResult(new WholesaleOrderOffers(
+                variantIds.Where(Offers.ContainsKey).ToDictionary(id => id, id => Offers[id]), OrderOffersShowPrices));
 
         public Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
             Task.FromResult(tenantId == Wholesaler && ActiveMembers.Contains(membershipId));

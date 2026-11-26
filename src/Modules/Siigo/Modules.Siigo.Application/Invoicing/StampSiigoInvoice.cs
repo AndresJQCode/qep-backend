@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Siigo.Domain;
 using Modules.Tenancy.Application;
 
@@ -29,7 +30,10 @@ public sealed class StampSiigoInvoiceHandler(
     ISiigoInvoiceRepository invoices,
     ISiigoUnitOfWork unitOfWork,
     IClock clock,
-    IValidator<StampSiigoInvoiceCommand> validator) : ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>
+    IValidator<StampSiigoInvoiceCommand> validator,
+    ISiigoInvoiceBatchRepository batches,
+    ISiigoOrderSource orders,
+    ILogger<StampSiigoInvoiceHandler> logger) : ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>
 {
     public async Task<SiigoInvoiceDto> HandleAsync(StampSiigoInvoiceCommand command, CancellationToken cancellationToken)
     {
@@ -38,42 +42,50 @@ public sealed class StampSiigoInvoiceHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var kind = SiigoInvoiceSupport.ParseKind(command.Kind);
 
-        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        await unitOfWork.LockOrderAsync(command.OrderId, cancellationToken);
-        var row = (await invoices.ListByOrderAsync(command.TenantId, command.OrderId, cancellationToken))
-            .Where(value => value.Kind == kind && value.IsLive)
-            .OrderByDescending(value => value.CreatedAt)
-            .FirstOrDefault()
-            ?? throw new ResourceNotFoundException(SiigoErrorCodes.InvoiceNotFound, "The order has no current Siigo invoice of that kind.");
-        if (!row.CanStamp)
+        SiigoInvoice row;
+        DateTimeOffset now;
+        await using (var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken))
         {
-            throw new SiigoDomainException(
-                SiigoErrorCodes.InvoiceStateInvalid, "Only an invoice created in Siigo and not yet sent to the DIAN can be stamped.");
+            await unitOfWork.LockOrderAsync(command.OrderId, cancellationToken);
+            row = (await invoices.ListByOrderAsync(command.TenantId, command.OrderId, cancellationToken))
+                .Where(value => value.Kind == kind && value.IsLive)
+                .OrderByDescending(value => value.CreatedAt)
+                .FirstOrDefault()
+                ?? throw new ResourceNotFoundException(SiigoErrorCodes.InvoiceNotFound, "The order has no current Siigo invoice of that kind.");
+            if (!row.CanStamp)
+            {
+                throw new SiigoDomainException(
+                    SiigoErrorCodes.InvoiceStateInvalid, "Only an invoice created in Siigo and not yet sent to the DIAN can be stamped.");
+            }
+
+            var credentials = await SiigoInvoiceSupport.CredentialsAsync(connections, command.TenantId, row.ConnectionId, cancellationToken);
+            now = clock.UtcNow;
+            switch (await api.StampInvoiceAsync(credentials, row.SiigoInvoiceId!, cancellationToken))
+            {
+                case SiigoStampOutcome.Stamped stamped:
+                    row.MarkStamped(stamped.Cufe, now);
+                    break;
+                case SiigoStampOutcome.Rejected rejected when rejected.Errors.Any(error => error.Code == SiigoApiErrors.CredentialsRejected):
+                    // La clave de acceso ya no sirve: no es un rechazo de la DIAN, es la conexión.
+                    throw new ResourceConflictException(SiigoErrorCodes.ConnectionUnavailable, "Siigo rejected the credentials of the connection.");
+                case SiigoStampOutcome.Rejected rejected when SiigoApiErrors.IsServiceUnavailable(rejected.Errors):
+                    // Un servicio de Siigo caído no es un rechazo de la DIAN: la factura sigue Created y se reintenta.
+                    throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, "Siigo service is unavailable; try sending the invoice to the DIAN again.");
+                case SiigoStampOutcome.Rejected rejected:
+                    var errors = rejected.Errors.Count > 0
+                        ? rejected.Errors
+                        : await api.GetStampErrorsAsync(credentials, row.SiigoInvoiceId!, cancellationToken);
+                    row.MarkStampRejected(
+                        errors.Count > 0 ? errors[0].Code : "siigo.invoice.stamp_rejected", SiigoInvoiceSupport.ErrorDetailOf(errors), now);
+                    break;
+                default:
+                    throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, "Siigo did not answer; try sending the invoice to the DIAN again.");
+            }
+
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
-        var credentials = await SiigoInvoiceSupport.CredentialsAsync(connections, command.TenantId, row.ConnectionId, cancellationToken);
-        var now = clock.UtcNow;
-        switch (await api.StampInvoiceAsync(credentials, row.SiigoInvoiceId!, cancellationToken))
-        {
-            case SiigoStampOutcome.Stamped stamped:
-                row.MarkStamped(stamped.Cufe, now);
-                break;
-            case SiigoStampOutcome.Rejected rejected when rejected.Errors.Any(error => error.Code == SiigoApiErrors.CredentialsRejected):
-                // La clave de acceso ya no sirve: no es un rechazo de la DIAN, es la conexión.
-                throw new ResourceConflictException(SiigoErrorCodes.ConnectionUnavailable, "Siigo rejected the credentials of the connection.");
-            case SiigoStampOutcome.Rejected rejected:
-                var errors = rejected.Errors.Count > 0
-                    ? rejected.Errors
-                    : await api.GetStampErrorsAsync(credentials, row.SiigoInvoiceId!, cancellationToken);
-                row.MarkStampRejected(
-                    errors.Count > 0 ? errors[0].Code : "siigo.invoice.stamp_rejected", SiigoInvoiceSupport.ErrorDetailOf(errors), now);
-                break;
-            default:
-                throw new ServiceUnavailableException(SiigoErrorCodes.Unavailable, "Siigo did not answer; try sending the invoice to the DIAN again.");
-        }
-
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return SiigoInvoiceDto.From(row);
+        return await SiigoSavedInvoice.ToDtoAsync(batches, orders, row, now, logger, cancellationToken);
     }
 }

@@ -46,6 +46,8 @@ public sealed record CompanyWithholdingTaxRateDto(
 /// <param name="WithholdingTaxRates">Las tasas municipales de la empresa, ordenadas por departamento, municipio y tipo
 /// (spec ReteICA por empresa §9.2). Nunca null.</param>
 /// <param name="ChargesVat">Si la empresa cobra IVA (spec 2026-11-17 §5.1).</param>
+/// <param name="Region">La región (provincia) guardada de una empresa de afuera (spec 2026-11-23); null para Colombia, que
+/// la deriva de <c>Department</c>, y para lo que no tiene región. El listado no la trae.</param>
 public sealed record CompanyDto(
     Guid Id,
     string Name,
@@ -63,7 +65,11 @@ public sealed record CompanyDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates,
-    bool ChargesVat);
+    bool ChargesVat,
+    CompanyRegionDto? Region = null);
+
+/// <summary>La región (provincia) de una empresa de afuera, ya resuelta.</summary>
+public sealed record CompanyRegionDto(Guid Id, string Name);
 
 public sealed record CompanyResponse(
     Guid Id,
@@ -82,7 +88,8 @@ public sealed record CompanyResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<CompanyWithholdingTaxRateDto> WithholdingTaxRates,
-    bool ChargesVat);
+    bool ChargesVat,
+    CompanyRegionDto? Region = null);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito: <c>email</c> y <c>address</c> no se pintan
@@ -158,7 +165,8 @@ public sealed record CreateCompanyRequest(
     string? Email,
     string? Address,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    bool? ChargesVat = null);
+    bool? ChargesVat = null,
+    Guid? RegionId = null);
 
 public sealed record UpdateCompanyRequest(
     string Name,
@@ -172,4 +180,5 @@ public sealed record UpdateCompanyRequest(
     string? Email,
     string? Address,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    bool? ChargesVat = null);
+    bool? ChargesVat = null,
+    Guid? RegionId = null);

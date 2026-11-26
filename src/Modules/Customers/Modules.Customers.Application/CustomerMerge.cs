@@ -11,7 +11,7 @@ public static class CustomerMergeLimits
     public const int MaxMerged = 10;
 }
 
-/// <summary>Las nueve clases que la fusión mueve al que queda, en el orden en que la confirmación las lista.</summary>
+/// <summary>Las diez clases que la fusión mueve al que queda, en el orden en que la confirmación las lista.</summary>
 public enum CustomerMergeMoveKind
 {
     Quotations,
@@ -21,6 +21,7 @@ public enum CustomerMergeMoveKind
     Deals,
     Notes,
     Addresses,
+    BillingProfiles,
     Tags,
     Contacts,
 }
@@ -119,6 +120,7 @@ public sealed class GetCustomerMergePreviewHandler(
                 Move(CustomerMergeMoveKind.Deals, referenceCounts.Deals),
                 Move(CustomerMergeMoveKind.Notes, owned.Notes),
                 Move(CustomerMergeMoveKind.Addresses, owned.Addresses),
+                Move(CustomerMergeMoveKind.BillingProfiles, owned.BillingProfiles),
                 Move(CustomerMergeMoveKind.Tags, tagsGained),
                 Move(CustomerMergeMoveKind.Contacts, contactsMoved),
             ],
@@ -210,7 +212,7 @@ public sealed class MergeCustomersValidator : AbstractValidator<MergeCustomersCo
 /// IGSID o el documento del fusionado correría antes de que el fusionado los suelte y chocaría con el índice único. Por eso
 /// el primero marca a los fusionados (<see cref="CustomerMergePlan.MarkMerged"/>, que suelta lo que van a dar) y el segundo
 /// llena al que queda (<see cref="CustomerMergePlan.FillSurvivor"/>) y cambia las etiquetas. Después, en la misma
-/// transacción, el SQL de notas y direcciones y el de los otros módulos. Sin el <c>Commit</c>, el <c>Dispose</c> deshace
+/// transacción, el SQL de notas, direcciones y perfiles de facturación y el de los otros módulos. Sin el <c>Commit</c>, el <c>Dispose</c> deshace
 /// todo: la fusión queda completa o no pasa.
 /// </summary>
 public sealed class MergeCustomersHandler(
@@ -353,8 +355,8 @@ public sealed class MergeCustomersHandler(
         await transaction.CommitAsync(cancellationToken);
 
         // Se relee sin tracking (FC-04 duda 1): MoveOwnedAsync es un ExecuteUpdate, así que la instancia cargada no ve las
-        // direcciones que llegaron, y la respuesta tiene que traer la libreta entera.
-        var fresh = (await repository.FindManyAsync(command.TenantId, [survivor.Id], cancellationToken))[survivor.Id];
+        // direcciones ni los perfiles de facturación que llegaron, y la respuesta tiene que traer las dos libretas enteras.
+        var fresh = await mergeStore.ReadSurvivorAsync(command.TenantId, survivor.Id.Value, cancellationToken);
         var dto = await fresh.ToDtoAsync(geographyLookup, classificationRepository, tags, taxRateLookup, companyDirectory, cancellationToken);
         return new CustomerMergeResult(dto, await DroppedAsync(command.TenantId, tagMerge.Dropped, cancellationToken));
     }

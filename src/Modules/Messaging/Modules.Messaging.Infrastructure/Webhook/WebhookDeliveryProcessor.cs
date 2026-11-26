@@ -27,6 +27,7 @@ internal sealed partial class WebhookDeliveryProcessor(
     IClock clock,
     MarketingOptOutButtons optOutButtons,
     IMessagingNotifier notifier,
+    ICampaignDispatchStore campaigns,
     MessagingMetrics metrics,
     IOptions<MessagingAutomationOptions> automationOptions,
     ILogger<WebhookDeliveryProcessor> logger)
@@ -516,6 +517,13 @@ internal sealed partial class WebhookDeliveryProcessor(
             {
                 // Spec 2026-10-11 decisión 10: la persona apagó el marketing. Idempotente; si falla, la entrega se reintenta.
                 await customers.MarkMarketingOptOutAsync(route.TenantId, customerId, cancellationToken);
+            }
+
+            // Un bloqueo de la cuenta (131042 pago, 131031, 368, 131005) llega acá sobre un envío que Meta había aceptado: la campaña se detiene
+            // como si el worker lo hubiera recibido, y lo pendiente queda Skipped campaign_failed para reintentarlo cuando se resuelva.
+            foreach (var stop in applied.CampaignsToStop ?? [])
+            {
+                await campaigns.StopCampaignAsync(stop.CampaignId, stop.TenantId, stop.Code, clock.UtcNow, cancellationToken);
             }
 
             // Spec 2026-10-14: el acuse cambió la foto del hilo (entregado, leído, fallido); quien lo mira lo relee.

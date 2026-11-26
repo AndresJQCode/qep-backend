@@ -49,8 +49,8 @@ public sealed class PurchaseOrderComposer(
             new PurchaseOrderMemberDto(order.CreatedByMemberId, NameOf(names, order.CreatedByMemberId)),
             order.CreatedAt,
             order.Lines.Select(ToLine).ToList(),
-            ToTotals(totals),
-            order.RequestedTotals().Total,
+            totals is null ? null : ToTotals(totals),
+            order.RequestedTotals()?.Total,
             order.History
                 .OrderBy(entry => entry.Sequence)
                 .Select(entry => new PurchaseOrderHistoryDto(
@@ -70,7 +70,8 @@ public sealed class PurchaseOrderComposer(
                 order.LastEmailStatus?.ToString(),
                 order.LastEmailTo,
                 order.LastEmailAt,
-                supplierMap.TryGetValue(order.SupplierId, out var emailSupplier) ? emailSupplier.Email : null));
+                supplierMap.TryGetValue(order.SupplierId, out var emailSupplier) ? emailSupplier.Email : null),
+            order.HasPrices);
     }
 
     public async Task<IReadOnlyList<PurchaseOrderSummaryDto>> SummariesAsync(
@@ -95,11 +96,12 @@ public sealed class PurchaseOrderComposer(
                     order.SupplierId,
                     supplierMap.TryGetValue(order.SupplierId, out var supplier) ? supplier.Name : UnknownName),
                 order.Currency,
-                order.Totals().Total,
+                order.Totals()?.Total,
                 order.CreatedAt,
                 order.Lines.Count,
                 order.IsLinked,
-                ModeOf(order)))
+                ModeOf(order),
+                order.HasPrices))
             .ToList();
     }
 

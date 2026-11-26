@@ -1,0 +1,86 @@
+{
+  "name": "non-salary-over-forty-percent",
+  "source": "synthetic",
+  "description": "Pagos no salariales por encima del 40 %: el exceso se suma al IBC y a la ARL, no a la caja ni a los parafiscales (decisión del owner 1).",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "IncomeRule"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-01",
+      "end": "2026-11-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 2000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "incomes": [
+      {
+        "conceptId": "00000000-0000-0000-0002-000000000004",
+        "conceptName": "Otros ingresos",
+        "amount": 1000000,
+        "salaryConstitutive": false
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 1000000 },
+      { "code": "transport_allowance", "amount": 124548 },
+      { "code": "income:00000000-0000-0000-0002-000000000004:0", "amount": 1000000 },
+      { "code": "ibc", "amount": 1200000 },
+      { "code": "health_employee", "amount": 48000 },
+      { "code": "pension_employee", "amount": 48000 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 144000 },
+      { "code": "arl", "amount": 6300 },
+      { "code": "compensation_fund", "amount": 40000 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 93675 },
+      { "code": "severance_interest", "amount": 11245 },
+      { "code": "premium", "amount": 93675 },
+      { "code": "vacation", "amount": 41700 }
+    ],
+    "net": 2028548,
+    "employerCost": 2555143
+  },
+  "notes": [
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 2 000 000 ÷ 30 × 15 = 1000000; salary = round(0 + 1000000) − 0 = 1 000 000",
+    "income:0 Otros ingresos = round(1000000) = 1 000 000 (no salarial)",
+    "transport_allowance = round(0 + 249 095 ÷ 30 × 15) − 0 = round(124547.5) − 0 = 124 548",
+    "SalDev_m = 0 + 1000000 + 0 + 0 = 1000000; no salarial del mes = 1000000; 1000000 > 40 % de 2000000 ⇒ base = 2000000 × 0,6 = 1200000; piso 875452.5; tope 43772625; ibc = techo(1200000) = 1 200 000",
+    "health_employee = al peso(1 200 000 × 0,04 = 48000) − 0 = 48 000",
+    "pension_employee = al peso(1 200 000 × 0,04) − 0 = 48 000",
+    "solidarity_fund: ≈1.142266 SMMLV < 4 y sin retención previa ⇒ sin línea",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 2 000 000 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(1 200 000 × 0.12) − 0 = 144 000",
+    "arl = techo100(1200000 × 0.00522 = 6264) − 0 = 6 300",
+    "compensation_fund = techo100(1000000 × 0,04) − 0 = 40 000",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 1000000 + 124548 + 0 + 0 = 1124548; severance = round(93674.8484) = 93 675; severance_interest = round(11245.48) = 11 245; premium = 93 675; vacation = round((1000000 + 0) × 0,0417 = 41700) = 41 700",
+    "totalEarned = 1000000 + 124548 + 0 + 0 + 1000000 = 2124548; totalDeductions = 96000; net = 2028548; employerCost = 2124548 + aportes 190300 + provisiones 240295 = 2555143"
+  ]
+}

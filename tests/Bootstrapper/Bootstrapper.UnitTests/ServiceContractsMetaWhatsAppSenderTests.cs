@@ -1,8 +1,8 @@
-using Modules.ServiceContracts.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper.UnitTests;
 
@@ -233,6 +233,9 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
         public int ResolveCalls { get; private set; }
 
         public int ListResolvedCalls { get; private set; }
+
+        public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
         {

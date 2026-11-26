@@ -55,7 +55,7 @@ public sealed class ChargeDtoComposer(
         foreach (var charge in items)
         {
             var customer = customerRefs.TryGetValue(charge.CustomerId, out var found)
-                ? new CustomerRefDto(found.Id, found.Name, found.PhoneE164, found.Email)
+                ? new CustomerRefDto(found.Id, found.Name, found.PhoneE164, found.Email, found.BusinessName)
                 : new CustomerRefDto(charge.CustomerId, UnknownCustomerName, null, null);
             // Sin perfil no hay encargado: el contrato lo marca nulo, no inventa uno.
             var assignee = profileByCustomer.TryGetValue(charge.CustomerId, out var profile)

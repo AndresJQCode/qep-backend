@@ -29,6 +29,20 @@ spec:
     spec:
       imagePullSecrets:
         - name: regcred
+      # 45 s y no el default de 30: el preStop consume 10, y al apagado del host le quedan 35, más que el
+      # ShutdownTimeout por defecto de .NET (30 s; el repo no lo cambia). Lo verifica ShutdownBudgetTests.
+      terminationGracePeriodSeconds: 45
+      # DNS (incidente 2026-11-19, ver migracion-k8s docs/12-bitacora-incidencias.md): con ndots:5
+      # cada nombre del cluster (pg-platform-pooler-rw.database.svc.cluster.local, valkey...) generaba
+      # ~8 consultas antes de resolver, y una sola perdida costaba 5 s; el health check de la base
+      # (corte 2 s) fallaba y el pod salía del Service con 503. ndots:2 resuelve esos FQDN al primer
+      # intento; single-request-reopen evita la carrera de conntrack de glibc con A/AAAA en paralelo.
+      # Ya se aplicó en el cluster con kubectl patch; aquí queda para que ningún deploy lo pierda.
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "2"
+          - name: single-request-reopen
       containers:
         - name: #{APP_NAME}#
           image: index.docker.io/qcodeco/prod-#{APP_NAME}#:TAG
@@ -37,6 +51,14 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          # El ingress sigue mandando requests al pod que se apaga hasta que su endpoint sale del Service; sin esta
+          # espera, los webhooks de Meta y Shopify que caen ahí reciben 502. 10 s antes del SIGTERM los cubren, y
+          # después el host tiene su ShutdownTimeout para que los workers terminen lo que tienen en curso.
+          # La imagen aspnet es Debian y trae sleep.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "10"]
           # Dos fuentes, sin claves superpuestas: el ConfigMap lleva el delta por entorno
           # no sensible, el Secret lleva las credenciales. Ante una colisión de claves
           # gana la fuente posterior, por eso el Secret va segundo a propósito.

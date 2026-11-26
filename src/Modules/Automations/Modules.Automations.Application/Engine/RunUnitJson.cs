@@ -145,7 +145,11 @@ public static class RunUnitJson
             var record = step.Record;
             var node = new JsonObject
             {
-                ["step"] = record.Step, ["seq"] = record.Seq, ["nodeId"] = record.NodeId, ["kind"] = record.Kind, ["outcome"] = record.Outcome,
+                ["step"] = record.Step,
+                ["seq"] = record.Seq,
+                ["nodeId"] = record.NodeId,
+                ["kind"] = record.Kind,
+                ["outcome"] = record.Outcome,
             };
             if (record.FromNodeId is not null)
             {

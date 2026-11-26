@@ -146,6 +146,11 @@ internal sealed partial class ShopifyOrderUpdateClient(
                 shipping["company"] = company;
             }
 
+            if (address.Zip is { } zip)
+            {
+                shipping["zip"] = zip;
+            }
+
             input["shippingAddress"] = shipping;
         }
 

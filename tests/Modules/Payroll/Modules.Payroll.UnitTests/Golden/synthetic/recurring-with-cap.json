@@ -1,0 +1,110 @@
+{
+  "name": "recurring-with-cap",
+  "source": "synthetic",
+  "description": "Recurrentes: deducción con tope restante 120 000, ingreso proporcional y uno agotado sin línea.",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "RecurringConceptRule"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-01",
+      "end": "2026-11-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "recurring": [
+      {
+        "recurringId": "aaaaaaaa-0000-0000-0000-000000000001",
+        "conceptName": "Libranza",
+        "kind": "Deduction",
+        "mode": "Fixed",
+        "amount": 300000,
+        "salaryConstitutive": false,
+        "remainingCap": 120000
+      },
+      {
+        "recurringId": "aaaaaaaa-0000-0000-0000-000000000002",
+        "conceptName": "Bono de permanencia",
+        "kind": "Income",
+        "mode": "Proportional",
+        "amount": 200000,
+        "salaryConstitutive": true,
+        "remainingCap": null
+      },
+      {
+        "recurringId": "aaaaaaaa-0000-0000-0000-000000000003",
+        "conceptName": "Préstamo agotado",
+        "kind": "Deduction",
+        "mode": "Fixed",
+        "amount": 50000,
+        "salaryConstitutive": false,
+        "remainingCap": 0
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 1500000 },
+      { "code": "transport_allowance", "amount": 124548 },
+      { "code": "recurring:aaaaaaaa-0000-0000-0000-000000000002", "amount": 200000 },
+      { "code": "ibc", "amount": 1700000 },
+      { "code": "recurring:aaaaaaaa-0000-0000-0000-000000000001", "amount": 120000 },
+      { "code": "health_employee", "amount": 68000 },
+      { "code": "pension_employee", "amount": 68000 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 204000 },
+      { "code": "arl", "amount": 8900 },
+      { "code": "compensation_fund", "amount": 68000 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 151985 },
+      { "code": "severance_interest", "amount": 18245 },
+      { "code": "premium", "amount": 151985 },
+      { "code": "vacation", "amount": 70890 }
+    ],
+    "net": 1568548,
+    "employerCost": 2498553
+  },
+  "notes": [
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 3 000 000 ÷ 30 × 15 = 1500000; salary = round(0 + 1500000) − 0 = 1 500 000",
+    "recurring Libranza = round(min(300000, tope restante 120000)) = 120 000",
+    "recurring Bono de permanencia = round(200000 × 15 ÷ 15) = 200 000",
+    "recurring Préstamo agotado: min(50000, tope restante 0) = 0 ⇒ sin línea",
+    "transport_allowance = round(0 + 249 095 ÷ 30 × 15) − 0 = round(124547.5) − 0 = 124 548",
+    "SalDev_m = 0 + 1500000 + 0 + 200000 = 1700000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(1700000) = 1 700 000",
+    "health_employee = al peso(1 700 000 × 0,04 = 68000) − 0 = 68 000",
+    "pension_employee = al peso(1 700 000 × 0,04) − 0 = 68 000",
+    "solidarity_fund: ≈1.7134 SMMLV < 4 y sin retención previa ⇒ sin línea",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 3 200 000 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(1 700 000 × 0.12) − 0 = 204 000",
+    "arl = techo100(1700000 × 0.00522 = 8874) − 0 = 8 900",
+    "compensation_fund = techo100(1700000 × 0,04) − 0 = 68 000",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 1500000 + 124548 + 0 + 200000 = 1824548; severance = round(151984.8484) = 151 985; severance_interest = round(18245.48) = 18 245; premium = 151 985; vacation = round((1500000 + 200000) × 0,0417 = 70890) = 70 890",
+    "totalEarned = 1500000 + 124548 + 0 + 200000 + 0 = 1824548; totalDeductions = 256000; net = 1568548; employerCost = 1824548 + aportes 280900 + provisiones 393105 = 2498553"
+  ]
+}

@@ -55,6 +55,39 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
             (matching.Skip((page - 1) * pageSize).Take(pageSize).ToList(), matching.Count));
     }
 
+    /// <summary>Las últimas exclusiones que llegaron a <see cref="SearchActiveFilteredAsync"/>.</summary>
+    public (IReadOnlyCollection<Guid>? Categories, IReadOnlyCollection<Guid>? Products)? LastExclusions { get; private set; }
+
+    public bool LastOrderByName { get; private set; }
+
+    public Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId, string? search, string? pricedInCurrency, IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds, IReadOnlyCollection<Guid>? excludedProductIds, bool orderByName, int page,
+        int pageSize, CancellationToken cancellationToken)
+    {
+        SearchCalls++;
+        LastOrderByName = orderByName;
+        LastCategoryIds = categoryIds;
+        LastExclusions = (excludedCategoryIds, excludedProductIds);
+        var matching = products
+            .Where(product => product.TenantId == tenantId && product.IsActive)
+            .Where(product => excludedProductIds is null || !excludedProductIds.Contains(product.Id.Value))
+            .Where(product => pricedInCurrency is null
+                || product.Variants.Any(variant => variant.IsActive && variant.PriceIn(pricedInCurrency) is not null))
+            .ToList();
+        return Task.FromResult<(IReadOnlyList<Product>, int)>(
+            (matching.Skip((page - 1) * pageSize).Take(pageSize).ToList(), matching.Count));
+    }
+
+    public Task<IReadOnlyList<ProductBasics>> FindBasicsByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ProductBasics>>(products
+            .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id))
+            .Select(product => new ProductBasics(
+                product.Id, product.Name, product.CategoryId, product.Variants.Count,
+                product.Variants.Count == 1 ? product.Variants[0].Code : null))
+            .ToList());
+
     public Task<IReadOnlyList<Product>> ListForExportAsync(
         Guid tenantId, string? search, string? name, string? code, bool? isActive, ProductKind? kind, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -75,7 +108,7 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
-        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, bool includeCosts, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public Task<(IReadOnlyList<ProductSummary> Items, int Total)> SearchSummariesAsync(
@@ -238,4 +271,39 @@ internal sealed record VariantWorld(Product Product, OptionDefinition Size, Guid
         var valueId = Size.Values.Single(candidate => candidate.Value == value).Id;
         return Product.Variants.Single(variant => variant.OptionValueIds.Contains(valueId));
     }
+}
+
+/// <summary>
+/// Spec 2026-11-22: el resolutor de precios de canal. Sin <paramref name="listedChannel"/> todo canal vende al base; con él, ese
+/// canal tiene una lista que multiplica el base por <paramref name="factor"/> (sin redondeo: la regla real la prueban
+/// <c>PriceListTests</c> y la integración de Catalog). Anota qué canales se pidieron.
+/// </summary>
+internal sealed class FakePriceListPricing(PriceChannel? listedChannel = null, decimal factor = 1m) : IPriceListPricing
+{
+    private readonly PriceList _list = PriceList.Create(
+        Guid.CreateVersion7(), "Lista de prueba", 0m, PriceListVisibility.AllActive, [], DateTimeOffset.UnixEpoch);
+
+    public List<PriceChannel> RequestedChannels { get; } = [];
+
+    public Task<PriceList?> ListForChannelAsync(Guid tenantId, PriceChannel channel, CancellationToken cancellationToken)
+    {
+        RequestedChannels.Add(channel);
+        return Task.FromResult(channel == listedChannel ? _list : null);
+    }
+
+    public Task<PriceList?> FindAsync(Guid tenantId, PriceListId id, CancellationToken cancellationToken) =>
+        Task.FromResult<PriceList?>(id == _list.Id ? _list : null);
+
+    public Task<PriceBook> BookAsync(
+        Guid tenantId, PriceList? list, IReadOnlyCollection<PricedVariant> variants, CancellationToken cancellationToken) =>
+        Task.FromResult(PriceBook.BasePrices(list is null
+            ? variants
+            : variants.Select(variant => variant with
+            {
+                BasePrices = variant.BasePrices.ToDictionary(pair => pair.Key, pair => pair.Value * factor),
+            })));
+
+    public Task<PriceBook> BookForAdjustmentAsync(
+        Guid tenantId, decimal adjustmentPercent, IReadOnlyCollection<PricedVariant> variants, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Ningún adaptador de estas pruebas lo usa.");
 }

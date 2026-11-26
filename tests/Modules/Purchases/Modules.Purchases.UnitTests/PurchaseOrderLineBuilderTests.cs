@@ -99,6 +99,43 @@ public sealed class PurchaseOrderLineBuilderTests
         Assert.Equal("USD", build.Currency);
     }
 
+    // Spec 2026-11-19: el flag vivo viaja en el armado y el borrador sigue trayendo el costo (la vista previa lo usa); quien lo
+    // descarta es el dominio. Una orden externa nunca se oculta, aunque la lista de algún mayorista lo esté.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ALinkedBuildCarriesTheLiveShowPricesAndStillTheCost(bool showPrices)
+    {
+        var supplier = Guid.CreateVersion7();
+        _suppliers.Add(supplier, "Mayorista", linkedTenantId: Guid.CreateVersion7());
+        var item = _wholesale.Add("ACE-1", 12500m, 4.8m, 11900m, 19m);
+        _wholesale.ShowPrices = showPrices;
+
+        var build = await new PurchaseOrderLineBuilder(_suppliers, _catalog, _wholesale).BuildAsync(
+            TenantId,
+            new PreviewPurchaseOrderCommand(TenantId, supplier, "COP", null, [new PurchaseOrderLineInput(item.VariantId, 1m, null)]),
+            CancellationToken.None);
+
+        Assert.Equal(showPrices, build.ShowPrices);
+        Assert.Equal(10000m, Assert.Single(build.Lines).UnitCost);
+    }
+
+    [Fact]
+    public async Task AnExternalBuildAlwaysShowsPrices()
+    {
+        var supplier = Guid.CreateVersion7();
+        _suppliers.Add(supplier, "Activo");
+        var variant = _catalog.Add("SKU-1", "Camiseta", 19m);
+        _wholesale.ShowPrices = false;
+
+        var build = await new PurchaseOrderLineBuilder(_suppliers, _catalog, _wholesale).BuildAsync(
+            TenantId,
+            new PreviewPurchaseOrderCommand(TenantId, supplier, "COP", null, [new PurchaseOrderLineInput(variant.VariantId, 1m, 5m)]),
+            CancellationToken.None);
+
+        Assert.True(build.ShowPrices);
+    }
+
     private readonly FakeWholesaleCatalog _wholesale = new();
 
     private async Task<IReadOnlyList<PurchaseOrderLineDraft>> Build(

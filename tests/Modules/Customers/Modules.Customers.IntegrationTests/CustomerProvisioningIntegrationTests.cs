@@ -81,6 +81,29 @@ public sealed class CustomerProvisioningIntegrationTests
             + $"AND payload->>'resourceId' = '{created.Id}' AND payload->>'actorType' = 'Integration' AND payload->>'actorId' = '{Guid.Empty}'"));
     }
 
+    // Decisión del owner 2026-11-24: la etiqueta de la primera dirección de la libreta puede venir del llamador (el contacto de Mayorista).
+    [Fact]
+    public async Task CreateCompleteWithAnAddressLabelNamesTheFirstAddressWithIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var data = new CompleteCustomerData(
+            "Distribuciones Norte SAS", "NIT", "900123456", "310 935 2187", "ana@distri.co", "Calle 10 # 45-12", "CO", city.CityId, null,
+            null, AddressLabel: "Ana Pérez");
+
+        var created = await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken));
+
+        Assert.Equal("Ana Pérez|Calle 10 # 45-12|true", await ScalarAsync(database.GetConnectionString(),
+            "SELECT a.name || '|' || a.address || '|' || a.is_principal FROM customers.customer_addresses a "
+            + $"WHERE a.customer_id = '{created.Id}'"));
+        Assert.Equal("Distribuciones Norte SAS", await ScalarAsync(database.GetConnectionString(),
+            $"SELECT name FROM customers.customers WHERE id = '{created.Id}'"));
+    }
+
     [Fact]
     public async Task CreateIncompletePersistsIncomplete()
     {

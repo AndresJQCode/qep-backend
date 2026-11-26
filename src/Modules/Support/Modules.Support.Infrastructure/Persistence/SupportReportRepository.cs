@@ -16,7 +16,9 @@ internal sealed class SupportReportRepository(SupportDbContext dbContext) : ISup
         // Revisión del bloque D: el último cambio de estado de cada ticket, de la traza, para saber si un Cerrado viene de Resuelto.
         var rows = await dbContext.Tickets
             .AsNoTracking()
-            .Where(ticket => ticket.TenantId == tenantId && ticket.ReceivedAt >= from && ticket.ReceivedAt < to)
+            // Spec 2026-11-22 §5.3: una tarea interna no es un ticket de cliente; fuera de la fuente, así los totales y el desglose por
+            // tipo (que ya omite el tipo interno) cuentan lo mismo.
+            .Where(ticket => ticket.TenantId == tenantId && !ticket.IsInternal && ticket.ReceivedAt >= from && ticket.ReceivedAt < to)
             .Select(ticket => new
             {
                 ticket.Id,
@@ -60,6 +62,7 @@ internal sealed class SupportReportRepository(SupportDbContext dbContext) : ISup
             .Where(survey => survey.TenantId == tenantId
                 && dbContext.Tickets.Any(ticket => ticket.Id == survey.TicketId
                     && ticket.TenantId == tenantId
+                    && !ticket.IsInternal
                     && ticket.ReceivedAt >= from
                     && ticket.ReceivedAt < to))
             .Select(survey => new SupportReportSurveyRow(survey.TicketId.Value, survey.Status, survey.ReasonCode, survey.Rating))

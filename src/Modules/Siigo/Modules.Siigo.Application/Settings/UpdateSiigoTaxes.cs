@@ -19,29 +19,30 @@ public sealed record UpdateSiigoTaxesCommand(
     IReadOnlyList<SiigoWithholdingLinkInput>? Withholdings,
     long ExpectedVersion) : ICommand<SiigoSettingsDto>;
 
-/// <summary>La forma del cuerpo: porcentajes de 0 a 100 sin repetir, tasas sin repetir y ids de Siigo del largo de la columna.</summary>
+/// <summary>La forma del cuerpo: porcentajes de 0 a 100 sin repetir, tasas sin repetir y ids de Siigo del largo de la columna. Un elemento
+/// nulo de las listas falla en su propio campo.</summary>
 public sealed class UpdateSiigoTaxesValidator : AbstractValidator<UpdateSiigoTaxesCommand>
 {
     public UpdateSiigoTaxesValidator()
     {
         RuleFor(command => command.Vat)
             .NotNull()
-            .Must(vat => vat!.Select(link => link.TaxPercentage).Distinct().Count() == vat!.Count)
+            .Must(vat => SiigoSettingsSupport.HasNoRepeated(vat!, link => link.TaxPercentage))
             .When(command => command.Vat is not null)
             .WithMessage("A VAT percentage cannot repeat.")
             .OverridePropertyName("vat");
-        RuleForEach(command => command.Vat).ChildRules(link =>
+        RuleForEach(command => command.Vat).NotNull().ChildRules(link =>
         {
             link.RuleFor(value => value.TaxPercentage).InclusiveBetween(0, 100).OverridePropertyName("taxPercentage");
             link.RuleFor(value => value.SiigoTaxId).MaximumLength(SiigoTaxLink.TaxIdMaxLength).OverridePropertyName("siigoTaxId");
         }).OverridePropertyName("vat");
         RuleFor(command => command.Withholdings)
             .NotNull()
-            .Must(rates => rates!.Select(link => link.TaxRateId).Distinct().Count() == rates!.Count)
+            .Must(rates => SiigoSettingsSupport.HasNoRepeated(rates!, link => link.TaxRateId))
             .When(command => command.Withholdings is not null)
             .WithMessage("A withholding rate cannot repeat.")
             .OverridePropertyName("withholdings");
-        RuleForEach(command => command.Withholdings).ChildRules(link =>
+        RuleForEach(command => command.Withholdings).NotNull().ChildRules(link =>
         {
             link.RuleFor(value => value.TaxRateId).NotEmpty().OverridePropertyName("taxRateId");
             link.RuleFor(value => value.SiigoTaxId).MaximumLength(SiigoTaxLink.TaxIdMaxLength).OverridePropertyName("siigoTaxId");
@@ -60,6 +61,7 @@ public sealed class UpdateSiigoTaxesHandler(
     ISiigoSettingsRepository settingsRepository,
     ISiigoCompanyDirectory companies,
     ISiigoTaxRateDirectory taxRates,
+    ISiigoMemberDirectory members,
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
@@ -80,7 +82,7 @@ public sealed class UpdateSiigoTaxesHandler(
         settings.ReplaceWithholdingLinks(MergeWithholdings(settings, command.Withholdings!, await OfferedRatesAsync(settings, cancellationToken)));
         SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoSettingsSteps.Taxes, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, cancellationToken);
+        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, members, cancellationToken);
     }
 
     private async Task<HashSet<Guid>> OfferedRatesAsync(SiigoSettings settings, CancellationToken cancellationToken) =>

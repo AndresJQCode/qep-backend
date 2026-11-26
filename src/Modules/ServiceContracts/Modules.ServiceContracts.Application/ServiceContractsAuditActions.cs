@@ -17,11 +17,25 @@ public static class ServiceContractsAuditActions
 
     public const string ServiceCancelled = "billing.service.cancelled";
 
+    public const string ServiceDeleted = "billing.service.deleted";
+
     public const string ProfileUpdated = "billing.profile.updated";
 
     public const string SettingsUpdated = "billing.settings.updated";
 
     public const string ImportCompleted = "billing.import.completed";
+
+    // Reajuste de precio (spec 2026-11-24 §6.14). La aplicación de un programado en la corrida diaria no audita: queda en el
+    // historial de precios del contrato.
+    public const string ServicePriceReviewUpdated = "billing.service.price_review_updated";
+
+    public const string ServicePriceScheduled = "billing.service.price_scheduled";
+
+    public const string ServicePriceScheduleCancelled = "billing.service.price_schedule_cancelled";
+
+    public const string ServicePriceKept = "billing.service.price_kept";
+
+    public const string IpcSaved = "billing.ipc.saved";
 
     /// <summary>Tipos de recurso (<c>resourceType</c>) de esas acciones.</summary>
     public static class Resources
@@ -35,5 +49,8 @@ public static class ServiceContractsAuditActions
         public const string Settings = "settings";
 
         public const string Import = "import";
+
+        /// <summary>El <c>resourceId</c> es el año.</summary>
+        public const string IpcRate = "ipc_rate";
     }
 }

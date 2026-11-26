@@ -24,7 +24,9 @@ public sealed record UpdateCustomerCommand(
     // Spec impuestos por tipo §9.2: null no toca las tasas guardadas; una lista vacía las quita.
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
     // Spec ReteICA por empresa §9.3: null no toca los municipios guardados; una lista vacía los quita.
-    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
+    // Spec 2026-11-23: el PUT reemplaza, así que null borra la región guardada (igual que CityName).
+    Guid? RegionId = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
 public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCommand>
@@ -69,6 +71,8 @@ public sealed class UpdateCustomerHandler(
 
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
+        _ = await CustomerRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country, command.RegionId, CustomerRegionRules.CustomerRegionInvalid, cancellationToken);
 
         var customer = await repository.FindAsync(
             command.TenantId,
@@ -135,7 +139,8 @@ public sealed class UpdateCustomerHandler(
                     Address = command.Address,
                     Country = command.Country,
                     CityId = command.CityId,
-                    CityName = command.CityName
+                    CityName = command.CityName,
+                    RegionId = command.RegionId
                 },
                 CustomerMapping.ToCommercialInfo(
                     command.ClassificationId, command.VatSurplus),
@@ -180,7 +185,8 @@ public sealed class UpdateCustomerHandler(
                 Address = command.Address,
                 Country = command.Country,
                 CityId = command.CityId,
-                CityName = command.CityName
+                CityName = command.CityName,
+                RegionId = command.RegionId
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.VatSurplus),

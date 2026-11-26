@@ -22,6 +22,41 @@ public sealed class DistributorComposerTests
     }
 
     [Fact]
+    public async Task TheDetailCarriesTheResolvedColombianCity()
+    {
+        var world = new DistributorWorld();
+        var distributor = world.SeedInvited(cityId: world.MedellinId, address: "Calle 10 # 40-20");
+
+        var detail = await world.Composer().DetailAsync(distributor, Ct);
+
+        Assert.Equal(
+            new DistributorCityDto(world.MedellinId, "Medellín", world.Cities.DepartmentId, "Antioquia"), detail.City);
+        Assert.Equal("Calle 10 # 40-20", detail.Address);
+    }
+
+    [Fact]
+    public async Task TheDetailCarriesTheTypedCityOutsideColombia()
+    {
+        var world = new DistributorWorld();
+        var distributor = world.SeedInvited(country: "ES", identificationType: "NIF", cityName: "Madrid");
+
+        var detail = await world.Composer().DetailAsync(distributor, Ct);
+
+        Assert.Equal(new DistributorCityDto(null, "Madrid"), detail.City);
+    }
+
+    [Fact]
+    public async Task TheDetailWithoutCityHasNullCity()
+    {
+        var world = new DistributorWorld();
+
+        var detail = await world.Composer().DetailAsync(world.SeedInvited(), Ct);
+
+        Assert.Null(detail.City);
+        Assert.Null(detail.Address);
+    }
+
+    [Fact]
     public async Task AllowedActionsAreEmptyWithoutTheManagePermission()
     {
         var world = new DistributorWorld(WholesalePermissions.DistributorRead);
@@ -58,11 +93,11 @@ public sealed class DistributorComposerTests
 
         Assert.Equal(3, summaries.Count);
         Assert.Equal(1, world.Members.FindNamesCalls);
-        Assert.Equal(1, world.PriceLists.FindManyCalls);
+        Assert.Equal(1, world.PriceLists.ListCalls);
         Assert.Equal(1, world.TenantNames.Calls);
         Assert.Equal(("Distri Norte", distributorTenant), (summaries[1].DistributorTenant!.Name, summaries[1].DistributorTenant!.Id));
         Assert.Null(summaries[0].DistributorTenant);
-        Assert.All(summaries, summary => Assert.Equal(("Mayoristas", 15m), (summary.PriceList.Name, summary.PriceList.DiscountPercent)));
+        Assert.All(summaries, summary => Assert.Equal(("Mayoristas", -15m), (summary.PriceList.Name, summary.PriceList.AdjustmentPercent)));
     }
 
     [Fact]

@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Catalog;
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -27,7 +29,8 @@ public sealed class QuotationTests
         IReadOnlyList<WithholdingRate>? customerWithholdings = null,
         bool customerVatSurplus = false,
         DateOnly? validUntil = null,
-        string defaultCurrency = "COP") =>
+        string defaultCurrency = "COP",
+        QuotationKind kind = QuotationKind.Standard) =>
         Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -44,7 +47,8 @@ public sealed class QuotationTests
             customerWithholdings ?? [],
             MunicipalContext.None,
             AdvisorId,
-            Now);
+            Now,
+            kind);
 
     private static QuotationBillingAccount BillingAccountIn(string currency) =>
         BillingAccount with { Currency = currency };
@@ -213,7 +217,7 @@ public sealed class QuotationTests
         Assert.Equal(5m, item.DiscountPercentage);
         // El precio viene con IVA incluido: 10 * 119_000 = 1_190_000; descuento 5% = 59_500;
         // cobrado = 1_130_500.
-        Assert.Equal(59_500m, item.DiscountAmount);
+        Assert.Equal(50_000m, item.DiscountAmount); // sin IVA (spec 2026-11-23): 59.500 / 1,19
         // El IVA se extrae de lo cobrado (x 19/119 = 180_500), no se suma encima, y el
         // subtotal es lo que queda de base: 1_130_500 - 180_500 = 950_000.
         Assert.Equal(950_000m, item.Subtotal);
@@ -233,7 +237,7 @@ public sealed class QuotationTests
 
         // cobrado = 1_130_500 con IVA adentro; IVA extraido = 180_500; base = 950_000
         Assert.Equal(950_000m, quotation.Subtotal);
-        Assert.Equal(59_500m, quotation.DiscountAmount);
+        Assert.Equal(50_000m, quotation.DiscountAmount);
         Assert.Equal(180_500m, quotation.TaxAmount);
         Assert.Equal(19m, quotation.TaxPercentage);
         Assert.Equal(1_130_500m, quotation.Total);
@@ -1613,7 +1617,7 @@ public sealed class QuotationTests
 
         // 3 x 10.000 + 3 x 20.000 = 90.000, menos 5% = 85.500, IVA adentro.
         Assert.Equal(85_500m, quotation.Total);
-        Assert.Equal(4_500m, quotation.DiscountAmount);
+        Assert.Equal(3_781.51m, quotation.DiscountAmount); // sin IVA: 4.500 con IVA
         Assert.Equal(versionBefore, quotation.Version);
     }
 
@@ -1626,7 +1630,7 @@ public sealed class QuotationTests
         var item = QuotationItemId.New();
 
         quotation.AddItem(item, Guid.NewGuid(), Guid.NewGuid(), 3m, 10_000m, 5m, 19, AdvisorId, Now);
-        Assert.Equal(1_500m, quotation.DiscountAmount);
+        Assert.Equal(1_260.50m, quotation.DiscountAmount); // sin IVA: 1.500 con IVA
 
         quotation.ApplyGroupDiscounts(
             new Dictionary<QuotationItemId, QuotationItemDiscount>
@@ -1661,5 +1665,286 @@ public sealed class QuotationTests
 
         Assert.Equal(5m, quotation.Items.Single(item => item.Id == mentioned).DiscountPercentage);
         Assert.Equal(7m, quotation.Items.Single(item => item.Id == untouched).DiscountPercentage);
+    }
+
+    // ---- Cotizaciones de proyecto (spec 2026-11-26) ----
+    //
+    // Una cotización `Project` lleva un alcance y una sola línea, la del servicio, con precio = total. La arma el
+    // agregado: nadie agrega ni edita líneas a mano.
+
+    private static readonly ProjectServiceLine Service =
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), 19, ProductKind.Service, SalesUnit.Hour);
+
+    private static Quotation NewProjectQuotation(QuotationBillingAccount? billingAccount = null) =>
+        NewQuotation(billingAccount: billingAccount ?? BillingAccount, kind: QuotationKind.Project);
+
+    private static ProjectScope GlobalScope(Guid? serviceVariantId, decimal? price) =>
+        ProjectScope.Create(
+            serviceVariantId, ProjectPricingMode.Global, price, [],
+            [new ProjectItem(Guid.CreateVersion7(), "Soporte durante el lanzamiento")]);
+
+    private static ProjectScope PerPhaseScope(Guid? serviceVariantId, params decimal?[] prices) =>
+        ProjectScope.Create(
+            serviceVariantId, ProjectPricingMode.PerPhase, null,
+            [.. prices.Select(price => new ProjectPhase(
+                Guid.CreateVersion7(), "Descubrimiento", price,
+                [new ProjectItem(Guid.CreateVersion7(), "Talleres con el equipo de ventas")]))],
+            []);
+
+    [Fact]
+    public void AQuotationIsStandardWithoutAScopeByDefault()
+    {
+        var quotation = NewQuotation();
+
+        Assert.Equal(QuotationKind.Standard, quotation.Kind);
+        Assert.Null(quotation.ProjectScope);
+        Assert.Null(quotation.ProjectPricingMode);
+    }
+
+    [Fact]
+    public void AProjectQuotationStartsWithAnEmptyScopeAndNoLines()
+    {
+        var quotation = NewProjectQuotation();
+
+        Assert.Equal(QuotationKind.Project, quotation.Kind);
+        Assert.Equal(ProjectScope.Empty, quotation.ProjectScope);
+        Assert.Equal(ProjectPricingMode.Global, quotation.ProjectPricingMode);
+        Assert.Empty(quotation.Items);
+        Assert.Equal(1, quotation.Version);
+    }
+
+    [Fact]
+    public void ReplacingTheScopeWithAServiceLeavesOneLineAtTheTotal()
+    {
+        var quotation = NewProjectQuotation();
+        var scope = PerPhaseScope(Service.VariantId, 600m, 400m);
+
+        quotation.ReplaceProjectScope(scope, Service, AdvisorId, Now.AddMinutes(1));
+
+        Assert.Equal(scope, quotation.ProjectScope);
+        Assert.Equal(ProjectPricingMode.PerPhase, quotation.ProjectPricingMode);
+        var line = Assert.Single(quotation.Items);
+        Assert.Equal(Service.VariantId, line.VariantId);
+        Assert.Equal(Service.ProductId, line.ProductId);
+        Assert.Equal(1m, line.Quantity);
+        Assert.Equal(1000m, line.UnitPrice);
+        Assert.Equal(0m, line.DiscountPercentage);
+        Assert.Equal(19, line.TaxPercentage);
+        Assert.Equal(ProductKind.Service, line.Kind);
+        Assert.Equal(SalesUnit.Hour, line.SalesUnit);
+        Assert.Equal(1, line.Position);
+        Assert.Equal(1000m, quotation.Total);
+        Assert.Equal(2, quotation.Version);
+        Assert.Equal(AdvisorId, quotation.UpdatedBy);
+        Assert.Equal(Now.AddMinutes(1), quotation.UpdatedAt);
+    }
+
+    [Fact]
+    public void ChangingTheServiceSwapsTheLine()
+    {
+        var quotation = NewProjectQuotation();
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1000m), Service, AdvisorId, Now);
+        var oldLine = quotation.Items.Single().Id;
+        var other = new ProjectServiceLine(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), 5, ProductKind.Service, SalesUnit.Month);
+        var version = quotation.Version;
+
+        quotation.ReplaceProjectScope(GlobalScope(other.VariantId, 1000m), other, AdvisorId, Now.AddMinutes(1));
+
+        var line = Assert.Single(quotation.Items);
+        Assert.NotEqual(oldLine, line.Id);
+        Assert.Equal(other.VariantId, line.VariantId);
+        Assert.Equal(5, line.TaxPercentage);
+        Assert.Equal(1, line.Position);
+        Assert.Equal(version + 1, quotation.Version);
+    }
+
+    [Fact]
+    public void KeepingTheServiceOnlyChangesThePrice()
+    {
+        var quotation = NewProjectQuotation();
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1000m), Service, AdvisorId, Now);
+        var lineId = quotation.Items.Single().Id;
+        var version = quotation.Version;
+
+        // Sin volver a consultar el catálogo: el servicio no cambió.
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 2500m), null, AdvisorId, Now.AddMinutes(1));
+
+        var line = Assert.Single(quotation.Items);
+        Assert.Equal(lineId, line.Id);
+        Assert.Equal(2500m, line.UnitPrice);
+        Assert.Equal(19, line.TaxPercentage);
+        Assert.Equal(2500m, quotation.Total);
+        Assert.Equal(version + 1, quotation.Version);
+    }
+
+    [Fact]
+    public void ReplacingTheScopeWithTheSameContentDoesNotTouchTheQuotation()
+    {
+        var quotation = NewProjectQuotation();
+        var scope = GlobalScope(Service.VariantId, 1000m);
+        quotation.ReplaceProjectScope(scope, Service, AdvisorId, Now);
+        var version = quotation.Version;
+
+        quotation.ReplaceProjectScope(scope with { }, null, AdvisorId, Now.AddMinutes(1));
+
+        Assert.Equal(version, quotation.Version);
+        Assert.Equal(Now, quotation.UpdatedAt);
+    }
+
+    [Fact]
+    public void NoServiceMeansNoLineAndNoTotalMeansPriceZero()
+    {
+        var quotation = NewProjectQuotation();
+        quotation.ReplaceProjectScope(GlobalScope(null, 1000m), null, AdvisorId, Now);
+        Assert.Empty(quotation.Items);
+        Assert.Equal(0m, quotation.Total);
+
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, null), Service, AdvisorId, Now);
+        Assert.Equal(0m, Assert.Single(quotation.Items).UnitPrice);
+
+        quotation.ReplaceProjectScope(GlobalScope(null, null), null, AdvisorId, Now);
+        Assert.Empty(quotation.Items);
+    }
+
+    [Fact]
+    public void PhasePricesAreRoundedWithTheDocumentRule()
+    {
+        var quotation = NewProjectQuotation();
+
+        quotation.ReplaceProjectScope(PerPhaseScope(Service.VariantId, 100.4m, 200.4m), Service, AdvisorId, Now);
+
+        Assert.Equal([100m, 200m], quotation.ProjectScope!.Phases.Select(phase => phase.Price!.Value));
+        Assert.Equal(300m, quotation.Items.Single().UnitPrice);
+    }
+
+    // P8: la línea es la suma de las fases ya redondeadas, también cuando cambia la regla sin tocar el alcance.
+    [Fact]
+    public void ChangingTheRoundingRuleKeepsTheProjectLineAtTheSumOfItsPhases()
+    {
+        var quotation = NewProjectQuotation(BillingAccountIn("USD"));
+        quotation.ReplaceProjectScope(PerPhaseScope(Service.VariantId, 100.4m, 200.4m), Service, AdvisorId, Now);
+        var version = quotation.Version;
+
+        quotation.UsePriceRounding(new PriceRounding(0, PriceRoundingMode.Nearest), Now.AddMinutes(1));
+
+        Assert.Equal([100m, 200m], quotation.ProjectScope!.Phases.Select(phase => phase.Price!.Value));
+        Assert.Equal(300m, quotation.Items.Single().UnitPrice);
+        Assert.Equal(300m, quotation.Total);
+        Assert.Equal(version, quotation.Version);
+    }
+
+    [Fact]
+    public void ReplacingTheScopeNeedsTheNewServiceLine()
+    {
+        var quotation = NewProjectQuotation();
+        var other = new ProjectServiceLine(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), 19, ProductKind.Service, SalesUnit.Unit);
+
+        Assert.Throws<InvalidOperationException>(
+            () => quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1m), null, AdvisorId, Now));
+        Assert.Throws<InvalidOperationException>(
+            () => quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1m), other, AdvisorId, Now));
+        Assert.Equal(ProjectScope.Empty, quotation.ProjectScope);
+        Assert.Empty(quotation.Items);
+    }
+
+    [Fact]
+    public void AStandardQuotationHasNoProjectScope() =>
+        Assert.Throws<InvalidOperationException>(
+            () => NewQuotation().ReplaceProjectScope(GlobalScope(null, null), null, AdvisorId, Now));
+
+    [Fact]
+    public void ReplacingTheScopeNeedsAnEditableQuotation()
+    {
+        var quotation = NewProjectQuotation();
+        quotation.Void(AdvisorId, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => quotation.ReplaceProjectScope(GlobalScope(null, null), null, AdvisorId, Now));
+
+        Assert.Equal("quotation.quotation.not_editable", error.Code);
+    }
+
+    [Fact]
+    public void ManualLinesAreRejectedOnAProject()
+    {
+        var quotation = NewProjectQuotation();
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1000m), Service, AdvisorId, Now);
+        var line = quotation.Items.Single().Id;
+
+        var add = Assert.Throws<QuotationsDomainException>(() => quotation.AddItem(
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 1m, 0m, 19, AdvisorId, Now));
+        var update = Assert.Throws<QuotationsDomainException>(
+            () => quotation.UpdateItemQuantity(line, 2m, 0m, 19, AdvisorId, Now));
+        var remove = Assert.Throws<QuotationsDomainException>(() => quotation.RemoveItem(line, AdvisorId, Now));
+
+        Assert.All(
+            [add, update, remove],
+            error => Assert.Equal("quotation.project.items_not_allowed", error.Code));
+        Assert.Equal(1m, Assert.Single(quotation.Items).Quantity);
+    }
+
+    // Review Focus 1: cambiar de moneda no pide precios al catálogo; lo escrito en la moneda vieja se borra.
+    [Fact]
+    public void AProjectChangingCurrencyClearsItsPricesWithoutTheCatalog()
+    {
+        var quotation = NewProjectQuotation(BillingAccountIn("COP"));
+        quotation.ReplaceProjectScope(PerPhaseScope(Service.VariantId, 600m, 400m), Service, AdvisorId, Now);
+        var line = quotation.Items.Single().Id;
+
+        quotation.UpdateDetails(
+            null, null, null, QuotationParties.Empty, billingAccount: BillingAccountIn("USD"), repricing: null,
+            isRetail: false, globalScaleFloor: null, MunicipalContext.None, AdvisorId, Now);
+
+        Assert.Equal("USD", quotation.Currency);
+        Assert.Null(quotation.ProjectScope!.Total);
+        Assert.False(quotation.ProjectScope.HasPrices);
+        Assert.Equal(2, quotation.ProjectScope.Phases.Count);
+        Assert.Equal(line, Assert.Single(quotation.Items).Id);
+        Assert.Equal(0m, quotation.Items.Single().UnitPrice);
+        Assert.Equal(0m, quotation.Total);
+    }
+
+    [Fact]
+    public void AProjectNeverRequiresShipping()
+    {
+        var quotation = NewProjectQuotation();
+        Assert.False(quotation.RequiresShipping);
+
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1000m), Service, AdvisorId, Now);
+
+        Assert.False(quotation.RequiresShipping);
+    }
+
+    [Fact]
+    public void SendingOrConvertingAnIncompleteProjectSaysIncomplete()
+    {
+        var quotation = NewProjectQuotation();
+
+        // Sin servicio no hay líneas: el motivo es el proyecto, no «sin productos».
+        Assert.Equal(
+            "quotation.project.incomplete",
+            Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToOrder).Code);
+        Assert.Equal(
+            "quotation.project.incomplete",
+            Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable).Code);
+        Assert.False(quotation.CanBeConvertedToOrder);
+
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, null), Service, AdvisorId, Now);
+
+        Assert.Equal(
+            "quotation.project.incomplete",
+            Assert.Throws<QuotationsDomainException>(quotation.EnsureSendable).Code);
+        Assert.Equal(
+            "quotation.project.incomplete",
+            Assert.Throws<QuotationsDomainException>(quotation.EnsureConvertibleToOrder).Code);
+        Assert.False(quotation.CanBeConvertedToOrder);
+
+        quotation.ReplaceProjectScope(GlobalScope(Service.VariantId, 1000m), null, AdvisorId, Now);
+
+        quotation.EnsureSendable();
+        quotation.EnsureConvertibleToOrder();
+        Assert.True(quotation.CanBeConvertedToOrder);
     }
 }

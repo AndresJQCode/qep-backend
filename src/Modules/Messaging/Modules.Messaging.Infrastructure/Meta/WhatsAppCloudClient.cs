@@ -261,6 +261,10 @@ internal sealed partial class WhatsAppCloudClient(
         return PostMessageAsync(sender, MessagePayload(target, "video", content, callbackData, contextWamid), cancellationToken);
     }
 
+    public Task<SendResult> SendStickerAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        PostMessageAsync(sender, MessagePayload(target, "sticker", new JsonObject { ["id"] = mediaId }, callbackData, contextWamid), cancellationToken);
+
     public Task<SendResult> SendDocumentAsync(
         MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
         CancellationToken cancellationToken)

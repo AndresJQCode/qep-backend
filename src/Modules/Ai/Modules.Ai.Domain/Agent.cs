@@ -28,7 +28,7 @@ public sealed class Agent
     }
 
     /// <summary>Nace en borrador con la versión 1 de concurrencia (el DEFAULT de la columna).</summary>
-    public static Agent Create(Guid tenantId, string name, AgentConfig config, Guid by, DateTimeOffset now)
+    public static Agent Create(Guid tenantId, string name, AgentConfig config, Guid by, DateTimeOffset now, string? sourceTemplateId = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         return new Agent
@@ -44,6 +44,7 @@ public sealed class Agent
             CreatedBy = by,
             UpdatedAt = now,
             Version = 1,
+            SourceTemplateId = sourceTemplateId,
         };
     }
 
@@ -146,6 +147,9 @@ public sealed class Agent
     public Guid TenantId { get; private set; }
 
     public string Name { get; private set; }
+
+    /// <summary>La plantilla del sistema de la que salió (spec 2026-11-23 menores, M2). Sólo la pone crear desde plantilla; duplicar e importar no la copian. No cambia nunca.</summary>
+    public string? SourceTemplateId { get; private set; }
 
     public AgentStatus Status { get; private set; }
 

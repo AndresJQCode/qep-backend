@@ -12,8 +12,16 @@ internal static class SupportThreadRules
     /// Plan E6: un entrante vinculado (solo o desde «sin clasificar») reabre un ticket que esperaba al cliente; uno resuelto no (decisión
     /// pendiente P4). Lo reabre el sistema: el evento no tiene actor y la auditoría sale como sistema, porque el cambio lo causa el
     /// mensaje del cliente y no quien lo clasificó.
+    /// <para>Spec 2026-11-22 §6: si reabrió y el ticket tiene responsable, éste recibe «el cliente respondió» en su campana, salvo que él
+    /// mismo haya causado el cambio (<paramref name="actorMemberId"/>: el asesor que clasifica a mano un entrante; null en el seguimiento
+    /// del hilo, que es el sistema). Sin responsable no hay aviso inmediato: lo cubre el aviso de «sin asignar».</para>
     /// </summary>
-    public static void ReopenIfWaiting(SupportTicket ticket, SupportReadContext context, ISupportAuditPublisher auditPublisher)
+    public static void ReopenIfWaiting(
+        SupportTicket ticket,
+        SupportReadContext context,
+        ISupportAuditPublisher auditPublisher,
+        ISupportIntegrationEvents events,
+        Guid? actorMemberId)
     {
         if (ticket.Status is not SupportTicketStatus.WaitingOnCustomer)
         {
@@ -28,6 +36,11 @@ internal static class SupportThreadRules
             ticket.Id.ToString(),
             StatusFields,
             context.Now);
+
+        if (ticket.AssigneeMemberId is { } assignee && actorMemberId != assignee)
+        {
+            events.PublishCustomerReplied(ticket, context.Now);
+        }
     }
 
     /// <summary>Los mensajes de la conversación con esos ids, como los dibuja Soporte, por id. Un id que ya no está en Mensajería no

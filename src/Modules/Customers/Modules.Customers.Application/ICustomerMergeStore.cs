@@ -2,8 +2,8 @@ using Modules.Customers.Domain;
 
 namespace Modules.Customers.Application;
 
-/// <summary>Spec 2026-10-24 §3.4 (F14): las dos clases de Customers que la vista previa cuenta fuera del agregado.</summary>
-public sealed record CustomerMergeOwnedCounts(int Notes, int Addresses);
+/// <summary>Spec 2026-10-24 §3.4 (F14): las clases de Customers que la vista previa cuenta fuera del agregado.</summary>
+public sealed record CustomerMergeOwnedCounts(int Notes, int Addresses, int BillingProfiles);
 
 /// <summary>
 /// Spec 2026-10-24 §3.2–§3.4: lo que la fusión lee y escribe en <c>customers</c> sin pasar por el agregado. Todo recibe
@@ -39,7 +39,7 @@ public interface ICustomerMergeStore
     Task<IReadOnlyList<Guid>> RepointContactsAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken);
 
-    /// <summary>Las notas y las direcciones de envío de estos clientes (la vista previa, §3.4).</summary>
+    /// <summary>Las notas, las direcciones de envío y los perfiles de facturación de estos clientes (la vista previa, §3.4).</summary>
     Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
 
@@ -48,9 +48,17 @@ public interface ICustomerMergeStore
     /// principal del que queda sigue siendo la única. Las notas no cambian su <c>version</c>.
     /// Spec 2026-10-26 D-7: el historial de consentimiento (<c>data_consents</c>) también pasa al que queda; sólo cambia
     /// <c>customer_id</c>.
+    /// Los perfiles de facturación pasan todos, sin deduplicar y sin tope, como no principales; si el que queda no tenía
+    /// ninguno, el movido más antiguo (<c>created_at</c>, <c>id</c>) queda principal (owner, 2026-11-25).
     /// </summary>
     Task MoveOwnedAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El que queda releído sin tracking, con sus dos libretas, para la respuesta de la fusión: <see cref="MoveOwnedAsync"/>
+    /// escribe por fuera del agregado y la instancia cargada no ve lo que llegó.
+    /// </summary>
+    Task<Customer> ReadSurvivorAsync(Guid tenantId, Guid survivorId, CancellationToken cancellationToken);
 
     /// <summary><c>merged_into_id</c> del cliente; <c>null</c> si no está fusionado o no es del tenant.</summary>
     Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);

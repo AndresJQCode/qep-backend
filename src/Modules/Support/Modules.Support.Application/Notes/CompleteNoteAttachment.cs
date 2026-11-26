@@ -13,21 +13,18 @@ public sealed record CompleteNoteAttachmentCommand(Guid TenantId, Guid TicketId,
 /// <c>support.public.attachment_not_uploaded</c> (owner O1: an existing code).
 /// </summary>
 public sealed class CompleteNoteAttachmentHandler(
-    IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportAttachmentStorage storage)
     : ICommandHandler<CompleteNoteAttachmentCommand, SupportNoteAttachmentStatusDto>
 {
     public async Task<SupportNoteAttachmentStatusDto> HandleAsync(
         CompleteNoteAttachmentCommand command, CancellationToken cancellationToken)
     {
-        var (ticket, actor) = await SupportNoteAttachmentRules.EnsureWritableAsync(
-            executionContext, tenantModules, membershipDirectory, tickets, command.TenantId, command.TicketId,
-            static () => Task.CompletedTask, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, expectedVersion: null, cancellationToken);
+        SupportNoteAttachmentRules.EnsureOpen(ticket);
         return await storage.CompleteAsync(
-                command.TenantId, command.FileId, SupportNoteUploads.OwnerKey(ticket, actor), cancellationToken) switch
+                command.TenantId, command.FileId, SupportNoteUploads.OwnerKey(ticket.Id, actor), cancellationToken) switch
         {
             SupportAttachmentCompletion.Available => new SupportNoteAttachmentStatusDto("available"),
             SupportAttachmentCompletion.Rejected => new SupportNoteAttachmentStatusDto("rejected"),

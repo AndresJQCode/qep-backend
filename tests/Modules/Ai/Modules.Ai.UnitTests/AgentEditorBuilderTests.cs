@@ -26,6 +26,32 @@ public sealed class AgentEditorBuilderTests
     }
 
     [Fact]
+    public async Task TheEditorNamesTheTemplateTheAgentCameFrom()
+    {
+        var templates = new FakeTemplates(new SystemAgentTemplate("asistente-de-citas", "Asistente de citas", "Reserva citas.", [], "{}"));
+
+        var editor = await Builder(new FakeConnections(), templates: templates).BuildAsync(AgentFromTemplate(), Ct);
+
+        Assert.Equal(("asistente-de-citas", "Asistente de citas"), (editor.SourceTemplateId, editor.SourceTemplateName));
+    }
+
+    [Fact]
+    public async Task ATemplateThatNoLongerExistsKeepsTheIdWithoutAName()
+    {
+        var editor = await Builder(new FakeConnections()).BuildAsync(AgentFromTemplate(), Ct);
+
+        Assert.Equal(("asistente-de-citas", (string?)null), (editor.SourceTemplateId, editor.SourceTemplateName));
+    }
+
+    [Fact]
+    public async Task AnAgentWithoutATemplateHasNoSource()
+    {
+        var editor = await Builder(new FakeConnections()).BuildAsync(NewAgent(), Ct);
+
+        Assert.Equal(((string?)null, (string?)null), (editor.SourceTemplateId, editor.SourceTemplateName));
+    }
+
+    [Fact]
     public async Task TheEditorOnlyReturnsLiveConnections()
     {
         var liveId = Guid.CreateVersion7();
@@ -135,6 +161,33 @@ public sealed class AgentEditorBuilderTests
         Assert.Empty(list.Items.Single(item => item.Id == unused.Id).UsedByChatbots);
     }
 
+    // Spec 2026-11-23 §9.3: el editor siempre trae la disponibilidad de la Agenda; el validador la lee sólo con la herramienta prendida.
+    [Fact]
+    public async Task TheEditorAlwaysCarriesTheSchedulingReadiness()
+    {
+        var editor = await Builder(new FakeConnections(), scheduling: new FakeScheduling(new AgentSchedulingReadiness(true, 2)))
+            .BuildAsync(NewAgent(), Ct);
+
+        Assert.Equal(new AgentSchedulingReadinessDto(true, 2, true), editor.Scheduling);
+        Assert.DoesNotContain(editor.Issues, issue => issue.Code.StartsWith("scheduling_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ValidationReadsReadinessOnlyWithTheTool()
+    {
+        var scheduling = new FakeScheduling(new AgentSchedulingReadiness(false, 0));
+        var off = NewAgent();
+        var on = NewAgent();
+        on.SaveDraft(on.DraftConfig with { Tools = new AgentTools(false, false, false, Scheduling: true) }, By, Now);
+
+        await Builder(new FakeConnections(), scheduling: scheduling).ValidateAsync(off, publishing: true, Ct);
+        Assert.Equal(0, scheduling.Calls);
+
+        var issues = await Builder(new FakeConnections(), scheduling: scheduling).ValidateAsync(on, publishing: true, Ct);
+        Assert.Equal(1, scheduling.Calls);
+        Assert.Contains(issues, issue => issue.Code == "scheduling_module_disabled");
+    }
+
     private static Agent QuotingAgent(AgentBillingAccount account) =>
         Agent.Create(
             Tenant,
@@ -154,7 +207,9 @@ public sealed class AgentEditorBuilderTests
         IAiConnections connections,
         FakeAdvisors? advisors = null,
         FakeAiProviderCredentials? credentials = null,
-        FakeBillingAccounts? billing = null) =>
+        FakeBillingAccounts? billing = null,
+        FakeScheduling? scheduling = null,
+        ISystemAgentTemplateCatalog? templates = null) =>
         new(
             connections,
             new FakeSlots(),
@@ -162,7 +217,49 @@ public sealed class AgentEditorBuilderTests
             new FakeModelCatalog(),
             advisors ?? new FakeAdvisors(canQuote: true),
             credentials ?? new FakeAiProviderCredentials([]),
-            billing ?? new FakeBillingAccounts());
+            billing ?? new FakeBillingAccounts(),
+            scheduling ?? new FakeScheduling(new AgentSchedulingReadiness(true, 1)),
+            templates ?? new FakeTemplates());
+
+    private sealed class FakeTemplates(params SystemAgentTemplate[] templates) : ISystemAgentTemplateCatalog
+    {
+        public IReadOnlyList<SystemAgentTemplate> All => templates;
+
+        public SystemAgentTemplate? Find(string id) => templates.FirstOrDefault(template => string.Equals(template.Id, id, StringComparison.Ordinal));
+    }
+
+    private static Agent AgentFromTemplate() =>
+        Agent.Create(
+            Tenant, "Citas", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now, sourceTemplateId: "asistente-de-citas");
+
+    /// <summary>Sólo la lectura de disponibilidad importa acá; el resto del puerto no se toca.</summary>
+    private sealed class FakeScheduling(AgentSchedulingReadiness readiness) : IAiScheduling
+    {
+        public int Calls { get; private set; }
+
+        public Task<AgentSchedulingReadiness> GetReadinessAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(readiness);
+        }
+
+        public Task<AiSchedulingResult<AiBookableServices>> ListBookableServicesAsync(AiSchedulingCaller caller, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<AiSchedulingResult<AiAvailability>> SearchAvailabilityAsync(AiSchedulingCaller caller, Guid serviceId, DateOnly fromDate, DateOnly toDate, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<AiSchedulingResult<AiAppointmentWrite>> BookAsync(AiSchedulingCaller caller, Guid serviceId, DateTime localStartsAt, Guid? resourceId, string? note, string clientRequestId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<AiSchedulingResult<AiStartPreview>> PreviewBookingAsync(AiSchedulingCaller caller, Guid serviceId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<AiSchedulingResult<AiReschedulePreview>> PreviewRescheduleAsync(AiSchedulingCaller caller, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<AiSchedulingResult<AiAppointments>> ListMyAppointmentsAsync(AiSchedulingCaller caller, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<AiSchedulingResult<AiAppointment>> FindMyAppointmentAsync(AiSchedulingCaller caller, Guid appointmentId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<AiSchedulingResult<AiAppointmentWrite>> CancelAsync(AiSchedulingCaller caller, Guid appointmentId, string? reason, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<AiSchedulingResult<AiAppointmentWrite>> RescheduleAsync(AiSchedulingCaller caller, Guid appointmentId, DateTime localStartsAt, Guid? resourceId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
 
     private sealed class FakeBillingAccounts(params AiBillingAccountOption[] options) : IAiQuotationBillingAccounts
     {

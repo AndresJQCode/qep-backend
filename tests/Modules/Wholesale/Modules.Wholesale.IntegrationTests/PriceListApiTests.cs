@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using Modules.Catalog.Application;
 using Modules.Wholesale.Application;
+using PriceListExclusionInput = Modules.Catalog.Application.PriceListExclusionInput;
 
 namespace Modules.Wholesale.IntegrationTests;
 
@@ -20,13 +22,13 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
 
         var response = await manager.PostAsJsonAsync(
             WholesaleApiHarness.PriceListsUrl(tenant.TenantId),
-            new { name = "  Oro  ", discountPercent = 12.5m, visibility = "Categories", categoryIds = new[] { home } },
+            new { name = "  Oro  ", adjustmentPercent = -12.5m, visibility = "Categories", categoryIds = new[] { home } },
             Ct);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var detail = (await response.Content.ReadFromJsonAsync<PriceListDetailDto>(Ct))!;
-        Assert.Equal($"/api/v1/tenants/{tenant.TenantId}/wholesale/price-lists/{detail.Id}", response.Headers.Location?.OriginalString);
-        Assert.Equal(("Oro", 12.5m, "Categories", 0, 1L), (detail.Name, detail.DiscountPercent, detail.Visibility, detail.DistributorCount, detail.Version));
+        Assert.Equal($"/api/v1/tenants/{tenant.TenantId}/catalog/price-lists/{detail.Id}", response.Headers.Location?.OriginalString);
+        Assert.Equal(("Oro", -12.5m, "Categories", 0, 1L), (detail.Name, detail.AdjustmentPercent, detail.Visibility, detail.DistributorCount, detail.Version));
         Assert.Equal([(home, "Hogar")], detail.Categories.Select(category => (category.Id, category.Name)));
 
         var listed = await manager.GetFromJsonAsync<PriceListsResponse>(WholesaleApiHarness.PriceListsUrl(tenant.TenantId), Ct);
@@ -43,11 +45,11 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
 
         var response = await manager.PostAsJsonAsync(
             WholesaleApiHarness.PriceListsUrl(tenant.TenantId),
-            new { name = "ORO", discountPercent = 5m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() },
+            new { name = "ORO", adjustmentPercent = -5m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() },
             Ct);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal("wholesale.price_list.name_taken", await WholesaleApiHarness.CodeOfAsync(response));
+        Assert.Equal("catalog.price_list.name_taken", await WholesaleApiHarness.CodeOfAsync(response));
     }
 
     [Fact]
@@ -66,7 +68,7 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
             Ct);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal("wholesale.price_list.in_use", await WholesaleApiHarness.CodeOfAsync(response));
+        Assert.Equal("catalog.price_list.in_use", await WholesaleApiHarness.CodeOfAsync(response));
 
         var unused = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Plata", 5m);
         var deleted = await manager.SendAsync(
@@ -84,7 +86,7 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
         using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
         var list = await WholesaleApiHarness.CreatePriceListAsync(manager, tenant.TenantId, "Oro", 10m);
         var url = $"{WholesaleApiHarness.PriceListsUrl(tenant.TenantId)}/{list.Id}";
-        var body = new { name = "Oro 2", discountPercent = 11m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() };
+        var body = new { name = "Oro 2", adjustmentPercent = -11m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() };
 
         var missing = await manager.PutAsJsonAsync(url, body, Ct);
         var stale = await manager.SendAsync(
@@ -113,8 +115,8 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
         await WholesaleApiHarness.CreateVariantAsync(manager, tenant.TenantId, "P-2", "Tetera", priceCop: null);
 
         var response = await manager.PostAsJsonAsync(
-            $"{WholesaleApiHarness.PriceListsUrl(tenant.TenantId)}/preview",
-            new { discountPercent = 10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() },
+            WholesaleApiHarness.PreviewUrl(tenant.TenantId),
+            new { adjustmentPercent = -10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() },
             Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -125,7 +127,7 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
         Assert.Equal((priced, "P-1", 10_333m, 9_300m), (item.VariantId, item.Code, item.BasePrice, item.ListPrice));
     }
 
-    // Ruling W5: el árbol de categorías para la visibilidad, con sólo wholesale.price_list.manage.
+    // Ruling W5: el árbol de categorías para la visibilidad, sin catalog.product.read.
     [Fact]
     public async Task CategoriesAreReadableWithOnlyThePriceListPermission()
     {
@@ -133,8 +135,9 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
         using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
         var home = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Hogar");
         var kitchen = await WholesaleApiHarness.CreateCategoryAsync(manager, tenant.TenantId, "Cocina", home);
+        // Spec 2026-11-22: más wholesale.distributor.read, que es lo que cierra la ruta sin el módulo mayorista.
         using var listsOnly = WholesaleApiHarness.CreateClient(
-            Factory, tenant.SubjectId, tenant.TenantId, WholesalePermissions.PriceListManage);
+            Factory, tenant.SubjectId, tenant.TenantId, WholesalePermissions.PriceListManage, WholesalePermissions.DistributorRead);
         using var readerOnly = WholesaleApiHarness.CreateReader(Factory, tenant);
 
         var categories = await listsOnly.GetFromJsonAsync<WholesaleCategoriesResponse>(
@@ -145,5 +148,47 @@ public sealed class PriceListApiTests(SharedWholesaleHost host) : IClassFixture<
             [(kitchen, "Cocina", (Guid?)home), (home, "Hogar", (Guid?)null)],
             categories!.Items.Select(category => (category.Id, category.Name, category.ParentId)));
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    // Spec 2026-11-19: showPrices es opcional; un PUT que no lo trae (un cliente viejo) no vuelve a mostrar una lista oculta.
+    [Fact]
+    public async Task PutWithoutShowPricesKeepsHiddenList()
+    {
+        var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
+        using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
+        var created = await manager.PostAsJsonAsync(
+            WholesaleApiHarness.PriceListsUrl(tenant.TenantId),
+            new { name = "Oculta", adjustmentPercent = -10m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), showPrices = false },
+            Ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var list = (await created.Content.ReadFromJsonAsync<PriceListDetailDto>(Ct))!;
+        Assert.False(list.ShowPrices);
+        var url = $"{WholesaleApiHarness.PriceListsUrl(tenant.TenantId)}/{list.Id}";
+
+        var put = await manager.SendAsync(
+            WholesaleApiHarness.WithIfMatch(
+                new HttpRequestMessage(HttpMethod.Put, url)
+                {
+                    Content = JsonContent.Create(new { name = "Oculta 2", adjustmentPercent = -12m, visibility = "AllActive", categoryIds = Array.Empty<Guid>() }),
+                },
+                list.Version),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.False((await put.Content.ReadFromJsonAsync<PriceListDetailDto>(Ct))!.ShowPrices);
+        var read = (await manager.GetFromJsonAsync<PriceListDetailDto>(url, Ct))!;
+        Assert.Equal(("Oculta 2", -12m, false), (read.Name, read.AdjustmentPercent, read.ShowPrices));
+        var listed = await manager.GetFromJsonAsync<PriceListsResponse>(WholesaleApiHarness.PriceListsUrl(tenant.TenantId), Ct);
+        Assert.False(Assert.Single(listed!.Items).ShowPrices);
+
+        var shown = await manager.SendAsync(
+            WholesaleApiHarness.WithIfMatch(
+                new HttpRequestMessage(HttpMethod.Put, url)
+                {
+                    Content = JsonContent.Create(new { name = "Oculta 2", adjustmentPercent = -12m, visibility = "AllActive", categoryIds = Array.Empty<Guid>(), showPrices = true }),
+                },
+                read.Version),
+            Ct);
+        Assert.True((await shown.Content.ReadFromJsonAsync<PriceListDetailDto>(Ct))!.ShowPrices);
     }
 }

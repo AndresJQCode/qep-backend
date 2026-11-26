@@ -122,8 +122,10 @@ public sealed class ServiceContractDescriptionTests
     [InlineData(null)]
     public void TheServiceDtoExposesTheDescription(string? description)
     {
+        var review = new PriceReviewInfoDto("Manual", 0m, new DateOnly(2027, 11, 1), null, null, null, "None", null, null, null);
+
         var dto = ServiceContractsMapping.ToServiceDto(
-            NewService(description), new CustomerRefDto(Guid.NewGuid(), "Panadería", null, null), null, 0, []);
+            NewService(description), new CustomerRefDto(Guid.NewGuid(), "Panadería", null, null), null, 0, [], review);
 
         Assert.Equal(description, dto.Description);
     }

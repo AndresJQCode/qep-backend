@@ -13,6 +13,7 @@ namespace Modules.Customers.Domain;
 public sealed class Customer
 {
     private readonly List<CustomerAddress> _addresses = [];
+    private readonly List<CustomerBillingProfile> _billingProfiles = [];
     private readonly List<CustomerTaxRate> _withholdingTaxRates = [];
     private readonly List<CustomerWithholdingAgentCity> _withholdingAgentCities = [];
 
@@ -157,6 +158,10 @@ public sealed class Customer
     /// </summary>
     public IReadOnlyCollection<CustomerAddress> Addresses => _addresses;
 
+    /// <summary>La libreta de perfiles de facturación (spec 2026-11-24): a quién se le puede facturar. Vacía por defecto y,
+    /// como <see cref="Addresses"/>, sólo si la consulta los incluyó.</summary>
+    public IReadOnlyCollection<CustomerBillingProfile> BillingProfiles => _billingProfiles;
+
     /// <summary>La direccion que la cotizacion propone por defecto. Null en un cliente sin libreta
     /// (ver <see cref="Addresses"/>), o si la consulta no incluyo las direcciones: EF materializa
     /// el agregado sin sus hijos.</summary>
@@ -256,6 +261,13 @@ public sealed class Customer
     /// <see cref="CityId"/>. Ver <see cref="CustomerContactInfo.CityName"/>.
     /// </summary>
     public string? CityName { get; private set; }
+
+    /// <summary>
+    /// La region (provincia) del domicilio, FK blanda a <c>geography.regions</c>. Solo con un pais
+    /// distinto de Colombia; nula en Colombia, que deriva el departamento de <see cref="CityId"/>.
+    /// Ver <see cref="CustomerContactInfo.RegionId"/>.
+    /// </summary>
+    public Guid? RegionId { get; private set; }
 
     /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
@@ -858,6 +870,123 @@ public sealed class Customer
     }
 
     /// <summary>
+    /// El <c>POST</c> de la libreta de perfiles (spec 2026-11-24 §3.2): idempotente por contenido, porque el frontend guarda
+    /// el perfil después de grabar el documento y un reintento no puede duplicarlo. Igual es mismo país, mismo tipo, mismo
+    /// número normalizado, mismo nombre y dirección, y misma ciudad (el id en <c>CO</c>, el texto afuera); teléfono, correo,
+    /// región, tipo de persona, tasas y excedente no cuentan. Lo encontrado se devuelve sin tocarlo (para cambiarlo está
+    /// <see cref="UpdateBillingProfile"/>) y no cuenta contra el tope. El primero queda principal aunque no lo pida.
+    /// </summary>
+    public (CustomerBillingProfile Profile, bool Added) EnsureBillingProfile(
+        CustomerBillingProfileDetails details, bool isPrincipal, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        EnsureNotMerged();
+        EnsureActive();
+        if (!IsComplete)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.incomplete",
+                "An incomplete customer cannot be edited until it is completed.");
+        }
+
+        var wanted = details.Normalized();
+        var wantedNumber = CustomerIdentificationNumbers.Normalize(wanted.IdentificationNumber);
+        var found = _billingProfiles.FirstOrDefault(entry =>
+            entry.Country == wanted.Country
+            && entry.IdentificationType == wanted.IdentificationType
+            && CustomerIdentificationNumbers.Normalize(entry.IdentificationNumber) == wantedNumber
+            && SameText(entry.Name, wanted.Name)
+            && SameText(entry.Address, wanted.Address)
+            && (wanted.Country == ColombiaCountryCode
+                ? entry.CityId == wanted.CityId
+                : SameText(entry.CityName, wanted.CityName)));
+        if (found is not null)
+        {
+            return (found, false);
+        }
+
+        if (_billingProfiles.Count >= CustomerBillingProfile.MaxPerCustomer)
+        {
+            throw new CustomersDomainException(
+                CustomerBillingProfileErrors.LimitReached,
+                $"A customer cannot have more than {CustomerBillingProfile.MaxPerCustomer} billing profiles.");
+        }
+
+        var profile = CustomerBillingProfile.Create(Id, TenantId, wanted, occurredAt);
+        _billingProfiles.Add(profile);
+        if (isPrincipal || _billingProfiles.Count == 1)
+        {
+            ApplyPrincipalBillingProfile(profile, occurredAt);
+        }
+
+        Touch(occurredAt);
+        return (profile, true);
+    }
+
+    /// <summary>Reemplaza el perfil entero. <paramref name="isPrincipal"/> en <c>false</c> no desmarca: se cambia marcando
+    /// otro, como en <see cref="UpdateAddress"/>.</summary>
+    public CustomerBillingProfile UpdateBillingProfile(
+        CustomerBillingProfileId id,
+        CustomerBillingProfileDetails details,
+        bool isPrincipal,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        EnsureNotMerged();
+        EnsureActive();
+
+        var profile = FindBillingProfile(id);
+        profile.Apply(TenantId, details, occurredAt);
+        if (isPrincipal)
+        {
+            ApplyPrincipalBillingProfile(profile, occurredAt);
+        }
+
+        Touch(occurredAt);
+        return profile;
+    }
+
+    /// <summary>Quita un perfil. El principal no se quita: primero hay que nombrar otro.</summary>
+    public void RemoveBillingProfile(CustomerBillingProfileId id, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+
+        var profile = FindBillingProfile(id);
+        if (profile.IsPrincipal)
+        {
+            throw new CustomersDomainException(
+                CustomerBillingProfileErrors.PrincipalNotRemovable,
+                "The principal billing profile cannot be removed. Mark another one as principal first.");
+        }
+
+        _billingProfiles.Remove(profile);
+        Touch(occurredAt);
+    }
+
+    public void MakeBillingProfilePrincipal(CustomerBillingProfileId id, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+
+        ApplyPrincipalBillingProfile(FindBillingProfile(id), occurredAt);
+        Touch(occurredAt);
+    }
+
+    private void ApplyPrincipalBillingProfile(CustomerBillingProfile profile, DateTimeOffset occurredAt)
+    {
+        foreach (var other in _billingProfiles)
+        {
+            other.MarkPrincipal(other == profile, occurredAt);
+        }
+    }
+
+    private CustomerBillingProfile FindBillingProfile(CustomerBillingProfileId id) =>
+        _billingProfiles.FirstOrDefault(profile => profile.Id == id)
+            ?? throw new CustomersDomainException(
+                CustomerBillingProfileErrors.NotFound, "The customer billing profile was not found.");
+
+    /// <summary>
     /// Reemplaza las tasas de retención del cliente. Deduplica; <see cref="Guid.Empty"/> se rechaza. Sube la versión y
     /// devuelve <c>true</c> sólo si el conjunto cambió: guardar lo mismo no es un cambio.
     /// </summary>
@@ -1050,6 +1179,7 @@ public sealed class Customer
         Country = location.Country;
         CityId = location.CityId;
         CityName = location.CityName;
+        RegionId = location.RegionId;
     }
 
     private void Assign(CustomerCommercialInfo commercial)
@@ -1381,7 +1511,7 @@ public sealed class Customer
     /// pero no corre hasta el SaveChanges, y fallar rapido con un codigo de dominio es mejor que
     /// dejar que un Guid.Empty vuelva como una violacion de FK que no dice nada util.
     /// </summary>
-    private static (string Country, Guid? CityId, string? CityName) EnsureValidLocation(
+    private static (string Country, Guid? CityId, string? CityName, Guid? RegionId) EnsureValidLocation(
         CustomerContactInfo normalized)
     {
         // Normalized() ya rechazo un pais ausente o que no sean dos letras.
@@ -1389,17 +1519,29 @@ public sealed class Customer
 
         if (country == ColombiaCountryCode)
         {
+            // Red del dominio: el validador ya rechaza la region con CO con un error por campo.
+            if (normalized.RegionId is not null)
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.region_lane_invalid",
+                    "A Colombian customer takes its region from the city, not from a region id.");
+            }
+
             // Solo null es "sin ciudad"; un Guid.Empty es un id roto y se sigue rechazando (G5).
             return normalized.CityId is { } cityId
                 ? (country, cityId != Guid.Empty
                     ? cityId
                     : throw new CustomersDomainException(
                         "customers.customer.city_required",
-                        "The customer city is required."), null)
-                : (country, null, null);
+                        "The customer city is required."), null, null)
+                : (country, null, null, null);
         }
 
-        return (country, null, string.IsNullOrWhiteSpace(normalized.CityName) ? null : normalized.CityName);
+        return (
+            country,
+            null,
+            string.IsNullOrWhiteSpace(normalized.CityName) ? null : normalized.CityName,
+            normalized.RegionId);
     }
 
     // Con documento corren las dos reglas de pais; sin documento no hay nada que comprobar.

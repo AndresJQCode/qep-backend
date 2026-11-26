@@ -43,6 +43,22 @@ public static class MetaErrorCodes
     /// <summary>La plantilla está deshabilitada.</summary>
     public const int TemplateDisabled = 132016;
 
+    /// <summary>Hay un problema con el método de pago de la cuenta (o con su línea de crédito).</summary>
+    public const int PaymentIssue = 131042;
+
+    /// <summary>La cuenta está restringida o bloqueada, o no pasó una verificación.</summary>
+    public const int AccountRestricted = 131031;
+
+    /// <summary>La cuenta está restringida o deshabilitada por incumplir políticas.</summary>
+    public const int PolicyRestricted = 368;
+
+    /// <summary>La app perdió los permisos sobre la cuenta.</summary>
+    public const int PermissionRemoved = 131005;
+
+    /// <summary>Bloqueos de la cuenta, no del destinatario: cada envío siguiente falla igual, así que una campaña se detiene. Meta los
+    /// reporta en la respuesta del envío o después, por webhook, sobre un mensaje que ya había aceptado con 200.</summary>
+    public static bool IsAccountBlocked(int code) => code is PaymentIssue or AccountRestricted or PolicyRestricted or PermissionRemoved;
+
     /// <summary>Credenciales (190) o número (133010) rechazados: la conexión necesita atención y seguir enviando sólo junta fallas.</summary>
     public static bool IsRejectedCredentials(int code) => code is TokenExpired or NumberUnregistered;
 

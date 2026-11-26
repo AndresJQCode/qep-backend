@@ -31,6 +31,12 @@ public static class AiEndpoints
             .Produces<IReadOnlyList<AiConnectionDto>>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // Spec 2026-11-23 §4: la galería de plantillas del sistema. En el grupo y no bajo /agents: una plantilla no es un agente.
+        group.MapGet("/agent-templates", ListAgentTemplatesAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Produces<IReadOnlyList<AgentTemplateDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         // Spec §5 y plan 2026-11-12 Tarea 9: el historial de sesiones y la actividad del agente en una conversación. Lectura con
         // ai.agent.read; si la actividad también la ve todo asesor de la conversación es DECISIÓN-PENDIENTE P-10.
         group.MapGet("/sessions", ListSessionsAsync)
@@ -69,6 +75,16 @@ public static class AiEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec 2026-11-23 §4: crear con una plantilla del sistema. /agents/from-template no choca con /agents/{agentId:guid}.
+        agents.MapPost("/from-template", CreateAgentFromTemplateAsync)
+            .RequireAuthorization(AiPermissions.AgentManage)
+            .Accepts<CreateAgentFromTemplateRequest>("application/json")
+            .Produces<AgentEditorDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         agents.MapGet("/{agentId:guid}/export", ExportAgentAsync)
@@ -356,6 +372,9 @@ public static class AiEndpoints
     private static async Task<IResult> ListConnectionsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAiConnectionsQuery(tenantId), cancellationToken));
 
+    private static async Task<IResult> ListAgentTemplatesAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListAgentTemplatesQuery(tenantId), cancellationToken));
+
     // Plan 2026-11-17 A5: from y to son días del tenant (yyyy-MM-dd), los dos inclusivos; cursor es el nextCursor de la página anterior.
     private static async Task<IResult> ListSessionsAsync(
         Guid tenantId,
@@ -392,6 +411,14 @@ public static class AiEndpoints
             (string?)null,
             await dispatcher.SendAsync(
                 new ImportAgentCommand(tenantId, request.Name ?? request.Export?.Name ?? string.Empty, request.Export!), cancellationToken));
+
+    // Sin Location, como crear e importar. Un cuerpo sin campos lo frena el validador con el campo (422), no un 500.
+    private static async Task<IResult> CreateAgentFromTemplateAsync(
+        Guid tenantId, CreateAgentFromTemplateRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created(
+            (string?)null,
+            await dispatcher.SendAsync(
+                new CreateAgentFromTemplateCommand(tenantId, request.TemplateId ?? string.Empty, request.Name ?? string.Empty), cancellationToken));
 
     private static async Task<IResult> ExportAgentAsync(Guid tenantId, Guid agentId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ExportAgentQuery(tenantId, agentId), cancellationToken));
@@ -446,6 +473,8 @@ public sealed record CreateAgentRequest(string Name, AgentSourceRequest Source);
 
 /// <summary><c>name</c> (si viene) pisa el del archivo.</summary>
 public sealed record ImportAgentRequest(string? Name, AgentExportDto? Export);
+
+public sealed record CreateAgentFromTemplateRequest(string? TemplateId, string? Name);
 
 public sealed record UpdateAgentRequest(string Name, IReadOnlyList<Guid>? ConnectionIds);
 

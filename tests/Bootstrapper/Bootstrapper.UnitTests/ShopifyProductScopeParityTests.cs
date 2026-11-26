@@ -1,5 +1,5 @@
-using ShopifyModuleScopes = Modules.Shopify.Application.ShopifyScopes;
 using RegisteredTopics = Modules.Integrations.Application.Shopify.ShopifyWebhookTopics;
+using ShopifyModuleScopes = Modules.Shopify.Application.ShopifyScopes;
 
 namespace Bootstrapper.UnitTests;
 

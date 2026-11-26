@@ -11,11 +11,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Modules.Storage.Application;
+using Modules.Storage.Infrastructure.ChatbotMedia;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.ProductImages;
 using Modules.Storage.Infrastructure.TemplateImages;
+using Modules.Storage.Infrastructure.UnreferencedFiles;
 using Npgsql;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -533,12 +535,22 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
                 services.Remove(descriptor);
             }
 
-            // Y el barrido diario (spec 2026-11-17, «Closing the residual gaps»): TemplateHeaderImageSweepTests lo corre a mano.
-            var templateImageSweepWorkers = services
+            // Y el de los archivos de un chatbot borrado (spec 2026-11-18): ChatbotMediaReleaseTests corre el lote a mano.
+            var chatbotMediaReleaseWorkers = services
                 .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationType == typeof(TemplateHeaderImageSweepWorker))
+                    && descriptor.ImplementationType == typeof(ChatbotMediaReleaseWorker))
                 .ToList();
-            foreach (var descriptor in templateImageSweepWorkers)
+            foreach (var descriptor in chatbotMediaReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
+
+            // Y el barrido diario (spec 2026-11-17, «Closing the residual gaps»): TemplateHeaderImageSweepTests lo corre a mano.
+            var unreferencedFileSweepWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(UnreferencedFileSweepWorker))
+                .ToList();
+            foreach (var descriptor in unreferencedFileSweepWorkers)
             {
                 services.Remove(descriptor);
             }
@@ -628,6 +640,8 @@ internal sealed class InMemoryObjectStorage : IObjectStorage
 /// S3: borrar lo ya listado no corre las páginas siguientes.</summary>
 internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets.qep.test";
 
     private readonly ConcurrentDictionary<string, DateTimeOffset> _objects = new(StringComparer.Ordinal);

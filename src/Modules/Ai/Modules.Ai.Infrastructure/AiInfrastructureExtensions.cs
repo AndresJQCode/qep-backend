@@ -9,6 +9,7 @@ using Modules.Ai.Infrastructure.Model.Anthropic;
 using Modules.Ai.Infrastructure.Model.OpenAi;
 using Modules.Ai.Infrastructure.Options;
 using Modules.Ai.Infrastructure.Persistence;
+using Modules.Ai.Infrastructure.Seed;
 
 namespace Modules.Ai.Infrastructure;
 
@@ -20,6 +21,9 @@ public static class AiInfrastructureExtensions
         services.AddSingleton<IValidateOptions<AiOptions>, AiOptionsValidator>();
         services.AddOptions<AiOptions>().Bind(configuration.GetSection(AiOptions.SectionName)).ValidateOnStart();
         services.AddSingleton<IAiModelCatalog, ConfiguredAiModelCatalog>();
+
+        // Spec 2026-11-23: las plantillas de agente del sistema se leen una vez de los recursos embebidos y no cambian mientras corre el proceso.
+        services.AddSingleton<ISystemAgentTemplateCatalog, SystemAgentTemplateCatalog>();
 
         var connectionString = configuration.GetConnectionString("QepDatabase")
             ?? throw new InvalidOperationException("Connection string 'QepDatabase' is required.");
@@ -59,6 +63,16 @@ public static class AiInfrastructureExtensions
         services.AddScoped<IAgentTool, SimulatedQuotationDraftTool>();
         // Spec 2026-10-29 §8.2 y P-4: la real, sólo en canales reales (sus puertos van en Bootstrapper).
         services.AddScoped<IAgentTool, CreateQuotationDraftTool>();
+        // Spec 2026-11-23 §5: las seis de la Agenda y sus tres gemelas simuladas del playground (el puerto va en Bootstrapper).
+        services.AddScoped<IAgentTool, ListBookableServicesTool>();
+        services.AddScoped<IAgentTool, CheckAvailabilityTool>();
+        services.AddScoped<IAgentTool, ListMyAppointmentsTool>();
+        services.AddScoped<IAgentTool, BookAppointmentTool>();
+        services.AddScoped<IAgentTool, CancelAppointmentTool>();
+        services.AddScoped<IAgentTool, RescheduleAppointmentTool>();
+        services.AddScoped<IAgentTool, SimulatedBookAppointmentTool>();
+        services.AddScoped<IAgentTool, SimulatedCancelAppointmentTool>();
+        services.AddScoped<IAgentTool, SimulatedRescheduleAppointmentTool>();
         services.AddScoped<IAiRunLedger, AiRunLedger>();
         // Plan 2026-11-12 Tarea 9: la actividad, el historial y los conteos de la lista.
         services.AddScoped<IAgentActivityReader, AgentActivityReader>();

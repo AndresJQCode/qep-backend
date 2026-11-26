@@ -178,6 +178,33 @@ public sealed class GetOrdersExportLayoutHandlerTests
         Assert.Equal(2, dto.Version);
     }
 
+    // Spec 2026-11-25 indicativo: sin fila, el indicativo viaja en el Excel.
+    [Fact]
+    public async Task WithoutAStoredLayoutThePhoneDialCodeIsIncluded()
+    {
+        var handler = NewHandler(new InMemoryOrdersExportLayoutRepository());
+
+        var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
+
+        Assert.True(dto.IncludePhoneDialCode);
+    }
+
+    [Fact]
+    public async Task AStoredLayoutComesOutWithItsPhoneDialCodeSwitch()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var layout = OrdersExportLayout.CreateDefault(TenantId, Now);
+        Assert.True(layout.Replace(
+            OrdersExportLayout.Effective(stored: null), layout.SheetName, includePhoneDialCode: false, Now));
+        repository.Add(layout);
+        var handler = NewHandler(repository);
+
+        var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
+
+        Assert.False(dto.IncludePhoneDialCode);
+        Assert.Equal(2, dto.Version);
+    }
+
     [Fact]
     public async Task ForAnotherTenantIsForbiddenAndReadsNothing()
     {

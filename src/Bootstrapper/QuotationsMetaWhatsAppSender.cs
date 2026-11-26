@@ -13,7 +13,8 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class QuotationsMetaWhatsAppSender(
     IQuotationTemplateOutbound outbound, IObjectStorage storage, IQuotationTemplateReadiness readiness,
-    IOrderTemplateOutbound orderOutbound, IOrderTemplateReadiness orderReadiness) : IMetaWhatsAppSender
+    IOrderTemplateOutbound orderOutbound, IOrderTemplateReadiness orderReadiness,
+    IInvoiceTemplateOutbound invoiceOutbound, IInvoiceTemplateReadiness invoiceReadiness) : IMetaWhatsAppSender
 {
     public async Task SendQuotationAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
@@ -45,7 +46,7 @@ internal sealed class QuotationsMetaWhatsAppSender(
                 WhatsAppTemplateValues.Total(message.Total, message.Currency, message.NumberFormat),
                 WhatsAppTemplateValues.ValidUntil(message.ValidUntil),
                 document,
-                WhatsAppTemplateValues.DocumentFileName(message.OrderNumber)),
+                WhatsAppTemplateValues.DocumentFileName(message.OrderNumber, message.Language)),
             cancellationToken);
 
         if (result is not QuotationTemplateSendResult.Sent)
@@ -101,6 +102,48 @@ internal sealed class QuotationsMetaWhatsAppSender(
             };
             throw new QuotationsDomainException(
                 "order.whatsapp.send_failed", $"Meta did not accept the order ({reason}).");
+        }
+    }
+
+    /// <summary>Spec 2026-11-21: la factura con la fila <c>Invoice</c> aprobada. El PDF ya viene en <see cref="WhatsAppInvoiceMessage.Document"/>
+    /// (lo generó la factura de Siigo y no vive en Storage), así que acá no se descarga nada. Adjunto <c>Factura-{numero}.pdf</c>.</summary>
+    public async Task SendInvoiceAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        var tenantId = message.TenantId ?? throw new InvalidOperationException("The invoice message carries no tenant.");
+        var sentBy = message.SentByMemberId ?? throw new InvalidOperationException("The invoice message carries no sender.");
+        var document = message.Document ?? throw new InvalidOperationException("The invoice message carries no PDF.");
+
+        if (await invoiceReadiness.FindApprovedAsync(tenantId, channel.ConnectionId, cancellationToken) is not { } template)
+        {
+            throw new QuotationsDomainException(
+                "invoice.whatsapp.send_failed", "Meta did not accept the invoice (template_not_approved).");
+        }
+
+        var result = await invoiceOutbound.SendAsync(
+            new InvoiceTemplateSend(
+                tenantId, channel.ConnectionId, sentBy,
+                waId,
+                message.CustomerId,
+                message.FullName,
+                template,
+                message.FullName,
+                message.InvoiceNumber,
+                WhatsAppTemplateValues.Total(message.Total, message.Currency, message.NumberFormat),
+                document,
+                WhatsAppTemplateValues.InvoiceDocumentFileName(message.InvoiceNumber)),
+            cancellationToken);
+
+        if (result is not InvoiceTemplateSendResult.Sent)
+        {
+            var reason = result switch
+            {
+                InvoiceTemplateSendResult.ConnectionUnavailable unavailable => unavailable.Reason ?? "connection_unavailable",
+                InvoiceTemplateSendResult.Failed failed => failed.Code,
+                _ => "unknown",
+            };
+            throw new QuotationsDomainException(
+                "invoice.whatsapp.send_failed", $"Meta did not accept the invoice ({reason}).");
         }
     }
 }

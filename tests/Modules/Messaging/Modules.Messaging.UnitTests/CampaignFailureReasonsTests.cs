@@ -51,14 +51,40 @@ public sealed class CampaignFailureReasonsTests
     [InlineData(132016)]
     [InlineData(190)]
     [InlineData(133010)]
+    [InlineData(131042)]
+    [InlineData(131031)]
+    [InlineData(368)]
+    [InlineData(131005)]
     public void TheseGraphCodesStopTheWholeCampaign(int code) =>
         Assert.True(CampaignFailureCodes.StopsTheCampaign(code));
+
+    // Bloqueos de la cuenta, no del destinatario: pago (131042), cuenta restringida o sin verificar (131031), restricción por políticas
+    // (368) y permisos perdidos (131005). Con cualquiera de ellos cada envío siguiente falla igual.
+    [Theory]
+    [InlineData(131042)]
+    [InlineData(131031)]
+    [InlineData(368)]
+    [InlineData(131005)]
+    public void AccountBlocksAreRecognized(int code) =>
+        Assert.True(MetaErrorCodes.IsAccountBlocked(code));
+
+    [Theory]
+    [InlineData(131026)]
+    [InlineData(131049)]
+    [InlineData(131050)]
+    [InlineData(131016)]
+    [InlineData(131000)]
+    [InlineData(132015)]
+    public void RecipientAndTransientCodesAreNotAccountBlocks(int code) =>
+        Assert.False(MetaErrorCodes.IsAccountBlocked(code));
 
     [Theory]
     [InlineData(131049)]
     [InlineData(131050)]
     [InlineData(130429)]
     [InlineData(131056)]
+    [InlineData(131026)]
+    [InlineData(131016)]
     [InlineData(100)]
     public void OtherCodesOnlyFailTheRecipient(int code) =>
         Assert.False(CampaignFailureCodes.StopsTheCampaign(code));

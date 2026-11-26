@@ -39,7 +39,7 @@ public sealed class SiigoInvoiceTests
         Assert.True(invoice.IsBeingSent(Now.AddSeconds(30)));
         Assert.False(invoice.IsBeingSent(Now + SiigoInvoice.SendLease + TimeSpan.FromSeconds(1)));
 
-        invoice.MarkTransient(Now.AddSeconds(31));
+        invoice.MarkTransient(null, Now.AddSeconds(31));
 
         Assert.False(invoice.IsBeingSent(Now.AddSeconds(32)));
         Assert.Equal(SiigoInvoiceStatus.Pending, invoice.Status);
@@ -118,20 +118,30 @@ public sealed class SiigoInvoiceTests
     }
 
     [Fact]
-    public void OnlyAnUnknownCanBeResolved()
+    public void OnlyAnUnknownOrAPendingNotBeingSentCanBeResolved()
     {
-        var pending = NewPending();
+        var sending = NewPending();
+        sending.BeginSend(Now);
         var created = NewPending();
         created.MarkCreated("id-1", "FV-1-123", 100m, null, Now);
         var rejected = NewPending();
         rejected.MarkRejected("x", "y", null, Now);
 
-        foreach (var invoice in new[] { pending, created, rejected })
+        foreach (var invoice in new[] { sending, created, rejected })
         {
             Assert.Equal("siigo.invoice.state_invalid", CodeOf(() => invoice.ResolveExists("FV-1-999", Now)));
             Assert.Equal("siigo.invoice.state_invalid", CodeOf(() => invoice.ResolveMissing(Now)));
         }
+
+        var idle = NewPending();
+
+        idle.ResolveMissing(Now);
+
+        Assert.Equal(SiigoInvoiceStatus.Failed, idle.Status);
     }
+
+    [Fact]
+    public void TheSendLeaseIsEightMinutes() => Assert.Equal(TimeSpan.FromMinutes(8), SiigoInvoice.SendLease);
 
     [Fact]
     public void AnUnknownResolvedAsExistsBecomesCreatedWithThatNumber()
@@ -219,6 +229,100 @@ public sealed class SiigoInvoiceTests
         invoice.MarkOrderChanged();
 
         Assert.True(invoice.OrderChanged);
+    }
+
+    // Spec 2026-11-25 §1: la factura que una persona anuló en Siigo deja de ser vigente y conserva lo que la identifica allá.
+    [Fact]
+    public void ACreatedInvoiceIsAnnulledKeepingItsSiigoData()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        Assert.Equal(SiigoInvoiceStatus.Annulled, invoice.Status);
+        Assert.False(invoice.IsLive);
+        Assert.False(invoice.IsOpen);
+        Assert.Equal("siigo.invoice.annulled_in_siigo", invoice.ErrorCode);
+        Assert.Equal(("id-1", "FV-1-1", 100m), (invoice.SiigoInvoiceId, invoice.Number, invoice.SiigoTotal));
+        Assert.False(invoice.HasPdf);
+        Assert.False(invoice.CanStamp);
+        Assert.Equal(Now.AddMinutes(1), invoice.UpdatedAt);
+    }
+
+    [Fact]
+    public void ADeletedInvoiceCarriesTheDeletedCode()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+
+        invoice.MarkAnnulled(true, Now.AddMinutes(1));
+
+        Assert.Equal(SiigoInvoiceStatus.Annulled, invoice.Status);
+        Assert.Equal("siigo.invoice.deleted_in_siigo", invoice.ErrorCode);
+    }
+
+    [Fact]
+    public void AStampedInvoiceIsAnnulledKeepingItsCufe()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, "cufe-abc", Now);
+
+        Assert.True(invoice.IsAnnulmentVerifiable);
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        Assert.Equal((SiigoInvoiceStatus.Annulled, "cufe-abc"), (invoice.Status, invoice.Cufe));
+    }
+
+    [Fact]
+    public void AStampRejectedInvoiceIsAnnulledAndLosesTheDianError()
+    {
+        var invoice = NewPending();
+        invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+        invoice.MarkStampRejected("x", "y", Now);
+
+        Assert.True(invoice.IsAnnulmentVerifiable);
+        invoice.MarkAnnulled(false, Now.AddMinutes(1));
+
+        Assert.Equal(SiigoInvoiceStatus.Annulled, invoice.Status);
+        Assert.Null(invoice.ErrorDetail);
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("unknown")]
+    [InlineData("rejected")]
+    [InlineData("failed")]
+    [InlineData("annulled")]
+    [InlineData("resolved_without_id")]
+    public void OnlyAVerifiableInvoiceCanBeAnnulled(string state)
+    {
+        var invoice = NewPending();
+        switch (state)
+        {
+            case "unknown":
+                invoice.ExpireIfStale(Now.AddDays(2));
+                break;
+            case "rejected":
+                invoice.MarkRejected("x", "y", null, Now);
+                break;
+            case "failed":
+                invoice.MarkFailed("x", "y", Now);
+                break;
+            case "annulled":
+                invoice.MarkCreated("id-1", "FV-1-1", 100m, null, Now);
+                invoice.MarkAnnulled(false, Now);
+                break;
+            case "resolved_without_id":
+                invoice.ResolveExists("FV-1-5", Now);
+                break;
+        }
+
+        var before = invoice.Status;
+
+        Assert.False(invoice.IsAnnulmentVerifiable);
+        Assert.Equal("siigo.invoice.state_invalid", CodeOf(() => invoice.MarkAnnulled(false, Now.AddDays(2))));
+        Assert.Equal(before, invoice.Status);
     }
 
     [Fact]

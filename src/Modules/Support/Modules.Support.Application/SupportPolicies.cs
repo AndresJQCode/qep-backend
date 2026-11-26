@@ -12,4 +12,12 @@ public static class SupportPolicies
     /// <see cref="SupportPermissions.SettingsManage"/>. Así un rol con sólo configurar lee la versión que tiene que mandar al
     /// guardar.</summary>
     public const string SettingsView = "support.settings.view";
+
+    /// <summary>Actuar sobre un ticket: <see cref="SupportPermissions.Manage"/> o <see cref="SupportPermissions.TaskUse"/>. La política sólo
+    /// deja pasar a quien podría actuar sobre algo; la decisión por ticket la toma <c>SupportTicketScope</c> (spec 2026-11-22 §5.6).</summary>
+    public const string TicketAct = "support.ticket.act";
+
+    /// <summary>Ver un ticket por la puerta: leer, gestionar o usar tareas (plan D10). Quien sólo usa tareas ve únicamente las suyas, y la
+    /// puerta lo decide por ticket.</summary>
+    public const string TicketScopedView = "support.ticket.scoped_view";
 }

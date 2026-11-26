@@ -20,6 +20,13 @@ public sealed class WhatsAppPhoneTests
         Assert.Equal(expected, WhatsAppPhone.Normalize(phone));
 
     [Theory]
+    [InlineData("+5016123456", "5016123456")]   // Belice: 10 dígitos en total con su indicativo
+    [InlineData("+573001234567", "573001234567")]
+    [InlineData(" +592 612 3456", "5926123456")]
+    public void ANumberWithPlusKeepsItsDigits(string phone, string expected) =>
+        Assert.Equal(expected, WhatsAppPhone.Normalize(phone));
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]

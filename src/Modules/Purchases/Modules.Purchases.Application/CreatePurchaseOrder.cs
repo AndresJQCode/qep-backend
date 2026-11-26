@@ -55,7 +55,8 @@ public sealed class CreatePurchaseOrderHandler(
                 command.Notes,
                 build.Lines,
                 memberId,
-                now);
+                now,
+                build.ShowPrices);
             orders.Add(order);
             auditPublisher.Publish(
                 command.TenantId,

@@ -1,4 +1,5 @@
 using BuildingBlocks.Domain.Catalog;
+using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -32,6 +33,35 @@ public interface IQuotationProductPricingLookup
         Guid tenantId,
         IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-22 (listas de precios por canal, D-5): lo mismo con los precios de la lista del canal. Los dos métodos de
+    /// arriba son el canal <see cref="QuotationPriceChannel.Quotations"/>. La implementación por defecto devuelve el precio base,
+    /// para que los dobles de prueba que ya existen sigan compilando; el adaptador real la sobrescribe.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> variantIds,
+        QuotationPriceChannel channel,
+        CancellationToken cancellationToken) =>
+        FindManyAsync(tenantId, variantIds, cancellationToken);
+}
+
+/// <summary>
+/// Spec 2026-11-22 (D-5): con qué lista se precia una línea. La tienda pública y la edición de un pedido que nació en ella usan la
+/// de <c>Store</c>; todo lo demás (cotizaciones, pedidos manuales y convertidos, regalos) la de <c>Quotations</c>. El canal se
+/// deriva del origen del pedido y no se guarda: la línea guarda su precio.
+/// </summary>
+public enum QuotationPriceChannel
+{
+    Quotations,
+    Store,
+}
+
+public static class QuotationPriceChannels
+{
+    public static QuotationPriceChannel For(OrderSource source) =>
+        source == OrderSource.Store ? QuotationPriceChannel.Store : QuotationPriceChannel.Quotations;
 }
 
 /// <param name="ProductId">El producto dueño: la línea lo guarda junto a la variante (spec §4) y

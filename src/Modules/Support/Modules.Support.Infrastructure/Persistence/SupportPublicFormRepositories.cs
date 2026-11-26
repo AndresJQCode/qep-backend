@@ -18,7 +18,7 @@ internal sealed class SupportTicketAccessRepository(SupportDbContext dbContext) 
         // El ticket sin tracking: la consulta no lo modifica, y así un guardado del intento nunca le sube la versión.
         var ticket = await dbContext.Tickets
             .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.TenantId == tenantId && item.Number == number, cancellationToken);
+            .FirstOrDefaultAsync(item => item.TenantId == tenantId && !item.IsInternal && item.Number == number, cancellationToken);
         if (ticket is null)
         {
             return null;
@@ -39,7 +39,7 @@ internal sealed class SupportTicketAccessRepository(SupportDbContext dbContext) 
 
         var ticket = await dbContext.Tickets
             .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.TenantId == tenantId && item.Number == number, cancellationToken);
+            .FirstOrDefaultAsync(item => item.TenantId == tenantId && !item.IsInternal && item.Number == number, cancellationToken);
         if (ticket is null)
         {
             return null;

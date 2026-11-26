@@ -50,7 +50,8 @@ public sealed class Company
         string? cityName,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt,
-        bool chargesVat)
+        bool chargesVat,
+        Guid? regionId)
     {
         Id = id;
         TenantId = tenantId;
@@ -60,6 +61,7 @@ public sealed class Company
         DocumentType = documentType;
         CityId = cityId;
         CityName = cityName;
+        RegionId = regionId;
         _bankAccounts.AddRange(bankAccounts);
         Apply(contact);
         ChargesVat = chargesVat;
@@ -126,6 +128,14 @@ public sealed class Company
     /// <summary>Ciudad escrita a mano, sólo para empresas fuera de Colombia; nula en Colombia.</summary>
     public string? CityName { get; private set; }
 
+    /// <summary>
+    /// La región (provincia) del domicilio, referencia blanda a <c>geography.regions</c> (sin FK entre esquemas, igual que
+    /// <see cref="CityId"/>). Sólo para una empresa de un país con catálogo de regiones distinto de Colombia; nula en
+    /// Colombia, que deriva el departamento de <see cref="CityId"/>. Que la región exista y sea del país lo comprueba el
+    /// handler contra Geography; el dominio sólo garantiza el carril.
+    /// </summary>
+    public Guid? RegionId { get; private set; }
+
     public bool IsActive { get; private set; }
 
     /// <summary>
@@ -170,11 +180,12 @@ public sealed class Company
         string? cityName,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt,
-        bool chargesVat = true)
+        bool chargesVat = true,
+        Guid? regionId = null)
     {
         var normalizedCountry = NormalizeCountry(country);
         EnsureDocumentTypeAllowed(normalizedCountry, documentType);
-        var location = EnsureValidLocation(normalizedCountry, cityId, cityName);
+        var location = EnsureValidLocation(normalizedCountry, cityId, cityName, regionId);
 
         return new Company(
             id,
@@ -188,7 +199,8 @@ public sealed class Company
             location.CityName,
             contact,
             occurredAt,
-            chargesVat);
+            chargesVat,
+            location.RegionId);
     }
 
     /// <summary>
@@ -206,7 +218,8 @@ public sealed class Company
         string? cityName,
         CompanyContactInfo contact,
         DateTimeOffset occurredAt,
-        bool chargesVat)
+        bool chargesVat,
+        Guid? regionId = null)
     {
         EnsureActive();
 
@@ -221,7 +234,7 @@ public sealed class Company
         var normalizedTaxId = NormalizeTaxId(taxId);
         var normalizedCountry = NormalizeCountry(country);
         EnsureDocumentTypeAllowed(normalizedCountry, documentType);
-        var location = EnsureValidLocation(normalizedCountry, cityId, cityName);
+        var location = EnsureValidLocation(normalizedCountry, cityId, cityName, regionId);
         var normalizedContact = contact.Normalized();
 
         Name = normalizedName;
@@ -230,6 +243,7 @@ public sealed class Company
         DocumentType = documentType;
         CityId = location.CityId;
         CityName = location.CityName;
+        RegionId = location.RegionId;
         _bankAccounts.Clear();
         _bankAccounts.AddRange(normalizedAccounts);
         Assign(normalizedContact);
@@ -414,15 +428,27 @@ public sealed class Company
     // es mínimo (no vacía): que la fila exista es del handler, que resuelve contra
     // ICompanyGeographyLookup antes de llegar acá — el dominio no puede llamar a Geography.
     // Mismo criterio que Supplier.EnsureValidLocation.
-    private static (Guid? CityId, string? CityName) EnsureValidLocation(
+    private static (Guid? CityId, string? CityName, Guid? RegionId) EnsureValidLocation(
         string country,
         Guid? cityId,
-        string? cityName)
+        string? cityName,
+        Guid? regionId)
     {
+        // Guid.Empty es un id roto del cliente HTTP, no una región: cuenta como ausente.
+        var normalizedRegion = regionId == Guid.Empty ? null : regionId;
+
         if (country == ColombiaCountryCode)
         {
+            // Red del dominio: el validador ya rechaza la región con CO con un error por campo.
+            if (normalizedRegion is not null)
+            {
+                throw new CompaniesDomainException(
+                    "companies.company.region_lane_invalid",
+                    "A Colombian company takes its region from the city, not from a region id.");
+            }
+
             return cityId is { } id && id != Guid.Empty
-                ? (id, null)
+                ? (id, null, null)
                 : throw new CompaniesDomainException(
                     "companies.company.city_required",
                     "The city is required.");
@@ -440,7 +466,7 @@ public sealed class Company
             ? throw new CompaniesDomainException(
                 "companies.company.city_name_too_long",
                 $"The city name cannot exceed {CityNameMaxLength} characters.")
-            : (null, trimmed);
+            : (null, trimmed, normalizedRegion);
     }
 
     private static string Normalize(

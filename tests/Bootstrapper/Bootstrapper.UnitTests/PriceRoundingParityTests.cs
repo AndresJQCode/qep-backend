@@ -47,7 +47,10 @@ public sealed class PriceRoundingParityTests
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
-                CompanyId = Guid.CreateVersion7(), BankName = "Banco", AccountNumber = "123", Currency = currency,
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Banco",
+                AccountNumber = "123",
+                Currency = currency,
             },
             ShippingDetails.None,
             [new OrderLineInput(variant, variant, quantity, price, discount, 0)],

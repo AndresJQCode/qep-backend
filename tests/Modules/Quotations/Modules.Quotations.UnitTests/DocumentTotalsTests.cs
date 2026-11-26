@@ -312,4 +312,70 @@ public sealed class DocumentTotalsTests
 
         Assert.Equal(119_000m, totals.ProductsTotal);
     }
+
+    // ---- Descuento de línea sin IVA (spec 2026-11-23) ----
+
+    private static readonly Guid TenantId = Guid.CreateVersion7();
+    private static readonly MemberId Advisor = new(Guid.CreateVersion7());
+    private static readonly DateTimeOffset Now = new(2026, 11, 23, 12, 0, 0, TimeSpan.Zero);
+
+    private static Order OrderOf(params (decimal Quantity, decimal UnitPrice, decimal Discount)[] lines) =>
+        Order.CreateManual(
+            Domain.OrderId.New(), TenantId, "PED-2026-0100",
+            new OrderHeader(Guid.CreateVersion7(), Advisor, "COP", "Transferencia", false, null, false, []),
+            QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
+                Country = "CO",
+            },
+            ShippingDetails.None,
+            [.. lines.Select(line => new OrderLineInput(
+                Guid.CreateVersion7(), Guid.CreateVersion7(), line.Quantity, line.UnitPrice, line.Discount, 19))],
+            null, Advisor, [], Now, DateOnly.FromDateTime(Now.UtcDateTime));
+
+    [Fact]
+    public void TheHeaderDiscountSumsTheWithoutVatLines()
+    {
+        var order = OrderOf((200m, 25_000m, 20m), (3m, 35_900m, 40m));
+
+        Assert.Equal(order.Items.Sum(item => item.DiscountAmount), order.DiscountAmount);
+        // Cada línea cierra con su base: bruto sin IVA − descuento = Subtotal.
+        Assert.All(order.Items, item =>
+        {
+            var gross = item.Quantity * item.UnitPrice;
+            var grossWithoutTax = gross - Math.Round(gross * 19m / 119m, 2, MidpointRounding.AwayFromZero);
+            Assert.Equal(item.Subtotal, grossWithoutTax - item.DiscountAmount);
+        });
+    }
+
+    // Los totales no se mueven con el cambio de base del descuento: salen de Subtotal y TaxAmount.
+    [Fact]
+    public void TotalsDoNotChange()
+    {
+        var order = OrderOf((200m, 25_000m, 20m));
+
+        Assert.Equal(3_361_344.54m, order.Subtotal);
+        Assert.Equal(638_655.46m, order.TaxAmount);
+        Assert.Equal(4_000_000m, order.Total);
+        Assert.Equal(0m, order.RetentionAmount);
+        Assert.Equal(4_000_000m, order.NetTotal);
+    }
+
+    // POB888: el descuento de encabezado sin IVA es el viejo (con IVA) ÷ 1,19, con ±0,01 por línea.
+    [Fact]
+    public void TheHeaderDiscountIsTheOldOneDividedByTheVatFactor()
+    {
+        (decimal Quantity, decimal UnitPrice, decimal Discount)[] lines = [(3m, 35_900m, 40m), (7m, 12_345m, 40m)];
+        var cop = PriceRounding.LegacyFor("COP");
+        var oldWithVat = lines.Sum(line =>
+            VatIncludedLine.Compute(line.Quantity, line.UnitPrice, line.Discount, 19, cop).DiscountAmount);
+
+        var order = OrderOf(lines);
+
+        Assert.InRange(order.DiscountAmount, oldWithVat / 1.19m - 0.02m, oldWithVat / 1.19m + 0.02m);
+    }
 }

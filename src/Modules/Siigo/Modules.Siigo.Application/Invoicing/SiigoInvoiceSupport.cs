@@ -62,6 +62,24 @@ internal static class SiigoInvoiceSupport
                 $"The Siigo connection cannot be used right now ({resolution.UnavailableReason}).");
     }
 
+    /// <summary>
+    /// La fila de ese pedido y tenant que tiene PDF en Siigo (<see cref="SiigoInvoice.HasPdf"/>), o 404 <c>siigo.invoice.not_found</c>:
+    /// otro pedido, otro tenant, rechazada, pendiente o resuelta a mano sin id son lo mismo, y nunca se llama a Siigo.
+    /// </summary>
+    public static async Task<SiigoInvoice> FindWithPdfAsync(
+        ISiigoInvoiceRepository invoices, Guid tenantId, Guid orderId, Guid invoiceId, CancellationToken cancellationToken) =>
+        (await invoices.ListByOrderAsync(tenantId, orderId, cancellationToken))
+            .FirstOrDefault(value => value.Id == invoiceId && value.HasPdf)
+        ?? throw new ResourceNotFoundException(SiigoErrorCodes.InvoiceNotFound, "The order has no Siigo invoice with a PDF under that id.");
+
+    /// <summary>El PDF de la fila, pedido a Siigo con las credenciales de su conexión. Lo comparten la descarga y el envío por WhatsApp.</summary>
+    public static async Task<byte[]> LoadPdfAsync(
+        ISiigoConnectionDirectory connections, ISiigoApi api, SiigoInvoice row, CancellationToken cancellationToken)
+    {
+        var credentials = await CredentialsAsync(connections, row.TenantId, row.ConnectionId, cancellationToken);
+        return await api.GetInvoicePdfAsync(credentials, row.SiigoInvoiceId!, cancellationToken);
+    }
+
     public static SiigoInvoiceKind ParseKind(string? kind) =>
         string.IsNullOrWhiteSpace(kind) ? SiigoInvoiceKind.Order : Enum.Parse<SiigoInvoiceKind>(kind, ignoreCase: true);
 
@@ -79,11 +97,37 @@ internal static class SiigoInvoiceSupport
                 .OrderBy(row => row.Kind),
         ];
 
+    /// <summary>Si es la de flete y la del pedido sigue abierta (<c>Pending</c> o <c>Unknown</c>): sólo sale después de que la del pedido
+    /// existe, así que nunca salió y no hay nada que mirar en Siigo.</summary>
+    public static bool IsFreightWaitingForTheOrder(SiigoInvoice row, IEnumerable<SiigoInvoice> rows) =>
+        row.Kind == SiigoInvoiceKind.Freight && rows.Any(value => value is { Kind: SiigoInvoiceKind.Order, IsOpen: true });
+
+    /// <summary>El código <c>siigo.invoice.*</c> de un intento que no se sabe cómo terminó (<c>SiigoInvoiceOutcome.Transient.Reason</c>). Lo que
+    /// el tenant no puede corregir (Partner-Id o token que faltan) cae en <c>unavailable</c>: quien lo arregla lo ve en Grafana.</summary>
+    public static string TransientCodeOf(string reason) => reason switch
+    {
+        "timeout" => SiigoErrorCodes.InvoiceTimeout,
+        "network" => SiigoErrorCodes.InvoiceNetwork,
+        "http_429" => SiigoErrorCodes.InvoiceRateLimited,
+        _ => SiigoErrorCodes.InvoiceUnavailable,
+    };
+
+    /// <summary>Si la petición de la factura pudo haber salido hacia Siigo (D-2, spec 2026-11-24). Sin <c>Partner-Id</c> no se llama, y
+    /// sin token la autenticación no llegó a dar con qué mandarla: en los demás motivos no se sabe, incluido un timeout o una falla de red
+    /// de <c>/auth</c>, que llegan igual que los de la factura y se tratan como sin respuesta.</summary>
+    public static bool LeftQep(string transientReason) =>
+        transientReason is not ("partner_id_missing" or "auth_without_token");
+
     public static string ErrorCodeOf(IReadOnlyList<SiigoError> errors)
     {
         if (errors.Any(error => string.Equals(error.Code, SiigoApiErrors.InvalidTotalPayments, StringComparison.OrdinalIgnoreCase)))
         {
             return SiigoErrorCodes.InvoiceTotalsMismatch;
+        }
+
+        if (SiigoApiErrors.IsServiceUnavailable(errors))
+        {
+            return SiigoErrorCodes.InvoiceSiigoService;
         }
 
         return errors.Any(error => string.Equals(error.Code, SiigoApiErrors.CredentialsRejected, StringComparison.Ordinal))
@@ -113,7 +157,8 @@ internal static class SiigoInvoiceSupport
         SiigoInvoice invoice,
         string action,
         DateTimeOffset now,
-        string? outcome = null) =>
+        string? outcome = null,
+        string? fromStatus = null) =>
         recorder.Record(
             invoice.TenantId,
             executionContext.SubjectId,
@@ -129,6 +174,7 @@ internal static class SiigoInvoiceSupport
                 number = invoice.Number,
                 errorCode = invoice.ErrorCode,
                 outcome,
+                fromStatus,
             }),
             now);
 

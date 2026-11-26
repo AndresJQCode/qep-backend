@@ -114,4 +114,23 @@ public sealed class OrderItemTests
         var line = Assert.Single(order.Items);
         Assert.Equal((ProductKind.Physical, SalesUnit.Unit), (line.Kind, line.SalesUnit));
     }
+
+    // Spec 2026-11-23: el descuento de línea es base sin IVA, como Subtotal: bruto sin IVA − descuento = Subtotal.
+    [Fact]
+    public void TheLineDiscountIsWithoutVat()
+    {
+        var order = Order.CreateManual(
+            Domain.OrderId.New(), TenantId, "PED-2026-0003", Header(), QuotationParties.Empty, Account,
+            ShippingDetails.None,
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 200m, 25_000m, 20m, 19)],
+            null, Advisor, [], Now, DateOnly.FromDateTime(Now.UtcDateTime));
+
+        var line = Assert.Single(order.Items);
+        var gross = 200m * 25_000m;
+        var grossWithoutTax = gross - Math.Round(gross * 19m / 119m, 2, MidpointRounding.AwayFromZero);
+
+        Assert.Equal(grossWithoutTax - line.Subtotal, line.DiscountAmount);
+        Assert.Equal(840_336.13m, line.DiscountAmount);
+        Assert.Equal(line.DiscountAmount, order.DiscountAmount);
+    }
 }

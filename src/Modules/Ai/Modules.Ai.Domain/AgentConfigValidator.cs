@@ -35,7 +35,17 @@ public sealed record AgentValidationContext(
     bool? HandoffMemberCanReply,
     bool Publishing,
     bool? QuotationAdvisorCanQuote = null,
-    bool? QuotationBillingAccountEligible = null);
+    bool? QuotationBillingAccountEligible = null,
+    AgentSchedulingReadiness? Scheduling = null);
+
+/// <summary>Spec 2026-11-23 §6.3 y §9.2: si la Agenda puede atender al agente. Lo calcula Scheduling (por el puerto de Ai) y el editor lo
+/// muestra; el validador lo exige sólo con <c>tools.scheduling</c> prendido.</summary>
+/// <param name="ModuleEnabled">El módulo <c>scheduling</c> está prendido para el tenant.</param>
+/// <param name="BookableServices">Servicios activos con «Se puede reservar por WhatsApp» que alguna franja activa ofrece con algún recurso activo.</param>
+public sealed record AgentSchedulingReadiness(bool ModuleEnabled, int BookableServices)
+{
+    public bool Ready => ModuleEnabled && BookableServices > 0;
+}
 
 /// <summary>
 /// Spec 2026-10-29 D-A7: los problemas que impiden publicar. Guardar nunca falla por ellos: el borrador puede quedar a medias y la
@@ -125,6 +135,21 @@ public static class AgentConfigValidator
                     "quotation_billing_account_unavailable",
                     "quotationDraft.billingAccount",
                     "Esa cuenta de cobro ya no está disponible: el agente no creará borradores hasta que elijas otra."));
+            }
+        }
+
+        if (config.Tools.Scheduling && context.Scheduling is { } scheduling)
+        {
+            if (!scheduling.ModuleEnabled)
+            {
+                issues.Add(Error("scheduling_module_disabled", "tools.scheduling", "Activa el módulo Agenda para que el agente pueda agendar citas."));
+            }
+            else if (scheduling.BookableServices == 0)
+            {
+                issues.Add(Error(
+                    "scheduling_no_bookable_service",
+                    "tools.scheduling",
+                    "Ningún servicio de la Agenda se puede reservar por WhatsApp en una franja activa: marca uno como «Se puede reservar por WhatsApp» y ofrécelo en una franja."));
             }
         }
 

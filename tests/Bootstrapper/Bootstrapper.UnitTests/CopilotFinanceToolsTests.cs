@@ -188,8 +188,8 @@ public sealed class CopilotFinanceToolsTests
                 ListServicesQuery list => new ServicePageDto([.. Rows(list.PageSize).Select(_ => Service(Guid.NewGuid()))], Total, list.Page, list.PageSize, new ServiceSummaryDto(1, 0, [], [])),
                 GetServiceQuery get => new ServiceDetailDto(
                     Service(get.ServiceId), new ProfileDto(ServiceCustomer.Id, "WhatsApp", new MemberRefDto(Guid.NewGuid(), "Ana", true), 1),
-                    [.. Enumerable.Range(0, Total).Select(_ => Charge())], []),
-                ListChargesQuery list => new ChargePageDto([.. Rows(list.PageSize).Select(_ => Charge())], Total, list.Page, list.PageSize, new ChargeSummaryDto(1, 0, 0, [], [])),
+                    [.. Enumerable.Range(0, Total).Select(_ => Charge())], [], []),
+                ListChargesQuery list => new ChargePageDto([.. Rows(list.PageSize).Select(_ => Charge())], Total, list.Page, list.PageSize, new ChargeSummaryDto(1, 0, 0, [], [], PriceReviewCountsDto.Empty)),
                 _ => throw new InvalidOperationException($"Unexpected query {query.GetType().Name}."),
             };
             return Task.FromResult((TResponse)response);
@@ -202,9 +202,11 @@ public sealed class CopilotFinanceToolsTests
             1, 100, 10, null, null, 1, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
 
         private static ServiceDto Service(Guid id) => new(
-            id, ServiceCustomer, "Hosting", null, 100, "COP", "Monthly", new DateOnly(2024, 1, 1), "Active", null, 0, [], 1, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+            id, ServiceCustomer, "Hosting", null, 100, "COP", "Monthly", new DateOnly(2024, 1, 1), "Active", null, 0, [], 1, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch,
+            new PriceReviewInfoDto("Manual", 0, new DateOnly(2027, 1, 1), null, null, null, "None", null, null, null));
 
         private static ChargeDto Charge() => new(
-            Guid.NewGuid(), Guid.NewGuid(), "Hosting", ServiceCustomer, null, 100, "COP", new DateOnly(2026, 10, 1), "Open", 3, null, null, 1);
+            Guid.NewGuid(), Guid.NewGuid(), "Hosting", ServiceCustomer, null, 100, "COP", new DateOnly(2026, 10, 1), "Open", 3, null, null, 1,
+            new DateOnly(2026, 10, 1), false);
     }
 }

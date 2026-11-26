@@ -49,8 +49,11 @@ public sealed class PurchaseOrderLine
     /// <summary>Cantidad pedida. Nula sólo en una línea que agregó el mayorista al aprobar (<c>Added</c>).</summary>
     public decimal? Quantity { get; private set; }
 
-    /// <summary>Costo unitario sin IVA.</summary>
-    public decimal UnitCost { get; private set; }
+    /// <summary>
+    /// Costo unitario sin IVA. Nulo en una línea vinculada que nació sin precio (lista oculta, spec 2026-11-19): el
+    /// distribuidor nunca pidió a un precio, y los costos llegan con la aprobación (<see cref="ConfirmedUnitCost"/>).
+    /// </summary>
+    public decimal? UnitCost { get; private set; }
 
     public decimal? ConfirmedQuantity { get; private set; }
 
@@ -70,32 +73,42 @@ public sealed class PurchaseOrderLine
     /// <summary>True si la confirmación creó el producto en el catálogo propio en vez de encontrarlo.</summary>
     public bool CreatedInCatalog { get; private set; }
 
+    // D-12: sin precio pedido sólo se compara la cantidad; no hay un precio que haya «cambiado».
     public PurchaseOrderLineStatus Status => (Quantity, ConfirmedQuantity) switch
     {
         (null, _) => PurchaseOrderLineStatus.Added,
         (_, null) => PurchaseOrderLineStatus.Pending,
         (_, 0m) => PurchaseOrderLineStatus.Rejected,
-        var (requested, confirmed) when confirmed == requested && ConfirmedUnitCost == UnitCost =>
+        var (requested, confirmed) when confirmed == requested && (UnitCost is null || ConfirmedUnitCost == UnitCost) =>
             PurchaseOrderLineStatus.Unchanged,
         _ => PurchaseOrderLineStatus.Changed,
     };
 
     /// <summary>
     /// Subtotal efectivo sin IVA (D-5): con los valores confirmados si la línea ya se confirmó, aunque la orden se haya
-    /// cancelado después; si no, con los pedidos.
+    /// cancelado después; si no, con los pedidos. Nulo mientras no haya un costo con qué calcularlo (línea sin precio que
+    /// el mayorista todavía no aprobó); una línea rechazada (cantidad confirmada 0) vale 0.
     /// </summary>
-    public decimal Subtotal => ConfirmedQuantity is { } quantity
-        ? PurchaseOrderMath.Subtotal(quantity, ConfirmedUnitCost ?? UnitCost)
-        : RequestedSubtotal;
+    public decimal? Subtotal => ConfirmedQuantity switch
+    {
+        0m => 0m,
+        { } quantity => (ConfirmedUnitCost ?? UnitCost) is { } cost ? PurchaseOrderMath.Subtotal(quantity, cost) : null,
+        null => RequestedSubtotal,
+    };
 
     /// <summary>Subtotal sin IVA con lo pedido, sin importar lo confirmado. Una línea <c>Added</c> no se pidió: suma 0.</summary>
-    public decimal RequestedSubtotal => PurchaseOrderMath.Subtotal(Quantity ?? 0m, UnitCost);
+    public decimal? RequestedSubtotal => UnitCost is { } cost ? PurchaseOrderMath.Subtotal(Quantity ?? 0m, cost) : null;
 
-    public decimal Tax => PurchaseOrderMath.Tax(Subtotal, TaxRatePercent);
+    public decimal? Tax => Subtotal is { } subtotal ? PurchaseOrderMath.Tax(subtotal, TaxRatePercent) : null;
 
-    public decimal RequestedTax => PurchaseOrderMath.Tax(RequestedSubtotal, TaxRatePercent);
+    public decimal? RequestedTax =>
+        RequestedSubtotal is { } subtotal ? PurchaseOrderMath.Tax(subtotal, TaxRatePercent) : null;
 
-    internal static PurchaseOrderLine From(PurchaseOrderLineDraft draft) => new()
+    /// <summary>
+    /// <paramref name="withPrices"/> en <c>false</c> arma la línea sin ningún monto (costo ni lista del mayorista): es el
+    /// único punto donde se descartan, para que ni el adaptador ni el DTO tengan que enmascarar nada.
+    /// </summary>
+    internal static PurchaseOrderLine From(PurchaseOrderLineDraft draft, bool withPrices) => new()
     {
         Id = Guid.CreateVersion7(),
         VariantId = draft.VariantId,
@@ -103,25 +116,25 @@ public sealed class PurchaseOrderLine
         Code = draft.Code,
         Name = draft.Name,
         Quantity = draft.Quantity,
-        UnitCost = draft.UnitCost,
+        UnitCost = withPrices ? draft.UnitCost : null,
         TaxRatePercent = draft.TaxRatePercent,
-        ListBasePrice = draft.Listing?.BasePrice,
-        ListDiscountPercent = draft.Listing?.DiscountPercent,
-        ListUnitPrice = draft.Listing?.UnitPrice,
+        ListBasePrice = withPrices ? draft.Listing?.BasePrice : null,
+        ListDiscountPercent = withPrices ? draft.Listing?.DiscountPercent : null,
+        ListUnitPrice = withPrices ? draft.Listing?.UnitPrice : null,
     };
 
-    internal static PurchaseOrderLine From(LinkedLineSnapshot snapshot) => new()
+    internal static PurchaseOrderLine From(LinkedLineSnapshot snapshot, bool withPrices) => new()
     {
         Id = snapshot.LineId,
         SupplierVariantId = snapshot.SupplierVariantId,
         Code = snapshot.Code,
         Name = snapshot.Name,
         Quantity = snapshot.Quantity,
-        UnitCost = snapshot.UnitCost,
+        UnitCost = withPrices ? snapshot.UnitCost : null,
         TaxRatePercent = snapshot.TaxRatePercent,
-        ListBasePrice = snapshot.BasePrice,
-        ListDiscountPercent = snapshot.DiscountPercent,
-        ListUnitPrice = snapshot.UnitPrice,
+        ListBasePrice = withPrices ? snapshot.BasePrice : null,
+        ListDiscountPercent = withPrices ? snapshot.DiscountPercent : null,
+        ListUnitPrice = withPrices ? snapshot.UnitPrice : null,
     };
 
     /// <summary>Una línea que el mayorista agregó al editar el pedido: no se pidió, así que llega ya confirmada.</summary>
@@ -138,7 +151,7 @@ public sealed class PurchaseOrderLine
         ConfirmedUnitCost = line.UnitCost,
     };
 
-    internal void Confirm(decimal quantity, decimal unitCost)
+    internal void Confirm(decimal quantity, decimal? unitCost)
     {
         ConfirmedQuantity = quantity;
         ConfirmedUnitCost = unitCost;

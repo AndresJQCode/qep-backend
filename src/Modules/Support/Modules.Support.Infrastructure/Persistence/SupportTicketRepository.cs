@@ -65,6 +65,7 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
         Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         await dbContext.Tickets
             .Where(ticket => ticket.TenantId == tenantId
+                && !ticket.IsInternal
                 && ticket.ConversationId == conversationId
                 && ticket.Status != SupportTicketStatus.Closed)
             .OrderBy(ticket => ticket.ReceivedAt)
@@ -79,6 +80,7 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
         return await dbContext.Tickets
             .AsNoTracking()
             .Where(ticket => ticket.TenantId == tenantId
+                && !ticket.IsInternal
                 && (ticket.ConversationId == conversationId || (hasCustomer && ticket.CustomerId == customer)))
             .OrderByDescending(ticket => ticket.ReceivedAt)
             .ThenByDescending(ticket => ticket.Id)
@@ -108,9 +110,15 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
     }
 
     public async Task<SupportInboxTotals> TotalsAsync(
-        Guid tenantId, DateOnly today, DateOnly? dueSoonLimit, CancellationToken cancellationToken)
+        Guid tenantId,
+        SupportTicketKind kind,
+        Guid? participantMemberId,
+        DateOnly today,
+        DateOnly? dueSoonLimit,
+        CancellationToken cancellationToken)
     {
-        var tickets = dbContext.Tickets.AsNoTracking().Where(ticket => ticket.TenantId == tenantId);
+        var tickets = Scoped(
+            dbContext.Tickets.AsNoTracking().Where(ticket => ticket.TenantId == tenantId), kind, participantMemberId);
         var counted = await tickets
             .GroupBy(ticket => ticket.Status)
             .Select(group => new { Status = group.Key, Count = group.Count() })
@@ -128,9 +136,34 @@ internal sealed class SupportTicketRepository(SupportDbContext dbContext) : ISup
         return new SupportInboxTotals(byStatus, overdue, dueSoon);
     }
 
+    // El alcance de quien lista: el tipo de ticket y, para quien sólo usa tareas, su participación (creador o responsable). Va en la
+    // consulta: nunca se traen filas ajenas para descartarlas después.
+    private static IQueryable<SupportTicket> Scoped(
+        IQueryable<SupportTicket> tickets, SupportTicketKind kind, Guid? participantMemberId)
+    {
+        tickets = kind switch
+        {
+            SupportTicketKind.External => tickets.Where(ticket => !ticket.IsInternal),
+            SupportTicketKind.Internal => tickets.Where(ticket => ticket.IsInternal),
+            _ => tickets,
+        };
+
+        return participantMemberId is { } member
+            ? tickets.Where(ticket => ticket.CreatedByMemberId == member || ticket.AssigneeMemberId == member)
+            : tickets;
+    }
+
     private IQueryable<SupportTicket> Filtered(SupportTicketFilter filter)
     {
-        var tickets = dbContext.Tickets.AsNoTracking().Where(ticket => ticket.TenantId == filter.TenantId);
+        var tickets = Scoped(
+            dbContext.Tickets.AsNoTracking().Where(ticket => ticket.TenantId == filter.TenantId),
+            filter.Kind,
+            filter.ParticipantMemberId);
+
+        if (filter.CreatedByMemberId is { } createdBy)
+        {
+            tickets = tickets.Where(ticket => ticket.CreatedByMemberId == createdBy);
+        }
 
         if (filter.Statuses is { Count: > 0 } statuses)
         {

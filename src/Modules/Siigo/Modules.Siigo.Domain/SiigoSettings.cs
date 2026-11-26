@@ -1,16 +1,17 @@
 namespace Modules.Siigo.Domain;
 
-/// <summary>El paso «Documento» del asistente (spec 2026-11-18 §5.3): comprobante, vendedor, centro de costo, bodega, los interruptores
-/// y el código del producto que factura el flete. Los ids son los de Siigo, como texto.</summary>
+/// <summary>El paso «Documento» del asistente (spec 2026-11-18 §5.3): comprobante, centro de costo, bodega, los interruptores y el
+/// código del producto que factura el flete. Los ids son los de Siigo, como texto. El vendedor no se configura: es el asesor de cada
+/// pedido (spec 2026-11-20).</summary>
 public sealed record SiigoDocumentSettings(
     string? DocumentTypeId,
-    string? SellerId,
     string? CostCenterId,
     string? WarehouseId,
     bool SendToDian,
     bool SendMail,
     bool FreightSeparateInvoice,
-    string? FreightProductCode);
+    string? FreightProductCode,
+    SiigoPriceMode? PriceMode = null);
 
 /// <summary>El paso «Formas de pago» (spec 2026-11-18 §5.2): un vínculo por cuenta de cobro de la empresa, la forma de pago a crédito
 /// con sus días, la de contraentrega y la que se usa cuando el pedido no trae banco.</summary>
@@ -28,7 +29,7 @@ public sealed record SiigoVariantLinkInput(Guid VariantId, string Code, string S
 /// Spec 2026-11-18 §5.2: la configuración de una conexión de Siigo, una fila por conexión (PK <see cref="ConnectionId"/>), con los
 /// vínculos de impuestos, retenciones, cuentas de cobro y productos. Nace vacía al primer acceso. <b>Toda escritura sube
 /// <see cref="Version"/></b>, que es el <c>If-Match</c> de los <c>PUT</c> y el token de concurrencia de la fila; sin esa regla, dos
-/// pestañas se pisarían en silencio. Los ids de Siigo (comprobante, vendedor, impuestos…) son texto: la lista de Siigo no se copia y
+/// pestañas se pisarían en silencio. Los ids de Siigo (comprobante, impuestos…) son texto: la lista de Siigo no se copia y
 /// la validez de cada uno se revisa al leerla en vivo, no acá. Nunca guarda la clave de acceso: esa es de la conexión de Integrations.
 /// </summary>
 public sealed class SiigoSettings
@@ -41,6 +42,7 @@ public sealed class SiigoSettings
     private readonly List<SiigoTaxLink> _taxLinks = [];
     private readonly List<SiigoWithholdingLink> _withholdingLinks = [];
     private readonly List<SiigoPaymentLink> _paymentLinks = [];
+    private readonly List<SiigoSellerLink> _sellerLinks = [];
 
     private SiigoSettings()
     {
@@ -56,8 +58,6 @@ public sealed class SiigoSettings
 
     public string? DocumentTypeId { get; private set; }
 
-    public string? SellerId { get; private set; }
-
     public string? CostCenterId { get; private set; }
 
     public string? WarehouseId { get; private set; }
@@ -72,6 +72,9 @@ public sealed class SiigoSettings
     public bool FreightSeparateInvoice { get; private set; }
 
     public string? FreightProductCode { get; private set; }
+
+    /// <summary>Cómo viaja el precio de cada ítem (spec 2026-11-23). <see cref="SiigoPriceMode.BaseWithDiscount"/> de fábrica.</summary>
+    public SiigoPriceMode PriceMode { get; private set; } = SiigoPriceMode.BaseWithDiscount;
 
     public string? CreditPaymentTypeId { get; private set; }
 
@@ -94,6 +97,15 @@ public sealed class SiigoSettings
 
     public IReadOnlyList<SiigoPaymentLink> PaymentLinks => _paymentLinks;
 
+    public IReadOnlyList<SiigoSellerLink> SellerLinks => _sellerLinks;
+
+    /// <summary>Cuándo el asistente intentó vincular por correo por primera vez (spec 2026-11-20 §9). Null: nunca; la pantalla lo
+    /// intenta sola al abrir el paso.</summary>
+    public DateTimeOffset? SellersAutoLinkedAt { get; private set; }
+
+    /// <summary>Igual que <see cref="SellersAutoLinkedAt"/>, para la vinculación de productos por código.</summary>
+    public DateTimeOffset? ProductsAutoLinkedAt { get; private set; }
+
     public static SiigoSettings Create(Guid connectionId, Guid tenantId) =>
         new()
         {
@@ -102,6 +114,7 @@ public sealed class SiigoSettings
             SendToDian = false,
             SendMail = false,
             FreightSeparateInvoice = false,
+            PriceMode = SiigoPriceMode.BaseWithDiscount,
             Version = 0,
         };
 
@@ -115,13 +128,13 @@ public sealed class SiigoSettings
     {
         ArgumentNullException.ThrowIfNull(document);
         DocumentTypeId = Id(document.DocumentTypeId);
-        SellerId = Id(document.SellerId);
         CostCenterId = Id(document.CostCenterId);
         WarehouseId = Id(document.WarehouseId);
         SendToDian = document.SendToDian;
         SendMail = document.SendMail;
         FreightSeparateInvoice = document.FreightSeparateInvoice;
         FreightProductCode = Text(document.FreightProductCode, FreightProductCodeMaxLength);
+        PriceMode = document.PriceMode ?? PriceMode;
         Touch();
     }
 
@@ -138,6 +151,31 @@ public sealed class SiigoSettings
             (link, connectionId, tenantId) => (link.ConnectionId, link.TenantId) = (connectionId, tenantId));
         Touch();
     }
+
+    /// <summary>Igual que <see cref="ReplaceTaxLinks"/>, por <c>MembershipId</c> (spec 2026-11-20): el vendedor de cada asesor.</summary>
+    public void ReplaceSellerLinks(IReadOnlyList<SiigoSellerLink> links)
+    {
+        ArgumentNullException.ThrowIfNull(links);
+        Sync(
+            _sellerLinks,
+            links,
+            link => link.MembershipId,
+            (existing, incoming) => existing.Relink(incoming.SiigoUserId, incoming.SiigoUserName),
+            (link, connectionId, tenantId) => (link.ConnectionId, link.TenantId) = (connectionId, tenantId));
+        Touch();
+    }
+
+    /// <summary>El usuario de Siigo vinculado al asesor, o <c>null</c> si no tiene vínculo.</summary>
+    public string? SellerFor(Guid membershipId) =>
+        _sellerLinks.Find(link => link.MembershipId == membershipId)?.SiigoUserId;
+
+    /// <summary>Deja constancia de que ya se intentó vincular vendedores por correo; vinculen o no, la pantalla no lo repite sola. No sube
+    /// <see cref="Version"/>: es un registro, no configuración, y subirla dejaría vieja la versión que la pantalla acaba de leer (un 412 en
+    /// el siguiente guardado sin que nadie haya cambiado nada). Si el auto-link vinculó algo, la versión ya subió con los vínculos.</summary>
+    public void MarkSellersAutoLinked(DateTimeOffset at) => SellersAutoLinkedAt = at;
+
+    /// <summary>Igual que <see cref="MarkSellersAutoLinked"/>, para productos.</summary>
+    public void MarkProductsAutoLinked(DateTimeOffset at) => ProductsAutoLinkedAt = at;
 
     /// <summary>Igual que <see cref="ReplaceTaxLinks"/>, por <c>TaxRateId</c>.</summary>
     public void ReplaceWithholdingLinks(IReadOnlyList<SiigoWithholdingLink> links)

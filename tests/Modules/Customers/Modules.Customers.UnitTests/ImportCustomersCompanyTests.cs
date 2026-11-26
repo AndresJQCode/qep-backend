@@ -24,6 +24,10 @@ public sealed class ImportCustomersCompanyTests
     {
         public Task<CustomerCityRef?> FindCityAsync(Guid cityId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<IReadOnlyDictionary<Guid, CustomerRegionRef>> FindRegionsAsync(
+            IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, CustomerRegionRef>>(new Dictionary<Guid, CustomerRegionRef>());
+
         public Task<IReadOnlyDictionary<Guid, CustomerCityRef>> FindCitiesAsync(IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

@@ -452,13 +452,14 @@ public sealed class OrdersReportSummaryApiTests
             $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
 
         Assert.NotNull(summary);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
-        Assert.Equal([1, 1, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store", "Wholesale"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal([1, 1, 0, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal([new MoneyAmount("COP", quotation.Total)], summary.BySource[0].Totals);
         Assert.Equal([new MoneyAmount("COP", manual.Total)], summary.BySource[1].Totals);
         Assert.Empty(summary.BySource[2].Totals);
         Assert.Empty(summary.BySource[3].Totals);
         Assert.Empty(summary.BySource[4].Totals);
+        Assert.Empty(summary.BySource[5].Totals);
         Assert.Equal(0, summary.WithoutClient.Count);
         Assert.Empty(summary.WithoutClient.Totals);
     }
@@ -477,7 +478,7 @@ public sealed class OrdersReportSummaryApiTests
             $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
 
         Assert.NotNull(summary);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store", "Wholesale"], summary.BySource.Select(slice => slice.Source));
         Assert.All(summary.BySource, slice => Assert.Equal(0, slice.Count));
         Assert.NotNull(summary.WithoutClient);
         Assert.Equal(0, summary.WithoutClient.Count);

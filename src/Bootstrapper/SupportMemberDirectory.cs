@@ -83,6 +83,27 @@ internal sealed class SupportMemberDirectory(
         return managers;
     }
 
+    public async Task<IReadOnlyList<SupportMemberRef>> ListTaskMembersAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var tenant = new TenantId(tenantId);
+        var active = await tenancy.Memberships.AsNoTracking()
+            .Where(membership => membership.TenantId == tenant && membership.State == MembershipState.Active)
+            .ToListAsync(cancellationToken);
+
+        var members = new List<SupportMemberRef>();
+        foreach (var membership in active)
+        {
+            var member = await ToRefAsync(tenant, membership, cancellationToken);
+            if (member.CanManage || member.CanUseTasks)
+            {
+                members.Add(member);
+            }
+        }
+
+        // Sin ordenar, como ListManagersAsync: el orden lo da ListTaskAssigneesHandler.
+        return members;
+    }
+
     private async Task<SupportMemberRef> ToRefAsync(TenantId tenant, Membership membership, CancellationToken cancellationToken)
     {
         var isActive = membership.State == MembershipState.Active;
@@ -90,7 +111,9 @@ internal sealed class SupportMemberDirectory(
         // aunque su rol lo conceda.
         var canManage = isActive
             && await permissions.AnyGrantsAsync(tenant, membership.Roles, SupportPermissions.Manage, cancellationToken);
-        return new SupportMemberRef(membership.Id.Value, DisplayNameOf(membership.DisplayName), isActive, canManage);
+        var canUseTasks = isActive
+            && await permissions.AnyGrantsAsync(tenant, membership.Roles, SupportPermissions.TaskUse, cancellationToken);
+        return new SupportMemberRef(membership.Id.Value, DisplayNameOf(membership.DisplayName), isActive, canManage, canUseTasks);
     }
 
     private static string DisplayNameOf(string? displayName) =>

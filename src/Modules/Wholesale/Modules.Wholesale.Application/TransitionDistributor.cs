@@ -58,21 +58,23 @@ public sealed partial class TransitionDistributorHandler(
         {
             case DistributorAction.Resend:
                 var token = InvitationTokens.Generate();
+                var (emailProof, emailProofHash) = DistributorEmailProofs.Issue();
                 var noticeQueued = await NoticeConnectionIsReadyAsync(distributor, cancellationToken);
-                distributor.ResendInvitation(InvitationTokens.HashOf(token), noticeQueued, now);
+                distributor.ResendInvitation(InvitationTokens.HashOf(token), noticeQueued, now, emailProofHash);
                 eventPublisher.DistributorInvited(
                     command.TenantId,
                     distributor.Id.Value,
                     distributor.Email,
                     distributor.BusinessName,
                     token,
+                    emailProof,
                     distributor.Invitation.ExpiresAt,
                     command.CorrelationId,
                     now);
                 if (noticeQueued)
                 {
                     await DistributorWhatsAppNotice.QueueAsync(
-                        eventPublisher, memberships, executionContext.SubjectId, distributor, command.CorrelationId, now,
+                        eventPublisher, memberships, executionContext.SubjectId, distributor, token, command.CorrelationId, now,
                         cancellationToken);
                 }
 

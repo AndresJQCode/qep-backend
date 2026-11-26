@@ -56,7 +56,8 @@ public static class RestOrderParser
         OptionalString(address, "province_code", $"{field}.province_code"),
         OptionalString(address, "country_code", $"{field}.country_code"),
         OptionalString(address, "phone", $"{field}.phone"),
-        OptionalString(address, "company", $"{field}.company"));
+        OptionalString(address, "company", $"{field}.company"),
+        OptionalString(address, "zip", $"{field}.zip"));
 
     private static ShopifyLine[] Lines(JsonElement order) =>
         Items(order, "line_items", "line_items")

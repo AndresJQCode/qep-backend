@@ -31,7 +31,8 @@ public sealed class OrderItem
         PriceRounding rounding,
         ProductKind kind,
         SalesUnit salesUnit,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool isGift)
     {
         Id = id;
         OrderId = orderId;
@@ -42,8 +43,14 @@ public sealed class OrderItem
         Position = position;
         CreatedAt = occurredAt;
         UpdatedAt = occurredAt;
-        Apply(quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat, currency, rounding, occurredAt);
+        IsGift = isGift;
+        Apply(
+            quantity, unitPrice, isGift ? GiftDiscountPercentage : discountPercentage, productTaxPercentage, chargesVat,
+            currency, rounding, occurredAt);
     }
+
+    /// <summary>El descuento fijo de una línea de regalo (spec 2026-11-21): el precio real se conserva y el cliente no paga.</summary>
+    public const decimal GiftDiscountPercentage = 100m;
 
     public OrderItemId Id { get; private set; }
 
@@ -64,6 +71,10 @@ public sealed class OrderItem
     /// <summary>La unidad de venta de la línea, con la misma regla que <see cref="Kind"/>.</summary>
     public SalesUnit SalesUnit { get; private set; }
 
+    /// <summary>Si la línea es un regalo (spec 2026-11-21): descuento fijo en 100 %, precio real conservado. La clave de la
+    /// línea es (<see cref="VariantId"/>, <see cref="IsGift"/>): puede haber una pagada y una de regalo de la misma variante.</summary>
+    public bool IsGift { get; private set; }
+
     public string? ProductCode { get; private set; }
 
     /// <summary>La línea de la orden de compra vinculada de la que salió (mayorista fase 3). Null en cualquier otro pedido y
@@ -80,6 +91,7 @@ public sealed class OrderItem
 
     public QuotationDiscountOrigin DiscountOrigin { get; private set; }
 
+    /// <summary>El descuento de la línea en base sin IVA, como <see cref="Subtotal"/> (spec 2026-11-23).</summary>
     public decimal DiscountAmount { get; private set; }
 
     public decimal Subtotal { get; private set; }
@@ -154,10 +166,14 @@ public sealed class OrderItem
         PriceRounding rounding,
         ProductKind kind,
         SalesUnit salesUnit,
-        DateTimeOffset occurredAt) =>
+        DateTimeOffset occurredAt,
+        bool isGift = false) =>
         new(
             id, orderId, variantId, productId, quantity, unitPrice, discountPercentage, productTaxPercentage, chargesVat,
-            position, currency, rounding, kind, salesUnit, occurredAt);
+            position, currency, rounding, kind, salesUnit, occurredAt, isGift);
+
+    /// <summary>Renumera la línea tras reemplazar las de una edición externa, para que dos no compartan posición.</summary>
+    internal void MoveTo(int position) => Position = position;
 
     internal void LinkPurchaseOrderLine(Guid? purchaseOrderLineId) => SourcePurchaseOrderLineId = purchaseOrderLineId;
 
@@ -190,7 +206,10 @@ public sealed class OrderItem
         string currency,
         PriceRounding rounding,
         DateTimeOffset occurredAt) =>
-        Apply(quantity, UnitPrice, discountPercentage, productTaxPercentage, chargesVat, currency, rounding, occurredAt);
+        // Un regalo conserva su 100 %: sólo la cantidad se edita.
+        Apply(
+            quantity, UnitPrice, IsGift ? GiftDiscountPercentage : discountPercentage, productTaxPercentage, chargesVat,
+            currency, rounding, occurredAt);
 
     /// <summary>Spec 2026-11-14 §4: la línea que una edición de la plataforma conserva, con el precio y el descuento que la
     /// plataforma cobró ahora (sin repreciar contra el catálogo). Conserva su id y su costo congelado.</summary>
@@ -218,6 +237,7 @@ public sealed class OrderItem
     /// COP. Así una edición que llega igual a lo que el pedido ya tiene no cuenta como cambio.</summary>
     internal bool SameAs(OrderItem other) =>
         VariantId == other.VariantId
+        && IsGift == other.IsGift
         && ProductId == other.ProductId
         && Quantity == other.Quantity
         && UnitPrice == other.UnitPrice
@@ -232,6 +252,11 @@ public sealed class OrderItem
         DateTimeOffset occurredAt)
     {
         DiscountOrigin = origin;
+        if (IsGift)
+        {
+            discountPercentage = GiftDiscountPercentage;
+        }
+
         // La tasa efectiva se conserva tal cual: el descuento no cambia si la línea lleva IVA.
         Compute(Quantity, UnitPrice, discountPercentage, TaxPercentage, ProductTaxRate, rounding, occurredAt);
     }
@@ -305,7 +330,8 @@ public sealed class OrderItem
         TaxPercentage = taxPercentage;
         ProductTaxPercentage = productTaxPercentage;
         var amounts = VatIncludedLine.Compute(quantity, unitPrice, discountPercentage, taxPercentage, rounding);
-        DiscountAmount = amounts.DiscountAmount;
+        // Sin IVA, como Subtotal (spec 2026-11-23): bruto sin IVA − descuento = Subtotal.
+        DiscountAmount = amounts.DiscountAmountWithoutTax;
         TaxAmount = amounts.TaxAmount;
         Subtotal = amounts.Subtotal;
         UpdatedAt = occurredAt;

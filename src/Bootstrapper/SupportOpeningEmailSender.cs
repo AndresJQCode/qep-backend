@@ -24,7 +24,8 @@ internal sealed partial class SupportOpeningEmailSender(IEmailChannel channel, I
         {
             await channel.SendAsync(
                 SupportOpeningEmailTemplate.Render(new SupportOpeningEmailInput(
-                    email.ToAddress, email.TenantName, email.TicketNumber, email.TypeName, email.DueOn, email.ConsultUrl, email.Pin)),
+                    email.ToAddress, email.TenantName, email.TicketNumber, email.TypeName, email.DueOn, email.ConsultUrl, email.Pin,
+                    email.Language)),
                 cancellationToken);
             return new SupportChannelSendResult.Sent(null, null);
         }

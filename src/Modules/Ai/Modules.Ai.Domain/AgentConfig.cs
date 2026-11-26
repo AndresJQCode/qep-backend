@@ -51,7 +51,7 @@ public sealed record AgentConfig(
             Faq: [],
             UseQuickReplies: false,
             AnswerOnlyFromSources: true,
-            Tools: new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: false),
+            Tools: new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: false, Scheduling: false),
             Handoff: new AgentHandoff(
                 AgentHandoff.ToUnassigned, MemberId: null, Message: null, AgentHandoff.DefaultMaxRepliesWithoutHuman,
                 AgentHandoff.DefaultMaxConsecutiveFailures),
@@ -69,8 +69,9 @@ public sealed record AgentConfig(
 /// <param name="Id">Lo que el modelo cita como fuente; lo elige el editor y es único dentro del agente.</param>
 public sealed record AgentFaq(string Id, string Question, string Answer);
 
-/// <summary>Spec 2026-10-29 §8: qué herramientas puede usar el agente.</summary>
-public sealed record AgentTools(bool Catalog, bool OrderStatus, bool QuotationDraft);
+/// <summary>Spec 2026-10-29 §8: qué herramientas puede usar el agente. <paramref name="Scheduling"/> (spec 2026-11-23 D-1) tiene valor por
+/// defecto para que un documento guardado antes de la herramienta de la Agenda se siga leyendo, con ella apagada.</summary>
+public sealed record AgentTools(bool Catalog, bool OrderStatus, bool QuotationDraft, bool Scheduling = false);
 
 /// <summary>
 /// Spec 2026-10-29 P-4 (owner, 2026-10-29): con qué asesora y con qué cuenta de cobro nace el borrador de cotización que crea el agente.

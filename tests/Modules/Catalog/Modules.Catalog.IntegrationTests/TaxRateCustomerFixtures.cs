@@ -1,5 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Customers.Application;
+using Modules.Customers.Domain;
 using Npgsql;
 
 namespace Modules.Catalog.IntegrationTests;
@@ -52,6 +56,54 @@ internal static class TaxRateCustomerFixtures
         Assert.True(
             response.StatusCode == HttpStatusCode.Created,
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// Un cliente de afuera **sin** tasas propias y con un perfil de facturación que sí la tiene. El perfil se guarda por el
+    /// repositorio: lo que se verifica es la consulta del candado, no la API de Customers.
+    /// </summary>
+    public static async Task AssignToABillingProfileOfANewCustomerAsync(
+        HttpClient customerManager, IServiceProvider services, string tenantId, Guid taxRateId)
+    {
+        var response = await customerManager.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers",
+            new
+            {
+                name = "Casa Verde S.L.",
+                identificationType = "NIF",
+                identificationNumber = "B-87654321",
+                phone = "+34 910 000 001",
+                email = "compras@casaverde.es",
+                address = "Calle Mayor 1",
+                country = "ES",
+                cityName = "Madrid"
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(
+            response.StatusCode == HttpStatusCode.Created,
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var customerId = (await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken))
+            .GetProperty("id").GetGuid();
+
+        await using var scope = services.CreateAsyncScope();
+        var customer = await scope.ServiceProvider.GetRequiredService<ICustomerRepository>().FindAsync(
+            Guid.Parse(tenantId), new CustomerId(customerId), TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        customer.EnsureBillingProfile(
+            new CustomerBillingProfileDetails
+            {
+                Name = "Casa Verde S.L.",
+                IdentificationType = "NIF",
+                IdentificationNumber = "B-87654321",
+                Address = "Calle Mayor 1",
+                Country = "ES",
+                CityName = "Madrid",
+                WithholdingTaxRateIds = [taxRateId]
+            },
+            false,
+            DateTimeOffset.UtcNow);
+        await scope.ServiceProvider.GetRequiredService<ICustomersUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     /// <summary>

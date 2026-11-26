@@ -16,6 +16,19 @@ public sealed class PurchaseOrderTotalsTests
     }
 
     [Fact]
+    public void AnOrderWithAPricelessLineHasNoTotalsAndOneWithAllPricesStillDoes()
+    {
+        var order = LinkedOrder([LinkedLine(code: "A"), LinkedLine(code: "B")], withPrices: false);
+        Assert.Null(order.Totals());
+        Assert.Null(order.RequestedTotals());
+
+        order.Replace(SupplierId, SupplierTenantId, "COP", null, [LinkedLine(quantity: 3m, unitCost: 100m, taxRatePercent: 0m)], Now);
+
+        Assert.Equal(new PurchaseOrderTotals(300m, 0m, 300m), order.Totals());
+        Assert.Equal(new PurchaseOrderTotals(300m, 0m, 300m), order.RequestedTotals());
+    }
+
+    [Fact]
     public void LineTaxIsRoundedAwayFromZeroPerLine()
     {
         Assert.Equal(0.03m, PurchaseOrderMath.Tax(0.25m, 10m));
@@ -30,15 +43,15 @@ public sealed class PurchaseOrderTotalsTests
     public void TotalsUseConfirmedValuesOnceConfirmedAndRequestedStaysOriginal()
     {
         var order = Order(lines: [Line(quantity: 2m, unitCost: 10m, taxRatePercent: 0m)]);
-        Assert.Equal(20m, order.Totals().Subtotal);
+        Assert.Equal(20m, order.Totals()!.Subtotal);
         order.Send(MemberId, Now);
 
         order.Confirm([new PurchaseOrderLineConfirmation(order.Lines[0].Id, 1m, 12m)], MemberId, Now);
 
-        Assert.Equal(12m, order.Totals().Subtotal);
+        Assert.Equal(12m, order.Totals()!.Subtotal);
         Assert.Equal(12m, order.Lines[0].Subtotal);
         Assert.Equal(20m, order.Lines[0].RequestedSubtotal);
-        Assert.Equal(20m, order.RequestedTotals().Subtotal);
+        Assert.Equal(20m, order.RequestedTotals()!.Subtotal);
     }
 
     [Fact]

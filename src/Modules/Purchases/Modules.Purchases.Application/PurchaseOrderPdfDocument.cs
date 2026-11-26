@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Modules.Purchases.Application;
 
 /// <summary>Una fila de la tabla del PDF, con cada valor ya formateado: la plantilla imprime texto, no calcula.</summary>
@@ -28,7 +30,9 @@ public sealed record PurchaseOrderPdfDocument(
     string Subtotal,
     string Tax,
     string Total,
-    bool ShowsConfirmedValues);
+    bool ShowsConfirmedValues,
+    // No viaja a la plantilla Typst (su contrato no cambia): sólo le dice al correo si imprime la tabla de montos.
+    [property: JsonIgnore] bool ShowsAmounts = true);
 
 /// <summary>Genera el PDF de una orden; el adaptador (Infrastructure) llama a <c>qcode-pdf</c> con su plantilla.</summary>
 public interface IPurchaseOrderPdfRenderer

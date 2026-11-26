@@ -109,7 +109,9 @@ public sealed class BillingEmailTemplatesTests
             DueSoon: [row, row],
             Overdue: [],
             FailedReminders: [failed],
-            OverdueTotalByCurrency: []);
+            OverdueTotalByCurrency: [],
+            PriceReviews: [],
+            HeldCharges: []);
 
         var message = BillingDigestEmailTemplate.Render(digest, Colombian);
 
@@ -125,5 +127,76 @@ public sealed class BillingEmailTemplatesTests
         Assert.Contains("Vencidos", second.HtmlBody, StringComparison.Ordinal);
         Assert.Contains("- Ana <x> / Dominio: US$ 20,00, 10/03/2026\n", second.TextBody, StringComparison.Ordinal);
         Assert.Contains("Total vencido: $ 150.000 y US$ 20,00", second.TextBody, StringComparison.Ordinal);
+    }
+
+    private static BillingDigestEmailInput Digest(
+        IReadOnlyList<BillingDigestEmailRow> dueSoon,
+        IReadOnlyList<BillingPriceReviewEmailRow> priceReviews,
+        IReadOnlyList<BillingPriceReviewEmailRow> heldCharges) =>
+        new("luis@verde.co", "Luis", "Verde SAS", dueSoon, [], [], [], priceReviews, heldCharges);
+
+    [Fact]
+    public void TheDigestDrawsPriceReviewsAndHeldCharges()
+    {
+        var missing = new BillingPriceReviewEmailRow(
+            "Ana <x>", "Hosting", "$ 150.000", new DateOnly(2026, 3, 20), new DateOnly(2026, 3, 15), 2025, true, null);
+        var manual = missing with { CustomerName = "Beto", IpcYear = null, IpcMissing = false };
+        var held = new BillingPriceReviewEmailRow(
+            "Carla", "Dominio", "US$ 20,00", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 7), 2025, false,
+            new DateOnly(2026, 3, 10));
+        var failed = new BillingDigestEmailRow("Dora", "Soporte", "$ 10", new DateOnly(2026, 3, 10), "no_phone");
+
+        var message = BillingDigestEmailTemplate.Render(
+            Digest([], [missing, manual], [held]) with { FailedReminders = [failed] }, Colombian);
+
+        Assert.Equal(
+            "Cobros de hoy: 0 por vencer, 0 vencidos, 1 avisos fallidos, 2 precios por revisar, 1 cobros retenidos",
+            message.Subject);
+        var text = message.TextBody;
+        Assert.Contains(
+            "- Ana <x> / Hosting: $ 150.000, revisión 20/03/2026, se genera 15/03/2026, IPC 2025 (falta cargarlo)\n",
+            text,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "- Beto / Hosting: $ 150.000, revisión 20/03/2026, se genera 15/03/2026, IPC —\n", text, StringComparison.Ordinal);
+        Assert.Contains(
+            "- Carla / Dominio: US$ 20,00, revisión 12/03/2026, se genera 07/03/2026, IPC 2025, retenido desde 10/03/2026\n",
+            text,
+            StringComparison.Ordinal);
+        // Después de los avisos fallidos, primero lo que está por revisar y luego lo retenido.
+        var failedAt = text.IndexOf("Avisos fallidos", StringComparison.Ordinal);
+        var reviewsAt = text.IndexOf("Precios por revisar", StringComparison.Ordinal);
+        var heldAt = text.IndexOf("Cobros retenidos", StringComparison.Ordinal);
+        Assert.True(failedAt >= 0 && failedAt < reviewsAt && reviewsAt < heldAt, text);
+        var html = message.HtmlBody;
+        Assert.Contains("<h3>Precios por revisar</h3>", html, StringComparison.Ordinal);
+        Assert.Contains("<h3>Cobros retenidos</h3>", html, StringComparison.Ordinal);
+        Assert.Contains(">Precio actual</th>", html, StringComparison.Ordinal);
+        Assert.Contains(">Se genera</th>", html, StringComparison.Ordinal);
+        Assert.Contains(">2025 (falta cargarlo)</td>", html, StringComparison.Ordinal);
+        Assert.Contains("Ana &lt;x&gt;", html, StringComparison.Ordinal);
+        // «Retenido desde» es columna de los retenidos y de nadie más.
+        Assert.Equal(
+            html.IndexOf(">Retenido desde</th>", StringComparison.Ordinal),
+            html.LastIndexOf(">Retenido desde</th>", StringComparison.Ordinal));
+        Assert.True(
+            html.IndexOf(">Retenido desde</th>", StringComparison.Ordinal)
+                > html.IndexOf("<h3>Cobros retenidos</h3>", StringComparison.Ordinal),
+            html);
+    }
+
+    [Fact]
+    public void EmptyReviewSectionsAreNotDrawn()
+    {
+        var row = new BillingDigestEmailRow("Ana", "Hosting", "$ 150.000", new DateOnly(2026, 3, 10), null);
+
+        var message = BillingDigestEmailTemplate.Render(Digest([row], [], []), Colombian);
+
+        Assert.Equal("Cobros de hoy: 1 por vencer, 0 vencidos, 0 avisos fallidos", message.Subject);
+        foreach (var body in new[] { message.HtmlBody, message.TextBody })
+        {
+            Assert.DoesNotContain("Precios por revisar", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("Cobros retenidos", body, StringComparison.Ordinal);
+        }
     }
 }

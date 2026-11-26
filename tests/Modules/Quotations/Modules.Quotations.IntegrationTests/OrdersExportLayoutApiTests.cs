@@ -566,6 +566,58 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
         Assert.Equal(["SheetName"], problem!.Errors!.Keys);
     }
 
+    // Spec 2026-11-25 indicativo: sin fila, el Excel lleva el indicativo.
+    [Fact]
+    public async Task GetWithoutAStoredLayoutIncludesThePhoneDialCode()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead);
+        using var _ = client;
+
+        using var response = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(body.RootElement.GetProperty("includePhoneDialCode").GetBoolean());
+    }
+
+    // Guardar sólo el interruptor es un cambio; un PUT sin el campo, o con null, no lo vuelve a prender.
+    [Fact]
+    public async Task PutSavesThePhoneDialCodeSwitchAndAnAbsentOrNullOneKeepsIt()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var columns = await DefaultColumnsAsync(client, tenantId);
+
+        using var off = await SendPutAsync(
+            client, tenantId, JsonContent.Create(new { columns, includePhoneDialCode = false }), "\"1\"");
+
+        Assert.Equal(HttpStatusCode.OK, off.StatusCode);
+        Assert.Equal("\"2\"", off.Headers.ETag?.Tag);
+        var saved = await off.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
+        Assert.False(saved!.IncludePhoneDialCode);
+        Assert.Single(
+            await OutboxMessagesAsync(factory, AuditEvent), message => ActionOf(message) == AuditAction);
+
+        columns[18] = columns[18] with { Header = "Correo" };
+        using var absent = await PutAsync(client, tenantId, columns, "\"2\"");
+        Assert.Equal(HttpStatusCode.OK, absent.StatusCode);
+        var afterAbsent = await absent.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(3, afterAbsent!.Version);
+        Assert.False(afterAbsent.IncludePhoneDialCode);
+
+        using var asNull = await SendPutAsync(
+            client, tenantId, JsonContent.Create(new { columns, includePhoneDialCode = (bool?)null }), "\"3\"");
+        Assert.Equal(HttpStatusCode.OK, asNull.StatusCode);
+        var afterNull = await asNull.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(3, afterNull!.Version);
+        Assert.False(afterNull.IncludePhoneDialCode);
+
+        var reread = await client.GetFromJsonAsync<LayoutPayload>(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
+        Assert.False(reread!.IncludePhoneDialCode);
+    }
+
     private static async Task AssertDomainCodeAsync(
         HttpClient client, Guid tenantId, IReadOnlyList<ColumnPayload> columns, string code, string ifMatch = "\"1\"")
     {
@@ -622,7 +674,8 @@ public sealed class OrdersExportLayoutApiTests(SharedQuotationsHost sharedHost) 
     }
 
     private sealed record LayoutPayload(
-        Guid TenantId, IReadOnlyList<ColumnPayload> Columns, long Version, string? SheetName, string? DefaultSheetName);
+        Guid TenantId, IReadOnlyList<ColumnPayload> Columns, long Version, string? SheetName, string? DefaultSheetName,
+        bool? IncludePhoneDialCode);
 
     private sealed record ColumnPayload(
         string Kind, string? Key, string? DefaultHeader, int? DefaultPosition, bool? DefaultVisible, string Header,

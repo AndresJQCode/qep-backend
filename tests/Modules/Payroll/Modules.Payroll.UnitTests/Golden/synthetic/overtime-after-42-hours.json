@@ -1,0 +1,97 @@
+{
+  "name": "overtime-after-42-hours",
+  "source": "synthetic",
+  "description": "Jornada de 42 horas: valor hora 10 000, 10 h extra diurna y 8 h de recargo dominical.",
+  "legal": "legal/2026-08-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "OvertimeRule", "OvertimeFactors"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-08-01",
+      "end": "2026-08-15",
+      "half": "First"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 2100000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "overtime": [
+      {
+        "conceptId": "00000000-0000-0000-0001-000000000001",
+        "conceptName": "Hora extra diurna",
+        "hours": 10,
+        "systemKey": "ExtraDay",
+        "customMultiplier": null
+      },
+      {
+        "conceptId": "00000000-0000-0000-0001-000000000004",
+        "conceptName": "Recargo dominical y festivo",
+        "hours": 8,
+        "systemKey": "SundaySurcharge",
+        "customMultiplier": null
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 1050000 },
+      { "code": "transport_allowance", "amount": 124548 },
+      { "code": "overtime:00000000-0000-0000-0001-000000000001", "amount": 125000 },
+      { "code": "overtime:00000000-0000-0000-0001-000000000004", "amount": 72000 },
+      { "code": "ibc", "amount": 1247000 },
+      { "code": "health_employee", "amount": 49880 },
+      { "code": "pension_employee", "amount": 49880 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 149700 },
+      { "code": "arl", "amount": 6600 },
+      { "code": "compensation_fund", "amount": 49900 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 114250 },
+      { "code": "severance_interest", "amount": 13715 },
+      { "code": "premium", "amount": 114250 },
+      { "code": "vacation", "amount": 43785 }
+    ],
+    "net": 1271788,
+    "employerCost": 1863748
+  },
+  "notes": [
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 2 100 000 ÷ 30 × 15 = 1050000; salary = round(0 + 1050000) − 0 = 1 050 000",
+    "valor hora = 2 100 000 ÷ 30 ÷ (42 ÷ 6) = 10000 (sin redondear)",
+    "overtime Hora extra diurna = round(10 × 10000 × (1 + 0.25 = 1.25)) = 125 000",
+    "overtime Recargo dominical y festivo = round(8 × 10000 × (0.9 = 0.9)) = 72 000",
+    "transport_allowance = round(0 + 249 095 ÷ 30 × 15) − 0 = round(124547.5) − 0 = 124 548",
+    "SalDev_m = 0 + 1050000 + 197000 + 0 = 1247000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 875452.5; tope 43772625; ibc = techo(1247000) = 1 247 000",
+    "health_employee = al peso(1 247 000 × 0,04 = 49880) − 0 = 49 880",
+    "pension_employee = al peso(1 247 000 × 0,04) − 0 = 49 880",
+    "solidarity_fund: ≈1.19938 SMMLV < 4 y sin retención previa ⇒ sin línea",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 2 297 000 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(1 247 000 × 0.12) − 0 = 149 700",
+    "arl = techo100(1247000 × 0.00522 = 6509.34) − 0 = 6 600",
+    "compensation_fund = techo100(1247000 × 0,04) − 0 = 49 900",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 1050000 + 124548 + 197000 + 0 = 1371548; severance = round(114249.9484) = 114 250; severance_interest = round(13715.48) = 13 715; premium = 114 250; vacation = round((1050000 + 0) × 0,0417 = 43785) = 43 785",
+    "totalEarned = 1050000 + 124548 + 197000 + 0 + 0 = 1371548; totalDeductions = 99800; net = 1271748; employerCost = 1371548 + aportes 206200 + provisiones 286000 = 1863748"
+  ]
+}

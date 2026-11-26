@@ -413,7 +413,8 @@ public sealed record QuotationHeaderSnapshot(
                 party.DepartmentId,
                 party.CityId,
                 party.Country,
-                party.CityName);
+                party.CityName,
+                party.RegionId);
 }
 
 /// <summary>La cuenta de cobro dentro de una foto del encabezado. Es un record para que la

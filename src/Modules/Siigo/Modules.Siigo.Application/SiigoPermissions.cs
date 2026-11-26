@@ -12,4 +12,8 @@ public static class SiigoPermissions
 
     /// <summary>Generar y reintentar la factura electrónica de un pedido en Siigo.</summary>
     public const string InvoiceIssue = "siigo.invoice.issue";
+
+    /// <summary>Ver las llamadas a Siigo que fallaron, con su curl y la respuesta (spec 2026-11-21). De fábrica sólo <c>admin</c>: el cuerpo lleva
+    /// datos del cliente. Quien deba verlas (soporte) recibe un rol personalizado con este permiso.</summary>
+    public const string CallsRead = "siigo.calls.read";
 }

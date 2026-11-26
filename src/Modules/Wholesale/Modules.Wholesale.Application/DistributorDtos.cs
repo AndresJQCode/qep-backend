@@ -2,8 +2,12 @@ using System.Text.Json.Serialization;
 
 namespace Modules.Wholesale.Application;
 
-/// <summary>La lista de precios del distribuidor con lo que la fila pinta: nombre y descuento, sin pedir la lista aparte.</summary>
-public sealed record DistributorPriceListDto(Guid Id, string Name, decimal DiscountPercent);
+/// <summary>
+/// La lista del distribuidor (spec 2026-11-22: una lista de Catalog). <c>AdjustmentPercent</c> va con signo: negativo es descuento.
+/// <c>Exists</c> en <c>false</c> dice que la lista ya no está (o el distribuidor viene de antes de la unificación): la pantalla le
+/// pide elegir una en vez de pintar un nombre que no existe.
+/// </summary>
+public sealed record DistributorPriceListDto(Guid Id, string Name, decimal AdjustmentPercent, bool Exists = true);
 
 /// <summary>El asesor con su nombre visible ya resuelto (<c>"Sin nombre"</c> si la membresía ya no está, D-15).</summary>
 public sealed record DistributorAdvisorDto(Guid MemberId, string Name);
@@ -61,10 +65,25 @@ public sealed record DistributorSummaryDto(
     DateTimeOffset CreatedAt);
 
 /// <summary>
+/// La ciudad del distribuidor, con el nombre ya resuelto. <c>Id</c> es el de Geography en Colombia y <c>null</c> afuera, donde
+/// la ciudad es el texto que escribió el mayorista.
+/// <para><c>DepartmentId</c> y <c>DepartmentName</c> van por la pantalla (BFF): la edición elige departamento y luego ciudad, y
+/// sin ellos no tiene cómo preseleccionar la guardada. Son <c>null</c> afuera de Colombia y si la ciudad ya no se
+/// encuentra.</para>
+/// </summary>
+public sealed record DistributorCityDto(Guid? Id, string Name, Guid? DepartmentId = null, string? DepartmentName = null);
+
+/// <summary>
 /// El distribuidor completo para su pantalla (BFF). <c>AllowedActions</c> ya cruza estado y permiso (en minúscula y en el orden
 /// del contrato: <c>edit</c>, <c>resend</c>, <c>delete</c>, <c>block</c>, <c>unblock</c>); sin
-/// <c>wholesale.distributor.manage</c> llega vacío. El token nunca viaja. <c>Phone</c> es el celular del aviso en E.164, o
-/// <c>null</c> (spec 2026-11-18).
+/// <c>wholesale.distributor.manage</c> llega vacío. <c>Phone</c> es el celular del aviso en E.164, o <c>null</c> (spec
+/// 2026-11-18).
+/// <para><c>InvitationUrl</c> (spec 2026-11-19 §1) es el link para «Copiar» y sólo viene en la respuesta de invitar (el mismo
+/// token del correo) y en la de rotar el link: la base guarda el hash, así que es la única vez que existe. En cualquier otra
+/// respuesta es <c>null</c> y el frontend tiene que rotar para volver a tenerlo; sin este campo no habría cómo copiarlo.</para>
+/// <para><c>City</c> trae el nombre ya resuelto (BFF: la pantalla de detalle lo pinta sin conocer Geography) y es <c>null</c>
+/// en una invitación anterior a la migración; <c>Address</c> es opcional. El resumen de la lista no los lleva: la grilla no los
+/// muestra y resolverlos por fila sería una consulta más por página.</para>
 /// </summary>
 public sealed record DistributorDetailDto(
     Guid Id,
@@ -85,7 +104,21 @@ public sealed record DistributorDetailDto(
     DistributorInvitationDto Invitation,
     DateTimeOffset CreatedAt,
     DateTimeOffset? ActivatedAt,
-    IReadOnlyList<string> AllowedActions);
+    IReadOnlyList<string> AllowedActions,
+    string? InvitationUrl = null,
+    DistributorCityDto? City = null,
+    string? Address = null)
+{
+    /// <summary>
+    /// El <c>ToString</c> generado imprimiría <c>InvitationUrl</c>, que lleva el token plano: un log o un mensaje de aserción
+    /// que nombre el DTO filtraría el link. Sólo se imprime lo que identifica la fila.
+    /// </summary>
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("Id = ").Append(Id).Append(", Status = ").Append(Status).Append(", Version = ").Append(Version);
+        return true;
+    }
+}
 
 /// <summary>
 /// Cuántos distribuidores hay por estado con <c>search</c> y sin <c>status</c>, para las pestañas. Las claves son el nombre del

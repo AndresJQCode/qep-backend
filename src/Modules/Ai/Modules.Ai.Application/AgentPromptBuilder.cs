@@ -118,12 +118,29 @@ public sealed class AgentPromptBuilder(AiRunLimits limits)
 
     private static readonly CompositeFormat BlockFormat = CompositeFormat.Parse(BlockInstructions);
 
+    /// <summary>Spec 2026-11-23 §7.8: contrato de prompt de la Agenda, sólo con <c>tools.scheduling</c>. Es guía: las reglas las aplica el
+    /// backend, y si el modelo la ignora responde con un código.</summary>
+    internal const string SchedulingSection =
+        "## Agenda\n"
+        + "- Las horas de la agenda están en la hora local del negocio (la fecha y la zona que ves arriba). Escribe al cliente días y horas en esa hora local, nunca en UTC.\n"
+        + "- Nunca ofrezcas ni confirmes un horario que no haya devuelto check_availability en este turno. Si no hay horarios, dilo y ofrece otro rango o pasar con una persona.\n"
+        + "- Antes de reservar, cancelar o cambiar una cita, confirma con el cliente el servicio, el día y la hora (o cuál cita).\n"
+        + "- Si la reserva queda en estado Pending, dile que el negocio la confirmará; no digas que ya está confirmada.\n"
+        + "- Sólo ves y cambias las citas de este cliente. Si pide algo de otra persona, ofrece pasar con alguien del equipo.\n"
+        + "- Si una herramienta responde slot_taken o session_full, vuelve a consultar la disponibilidad antes de proponer otro horario.";
+
     private static string SystemPromptOf(AgentConfig config, IReadOnlyList<AiQuickReply> quickReplies)
     {
         var builder = new StringBuilder(QepInstructions);
         if (config.AnswerOnlyFromSources)
         {
             builder.Append('\n').Append(OnlyFromSourcesRule);
+        }
+
+        // Spec 2026-11-23 §7.8: fija, sin fecha ni zona (ya van en VolatileContext), para no mover el punto de caché (C-12).
+        if (config.Tools.Scheduling)
+        {
+            builder.Append("\n\n").Append(SchedulingSection);
         }
 
         builder.Append("\n\n## Instrucciones del negocio\n").Append(config.Instructions.Trim());

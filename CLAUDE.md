@@ -20,6 +20,29 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
 `git -C ../qep-frontend branch --show-current`, y si el dato no aparece,
 `git -C ../qep-frontend log -S "<término>" --all` más `git branch -a --contains <sha>`.
 
+## Cada agente trabaja en su repo
+
+Decisión del owner, 2026-11-26. Los agentes de este repo **no hacen tareas de `qep-frontend`** (ni de otro repo): no
+escriben archivos, specs ni planes allá, no crean ramas ni worktrees, no commitean y no lanzan subagentes para hacerlo.
+**Leer** el otro repo para verificar un contrato sí se puede.
+
+Cuando un trabajo cruza repos, terminas la parte del backend y **le entregas al owner un prompt** para la sesión del otro
+repo. El prompt se entiende sin esta conversación: qué se pide y por qué, el contrato (rutas, campos, permisos y códigos
+de error verificados en el código), la ruta del spec del backend, la rama y el commit donde está, si ya se mergeó o
+desplegó, y las decisiones pendientes.
+
+## Tablero de trabajo
+
+Este repo se trabaja en el tablero de Trello **Lulo CRM** (workspace QCode): <https://trello.com/b/hhjA716M/lulo-crm>.
+Tus tarjetas son las que empiezan por `[backend]`. Las reglas para tomarlas, crearlas, bloquearlas y cerrarlas están
+en el `CLAUDE.md` de la raíz del workspace (`../CLAUDE.md`), compartidas con `qep-frontend`.
+
+**Tarjetas que necesitan la aprobación del owner** (decisión del owner, 2026-11-26): una tarjeta que espera una decisión o
+una aprobación suya, incluida la de un spec, se mueve a la columna «Bloqueadas» con un comentario que diga qué hay que
+aprobar y de qué columna venía. No se implementa ni se toma hasta que responda. Con la respuesta, se comenta en la
+tarjeta y vuelve a «Por hacer», o a «En progreso» si la sigue la misma sesión. Una tarjeta que sólo espera a otra se
+queda en «Por hacer».
+
 ## Reglas duras
 
 - **Nunca imprimir el valor de un secreto.** `dotnet user-secrets list` y equivalentes se
@@ -59,7 +82,27 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
   el código. Lo que falte se registra explícitamente como decisión pendiente, no se asume.
 - **La autoridad es el código.** Ante discrepancia entre el código y un documento, gana el
   código y el documento se corrige.
-- **Commits:** conventional commits. **Sin atribución de IA.**
+- **Commits:** conventional commits. **Cada commit hecho por un agente declara sesión y
+  autoría** (decisión del owner, 2026-11-26; en este repo manda sobre la regla global «sin
+  atribución de IA»). El mensaje termina con estas dos líneas, juntas y tras una línea en blanco:
+
+  ```
+  Session: <nombre de la sesión>
+  Co-Authored-By: Claude <modelo que escribió el cambio> <noreply@anthropic.com>
+  ```
+
+  El nombre de la sesión es el título que el owner ve en su pestaña. Se lee **justo antes de cada
+  commit**, porque puede cambiar; el título puesto a mano gana sobre el automático. En Bash:
+
+  ```bash
+  t=$(cat "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID".jsonl)
+  { grep '^{"type":"custom-title"' <<<"$t" | tail -1; grep '^{"type":"ai-title"' <<<"$t" | tail -1; } |
+    head -1 | sed -E 's/.*"(customTitle|aiTitle)":"(([^"\\]|\\.)*)".*/\2/'
+  ```
+
+  Si no devuelve nada, se usa el nombre de la primera línea de `ListAgents` («This session is …»).
+  Un subagente no lo deduce: quien lo lanza le pasa las líneas `Session:` y `Co-Authored-By:` en el
+  encargo. El autor de Git no se cambia. Los commits ya hechos no se reescriben.
 - **Antes de commitear se comprueba la rama, y si es la por defecto (`main`) se crea una
   primero.** La comprobación es `git branch --show-current` **en ese momento**, no lo que se
   haya leído al abrir la sesión: el 2026-09-05 el snapshot del arranque decía `main` mientras
@@ -70,6 +113,13 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
 - **Prohibido mergear a `main`** (decisión del owner, 2026-10-10). Los merges de un agente
   terminan en `develop`; llevar `develop` a `main` lo hace el owner, nunca un agente. Un pedido de
   "mergear" o "publicar" sin destino significa `develop`.
+- **Un cambio de arquitectura lo autoriza el owner antes del merge** (decisión del owner, 2026-11-25). Es cambio de
+  arquitectura cualquier aviso «Requiere autorización del owner» de `.\scripts\test-feature.ps1` (una prueba de
+  `tests/ArchitectureTests/` modificada o una referencia nueva entre módulos) y, aunque el script no lo vea, un contrato
+  HTTP que cambia (ruta, campo, código de error o permiso) sin un spec aprobado que lo diga. Se le muestra cada
+  desviación con su archivo y el motivo, y se espera su respuesta: una prueba en verde no es autorización, y aprobar
+  una no aprueba las demás. La revisión final de la rama la hace un subagente de solo lectura, sin el contexto de quien
+  implementó.
 - **[`docs/estado.md`](docs/estado.md) se actualiza en `develop`, al mergear.** Es el estado global
   del proyecto, y sin esta regla se queda viejo. El 2026-10-21, a un día de creado, decía «sin empezar» para
   variantes con el backend ya mergeado, y once specs construidos seguían en «Por verificar». Cada merge a
@@ -142,7 +192,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   pantalla a conocer el enum del backend para dibujar el que falta. Un total que no cierra se
   explica con un campo y no con una omisión (`QuotationValidityDto.WithoutExpiry`). Los enums
   viajan con su nombre (`Sent`, `PriceBaseUsd`) porque el diccionario lo tiene el frontend. El
-  422 de validación lleva el mapa `errors` (`ApiExceptionHandler.cs:51`), el único 422 que el
+  422 de validación lleva el mapa `errors` (`ApiExceptionHandler`, `problem.Extensions["errors"]`), el único 422 que el
   formulario sabe leer para marcar el input. Y una colección que se edita vuelve entera y en
   orden, que es lo que el formulario repinta.
 - **Aislamiento de tenant, doble capa.** La ruta lleva `{tenantId:guid}` y la política exige
@@ -200,38 +250,20 @@ si vas a tocar un módulo, abre su regla antes (o lee primero un archivo del mó
 | [`buyers-store`](.claude/rules/buyers-store.md) | Compradores y tienda pública: sesión del comprador, enlace pedido-cuenta, nota del comprador, anulación, paridad con Store |
 | [`infra-valkey-sesiones`](.claude/rules/infra-valkey-sesiones.md) | Valkey, sesiones, permisos, timbres y tiempo real: limitadores, ACL, cachés de sesión y permisos, colas con timbre, listener y presencia |
 | [`tenancy-y-servicios`](.claude/rules/tenancy-y-servicios.md) | Tenancy, Identidad, contratos de servicio y API externa: registro de tenant, roles asignables, módulo billing, claves de API |
+| [`siigo`](.claude/rules/siigo.md) | Siigo (facturación de pedidos): registro legal de facturas, DIAN apagado por defecto, retenciones, `error_detail`, bloqueo de marca manual y anulación |
+| [`wms`](.claude/rules/wms.md) | WMS (bodegas, ledger y saldos): ledger inmutable, clave de `stock_balances`, particiones, ventana de `occurredAt`, idempotencia |
 
 Una regla nueva va al archivo de su módulo, no acá. Si lee o escribe columnas o tablas de otro
 módulo por nombre, va en `sql-entre-modulos`: sus paths (Bootstrapper y migraciones) la cargan
 justo cuando alguien renombra una columna o toca el adaptador.
 
-### Siigo (facturación de pedidos)
-
-- **`siigo.invoices` es el registro de un documento legal: no tiene purga y su `Down` no se corre.** Una fila `Created` o
-  `Stamped` es una factura que existe en Siigo; borrarla aquí no la borra allá y deja el pedido sin rastro de ella.
-- **«Enviar a la DIAN» (`send_to_dian`) nace apagado y prenderlo lo decide quien configura.** No hay empresa de pruebas de Siigo:
-  cada factura sale contra la cuenta real, y una emitida a la DIAN no se borra. Con el interruptor apagado la factura queda creada y
-  sin emitir, y una persona la revisa en Siigo. Una prueba o un seed nunca lo prende.
-- **Las retenciones no van todas en el mismo lugar:** ReteFuente se manda en los `taxes` de **cada ítem** (después del IVA) y ReteICA
-  en `retentions` de la factura. Sólo se manda el id del vínculo: el monto lo calcula Siigo. ReteIVA y autorretención no se mandan
-  (decisión pendiente, V-7).
-- **Nunca se reintenta con el total que propone Siigo.** Cuando los pagos no suman, Siigo rechaza con `invalid_total_payments` y el
-  total esperado; ajustar los pagos a ese valor taparía justo la diferencia que la regla quiere mostrar. La fila queda `Rejected`
-  (`siigo.invoice.totals_mismatch`) y se corrige la configuración del impuesto o la tasa.
-- **`error_detail` guarda los códigos de error de Siigo, no sus mensajes.** Siigo repite en el mensaje los valores que rechaza
-  (documento, dirección, nombre del cliente) y la fila se guarda y se devuelve en el `GET`. La excepción es `invalid_total_payments`,
-  cuyo mensaje es el total esperado. Lo amarra `SiigoNoLeakTests` (precedente: encontró que el mensaje se guardaba completo).
-- **`request_json` lleva datos del cliente** y sólo lo leen los handlers del módulo: ningún DTO ni `GET` lo devuelve.
-- **El cliente HTTP `siigo` no tiene loggers (`RemoveAllLoggers`).** Con los defaults de .NET 10 su log ya redacta headers y queries,
-  así que quitarlo no filtra un sentinela, y por eso `SiigoNoLeakTests` exige además que no haya **ninguna** línea de su categoría.
-- **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected` y
-  `Failed`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`, `order_id` o
-  `tenant_id` compila y deja ambas operaciones en 500.
-  **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
-- **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
-  `Created` y la respuesta lleva `orderMarkFailed`; el siguiente `POST` reintenta sólo la marca. Nunca deja el `POST` fallando.
-
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
-[README § Verificación](README.md#verificación).
+[README § Verificación](README.md#verificación). Las pruebas van en dos niveles (decisión del owner, 2026-11-24):
+
+- **Para mergear a `develop`** basta `.\scripts\test-feature.ps1` en verde, **leyendo sus avisos**. No se corre el
+  proyecto de integración completo de cada módulo tocado.
+- **La suite completa** (`.\scripts\run-all-tests.ps1`) corre de noche o antes de llevar `develop` a `main`.
+- **`main` sólo recibe un commit con reporte completo en verde** y el árbol limpio, según el encabezado de
+  `TestResults\report.md`. `develop` puede quedar roto hasta esa corrida; lo que ahí falle se corrige antes de `main`.

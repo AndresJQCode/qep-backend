@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Domain;
+using BuildingBlocks.Domain.Localization;
 
 namespace Modules.Tenancy.Domain;
 
@@ -27,7 +28,9 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? country,
+        string? language)
     {
         Id = id;
         OwnerMembershipId = ownerMembershipId;
@@ -36,6 +39,14 @@ public sealed class Tenant
         DefaultCulture = ValidateCulture(defaultCulture);
         TimeZone = ValidateTimeZone(timeZone);
         DateFormat = ValidateDateFormat(dateFormat);
+        if (country is not null)
+        {
+            Country = NormalizeCountryCode(country);
+            // Spec 2026-11-23: con país, la moneda es la de ese país. Sin país (signup) queda la de la columna.
+            DefaultCurrency = TenantCurrencies.ForCountry(Country);
+        }
+
+        Language = language is null ? SupportedLanguages.Default : ValidateLanguage(language);
         Status = TenantStatus.Active;
         Version = 1;
         CreatedAt = createdAt;
@@ -80,6 +91,14 @@ public sealed class Tenant
     /// Arranca exigiéndolo todo, como era antes de que fuera configurable.
     /// </summary>
     public CustomerFieldPolicy CustomerFieldPolicy { get; private set; } = CustomerFieldPolicy.Default;
+
+    /// <summary>
+    /// El idioma con que el producto le habla a quien no eligió uno propio (spec 2026-11-22, i18n):
+    /// <c>es-419</c> o <c>es-ES</c>, de <see cref="SupportedLanguages"/>. Es idioma, no formato
+    /// regional: no cambia separadores ni fechas. Arranca en <c>es-419</c> y la migración rellena los
+    /// tenants existentes con lo mismo.
+    /// </summary>
+    public string Language { get; private set; } = SupportedLanguages.Default;
 
     /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
@@ -134,14 +153,18 @@ public sealed class Tenant
         string timeZone,
         string dateFormat,
         MembershipId ownerMembershipId,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        string? country = null,
+        string? language = null)
     {
         // La reserva va aquí y no en el constructor: EnsureNotReserved sólo protege lo nuevo. El constructor recibe el slug ya
         // validado y normalizado, así que no lo vuelve a validar.
         var normalizedSlug = ValidateSlug(slug);
         EnsureNotReserved(normalizedSlug);
+
+        // Spec 2026-11-22: sin país el tenant conserva el default CO (signup); con país, el de la invitación del distribuidor.
         return new(id, normalizedSlug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
-            createdAt);
+            createdAt, country, language);
     }
 
     /// <summary>
@@ -153,7 +176,9 @@ public sealed class Tenant
         string displayName,
         string defaultCulture,
         string timeZone,
-        string dateFormat)
+        string dateFormat,
+        string? country = null,
+        string? language = null)
     {
         var normalizedSlug = ValidateSlug(slug);
         EnsureNotReserved(normalizedSlug);
@@ -161,6 +186,16 @@ public sealed class Tenant
         ValidateCulture(defaultCulture);
         ValidateTimeZone(timeZone);
         ValidateDateFormat(dateFormat);
+        if (country is not null)
+        {
+            NormalizeCountryCode(country);
+        }
+
+        if (language is not null)
+        {
+            ValidateLanguage(language);
+        }
+
         return normalizedSlug;
     }
 
@@ -177,7 +212,9 @@ public sealed class Tenant
         string country,
         PersonTypeRequirement personTypeRequirement,
         DateTimeOffset occurredAt,
-        CustomerFieldPolicy? customerFieldPolicy = null)
+        CustomerFieldPolicy? customerFieldPolicy = null,
+        // Null keeps the stored language: a frontend older than the field does not send it.
+        string? language = null)
     {
         EnsureActive();
 
@@ -196,6 +233,7 @@ public sealed class Tenant
         var validatedCurrency = NormalizeCurrencyCode(defaultCurrency);
         var validatedNumberFormat = TenantNumberFormats.Normalize(numberFormat);
         var validatedCountry = NormalizeCountryCode(country);
+        var validatedLanguage = language is null ? Language : ValidateLanguage(language);
         List<string> changedFields = [];
 
         TrackChange(nameof(DisplayName), DisplayName, validatedDisplayName, changedFields);
@@ -205,6 +243,7 @@ public sealed class Tenant
         TrackChange(nameof(DefaultCurrency), DefaultCurrency, validatedCurrency, changedFields);
         TrackChange(nameof(NumberFormat), NumberFormat, validatedNumberFormat, changedFields);
         TrackChange(nameof(Country), Country, validatedCountry, changedFields);
+        TrackChange(nameof(Language), Language, validatedLanguage, changedFields);
         TrackChange(
             nameof(PersonTypeRequirement),
             PersonTypeRequirement.ToString(),
@@ -228,6 +267,7 @@ public sealed class Tenant
         DefaultCurrency = validatedCurrency;
         NumberFormat = validatedNumberFormat;
         Country = validatedCountry;
+        Language = validatedLanguage;
         PersonTypeRequirement = personTypeRequirement;
         CustomerFieldPolicy = validatedPolicy;
         Version++;
@@ -471,6 +511,13 @@ public sealed class Tenant
 
     // Shape only, same as Customers (CustomerContactInfo.NormalizeCountry): there is no world
     // geography module to check the code against, and the frontend picks it from its own list.
+    private static string ValidateLanguage(string value) =>
+        SupportedLanguages.TryNormalize(value, out var language)
+            ? language
+            : throw new TenantDomainException(
+                "tenancy.settings.language.invalid",
+                $"Language must be one of: {string.Join(", ", SupportedLanguages.All)}.");
+
     private static string NormalizeCountryCode(string value)
     {
         var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;

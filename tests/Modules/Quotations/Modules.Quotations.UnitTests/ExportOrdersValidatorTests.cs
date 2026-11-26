@@ -45,6 +45,42 @@ public sealed class ExportOrdersValidatorTests
                 .Order(StringComparer.Ordinal));
     }
 
+    // Buscar un pedido por su número o los de un cliente por su CUC ya acota el archivo: pedir fechas
+    // obligaría a adivinar en qué período cayó.
+    [Theory]
+    [InlineData("PED-2026", null)]
+    [InlineData(null, "CUC-001")]
+    public void AcceptsNoDatesWhenFilteringByOrderNumberOrClientCuc(string? orderNumber, string? clientCuc)
+    {
+        Assert.True(_validator.Validate(
+            NewCommand(null, null) with { OrderNumber = orderNumber, ClientCuc = clientCuc }).IsValid);
+    }
+
+    [Fact]
+    public void AcceptsASingleDateWhenFilteringByOrderNumber()
+    {
+        Assert.True(_validator.Validate(
+            NewCommand(new DateOnly(2026, 9, 1), null) with { OrderNumber = "PED-2026" }).IsValid);
+    }
+
+    [Fact]
+    public void ABlankOrderNumberOrCucStillRequiresBothDates()
+    {
+        Assert.Equal(
+            ["ConvertedFrom", "ConvertedTo"],
+            _validator.Validate(NewCommand(null, null) with { OrderNumber = "  ", ClientCuc = "" }).Errors
+                .Select(failure => failure.PropertyName)
+                .Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void FilteringByOrderNumberStillRejectsAnInvertedRange()
+    {
+        var failure = Assert.Single(_validator.Validate(
+            NewCommand(new DateOnly(2026, 9, 12), new DateOnly(2026, 9, 11)) with { OrderNumber = "PED-2026" }).Errors);
+        Assert.Equal("ConvertedTo", failure.PropertyName);
+    }
+
     private static DateOnly Date(string value) =>
         DateOnly.ParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture);
 

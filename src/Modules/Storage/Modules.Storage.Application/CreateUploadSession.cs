@@ -27,9 +27,9 @@ public sealed class CreateUploadSessionHandler(
         StorageAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, StoragePermissions.FileUpload);
 
-        // Fix round 1 del Bloque D: un dueño de sistema sólo se crea por su camino (IStorageSystemUploads). Mismo 422 que un tipo que
-        // no existe.
-        if (SystemOwnedFiles.Includes(command.OwnerType))
+        // Fix round 1 del Bloque D: un dueño de sistema sólo se crea por su camino (IStorageSystemUploads), y uno generado por el
+        // servidor (el export de WMS) sólo lo escribe su adaptador. Mismo 422 que un tipo que no existe.
+        if (SystemOwnedFiles.Includes(command.OwnerType) || ServerGeneratedFiles.Includes(command.OwnerType))
         {
             throw new StorageDomainException(
                 "storage.file.owner_type_invalid",

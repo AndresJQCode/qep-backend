@@ -32,14 +32,17 @@ public sealed record MembershipListItemDto(
     DateTimeOffset? AcceptedAt,
     DateTimeOffset ExpiresAt,
     long Version,
-    bool IsOwner);
+    bool IsOwner,
+    string? Phone = null,
+    string? PhoneSource = null);
 
 public static class MembershipListItemMappings
 {
     public static MembershipListItemDto ToListItemDto(
         this Membership membership,
         string? email,
-        Tenant tenant) =>
+        Tenant tenant,
+        EffectivePhone? phone = null) =>
         new(
             membership.Id,
             membership.UserId,
@@ -53,7 +56,9 @@ public static class MembershipListItemMappings
             membership.AcceptedAt,
             membership.ExpiresAt,
             membership.Version,
-            tenant.IsOwner(membership.Id));
+            tenant.IsOwner(membership.Id),
+            phone?.Phone,
+            phone?.SourceName);
 }
 
 /// <summary>Cuántas membresías caen en cada estado visible, dentro de lo buscado.</summary>
@@ -101,7 +106,8 @@ public sealed class ListMembershipsHandler(
     ITenantRepository tenantRepository,
     IUserDirectory userDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    MembershipPhoneReader phoneReader)
     : IQueryHandler<ListMembershipsQuery, MembershipListDto>
 {
     public async Task<MembershipListDto> HandleAsync(
@@ -144,10 +150,18 @@ public sealed class ListMembershipsHandler(
         var emails = await userDirectory.GetEmailsAsync(
             scoped.Select(membership => membership.UserId).ToList(),
             cancellationToken);
+        // The list also feeds the advisor picker, which only needs advisorship.read, so a phone number goes out
+        // only to who manages members; everybody else gets null and HR is never asked.
+        var phones = executionContext.HasPermission(TenancyPermissions.AdvisorshipManage)
+            ? await phoneReader.ForAsync(scoped, cancellationToken)
+            : null;
         var items = new List<MembershipListItemDto>(scoped.Count);
         foreach (var membership in scoped)
         {
-            items.Add(membership.ToListItemDto(emails.GetValueOrDefault(membership.UserId), tenant));
+            items.Add(membership.ToListItemDto(
+                emails.GetValueOrDefault(membership.UserId),
+                tenant,
+                phones?[membership.Id]));
         }
 
         // Ninguno de los filtros se aplica en SQL, y cada uno por su razón.

@@ -281,6 +281,65 @@ public sealed class TenantSettingsApiTests(SharedTenancyHost host) : IClassFixtu
         Assert.Equal("MX", body.GetProperty("country").GetString());
     }
 
+    // Spec 2026-11-22 (i18n): un tenant existente arranca en español latinoamericano y el PUT lo cambia.
+    [Fact]
+    public async Task GetReturnsLatinAmericanSpanishAndPutChangesTheLanguage()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("es-419", settings.GetProperty("language").GetString());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), language: "es-es");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("es-ES", body.GetProperty("language").GetString());
+        var reread = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("es-ES", reread.GetProperty("language").GetString());
+    }
+
+    // Ventana de despliegue: un frontend anterior al idioma no lo manda (language: null en el
+    // cuerpo). El PUT no lo pisa.
+    [Fact]
+    public async Task PutWithoutLanguageKeepsTheStoredValue()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, NewDisplayName(), language: "es-ES");
+        first.EnsureSuccessStatusCode();
+
+        var response = await PutAsync(client, TenantId, first.Headers.ETag!.Tag, NewDisplayName());
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("es-ES", body.GetProperty("language").GetString());
+    }
+
+    [Fact]
+    public async Task PutWithAnUnsupportedLanguageIsA422WithTheDomainCode()
+    {
+        var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), language: "es-CO");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.settings.language.invalid", problem.GetProperty("code").GetString());
+    }
+
     [Fact]
     public async Task PutWithAMalformedCountryIsA422WithTheDomainCode()
     {
@@ -552,7 +611,8 @@ public sealed class TenantSettingsApiTests(SharedTenancyHost host) : IClassFixtu
         string numberFormat = "1.234,56",
         string country = "CO",
         string? personTypeRequirement = null,
-        object? customerFieldPolicy = null)
+        object? customerFieldPolicy = null,
+        string? language = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put,
@@ -568,7 +628,8 @@ public sealed class TenantSettingsApiTests(SharedTenancyHost host) : IClassFixtu
                 numberFormat,
                 country,
                 personTypeRequirement,
-                customerFieldPolicy
+                customerFieldPolicy,
+                language
             })
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);

@@ -1,0 +1,108 @@
+{
+  "name": "transport-flips-in-second-half-second",
+  "source": "synthetic",
+  "description": "Una comisión de 600 000 en la segunda lleva el mes a 3 600 000 > 3 501 810: la segunda paga 0 y NO se descuenta lo de la primera.",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine", "IncomeRule"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-16",
+      "end": "2026-11-30",
+      "half": "Second"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryAndSalaryIncome",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 3000000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "incomes": [
+      {
+        "conceptId": "00000000-0000-0000-0002-000000000001",
+        "conceptName": "Comisiones",
+        "amount": 600000,
+        "salaryConstitutive": true
+      }
+    ],
+    "prior": {
+      "workedDays": 15,
+      "salaryRaw": 1500000,
+      "salary": 1500000,
+      "transportRaw": 124547.5,
+      "transport": 124548,
+      "overtime": 0,
+      "salaryIncome": 0,
+      "nonSalaryIncome": 0,
+      "healthEmployee": 60000,
+      "pensionEmployee": 60000,
+      "solidarityFund": 0,
+      "healthEmployer": 0,
+      "pensionEmployer": 180000,
+      "arl": 7900,
+      "compensationFund": 60000,
+      "icbf": 0,
+      "sena": 0
+    }
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 1500000 },
+      { "code": "transport_allowance", "amount": 0 },
+      { "code": "income:00000000-0000-0000-0002-000000000001:0", "amount": 600000 },
+      { "code": "ibc", "amount": 3600000 },
+      { "code": "health_employee", "amount": 84000 },
+      { "code": "pension_employee", "amount": 84000 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 252000 },
+      { "code": "arl", "amount": 10900 },
+      { "code": "compensation_fund", "amount": 84000 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 174930 },
+      { "code": "severance_interest", "amount": 21000 },
+      { "code": "premium", "amount": 174930 },
+      { "code": "vacation", "amount": 87570 }
+    ],
+    "net": 1932000,
+    "employerCost": 2905330
+  },
+  "notes": [
+    "prior = acumulados de la primera quincena (transport-flips-in-second-half-first) escritos a mano en `input.prior`",
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 3 000 000 ÷ 30 × 15 = 1500000; salary = round(1500000 + 1500000) − 1500000 = 1 500 000",
+    "income:0 Comisiones = round(600000) = 600 000 (salarial)",
+    "transport_allowance = 0: ingreso para el tope 3 600 000 > 3 501 810 (2 × SMMLV)",
+    "SalDev_m = 1500000 + 1500000 + 0 + 600000 = 3600000; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 1750905; tope 43772625; ibc = techo(3600000) = 3 600 000",
+    "health_employee = al peso(3 600 000 × 0,04 = 144000) − 60000 = 84 000",
+    "pension_employee = al peso(3 600 000 × 0,04) − 60000 = 84 000",
+    "solidarity_fund: ≈2.05608 SMMLV < 4 y sin retención previa ⇒ sin línea",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 3 600 000 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(3 600 000 × 0.12) − 180000 = 252 000",
+    "arl = techo100(3600000 × 0.00522 = 18792) − 7900 = 10 900",
+    "compensation_fund = techo100(3600000 × 0,04) − 60000 = 84 000",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 1500000 + 0 + 0 + 600000 = 2100000; severance = round(174930) = 174 930; severance_interest = round(21000) = 21 000; premium = 174 930; vacation = round((1500000 + 600000) × 0,0417 = 87570) = 87 570",
+    "totalEarned = 1500000 + 0 + 0 + 600000 + 0 = 2100000; totalDeductions = 168000; net = 1932000; employerCost = 2100000 + aportes 346900 + provisiones 458430 = 2905330",
+    "Sin reintegro (comportamiento fijado): el auxilio de 124 548 pagado en la primera quincena se queda aunque el mes ya supere 2 SMMLV; la segunda sólo paga 0. El dueño puede decidir otra cosa (reintegrar), y entonces este caso cambia.",
+    "Lo mismo vale para la exoneración (ET art. 114-1): si el mes cruza el umbral en la segunda, salud del empleador, ICBF y SENA salen completos del mes menos lo aportado, sin revisar la primera."
+  ]
+}

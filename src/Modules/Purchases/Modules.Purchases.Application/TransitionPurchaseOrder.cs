@@ -82,7 +82,8 @@ public sealed class TransitionPurchaseOrderHandler(
                             .ToList(),
                         order.Currency),
                     cancellationToken);
-                order.SendToWholesaler(submitted.OrderId, submitted.OrderNumber, submitted.Lines, memberId, clock.UtcNow);
+                order.SendToWholesaler(
+                    submitted.OrderId, submitted.OrderNumber, submitted.Lines, memberId, clock.UtcNow, submitted.ShowPrices);
                 break;
             case PurchaseOrderAction.Send:
                 order.Send(memberId, clock.UtcNow);

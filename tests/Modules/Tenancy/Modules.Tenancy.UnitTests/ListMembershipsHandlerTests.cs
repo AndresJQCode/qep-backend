@@ -75,17 +75,48 @@ public sealed class ListMembershipsHandlerTests
         Assert.Equal("ana@example.com", Assert.Single(byEmail.Items).Email);
     }
 
+    // The list also feeds the advisor picker (advisorship.read): only who manages members gets numbers.
+    [Fact]
+    public async Task PhonesAreHiddenFromWhoOnlyReadsTheRoster()
+    {
+        var (memberships, emails) = Roster(("ana@example.com", "Ana Pérez", null));
+        memberships[0].ChangeOwnPhone("+573001112233", Now);
+
+        var list = await Handler(memberships, emails).HandleAsync(
+            new ListMembershipsQuery(TenantUnderTest), TestContext.Current.CancellationToken);
+
+        var only = Assert.Single(list.Items);
+        Assert.Null(only.Phone);
+        Assert.Null(only.PhoneSource);
+    }
+
+    [Fact]
+    public async Task PhonesAreShownToWhoManagesMembers()
+    {
+        var (memberships, emails) = Roster(("ana@example.com", "Ana Pérez", null));
+        memberships[0].ChangeOwnPhone("+573001112233", Now);
+
+        var list = await Handler(memberships, emails, TenancyPermissions.AdvisorshipManage).HandleAsync(
+            new ListMembershipsQuery(TenantUnderTest), TestContext.Current.CancellationToken);
+
+        var only = Assert.Single(list.Items);
+        Assert.Equal("+573001112233", only.Phone);
+        Assert.Equal("Member", only.PhoneSource);
+    }
+
     private static ListMembershipsHandler Handler(
         IReadOnlyList<Membership> memberships,
-        IReadOnlyDictionary<Guid, string> emails) =>
+        IReadOnlyDictionary<Guid, string> emails,
+        params string[] permissions) =>
         new(
             new InMemoryMembershipRepository([.. memberships]),
             new InMemoryTenantRepository(Tenant.Create(
                 TenantUnderTest, "acme", "Acme", "es-CO", "America/Bogota", "yyyy-MM-dd",
                 MembershipId.New(), Now)),
             new StubUserDirectory(emails),
-            new RosterReadExecutionContext(TenantUnderTest),
-            new FixedClock(Now));
+            new RosterReadExecutionContext(TenantUnderTest, permissions),
+            new FixedClock(Now),
+            new MembershipPhoneReader(new NoHrPhones()));
 
     private static (IReadOnlyList<Membership> Memberships, IReadOnlyDictionary<Guid, string> Emails)
         Roster(params (string Email, string DisplayName, int? AdvisorCode)[] people)

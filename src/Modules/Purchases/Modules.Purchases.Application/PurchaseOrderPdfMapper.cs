@@ -24,8 +24,11 @@ public static class PurchaseOrderPdfMapper
 
         var numbers = RegionalNumberFormat.ToNumberFormatInfo(regional?.NumberFormat);
         var currency = Currencies.Get(detail.Currency);
-        string Money(decimal amount) =>
-            $"{currency.Symbol} {amount.ToString($"N{currency.Decimals}", numbers)}";
+        // Sin monto (orden vinculada que nació sin precio y todavía no se aprueba, spec 2026-11-19) se imprime «—», igual que
+        // una cantidad ausente: el monto no existe en la base, así que no hay nada que enmascarar.
+        string Money(decimal? amount) => amount is { } value
+            ? $"{currency.Symbol} {value.ToString($"N{currency.Decimals}", numbers)}"
+            : "—";
 
         var lines = detail.Lines
             .Select(line =>
@@ -54,10 +57,11 @@ public static class PurchaseOrderPdfMapper
             detail.Currency,
             detail.Notes,
             lines,
-            Money(detail.Totals.Subtotal),
-            Money(detail.Totals.Tax),
-            Money(detail.Totals.Total),
-            detail.Lines.Any(line => line.ConfirmedQuantity is not null || line.ConfirmedUnitCost is not null));
+            Money(detail.Totals?.Subtotal),
+            Money(detail.Totals?.Tax),
+            Money(detail.Totals?.Total),
+            detail.Lines.Any(line => line.ConfirmedQuantity is not null || line.ConfirmedUnitCost is not null),
+            detail.ShowPrices);
     }
 
     // El envío se busca en el historial y no por el estado: una orden cancelada después de enviarse conserva la fecha del envío.

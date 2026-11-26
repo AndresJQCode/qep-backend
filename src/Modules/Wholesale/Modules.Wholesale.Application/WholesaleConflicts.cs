@@ -34,15 +34,8 @@ internal static class WholesaleConflicts
         }
     }
 
-    public static ResourceConflictException PriceListNameTaken() =>
-        new(WholesaleErrorCodes.PriceListNameTaken, "Another price list already has that name.");
 
-    public static ResourceConflictException PriceListInUse() =>
-        new(WholesaleErrorCodes.PriceListInUse, "A distributor uses this price list.");
 
-    /// <summary>422: algún id no es una categoría del tenant (D-9). Es una regla de negocio sobre el cuerpo, no un conflicto.</summary>
-    public static WholesaleDomainException CategoryNotFound() =>
-        new(WholesaleErrorCodes.PriceListCategoryNotFound, "Una de las categorías no existe en el catálogo.");
 
     public static ResourceConflictException InvalidTransition() =>
         new(WholesaleErrorCodes.DistributorInvalidTransition, "The distributor status does not allow this action.");
@@ -60,12 +53,22 @@ internal static class WholesaleConflicts
     public static ResourceConflictException IdentificationTaken() =>
         new(WholesaleErrorCodes.DistributorIdentificationTaken, "Another distributor already has that identification number.");
 
+    /// <summary>La aceptación ya empezó (la marca, o el tenant reservado ya creado) con la invitación pendiente: cambiar el
+    /// documento duplicaría lo que ese intento creó.</summary>
+    public static ResourceConflictException AcceptanceInProgress() =>
+        new(WholesaleErrorCodes.DistributorAcceptanceInProgress,
+            "El distribuidor ya empezó a aceptar la invitación: no puedes cambiar el tipo ni el número de documento.");
+
     public static WholesaleDomainException AdvisorInvalid() =>
         new(WholesaleErrorCodes.DistributorAdvisorInvalid, "El asesor no es un miembro activo de la organización.");
 
     public static WholesaleDomainException CompanyInvalid() =>
         new(WholesaleErrorCodes.DistributorCompanyInvalid,
             "La empresa no existe, está inactiva o su documento no sirve para el proveedor del distribuidor.");
+
+    /// <summary>La ciudad que el mayorista eligió para un distribuidor colombiano no existe en Geography.</summary>
+    public static WholesaleDomainException CityNotFound() =>
+        new(WholesaleErrorCodes.DistributorCityNotFound, "La ciudad no existe.");
 
     /// <summary>Spec 2026-11-18: con teléfono, varias conexiones listas para el aviso y ninguna elegida.</summary>
     public static WholesaleDomainException WhatsAppConnectionRequired() =>
@@ -91,11 +94,8 @@ internal static class WholesaleConflicts
     public static RequestForbiddenException RelationshipInactive() =>
         new(WholesaleErrorCodes.RelationshipInactive, "The wholesaler blocked this relationship.");
 
-    public static RequestForbiddenException EmailMismatch() =>
-        new(WholesaleErrorCodes.InvitationEmailMismatch, "The invitation was sent to another email address.");
-
     public static RequestForbiddenException NotTenantOwner() =>
-        new(WholesaleErrorCodes.InvitationNotTenantOwner, "Only the owner of the organization can link it.");
+        new(WholesaleErrorCodes.InvitationNotTenantOwner, "Only an owner or admin of the organization can link it.");
 
     public static WholesaleDomainException SelfLink() =>
         new(WholesaleErrorCodes.InvitationSelfLink, "No puedes vincular la organización del mayorista como su distribuidor.");

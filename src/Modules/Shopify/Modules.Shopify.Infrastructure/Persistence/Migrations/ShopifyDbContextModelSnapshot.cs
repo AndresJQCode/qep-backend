@@ -143,6 +143,11 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("party_phone");
 
+                    b.Property<string>("PartyPostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("postal_code");
+
                     b.Property<Guid?>("PreviousCityId")
                         .HasColumnType("uuid")
                         .HasColumnName("previous_city_id");

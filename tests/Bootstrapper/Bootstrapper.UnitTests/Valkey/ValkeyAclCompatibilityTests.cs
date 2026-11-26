@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
-using BuildingBlocks.Application;
 using Bootstrapper.Valkey;
 using Bootstrapper.Valkey.Permissions;
 using Bootstrapper.Valkey.Sessions;
+using BuildingBlocks.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;

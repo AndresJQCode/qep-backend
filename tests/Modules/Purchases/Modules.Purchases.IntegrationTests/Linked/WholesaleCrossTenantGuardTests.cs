@@ -45,6 +45,74 @@ public sealed class WholesaleCrossTenantGuardTests(SharedPurchasesHost host) : I
         Assert.Equal(PurchasesErrorCodes.RelationshipInactive, await PurchasesApiHarness.CodeOfAsync(response));
     }
 
+    // Spec 2026-11-20: el árbol visible y el filtro por categoría llegan por HTTP con los mismos guardas que el catálogo.
+    [Fact]
+    public async Task CatalogCategoriesAreServedAsAFlatList()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+
+        var response = await world.Buyer.GetAsync(world.CatalogUrl() + "/categories", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = System.Text.Json.JsonDocument.Parse(await PurchasesApiHarness.BodyAsync(response));
+        Assert.Equal(System.Text.Json.JsonValueKind.Array, document.RootElement.GetProperty("items").ValueKind);
+    }
+
+    [Fact]
+    public async Task CatalogCategoriesCarryOnlyWhatTheListShows()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+        var raiz = await world.CreateWholesalerCategoryAsync("Hogar");
+        var hijo = await world.CreateWholesalerCategoryAsync("Cocina", raiz);
+        var nieto = await world.CreateWholesalerCategoryAsync("Ollas", hijo);
+        var otra = await world.CreateWholesalerCategoryAsync("Jardín");
+        await world.UseCategoriesAsync(hijo);
+
+        var response = await world.Buyer.GetAsync(world.CatalogUrl() + "/categories", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = System.Text.Json.JsonDocument.Parse(await PurchasesApiHarness.BodyAsync(response));
+        var items = document.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => (
+                Id: item.GetProperty("id").GetGuid(),
+                Name: item.GetProperty("name").GetString(),
+                Parent: item.GetProperty("parentId").ValueKind == System.Text.Json.JsonValueKind.Null
+                    ? (Guid?)null
+                    : item.GetProperty("parentId").GetGuid()))
+            .ToList();
+        Assert.Equal([(hijo, "Cocina", (Guid?)null), (nieto, "Ollas", hijo)], items);
+        Assert.DoesNotContain(items, item => item.Id == raiz || item.Id == otra);
+
+        var allowed = await world.Buyer.GetAsync($"{world.CatalogUrl()}?categoryId={nieto}", Ct);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        var hidden = await world.Buyer.GetAsync($"{world.CatalogUrl()}?categoryId={otra}", Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, hidden.StatusCode);
+        Assert.Equal(PurchasesErrorCodes.CategoryNotVisible, await PurchasesApiHarness.CodeOfAsync(hidden));
+    }
+
+    [Fact]
+    public async Task CatalogCategoriesWithABlockedRelationshipIs403()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+        await world.BlockRelationshipAsync();
+
+        var response = await world.Buyer.GetAsync(world.CatalogUrl() + "/categories", Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(PurchasesErrorCodes.RelationshipInactive, await PurchasesApiHarness.CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task CatalogWithAnUnknownCategoryIs422NotVisible()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+
+        var response = await world.Buyer.GetAsync($"{world.CatalogUrl()}?categoryId={Guid.CreateVersion7()}", Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(PurchasesErrorCodes.CategoryNotVisible, await PurchasesApiHarness.CodeOfAsync(response));
+    }
+
     [Fact]
     public async Task TheCatalogCarriesThePriceListAndTheNetCost()
     {
@@ -57,6 +125,21 @@ public sealed class WholesaleCrossTenantGuardTests(SharedPurchasesHost host) : I
         Assert.Equal(
             (LinkedPurchasesHarness.BasePrice, LinkedPurchasesHarness.ListPrice, PurchaseOrderMath.NetOfVat(LinkedPurchasesHarness.ListPrice, 19m)),
             (item.BasePrice, item.ListPrice, item.UnitCost));
+    }
+
+    // Spec 2026-11-19: cada ítem trae el producto de su variante; sin foto subida, ImageUrl es null.
+    [Fact]
+    public async Task TheCatalogItemsCarryTheirProduct()
+    {
+        using var world = await LinkedPurchasesHarness.NewWorldAsync(Factory);
+
+        var page = await world.Buyer.GetFromJsonAsync<SupplierCatalogPageDto>(world.CatalogUrl(), Ct);
+
+        var item = page!.Items.Single(candidate => candidate.VariantId == world.VariantA);
+        Assert.NotEqual(Guid.Empty, item.ProductId);
+        Assert.False(string.IsNullOrWhiteSpace(item.ProductName));
+        Assert.StartsWith(item.ProductName, item.Name, StringComparison.Ordinal);
+        Assert.Null(item.ImageUrl);
     }
 
     [Fact]

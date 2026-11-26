@@ -13,6 +13,13 @@ public interface ISupplierGeographyLookup
     Task<IReadOnlyDictionary<Guid, SupplierCityRef>> FindCitiesAsync(
         IReadOnlyCollection<Guid> cityIds,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resuelve regiones (provincias) por id, en lote y con una sola consulta: pais al que
+    /// pertenecen y nombre. Los ids que no existen no salen. Sin ids no se consulta.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, SupplierRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken);
 }
 
 /// <summary>La ciudad y su departamento juntos: las respuestas necesitan los dos objetos y pedirlos aparte sería una segunda consulta por proveedor.</summary>
@@ -23,3 +30,6 @@ public sealed record SupplierCityRef(
     Guid DepartmentId,
     string DepartmentDivipolaCode,
     string DepartmentName);
+
+/// <summary>Una region de <c>Geography</c> en el vocabulario del modulo.</summary>
+public sealed record SupplierRegionRef(Guid Id, string CountryCode, string Name);

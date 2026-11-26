@@ -38,6 +38,7 @@ public sealed record PurchaseOrderMemberDto(Guid MemberId, string Name);
 /// <summary>
 /// Una línea del detalle. Código, nombre y tasa son la foto que guardó la orden, no el catálogo de hoy. <c>LineStatus</c> y
 /// <c>Subtotal</c> (sin IVA, con lo confirmado si existe) los calcula el backend: la pantalla nunca multiplica.
+/// <c>UnitCost</c> y <c>Subtotal</c> son null en una orden vinculada que todavía no tiene precio (spec 2026-11-19).
 /// </summary>
 public sealed record PurchaseOrderLineDto(
     Guid Id,
@@ -46,11 +47,11 @@ public sealed record PurchaseOrderLineDto(
     string Name,
     decimal? Quantity,
     decimal? ConfirmedQuantity,
-    decimal UnitCost,
+    decimal? UnitCost,
     decimal? ConfirmedUnitCost,
     decimal TaxRatePercent,
     string LineStatus,
-    decimal Subtotal,
+    decimal? Subtotal,
     /// <summary>Mayorista fase 3: la variante del mayorista; null en una orden externa.</summary>
     Guid? SupplierVariantId = null,
     /// <summary>Mayorista fase 3: la foto de la lista; null en una externa y en una línea que agregó el mayorista.</summary>
@@ -69,7 +70,8 @@ public sealed record PurchaseOrderHistoryDto(string Status, DateTimeOffset At, s
 /// <b>sin IVA</b> y el IVA se suma en los totales. <c>Totals</c> usa lo confirmado en las líneas que lo tienen y
 /// <c>RequestedTotal</c> lo pedido. <c>AllowedActions</c> ya cruza estado y permisos (en minúscula, en el orden del contrato:
 /// <c>"edit"</c>, <c>"delete"</c>, <c>"send"</c>, <c>"confirm"</c>, <c>"receive"</c>, <c>"cancel"</c>); sin
-/// <c>purchases.order.manage</c> llega vacío.
+/// <c>purchases.order.manage</c> llega vacío. <c>Totals</c> y <c>RequestedTotal</c> son null en una orden vinculada que todavía no
+/// tiene precio, y <c>RequestedTotal</c> sigue null después de aprobarse si nació sin precio (spec 2026-11-19).
 /// </summary>
 public sealed record PurchaseOrderDetailDto(
     Guid Id,
@@ -83,8 +85,8 @@ public sealed record PurchaseOrderDetailDto(
     PurchaseOrderMemberDto CreatedBy,
     DateTimeOffset CreatedAt,
     IReadOnlyList<PurchaseOrderLineDto> Lines,
-    PurchaseOrderTotalsDto Totals,
-    decimal RequestedTotal,
+    PurchaseOrderTotalsDto? Totals,
+    decimal? RequestedTotal,
     IReadOnlyList<PurchaseOrderHistoryDto> History,
     IReadOnlyList<string> AllowedActions,
     /// <summary>Mayorista fase 3 (adenda): <c>External</c> o <c>Linked</c>, el modo fijado al guardar (D-10). La pantalla
@@ -93,7 +95,10 @@ public sealed record PurchaseOrderDetailDto(
     PurchaseOrderLinkedDto? Linked = null,
     PurchaseOrderChangesDto? Changes = null,
     /// <summary>Correo al proveedor: el último intento y el correo con que se mandaría hoy. Un backend anterior no lo manda.</summary>
-    PurchaseOrderEmailDto? Email = null);
+    PurchaseOrderEmailDto? Email = null,
+    /// <summary>Spec 2026-11-19: false en una orden vinculada que nació sin precio y todavía no se aprueba (<c>order.HasPrices</c>);
+    /// ausente = backend viejo = se muestran. Nada se enmascara acá: lo que no está, no está.</summary>
+    bool ShowPrices = true);
 
 /// <summary>
 /// <c>Status</c> (<c>Sent</c>, <c>Failed</c> o <c>NoRecipient</c>), <c>To</c> y <c>At</c> son del último intento y llegan nulos
@@ -104,7 +109,7 @@ public sealed record PurchaseOrderEmailDto(string? Status, string? To, DateTimeO
 
 /// <summary>
 /// Una fila de la lista. <c>Total</c> sigue la regla de <c>totals.total</c> del detalle y <c>LineCount</c> viene contado, para
-/// que la grilla no pida el detalle de cada orden.
+/// que la grilla no pida el detalle de cada orden. <c>Total</c> es null mientras la orden no tiene precio (spec 2026-11-19).
 /// </summary>
 public sealed record PurchaseOrderSummaryDto(
     Guid Id,
@@ -113,12 +118,14 @@ public sealed record PurchaseOrderSummaryDto(
     bool ConfirmedWithChanges,
     PurchaseOrderSupplierRefDto Supplier,
     string Currency,
-    decimal Total,
+    decimal? Total,
     DateTimeOffset CreatedAt,
     int LineCount,
     /// <summary>Mayorista fase 3: si la orden va a un mayorista vinculado, y el modo por nombre (adenda).</summary>
     bool IsLinked = false,
-    string Mode = PurchaseOrderModes.External);
+    string Mode = PurchaseOrderModes.External,
+    /// <summary>Spec 2026-11-19: false cuando la orden todavía no tiene precio (<c>total</c> es entonces null).</summary>
+    bool ShowPrices = true);
 
 /// <summary>
 /// Cuántas órdenes hay en cada estado con los filtros de la lista salvo <c>status</c>, para las pestañas (D-18). Las claves del
@@ -150,7 +157,7 @@ public sealed record PurchaseOrderPreviewLineDto(
     string Code,
     string Name,
     decimal TaxRatePercent,
-    decimal Subtotal,
+    decimal? Subtotal,
     /// <summary>Mayorista fase 3: con proveedor vinculado, <c>VariantId</c> es la del mayorista y esto su precio de lista.</summary>
     PurchaseOrderListPriceDto? ListPrice = null);
 
@@ -158,11 +165,14 @@ public sealed record PurchaseOrderPreviewLineDto(
 /// La vista previa del formulario (con debounce): misma aritmética que el alta (D-19), así el total que se ve es el que se
 /// guarda. Las líneas vuelven en el orden del cuerpo.
 /// </summary>
-/// <remarks>Mayorista fase 3: <c>Currency</c> es la moneda efectiva (la del mayorista con proveedor vinculado, D-11).</remarks>
+/// <remarks>Mayorista fase 3: <c>Currency</c> es la moneda efectiva (la del mayorista con proveedor vinculado, D-11). Spec
+/// 2026-11-19: con la lista del mayorista oculta (flag vivo al consultar), <c>Subtotal</c>, <c>ListPrice</c> y <c>Totals</c> van
+/// <c>null</c> y <c>ShowPrices</c> es <c>false</c>; los totales se calculan igual, sólo el DTO los omite.</remarks>
 public sealed record PurchaseOrderPreviewDto(
     IReadOnlyList<PurchaseOrderPreviewLineDto> Lines,
-    PurchaseOrderTotalsDto Totals,
-    string Currency);
+    PurchaseOrderTotalsDto? Totals,
+    string Currency,
+    bool ShowPrices = true);
 
 /// <summary>
 /// Una línea del cuerpo: la variante, la cantidad y el costo unitario sin IVA. Mayorista fase 3 (D-11): con proveedor vinculado

@@ -176,9 +176,15 @@ public sealed class OrderPricingRecalculationTests
             // La tienda exige partes completas: sólo el pedido, no lo que se prueba acá.
             var details = new QuotationPartyDetails
             {
-                Name = "Ana", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Cc,
-                PersonType = PartyPersonType.Natural, Phone = "3001112233", Email = "ana@example.com",
-                Address = "Calle 1", DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+                Name = "Ana",
+                IdentificationNumber = "1020304050",
+                IdentificationType = PartyIdentificationType.Cc,
+                PersonType = PartyPersonType.Natural,
+                Phone = "3001112233",
+                Email = "ana@example.com",
+                Address = "Calle 1",
+                DepartmentId = Guid.CreateVersion7(),
+                CityId = Guid.CreateVersion7(),
             };
             return Order.CreateFromStore(
                 OrderId.New(), TenantId, "PED-2026-0011", header,

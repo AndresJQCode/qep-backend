@@ -613,6 +613,12 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("discount_percentage");
 
+                    b.Property<bool>("IsGift")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_gift");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -768,6 +774,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
 
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("postal_code");
+
+                    b.Property<Guid?>("RegionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("region_id");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -838,6 +853,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<bool>("IncludePhoneDialCode")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("include_phone_dial_code");
 
                     b.Property<string>("SheetName")
                         .IsRequired()
@@ -1322,9 +1342,18 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
 
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("postal_code");
+
                     b.Property<Guid>("QuotationId")
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
+
+                    b.Property<Guid?>("RegionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("region_id");
 
                     b.Property<string>("Role")
                         .IsRequired()

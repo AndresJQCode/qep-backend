@@ -88,6 +88,7 @@ public sealed class OrderResponseComposer(
                 {
                     // Mayorista fase 3: false = la agregó el mayorista; fuera de un pedido mayorista no aplica.
                     FromPurchaseOrder = order.Wholesale is null ? null : item.SourcePurchaseOrderLineId is not null,
+                    IsGift = item.IsGift,
                 })
                 .ToArray(),
             // Sin el instante no se arma (spec 2026-11-16 F-8): CreatedAt no es opcional en el contrato, y un número sin
@@ -144,7 +145,9 @@ public sealed class OrderResponseComposer(
         ArgumentNullException.ThrowIfNull(order);
         var taxUnits = await QuotationResponseComposer.TaxUnitContextAsync(
             tenantClock, withholdingLookup, tenantId, order.CreatedAt, order.WithholdingBreakdown, cancellationToken);
-        return OrderResponses.ToResponse(order, taxUnits);
+        var regionsById = await QuotationResponseComposer.PartyRegionsAsync(
+            geographyLookup, order.Parties, cancellationToken);
+        return OrderResponses.ToResponse(order, taxUnits, regionsById);
     }
 
     public async Task<QuotationConversionPreviewResponse> ComposeConversionPreviewAsync(
@@ -165,10 +168,14 @@ public sealed class OrderResponseComposer(
 /// compositor del detalle.</summary>
 public static class OrderResponses
 {
+    private static readonly IReadOnlyDictionary<Guid, QuotationRegionRef> EmptyRegions =
+        new Dictionary<Guid, QuotationRegionRef>();
+
     /// <param name="context">El año local del pedido y el último año de UVT cargado por país, para decir si la UVT del
     /// desglose está desactualizada y cuál tomaría (spec alerta UVT §5.4). Lo resuelve
     /// <see cref="IOrderResponseComposer.ComposeOrderAsync"/> con el calendario del tenant y Catalog.</param>
-    internal static OrderResponse ToResponse(OrderDto order, TaxUnitContext context)
+    internal static OrderResponse ToResponse(
+        OrderDto order, TaxUnitContext context, IReadOnlyDictionary<Guid, QuotationRegionRef>? regionsById = null)
     {
         ArgumentNullException.ThrowIfNull(order);
         return new OrderResponse(
@@ -207,7 +214,9 @@ public static class OrderResponses
                 .Select(party => new QuotationPartyResponse(
                     party.Id, party.Role, party.Name, party.IdentificationNumber, party.Phone, party.Email,
                     party.Address, party.DepartmentId, party.CityId, party.PersonType, party.IdentificationType,
-                    party.Country, party.CityName))
+                    party.Country, party.CityName,
+                    QuotationResponseComposer.ToRegionDto(party.RegionId, regionsById ?? EmptyRegions),
+                    party.PostalCode))
                 .ToArray(),
             order.ConvertedAt,
             order.ConvertedBy,
@@ -242,6 +251,7 @@ public static class OrderResponses
             order.OrderDate,
             order.RequiresShipping,
             order.InvoiceProvider,
-            order.InvoiceNumber);
+            order.InvoiceNumber,
+            DeliveryEditable: order.DeliveryEditable);
     }
 }

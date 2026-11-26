@@ -16,10 +16,8 @@ public sealed class WholesaleDbContextMappingTests
         using var context = new WholesaleDbContextFactory().CreateDbContext([]);
         var model = context.Model;
 
-        var priceLists = model.FindEntityType(typeof(PriceList))!;
         var distributors = model.FindEntityType(typeof(Distributor))!;
         var invitations = model.FindEntityType(typeof(DistributorInvitation))!;
-        Assert.Equal(("wholesale", "price_lists"), (priceLists.GetSchema(), priceLists.GetTableName()));
         Assert.Equal(("wholesale", "distributors"), (distributors.GetSchema(), distributors.GetTableName()));
         Assert.Equal(("wholesale", "distributor_invitations"), (invitations.GetSchema(), invitations.GetTableName()));
 
@@ -28,15 +26,14 @@ public sealed class WholesaleDbContextMappingTests
             .Where(index => index.IsUnique)
             .Select(index => index.GetDatabaseName())
             .ToHashSet();
-        Assert.Contains(WholesaleDbContext.PriceListNameIndex, unique);
         Assert.Contains(WholesaleDbContext.DistributorIdentificationIndex, unique);
         Assert.Contains(WholesaleDbContext.DistributorTenantIndex, unique);
         Assert.Contains(WholesaleDbContext.InvitationTokenHashIndex, unique);
         Assert.Contains(WholesaleDbContext.InvitationReservedTenantIndex, unique);
         Assert.Equal(
-            ["IX_price_lists_tenant_name", "IX_distributors_tenant_identification", "IX_distributors_tenant_distributor_tenant",
+            ["IX_distributors_tenant_identification", "IX_distributors_tenant_distributor_tenant",
                 "IX_distributor_invitations_token_hash", "IX_distributor_invitations_reserved_tenant"],
-            [WholesaleDbContext.PriceListNameIndex, WholesaleDbContext.DistributorIdentificationIndex,
+            [WholesaleDbContext.DistributorIdentificationIndex,
                 WholesaleDbContext.DistributorTenantIndex, WholesaleDbContext.InvitationTokenHashIndex,
                 WholesaleDbContext.InvitationReservedTenantIndex]);
 
@@ -44,9 +41,19 @@ public sealed class WholesaleDbContextMappingTests
             .Single(index => index.GetDatabaseName() == WholesaleDbContext.DistributorTenantIndex);
         Assert.Equal("distributor_tenant_id IS NOT NULL", linkedIndex.GetFilter());
 
-        var priceListForeignKey = distributors.GetForeignKeys().Single(key => key.PrincipalEntityType == priceLists);
-        Assert.Equal(DeleteBehavior.Restrict, priceListForeignKey.DeleteBehavior);
-        Assert.Equal(WholesaleDbContext.DistributorPriceListForeignKey, priceListForeignKey.GetConstraintName());
+    }
+
+    // Spec 2026-11-22 (D-8): la lista vive en catalog.price_lists, otro esquema. El distribuidor guarda el id sin FK, y la tabla de
+    // listas ya no está en el modelo de Mayorista.
+    [Fact]
+    public void TheDistributorPriceListIsASoftReference()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var distributors = context.Model.FindEntityType(typeof(Distributor))!;
+
+        Assert.Empty(distributors.GetForeignKeys());
+        Assert.Equal("price_list_id", distributors.FindProperty(nameof(Distributor.PriceListId))!.GetColumnName());
+        Assert.DoesNotContain(context.Model.GetEntityTypes(), entity => entity.GetTableName() == "price_lists");
     }
 
     [Fact]
@@ -62,6 +69,17 @@ public sealed class WholesaleDbContextMappingTests
             .ToArray();
 
         Assert.Equal(["token_hash"], tokenColumns);
+    }
+
+    // Spec 2026-11-24 (prueba de buzón): sólo el hash, nulo en las invitaciones sin prueba vigente.
+    [Fact]
+    public void TheEmailProofHashIsANullableChar64Column()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var invitations = context.Model.FindEntityType(typeof(DistributorInvitation))!;
+
+        var proof = invitations.FindProperty(nameof(DistributorInvitation.EmailProofHash))!;
+        Assert.Equal(("email_proof_hash", "char(64)", true), (proof.GetColumnName(), proof.GetColumnType(), proof.IsNullable));
     }
 
     [Fact]
@@ -80,6 +98,25 @@ public sealed class WholesaleDbContextMappingTests
         Assert.Equal(
             [nameof(Distributor.TenantId), nameof(Distributor.IdentificationType), nameof(Distributor.IdentificationNumber)],
             index.Properties.Select(property => property.Name));
+    }
+
+    // Ciudad y dirección del distribuidor: tres columnas nullable (la empresa que nace al aceptar).
+    [Fact]
+    public void TheDistributorCityAndAddressColumnsAreNullableWithTheirLengths()
+    {
+        using var context = new WholesaleDbContextFactory().CreateDbContext([]);
+        var distributors = context.Model.FindEntityType(typeof(Distributor))!;
+
+        var cityId = distributors.FindProperty(nameof(Distributor.CityId))!;
+        Assert.Equal(("city_id", typeof(Guid?), true), (cityId.GetColumnName(), cityId.ClrType, cityId.IsNullable));
+
+        var cityName = distributors.FindProperty(nameof(Distributor.CityName))!;
+        Assert.Equal(("city_name", (int?)120, true), (cityName.GetColumnName(), cityName.GetMaxLength(), cityName.IsNullable));
+        Assert.Equal(Distributor.CityNameMaxLength, cityName.GetMaxLength());
+
+        var address = distributors.FindProperty(nameof(Distributor.Address))!;
+        Assert.Equal(("address", (int?)200, true), (address.GetColumnName(), address.GetMaxLength(), address.IsNullable));
+        Assert.Equal(Distributor.AddressMaxLength, address.GetMaxLength());
     }
 
     // Spec 2026-11-18 (aviso por WhatsApp): el destino del aviso en el distribuidor y su estado en la invitación, todo

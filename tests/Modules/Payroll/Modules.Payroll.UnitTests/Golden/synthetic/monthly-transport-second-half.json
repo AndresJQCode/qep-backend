@@ -1,0 +1,96 @@
+{
+  "name": "monthly-transport-second-half",
+  "source": "synthetic",
+  "description": "Auxilio mensual: la segunda paga el mes completo por 30 días.",
+  "legal": "legal/2026-11-01.json",
+  "covers": ["WorkedDaysRule", "SalaryRule", "MonthIncomeRule", "TransportAllowanceRule", "IbcRule", "EmployeeDeductionsRule", "EmployerContributionsRule", "ProvisionsRule", "PayrollEngine"],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2026-11-16",
+      "end": "2026-11-30",
+      "half": "Second"
+    },
+    "settings": {
+      "transportFrequency": "Monthly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 1750905,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "prior": {
+      "workedDays": 15,
+      "salaryRaw": 875452.5,
+      "salary": 875453,
+      "transportRaw": 124547.5,
+      "transport": 0,
+      "overtime": 0,
+      "salaryIncome": 0,
+      "nonSalaryIncome": 0,
+      "healthEmployee": 35018,
+      "pensionEmployee": 35018,
+      "solidarityFund": 0,
+      "healthEmployer": 0,
+      "pensionEmployer": 105100,
+      "arl": 4600,
+      "compensationFund": 35100,
+      "icbf": 0,
+      "sena": 0
+    }
+  },
+  "expected": {
+    "workedDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      { "code": "salary", "amount": 875452 },
+      { "code": "transport_allowance", "amount": 249095 },
+      { "code": "ibc", "amount": 1750905 },
+      { "code": "health_employee", "amount": 35018 },
+      { "code": "pension_employee", "amount": 35018 },
+      { "code": "health_employer", "amount": 0 },
+      { "code": "pension_employer", "amount": 105100 },
+      { "code": "arl", "amount": 4600 },
+      { "code": "compensation_fund", "amount": 35000 },
+      { "code": "icbf", "amount": 0 },
+      { "code": "sena", "amount": 0 },
+      { "code": "severance", "amount": 93675 },
+      { "code": "severance_interest", "amount": 11245 },
+      { "code": "premium", "amount": 93675 },
+      { "code": "vacation", "amount": 36506 }
+    ],
+    "net": 1054511,
+    "employerCost": 1504348
+  },
+  "notes": [
+    "prior = acumulados de la primera quincena (monthly-transport-first-half) escritos a mano en `input.prior`",
+    "días = 15 (cubre toda la quincena); finalSettlementPending = false",
+    "salary: SalaryRaw = 1 750 905 ÷ 30 × 15 = 875452.5; salary = round(875452.5 + 875452.5) − 875453 = 875 452",
+    "transport_allowance = round(124547.5 + 124547.5) - 0 = 249 095 (the monthly first half left transportRaw = 249 095 / 30 x 15 = 124547.5 and paid 0)",
+    "SalDev_m = 875453 + 875452 + 0 + 0 = 1750905; no salarial del mes = 0; no supera el 40 % ⇒ base = SalDev_m; piso 1750905; tope 43772625; ibc = techo(1750905) = 1 750 905",
+    "health_employee = al peso(1 750 905 × 0,04 = 70036.2) − 35018 = 35 018",
+    "pension_employee = al peso(1 750 905 × 0,04) − 35018 = 35 018",
+    "solidarity_fund: 1 SMMLV < 4 y sin retención previa ⇒ sin línea",
+    "exonerado = true (empresa exonerada = true; ingreso salarial del mes 1 750 905 < 17 509 050)",
+    "health_employer = 0 (exonerado)",
+    "pension_employer = techo100(1 750 905 × 0.12) − 105100 = 105 100",
+    "arl = techo100(1750905 × 0.00522 = 9139.7241) − 4600 = 4 600",
+    "compensation_fund = techo100(1750905 × 0,04) − 35100 = 35 000",
+    "icbf = 0 (exonerado)",
+    "sena = 0 (exonerado)",
+    "provisiones: base = 875452 + 249095 + 0 + 0 = 1124547; severance = round(93674.7651) = 93 675; severance_interest = round(11245.47) = 11 245; premium = 93 675; vacation = round((875452 + 0) × 0,0417 = 36506.3484) = 36 506",
+    "totalEarned = 875452 + 249095 + 0 + 0 + 0 = 1124547; totalDeductions = 70000; net = 1054547; employerCost = 1124547 + aportes 144700 + provisiones 235101 = 1504348"
+  ]
+}

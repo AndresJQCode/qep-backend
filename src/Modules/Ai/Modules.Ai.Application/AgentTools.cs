@@ -11,6 +11,14 @@ public static class AgentToolNames
     public const string GetOrderStatus = "get_order_status";
     public const string CreateQuotationDraft = "create_quotation_draft";
 
+    // Spec 2026-11-23 §5: las seis de la Agenda.
+    public const string ListBookableServices = "list_bookable_services";
+    public const string CheckAvailability = "check_availability";
+    public const string BookAppointment = "book_appointment";
+    public const string ListMyAppointments = "list_my_appointments";
+    public const string CancelAppointment = "cancel_appointment";
+    public const string RescheduleAppointment = "reschedule_appointment";
+
     /// <summary>Herramienta final: la respuesta al cliente.</summary>
     public const string SendReply = "send_reply";
 
@@ -21,7 +29,8 @@ public static class AgentToolNames
     public const string FinishObjective = "finish_objective";
 
     /// <summary>Las herramientas que escriben fuera de Ai. El bucle corre a lo sumo una por respuesta del modelo.</summary>
-    public static bool Writes(string name) => name == CreateQuotationDraft;
+    public static bool Writes(string name) =>
+        name is CreateQuotationDraft or BookAppointment or CancelAppointment or RescheduleAppointment;
 }
 
 /// <summary>
@@ -33,12 +42,20 @@ public static class AiServicePrincipal
     public const string CatalogRead = "catalog.read";
     public const string OrdersReadOwn = "orders.read_own";
     public const string QuotationsDraftCreate = "quotations.draft_create";
+    public const string SchedulingRead = "scheduling.read";
+    public const string SchedulingReadOwn = "scheduling.read_own";
+    public const string SchedulingBookOwn = "scheduling.book_own";
+    public const string SchedulingChangeOwn = "scheduling.change_own";
 
     public static readonly IReadOnlySet<string> Capabilities = new HashSet<string>(StringComparer.Ordinal)
     {
         CatalogRead,
         OrdersReadOwn,
         QuotationsDraftCreate,
+        SchedulingRead,
+        SchedulingReadOwn,
+        SchedulingBookOwn,
+        SchedulingChangeOwn,
     };
 }
 
@@ -75,8 +92,12 @@ public interface IAiQuickReplies
 /// (D-A30).</summary>
 /// <param name="QuotationDraft">P-4: la asesora y la cuenta de cobro del agente (de la versión de la sesión), para
 /// <c>create_quotation_draft</c>.</param>
+/// <param name="AgentId">Spec 2026-11-23 §5.7: el agente que corre; la auditoría de la Agenda lo nombra.</param>
+/// <param name="ConversationId"><c>null</c> en el playground: sin conversación no hay cliente que releer.</param>
+/// <param name="BookingOrdinal">D-14: 1 + las reservas que ya devolvieron una cita en este trabajo; entra en la llave de idempotencia.</param>
 public sealed record AgentToolInvocation(
-    Guid TenantId, Guid JobId, string CallId, Guid? CustomerId, bool IsTest, AgentQuotationDraft? QuotationDraft = null);
+    Guid TenantId, Guid JobId, string CallId, Guid? CustomerId, bool IsTest, AgentQuotationDraft? QuotationDraft = null,
+    Guid AgentId = default, Guid? ConversationId = null, int BookingOrdinal = 1);
 
 /// <summary>Una herramienta que termina el turno con un traspaso determinista (P-4 y P-4b), sin otra vuelta del modelo.</summary>
 /// <param name="Code">El código del traspaso (<see cref="AgentHandoffCodes"/>).</param>
@@ -463,6 +484,17 @@ public static class AgentToolErrors
 
     /// <summary>La respuesta del modelo traía más de una herramienta que escribe; sólo corrió la primera.</summary>
     public const string OneWritePerResponse = "one_write_per_response";
+
+    // Spec 2026-11-23 §8: lo que el modelo lee de la Agenda.
+    public const string SchedulingUnavailable = "scheduling_unavailable";
+    public const string SlotTaken = "slot_taken";
+    public const string SessionFull = "session_full";
+    public const string OutsideRules = "outside_rules";
+    public const string AppointmentChangeBlocked = "appointment_change_blocked";
+    public const string AppointmentNotFound = "appointment_not_found";
+    public const string ServiceNotFound = "service_not_found";
+    public const string ResourceNotChoosable = "resource_not_choosable";
+    public const string AppointmentChanged = "appointment_changed";
 }
 
 internal static class AgentToolArguments

@@ -20,6 +20,10 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
 
     public DbSet<ServiceContractsSettings> Settings => Set<ServiceContractsSettings>();
 
+    public DbSet<ServicePriceSchedule> ServicePriceSchedules => Set<ServicePriceSchedule>();
+
+    public DbSet<IpcRate> IpcRates => Set<IpcRate>();
+
     internal DbSet<CustomerMessage> CustomerMessages => Set<CustomerMessage>();
 
     internal DbSet<ReminderStep> ReminderSteps => Set<ReminderStep>();
@@ -31,9 +35,13 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    // Write projection of platform.outbox_messages (ExcludeFromMigrations): Tenancy owns the table. Spec 2026-11-22 §12.
+    internal DbSet<ServiceContractsOutboxMessage> Outbox => Set<ServiceContractsOutboxMessage>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+        ConfigureOutboxProjection(modelBuilder);
         ConfigureProfile(modelBuilder);
         ConfigureService(modelBuilder);
         ConfigureCharge(modelBuilder);
@@ -43,6 +51,23 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         ConfigureDailyDigest(modelBuilder);
         ConfigureTenantRun(modelBuilder);
         ConfigureSettings(modelBuilder);
+        ConfigureServicePriceSchedule(modelBuilder);
+        ConfigureIpcRate(modelBuilder);
+    }
+
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<ServiceContractsOutboxMessage>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
     }
 
     // Todos los `version` son bigint en la base (spec §2) aunque el dominio los lleve como int: el
@@ -75,6 +100,8 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         {
             table.HasCheckConstraint("CK_services_cycle_months", "cycle_months IN (1, 6, 12)");
             table.HasCheckConstraint("CK_services_status", "status IN ('Active','Paused','Cancelled')");
+            table.HasCheckConstraint("CK_services_adjustment_mode", "adjustment_mode IN ('Manual','Ipc')");
+            table.HasCheckConstraint("CK_services_ipc_extra_points", "ipc_extra_points >= 0 AND ipc_extra_points <= 50");
         });
         service.HasKey(value => value.Id);
         service.Property(value => value.Id)
@@ -101,7 +128,25 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
             .HasConversion<string>()
             .HasMaxLength(16);
         service.Property(value => value.ReactivatedOn).HasColumnName("reactivated_on");
-        service.Property(value => value.LastGeneratedDueDate).HasColumnName("last_generated_due_date");
+        // Conserva el nombre desplegado: siempre guardó el período (spec reajuste §6.2).
+        service.Property(value => value.LastGeneratedPeriodDate).HasColumnName("last_generated_due_date");
+        service.Property(value => value.AdjustmentMode)
+            .HasColumnName("adjustment_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        service.Property(value => value.IpcExtraPoints)
+            .HasColumnName("ipc_extra_points")
+            .HasPrecision(5, 2)
+            .HasDefaultValue(0m);
+        service.Property(value => value.NextReviewDate).HasColumnName("next_review_date");
+        service.Property(value => value.HeldSince).HasColumnName("held_since");
+        // Una colección primitiva sobre el campo (no tiene vida propia): `CarriedHeldPeriods` es su vista de sólo lectura y sin
+        // ignorarla EF intentaría mapear las dos.
+        service.PrimitiveCollection<List<DateOnly>>("_carriedHeldPeriods")
+            .HasColumnName("carried_held_periods")
+            .HasColumnType("date[]")
+            .HasDefaultValueSql("'{}'");
+        service.Ignore(value => value.CarriedHeldPeriods);
         service.Property(value => value.Version)
             .HasColumnName("version")
             .HasColumnType("bigint")
@@ -127,7 +172,9 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         charge.Property(value => value.CustomerId).HasColumnName("customer_id");
         charge.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
         charge.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
+        charge.Property(value => value.PeriodDate).HasColumnName("period_date");
         charge.Property(value => value.DueDate).HasColumnName("due_date");
+        charge.Property(value => value.PriceUnreviewed).HasColumnName("price_unreviewed").HasDefaultValue(false);
         // `Overdue` no se guarda: es Pending con due_date < hoy del tenant, y se calcula al responder.
         charge.Property(value => value.Status)
             .HasColumnName("status")
@@ -149,10 +196,11 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         charge.HasIndex(value => new { value.TenantId, value.CustomerId, value.Status })
             .HasDatabaseName("IX_charges_tenant_customer_status");
         // La deduplicación de la generación: dos réplicas que generen el mismo período chocan acá y
-        // no duplican el cobro (Review Focus 2).
-        charge.HasIndex(value => new { value.ServiceId, value.DueDate })
+        // no duplican el cobro. Es por período y no por vencimiento: los cobros liberados juntos de una retención vencen
+        // el mismo día (spec reajuste §6.5).
+        charge.HasIndex(value => new { value.ServiceId, value.PeriodDate })
             .IsUnique()
-            .HasDatabaseName("IX_charges_service_due");
+            .HasDatabaseName("IX_charges_service_period");
     }
 
     // Sin FK a services, como charges: el módulo no declara FKs y el contrato nunca se borra. Sólo se inserta: es la
@@ -160,7 +208,13 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
     private static void ConfigureServicePriceChange(ModelBuilder modelBuilder)
     {
         var change = modelBuilder.Entity<ServicePriceChange>();
-        change.ToTable("service_price_changes", Schema);
+        change.ToTable("service_price_changes", Schema, table =>
+            table.HasCheckConstraint("CK_service_price_changes_origin", "origin IN ('Edit','Scheduled','Ipc')"));
+        change.Property(value => value.Origin)
+            .HasColumnName("origin")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        change.Property(value => value.ScheduleId).HasColumnName("schedule_id");
         change.HasKey(value => value.Id);
         change.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         change.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -178,6 +232,70 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         change.Property(value => value.OccurredAt).HasColumnName("occurred_at");
         change.HasIndex(value => new { value.ServiceId, value.OccurredAt })
             .HasDatabaseName("IX_service_price_changes_service_occurred");
+    }
+
+    // Sin FK a services, como charges: borrar el contrato se lleva sus programados a mano (DeleteServiceHandler).
+    private static void ConfigureServicePriceSchedule(ModelBuilder modelBuilder)
+    {
+        var schedule = modelBuilder.Entity<ServicePriceSchedule>();
+        schedule.ToTable("service_price_schedules", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_service_price_schedules_source", "source IN ('Manual','Ipc')");
+            table.HasCheckConstraint("CK_service_price_schedules_status", "status IN ('Pending','Applied','Cancelled')");
+            table.HasCheckConstraint("CK_service_price_schedules_new_price", "new_price > 0");
+        });
+        schedule.HasKey(value => value.Id);
+        schedule.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        schedule.Property(value => value.TenantId).HasColumnName("tenant_id");
+        schedule.Property(value => value.ServiceId)
+            .HasColumnName("service_id")
+            .HasConversion(id => id.Value, value => new ServiceContractId(value));
+        schedule.Property(value => value.EffectiveFrom).HasColumnName("effective_from");
+        schedule.Property(value => value.NewPrice).HasColumnName("new_price").HasPrecision(18, 2);
+        schedule.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
+        schedule.Property(value => value.Source)
+            .HasColumnName("source")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        schedule.Property(value => value.IpcYear).HasColumnName("ipc_year").HasConversion<short>();
+        schedule.Property(value => value.IpcRate).HasColumnName("ipc_rate").HasPrecision(6, 2);
+        schedule.Property(value => value.ExtraPoints).HasColumnName("extra_points").HasPrecision(5, 2);
+        schedule.Property(value => value.Reason)
+            .HasColumnName("reason")
+            .HasMaxLength(ServicePriceChange.ReasonMaxLength);
+        schedule.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
+        schedule.Property(value => value.Status)
+            .HasColumnName("status")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        schedule.Property(value => value.AppliedPeriodDate).HasColumnName("applied_period_date");
+        schedule.Property(value => value.CreatedAt).HasColumnName("created_at");
+        schedule.Property(value => value.AppliedAt).HasColumnName("applied_at");
+        schedule.Property(value => value.CancelledAt).HasColumnName("cancelled_at");
+        // Un solo pendiente por contrato: dos «programar» a la vez chocan acá.
+        schedule.HasIndex(value => value.ServiceId)
+            .IsUnique()
+            .HasFilter("status = 'Pending'")
+            .HasDatabaseName("IX_service_price_schedules_pending");
+        schedule.HasIndex(value => new { value.TenantId, value.Source, value.IpcYear })
+            .HasDatabaseName("IX_service_price_schedules_tenant_source_year");
+    }
+
+    private static void ConfigureIpcRate(ModelBuilder modelBuilder)
+    {
+        var rate = modelBuilder.Entity<IpcRate>();
+        rate.ToTable("ipc_rates", Schema, table =>
+            table.HasCheckConstraint("CK_ipc_rates_rate", "rate >= -10 AND rate <= 100"));
+        rate.HasKey(value => new { value.TenantId, value.Year });
+        rate.Property(value => value.TenantId).HasColumnName("tenant_id");
+        rate.Property(value => value.Year).HasColumnName("year").HasConversion<short>().ValueGeneratedNever();
+        rate.Property(value => value.Rate).HasColumnName("rate").HasPrecision(6, 2);
+        rate.Property(value => value.UpdatedByMemberId).HasColumnName("updated_by_member_id");
+        rate.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        rate.Property(value => value.Version)
+            .HasColumnName("version")
+            .HasColumnType("bigint")
+            .IsConcurrencyToken();
     }
 
     private static void ConfigureCustomerMessage(ModelBuilder modelBuilder)

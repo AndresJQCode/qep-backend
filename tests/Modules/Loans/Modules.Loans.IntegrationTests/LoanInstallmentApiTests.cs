@@ -38,17 +38,17 @@ public sealed class LoanInstallmentApiTests
 
     private static Dictionary<string, object?> LoanBody(
         Guid customerId, string name = "Novasteel", string disbursedOn = "2026-08-15", Guid? assignee = null) => new()
-    {
-        ["customerId"] = customerId,
-        ["name"] = name,
-        ["principalAmount"] = 100_000_000m,
-        ["currency"] = null,
-        ["monthlyRatePercent"] = 1.5m,
-        ["disbursedOn"] = disbursedOn,
-        ["cutoffRule"] = "EndOfMonth",
-        ["assigneeMemberId"] = assignee,
-        ["note"] = null,
-    };
+        {
+            ["customerId"] = customerId,
+            ["name"] = name,
+            ["principalAmount"] = 100_000_000m,
+            ["currency"] = null,
+            ["monthlyRatePercent"] = 1.5m,
+            ["disbursedOn"] = disbursedOn,
+            ["cutoffRule"] = "EndOfMonth",
+            ["assigneeMemberId"] = assignee,
+            ["note"] = null,
+        };
 
     private static async Task<JsonElement> JsonOfAsync(HttpResponseMessage response)
     {

@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Net.Http.Json;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using BuildingBlocks.Application;
 using Modules.ServiceContracts.Application;
 using Modules.Tenancy.Infrastructure.Persistence;
 using static Modules.ServiceContracts.IntegrationTests.ServiceContractsApiHarness;

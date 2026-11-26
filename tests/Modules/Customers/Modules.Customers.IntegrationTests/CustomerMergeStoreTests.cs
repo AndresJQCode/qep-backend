@@ -420,8 +420,8 @@ public sealed class CustomerMergeStoreTests
             store.CountOwnedAsync(Tenant, [], TestContext.Current.CancellationToken));
 
         // Direcciones: la principal del alta y «Dirección 1» del primero, y la principal del alta del segundo.
-        Assert.Equal(new CustomerMergeOwnedCounts(Notes: 3, Addresses: 3), counts);
-        Assert.Equal(new CustomerMergeOwnedCounts(Notes: 0, Addresses: 0), none);
+        Assert.Equal(new CustomerMergeOwnedCounts(Notes: 3, Addresses: 3, BillingProfiles: 0), counts);
+        Assert.Equal(new CustomerMergeOwnedCounts(Notes: 0, Addresses: 0, BillingProfiles: 0), none);
     }
 
     [Fact]
@@ -498,7 +498,7 @@ public sealed class CustomerMergeStoreTests
             await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
             await store.MoveOwnedAsync(Tenant, survivor, [merged], ct);
             // Dentro de la transacción ya se ve movido; sin Commit, el Dispose lo deshace.
-            Assert.Equal(new CustomerMergeOwnedCounts(0, 0), await store.CountOwnedAsync(Tenant, [merged], ct));
+            Assert.Equal(new CustomerMergeOwnedCounts(0, 0, 0), await store.CountOwnedAsync(Tenant, [merged], ct));
         }
 
         Assert.Equal([merged], (await NotesAsync(fixture.ConnectionString, "nota B1")).Select(note => note.CustomerId).ToArray());

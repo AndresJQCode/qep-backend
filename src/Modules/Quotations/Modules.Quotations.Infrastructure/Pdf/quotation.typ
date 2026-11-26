@@ -17,7 +17,11 @@
 // documento —membrete y pie— y el renglón de vigencia, que un pedido no tiene. `kind` llega como texto
 // ("Quotation" / "Order", `QuotationPdfKind`); cualquier otro valor se imprime como cotización.
 #let es-pedido = data.kind == "Order"
-#let documento = if es-pedido { "Pedido" } else { "Cotización" }
+// Spec 2026-11-22 (i18n): el idioma del tenant. En España la cotización es «Presupuesto» —masculino, como el pedido— y el
+// asesor, «Comercial» (owner). Cualquier otro valor se imprime como Latinoamérica.
+#let espana = data.language == "es-ES"
+#let documento = if es-pedido { "Pedido" } else if espana { "Presupuesto" } else { "Cotización" }
+#let masculino = es-pedido or espana
 
 #let tinta = rgb("#14181F")
 // 5.8:1 sobre blanco. Los rótulos van en 7pt y a esa medida un gris "de diseño" deja de leerse.
@@ -255,16 +259,16 @@
     #v(3pt, weak: true)
     #par(leading: 0.6em)[
       #if hay-emisor [#renglon("N.°", data.quotationNumber) \ ]
-      // Concuerda con el documento: «la cotización», emitida; «el pedido», emitido.
-      #renglon(if es-pedido { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
+      // Concuerda con el documento: «la cotización», emitida; «el pedido» y «el presupuesto», emitido.
+      #renglon(if masculino { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
       // Un pedido no vence: "Sin vencimiento" se leería como una condición comercial que nadie pactó.
       #if not es-pedido [
         #renglon(
-          "Válida hasta",
+          if masculino { "Válido hasta" } else { "Válida hasta" },
           if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
         ) \
       ]
-      #renglon("Asesor", if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
+      #renglon(if espana { "Comercial" } else { "Asesor" }, if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
       #renglon("Cliente", if data.customerName == "" { vacio } else { data.customerName })
       #if data.customerCuc != "" [ \ #renglon("NIT / CUC", data.customerCuc)]
       #if data.customerContact != "" [ \ #renglon("Contacto", data.customerContact)]
@@ -375,12 +379,19 @@
 // el cliente lee para decidir.
 #let hay-descuento = data.items.any(item => item.discountPercentage > 0)
 
-#let columnas = if hay-descuento {
+// El pedido imprime otra tabla (owner 2026-11-23): # Item, Código, Descripción, Cantidad, Vr. unitario, Vr. total. El
+// unitario es el que ya trae el descuento, así que unitario × cantidad = total de la fila y no hace falta una columna
+// de valor público.
+#let columnas = if es-pedido {
+  (auto, auto, 1fr, auto, auto, auto)
+} else if hay-descuento {
   (1fr, auto, auto, auto, auto)
 } else {
   (1fr, auto, auto, auto)
 }
-#let titulos = if hay-descuento {
+#let titulos = if es-pedido {
+  ("# Item", "Código", "Descripción", "Cantidad", "Vr. unitario", "Vr. total")
+} else if hay-descuento {
   ("Producto", "Valor público", "Valor con descuento", "Cantidad", "Subtotal")
 } else {
   ("Producto", "Valor unitario", "Cantidad", "Subtotal")
@@ -388,7 +399,11 @@
 
 #table(
   columns: columnas,
-  align: (left, ..titulos.slice(1).map(_ => right)),
+  align: if es-pedido {
+    (center, left, left, right, right, right)
+  } else {
+    (left, ..titulos.slice(1).map(_ => right))
+  },
   inset: (x: 8pt, y: 7.5pt),
   // Fila 0 oscura para el encabezado; el resto alterna blanco y panel, como en la referencia
   // — la cebra ayuda a leer una fila completa en una tabla ancha, sin depender del color.
@@ -396,8 +411,19 @@
   stroke: (x, y) => (bottom: if y == 0 { none } else { 0.4pt + filete }),
   table.header(..titulos.map(titulo => rotulo(titulo, color: white))),
   ..data.items
-    .map(item => {
-      let celdas = ([#item.productName],)
+    .enumerate()
+    .map(((posicion, item)) => {
+      let celdas = if es-pedido {
+        ([#str(posicion + 1)], [#if item.productCode == none { "" } else { item.productCode }], [#item.productName])
+      } else {
+        ([#item.productName],)
+      }
+      if es-pedido {
+        celdas.push([#if item.unit == none { cantidad(item.quantity) } else { cantidad(item.quantity) + " " + item.unit }])
+        celdas.push([#importe(item.discountedUnitPrice)])
+        celdas.push([#importe(item.lineTotal)])
+        return celdas
+      }
       if hay-descuento {
         celdas.push([#importe(item.unitPrice)])
         celdas.push([#importe(item.discountedUnitPrice)])

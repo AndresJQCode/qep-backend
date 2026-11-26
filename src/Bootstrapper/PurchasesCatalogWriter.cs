@@ -77,7 +77,7 @@ internal sealed class PurchasesCatalogWriter(PurchasesDbContext purchases, IServ
 
         if (await writer.FindVariantIdByCodeAsync(tenantId, code, cancellationToken) is { } existing)
         {
-            return new PurchasesCatalogEntry(existing, Created: false);
+            return new PurchasesCatalogEntry(existing, Created: false, ProductId: null);
         }
 
         var productName = string.IsNullOrWhiteSpace(name) ? code : name.Trim();
@@ -99,6 +99,6 @@ internal sealed class PurchasesCatalogWriter(PurchasesDbContext purchases, IServ
                 ActorId: Guid.Empty,
                 now),
             cancellationToken);
-        return new PurchasesCatalogEntry(result.VariantIdsByKey[VariantKey], Created: true);
+        return new PurchasesCatalogEntry(result.VariantIdsByKey[VariantKey], Created: true, result.ProductId);
     }
 }

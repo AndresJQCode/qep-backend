@@ -11,7 +11,9 @@ public sealed class SystemTemplateSendTests
 
     private static readonly Dictionary<string, string> AllValues = new()
     {
-        ["nombre_contacto"] = "Laura", ["empresa"] = "Andina", ["valor_total"] = "10",
+        ["nombre_contacto"] = "Laura",
+        ["empresa"] = "Andina",
+        ["valor_total"] = "10",
     };
 
     private static ApprovedTemplate Row(string parameterFormat, string body, string? footer = null)
@@ -103,7 +105,10 @@ public sealed class SystemTemplateSendTests
         var row = Row("NAMED", "¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*.");
         var built = SystemTemplateSend.Build(row, new Dictionary<string, string>
         {
-            ["nombre_contacto"] = "Laura", ["numero_cotizacion"] = "COT-1", ["valor_total"] = "10", ["vigencia"] = "1 de enero",
+            ["nombre_contacto"] = "Laura",
+            ["numero_cotizacion"] = "COT-1",
+            ["valor_total"] = "10",
+            ["vigencia"] = "1 de enero",
         });
         Assert.Equal(
             [("fullname", "Laura"), ("order_number", "COT-1"), ("total", "10"), ("valid_until", "1 de enero")],

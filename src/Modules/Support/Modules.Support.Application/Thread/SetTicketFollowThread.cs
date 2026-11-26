@@ -33,9 +33,7 @@ public sealed class SetTicketFollowThreadValidator : AbstractValidator<SetTicket
 /// </summary>
 public sealed class SetTicketFollowThreadHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
@@ -47,12 +45,12 @@ public sealed class SetTicketFollowThreadHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(SetTicketFollowThreadCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var follow = command.Follow ?? throw new InvalidOperationException("Follow passed validation but is null.");
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
+        SupportTicketScope.EnsureExternal(ticket);
+        SupportTicketScope.EnsureVersion(ticket, command.ExpectedVersion);
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var version = ticket.Version;
         ticket.SetFollowThread(follow, actor, context.Now);

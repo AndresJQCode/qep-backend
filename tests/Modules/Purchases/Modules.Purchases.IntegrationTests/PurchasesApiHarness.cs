@@ -11,6 +11,7 @@ using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Purchases.Application;
 using Modules.Purchases.Infrastructure.Messaging;
+using Modules.Quotations.Application;
 using Modules.Suppliers.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
@@ -310,7 +311,7 @@ internal static class PurchasesApiHarness
             HttpMethod.Post,
             $"{OrderUrl(tenantId, order.Id)}/confirm",
             order.Version,
-            ConfirmBody(order.Lines.Select(line => (line.Id, line.Quantity!.Value, line.UnitCost)).ToArray()));
+            ConfirmBody(order.Lines.Select(line => (line.Id, line.Quantity!.Value, line.UnitCost!.Value)).ToArray()));
         await EnsureSuccessAsync(response);
         return (await response.Content.ReadFromJsonAsync<PurchaseOrderDetailDto>(Ct))!;
     }
@@ -407,6 +408,13 @@ internal static class PurchasesApiHarness
                 services.AddSingleton<FakePurchaseOrderPdfRenderer>();
                 services.AddSingleton<IPurchaseOrderPdfRenderer>(provider =>
                     provider.GetRequiredService<FakePurchaseOrderPdfRenderer>());
+
+                // El PDF del pedido del mayorista (su propio documento) tampoco sale a la red: se guarda por número.
+                services.RemoveAll<IQuotationPdfRenderer>();
+                services.AddSingleton<FakeQuotationPdfRenderer>();
+                services.AddSingleton<IQuotationPdfRenderer>(provider => provider.GetRequiredService<FakeQuotationPdfRenderer>());
+                services.RemoveAll<IQuotationPdfStorage>();
+                services.AddSingleton<IQuotationPdfStorage, FakeQuotationPdfStorage>();
 
                 // El correo al proveedor nunca sale a un proveedor real: el falso guarda lo que recibe (las pruebas lo filtran por
                 // la dirección, única por prueba) y falla con las direcciones que empiezan por «fail-».

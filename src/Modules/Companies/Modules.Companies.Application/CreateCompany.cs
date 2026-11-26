@@ -19,7 +19,9 @@ public sealed record CreateCompanyCommand(
     string? Email,
     string? Address,
     IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
-    bool? ChargesVat = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
+    bool? ChargesVat = null,
+    // Spec 2026-11-23: la región (provincia) del domicilio de un país con catálogo distinto de Colombia; null es «sin región».
+    Guid? RegionId = null) : ICommand<CompanyDto>, ICompanyWriteCommand;
 
 // Las reglas viven en CompanyWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCompanyValidator : AbstractValidator<CreateCompanyCommand>
@@ -40,6 +42,9 @@ public sealed class CreateCompanyHandler(
     ILogger<CreateCompanyHandler> logger)
     : ICommandHandler<CreateCompanyCommand, CompanyDto>
 {
+    private readonly CompanyCreation creation = new(
+        repository, unitOfWork, auditPublisher, geographyLookup, clock, validator, taxRateLookup, defaultTaxRates, logger);
+
     public async Task<CompanyDto> HandleAsync(
         CreateCompanyCommand command,
         CancellationToken cancellationToken)
@@ -52,77 +57,18 @@ public sealed class CreateCompanyHandler(
         CompaniesAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
 
-        // El pais se normaliza una sola vez, antes de validar: la busqueda de ciudad de abajo
-        // compara contra "CO", y un "co" sin normalizar se la saltaria.
-        command = command with { Country = CompanyWriteRules.NormalizeCountry(command.Country) };
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
-
-        // Se resuelve antes de crear el agregado, no despues: un CityId sintacticamente valido
-        // pero de una ciudad inexistente tiene que fallar como 422 companies.company.city_not_found
-        // en vez de reventar la FK de base como 500 al hacer SaveChanges.
-        // Fuera de Colombia la ciudad es texto libre: no hay nada que buscar en Geography.
-        CompanyCityRef? city = null;
-        if (command.Country == Company.ColombiaCountryCode)
-        {
-            city = await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
-                ?? throw new CompaniesDomainException(
-                    "companies.company.city_not_found",
-                    "The city was not found.");
-        }
-
-        // Spec ReteICA por empresa §7.3: en el alta, ausente es «ninguna». Se valida antes de crear, como la ciudad.
-        var withholdingTaxRateIds = command.WithholdingTaxRateIds ?? [];
-        var withholdingTaxRates = await taxRateLookup.FindManyAsync(
-            command.TenantId, withholdingTaxRateIds, cancellationToken);
-        CompanyWithholdingRules.Validate(withholdingTaxRates, withholdingTaxRateIds, [], command.Country!);
-
-        var now = clock.UtcNow;
-        var company = Company.Create(
-            CompanyId.New(),
-            command.TenantId,
-            command.Name,
-            command.BankAccounts.ToDomain(),
-            command.TaxId,
-            command.Country!,
-            CompanyDocumentTypes.Parse(command.DocumentType!),
-            command.CityId,
-            command.CityName,
-            new CompanyContactInfo
-            {
-                Phone = command.Phone,
-                Email = command.Email,
-                Address = command.Address
-            },
-            now,
-            // Spec 2026-11-17 §5.1: ausente es «cobra IVA».
-            command.ChargesVat ?? true);
-        company.SetWithholdingTaxRates(withholdingTaxRateIds, now);
-
-        repository.Add(company);
-        auditPublisher.Publish(
-            command.TenantId,
-            executionContext.SubjectId,
-            "companies.company.created",
-            company.Id.ToString(),
-            "success",
-            now);
-
-        // Desde EMP-08 no queda ninguna unicidad que arbitre la base para este agregado: la
-        // regla que sobrevive —que una empresa no repita la misma cuenta— es invariante del
-        // agregado y ya la hizo cumplir Company.Create en memoria. Por eso este SaveChanges no
-        // tiene detras ninguna rama de traduccion de 23505.
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        // Validar, resolver ciudad y retenciones, crear, auditar y guardar viven en CompanyCreation:
+        // las comparte con el alta del sistema (ICompanyProvisioning). Aquí se queda lo que es de este
+        // endpoint: autorizar, el actor de la sesión y la forma de la respuesta.
+        var created = await creation.CreateAsync(command, executionContext.SubjectId, cancellationToken);
 
         // Spec 2026-11-17 §5.3: después del commit, nunca dentro. Un fallo no deshace la empresa.
-        if (CompanyDefaultTaxRateSeeding.Applies(company.ChargesVat, company.Country))
-        {
-            await CompanyDefaultTaxRateSeeding.TryEnsureAsync(
-                defaultTaxRates, logger, command.TenantId, executionContext.SubjectId, cancellationToken);
-        }
+        await creation.SeedDefaultsAsync(created.Company, executionContext.SubjectId, cancellationToken);
 
-        return company.ToDto(
-            city,
+        return created.Company.ToDto(
+            created.City,
             await CompanyMapping.ResolveWithholdingTaxRatesAsync(
-                company.WithholdingTaxRateIds, withholdingTaxRates, geographyLookup, cancellationToken));
+                created.Company.WithholdingTaxRateIds, created.WithholdingRates, geographyLookup, cancellationToken),
+            created.Region);
     }
 }

@@ -21,4 +21,6 @@ public sealed record SupplierWriteData(
     string? Category,
     string? Notes,
     IReadOnlyList<SupplierBankAccount> BankAccounts,
-    IReadOnlyList<SupplierContact> Contacts);
+    IReadOnlyList<SupplierContact> Contacts,
+    // Spec 2026-11-23: la región (provincia) del domicilio de un país con catálogo distinto de Colombia; null es «sin región».
+    Guid? RegionId = null);

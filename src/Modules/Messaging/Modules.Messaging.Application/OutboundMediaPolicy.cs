@@ -9,6 +9,7 @@ public sealed record OutboundMediaRule(OutboundMediaFormat Format, string Extens
 /// Messaging-media-reply R2, R9 y R10, y spec 2026-10-20 (video y audio) D2: qué adjuntos acepta el asesor, con qué mime, qué kind
 /// sale y hasta qué tamaño en cada canal. Una sola tabla para la sesión de subida y para la confirmación: la extensión decide el
 /// formato, el mime tiene que ser el canónico de ese formato y el contenido lo verifica <see cref="OutboundMediaSniffer"/>.
+/// <para>2026-11-22: con PowerPoint, texto y sticker (WebP) queda todo lo que la Cloud API de WhatsApp admite; Instagram sigue sin recibirlos.</para>
 /// <para>Video y audio salen de la documentación pública de Meta y están <b>en borrador hasta V-1..V-3</b> (spec 2026-10-20): lo que
 /// Meta real no acepte se quita de acá. No hay transcodificación: lo que un canal no recibe tal cual no está en la tabla.</para>
 /// </summary>
@@ -19,6 +20,13 @@ public static class OutboundMediaPolicy
 
     /// <summary>El máximo de Meta para un documento.</summary>
     public const long MaxDocumentBytes = 100L * 1024 * 1024;
+
+    /// <summary>El máximo de Meta para un sticker estático (WebP, 2026-11-22). Uno animado llega a <see cref="MaxAnimatedStickerBytes"/>.</summary>
+    public const long MaxStaticStickerBytes = 100L * 1024;
+
+    /// <summary>El máximo de Meta para un sticker animado. Es el tope del formato en la tabla: el de un estático se mide al leer el
+    /// contenido, que es cuando se sabe si está animado.</summary>
+    public const long MaxAnimatedStickerBytes = 500L * 1024;
 
     /// <summary>El máximo de WhatsApp para un video o un audio (spec 2026-10-20, «Formatos y topes por canal»).</summary>
     public const long MaxWhatsAppVideoAudioBytes = 16L * 1024 * 1024;
@@ -35,6 +43,12 @@ public static class OutboundMediaPolicy
         new(OutboundMediaFormat.Xls, ".xls", MessageKind.Document, "application/vnd.ms-excel", MaxDocumentBytes, null),
         new(OutboundMediaFormat.Docx, ".docx", MessageKind.Document, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", MaxDocumentBytes, null),
         new(OutboundMediaFormat.Xlsx, ".xlsx", MessageKind.Document, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", MaxDocumentBytes, null),
+        new(OutboundMediaFormat.Ppt, ".ppt", MessageKind.Document, "application/vnd.ms-powerpoint", MaxDocumentBytes, null),
+        new(OutboundMediaFormat.Pptx, ".pptx", MessageKind.Document, "application/vnd.openxmlformats-officedocument.presentationml.presentation", MaxDocumentBytes, null),
+        new(OutboundMediaFormat.Txt, ".txt", MessageKind.Document, "text/plain", MaxDocumentBytes, null),
+
+        // Meta sólo admite WebP como sticker (2026-11-22): sale con type "sticker", sin texto, y no se comprime ni se transcodifica.
+        new(OutboundMediaFormat.Webp, ".webp", MessageKind.Sticker, "image/webp", MaxAnimatedStickerBytes, null),
 
         // Instagram: sólo MP4 en video (V-2).
         new(OutboundMediaFormat.Mp4, ".mp4", MessageKind.Video, "video/mp4", MaxWhatsAppVideoAudioBytes, InstagramMaxBytes),
@@ -74,8 +88,8 @@ public static class OutboundMediaPolicy
 
     public static bool IsImage(OutboundMediaFormat format) => KindOf(format) == MessageKind.Image;
 
-    /// <summary>Spec 2026-10-20 D7: WhatsApp no admite <c>caption</c> en audio; guardar un texto que nadie recibe es el anti-goal.</summary>
-    public static bool AcceptsCaption(OutboundMediaFormat format) => KindOf(format) != MessageKind.Audio;
+    /// <summary>Spec 2026-10-20 D7: WhatsApp no admite <c>caption</c> en audio ni en sticker; guardar un texto que nadie recibe es el anti-goal.</summary>
+    public static bool AcceptsCaption(OutboundMediaFormat format) => KindOf(format) is not (MessageKind.Audio or MessageKind.Sticker);
 
     public static bool IsAllowed(OutboundMediaFormat format, ConversationChannel channel) => MaxBytesOf(format, channel) is not null;
 

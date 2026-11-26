@@ -13,8 +13,8 @@ public interface IProductRepository
     /// cuando se llenan los dos); `search` es el criterio OR original sobre los mismos dos
     /// campos, para el combobox de productos de `quotes`. `isActive` es un filtro real de la
     /// consulta, no un post-filtro en memoria. `categoryIds`: null no filtra; no nulo deja sólo
-    /// los productos de esas categorías (una colección vacía no devuelve filas). Lo usa el POS;
-    /// `GET /catalog/products` no lo expone todavía (spec 2026-10-26 §3.3).
+    /// los productos de esas categorías (una colección vacía no devuelve filas). Lo usan el POS y
+    /// `GET /catalog/products?categoryId=` (spec 2026-11-19 catalogo-productos-filtro-categoria).
     /// </summary>
     Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
         Guid tenantId,
@@ -26,6 +26,34 @@ public interface IProductRepository
         int page,
         int pageSize,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-20 (listas de precios del mayorista): una página de productos **activos** como <see cref="SearchAsync"/>
+    /// (búsqueda por código o nombre, <paramref name="categoryIds"/> ya expandida a sus descendientes), más tres filtros en la
+    /// consulta, para que el total y la página sean verdad: <paramref name="pricedInCurrency"/> deja sólo los que tienen una
+    /// variante activa con precio en esa moneda (null no filtra); <paramref name="excludedCategoryIds"/> quita los de esas
+    /// categorías (ya expandida; un producto sin categoría no cae por ésta) y <paramref name="excludedProductIds"/> quita esos
+    /// productos. Null o vacía no excluye nada. Con <paramref name="orderByName"/> el orden es siempre por nombre (un selector que
+    /// se pagina), aun con <paramref name="search"/>; sin él, con búsqueda manda la relevancia, como <see cref="SearchAsync"/>.
+    /// </summary>
+    Task<(IReadOnlyList<Product> Items, int Total)> SearchActiveFilteredAsync(
+        Guid tenantId,
+        string? search,
+        string? pricedInCurrency,
+        IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
+        bool orderByName,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-20: lo mínimo de esos productos, proyectado en la base (sin cargar el agregado): un id desconocido o de otro
+    /// tenant simplemente no aparece.
+    /// </summary>
+    Task<IReadOnlyList<ProductBasics>> FindBasicsByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken);
 
     /// <summary>
     /// La misma página que <see cref="SearchAsync"/> —mismo filtro, mismo orden, mismo total—
@@ -52,10 +80,15 @@ public interface IProductRepository
     /// variante tiene foto propia, una de galería; con 2.048 variantes por producto, el agregado
     /// de una página entera serían cientos de miles de objetos para pintar una lista. El producto
     /// activo lo decide quien llama, que ya tiene la fila.
+    ///
+    /// Con <paramref name="includeCosts"/> suma **una** consulta a los costos de todas las variantes de la página
+    /// (spec 2026-11-19); sin él la tabla de costos no se toca y <see cref="SellableVariantSummary.Costs"/> queda null.
+    /// Quien llama lo prende sólo si el usuario puede ver costos (<c>CatalogCostAccess.CanRead</c>).
     /// </summary>
     Task<IReadOnlyList<SellableVariantSummary>> ListActiveVariantsAsync(
         Guid tenantId,
         IReadOnlyCollection<ProductId> productIds,
+        bool includeCosts,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -252,6 +285,13 @@ public interface IProductRepository
     Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Un producto reducido a nombre, categoría y variantes (<see cref="IProductRepository.FindBasicsByIdsAsync"/>).
+/// <paramref name="SingleVariantCode"/> es el código de su única variante; con varias, <c>null</c>.
+/// </summary>
+public sealed record ProductBasics(
+    ProductId Id, string Name, ProductCategoryId? CategoryId, int VariantCount, string? SingleVariantCode);
+
 /// <summary>Una fila del listado de productos (<see cref="IProductRepository.SearchSummariesAsync"/>).</summary>
 /// <param name="ImageFileId">El archivo de la primera foto de la galería.</param>
 /// <param name="Code">El código de la única variante; null si tiene más de una.</param>
@@ -281,6 +321,8 @@ public sealed record ProductPriceRange(string Currency, decimal Min, decimal Max
 /// <param name="Prices">Moneda → monto, sin orden garantizado: el mapeo los pone en orden de catálogo.</param>
 /// <param name="Scales">Sin orden garantizado: el mapeo las ordena por <c>FromUnit</c>.</param>
 /// <param name="GalleryFileId">El archivo de la foto propia de la variante; null si usa la principal.</param>
+/// <param name="Costs">Moneda → costo, sin orden garantizado; vacío si la variante no tiene. Null = no se leyó (quien
+/// llama no pidió los costos): el mapeo decide por el permiso, no por este campo.</param>
 public sealed record SellableVariantSummary(
     ProductId ProductId,
     VariantId Id,
@@ -291,7 +333,8 @@ public sealed record SellableVariantSummary(
     IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyList<SellableVariantScale> Scales,
     IReadOnlyList<int> PackagingUnits,
-    Guid? GalleryFileId);
+    Guid? GalleryFileId,
+    IReadOnlyDictionary<string, decimal>? Costs = null);
 
 public sealed record SellableVariantScale(
     Guid Id,

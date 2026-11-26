@@ -29,8 +29,8 @@ public sealed class SetFreightTaxRateHandler(
     public async Task<CarrierSettingsDto> HandleAsync(SetFreightTaxRateCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, command.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
 
         if (command.TaxRateId is { } taxRateId)
         {

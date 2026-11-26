@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Suppliers.Application;
 using Npgsql;
 using static Modules.Suppliers.IntegrationTests.SuppliersApiHarness;
@@ -348,5 +349,116 @@ public sealed class SupplierWriteApiTests
 
         Assert.Equal(HttpStatusCode.Forbidden, post.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, put.StatusCode);
+    }
+    // ---- Region (provincia guardada, spec 2026-11-23) ----
+    //
+    // Toda lectura de `region` sale del JSON de la respuesta HTTP, no del DTO.
+
+    private static Dictionary<string, object?> ForeignBody(Guid cityId, Guid? regionId, string country = "ES") =>
+        ValidBody(cityId, new()
+        {
+            ["country"] = country,
+            ["cityId"] = null,
+            ["cityName"] = "Madrid",
+            ["regionId"] = regionId
+        });
+
+    [Fact]
+    public async Task ForeignSupplierRoundTripsRegion()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var created = await client.PostAsJsonAsync(
+            SuppliersUrl(), ForeignBody(Guid.Empty, madrid), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var createdJson = await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var supplierId = createdJson.GetProperty("id").GetGuid();
+        Assert.Equal(madrid, createdJson.GetProperty("region").GetProperty("id").GetGuid());
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{SuppliersUrl()}/{supplierId}", TestContext.Current.CancellationToken);
+        var region = json.GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task UpdatingWithoutRegionClearsIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+        var created = await client.PostAsJsonAsync(
+            SuppliersUrl(), ForeignBody(Guid.Empty, madrid), TestContext.Current.CancellationToken);
+        var supplierId = (await created.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken))
+            .GetProperty("id").GetGuid();
+
+        var updated = await client.PutAsJsonAsync(
+            $"{SuppliersUrl()}/{supplierId}",
+            ForeignBody(Guid.Empty, regionId: null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var json = await client.GetFromJsonAsync<JsonElement>(
+            $"{SuppliersUrl()}/{supplierId}", TestContext.Current.CancellationToken);
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("region").ValueKind);
+    }
+
+    [Fact]
+    public async Task ColombianSupplierWithRegionIs422()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            SuppliersUrl(),
+            ValidBody(cityId, new() { ["regionId"] = madrid }),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("RegionId", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task RegionOfAnotherCountryIsRejected()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var madrid = await MadridRegionIdAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            SuppliersUrl(), ForeignBody(Guid.Empty, madrid, country: "FR"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("suppliers.supplier.region_invalid", await BodyAsync(response), StringComparison.Ordinal);
+    }
+
+    // GET /countries/CO/regions devuelve departamentos, asi que el frontend puede conservar uno al cambiar de pais.
+    [Fact]
+    public async Task DepartmentIdAsRegionIsRejected()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var department = await ColombianDepartmentRegionIdAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            SuppliersUrl(), ForeignBody(Guid.Empty, department), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("suppliers.supplier.region_invalid", await BodyAsync(response), StringComparison.Ordinal);
     }
 }

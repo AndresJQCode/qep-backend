@@ -62,6 +62,7 @@ public sealed class UpdateServiceHandler(
     IMembershipDirectory membershipDirectory,
     IServiceContractRepository services,
     IServicePriceChangeRepository priceChanges,
+    IServicePriceScheduleRepository schedules,
     IServiceContractsUnitOfWork unitOfWork,
     IServiceContractsAuditPublisher auditPublisher,
     IClock clock,
@@ -96,6 +97,16 @@ public sealed class UpdateServiceHandler(
         if (!string.Equals(service.Currency, currency, StringComparison.Ordinal))
         {
             changedFields.Add("currency");
+        }
+
+        // El cambio programado está en la moneda vieja (spec reajuste §6.12). Cambiar sólo el precio sí se permite: al
+        // aplicar, el programado lo reemplaza.
+        if (changedFields.Contains("currency")
+            && await schedules.FindPendingAsync(command.TenantId, service.Id, cancellationToken) is not null)
+        {
+            throw new ServiceContractsDomainException(
+                ServiceContractsErrorCodes.PriceScheduleCurrencyLocked,
+                "The currency cannot change while a price change is scheduled.");
         }
 
         // La membresía sólo hace falta para firmar el historial: una edición del nombre no la consulta.

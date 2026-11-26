@@ -1,8 +1,8 @@
 using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
-using BuildingBlocks.Observability;
 using Bootstrapper.Valkey;
 using Bootstrapper.Valkey.Sessions;
+using BuildingBlocks.Observability;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;

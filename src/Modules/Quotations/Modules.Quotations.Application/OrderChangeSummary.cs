@@ -3,6 +3,27 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
 
+/// <summary>La entrega de un pedido como la lee una persona en el historial (spec 2026-11-24 §10.4). Sólo se arma por sus
+/// tres formas, para que el texto no se escriba en otro lado.</summary>
+public sealed record OrderDeliveryText
+{
+    private OrderDeliveryText(string value) => Value = value;
+
+    public string Value { get; }
+
+    public static OrderDeliveryText StorePickup { get; } = new("Recoger en tienda");
+
+    public static OrderDeliveryText CustomerAddress { get; } = new("Enviar a la dirección del cliente");
+
+    /// <summary>Una parte con datos propios: dirección y ciudad, o lo que tenga de las dos.</summary>
+    public static OrderDeliveryText To(string? address, string? city)
+    {
+        var destination = string.Join(
+            ", ", new[] { address, city }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        return new($"Enviar a {(destination.Length == 0 ? "otros datos" : destination)}");
+    }
+}
+
 /// <summary>Los textos del historial del pedido (spec 2026-10-15 §4.6). Son hechos que lee una persona:
 /// en español, y donde se dirigen a alguien, tuteando.</summary>
 public static class OrderChangeSummary
@@ -48,6 +69,16 @@ public static class OrderChangeSummary
 
     public static string ItemRemoved(string productName) => QuotationChangeSummary.ItemRemoved(productName);
 
+    /// <summary>Spec 2026-11-21: el regalo entra y sale por su propio camino, y el historial lo dice con esa palabra.</summary>
+    public static string GiftAdded(string productName, decimal quantity, HistoryFormat format) =>
+        Trim($"Agregó de regalo {productName} x{format.Number(quantity)}.");
+
+    public static string GiftRemoved(string productName) => Trim($"Quitó el regalo {productName}.");
+
+    /// <summary>Spec 2026-11-23: «Editar pedido» cambia la cantidad de un regalo sin quitarlo y volverlo a agregar.</summary>
+    public static string GiftQuantityChanged(string productName, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió la cantidad del regalo {productName}: {format.Number(from)} → {format.Number(to)}.");
+
     public static string RetailChanged(bool isRetail) => isRetail
         ? "Marcó el pedido como detal: ninguna línea recibe descuento."
         : "Quitó el detal: las líneas vuelven a su descuento por escala.";
@@ -77,6 +108,14 @@ public static class OrderChangeSummary
         var changes = new List<string>(4);
         QuotationChangeSummary.AppendFreight(changes, before, after, format);
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
+    }
+
+    /// <summary>El cambio de recoger o enviar, o de dirección, de un pedido (spec 2026-11-24 §10.4).</summary>
+    public static string DeliveryChanged(OrderDeliveryText before, OrderDeliveryText after)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(after);
+        return Trim($"Entrega: {before.Value} → {after.Value}");
     }
 
     /// <summary>A quién se le factura, tal como lo lee una persona: el nombre de la parte propia, «consumidor
@@ -161,6 +200,18 @@ public static class OrderChangeSummary
         Trim($"Anulado con el pedido ya preparado: {reason}. Hay un paquete despachado que recuperar.");
 
     public static string Invoiced() => "Marcado como facturado.";
+
+    /// <summary>La factura la emitió un proveedor externo: el historial dice cuál y con qué número, en vez del genérico
+    /// «Marcado como facturado.» de la marca manual.</summary>
+    public static string InvoicedExternally(string provider, string number) =>
+        Trim($"Facturado en {ProviderDisplayName(provider)}, factura {number}.");
+
+    /// <summary>La factura se anuló en el proveedor externo y el pedido perdió su marca (spec 2026-11-25 §4).</summary>
+    public static string ExternalInvoiceAnnulled(string provider, string number) =>
+        Trim($"Se anuló en {ProviderDisplayName(provider)} la factura {number}; el pedido quedó sin facturar.");
+
+    private static string ProviderDisplayName(string provider) =>
+        string.Equals(provider, "siigo", StringComparison.OrdinalIgnoreCase) ? "Siigo" : provider;
 
     public static string InvoicingReverted() => "Se revirtió la facturación.";
 

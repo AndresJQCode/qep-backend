@@ -29,6 +29,11 @@ internal sealed class TemplateImageReferences(MessagingDbContext messaging) : IT
                 && ids.Contains(template.HeaderImageFileId.Value))
             .Select(template => template.HeaderImageFileId!.Value)
             .ToListAsync(cancellationToken);
-        return referenced.ToHashSet();
+        // Spec 2026-11-20: las imágenes que una plantilla retiró al cambiarlas siguen referenciadas hasta que se borre la plantilla.
+        var retired = await messaging.MessageTemplateRetiredHeaderImages.AsNoTracking()
+            .Where(image => image.TenantId == tenantId && ids.Contains(image.FileId))
+            .Select(image => image.FileId)
+            .ToListAsync(cancellationToken);
+        return referenced.Concat(retired).ToHashSet();
     }
 }

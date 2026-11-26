@@ -39,6 +39,20 @@ public sealed record BillingDigestEmailRow(
     DateOnly DueDate,
     string? FailureCode);
 
+/// <summary>
+/// Un contrato con el precio por revisar o con el cobro retenido (spec reajuste §6.6). <c>CurrentPrice</c> ya escrito, como en
+/// <see cref="BillingEmailLine"/>. <c>IpcYear</c> nulo es un contrato <c>Manual</c>; <c>HeldSince</c> sólo viene en los retenidos.
+/// </summary>
+public sealed record BillingPriceReviewEmailRow(
+    string CustomerName,
+    string ServiceName,
+    string CurrentPrice,
+    DateOnly ReviewPeriodDate,
+    DateOnly GenerationDate,
+    int? IpcYear,
+    bool IpcMissing,
+    DateOnly? HeldSince);
+
 public sealed record BillingDigestEmailInput(
     string ToAddress,
     string MemberName,
@@ -46,7 +60,9 @@ public sealed record BillingDigestEmailInput(
     IReadOnlyList<BillingDigestEmailRow> DueSoon,
     IReadOnlyList<BillingDigestEmailRow> Overdue,
     IReadOnlyList<BillingDigestEmailRow> FailedReminders,
-    IReadOnlyList<string> OverdueTotalByCurrency);
+    IReadOnlyList<string> OverdueTotalByCurrency,
+    IReadOnlyList<BillingPriceReviewEmailRow> PriceReviews,
+    IReadOnlyList<BillingPriceReviewEmailRow> HeldCharges);
 
 /// <summary>
 /// Texto compartido por las tres plantillas de cobro: totales, fecha y tabla. Los nombres de tenant, cliente y servicio los

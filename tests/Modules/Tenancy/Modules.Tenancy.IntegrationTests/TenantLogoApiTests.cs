@@ -705,6 +705,8 @@ public sealed class TenantLogoApiTests
     /// <summary>Recortado de `PaymentProofStorageHarness.InMemoryPublicObjectStorage`.</summary>
     internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public const string BaseUrl = "https://assets.qep.test";
 
         private readonly ConcurrentDictionary<string, byte> _objects = new(StringComparer.Ordinal);

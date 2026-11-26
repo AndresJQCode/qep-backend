@@ -34,10 +34,12 @@ public static class CampaignFailureCodes
     public static bool IsRetriable(int code) => code is MetaErrorCodes.ThroughputLimit or MetaErrorCodes.PairRateLimit;
 
     /// <summary>Decisión 15: plantilla inexistente (132001), pausada (132015) o deshabilitada (132016), y credenciales o número
-    /// rechazados (190, 133010). Seguir enviando sólo junta fallas.</summary>
+    /// rechazados (190, 133010), y los bloqueos de la cuenta (<see cref="MetaErrorCodes.IsAccountBlocked"/>: pago, restricción, políticas,
+    /// permisos). Seguir enviando sólo junta fallas.</summary>
     public static bool StopsTheCampaign(int code) =>
         code is MetaErrorCodes.TemplateDoesNotExist or MetaErrorCodes.TemplatePaused or MetaErrorCodes.TemplateDisabled
-        || MetaErrorCodes.IsRejectedCredentials(code);
+        || MetaErrorCodes.IsRejectedCredentials(code)
+        || MetaErrorCodes.IsAccountBlocked(code);
 
     /// <summary>Meta respondió 131050: la persona apagó el marketing. Un reintento manual nunca la vuelve a intentar (y el worker igual
     /// la omitiría por la ficha, decisión 10).</summary>

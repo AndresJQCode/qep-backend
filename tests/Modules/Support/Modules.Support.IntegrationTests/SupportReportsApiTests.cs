@@ -22,7 +22,9 @@ public sealed class SupportReportsApiTests(ClockedSupportHost host) : IClassFixt
     {
         var factory = await host.StartTestAsync();
         var scenario = await StartAsync(factory);
-        var types = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/ticket-types", Ct))).EnumerateArray().ToList();
+        // El reporte no cuenta el tipo interno: las tareas no son tickets de cliente.
+        var types = (await JsonAsync(await scenario.Client.GetAsync($"{scenario.Url}/ticket-types", Ct))).EnumerateArray()
+            .Where(type => !type.GetProperty("isInternal").GetBoolean()).ToList();
 
         var report = await ReportAsync(scenario.Client, scenario.Tenant, "2026-11-01", "2026-11-30");
 
@@ -126,5 +128,28 @@ public sealed class SupportReportsApiTests(ClockedSupportHost host) : IClassFixt
         var response = await client.GetAsync($"{SupportUrl(tenant)}/reports/summary?from={from}&to={to}", Ct);
         Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
         return await JsonAsync(response);
+    }
+
+    // Spec 2026-11-22 §5.3: una tarea resuelta en el rango no mueve ningún total ni aparece «Tarea interna» en el desglose por tipo.
+    [Fact]
+    public async Task TheReportIgnoresTasks()
+    {
+        var factory = await host.StartTestAsync();
+        var scenario = await StartAsync(factory);
+        var before = await ReportAsync(scenario.Client, scenario.Tenant, "2026-11-13", "2026-11-13");
+        var task = await SupportTicketSeed.SaveInternalTicketAsync(
+            factory, scenario.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), null, ClockedSupportHost.Reception);
+        await SupportTicketSeed.UpdateTicketAsync(
+            factory, scenario.TenantId, task.Id,
+            ticket => ticket.ChangeStatus(
+                Modules.Support.Domain.SupportTicketStatus.Resolved, Guid.CreateVersion7(), ClockedSupportHost.Reception, SupportTicketSeed.Clock));
+
+        var after = await ReportAsync(scenario.Client, scenario.Tenant, "2026-11-13", "2026-11-13");
+
+        Assert.Equal(before.GetProperty("received").GetInt32(), after.GetProperty("received").GetInt32());
+        Assert.Equal(
+            before.GetProperty("byStatus").GetRawText(), after.GetProperty("byStatus").GetRawText());
+        Assert.DoesNotContain(
+            after.GetProperty("byType").EnumerateArray(), row => row.GetProperty("name").GetString() == "Tarea interna");
     }
 }

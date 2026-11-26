@@ -126,6 +126,14 @@ public sealed class Order
 
     public OrderSource Source { get; private set; }
 
+    /// <summary>El tipo de documento (spec 2026-11-26 §6.2): el de la cotización de la que nació. Un pedido manual o de una
+    /// integración es <see cref="QuotationKind.Standard"/>.</summary>
+    public QuotationKind Kind { get; private set; }
+
+    /// <summary>El alcance vendido, copiado de la cotización con los mismos ids; <c>null</c> en un pedido
+    /// <see cref="QuotationKind.Standard"/>. No se edita (P4).</summary>
+    public ProjectScope? ProjectScope { get; private set; }
+
     /// <summary>La cotización de la que nació, si nació de una. Única a nivel de base entre las no nulas:
     /// una cotización tiene a lo sumo un pedido.</summary>
     public QuotationId? QuotationId { get; private set; }
@@ -447,7 +455,8 @@ public sealed class Order
     public const int InvoiceExternalIdMaxLength = 64;
 
     /// <summary>Quién emitió la factura: <c>siigo</c> si la creó una integración (spec 2026-11-18 §5.5), <c>null</c> si la marca es
-    /// manual (alguien la hizo afuera y sólo dejó constancia). Una factura de un proveedor no se revierte desde QEP.</summary>
+    /// manual (alguien la hizo afuera y sólo dejó constancia). La marca de un proveedor no se revierte con <see cref="RevertInvoicing"/>:
+    /// sólo se quita cuando su factura se anuló allá (<see cref="RevertExternalInvoicing"/>).</summary>
     public string? InvoiceProvider { get; private set; }
 
     /// <summary>El número que el proveedor le dio a la factura (<c>FV-1-123</c> en Siigo). <c>null</c> en una marca manual.</summary>
@@ -475,7 +484,9 @@ public sealed class Order
     /// <see cref="Quotation.RequiresShipping"/>. Con false la pantalla oculta el envío y dice «Marcar como prestado»
     /// en vez de «Preparar»; el dominio no cambia nada: <c>Prepare</c> y el resto siguen igual.
     /// </summary>
-    public bool RequiresShipping => _items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical);
+    public bool RequiresShipping =>
+        Kind != QuotationKind.Project
+        && (_items.Count == 0 || _items.Exists(item => item.Kind == ProductKind.Physical));
 
     public IReadOnlyCollection<OrderParty> Parties => _parties;
 
@@ -535,6 +546,9 @@ public sealed class Order
         // Spec ReteICA por empresa §7.5: hereda el municipio de la operación junto con la foto, y las filas con su
         // porcentaje efectivo y el del catálogo (los lleva Rate).
         order.OperationCityId = quotation.OperationCityId;
+        // El tipo y el alcance vendido, con los mismos ids (spec 2026-11-26 §6.6). La línea se copia abajo como cualquiera.
+        order.Kind = quotation.Kind;
+        order.ProjectScope = quotation.ProjectScope;
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
@@ -806,7 +820,8 @@ public sealed class Order
         {
             var item = order.AddItemCore(
                 OrderItemId.New(), line.VariantId, line.ProductId, line.Quantity, line.UnitPrice, line.DiscountPercentage,
-                line.TaxPercentage, line.DiscountOrigin, line.Product, line.Kind, line.SalesUnit, occurredAt);
+                line.TaxPercentage, line.DiscountOrigin, line.Product, line.Kind, line.SalesUnit, occurredAt,
+                isGift: line.IsGift);
             item.LinkPurchaseOrderLine(line.SourcePurchaseOrderLineId);
         }
 
@@ -942,6 +957,83 @@ public sealed class Order
         BillsToFinalConsumer = billsToFinalConsumer;
         BillingUsesBusinessName = billingUsesBusinessName;
         PartyVatSurplus = vatSurplus;
+        Touch(updatedBy, occurredAt);
+        return true;
+    }
+
+    /// <summary>
+    /// Los tres motivos por los que la entrega no se puede cambiar, del más específico al general (spec 2026-11-24 §10.1):
+    /// facturado, preparado y no editable. El guardado y el cálculo previo lo llaman antes de su guarda general, para que
+    /// la pantalla reciba el motivo exacto y no <c>order.order.not_editable</c>.
+    /// </summary>
+    public void EnsureDeliveryEditable()
+    {
+        EnsureNotInvoiced("The delivery of an invoiced order cannot change.");
+        EnsureNotPrepared("The delivery of a prepared order cannot change.");
+        EnsureEditable("The delivery can only change while the order is editable.");
+    }
+
+    /// <summary>
+    /// Cambia recoger o enviar y a dónde (owner 2026-11-24: revierte «el pedido no edita sus partes» para la entrega), en
+    /// todo origen. <paramref name="shipping"/> null con envío = los datos del cliente, sin fila. A recoger quita la fila y
+    /// limpia el envío, contraentrega incluida: no hay a dónde mandar nada. La fila existente se <b>modifica</b> y no se
+    /// reemplaza (<c>IX_order_parties_order_role</c>, como <see cref="SetBilling"/>). Devuelve <c>false</c>, sin tocar la
+    /// versión, si nada cambió. Una parte propia debe venir completa, como en el alta
+    /// (<c>order.shipping.party_incomplete</c>); con <paramref name="enforceCompleteness"/> en <c>false</c> (el cálculo
+    /// previo, que se hace mientras la persona teclea) no se exige.
+    /// </summary>
+    public bool SetDelivery(
+        bool isStorePickup,
+        QuotationPartyDetails? shipping,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt,
+        bool enforceCompleteness = true)
+    {
+        EnsureDeliveryEditable();
+        if (isStorePickup && shipping is not null)
+        {
+            throw new QuotationsDomainException(
+                OrderDeliveryErrors.ShippingPartyOnPickup, "A store pickup cannot carry a shipping party.");
+        }
+
+        // La fila candidata se arma aparte para validar y comparar lo normalizado antes de mutar nada.
+        var candidate = shipping is null
+            ? null
+            : OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping, "Delivery.Shipping");
+        if (enforceCompleteness && candidate is { IsComplete: false })
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+        }
+
+        var current = Shipping;
+        if (IsStorePickup == isStorePickup && current?.ToDetails() == candidate?.ToDetails())
+        {
+            return false;
+        }
+
+        if (candidate is null)
+        {
+            if (current is not null)
+            {
+                _parties.Remove(current);
+            }
+        }
+        else if (current is not null)
+        {
+            current.Apply(candidate.ToDetails());
+        }
+        else
+        {
+            _parties.Add(candidate);
+        }
+
+        IsStorePickup = isStorePickup;
+        if (isStorePickup)
+        {
+            AssignShipping(ShippingDetails.None);
+        }
+
         Touch(updatedBy, occurredAt);
         return true;
     }
@@ -1146,6 +1238,7 @@ public sealed class Order
         ProductKind kind = ProductKind.Physical,
         SalesUnit salesUnit = SalesUnit.Unit)
     {
+        EnsureLinesEditable();
         ArgumentNullException.ThrowIfNull(costs);
         EnsureEditable("Products can only be added while the order is editable.");
         // Un pedido pagado sigue editable: la línea nueva ya cuenta como vendida y congela al entrar (§4.3). El
@@ -1155,6 +1248,46 @@ public sealed class Order
         var item = AddItemCore(
             itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             QuotationDiscountOrigin.Own, null, kind, salesUnit, occurredAt);
+        if (sold)
+        {
+            item.FreezeCost(unitCost, occurredAt);
+        }
+
+        Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>Agrega una línea de regalo (spec 2026-11-21): precio de lista real con descuento fijo en 100 %. Misma regla
+    /// de edición, costo congelado y duplicado que <see cref="AddItem"/>, pero la clave es (variante, regalo): puede ser
+    /// de la misma variante que una línea pagada.</summary>
+    public void AddGift(
+        OrderItemId itemId,
+        Guid variantId,
+        Guid productId,
+        decimal quantity,
+        decimal listUnitPrice,
+        int taxPercentage,
+        OrderLineCosts costs,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt,
+        ProductKind kind = ProductKind.Physical,
+        SalesUnit salesUnit = SalesUnit.Unit)
+    {
+        EnsureLinesEditable();
+        // Un pedido mayorista no admite regalos: su precio sale de la orden de compra del distribuidor y la factura no los lleva.
+        if (Source == OrderSource.Wholesale)
+        {
+            throw new QuotationsDomainException(
+                "order.gift.wholesale_not_supported",
+                "Un pedido mayorista no admite regalos.");
+        }
+
+        ArgumentNullException.ThrowIfNull(costs);
+        EnsureEditable("Gifts can only be added while the order is editable.");
+        var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
+        var unitCost = sold ? costs.For(variantId) : null;
+        var item = AddItemCore(
+            itemId, variantId, productId, quantity, listUnitPrice, OrderItem.GiftDiscountPercentage, taxPercentage,
+            QuotationDiscountOrigin.Own, null, kind, salesUnit, occurredAt, isGift: true);
         if (sold)
         {
             item.FreezeCost(unitCost, occurredAt);
@@ -1190,11 +1323,12 @@ public sealed class Order
         QuotationProductSnapshot? product,
         ProductKind kind,
         SalesUnit salesUnit,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool isGift = false)
     {
         // Una línea por variante (spec 2026-10-20 §4): dos tallas del mismo producto son dos líneas. El
         // código de error se conserva: es contrato con el frontend.
-        if (_items.Any(existing => existing.VariantId == variantId))
+        if (_items.Any(existing => existing.VariantId == variantId && existing.IsGift == isGift))
         {
             throw new QuotationsDomainException(
                 "order.item.duplicate_product",
@@ -1204,7 +1338,7 @@ public sealed class Order
         // taxPercentage es la tasa del producto; la línea aplica el IVA de la empresa (spec 2026-11-17, R1).
         var item = OrderItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage, ChargesVat,
-            _items.Count + 1, Currency, PriceRounding, kind, salesUnit, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, kind, salesUnit, occurredAt, isGift);
         if (origin != QuotationDiscountOrigin.Own)
         {
             item.ApplyDiscount(discountPercentage, origin, Currency, PriceRounding, occurredAt);
@@ -1227,6 +1361,7 @@ public sealed class Order
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
+        EnsureLinesEditable();
         EnsureEditable("Products can only be edited while the order is editable.");
         FindItem(itemId).UpdateQuantity(
             quantity, discountPercentage, taxPercentage, ChargesVat, Currency, PriceRounding, occurredAt);
@@ -1237,6 +1372,7 @@ public sealed class Order
     /// tasa no cambian; el precio pasa por la regla de redondeo del pedido.</summary>
     public void ChangeItemUnitPrice(OrderItemId itemId, decimal unitPrice, MemberId updatedBy, DateTimeOffset occurredAt)
     {
+        EnsureLinesEditable();
         if (Source != OrderSource.Wholesale)
         {
             throw new QuotationsDomainException(
@@ -1250,15 +1386,18 @@ public sealed class Order
 
     public void RemoveItem(OrderItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
     {
+        EnsureLinesEditable();
         EnsureEditable("Products can only be removed while the order is editable.");
-        if (_items.Count == 1)
+        // Un regalo no sostiene el pedido: sin una línea pagada no hay qué facturar. Quitar un regalo siempre se puede.
+        var target = FindItem(itemId);
+        if (!target.IsGift && _items.Count(item => !item.IsGift) == 1)
         {
             throw new QuotationsDomainException(
                 "order.item.last_item_required",
                 "The last remaining item cannot be removed from the order.");
         }
 
-        _items.Remove(FindItem(itemId));
+        _items.Remove(target);
         Touch(updatedBy, occurredAt);
     }
 
@@ -1283,10 +1422,10 @@ public sealed class Order
     }
 
     /// <summary>
-    /// Cambia el envío de un pedido pendiente (spec 2026-10-17 flete §5.4). No cambia recoger o enviar: el
-    /// pedido no edita sus partes. Prender la contraentrega exige un pago que todavía no empezó —sin
-    /// comprobantes y <see cref="OrderPaymentStatus.PaymentPending"/>— (D-F14); ya prendida, se conserva aunque
-    /// llegue el comprobante del giro.
+    /// Cambia el envío de un pedido pendiente (spec 2026-10-17 flete §5.4). No cambia recoger o enviar: eso lo hace
+    /// <see cref="SetDelivery"/>, que va antes en la misma edición. Prender la contraentrega exige un pago que todavía no
+    /// empezó —sin comprobantes y <see cref="OrderPaymentStatus.PaymentPending"/>— (D-F14); ya prendida, se conserva
+    /// aunque llegue el comprobante del giro.
     /// </summary>
     public void SetShipping(ShippingDetails shipping, MemberId updatedBy, DateTimeOffset occurredAt)
     {
@@ -1334,7 +1473,7 @@ public sealed class Order
         IReadOnlyDictionary<OrderItemId, QuotationItemDiscount> discounts,
         DateTimeOffset occurredAt)
     {
-        foreach (var item in _items)
+        foreach (var item in _items.Where(item => !item.IsGift))
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
@@ -1718,6 +1857,34 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>
+    /// Quita la marca de un proveedor externo cuya factura se anuló allá (spec 2026-11-25 §4). Sólo suelta la marca de <b>ese</b>
+    /// proveedor y <b>ese</b> número. Sin marca, o con otra (manual, otro número u otro proveedor), no hace nada: la anulación ya está
+    /// guardada en el proveedor y una marca puesta en medio es una declaración de la persona que no se borra desde aquí.
+    /// </summary>
+    /// <returns>Si el pedido perdió la marca.</returns>
+    public bool RevertExternalInvoicing(string provider, string number, MemberId revertedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(number);
+
+        if (!IsInvoiced
+            || !string.Equals(InvoiceProvider, provider, StringComparison.Ordinal)
+            || !string.Equals(InvoiceNumber, number, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        InvoicedBy = null;
+        InvoicedAt = null;
+        InvoiceProvider = null;
+        InvoiceNumber = null;
+        InvoiceExternalId = null;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     public void RevertInvoicing(MemberId revertedBy, DateTimeOffset occurredAt)
     {
         if (!IsInvoiced)
@@ -1727,7 +1894,8 @@ public sealed class Order
                 "Only an invoiced order can have its invoicing reverted.");
         }
 
-        // Revertir una factura de Siigo es una nota crédito, fuera de alcance (spec §2 y §5.5): sólo se revierte la marca manual.
+        // Esta acción sólo revierte la marca manual. La de un proveedor externo se quita con RevertExternalInvoicing, cuando QEP verifica
+        // que la factura se anuló allá (spec 2026-11-25 §4); las notas crédito siguen fuera de alcance.
         if (InvoiceProvider is not null)
         {
             throw new QuotationsDomainException(
@@ -2036,17 +2204,21 @@ public sealed class Order
 
     /// <summary>
     /// Spec 2026-10-26 §4.4: agrega la parte de envío que Shopify no pudo completar al crear el pedido (la ciudad
-    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte, en esa ciudad o en otra (un
-    /// reintento: como un pedido no edita sus partes, desvío S1, la misma parte en otra ciudad la puso un intento anterior con
-    /// la ciudad que el sinónimo tenía entonces; el consumidor lee la que quedó en <see cref="Shipping"/>).
+    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte en una de
+    /// <paramref name="requestedCityIds"/>, las ciudades que el consumidor pidió hasta ahora (un reintento, desvío S1: la puso un
+    /// intento anterior con la ciudad que el sinónimo tenía entonces; el consumidor lee la que quedó en <see cref="Shipping"/>).
+    /// En una ciudad que nadie pidió la puso una persona por la entrega editable o la corrección del panel: es otra parte
+    /// (<c>order.order.shipping_party_present</c>).
     /// Quita de las notas toda línea que empiece por <paramref name="notesLinePrefix"/> (ordinal): la dirección en
     /// crudo que se anotó mientras no había parte. Sólo pedidos externos pendientes, sin recogida en tienda y sin
     /// otra parte de envío; la parte debe quedar completa. No recalcula totales.
     /// </summary>
-    public bool AttachExternalShipping(QuotationPartyDetails shipping, string notesLinePrefix, DateTimeOffset occurredAt)
+    public bool AttachExternalShipping(
+        QuotationPartyDetails shipping, string notesLinePrefix, IReadOnlyCollection<Guid> requestedCityIds, DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(shipping);
         ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
+        ArgumentNullException.ThrowIfNull(requestedCityIds);
         EnsureEditable("The shipping party can only be attached while the order is editable.");
         if (!IsExternal)
         {
@@ -2063,7 +2235,7 @@ public sealed class Order
         var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping);
         if (Shipping is { } current)
         {
-            return SameExceptCity(current.ToDetails(), candidate.ToDetails())
+            return SameExceptCity(current.ToDetails(), candidate.ToDetails()) && IsRequestedCity(current, requestedCityIds)
                 ? false
                 : throw new QuotationsDomainException(
                     ExternalOrderErrors.ShippingPartyPresent, "The order already has another shipping party.");
@@ -2089,7 +2261,8 @@ public sealed class Order
     /// departamento y ciudad). Si el pedido no la tenía, la crea y quita de las notas toda línea que empiece por
     /// <paramref name="notesLinePrefix"/> (la dirección cruda de la importación); si la tenía, la reemplaza en su fila.
     /// <c>true</c> si cambió; la misma parte no toca nada. Sólo pedidos externos editables, sin recogida en tienda, y la parte
-    /// debe quedar completa. Es el único camino por el que un pedido edita su parte de envío (desvío S1 sigue para los demás).
+    /// debe quedar completa. Fuera de este camino, la parte de envío sólo cambia por la entrega editable
+    /// (<see cref="SetDelivery"/>).
     /// </summary>
     public bool EditExternalShippingParty(QuotationPartyDetails party, string notesLinePrefix, DateTimeOffset occurredAt)
     {
@@ -2139,17 +2312,22 @@ public sealed class Order
 
     /// <summary>
     /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
-    /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, lanza
-    /// <c>order.order.shipping_party_changed</c>. <c>true</c> si cambió; <c>false</c> si la parte ya no está en la ciudad de
-    /// <paramref name="expected"/> (un reintento: la llevó un intento anterior, a ésta o a la que el sinónimo tenía entonces, y el
-    /// consumidor cayó antes de actualizar su huella; lee la que quedó en <see cref="Shipping"/>).
+    /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, o la llevó a una ciudad que no
+    /// está en <paramref name="requestedCityIds"/> (una persona), lanza <c>order.order.shipping_party_changed</c>. <c>true</c> si
+    /// cambió; <c>false</c> si la parte ya está en el destino o en otra de las ciudades que el consumidor pidió (un reintento: la
+    /// llevó un intento anterior a la que el sinónimo tenía entonces y el consumidor cayó antes de actualizar su huella; lee la
+    /// que quedó en <see cref="Shipping"/>).
     /// </summary>
     public bool CorrectExternalShippingCity(
-        QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
+        QuotationPartyDetails expected, Guid departmentId, Guid cityId, IReadOnlyCollection<Guid> requestedCityIds,
+        DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(requestedCityIds);
         EnsureEditable("The shipping city can only be corrected while the order is editable.");
-        if (Shipping is not { } party || !SameExceptCity(party.ToDetails(), expected))
+        if (Shipping is not { } party
+            || !SameExceptCity(party.ToDetails(), expected)
+            || (party.ToDetails() != expected && !IsRequestedCity(party, requestedCityIds)))
         {
             throw new QuotationsDomainException(
                 ExternalOrderErrors.ShippingPartyChanged, "The shipping party is no longer the one the platform sent.");
@@ -2290,7 +2468,8 @@ public sealed class Order
     }
 
     private bool SameItems(OrderItem[] candidates) =>
-        candidates.Length == _items.Count
+        // Los regalos tienen su propio alta y baja: la edición externa sólo compara las líneas pagadas.
+        candidates.Length == _items.Count(item => !item.IsGift)
         && candidates.All(candidate => _items.Any(item => item.SameAs(candidate)));
 
     private void ReplaceExternalLines(
@@ -2300,16 +2479,16 @@ public sealed class Order
         var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
         var newCosts = sold
             ? candidates
-                .Where(candidate => _items.All(item => item.VariantId != candidate.VariantId))
+                .Where(candidate => _items.All(item => item.IsGift || item.VariantId != candidate.VariantId))
                 .ToDictionary(candidate => candidate.VariantId, candidate => costs.For(candidate.VariantId))
             : [];
         var inputs = lines.ToArray();
-        _items.RemoveAll(item => candidates.All(candidate => candidate.VariantId != item.VariantId));
+        _items.RemoveAll(item => !item.IsGift && candidates.All(candidate => candidate.VariantId != item.VariantId));
         for (var index = 0; index < candidates.Length; index++)
         {
             var candidate = candidates[index];
             var input = inputs[index];
-            if (_items.FirstOrDefault(item => item.VariantId == candidate.VariantId) is { } kept)
+            if (_items.FirstOrDefault(item => !item.IsGift && item.VariantId == candidate.VariantId) is { } kept)
             {
                 kept.ApplyExternal(
                     input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, ChargesVat, index + 1,
@@ -2334,6 +2513,14 @@ public sealed class Order
 
             _items.Add(candidate);
         }
+
+        // Las pagadas conservan su orden y los regalos van después, también en su orden: nunca dos líneas con la misma posición.
+        var position = 1;
+        foreach (var line in _items.Where(item => !item.IsGift).OrderBy(item => item.Position)
+                     .Concat(_items.Where(item => item.IsGift).OrderBy(item => item.Position)).ToArray())
+        {
+            line.MoveTo(position++);
+        }
     }
 
     // Spec 2026-11-10 §3.2: la regla de US-14 («al menos un comprobante salvo pago pendiente») ya no existe: el pago
@@ -2353,10 +2540,26 @@ public sealed class Order
     // confirma una persona en QEP), así que una fuente nueva no hereda por descarte el trato de integración.
     private bool IsExternal => Source is OrderSource.Shopify;
 
-    // Spec 2026-10-26 y desvío S1: un pedido no edita sus partes, así que una parte de envío igual salvo el departamento y la
-    // ciudad es la que puso la plataforma (en otra ciudad del mismo sinónimo), no una de otra persona.
+    // Spec 2026-10-26 y desvío S1: una parte de envío igual salvo el departamento y la ciudad puede ser la que puso la
+    // plataforma en otra ciudad del mismo sinónimo. Sólo lo es si además esa ciudad la pidió el consumidor (IsRequestedCity):
+    // desde la entrega editable, una persona cambia sólo la ciudad.
     private static bool SameExceptCity(QuotationPartyDetails party, QuotationPartyDetails other) =>
         party with { DepartmentId = other.DepartmentId, CityId = other.CityId } == other;
+
+    // La misma señal con que Customers distingue el reintento de un trabajo de lo que hizo una persona.
+    private static bool IsRequestedCity(OrderParty party, IReadOnlyCollection<Guid> requestedCityIds) =>
+        party.CityId is { } cityId && requestedCityIds.Contains(cityId);
+
+    // El alcance vendido y su línea no se cambian en el pedido (spec 2026-11-26, P4): se anula y se cotiza de nuevo.
+    private void EnsureLinesEditable()
+    {
+        if (Kind == QuotationKind.Project)
+        {
+            throw new QuotationsDomainException(
+                ProjectErrors.ItemsLocked,
+                "En un pedido de proyecto no puedes cambiar productos ni regalos. Para cambiar lo vendido, anula y cotiza de nuevo.");
+        }
+    }
 
     private void EnsureEditable(string message)
     {

@@ -75,6 +75,7 @@ public sealed class CreateTicketFromConversationHandler(
     ISupportTicketNumberGenerator numbers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
+    ISupportIntegrationEvents integrationEvents,
     ISupportRealtime realtime,
     ISupportConversationEvents conversationEvents,
     SupportTicketDtoComposer composer,
@@ -140,6 +141,8 @@ public sealed class CreateTicketFromConversationHandler(
                 now,
                 context.Clock);
             tickets.Add(ticket);
+            // Same rule as the manual creation: an assignee other than the actor is told, in this transaction.
+            SupportAssignmentNotices.PublishOnCreate(integrationEvents, ticket, actor, now);
             // Plan F25: la clave de consulta nace con el ticket. Sólo su hash: el PIN viaja una vez, por el hilo, y no va a la
             // auditoría ni a la traza.
             access = SupportTicketAccess.Issue(ticket.Id, command.TenantId, pinHasher.Hash(pin), now);

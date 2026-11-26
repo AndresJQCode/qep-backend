@@ -7,8 +7,12 @@ namespace Modules.Wholesale.Application;
 /// </summary>
 public static class WholesalePermissions
 {
-    /// <summary>Crear, editar, borrar y previsualizar listas de precios. No hay permiso de lectura aparte.</summary>
-    public const string PriceListManage = "wholesale.price_list.manage";
+    /// <summary>
+    /// Spec 2026-11-22 (D-7, D-10): las listas pasaron a Catalog y su permiso es <c>catalog.price_list.manage</c>, que también cubre
+    /// la vista previa del distribuidor y las categorías para elegir la visibilidad. El literal se repite porque Mayorista no
+    /// referencia Catalog; la constante, la definición y la política son las de <c>CatalogPermissions.PriceListManage</c>.
+    /// </summary>
+    public const string PriceListManage = "catalog.price_list.manage";
 
     public const string DistributorRead = "wholesale.distributor.read";
 

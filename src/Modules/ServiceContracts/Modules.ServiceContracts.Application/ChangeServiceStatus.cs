@@ -30,9 +30,12 @@ public sealed class ChangeServiceStatusValidator : AbstractValidator<ChangeServi
 }
 
 /// <summary>
-/// Pausar, reanudar y cancelar (spec §3.2). Pausar no toca los cobros: los <c>Pending</c> siguen pendientes y avisándose.
-/// Cancelar pasa <b>todos</b> los <c>Pending</c> a <c>Cancelled</c> en la misma transacción. Reanudar sólo escribe la fecha de
-/// reactivación: los períodos en pausa no se cobran y el worker retoma desde la primera ancla de ahí en adelante.
+/// Pausar, reanudar y cancelar (spec §3.2 y reajuste §6.4). Pausar no toca los cobros: los <c>Pending</c> siguen pendientes y
+/// avisándose. Cancelar pasa <b>todos</b> los <c>Pending</c> a <c>Cancelled</c> y cancela el cambio de precio programado, en la
+/// misma transacción. Pausar un retenido guarda en el dominio los períodos retenidos y quita la retención; cancelar los
+/// descarta. Reanudar escribe la fecha de reactivación: los períodos que cayeron en la pausa no se cobran y el worker retoma
+/// desde la primera ancla de ahí en adelante. Lo retenido antes de la pausa sigue retenido y, si ya no es de revisión, se
+/// genera al reanudar, en la misma transacción.
 /// </summary>
 public sealed class ChangeServiceStatusHandler(
     IExecutionContext executionContext,
@@ -40,6 +43,8 @@ public sealed class ChangeServiceStatusHandler(
     ITenantClock tenantClock,
     IServiceContractRepository services,
     IChargeRepository charges,
+    IServicePriceScheduleRepository schedules,
+    IServicePriceChangeRepository priceChanges,
     IServiceContractsUnitOfWork unitOfWork,
     IServiceContractsAuditPublisher auditPublisher,
     IClock clock,
@@ -65,12 +70,20 @@ public sealed class ChangeServiceStatusHandler(
         switch (command.Transition)
         {
             case ServiceContractTransition.Pause:
-                service.Pause(now);
+                service.Pause(await TodayAsync(command.TenantId, cancellationToken), now);
                 action = ServiceContractsAuditActions.ServicePaused;
                 break;
             case ServiceContractTransition.Resume:
-                var today = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).Today;
+                var today = await TodayAsync(command.TenantId, cancellationToken);
                 service.Resume(today, now);
+                // Lo que quedó retenido antes de la pausa puede haber dejado de ser de revisión (pasó a Manual o se corrió la
+                // fecha mientras estaba pausado): entonces nace al reanudar, en esta misma transacción.
+                if (service.CarriedHeldPeriods.Count > 0)
+                {
+                    var pending = await schedules.FindPendingAsync(command.TenantId, service.Id, cancellationToken);
+                    PriceReviewGeneration.Run(service, pending, today, now, charges, priceChanges);
+                }
+
                 action = ServiceContractsAuditActions.ServiceResumed;
                 break;
             default:
@@ -81,6 +94,8 @@ public sealed class ChangeServiceStatusHandler(
                     charge.Cancel(now);
                 }
 
+                var scheduled = await schedules.FindPendingAsync(command.TenantId, service.Id, cancellationToken);
+                scheduled?.Cancel(service, now);
                 action = ServiceContractsAuditActions.ServiceCancelled;
                 break;
         }
@@ -98,4 +113,7 @@ public sealed class ChangeServiceStatusHandler(
 
         return await composer.ComposeAsync(service, cancellationToken);
     }
+
+    private async Task<DateOnly> TodayAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await tenantClock.GetAsync(tenantId, cancellationToken)).Today;
 }

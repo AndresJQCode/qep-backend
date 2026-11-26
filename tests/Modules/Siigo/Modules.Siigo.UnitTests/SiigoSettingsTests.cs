@@ -11,7 +11,7 @@ public sealed class SiigoSettingsTests
     private static SiigoSettings NewSettings() => SiigoSettings.Create(Guid.CreateVersion7(), Guid.CreateVersion7());
 
     private static SiigoDocumentSettings Document(bool sendToDian = false) =>
-        new("doc-1", "seller-1", null, null, sendToDian, false, false, null);
+        new("doc-1", null, null, sendToDian, false, false, null);
 
     [Fact]
     public void ANewSettingsHasDianOffAndEverythingElseEmpty()
@@ -24,12 +24,40 @@ public sealed class SiigoSettingsTests
         Assert.Equal(0, settings.Version);
         Assert.Null(settings.CompanyId);
         Assert.Null(settings.DocumentTypeId);
-        Assert.Null(settings.SellerId);
         Assert.Null(settings.CashOnDeliveryPaymentTypeId);
         Assert.Empty(settings.VariantLinks);
         Assert.Empty(settings.TaxLinks);
         Assert.Empty(settings.WithholdingLinks);
         Assert.Empty(settings.PaymentLinks);
+    }
+
+    [Fact]
+    public void APriceModeCreatedByDefaultIsBaseWithDiscount()
+    {
+        Assert.Equal(SiigoPriceMode.BaseWithDiscount, NewSettings().PriceMode);
+    }
+
+    [Fact]
+    public void UpdateDocumentKeepsThePriceModeWhenItIsNull()
+    {
+        var settings = NewSettings();
+        settings.UpdateDocument(Document() with { PriceMode = SiigoPriceMode.DiscountedPrice });
+
+        settings.UpdateDocument(Document() with { PriceMode = null });
+
+        Assert.Equal(SiigoPriceMode.DiscountedPrice, settings.PriceMode);
+    }
+
+    [Fact]
+    public void UpdateDocumentChangesThePriceMode()
+    {
+        var settings = NewSettings();
+        var before = settings.Version;
+
+        settings.UpdateDocument(Document() with { PriceMode = SiigoPriceMode.DiscountedPrice });
+
+        Assert.Equal(SiigoPriceMode.DiscountedPrice, settings.PriceMode);
+        Assert.Equal(before + 1, settings.Version);
     }
 
     [Fact]
@@ -59,7 +87,7 @@ public sealed class SiigoSettingsTests
     {
         var settings = NewSettings();
 
-        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "seller-1", "cc-1", "wh-1", true, true, true, "FLETE"));
+        settings.UpdateDocument(new SiigoDocumentSettings("doc-1", "cc-1", "wh-1", true, true, true, "FLETE"));
 
         Assert.True(settings.SendToDian);
         Assert.True(settings.SendMail);
@@ -142,5 +170,65 @@ public sealed class SiigoSettingsTests
             () => settings.UpdatePayments(new SiigoPaymentSettings([], null, 30, null, null)));
 
         Assert.Equal(SiigoErrorCodes.SettingsCreditInvalid, error.Code);
+    }
+
+    [Fact]
+    public void ReplaceSellerLinksReplacesTheStepAndSellerForFindsIt()
+    {
+        var settings = NewSettings();
+        var vanesa = Guid.CreateVersion7();
+        var andrea = Guid.CreateVersion7();
+        settings.ReplaceSellerLinks([new SiigoSellerLink(vanesa, "800", "VANESA HERNANDEZ"), new SiigoSellerLink(andrea, "744", "ANDREA RITUAL")]);
+        var version = settings.Version;
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(andrea, " 745 ", "ANDREA NUEVA")]);
+
+        Assert.Null(settings.SellerFor(vanesa));
+        Assert.Equal("745", settings.SellerFor(andrea));
+        var link = Assert.Single(settings.SellerLinks);
+        Assert.Equal((settings.ConnectionId, settings.TenantId, "ANDREA NUEVA"), (link.ConnectionId, link.TenantId, link.SiigoUserName));
+        Assert.Equal(version + 1, settings.Version);
+    }
+
+    [Fact]
+    public void ASellerLinkClampsTheNameAndFallsBackToTheId()
+    {
+        var settings = NewSettings();
+        var long250 = new string('N', 250);
+        var member = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(member, "800", long250), new SiigoSellerLink(other, "744", "   ")]);
+
+        Assert.Equal(SiigoSellerLink.UserNameMaxLength, settings.SellerLinks.Single(l => l.MembershipId == member).SiigoUserName.Length);
+        Assert.Equal("744", settings.SellerLinks.Single(l => l.MembershipId == other).SiigoUserName);
+
+        settings.ReplaceSellerLinks([new SiigoSellerLink(member, "800", ""), new SiigoSellerLink(other, "744", long250)]);
+
+        Assert.Equal("800", settings.SellerLinks.Single(l => l.MembershipId == member).SiigoUserName);
+        Assert.Equal(SiigoSellerLink.UserNameMaxLength, settings.SellerLinks.Single(l => l.MembershipId == other).SiigoUserName.Length);
+    }
+
+    [Fact]
+    public void ARepeatedMemberIsADuplicateLink()
+    {
+        var member = Guid.CreateVersion7();
+
+        var error = Assert.Throws<SiigoDomainException>(
+            () => NewSettings().ReplaceSellerLinks([new SiigoSellerLink(member, "800", "A"), new SiigoSellerLink(member, "744", "B")]));
+
+        Assert.Equal(SiigoErrorCodes.SettingsDuplicateLink, error.Code);
+    }
+
+    [Fact]
+    public void MarkingTheAutoLinkKeepsTheDateWithoutBumpingTheVersion()
+    {
+        var settings = NewSettings();
+
+        settings.MarkSellersAutoLinked(At);
+        settings.MarkProductsAutoLinked(At.AddMinutes(1));
+
+        Assert.Equal((At, At.AddMinutes(1)), (settings.SellersAutoLinkedAt, settings.ProductsAutoLinkedAt));
+        Assert.Equal(0, settings.Version);
     }
 }

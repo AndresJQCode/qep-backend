@@ -46,9 +46,13 @@ public interface IOrderEdits
 
     /// <summary>
     /// El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Null es "no lo toques"</b>, como en la
-    /// cotización: un frontend viejo no lo borra. El pedido no cambia recoger o enviar.
+    /// cotización: un frontend viejo no lo borra. Recoger o enviar lo cambia <see cref="Delivery"/>, que se aplica antes.
     /// </summary>
     ShippingRequest? Shipping { get; }
+
+    /// <summary>Recoger o enviar y a dónde (spec 2026-11-24 §10). <b>Null es «no la toques»</b>, como
+    /// <see cref="Shipping"/>.</summary>
+    OrderDeliveryEditRequest? Delivery { get; }
 
     /// <summary>
     /// A quién se le factura (spec 2026-10-26). <b>Null es «no lo toques»</b>, como <see cref="Shipping"/>:
@@ -84,6 +88,10 @@ public interface IOrderEdits
 
     /// <summary>La fecha del pedido (spec 2026-11-16 §4). <b>Null es «no la toques»</b>, como <see cref="Shipping"/>.</summary>
     DateOnly? OrderDate { get; }
+
+    /// <summary>Los regalos del pedido (spec 2026-11-23). <b>Null es «no los toques»</b>, como <see cref="Shipping"/>: un
+    /// frontend viejo no los borra. Presente —también vacía— es la lista entera deseada, por variante.</summary>
+    IReadOnlyList<OrderItemAddition>? Gifts { get; }
 }
 
 /// <summary>Aplica el bloque <c>billing</c> de la edición al pedido. Lo comparten el guardado y el cálculo
@@ -118,6 +126,135 @@ internal static class OrderBillingEdits
             billing.BillingVatSurplus, updatedBy, now,
             enforceCompleteness: strict);
         return changed ? OrderChangeSummary.BillingChanged(before, OrderChangeSummary.BillingLabel(order)) : null;
+    }
+}
+
+/// <summary>La entrega de un pedido en un momento dado: lo que el historial compara antes y después.</summary>
+internal sealed record OrderDeliveryState(bool IsStorePickup, QuotationPartyDetails? Shipping)
+{
+    public static OrderDeliveryState Of(Order order) => new(order.IsStorePickup, order.Shipping?.ToDetails());
+}
+
+/// <summary>Aplica el bloque <c>delivery</c> de la edición al pedido (spec 2026-11-24 §10). Lo comparten el guardado y el
+/// cálculo previo, y los dos lo hacen antes de la facturación, las retenciones, el envío y el estado de pago: el envío se
+/// resuelve contra la recogida que queda.</summary>
+internal static class OrderDeliveryEdits
+{
+    /// <summary>Devuelve <c>false</c> si no hay bloque o nada cambió. <paramref name="strict"/> exige la parte de envío
+    /// completa, como el guardado de la facturación; el cálculo previo no. Las reglas de Shopify (§11.1.4) valen en los dos.
+    /// </summary>
+    public static async Task<bool> ApplyAsync(
+        Order order,
+        OrderDeliveryEditRequest? delivery,
+        bool strict,
+        IQuotationCustomerLookup customerLookup,
+        IQuotationGeographyLookup geographyLookup,
+        IExternalOrderDeliveryCheck externalCheck,
+        Guid tenantId,
+        MemberId updatedBy,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (delivery is null)
+        {
+            return false;
+        }
+
+        var shipping = delivery.Shipping.ToDomain();
+        // Con recogida la parte la rechaza el agregado, con su propio código: su región no se consulta.
+        if (!delivery.IsStorePickup)
+        {
+            await PartyRegionRules.EnsureAsync(geographyLookup, shipping, "Delivery.Shipping", cancellationToken);
+            // De recoger a enviar con los datos del cliente: sin domicilio no hay a dónde mandar.
+            if (shipping is null && order.IsStorePickup)
+            {
+                var customer = await customerLookup.FindAsync(tenantId, order.ClientId, cancellationToken);
+                if (string.IsNullOrWhiteSpace(customer?.Address))
+                {
+                    throw new QuotationsDomainException(
+                        OrderDeliveryErrors.AddressRequired, "The customer has no address to ship the order to.");
+                }
+            }
+        }
+
+        var previousParty = order.Shipping?.ToDetails();
+        var changed = order.SetDelivery(delivery.IsStorePickup, shipping, updatedBy, now, enforceCompleteness: strict);
+        // Después del agregado, que ya validó y normalizó la parte: lo que se compara y se pregunta es lo que quedaría guardado.
+        // Quien lanza acá no ha escrito nada. De recoger a enviar con los datos del cliente la parte propia no cambia (no la
+        // hay), pero la entrega sí: también se pregunta, o Shopify se quedaría con la dirección anterior. Repetir esa entrega
+        // sin cambiarla no cuenta.
+        if (OwnShippingPartyChanged(order, previousParty)
+            || (changed && !order.IsStorePickup && order.Shipping is null))
+        {
+            await EnsureShopifyCanReceiveAsync(order, externalCheck, tenantId, cancellationToken);
+        }
+
+        return changed;
+    }
+
+    /// <summary>Si, enviando, la parte de envío propia dejó de ser <paramref name="previous"/>: se agregó, cambió o se quitó
+    /// para volver a los datos del cliente. Pasar a recoger no cuenta: no hay dirección que mandar.</summary>
+    public static bool OwnShippingPartyChanged(Order order, QuotationPartyDetails? previous) =>
+        !order.IsStorePickup && order.Shipping?.ToDetails() != previous;
+
+    // Spec 2026-11-24 §11.1.4: sólo en un pedido de Shopify, para que el envío a la tienda nunca falle por un dato que falta.
+    private static async Task EnsureShopifyCanReceiveAsync(
+        Order order,
+        IExternalOrderDeliveryCheck externalCheck,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        if (order.Source != OrderSource.Shopify)
+        {
+            return;
+        }
+
+        // Con los datos del cliente no hay parte propia que mandar: no hace falta preguntar.
+        var code = order.Shipping?.ToDetails() is { } party
+            ? await externalCheck.CheckAsync(
+                tenantId, order.Id.Value, party.Country ?? QuotationPartyDetails.ColombiaCountryCode, party.RegionId,
+                cancellationToken)
+            : OrderDeliveryErrors.ShopifyPartyRequired;
+        if (code is not null)
+        {
+            throw new QuotationsDomainException(code, "Shopify cannot receive this delivery address.");
+        }
+    }
+
+    /// <summary>El texto del historial: la ciudad es la de DIVIPOLA en Colombia y la escrita afuera.</summary>
+    public static async Task<string> DescribeChangeAsync(
+        IQuotationGeographyLookup geographyLookup,
+        OrderDeliveryState before,
+        OrderDeliveryState after,
+        CancellationToken cancellationToken)
+    {
+        var cityIds = new[] { before.Shipping, after.Shipping }
+            .Where(party => party is { IsColombian: true, CityId: not null })
+            .Select(party => party!.CityId!.Value)
+            .Distinct()
+            .ToArray();
+        IReadOnlyDictionary<Guid, string> cityNames = cityIds.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await geographyLookup.FindCityNamesAsync(cityIds, cancellationToken);
+        return OrderChangeSummary.DeliveryChanged(Text(before, cityNames), Text(after, cityNames));
+    }
+
+    private static OrderDeliveryText Text(OrderDeliveryState state, IReadOnlyDictionary<Guid, string> cityNames)
+    {
+        if (state.IsStorePickup)
+        {
+            return OrderDeliveryText.StorePickup;
+        }
+
+        if (state.Shipping is not { } party)
+        {
+            return OrderDeliveryText.CustomerAddress;
+        }
+
+        var city = !party.IsColombian
+            ? party.CityName
+            : party.CityId is { } cityId ? cityNames.GetValueOrDefault(cityId) : null;
+        return OrderDeliveryText.To(party.Address, city);
     }
 }
 
@@ -427,6 +564,15 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
         RuleFor(edits => edits.Items)
             .Must(items => !HasDuplicates(items.Select(line => line.VariantId)))
             .WithMessage("La misma variante no puede aparecer más de una vez.");
+        RuleForEach(edits => edits.Gifts).ChildRules(gift =>
+        {
+            gift.RuleFor(line => line.VariantId).NotEmpty();
+            gift.RuleFor(line => line.Quantity).GreaterThan(0m);
+        }).When(edits => edits.Gifts is not null);
+        RuleFor(edits => edits.Gifts)
+            .Must(gifts => !HasDuplicates(gifts!.Select(line => line.VariantId)))
+            .WithMessage("La misma variante no puede ir más de una vez como regalo.")
+            .When(edits => edits.Gifts is not null);
 
         RuleForEach(edits => edits.Proofs.Add).ChildRules(addition =>
         {

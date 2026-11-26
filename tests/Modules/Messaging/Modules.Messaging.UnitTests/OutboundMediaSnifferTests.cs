@@ -178,4 +178,80 @@ public sealed class OutboundMediaSnifferTests
     // D4: OggOpusSniffer necesita 27 + segmentos + 8 bytes; con 8 no alcanzaba.
     [Fact]
     public void TheHeaderIsLongEnoughForAnOggOpusFirstPage() => Assert.Equal(64, OutboundMediaSniffer.HeaderLength);
+
+    // Meta admite .ppt y .pptx como documento: mismos contenedores que .doc y .docx (OLE y zip).
+    [Fact]
+    public void PowerPointFilesAreDetectedByTheirContainerSignature()
+    {
+        Assert.Equal(OutboundMediaFormat.Ppt, OutboundMediaSniffer.Detect(Ole, ".ppt"));
+        Assert.Equal(OutboundMediaFormat.Pptx, OutboundMediaSniffer.Detect(Zip, ".pptx"));
+        Assert.Null(OutboundMediaSniffer.Detect(Zip, ".ppt"));
+        Assert.Null(OutboundMediaSniffer.Detect(Ole, ".pptx"));
+    }
+
+    // .txt no tiene firma: se acepta texto UTF-8 válido sin bytes de control, que deja fuera un binario renombrado.
+    [Theory]
+    [InlineData("Hola, mundo\r\nsegunda línea\ttabulada")]
+    [InlineData("Cotización: añadir 50 % de descuento ✓")]
+    [InlineData("a")]
+    public void PlainUtf8TextIsDetectedAsTxt(string text) =>
+        Assert.Equal(OutboundMediaFormat.Txt, OutboundMediaSniffer.Detect(System.Text.Encoding.UTF8.GetBytes(text), ".txt"));
+
+    [Fact]
+    public void ATxtWithAByteOrderMarkIsDetected() =>
+        Assert.Equal(OutboundMediaFormat.Txt, OutboundMediaSniffer.Detect([0xEF, 0xBB, 0xBF, .. "Hola"u8], ".txt"));
+
+    // El sniffer sólo ve 64 bytes: un carácter de varios bytes cortado justo en el límite no invalida el texto.
+    [Fact]
+    public void AMultiByteCharacterCutAtTheHeaderLimitStillCountsAsText()
+    {
+        byte[] header = [.. new string('a', OutboundMediaSniffer.HeaderLength - 1).Select(c => (byte)c), 0xC3];
+
+        Assert.Equal(OutboundMediaFormat.Txt, OutboundMediaSniffer.Detect(header, ".txt"));
+    }
+
+    [Fact]
+    public void ABrokenUtf8SequenceBeforeTheHeaderLimitIsNotText() =>
+        Assert.Null(OutboundMediaSniffer.Detect([.. "Hola "u8, 0xC3, 0x28, .. "mundo"u8], ".txt"));
+
+    [Fact]
+    public void ABinaryOrUtf16FileRenamedToTxtIsRejected()
+    {
+        Assert.Null(OutboundMediaSniffer.Detect(Exe, ".txt"));
+        Assert.Null(OutboundMediaSniffer.Detect(Pdf.Concat(new byte[] { 0 }).ToArray(), ".txt"));
+        Assert.Null(OutboundMediaSniffer.Detect(System.Text.Encoding.Unicode.GetPreamble().Concat(System.Text.Encoding.Unicode.GetBytes("Hola")).ToArray(), ".txt"));
+        Assert.Null(OutboundMediaSniffer.Detect([.. "Hola"u8, 0x01, .. "mundo"u8], ".txt"));
+        Assert.Null(OutboundMediaSniffer.Detect([], ".txt"));
+    }
+
+    // Meta sólo acepta WebP como sticker. Contenedor RIFF: "RIFF", tamaño, "WEBP", y el primer chunk (VP8, VP8L o VP8X).
+    private static byte[] Webp(string chunk, byte flags = 0) =>
+        Padded("RIFF"u8.ToArray(), [0x24, 0, 0, 0], "WEBP"u8.ToArray(), System.Text.Encoding.ASCII.GetBytes(chunk), [10, 0, 0, 0], [flags]);
+
+    [Theory]
+    [InlineData("VP8 ")]
+    [InlineData("VP8L")]
+    [InlineData("VP8X")]
+    public void AWebpContainerIsDetectedForEveryBitstream(string chunk) =>
+        Assert.Equal(OutboundMediaFormat.Webp, OutboundMediaSniffer.Detect(Webp(chunk), ".webp"));
+
+    [Fact]
+    public void ARiffThatIsNotWebpOrAWebpWithAnotherExtensionIsRejected()
+    {
+        Assert.Null(OutboundMediaSniffer.Detect(Padded("RIFF"u8.ToArray(), [0x24, 0, 0, 0], "WAVEfmt "u8.ToArray()), ".webp"));
+        Assert.Null(OutboundMediaSniffer.Detect(Webp("VP8 "), ".png"));
+        Assert.Null(OutboundMediaSniffer.Detect(Webp("VP8 "), ".jpg"));
+    }
+
+    // Sticker animado = chunk VP8X con el bit de animación (0x02) en las banderas. Cambia el tope: 500 KB frente a 100 KB.
+    [Fact]
+    public void OnlyAnExtendedWebpWithTheAnimationFlagIsAnimated()
+    {
+        Assert.True(OutboundMediaSniffer.IsAnimatedWebp(Webp("VP8X", flags: 0x02)));
+        Assert.True(OutboundMediaSniffer.IsAnimatedWebp(Webp("VP8X", flags: 0x12)));
+        Assert.False(OutboundMediaSniffer.IsAnimatedWebp(Webp("VP8X", flags: 0x10)));
+        Assert.False(OutboundMediaSniffer.IsAnimatedWebp(Webp("VP8 ", flags: 0x02)));
+        Assert.False(OutboundMediaSniffer.IsAnimatedWebp(Webp("VP8L", flags: 0x02)));
+        Assert.False(OutboundMediaSniffer.IsAnimatedWebp([0x52, 0x49]));
+    }
 }

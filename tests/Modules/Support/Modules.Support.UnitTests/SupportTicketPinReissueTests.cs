@@ -77,6 +77,8 @@ public sealed class SupportTicketPinReissueTests
     }
 
     [Fact]
-    public void PinReissuedIsTheLastEventKind() =>
-        Assert.Equal(SupportTicketEventKind.PinReissued, Enum.GetValues<SupportTicketEventKind>()[^1]);
+    public void PinReissuedStaysRightBeforeTheTaskDueDateKind() =>
+        Assert.Equal(
+            [SupportTicketEventKind.PinReissued, SupportTicketEventKind.DueDateChanged],
+            Enum.GetValues<SupportTicketEventKind>()[^2..]);
 }

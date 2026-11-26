@@ -1,7 +1,7 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
 using FluentValidation;
-using System.Globalization;
 using FluentValidation.Results;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
@@ -58,7 +58,8 @@ internal static class ManagedTemplateMapping
             template.CreatedAt,
             template.UpdatedAt,
             BillingTemplateDefinitions.RequestedCategoryFor(template.Kind, template.Name, template.Category),
-            template.HeaderImageUrl);
+            template.HeaderImageUrl,
+            described.HeaderMedia);
     }
 }
 
@@ -79,6 +80,9 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
         var supportFormalReply = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.SupportFormalReply);
         var supportSurvey = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.SupportSurvey);
         var wholesaleNotice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.WholesaleInvitationNotice);
+        var invoice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.Invoice);
+        var taskNotice = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.TaskNotice);
+        var appointmentReminder = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.AppointmentReminder);
         return new TemplateManagementDto(
             connection,
             quotation is null ? null : new QuotationTemplateStatusDto(quotation.Id, quotation.Status, quotation.StatusReason),
@@ -92,7 +96,12 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
             supportSurvey is null ? null : new SupportSurveyTemplateStatusDto(supportSurvey.Id, supportSurvey.Status, supportSurvey.StatusReason),
             wholesaleNotice is null
                 ? null
-                : new WholesaleInvitationNoticeTemplateStatusDto(wholesaleNotice.Id, wholesaleNotice.Status, wholesaleNotice.StatusReason));
+                : new WholesaleInvitationNoticeTemplateStatusDto(wholesaleNotice.Id, wholesaleNotice.Status, wholesaleNotice.StatusReason),
+            invoice is null ? null : new InvoiceTemplateStatusDto(invoice.Id, invoice.Status, invoice.StatusReason),
+            taskNotice is null ? null : new TaskNoticeTemplateStatusDto(taskNotice.Id, taskNotice.Status, taskNotice.StatusReason),
+            appointmentReminder is null
+                ? null
+                : new AppointmentReminderTemplateStatusDto(appointmentReminder.Id, appointmentReminder.Status, appointmentReminder.StatusReason));
     }
 }
 
@@ -328,8 +337,7 @@ public sealed partial class CreateTemplateHandler(
     ILogger<CreateTemplateHandler> logger)
     : ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>
 {
-    private static readonly IReadOnlyDictionary<string, string[]> HeaderImageField =
-        new Dictionary<string, string[]>(StringComparer.Ordinal) { ["headerImageFileId"] = [TemplateMessages.HeaderImage] };
+    private readonly TemplateHeaderImageIntake _intake = new(images, repository, unitOfWork, imageReleases, clock, logger);
 
     public async Task<ManagedTemplateDto> HandleAsync(CreateTemplateCommand command, CancellationToken cancellationToken)
     {
@@ -358,10 +366,11 @@ public sealed partial class CreateTemplateHandler(
         if (await repository.IsHeaderImageInUseAsync(command.TenantId, fileId, cancellationToken))
         {
             throw new MessagingDomainException(
-                MessagingErrorCodes.TemplateHeaderImageRejected, "The header image already belongs to another template.", fieldErrors: HeaderImageField);
+                MessagingErrorCodes.TemplateHeaderImageRejected, "The header image already belongs to another template.",
+                fieldErrors: TemplateHeaderImageIntake.HeaderImageField);
         }
 
-        var mimeType = await EnsureUsableImageAsync(command.TenantId, fileId, cancellationToken);
+        var mimeType = await _intake.EnsureUsableImageAsync(command.TenantId, fileId, cancellationToken);
         // Desde la publicación la imagen puede ser pública. Hasta que la fila quede guardada, cualquier salida la libera, también una
         // cancelación del request: una imagen pública sin fila no puede quedar. Con la fila guardada nunca se libera: es su imagen.
         // La publicación va dentro (revisión final): si falla después de copiar al bucket público (el guardado de Storage, una cancelación),
@@ -380,7 +389,7 @@ public sealed partial class CreateTemplateHandler(
         }
         catch (Exception) when (!saved)
         {
-            await ReleaseOrDeferAsync(command.TenantId, fileId);
+            await _intake.ReleaseOrDeferAsync(command.TenantId, fileId);
             throw;
         }
     }
@@ -415,33 +424,6 @@ public sealed partial class CreateTemplateHandler(
         return ManagedTemplateMapping.ToDto(template, names);
     }
 
-    /// <summary>Completa la subida y revisa el archivo con lo que Storage guardó, no con lo que el navegador declaró. Cada problema sale con
-    /// su código y la clave <c>headerImageFileId</c>, que el formulario marca en el campo del encabezado. Devuelve el tipo del archivo.</summary>
-    private async Task<string> EnsureUsableImageAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
-    {
-        var file = await images.CompleteAsync(tenantId, fileId, cancellationToken);
-        var (code, message) = file.State switch
-        {
-            TemplateImageState.NotFound => (MessagingErrorCodes.TemplateHeaderImageNotFound, "The header image was not found in this tenant."),
-            TemplateImageState.NotUploaded => (MessagingErrorCodes.TemplateHeaderImageNotUploaded, "The header image was not uploaded yet."),
-            TemplateImageState.Rejected => (MessagingErrorCodes.TemplateHeaderImageRejected, "The header image was rejected by the file scan."),
-            _ when !TemplateHeaderImagePolicy.IsAllowedMimeType(file.MimeType) =>
-                (MessagingErrorCodes.TemplateHeaderImageUnsupported, "A template header image must be a JPEG or PNG file."),
-            _ when file.SizeBytes > TemplateHeaderImagePolicy.MaxSizeBytes =>
-                (MessagingErrorCodes.TemplateHeaderImageTooLarge, "A template header image cannot exceed 5 MB."),
-            // Antes de publicar: un archivo que el barrido diario de Storage ya podría estar soltando no se toma (ver MaxUploadAge).
-            _ when clock.UtcNow - file.CreatedAt > TemplateHeaderImagePolicy.MaxUploadAge =>
-                (MessagingErrorCodes.TemplateHeaderImageRejected, "The header image was uploaded too long ago; upload it again."),
-            _ => (null, null),
-        };
-        if (code is not null)
-        {
-            throw new MessagingDomainException(code, message!, fieldErrors: HeaderImageField);
-        }
-
-        return file.MimeType!.Trim().ToLowerInvariant();
-    }
-
     /// <summary>Como el PDF del pedido (<c>OrderTemplateProvisioning</c>): la subida es un endpoint de la app, no de la WABA, así que nunca
     /// se reporta la conexión; <c>no_app_id</c> se registra y sale como <c>upload_failed</c>.</summary>
     private async Task<string> UploadImageAsync(
@@ -460,71 +442,10 @@ public sealed partial class CreateTemplateHandler(
         throw new MessagingDomainException(MessagingErrorCodes.TemplateUploadFailed, "WhatsApp did not accept the header image of the template.");
     }
 
-    /// <summary>Libera la imagen ya publicada de una creación que falló, con <see cref="CancellationToken.None"/>: la liberación no puede
-    /// depender del request que se está cayendo. Si Storage no la libera (R2 caído), deja el aviso
-    /// <see cref="MessagingIntegrationEvents.TemplateHeaderImageReleased"/> en el outbox y Storage la libera con reintentos (plan 2026-11-17
-    /// Task 8). El aviso se guarda solo: antes se descarta lo que el tracker tenía (la fila y la auditoría que no se pudieron guardar, si el
-    /// fallo fue al guardar), para que no viaje con él. Si eso también falla, se registra y sale el error original.
-    /// <para>Revisión del bloque C: antes de liberar (por cualquiera de los dos caminos) se pregunta a la base si una plantilla guardada usa
-    /// el archivo. Si una lo usa (otra creación con el mismo fileId ganó entre la revisión de arriba y este fallo), no se libera: es su
-    /// imagen. Si la pregunta misma falla, tampoco: una imagen pública de más es mejor que quitarle la suya a una plantilla viva.</para></summary>
-    private async Task ReleaseOrDeferAsync(Guid tenantId, Guid fileId)
-    {
-        try
-        {
-            if (await repository.IsHeaderImageInUseAsync(tenantId, fileId, CancellationToken.None))
-            {
-                LogReleaseSkippedInUse(logger, tenantId, fileId);
-                return;
-            }
-        }
-        catch (Exception exception)
-        {
-            LogReleaseFailed(logger, exception, tenantId, fileId);
-            return;
-        }
-
-        try
-        {
-            await images.ReleaseAsync(tenantId, fileId, CancellationToken.None);
-            return;
-        }
-        catch (Exception exception)
-        {
-            LogReleaseDeferred(logger, exception, tenantId, fileId);
-        }
-
-        try
-        {
-            unitOfWork.DiscardPendingChanges();
-            imageReleases.Publish(tenantId, fileId, clock.UtcNow);
-            await unitOfWork.SaveChangesAsync(CancellationToken.None);
-        }
-        catch (Exception exception)
-        {
-            LogReleaseFailed(logger, exception, tenantId, fileId);
-        }
-    }
-
-    [LoggerMessage(
-        Level = LogLevel.Warning,
-        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released now; the release goes through the outbox.")]
-    private static partial void LogReleaseDeferred(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
-
-    [LoggerMessage(
-        Level = LogLevel.Warning,
-        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} is not released: a saved template uses it.")]
-    private static partial void LogReleaseSkippedInUse(ILogger logger, Guid tenantId, Guid fileId);
-
     [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "Meta did not accept the header image of a template for connection {ConnectionId} in tenant {TenantId}: status {HttpStatus}, code {GraphCode}, reason {Reason}; the connection is not reported.")]
     private static partial void LogUploadFailed(ILogger logger, Guid tenantId, Guid connectionId, int httpStatus, string graphCode, string reason);
-
-    [LoggerMessage(
-        Level = LogLevel.Error,
-        Message = "The header image {FileId} of a template that failed to be created in tenant {TenantId} could not be released nor deferred to the outbox; it stays published.")]
-    private static partial void LogReleaseFailed(ILogger logger, Exception exception, Guid tenantId, Guid fileId);
 }
 
 /// <summary>§4.7 <c>DELETE …/template-management/templates/{templateId}</c>. D-T11: en Meta sólo ese idioma; D-T12: no si una campaña
@@ -566,12 +487,19 @@ public sealed class DeleteTemplateHandler(
         }
 
         var now = clock.UtcNow;
+        // Spec 2026-11-20: las imágenes retiradas se leen antes de quitar la fila (la cascada se las lleva al guardar).
+        var retiredFileIds = await repository.ListRetiredHeaderImageFileIdsAsync(command.TenantId, template.Id, cancellationToken);
         repository.Remove(template);
         // Spec 2026-11-17: la imagen del encabezado la libera Storage al leer el aviso, que commitea con la eliminación de la fila. Si el
         // guardado falla, no sale aviso y la imagen sigue siendo de su fila.
         if (template.HeaderImageFileId is { } fileId)
         {
             imageReleases.Publish(command.TenantId, fileId, now);
+        }
+
+        foreach (var retiredFileId in retiredFileIds)
+        {
+            imageReleases.Publish(command.TenantId, retiredFileId, now);
         }
 
         audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateDeleted, template.Id, now);

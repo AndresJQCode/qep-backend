@@ -30,6 +30,40 @@ public static class ServiceContractsErrorCodes
     /// <summary>The description exceeds <see cref="ServiceContract.DescriptionMaxLength"/>; the SPA maps this code to the field.</summary>
     public const string ServiceDescriptionTooLong = "billing.service.description_too_long";
 
+    /// <summary>La próxima revisión no es posterior al último período generado.</summary>
+    public const string ServiceReviewDateInvalid = "billing.service.review_date_invalid";
+
+    public const string ServiceNotActive = "billing.service.not_active";
+
+    // Reajuste de precio (spec 2026-11-24 §8).
+    public const string PriceScheduleAlreadyPending = "billing.price_schedule.already_pending";
+
+    public const string PriceScheduleNotFound = "billing.price_schedule.not_found";
+
+    public const string PriceSchedulePeriodGenerated = "billing.price_schedule.period_generated";
+
+    public const string PriceScheduleSamePrice = "billing.price_schedule.same_price";
+
+    public const string PriceScheduleCurrencyLocked = "billing.price_schedule.currency_locked";
+
+    public const string PriceScheduleAfterReview = "billing.price_schedule.after_review";
+
+    public const string IpcNotSet = "billing.ipc.not_set";
+
+    public const string IpcInUse = "billing.ipc.in_use";
+
+    /// <summary>409: la tasa guardada no es la que la pantalla mostraba.</summary>
+    public const string IpcRateChanged = "billing.ipc.rate_changed";
+
+    public const string PriceReviewNotIpc = "billing.price_review.not_ipc";
+
+    public const string PriceReviewYearMismatch = "billing.price_review.year_mismatch";
+
+    public const string PriceReviewNotPending = "billing.price_review.not_pending";
+
+    /// <summary>Sólo por ítem de la confirmación en lote: el precio calculado ya no es el que la persona vio.</summary>
+    public const string PriceReviewPriceChanged = "billing.price_review.price_changed";
+
     public const string ProfileMissing = "billing.profile.missing";
 
     public const string ProfileNotFound = "billing.profile.not_found";

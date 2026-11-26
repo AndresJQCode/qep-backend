@@ -7,17 +7,13 @@ using Modules.Wholesale.Domain;
 namespace Modules.Wholesale.Infrastructure.Persistence;
 
 /// <summary>
-/// Listas de precios, distribuidores y sus invitaciones. Sin FKs a otros esquemas: listas de otros tenants, miembros,
-/// empresas, tenants y clientes son referencias blandas. La única FK es <c>distributors.price_list_id</c>, con
-/// <c>ON DELETE RESTRICT</c>: la red de la carrera entre borrar una lista e invitar con ella.
+/// Distribuidores y sus invitaciones. Sin FKs a otros esquemas: listas de precios (en Catalog desde el spec 2026-11-22), miembros,
+/// empresas, tenants y clientes son referencias blandas.
 /// </summary>
 public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> options)
     : DbContext(options)
 {
     public const string Schema = "wholesale";
-
-    /// <summary>D-12: nombre único por tenant sin importar mayúsculas → 409 <c>name_taken</c>.</summary>
-    public const string PriceListNameIndex = "IX_price_lists_tenant_name";
 
     /// <summary>D-13: un documento por mayorista en cualquier estado → 409 <c>identification_taken</c>.</summary>
     public const string DistributorIdentificationIndex = "IX_distributors_tenant_identification";
@@ -31,16 +27,7 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
     /// <summary>Un id reservado por invitación (D-17).</summary>
     public const string InvitationReservedTenantIndex = "IX_distributor_invitations_reserved_tenant";
 
-    /// <summary>Borrar una lista en uso → 409 <c>in_use</c> (la carrera contra invitar).</summary>
-    public const string DistributorPriceListForeignKey = "FK_distributors_price_lists_price_list_id";
-
-    internal const string NormalizedName = "NormalizedName";
-
-    private const string CategoryIdsField = "_categoryIds";
-
     private const string DistributorIdColumn = "DistributorId";
-
-    public DbSet<PriceList> PriceLists => Set<PriceList>();
 
     public DbSet<Distributor> Distributors => Set<Distributor>();
 
@@ -55,50 +42,9 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
-        ConfigurePriceList(modelBuilder);
         ConfigureDistributor(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
         ConfigureInbox(modelBuilder);
-    }
-
-    // Enums como texto de 16 y `version` como bigint fijado a mano: un cambio del tipo CLR no cambia el esquema.
-    private static void ConfigurePriceList(ModelBuilder modelBuilder)
-    {
-        var list = modelBuilder.Entity<PriceList>();
-        list.ToTable("price_lists", Schema);
-        list.HasKey(value => value.Id);
-        list.Property(value => value.Id)
-            .HasColumnName("id")
-            .HasConversion(id => id.Value, value => new PriceListId(value))
-            .ValueGeneratedNever();
-        list.Property(value => value.TenantId).HasColumnName("tenant_id");
-        list.Property(value => value.Name).HasColumnName("name").HasMaxLength(PriceList.NameMaxLength);
-        // La llave del índice único: la base la calcula, así ninguna escritura la puede dejar desalineada del nombre.
-        list.Property<string>(NormalizedName)
-            .HasColumnName("normalized_name")
-            .HasMaxLength(PriceList.NameMaxLength)
-            .HasComputedColumnSql("lower(name)", stored: true);
-        list.Property(value => value.DiscountPercent).HasColumnName("discount_percent").HasPrecision(5, 2);
-        list.Property(value => value.Visibility)
-            .HasColumnName("visibility")
-            .HasConversion<string>()
-            .HasMaxLength(16);
-        list.Ignore(value => value.CategoryIds);
-        list.Property<List<Guid>>(CategoryIdsField)
-            .HasField(CategoryIdsField)
-            .UsePropertyAccessMode(PropertyAccessMode.Field)
-            .HasColumnName("category_ids")
-            .HasColumnType("uuid[]");
-        list.Property(value => value.CreatedAt).HasColumnName("created_at");
-        list.Property(value => value.UpdatedAt).HasColumnName("updated_at");
-        list.Property(value => value.Version)
-            .HasColumnName("version")
-            .HasColumnType("bigint")
-            .IsConcurrencyToken();
-
-        list.HasIndex(nameof(PriceList.TenantId), NormalizedName)
-            .IsUnique()
-            .HasDatabaseName(PriceListNameIndex);
     }
 
     private static void ConfigureDistributor(ModelBuilder modelBuilder)
@@ -139,6 +85,8 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
         distributor.Property(value => value.CreatedAt).HasColumnName("created_at");
         distributor.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         distributor.Property(value => value.ActivatedAt).HasColumnName("activated_at");
+        // La marca de «empezó a aceptar»: se confirma antes de escribir en otro módulo y bloquea el cambio de documento.
+        distributor.Property(value => value.AcceptanceStartedAt).HasColumnName("acceptance_started_at");
         distributor.Property(value => value.Version)
             .HasColumnName("version")
             .HasColumnType("bigint")
@@ -146,12 +94,10 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
         // Spec 2026-11-18: el destino del aviso por WhatsApp; la conexión es referencia blanda a Integrations.
         distributor.Property(value => value.Phone).HasColumnName("phone").HasMaxLength(Distributor.PhoneMaxLength);
         distributor.Property(value => value.WhatsAppConnectionId).HasColumnName("whatsapp_connection_id");
-
-        distributor.HasOne<PriceList>()
-            .WithMany()
-            .HasForeignKey(value => value.PriceListId)
-            .OnDelete(DeleteBehavior.Restrict)
-            .HasConstraintName(DistributorPriceListForeignKey);
+        // Ciudad y dirección con las que nace la empresa del distribuidor al aceptar; la ciudad es referencia blanda a Geography.
+        distributor.Property(value => value.CityId).HasColumnName("city_id");
+        distributor.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(Distributor.CityNameMaxLength);
+        distributor.Property(value => value.Address).HasColumnName("address").HasMaxLength(Distributor.AddressMaxLength);
 
         distributor.HasIndex(value => new { value.TenantId, value.IdentificationType, value.IdentificationNumber })
             .IsUnique()
@@ -178,6 +124,9 @@ public sealed class WholesaleDbContext(DbContextOptions<WholesaleDbContext> opti
                 .HasConversion(id => id.Value, value => new DistributorId(value));
             invitation.HasKey(DistributorIdColumn);
             invitation.Property(value => value.TokenHash).HasColumnName("token_hash").HasColumnType("char(64)");
+            // Spec 2026-11-24: como el token, sólo el hash; la prueba plana no tiene columna. Sin índice: se compara sobre la
+            // invitación que ya se encontró por token.
+            invitation.Property(value => value.EmailProofHash).HasColumnName("email_proof_hash").HasColumnType("char(64)");
             invitation.Property(value => value.SentAt).HasColumnName("sent_at");
             invitation.Property(value => value.ExpiresAt).HasColumnName("expires_at");
             invitation.Property(value => value.ReservedTenantId).HasColumnName("reserved_tenant_id");

@@ -6,9 +6,10 @@ namespace Modules.Authorization.Domain;
 /// Un rol definido por un tenant, con el conjunto de permisos que concede.
 /// </summary>
 /// <remarks>
-/// Convive con los roles de sistema, que se versionan con el codigo y no viven aca. La
+/// Convive con el rol de sistema, que se versiona con el codigo y no vive aca. La
 /// diferencia no es cosmetica: un rol de sistema no se edita ni se borra, y su clave esta
-/// reservada — <see cref="SystemRoleKeys"/>.
+/// reservada — <see cref="SystemRoleKeys"/>. Los roles que se siembran en cada tenant
+/// (spec 2026-11-25) sí son filas de este agregado: se editan y se borran como cualquiera.
 ///
 /// El agregado no valida que un permiso exista en el catalogo. No puede: el catalogo se
 /// arma en composicion y el dominio no lo conoce. Esa comprobacion es del handler, contra
@@ -21,10 +22,10 @@ public sealed class Role
     public const int DisplayNameMaxLength = 60;
     public const int DescriptionMaxLength = 300;
 
-    // La misma forma que `UserPreference` acepta para un color scheme: minusculas, digitos y
-    // guiones. La clave viaja en la membresia y se compara ordinal contra el catalogo.
+    // Minusculas, digitos, guiones y guion bajo (`scheduling_manager` lo lleva). La clave viaja
+    // en la membresia y se compara ordinal contra el catalogo.
     private static readonly Regex KeyShape = new(
-        "^[a-z0-9-]{1,32}$",
+        "^[a-z0-9_-]{1,32}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly List<string> _permissions = [];
@@ -139,7 +140,7 @@ public sealed class Role
         {
             throw new AuthorizationDomainException(
                 "authorization.role.key_invalid",
-                $"A role key must match {KeyShape} — lowercase letters, digits and hyphens.");
+                $"A role key must match {KeyShape} — lowercase letters, digits, hyphens and underscores.");
         }
 
         if (SystemRoleKeys.IsReserved(normalized))

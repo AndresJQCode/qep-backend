@@ -29,4 +29,29 @@ public sealed class AgentExportTests
         Assert.True(portable.Tools.QuotationDraft);
         Assert.Equal(model, portable.Model);
     }
+
+    // Spec 2026-11-23 D-1 y §9.1: un documento guardado antes de la herramienta de la Agenda se sigue leyendo, con el interruptor apagado.
+    [Fact]
+    public void AConfigWithoutTheSchedulingKeyReadsFalse()
+    {
+        var json = AgentConfig.Default(new AgentModelRef("anthropic", "claude-sonnet-5-5")).ToJson()
+            .Replace(",\"scheduling\":false", string.Empty, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("scheduling", json, StringComparison.Ordinal);
+        Assert.False(AgentConfig.FromJson(json).Tools.Scheduling);
+    }
+
+    [Fact]
+    public void SchedulingTravelsInTheExport()
+    {
+        var config = AgentConfig.Default(new AgentModelRef("anthropic", "claude-sonnet-5-5")) with
+        {
+            Tools = new AgentTools(Catalog: false, OrderStatus: false, QuotationDraft: false, Scheduling: true),
+        };
+
+        var portable = AgentExport.Portable(config);
+
+        Assert.True(portable.Tools.Scheduling);
+        Assert.True(AgentConfig.FromJson(portable.ToJson()).Tools.Scheduling);
+    }
 }

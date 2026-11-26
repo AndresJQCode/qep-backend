@@ -298,11 +298,10 @@ public sealed class DeleteRoleHandler(
 
         // Borrar un rol que alguien tiene puesto no explota en ningún lado: `PermissionsForAsync`
         // ignora lo que no conoce, así que esa gente pierde permisos en silencio y nadie
-        // relaciona una cosa con la otra. Se rechaza y se pide reasignar primero.
-        var roleSets = await roleUsage.ActiveRoleSetsAsync(command.TenantId, cancellationToken);
-        var inUse = roleSets.Any(
-            roles => roles.Contains(role.Key, StringComparer.Ordinal));
-        if (inUse)
+        // relaciona una cosa con la otra. Se rechaza y se pide reasignar primero. Cuentan
+        // también las invitadas y las suspendidas (spec 2026-11-25): su rol quedaría sin existir
+        // y guardar sus roles respondería `tenancy.membership.role_unknown`.
+        if (await roleUsage.AnyHoldsRoleAsync(command.TenantId, role.Key, cancellationToken))
         {
             throw new AuthorizationDomainException(
                 "authorization.role.in_use",

@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -71,6 +73,7 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
     public async Task TheCatalogNamesTheOrderPermissions()
     {
         var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedRolesAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
 
@@ -99,9 +102,10 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
         Assert.Equal(
             expected,
             catalog.Permissions
-                // Los pedidos de venta; las órdenes de compra (`purchases.order.*`) son otro módulo.
+                // Los pedidos de venta; las órdenes de compra (`purchases.order.*` y `wms.purchase_order.*`) son de otros módulos.
                 .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal)
-                    && !permission.Permission.StartsWith("purchases.", StringComparison.Ordinal))
+                    && !permission.Permission.StartsWith("purchases.", StringComparison.Ordinal)
+                    && !permission.Permission.StartsWith("wms.", StringComparison.Ordinal))
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
         // Los únicos permisos de venta son los del punto de venta (spec 2026-10-07): la regla
         // sigue cuidando que ningún permiso de pedidos se llame "sale".
@@ -136,7 +140,7 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
     }
 
     /// <summary>
-    /// Spec 2026-10-07 (módulo POS): siete permisos propios, todos de admin; el rol de sistema
+    /// Spec 2026-10-07 (módulo POS): siete permisos propios, todos de admin; el rol sembrado
     /// `cashier` vende, abre y cierra su caja y lee sus ventas, sin descontar ni anular
     /// (decisión 4). Asesor y facturación no ven el punto de venta.
     /// </summary>
@@ -144,6 +148,7 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
     public async Task TheCatalogNamesThePosPermissionsAndTheCashierRole()
     {
         var factory = host.Factory(connectionString => new QepApiFactory(connectionString));
+        await SeedRolesAsync(factory);
         using var client = CreateClient(factory, SubjectId, TenantId);
         client.DefaultRequestHeaders.Add("X-Permissions", "advisorship.read");
 
@@ -178,8 +183,7 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
             PermissionsOf(catalog, "admin", "pos."));
         Assert.Equal(
             ["pos.register.operate", "pos.sale.create", "pos.sale.customer", "pos.sale.read"],
-            catalog.Roles.Single(role => role.Role == "cashier").Permissions
-                .Order(StringComparer.Ordinal).ToArray());
+            PermissionsOf(catalog, "cashier", "pos."));
         Assert.Empty(PermissionsOf(catalog, "advisor", "pos."));
         Assert.Empty(PermissionsOf(catalog, "billing", "pos."));
     }
@@ -209,12 +213,22 @@ public sealed class AuthorizationCatalogApiTests(SharedTenancyHost host) : IClas
         Assert.All(catalog.Permissions, p => Assert.False(string.IsNullOrWhiteSpace(p.EntityLabel)));
     }
 
+    /// <summary>Siembra los roles de fábrica del tenant de la prueba, que no pasa por el alta ni tiene fila en
+    /// <c>tenancy.tenants</c>.</summary>
+    private async Task SeedRolesAsync(QepApiFactory factory)
+    {
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(Guid.Parse(TenantId), TestContext.Current.CancellationToken);
+    }
+
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
     [
         .. catalog.Roles.Single(item => item.Role == role).Permissions
-            // Pedidos de venta; las órdenes de compra (`purchases.order.*`) son otro módulo.
+            // Pedidos de venta; las órdenes de compra (`purchases.order.*` y `wms.purchase_order.*`) son de otros módulos.
             .Where(permission => permission.Contains("order", StringComparison.Ordinal)
-                && !permission.StartsWith("purchases.", StringComparison.Ordinal))
+                && !permission.StartsWith("purchases.", StringComparison.Ordinal)
+                && !permission.StartsWith("wms.", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal),
     ];
 

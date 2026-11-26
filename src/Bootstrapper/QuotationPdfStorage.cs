@@ -34,6 +34,10 @@ internal sealed class QuotationPdfStorage(
     /// </summary>
     private const string QuotationPrefix = "quotations";
 
+    /// <summary>Prefijo de la copia pública de las facturas. Propio, y no <c>quotations/</c>, para que
+    /// la regla de lifecycle del bucket público se configure sobre él sin tocar las demás copias.</summary>
+    private const string InvoicePrefix = "invoices";
+
     public async Task<string> SaveAsync(
         Guid tenantId,
         QuotationId quotationId,
@@ -87,6 +91,25 @@ internal sealed class QuotationPdfStorage(
         var publicKey = $"{QuotationPrefix}/{Guid.CreateVersion7():N}.pdf";
 
         await publicObjectStorage.CopyFromPrivateAsync(storageKey, publicKey, cancellationToken);
+        return publicObjectStorage.GetUrl(publicKey);
+    }
+
+    public async Task<string> PublishInvoiceAsync(
+        ReadOnlyMemory<byte> content, CancellationToken cancellationToken)
+    {
+        if (!publicObjectStorage.IsConfigured)
+        {
+            // Mismo criterio que PublishAsync: sin bucket público la URL sería la firmada, y el mensaje
+            // se daría por enviado sin llegar. Mejor que falle el envío.
+            throw new InvalidOperationException(
+                "Storage:R2:PublicBucket and PublicBaseUrl are required to send an invoice by "
+                + "WhatsApp through Zenvia: it cannot download the PDF from a presigned URL.");
+        }
+
+        // Aleatoria y sin nada del tenant, el pedido ni la factura: la URL es pública.
+        var publicKey = $"{InvoicePrefix}/{Guid.CreateVersion7():N}.pdf";
+
+        await publicObjectStorage.UploadAsync(publicKey, content, PdfContentType, cancellationToken);
         return publicObjectStorage.GetUrl(publicKey);
     }
 

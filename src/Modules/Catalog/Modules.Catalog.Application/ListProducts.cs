@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain.Catalog;
+using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
@@ -24,6 +25,9 @@ namespace Modules.Catalog.Application;
 /// <c>IsActive</c> es un filtro real contra la base — antes el `Select` de estado del listado
 /// filtraba en el cliente, sobre el catálogo entero ya traído, algo que dejó de alcanzar en
 /// cuanto el listado empezó a paginar server-side.
+///
+/// <c>CategoryId</c> (spec 2026-11-19 catalogo-productos-filtro-categoria) deja la categoría y sus
+/// descendientes, como <c>/pos/products</c>; null no filtra. El total cuenta lo filtrado.
 /// </summary>
 public sealed record ListProductsQuery(
     Guid TenantId,
@@ -35,7 +39,8 @@ public sealed record ListProductsQuery(
     int PageSize,
     bool IncludeVariants = false,
     bool? VisibleInStore = null,
-    ProductKind? Kind = null) : IQuery<ProductPage>;
+    ProductKind? Kind = null,
+    Guid? CategoryId = null) : IQuery<ProductPage>;
 
 /// <summary>Una página de productos con el total que la UI necesita para paginar.</summary>
 public sealed record ProductPage(
@@ -79,6 +84,7 @@ public sealed class ListProductsHandler(
     IProductRepository repository,
     IProductImageLookup imageLookup,
     IOptionDefinitionRepository optionRepository,
+    IProductCategoryRepository categoryRepository,
     IExecutionContext executionContext)
     : IQueryHandler<ListProductsQuery, ProductPage>
 {
@@ -92,6 +98,22 @@ public sealed class ListProductsHandler(
         var page = ProductPaging.NormalizePage(query.Page);
         var pageSize = ProductPaging.NormalizePageSize(query.PageSize, query.IncludeVariants);
 
+        // La categoría y todas sus descendientes, como PosProductLookup. La expansión ya filtra por
+        // tenant: un id inexistente o de otro tenant expande a nada, y eso es la página vacía (nunca un
+        // 404 ni datos ajenos), sin consultar productos.
+        IReadOnlyCollection<Guid>? categoryIds = null;
+        if (query.CategoryId is { } categoryId)
+        {
+            var expanded = await categoryRepository.ListIdsWithDescendantsAsync(
+                query.TenantId, new ProductCategoryId(categoryId), cancellationToken);
+            if (expanded.Count == 0)
+            {
+                return new ProductPage([], 0, page, pageSize);
+            }
+
+            categoryIds = expanded.Select(id => id.Value).ToArray();
+        }
+
         var (products, total) = await repository.SearchSummariesAsync(
             query.TenantId,
             query.Search,
@@ -100,18 +122,21 @@ public sealed class ListProductsHandler(
             query.IsActive,
             query.VisibleInStore,
             query.Kind,
-            categoryIds: null,
+            categoryIds,
             page,
             pageSize,
             cancellationToken);
 
         // Las variantes vendibles de los productos activos de la página, en una lectura proyectada
         // (ver IProductRepository.ListActiveVariantsAsync). Un producto dado de baja no se vende,
-        // así que ni se consulta: trae la lista vacía.
+        // así que ni se consulta: trae la lista vacía. El costo de cada variante (spec 2026-11-19) viaja con la misma regla
+        // que en el detalle: sólo si quien llama puede verlo, y entonces la lectura suma una sola consulta para la página.
+        var includeCosts = query.IncludeVariants && CatalogCostAccess.CanRead(executionContext);
         var variantsByProduct = query.IncludeVariants
             ? (await repository.ListActiveVariantsAsync(
                     query.TenantId,
                     products.Where(product => product.IsActive).Select(product => product.Id).ToArray(),
+                    includeCosts,
                     cancellationToken))
                 .GroupBy(variant => variant.ProductId)
                 .ToDictionary(group => group.Key, group => group.ToArray())
@@ -129,7 +154,7 @@ public sealed class ListProductsHandler(
         var images = imageIds.Length == 0
             ? new Dictionary<Guid, ProductImageRef>()
             : await imageLookup.FindManyAsync(imageIds, cancellationToken);
-        var lookups = ProductReadLookups.Empty(query.TenantId) with { Images = images };
+        var lookups = ProductReadLookups.Empty(query.TenantId) with { Images = images, IncludeCosts = includeCosts };
 
         // Los nombres de los valores de opción sólo se piden si alguna variante tiene valores.
         var valueNames = variantsByProduct is not null

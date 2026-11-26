@@ -116,8 +116,11 @@ public sealed class SupportOpeningSender(
         SupportTicket ticket, string address, string pin, string consultUrl, CancellationToken cancellationToken)
     {
         var tenantName = await tenants.GetDisplayNameAsync(new TenantId(ticket.TenantId), cancellationToken) ?? string.Empty;
+        var regional = await tenants.GetRegionalSettingsAsync(new TenantId(ticket.TenantId), cancellationToken);
+        var language = BuildingBlocks.Domain.Localization.SupportedLanguages.OrDefault(regional?.Language);
         var result = await email.SendAsync(
-            new SupportOpeningEmail(address, tenantName, ticket.DisplayNumber, ticket.TypeName, ticket.DueOn, consultUrl, pin),
+            new SupportOpeningEmail(
+                address, tenantName, ticket.DisplayNumber, ticket.TypeName, ticket.DueOn, consultUrl, pin, language),
             cancellationToken);
         return Outcome(EmailChannel, result);
     }

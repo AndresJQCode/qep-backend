@@ -24,6 +24,16 @@ public static class SupportErrorCodes
 
     public const string AssigneeInvalid = "support.ticket.assignee_invalid";
 
+    /// <summary>Spec 2026-11-22 §8.6: a recipient of the unassigned-ticket alert that cannot manage tickets (or is not a member). Domain
+    /// code and not a field error: the id was chosen from a list, so there is no input to mark.</summary>
+    public const string AlertRecipientInvalid = "support.settings.alert_recipient_invalid";
+
+    /// <summary>Spec 2026-11-22 §8.6: the schedule of the alert is not one of the tenant's.</summary>
+    public const string AlertScheduleInvalid = "support.settings.alert_schedule_invalid";
+
+    /// <summary>Task-notices spec 2026-11-22 §5.4: the WhatsApp connection chosen for the task notices is not one of the tenant connections.</summary>
+    public const string TaskNoticeConnectionInvalid = "support.settings.task_notice_connection_invalid";
+
     public const string TicketTypeNotFound = "support.ticket_type.not_found";
 
     public const string TicketTypeUnavailable = "support.ticket_type.unavailable";
@@ -259,4 +269,18 @@ public static class SupportErrorCodes
 
     /// <summary>A closed ticket takes no new note nor a new note upload; replaying a note created before closing still answers it.</summary>
     public const string NoteTicketClosed = "support.note.ticket_closed";
+
+    // Spec 2026-11-22: tareas internas entre miembros.
+
+    /// <summary>The internal ticket type cannot be edited or deleted, and no ticket takes it nor leaves it by a type change.</summary>
+    public const string InternalTypeLocked = "support.ticket.internal_type_locked";
+
+    /// <summary>An internal task has no requester to reply to: no customer, conversation, follow-thread nor reply.</summary>
+    public const string InternalNoReply = "support.ticket.internal_no_reply";
+
+    /// <summary>The due date of a task is today (tenant zone) or later.</summary>
+    public const string InternalDueInPast = "support.ticket.internal_due_in_past";
+
+    /// <summary>[owner] D11: the free due date only exists on an internal task.</summary>
+    public const string NotInternal = "support.ticket.not_internal";
 }

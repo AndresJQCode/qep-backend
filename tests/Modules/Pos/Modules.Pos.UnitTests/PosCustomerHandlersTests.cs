@@ -1,9 +1,9 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Pos.Application;
+using static Modules.Pos.UnitTests.PosFixtures;
 using FieldRequirement = Modules.Tenancy.Domain.FieldRequirement;
 using PolicyOfCustomerFields = Modules.Tenancy.Domain.CustomerFieldPolicy;
-using static Modules.Pos.UnitTests.PosFixtures;
 
 namespace Modules.Pos.UnitTests;
 

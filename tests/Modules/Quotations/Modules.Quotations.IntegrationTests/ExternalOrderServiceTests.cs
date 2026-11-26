@@ -561,14 +561,14 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         {
             var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
             outcome = await writer.AttachShippingAsync(
-                setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken);
+                setup.TenantId, order.OrderId, Party(), RawAddressPrefix, [CityA], TestContext.Current.CancellationToken);
         }
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
             again = await writer.AttachShippingAsync(
-                setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken);
+                setup.TenantId, order.OrderId, Party(), RawAddressPrefix, [CityA], TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(ExternalShippingOutcomeKind.Applied, outcome.Kind);
@@ -626,7 +626,7 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         await using var scope = factory.Services.CreateAsyncScope();
         var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
         var outcome = await writer.AttachShippingAsync(
-            setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken);
+            setup.TenantId, order.OrderId, Party(), RawAddressPrefix, [CityA], TestContext.Current.CancellationToken);
 
         Assert.Equal(ExternalShippingOutcomeKind.NotPending, outcome.Kind);
         Assert.Equal(OrderStatus.Archived, outcome.Status);
@@ -658,7 +658,7 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         {
             var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
             edited = await writer.CorrectShippingCityAsync(
-                setup.TenantId, order.OrderId, Party(), DepartmentId, CityB, TestContext.Current.CancellationToken);
+                setup.TenantId, order.OrderId, Party(), DepartmentId, CityB, [CityB], TestContext.Current.CancellationToken);
         }
 
         var second = await CreateAsync(factory, Draft(setup, "#3004", parties: PartiesRequest(Party())));
@@ -666,7 +666,7 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         {
             var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
             untouched = await writer.CorrectShippingCityAsync(
-                setup.TenantId, second.OrderId, Party(), DepartmentId, CityB, TestContext.Current.CancellationToken);
+                setup.TenantId, second.OrderId, Party(), DepartmentId, CityB, [CityB], TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(ExternalShippingOutcomeKind.ShippingChanged, edited.Kind);
@@ -709,9 +709,9 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         Assert.Equal(("3009998877", (Guid?)CityA, (string?)null), await ReadShippingAsync(database, order.OrderId));
     }
 
-    // Desvío S1: un pedido no edita sus partes, así que la misma parte en otra ciudad la puso un intento anterior del trabajo con
-    // la ciudad que el sinónimo tenía entonces. Es AlreadyApplied, y la parte vuelve como quedó guardada: el trabajo guarda esa
-    // ciudad en su huella, no la que mandó.
+    // Desvío S1: la misma parte en otra ciudad que el trabajo pidió la puso un intento anterior, con la ciudad que el sinónimo
+    // tenía entonces. Es AlreadyApplied, y la parte vuelve como quedó guardada: el trabajo guarda esa ciudad en su huella, no la
+    // que mandó.
     [Fact]
     public async Task AttachShippingRetriedWithAnotherCityReturnsThePartyAsPersisted()
     {
@@ -722,9 +722,34 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         var order = await CreateAsync(factory, Draft(setup, "#3016", notes: $"{RawAddressPrefix} Cra 5"));
         await AttachAsync(factory, setup, order.OrderId, Party(CityB));
 
-        var retried = await AttachAsync(factory, setup, order.OrderId, Party());
+        var retried = await AttachAsync(factory, setup, order.OrderId, Party(), requested: [CityB, CityA]);
 
         Assert.Equal((ExternalShippingOutcomeKind.AlreadyApplied, Party(CityB)), (retried.Kind, retried.Party));
+        Assert.Equal(("3001112233", (Guid?)CityB, (string?)null), await ReadShippingAsync(database, order.OrderId));
+    }
+
+    // La misma parte en una ciudad que el trabajo no pidió la puso una persona: gana ella, al poner la parte y al recorregirla.
+    [Fact]
+    public async Task OurPartyInACityNobodyRequestedIsLeftAsItIs()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3017", parties: PartiesRequest(Party(CityB))));
+
+        var attached = await AttachAsync(factory, setup, order.OrderId, Party());
+        ExternalShippingOutcome corrected;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
+            corrected = await writer.CorrectShippingCityAsync(
+                setup.TenantId, order.OrderId, Party(), DepartmentId, CityA, [CityA], TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            (ExternalShippingOutcomeKind.ShippingPresent, ExternalShippingOutcomeKind.ShippingChanged),
+            (attached.Kind, corrected.Kind));
         Assert.Equal(("3001112233", (Guid?)CityB, (string?)null), await ReadShippingAsync(database, order.OrderId));
     }
 
@@ -786,18 +811,21 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         var service = ActivatorUtilities.CreateInstance<ExternalOrderService>(scope.ServiceProvider, racing);
 
         var error = await Assert.ThrowsAsync<RequestConcurrencyException>(() => service.AttachShippingAsync(
-            setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken));
+            setup.TenantId, order.OrderId, Party(), RawAddressPrefix, [CityA], TestContext.Current.CancellationToken));
 
         Assert.Equal("concurrency.conflict", error.Code);
         Assert.Equal(("3005556677", (Guid?)null, (string?)null), await ReadShippingAsync(database, order.OrderId));
     }
 
+    // Sin `requested`, la ciudad que se manda: el primer intento de un trabajo.
     private static async Task<ExternalShippingOutcome> AttachAsync(
-        QepApiFactory factory, ExternalSetup setup, Guid orderId, ExternalShippingParty party)
+        QepApiFactory factory, ExternalSetup setup, Guid orderId, ExternalShippingParty party, Guid[]? requested = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();
-        return await writer.AttachShippingAsync(setup.TenantId, orderId, party, RawAddressPrefix, TestContext.Current.CancellationToken);
+        return await writer.AttachShippingAsync(
+            setup.TenantId, orderId, party, RawAddressPrefix, requested ?? [party.CityId!.Value],
+            TestContext.Current.CancellationToken);
     }
 
     private static async Task<ExternalShippingState?> FindStateAsync(QepApiFactory factory, Guid tenantId, Guid orderId)

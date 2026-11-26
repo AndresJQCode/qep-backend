@@ -82,6 +82,20 @@ internal sealed class NotificationsOptionsValidator(IHostEnvironment environment
             }
         }
 
+        if (options.InApp.RetentionDays is < InAppOptions.MinRetentionDays or > InAppOptions.MaxRetentionDays)
+        {
+            failures.Add(
+                $"Notifications:InApp:RetentionDays must be between {InAppOptions.MinRetentionDays} and {InAppOptions.MaxRetentionDays}.");
+        }
+
+        if (options.TaskNotice.EscalationAfterMinutes
+            is < TaskNoticeOptions.MinEscalationAfterMinutes or > TaskNoticeOptions.MaxEscalationAfterMinutes)
+        {
+            failures.Add(
+                "Notifications:TaskNotice:EscalationAfterMinutes must be between "
+                + $"{TaskNoticeOptions.MinEscalationAfterMinutes} and {TaskNoticeOptions.MaxEscalationAfterMinutes}.");
+        }
+
         return failures.Count > 0
             ? ValidateOptionsResult.Fail(failures)
             : ValidateOptionsResult.Success;

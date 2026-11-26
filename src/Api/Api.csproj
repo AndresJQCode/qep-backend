@@ -18,6 +18,12 @@
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Api\Modules.ServiceContracts.Api.csproj" />
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Infrastructure\Modules.ServiceContracts.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Hr\Modules.Hr.Api\Modules.Hr.Api.csproj" />
+    <ProjectReference Include="..\Modules\Hr\Modules.Hr.Infrastructure\Modules.Hr.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Api\Modules.Payroll.Api.csproj" />
+    <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Infrastructure\Modules.Payroll.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Api\Modules.Scheduling.Api.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Infrastructure\Modules.Scheduling.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Api\Modules.Loans.Api.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Purchases\Modules.Purchases.Api\Modules.Purchases.Api.csproj" />
@@ -32,6 +38,8 @@
     <ProjectReference Include="..\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Buyers\Modules.Buyers.Api\Modules.Buyers.Api.csproj" />
     <ProjectReference Include="..\Modules\Buyers\Modules.Buyers.Infrastructure\Modules.Buyers.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Wms\Modules.Wms.Api\Modules.Wms.Api.csproj" />
+    <ProjectReference Include="..\Modules\Wms\Modules.Wms.Infrastructure\Modules.Wms.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Api\Modules.ApiAccess.Api.csproj" />
     <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Infrastructure\Modules.ApiAccess.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Suppliers\Modules.Suppliers.Api\Modules.Suppliers.Api.csproj" />
@@ -53,6 +61,7 @@
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Api\Modules.Geography.Api.csproj" />
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Infrastructure\Modules.Geography.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Identity\Modules.Identity.Infrastructure\Modules.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Api\Modules.Notifications.Api.csproj" />
     <ProjectReference Include="..\Modules\Notifications\Modules.Notifications.Infrastructure\Modules.Notifications.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Platform\Modules.Platform.Api\Modules.Platform.Api.csproj" />
     <ProjectReference Include="..\Modules\Platform\Modules.Platform.Infrastructure\Modules.Platform.Infrastructure.csproj" />

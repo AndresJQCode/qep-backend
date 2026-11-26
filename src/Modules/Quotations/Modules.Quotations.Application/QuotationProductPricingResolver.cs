@@ -37,17 +37,21 @@ internal static class QuotationProductPricingResolver
     /// consulta. No rechaza nada: quien la llama pasa cada variante por <see cref="Resolve"/>, línea por
     /// línea, y así los rechazos no se adelantan ni cambian de orden.
     /// </summary>
+    /// <param name="channel">Spec 2026-11-22 (D-5): la lista con que se precia; por defecto la de cotizaciones.</param>
     public static async Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindVariantsAsync(
         IQuotationProductPricingLookup lookup,
         Guid tenantId,
         IEnumerable<Guid> variantIds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        QuotationPriceChannel channel = QuotationPriceChannel.Quotations)
     {
         var distinct = variantIds.Distinct().ToArray();
 
         return distinct.Length == 0
             ? new Dictionary<Guid, QuotationVariantPricingRef>()
-            : await lookup.FindManyAsync(tenantId, distinct, cancellationToken);
+            : channel == QuotationPriceChannel.Quotations
+                ? await lookup.FindManyAsync(tenantId, distinct, cancellationToken)
+                : await lookup.FindManyAsync(tenantId, distinct, channel, cancellationToken);
     }
 
     /// <summary>

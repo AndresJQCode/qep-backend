@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.ServiceContracts.Application;
 using Modules.ServiceContracts.Domain;
 using Modules.ServiceContracts.Infrastructure.Persistence;
@@ -160,7 +161,7 @@ public sealed class ServiceContractsRepositoryTests
             Assert.Null(settings.WhatsAppConnectionId);
             settings.ChangeWhatsAppConnection(connectionId, Now);
             repository.Upsert(settings);
-            await new ServiceContractsUnitOfWork(db).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await UnitOfWork(db).SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var read = factory.Services.CreateAsyncScope();
@@ -194,12 +195,12 @@ public sealed class ServiceContractsRepositoryTests
             .FindAsync(Tenant, service.Id, TestContext.Current.CancellationToken);
         var secondCopy = await new ServiceContractRepository(secondDb)
             .FindAsync(Tenant, service.Id, TestContext.Current.CancellationToken);
-        firstCopy!.Pause(Now);
+        firstCopy!.Pause(Today, Now);
         secondCopy!.Cancel(Now);
-        await new ServiceContractsUnitOfWork(firstDb).SaveChangesAsync(TestContext.Current.CancellationToken);
+        await UnitOfWork(firstDb).SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
-            () => new ServiceContractsUnitOfWork(secondDb).SaveChangesAsync(TestContext.Current.CancellationToken));
+            () => UnitOfWork(secondDb).SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -213,7 +214,7 @@ public sealed class ServiceContractsRepositoryTests
         var otherCustomer = Guid.CreateVersion7();
         var services = Enumerable.Range(0, 3).Select(_ => Service(customerId, "COP", 10m)).ToList();
         var paused = Service(customerId, "COP", 10m);
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         var foreign = Service(otherCustomer, "COP", 10m);
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -248,7 +249,7 @@ public sealed class ServiceContractsRepositoryTests
         using var __ = factory;
 
         var service = Service(Guid.CreateVersion7(), "COP", 10m);
-        service.Pause(Now.AddDays(1));
+        service.Pause(Today.AddDays(1), Now.AddDays(1));
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
@@ -294,21 +295,24 @@ public sealed class ServiceContractsRepositoryTests
         Assert.Empty(none);
     }
 
+    private static ServiceContractsUnitOfWork UnitOfWork(ServiceContractsDbContext db) =>
+        new(db, NullLogger<ServiceContractsUnitOfWork>.Instance);
+
     private static ServiceContract Service(Guid customerId, string currency, decimal price) =>
         ServiceContract.Create(
             ServiceContractId.New(), Tenant, customerId, "Hosting", price, currency, BillingCycle.Monthly, Today.AddMonths(-1), Now);
 
     private static CustomerMessage Message(
         Guid customerId, DateOnly runDate, MessageDeliveryStatus status, DateTimeOffset attemptedAt) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = Tenant,
-        CustomerId = customerId,
-        RunDate = runDate,
-        Kind = CustomerMessageKind.Reminder,
-        Channel = BillingChannel.WhatsApp,
-        Status = status,
-        ClaimedUntil = attemptedAt.AddMinutes(5),
-        AttemptedAt = attemptedAt,
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = Tenant,
+            CustomerId = customerId,
+            RunDate = runDate,
+            Kind = CustomerMessageKind.Reminder,
+            Channel = BillingChannel.WhatsApp,
+            Status = status,
+            ClaimedUntil = attemptedAt.AddMinutes(5),
+            AttemptedAt = attemptedAt,
+        };
 }

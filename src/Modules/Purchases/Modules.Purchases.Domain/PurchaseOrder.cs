@@ -92,7 +92,8 @@ public sealed class PurchaseOrder
         string? notes,
         IReadOnlyList<PurchaseOrderLineDraft> lines,
         Guid memberId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool withPrices = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(number);
 
@@ -107,7 +108,7 @@ public sealed class PurchaseOrder
             UpdatedAt = now,
             Version = 1,
         };
-        order.Apply(supplierId, supplierTenantId, currency, notes, lines);
+        order.Apply(supplierId, supplierTenantId, currency, notes, lines, withPrices);
         order.AppendHistory(PurchaseOrderStatus.Draft, memberId, now);
         return order;
     }
@@ -121,10 +122,11 @@ public sealed class PurchaseOrder
         string currency,
         string? notes,
         IReadOnlyList<PurchaseOrderLineDraft> lines,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool withPrices = true)
     {
         EnsureDraft();
-        Apply(supplierId, supplierTenantId, currency, notes, lines);
+        Apply(supplierId, supplierTenantId, currency, notes, lines, withPrices);
         Touch(now);
     }
 
@@ -163,13 +165,16 @@ public sealed class PurchaseOrder
     /// <summary>
     /// Envío de una orden vinculada, ya con el pedido creado en el mayorista. Las líneas pasan a ser las del pedido, con
     /// sus ids (D-8): en un reintento después de que el pedido ya existía, la orden adopta lo que el pedido guardó.
+    /// Con <paramref name="withPrices"/> en <c>false</c> (lista oculta, spec 2026-11-19) las adopta sin montos: el precio
+    /// del pedido no se copia de vuelta, y llega con la aprobación.
     /// </summary>
     public void SendToWholesaler(
         Guid linkedOrderId,
         string linkedOrderNumber,
         IReadOnlyList<LinkedLineSnapshot> lines,
         Guid memberId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool withPrices = true)
     {
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentException.ThrowIfNullOrWhiteSpace(linkedOrderNumber);
@@ -183,7 +188,7 @@ public sealed class PurchaseOrder
         LinkedOrderId = linkedOrderId;
         LinkedOrderNumber = linkedOrderNumber;
         _lines.Clear();
-        _lines.AddRange(lines.Select(PurchaseOrderLine.From));
+        _lines.AddRange(lines.Select(line => PurchaseOrderLine.From(line, withPrices)));
         MoveTo(PurchaseOrderStatus.Sent, PurchaseOrderAction.Send, memberId, now);
     }
 
@@ -324,13 +329,26 @@ public sealed class PurchaseOrder
         _ => [],
     };
 
-    /// <summary>Totales efectivos (D-5): con lo confirmado en las líneas que lo tienen.</summary>
-    public PurchaseOrderTotals Totals() =>
-        PurchaseOrderMath.Sum(_lines.Select(line => (line.Subtotal, line.Tax)));
+    /// <summary>
+    /// False en una orden vinculada que nació sin precio y todavía no la aprobó el mayorista (D-11): alguna línea no tiene
+    /// subtotal. Se deriva, no se guarda. Una externa siempre tiene precio (D-7).
+    /// </summary>
+    public bool HasPrices => _lines.All(line => line.Subtotal is not null);
 
-    /// <summary>Totales con lo pedido, sin importar lo confirmado.</summary>
-    public PurchaseOrderTotals RequestedTotals() =>
-        PurchaseOrderMath.Sum(_lines.Select(line => (line.RequestedSubtotal, line.RequestedTax)));
+    /// <summary>Totales efectivos (D-5): con lo confirmado en las líneas que lo tienen. Nulo si falta algún precio.</summary>
+    public PurchaseOrderTotals? Totals() =>
+        _lines.All(line => line.Subtotal is not null && line.Tax is not null)
+            ? PurchaseOrderMath.Sum(_lines.Select(line => (line.Subtotal!.Value, line.Tax!.Value)))
+            : null;
+
+    /// <summary>
+    /// Totales con lo pedido, sin importar lo confirmado. Nulo si el pedido no tuvo precio: una orden que nació sin precio no
+    /// tiene total pedido, ni siquiera después de aprobarse.
+    /// </summary>
+    public PurchaseOrderTotals? RequestedTotals() =>
+        _lines.All(line => line.RequestedSubtotal is not null && line.RequestedTax is not null)
+            ? PurchaseOrderMath.Sum(_lines.Select(line => (line.RequestedSubtotal!.Value, line.RequestedTax!.Value)))
+            : null;
 
     // D-13: la confirmación la hace la aprobación del mayorista, y la cancelación después de confirmar también es suya.
     private IReadOnlyList<PurchaseOrderAction> LinkedAllowedActions() => Status switch
@@ -347,7 +365,8 @@ public sealed class PurchaseOrder
         Guid? supplierTenantId,
         string currency,
         string? notes,
-        IReadOnlyList<PurchaseOrderLineDraft> lines)
+        IReadOnlyList<PurchaseOrderLineDraft> lines,
+        bool withPrices)
     {
         ArgumentNullException.ThrowIfNull(lines);
         if (lines.Count == 0)
@@ -357,6 +376,12 @@ public sealed class PurchaseOrder
 
         // Application arma los borradores según el modo; uno mezclado es un error de programación, no del usuario.
         var linked = supplierTenantId is not null;
+        if (!withPrices && !linked)
+        {
+            // D-7: una externa exige costo; sin precio sólo existe en una vinculada.
+            throw new ArgumentException("Una orden externa no puede guardarse sin precios.", nameof(withPrices));
+        }
+
         if (lines.Any(line => linked ? line.Listing is null || line.VariantId is not null : line.Listing is not null || line.VariantId is null))
         {
             throw new ArgumentException(
@@ -379,7 +404,7 @@ public sealed class PurchaseOrder
         Currency = normalizedCurrency;
         Notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim();
         _lines.Clear();
-        _lines.AddRange(lines.Select(PurchaseOrderLine.From));
+        _lines.AddRange(lines.Select(line => PurchaseOrderLine.From(line, withPrices)));
     }
 
     private void EnsureDraft()

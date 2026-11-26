@@ -43,3 +43,24 @@ public sealed record ChatbotMediaCompletion(ChatbotMediaState State, ChatbotMedi
 
 /// <summary>Un archivo listo para mandar: <see cref="Kind"/> en minúscula y <see cref="Url"/> la URL pública absoluta.</summary>
 public sealed record ChatbotMediaFile(Guid FileId, string Kind, string FileName, string ContentType, long SizeBytes, Uri Url);
+
+/// <summary>Nombres de los eventos de integración que Automations escribe en <c>platform.outbox_messages</c> para otros módulos.</summary>
+public static class AutomationsIntegrationEvents
+{
+    /// <summary>
+    /// Spec 2026-11-18 («Lifecycle»): se borró un chatbot y sus bloques «Mensaje» nombraban archivos (los del borrador y los de cada versión).
+    /// Payload: <c>{ "tenantId": "&lt;guid&gt;", "fileIds": ["&lt;guid&gt;", …] }</c>. Lo consume Storage, que suelta los que ya nadie usa;
+    /// Storage lo nombra igual en <c>StorageSubscribedEvents</c>.
+    /// </summary>
+    public const string ChatbotMediaReleased = "automations.chatbot.media-released.v1";
+}
+
+/// <summary>
+/// Encola el aviso <see cref="AutomationsIntegrationEvents.ChatbotMediaReleased"/> para que Storage suelte los archivos de un chatbot
+/// borrado. No guarda: el aviso viaja con el <c>SaveChangesAsync</c> de quien llama, en la misma transacción que el borrado, o no sale
+/// nada. Copia de <c>ITemplateHeaderImageReleases</c> (Messaging), con varios archivos.
+/// </summary>
+public interface IChatbotMediaReleases
+{
+    void Publish(Guid tenantId, IReadOnlyCollection<Guid> fileIds, DateTimeOffset occurredAt);
+}

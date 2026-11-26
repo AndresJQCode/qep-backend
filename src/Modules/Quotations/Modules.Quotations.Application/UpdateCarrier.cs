@@ -43,8 +43,8 @@ public sealed class UpdateCarrierHandler(
     public async Task<CarrierDto> HandleAsync(UpdateCarrierCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, command.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var carrier = await carriers.FindAsync(command.TenantId, new CarrierId(command.CarrierId), cancellationToken)

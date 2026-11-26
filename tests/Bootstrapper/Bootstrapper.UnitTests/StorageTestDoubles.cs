@@ -64,12 +64,24 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
     /// <summary>Si no es null, <see cref="DeleteAsync"/> la lanza sin anotar el borrado.</summary>
     public Exception? DeleteFailure { get; set; }
 
-    public bool IsConfigured => true;
+    /// <summary>Lo que se subió directo al bucket público: clave, tipo y bytes.</summary>
+    public List<(string Key, string ContentType, byte[] Content)> Uploads { get; } = [];
+
+    public bool IsConfiguredValue { get; set; } = true;
+
+    public bool IsConfigured => IsConfiguredValue;
 
     public Task CopyFromPrivateAsync(
         string privateKey, string publicKey, CancellationToken cancellationToken)
     {
         Copies[publicKey] = privateKey;
+        return Task.CompletedTask;
+    }
+
+    public Task UploadAsync(
+        string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken)
+    {
+        Uploads.Add((publicKey, contentType, content.ToArray()));
         return Task.CompletedTask;
     }
 
@@ -161,11 +173,11 @@ internal sealed class FakeStorageSystemUploads : IStorageSystemUploads
     /// <summary>Un archivo que, al completarse, termina en <paramref name="outcome"/>.</summary>
     public Guid Seed(
         Guid tenantId, FileOwnerType ownerType, Guid ownerId, SystemUploadOutcome outcome, string mimeType = "image/png", long sizeBytes = 2048,
-        DateTimeOffset createdAt = default, Guid? fileId = null)
+        DateTimeOffset createdAt = default, Guid? fileId = null, string name = "banner.png")
     {
         var id = fileId ?? Guid.CreateVersion7();
         _files[id] = new Seeded(
-            tenantId, ownerType, ownerId, outcome, new SystemFileInfo(id, "banner.png", mimeType, sizeBytes, createdAt));
+            tenantId, ownerType, ownerId, outcome, new SystemFileInfo(id, name, mimeType, sizeBytes, createdAt));
         return id;
     }
 
@@ -187,8 +199,14 @@ internal sealed class FakeStorageSystemUploads : IStorageSystemUploads
         Guid tenantId, Guid fileId, FileOwnerType ownerType, Guid ownerId, CancellationToken cancellationToken) =>
         Task.FromResult(Find(tenantId, fileId, ownerType, ownerId) is { Outcome: SystemUploadOutcome.Available } file ? file.Info : null);
 
-    public Task<Uri> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    /// <summary>Los ids para los que se pidió una URL de descarga.</summary>
+    public List<Guid> Downloads { get; } = [];
+
+    public Task<Uri> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken)
+    {
+        Downloads.Add(fileId);
+        return Task.FromResult(new Uri($"https://r2.example.co/download/{fileId}?signature=abc"));
+    }
 
     public Task<SystemStoredFile> StoreAsync(
         Guid tenantId, FileOwnerType ownerType, Guid ownerId, string name, string mimeType, byte[] content, long maxSizeBytes,

@@ -55,6 +55,31 @@ public sealed class QuotationResponseComposerClientContactsTests
         Assert.Equal(new ClientContactDto(laura.Id, "Laura Gómez", null), Assert.Single(response.ClientContacts));
     }
 
+    [Fact]
+    public void ClientResponseCopiesRegions()
+    {
+        var madrid = new QuotationRegionDto(Guid.CreateVersion7(), "Madrid");
+        var barcelona = new QuotationRegionDto(Guid.CreateVersion7(), "Barcelona");
+        var customer = Customer with
+        {
+            Region = madrid,
+            Addresses =
+            [
+                new QuotationCustomerAddressRef(
+                    Guid.CreateVersion7(), "Sede", "Calle 2", null, null, "Barcelona", null, null, true, "ES", barcelona),
+            ],
+        };
+
+        var client = QuotationResponseComposer.ToClientResponse(customer);
+
+        Assert.NotNull(client);
+        Assert.Equal(madrid, client.Region);
+        Assert.Equal(barcelona, Assert.Single(client.Addresses).Region);
+        var json = JsonSerializer.SerializeToElement(client, Web);
+        Assert.Equal("Madrid", json.GetProperty("region").GetProperty("name").GetString());
+        Assert.Equal("Barcelona", json.GetProperty("addresses")[0].GetProperty("region").GetProperty("name").GetString());
+    }
+
     private static async Task<QuotationResponse> ComposeAsync(QuotationClientContact[] contacts)
     {
         var customers = new StubQuotationCustomerLookup(Customer);

@@ -24,7 +24,8 @@ public sealed class CreateTicketValidatorTests
         CreateTicketCommand.From(
             Tenant,
             new CreateTicketRequest(Guid.CreateVersion7(), subject, description, medium, channel, null, requester ?? Ana, null))
-        with { TenantCountry = tenantCountry };
+        with
+        { TenantCountry = tenantCountry };
 
     private static List<string> Errors(CreateTicketCommand command) =>
         new CreateTicketValidator().Validate(command).Errors.Select(error => error.PropertyName).ToList();
@@ -35,6 +36,21 @@ public sealed class CreateTicketValidatorTests
         Assert.Empty(Errors(Command()));
         Assert.Empty(Errors(Command(requester: Ana with { DocumentType = "NIE", CountryCode = "es" })));
     }
+
+    // Spec 2026-11-22 D5: un ticket externo toma su fecha del término del tipo; mandar dueOn es un error del campo, no se ignora.
+    [Fact]
+    public void ADueDateIsNotPartOfAnExternalTicket()
+    {
+        var withDueOn = Command() with { DueOn = "2026-11-30" };
+
+        Assert.Equal(["DueOn"], Errors(withDueOn));
+        Assert.Empty(Errors(Command() with { DueOn = null }));
+    }
+
+    // Spec 2026-11-22 D3: None es el canal de una tarea y comparte el enum con los de verdad; ningún alta lo elige.
+    [Fact]
+    public void NoneIsNotAReplyChannel() =>
+        Assert.Equal(["ReplyChannel"], Errors(Command(channel: "None")));
 
     [Fact]
     public void NieIsNotAllowedForColombia()
@@ -113,7 +129,8 @@ public sealed class CreateTicketValidatorTests
                 Tenant,
                 new CreateTicketRequest(
                     Guid.CreateVersion7(), "Asunto", "Descripción", "Phone", channel, customerId, requester, null, Anonymous: true))
-            with { TenantCountry = "CO" };
+            with
+            { TenantCountry = "CO" };
 
         Assert.Empty(Errors(Anonymous("Portal", null, null)));
         Assert.Equal(["ReplyChannel"], Errors(Anonymous("Email", null, null)));
@@ -131,7 +148,8 @@ public sealed class CreateTicketValidatorTests
     public void AMissingTypeFails()
     {
         var command = CreateTicketCommand.From(
-            Tenant, new CreateTicketRequest(null, "Asunto", "Descripción", "Phone", "Email", null, Ana, null)) with { TenantCountry = "CO" };
+            Tenant, new CreateTicketRequest(null, "Asunto", "Descripción", "Phone", "Email", null, Ana, null)) with
+        { TenantCountry = "CO" };
 
         Assert.Equal(["TicketTypeId"], Errors(command));
     }

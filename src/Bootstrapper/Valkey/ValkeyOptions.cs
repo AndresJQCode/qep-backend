@@ -33,4 +33,7 @@ public sealed class ValkeyAreaOptions
     public bool Doorbells { get; set; }
 
     public bool ApiKeyTouch { get; set; }
+
+    /// <summary>La tabla de valores legales de Hr, entera, bajo una clave versionada (spec 2026-11-22, «Caché»).</summary>
+    public bool LegalParameters { get; set; }
 }

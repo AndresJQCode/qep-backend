@@ -33,21 +33,25 @@ public sealed class PreviewPurchaseOrderHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var build = await lineBuilder.BuildAsync(command.TenantId, command, cancellationToken);
 
-        var lines = build.Lines
-            .Select(draft => new PurchaseOrderPreviewLineDto(
+        var show = build.ShowPrices;
+        var priced = build.Lines
+            .Select(draft => (Draft: draft, Subtotal: PurchaseOrderMath.Subtotal(draft.Quantity, draft.UnitCost)))
+            .ToList();
+        var lines = priced
+            .Select(pair => new PurchaseOrderPreviewLineDto(
                 // Externa: la variante propia. Vinculada: la del mayorista, con su precio de lista (mayorista fase 3).
-                draft.Listing?.SupplierVariantId ?? draft.VariantId!.Value,
-                draft.Code,
-                draft.Name,
-                draft.TaxRatePercent,
-                PurchaseOrderMath.Subtotal(draft.Quantity, draft.UnitCost),
-                draft.Listing is { } listing
+                pair.Draft.Listing?.SupplierVariantId ?? pair.Draft.VariantId!.Value,
+                pair.Draft.Code,
+                pair.Draft.Name,
+                pair.Draft.TaxRatePercent,
+                show ? pair.Subtotal : null,
+                show && pair.Draft.Listing is { } listing
                     ? new PurchaseOrderListPriceDto(listing.BasePrice, listing.DiscountPercent, listing.UnitPrice)
                     : null))
             .ToList();
         var totals = PurchaseOrderMath.Sum(
-            lines.Select(line => (line.Subtotal, PurchaseOrderMath.Tax(line.Subtotal, line.TaxRatePercent))));
+            priced.Select(pair => (pair.Subtotal, PurchaseOrderMath.Tax(pair.Subtotal, pair.Draft.TaxRatePercent))));
 
-        return new PurchaseOrderPreviewDto(lines, PurchaseOrderComposer.ToTotals(totals), build.Currency);
+        return new PurchaseOrderPreviewDto(lines, show ? PurchaseOrderComposer.ToTotals(totals) : null, build.Currency, show);
     }
 }

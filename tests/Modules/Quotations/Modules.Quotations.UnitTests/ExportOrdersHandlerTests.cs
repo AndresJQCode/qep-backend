@@ -202,6 +202,23 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(1, unitOfWork.Saves);
     }
 
+    // Por número de pedido no hacen falta fechas: el trabajo viaja sin rango y el repositorio no corta por fecha.
+    [Fact]
+    public async Task ExportByOrderNumberWithoutDatesEnqueuesAJobWithoutRange()
+    {
+        var queue = new InMemoryExportJobQueue();
+        var repository = new StubOrderListRepository(NewRow());
+        var handler = NewHandler(repository, queue);
+
+        await handler.HandleAsync(
+            NewCommand(null, null) with { OrderNumber = "PED-2026" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(((DateOnly?)null, (DateOnly?)null), (repository.LastExportSearch!.OrderDateFrom, repository.LastExportSearch.OrderDateTo));
+        Assert.Equal(
+            new OrdersExportFilters(null, null, null, null, null, null, null, "PED-2026"),
+            JsonSerializer.Deserialize<OrdersExportFilters>(Assert.Single(queue.Jobs).Filters));
+    }
+
     // Spec 2026-11-16 §4: el rango corta por la fecha del pedido, así que los días llegan tal cual aunque venga la zona de
     // quien pide. La zona se sigue guardando con los filtros: es parte del contrato del trabajo.
     [Fact]

@@ -1,13 +1,13 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
-using BuildingBlocks.Application;
 using Bootstrapper.Realtime;
 using Bootstrapper.Valkey.Permissions;
 using Bootstrapper.Valkey.Presence;
 using Bootstrapper.Valkey.RateLimiting;
 using Bootstrapper.Valkey.Sessions;
+using BuildingBlocks.Application;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Buyers.Application;
@@ -153,8 +153,11 @@ public static class ValkeyServiceCollectionExtensions
         // The app hub's «está respondiendo» (spec 2026-11-15 §5.3, plan N11): the same area. The pod-local registry always exists,
         // as the registry when the area is off and as the fallback of the shared one when Valkey fails.
         services.AddSingleton<LocalRealtimePresence>();
+        // Spec 2026-11-22 D-1: «has QEP open», read by the task notice worker. Local registry always; shared with the area on.
+        services.AddSingleton<LocalAppMemberPresence>();
         if (!shared)
         {
+            services.AddSingleton<IAppMemberPresence>(provider => provider.GetRequiredService<LocalAppMemberPresence>());
             services.AddSingleton<IMessagingPresence>(provider => provider.GetRequiredService<MessagingPresence>());
             services.AddSingleton<IMessagingPresenceReader, LocalMessagingPresenceReader>();
             services.AddSingleton<IRealtimePresence>(provider => provider.GetRequiredService<LocalRealtimePresence>());
@@ -162,6 +165,8 @@ public static class ValkeyServiceCollectionExtensions
         }
 
         services.AddSingleton<IRealtimePresence, ValkeyRealtimePresence>();
+        services.AddSingleton<IAppMemberPresence, ValkeyAppMemberPresence>();
+        services.AddHostedService<AppPresenceHeartbeatWorker>();
         services.AddSingleton<IMessagingPresence, ValkeyMessagingPresence>();
         services.AddSingleton(provider => new LocalMessagingPresenceReader(provider.GetRequiredService<MessagingPresence>()));
         services.AddSingleton<IMessagingPresenceReader, ValkeyMessagingPresenceReader>();

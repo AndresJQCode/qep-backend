@@ -1,7 +1,7 @@
 using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
-using Modules.Customers.Application;
 using Modules.Automations.Infrastructure.Persistence;
+using Modules.Customers.Application;
 using Modules.Customers.Infrastructure.Persistence;
 using Modules.Messaging.Domain;
 
@@ -24,7 +24,8 @@ namespace Bootstrapper;
 ///
 /// **Lo que lee por nombre.** <c>quotations.quotations.client_id</c>, <c>quotations.orders.client_id</c>,
 /// <c>loans.loans.customer_id</c>, <c>billing.services.customer_id</c>, <c>billing.charges.customer_id</c>,
-/// <c>billing.customer_profiles.customer_id</c>, <c>support.tickets.customer_id</c>; en <c>support</c>, por las conversaciones que se
+/// <c>billing.customer_profiles.customer_id</c>, <c>support.tickets.customer_id</c>,
+/// <c>scheduling.appointments.customer_id</c> (sólo para bloquear: una cita en cualquier estado impide el borrado); en <c>support</c>, por las conversaciones que se
 /// borran (plan E18 de la fase 2): <c>tickets</c> (<c>conversation_id</c>, <c>conversation_channel</c>, <c>follow_thread</c>,
 /// <c>follow_off_at</c>, <c>updated_at</c>, <c>version</c>), <c>ticket_messages.conversation_id</c>,
 /// <c>unclassified_messages.conversation_id</c>, <c>ticket_replies</c> (<c>ticket_id</c>, <c>message_id</c>) y <c>ticket_surveys</c>
@@ -113,6 +114,12 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
             // D4 (spec de soporte 2026-11-14): cualquier ticket, abierto o cerrado, bloquea, como cotizaciones y pedidos.
             [CustomerDeletionBlockReasons.SupportTickets] = [.. await database.SqlQuery<Guid>($"""
                 SELECT DISTINCT customer_id AS "Value" FROM support.tickets WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+                """).ToListAsync(cancellationToken)],
+            // PD-6 (plan de la Agenda, 2026-11-22): cualquier cita, en cualquier estado (la cancelada y la que ya pasó también), bloquea.
+            // Para limpiar duplicados está la fusión, que las mueve.
+            [CustomerDeletionBlockReasons.SchedulingAppointments] = [.. await database.SqlQuery<Guid>($"""
+                SELECT DISTINCT customer_id AS "Value" FROM scheduling.appointments
+                WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
                 """).ToListAsync(cancellationToken)],
         };
 

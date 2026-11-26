@@ -8,8 +8,20 @@ public sealed class AuthorizationDbContext(DbContextOptions<AuthorizationDbConte
 {
     public DbSet<Role> Roles => Set<Role>();
 
+    internal DbSet<RoleSeed> RoleSeeds => Set<RoleSeed>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // Una fila por tenant ya sembrado (spec 2026-11-25). El nombre de la llave importa: la siembra que pierde la
+        // carrera se reconoce por él.
+        var seed = modelBuilder.Entity<RoleSeed>();
+        seed.ToTable("role_seeds", "authorization");
+        seed.HasKey(value => value.TenantId).HasName("PK_role_seeds");
+        seed.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .ValueGeneratedNever();
+        seed.Property(value => value.SeededAt).HasColumnName("seeded_at");
+
         var role = modelBuilder.Entity<Role>();
         role.ToTable("roles", "authorization");
         role.HasKey(value => value.Id);

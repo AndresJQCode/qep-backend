@@ -24,7 +24,7 @@ public sealed class AssignSiigoCompanyValidator : AbstractValidator<AssignSiigoC
 /// (412 <c>concurrency.conflict</c>); la empresa del tenant y activa (422 <c>siigo.settings.company_invalid</c>). Si otra conexión del
 /// tenant ya factura con esa empresa, el guardado choca con <c>IX_settings_tenant_company</c> y <c>SiigoUnitOfWork</c> lo traduce, por
 /// nombre de índice, a 409 <c>siigo.settings.company_taken</c>: la comprobación previa sería sólo una respuesta amable y la carrera
-/// la cerraría el índice igual. Audita <c>siigo.settings.updated</c> con el nombre del paso, en la misma transacción.
+/// la cerraría el índice igual (salvo que quien la tiene ya no tenga conexión: esa fila huérfana se borra antes). Audita <c>siigo.settings.updated</c> con el nombre del paso, en la misma transacción.
 /// </summary>
 public sealed class AssignSiigoCompanyHandler(
     IExecutionContext executionContext,
@@ -33,6 +33,7 @@ public sealed class AssignSiigoCompanyHandler(
     ISiigoSettingsRepository settingsRepository,
     ISiigoCompanyDirectory companies,
     ISiigoTaxRateDirectory taxRates,
+    ISiigoMemberDirectory members,
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
@@ -54,9 +55,20 @@ public sealed class AssignSiigoCompanyHandler(
                 SiigoErrorCodes.SettingsCompanyInvalid, "The company does not exist in this tenant or is not active.");
         }
 
+        // Deleting a connection does not clean its settings (soft reference, no FK), so a row can outlive its connection and keep the
+        // company locked through IX_settings_tenant_company. Whoever holds it and no longer has a connection is released here; a live
+        // holder is left alone and the index answers 409 company_taken.
+        var holder = await settingsRepository.FindByCompanyAsync(command.TenantId, company.Id, [], cancellationToken);
+        if (holder is not null
+            && holder.ConnectionId != settings.ConnectionId
+            && await connections.FindAsync(command.TenantId, holder.ConnectionId, cancellationToken) is null)
+        {
+            settingsRepository.Remove(holder);
+        }
+
         settings.AssignCompany(company.Id);
         SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoSettingsSteps.Company, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, cancellationToken);
+        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, members, cancellationToken);
     }
 }

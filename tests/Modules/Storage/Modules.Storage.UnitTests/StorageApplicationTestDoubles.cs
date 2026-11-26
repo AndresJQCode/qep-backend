@@ -90,6 +90,8 @@ internal sealed class SigningObjectStorage : IObjectStorage
 /// <summary>El bucket público: sólo arma URLs.</summary>
 internal sealed class FixedPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets-qep.example.co";
 
     public bool IsConfigured => true;
@@ -143,6 +145,16 @@ internal sealed class AllowAllExecutionContext(Guid tenantId) : IExecutionContex
     public bool HasPermission(string permission) => true;
 }
 
+/// <summary>Un miembro con todos los permisos menos uno: el permiso extra del dueño del archivo.</summary>
+internal sealed class ExecutionContextLacking(Guid tenantId, string missingPermission) : IExecutionContext
+{
+    public Guid SubjectId { get; } = Guid.CreateVersion7();
+
+    public TenantId TenantId { get; } = new(tenantId);
+
+    public bool HasPermission(string permission) => !string.Equals(permission, missingPermission, StringComparison.Ordinal);
+}
+
 internal sealed class FixedClock(DateTimeOffset now) : IClock
 {
     public DateTimeOffset UtcNow { get; } = now;
@@ -152,6 +164,8 @@ internal sealed class FixedClock(DateTimeOffset now) : IClock
 /// qué tocó un handler (spec 2026-09-16, D15).</summary>
 internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public const string BaseUrl = "https://assets-qep.example.co";
 
     public Dictionary<string, string> Copies { get; } = new(StringComparer.Ordinal);
@@ -187,6 +201,8 @@ internal sealed class RecordingPublicObjectStorage : IPublicObjectStorage
 /// (fix round 1, Task 2: el chequeo se restauró al inicio del handler).</summary>
 internal sealed class UnconfiguredPublicObjectStorage : IPublicObjectStorage
 {
+    public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public bool IsConfigured => false;
 
     public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken) =>

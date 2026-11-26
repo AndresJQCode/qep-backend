@@ -807,7 +807,7 @@ public sealed class ShopifyAdaptersTests
     {
         var antioquia = Department.Create(DepartmentId.New(), "05", "Antioquia");
         var medellin = City.Create(CityId.New(), "05001", "Medellín", antioquia.Id);
-        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia), new NamedCities(medellin));
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia), new NamedCities(medellin), new CountingRegionRepository());
 
         Assert.Equal(new ShopifyCityRef(antioquia.Id.Value, medellin.Id.Value), (await lookup.LookupCityAsync("Antioquia", "Medellín", Ct)).City);
         Assert.Null((await lookup.LookupCityAsync("Antioquia", "Bello", Ct)).City);
@@ -824,7 +824,7 @@ public sealed class ShopifyAdaptersTests
         var cali = City.Create(CityId.New(), "76001", "Cali", valle.Id);
         var synonymId = CitySynonymId.New();
         var cities = new NamedCities(cali) { Synonyms = { [(valle.Id, "CALLI")] = (cali, synonymId) } };
-        var lookup = new ShopifyGeographyLookup(new NamedDepartments(valle), cities);
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(valle), cities, new CountingRegionRepository());
 
         Assert.Equal(
             new ShopifyCityLookup(valle.Id.Value, new ShopifyCityRef(valle.Id.Value, cali.Id.Value, synonymId.Value)),
@@ -846,7 +846,8 @@ public sealed class ShopifyAdaptersTests
         var cundinamarca = Department.Create(DepartmentId.New(), "25", "CUNDINAMARCA");
         var medellin = City.Create(CityId.New(), "05001", "MEDELLÍN", antioquia.Id);
         var soacha = City.Create(CityId.New(), "25754", "SOACHA", cundinamarca.Id);
-        var lookup = new ShopifyGeographyLookup(new NamedDepartments(antioquia, cundinamarca), new NamedCities(medellin, soacha));
+        var lookup = new ShopifyGeographyLookup(
+            new NamedDepartments(antioquia, cundinamarca), new NamedCities(medellin, soacha), new CountingRegionRepository());
 
         Assert.Equal(ShopifyCityCheck.Matches, await lookup.CheckCityAsync(antioquia.Id.Value, medellin.Id.Value, Ct));
         Assert.Equal(ShopifyCityCheck.CityNotInDepartment, await lookup.CheckCityAsync(antioquia.Id.Value, soacha.Id.Value, Ct));
@@ -952,11 +953,12 @@ public sealed class ShopifyAdaptersTests
                 expected,
                 await CityCorrectionWriter(orders: attach).AttachShippingAsync(
                     TenantId, orderId, new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId),
-                    "Dirección de envío de Shopify: ", Ct));
+                    "Dirección de envío de Shopify: ", [cityId], Ct));
             var correct = new FakeExternalOrderWriter { OnCorrect = _ => outcome };
             Assert.Equal(
                 expected,
-                await CityCorrectionWriter(orders: correct).CorrectShippingCityAsync(TenantId, orderId, fingerprint, departmentId, newCityId, Ct));
+                await CityCorrectionWriter(orders: correct).CorrectShippingCityAsync(
+                    TenantId, orderId, fingerprint, departmentId, newCityId, [newCityId], Ct));
         }
 
         // Lo que se le manda a Quotations, tal cual.
@@ -964,10 +966,19 @@ public sealed class ShopifyAdaptersTests
         var adapter = CityCorrectionWriter(orders: writer);
         await adapter.AttachShippingAsync(
             TenantId, orderId, new ShopifyPartyDraft("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", departmentId, cityId),
-            "Dirección de envío de Shopify: ", Ct);
-        var corrected = await adapter.CorrectShippingCityAsync(TenantId, orderId, fingerprint, departmentId, newCityId, Ct);
-        Assert.Equal((TenantId, orderId, persisted, "Dirección de envío de Shopify: "), Assert.Single(writer.Attached));
-        Assert.Equal((TenantId, orderId, persisted, departmentId, newCityId), Assert.Single(writer.Corrected));
+            "Dirección de envío de Shopify: ", [cityId], Ct);
+        var corrected = await adapter.CorrectShippingCityAsync(
+            TenantId, orderId, fingerprint, departmentId, newCityId, [cityId, newCityId], Ct);
+        var attached = Assert.Single(writer.Attached);
+        Assert.Equal(
+            (TenantId, orderId, persisted, "Dirección de envío de Shopify: "),
+            (attached.TenantId, attached.OrderId, attached.Shipping, attached.NotesLinePrefix));
+        Assert.Equal([cityId], attached.Requested);
+        var sentCorrection = Assert.Single(writer.Corrected);
+        Assert.Equal(
+            (TenantId, orderId, persisted, departmentId, newCityId),
+            (sentCorrection.TenantId, sentCorrection.OrderId, sentCorrection.Expected, sentCorrection.DepartmentId, sentCorrection.CityId));
+        Assert.Equal([cityId, newCityId], sentCorrection.Requested);
         Assert.Equal(fingerprint with { CityId = newCityId }, corrected.Party);
     }
 
@@ -1100,6 +1111,23 @@ public sealed class ShopifyAdaptersTests
             (sent.Source, sent.NotesLinePrefix, sent.ExpectedVersion, sent.ReplaceBuyerNotes, sent.BuyerNotes));
     }
 
+    // Una edición de dirección hecha en Shopify llega con su zip: sin él, el pedido perdería el código postal.
+    [Fact]
+    public async Task AShopifyAddressEditKeepsShopifysZip()
+    {
+        var (orderId, departmentId, cityId) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var orders = new FakeExternalOrderWriter { OnApplyEdit = _ => EditState(orderId) };
+        var party = new ShopifyPartyDraft(
+            "Laura Gómez", "3001112233", "laura@verde.co", "Cra 5", departmentId, cityId, "050021");
+
+        await OrderWriter(orders).ApplyEditAsync(
+            new ShopifyOrderEditDraft(TenantId, orderId, 3, null, null, party, false, null, Now), Ct);
+
+        Assert.Equal(
+            new ExternalShippingParty("Laura Gómez", "3001112233", "laura@verde.co", "Cra 5", departmentId, cityId, "050021"),
+            Assert.Single(orders.Edits).ShippingParty);
+    }
+
     [Fact]
     public async Task ReadStateMapsThePaymentStatusByName()
     {
@@ -1146,6 +1174,99 @@ public sealed class ShopifyAdaptersTests
         Assert.Equal(
             ShopifyOrderWriter.Fingerprint(source.ShippingParty),
             state.ShippingParty);
+    }
+
+    // Spec 2026-11-24 §5: el estado del pedido para Shopify lleva el código postal de la parte, que es lo que el envío manda.
+    [Fact]
+    public async Task ReadStateCarriesTheShippingPostalCode()
+    {
+        var orderId = Guid.CreateVersion7();
+        var orders = new FakeExternalOrderWriter();
+        var source = EditState(orderId);
+        orders.EditStates[(TenantId, orderId)] = source with
+        {
+            ShippingParty = source.ShippingParty! with { PostalCode = "050021" },
+        };
+
+        var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
+
+        Assert.Equal("050021", state!.ShippingParty!.PostalCode);
+    }
+
+    // La entrega editable puede dejar una parte de fuera de Colombia: leer el pedido para la sincronización y el envío no exige
+    // departamento ni ciudad.
+    [Fact]
+    public async Task ReadingTheStateOfAnOrderWithASpanishPartyDoesNotThrow()
+    {
+        var (orderId, regionId) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var orders = new FakeExternalOrderWriter();
+        orders.EditStates[(TenantId, orderId)] = EditState(orderId, shippingCountry: "ES") with
+        {
+            ShippingParty = new ExternalShippingParty(
+                "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28001", "ES", "Madrid", regionId),
+        };
+
+        var state = await OrderWriter(orders).ReadStateAsync(TenantId, orderId, Ct);
+
+        Assert.Equal(
+            new ShopifyShippingFingerprint(
+                "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28001", "ES", "Madrid", regionId),
+            state!.ShippingParty);
+    }
+
+    [Fact]
+    public async Task GeographyLookupDescribesARegionWithItsCountryAndCode()
+    {
+        var madrid = Region.Create(RegionId.New(), "ES", "28", "Madrid");
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(), new NamedCities(), new CountingRegionRepository(madrid));
+
+        Assert.Equal(("ES", "28"), await lookup.DescribeRegionAsync(madrid.Id.Value, Ct));
+        Assert.Null(await lookup.DescribeRegionAsync(Guid.CreateVersion7(), Ct));
+    }
+
+    [Fact]
+    public async Task GeographyLookupFindsARegionByCountryAndCode()
+    {
+        var madrid = Region.Create(RegionId.New(), "ES", "28", "Madrid");
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(), new NamedCities(), new CountingRegionRepository(madrid));
+
+        Assert.Equal(madrid.Id.Value, await lookup.FindRegionAsync("ES", "28", Ct));
+        Assert.Null(await lookup.FindRegionAsync("ES", "99", Ct));
+        Assert.Null(await lookup.FindRegionAsync("FR", "28", Ct));
+    }
+
+    private static ShopifyPartyDraft SpanishDraftParty(Guid regionId) => new(
+        "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28013", "ES", "Madrid", regionId);
+
+    [Fact]
+    public async Task OrderWriterCreateKeepsAForeignParty()
+    {
+        var writer = new FakeExternalOrderWriter();
+        var regionId = Guid.CreateVersion7();
+
+        await OrderWriter(writer).CreateAsync(Draft() with { ShippingParty = SpanishDraftParty(regionId) }, Ct);
+
+        Assert.Equal(
+            new QuotationPartyRequest(
+                "Lucía Fernández", null, "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null,
+                Country: "ES", CityName: "Madrid", RegionId: regionId, PostalCode: "28013"),
+            Assert.Single(writer.Created).Parties!.Shipping);
+    }
+
+    [Fact]
+    public async Task AShopifyAddressEditKeepsAForeignParty()
+    {
+        var (orderId, regionId) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        var orders = new FakeExternalOrderWriter { OnApplyEdit = _ => EditState(orderId) };
+
+        await OrderWriter(orders).ApplyEditAsync(
+            new ShopifyOrderEditDraft(TenantId, orderId, 3, null, null, SpanishDraftParty(regionId), false, null, Now), Ct);
+
+        Assert.Equal(
+            new ExternalShippingParty(
+                "Lucía Fernández", "+34600111222", "entregas@madrid.es", "Calle Mayor 1", null, null, "28013", "ES", "Madrid",
+                regionId),
+            Assert.Single(orders.Edits).ShippingParty);
     }
 
     // ---- Armado ----

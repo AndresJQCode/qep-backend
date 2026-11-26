@@ -115,41 +115,41 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     private static Dictionary<string, string> RowValues(
         CustomerDto customer, string companyIdentificationNumber, string tags, TenantCalendar calendar, string dateTimePattern) =>
         new(StringComparer.Ordinal)
-    {
-        [CustomerImportColumns.Cuc] = customer.Cuc ?? string.Empty,
-        [CustomerImportColumns.Name] = customer.Name,
-        [CustomerImportColumns.BusinessName] = customer.BusinessName ?? string.Empty,
-        [CustomerImportColumns.IdentificationType] = customer.IdentificationType ?? string.Empty,
-        [CustomerImportColumns.IdentificationNumber] = customer.IdentificationNumber ?? string.Empty,
-        [CustomerImportColumns.Phone] = customer.Phone ?? string.Empty,
-        [CustomerImportColumns.Email] = customer.Email ?? string.Empty,
-        [CustomerImportColumns.Address] = customer.Address ?? string.Empty,
-        // Un cliente de afuera no tiene departamento DIVIPOLA —la columna queda vacia— y su ciudad
-        // es la escrita a mano. Se exporta igual que uno colombiano a proposito: el archivo es
-        // para leerlo, y una fila con la ciudad en blanco esconderia al cliente. Que el importador
-        // no pueda volver a subir esa fila es otro asunto, y esta dicho en ImportCustomers: el
-        // alta de un cliente de afuera es por formulario.
-        [CustomerImportColumns.Department] = customer.Department?.Name ?? string.Empty,
-        [CustomerImportColumns.City] = customer.City?.Name ?? customer.CityName ?? string.Empty,
-        [CustomerImportColumns.Classification] = customer.Classification?.Name ?? string.Empty,
-        // El nombre de la tasa de cada tipo, que es lo que el importador lee de vuelta; vacia si no tiene (spec impuestos por
-        // tipo §7.4). Un cliente no tiene dos tasas del mismo pais y tipo, asi que la primera es la unica.
-        [CustomerImportColumns.Retefuente] = RateName(customer, CustomerImportColumns.Retefuente),
-        // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
-        // que abre el archivo.
-        [CustomerImportColumns.VatSurplus] = customer.VatSurplus ? "Si" : "No",
-        [ActiveColumn] = customer.IsActive ? "Si" : "No",
-        // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
-        // regional de quien abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del
-        // tenant, al minuto y sin offset (spec 2026-09-17, punto 8a), y con el formato de fecha del
-        // tenant (spec 2026-10-23, D-R7).
-        [CreatedAtColumn] = calendar.ToLocal(customer.CreatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
-        [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
-        [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
-        [PersonTypeColumn] = customer.PersonType ?? string.Empty,
-        [CustomerImportColumns.Company] = companyIdentificationNumber,
-        [CustomerImportColumns.Tags] = tags,
-    };
+        {
+            [CustomerImportColumns.Cuc] = customer.Cuc ?? string.Empty,
+            [CustomerImportColumns.Name] = customer.Name,
+            [CustomerImportColumns.BusinessName] = customer.BusinessName ?? string.Empty,
+            [CustomerImportColumns.IdentificationType] = customer.IdentificationType ?? string.Empty,
+            [CustomerImportColumns.IdentificationNumber] = customer.IdentificationNumber ?? string.Empty,
+            [CustomerImportColumns.Phone] = customer.Phone ?? string.Empty,
+            [CustomerImportColumns.Email] = customer.Email ?? string.Empty,
+            [CustomerImportColumns.Address] = customer.Address ?? string.Empty,
+            // Un cliente de afuera no tiene departamento DIVIPOLA —la columna queda vacia— y su ciudad
+            // es la escrita a mano. Se exporta igual que uno colombiano a proposito: el archivo es
+            // para leerlo, y una fila con la ciudad en blanco esconderia al cliente. Que el importador
+            // no pueda volver a subir esa fila es otro asunto, y esta dicho en ImportCustomers: el
+            // alta de un cliente de afuera es por formulario.
+            [CustomerImportColumns.Department] = customer.Department?.Name ?? string.Empty,
+            [CustomerImportColumns.City] = customer.City?.Name ?? customer.CityName ?? string.Empty,
+            [CustomerImportColumns.Classification] = customer.Classification?.Name ?? string.Empty,
+            // El nombre de la tasa de cada tipo, que es lo que el importador lee de vuelta; vacia si no tiene (spec impuestos por
+            // tipo §7.4). Un cliente no tiene dos tasas del mismo pais y tipo, asi que la primera es la unica.
+            [CustomerImportColumns.Retefuente] = RateName(customer, CustomerImportColumns.Retefuente),
+            // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
+            // que abre el archivo.
+            [CustomerImportColumns.VatSurplus] = customer.VatSurplus ? "Si" : "No",
+            [ActiveColumn] = customer.IsActive ? "Si" : "No",
+            // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
+            // regional de quien abre el archivo, y ahí 03/04 deja de ser una fecha sola. En la hora del
+            // tenant, al minuto y sin offset (spec 2026-09-17, punto 8a), y con el formato de fecha del
+            // tenant (spec 2026-10-23, D-R7).
+            [CreatedAtColumn] = calendar.ToLocal(customer.CreatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
+            [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
+            [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
+            [PersonTypeColumn] = customer.PersonType ?? string.Empty,
+            [CustomerImportColumns.Company] = companyIdentificationNumber,
+            [CustomerImportColumns.Tags] = tags,
+        };
 
     private static string RateName(CustomerDto customer, string type) =>
         customer.WithholdingTaxRates.FirstOrDefault(rate => rate.Type == type)?.Name ?? string.Empty;

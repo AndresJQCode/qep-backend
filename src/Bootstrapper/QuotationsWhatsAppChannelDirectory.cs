@@ -10,10 +10,12 @@ namespace Bootstrapper;
 /// <see cref="MessagingConnectionDirectory"/> para Messaging. Integrations ya filtra estado, visibilidad y habilitación
 /// del proveedor; acá se descarta además la conexión que no tiene con qué mandar el documento pedido (spec 2026-11-09 D6):
 /// para la cotización, sin token, número o plantilla de cotización (como una de Zenvia creada antes de que la plantilla fuera
-/// campo de la conexión); para el pedido, Meta sin plantilla <c>Order</c> aprobada o Zenvia sin <c>orderTemplateId</c>.
+/// campo de la conexión); para el pedido, Meta sin plantilla <c>Order</c> aprobada o Zenvia sin <c>orderTemplateId</c>; para la factura,
+/// Meta sin plantilla <c>Invoice</c> aprobada o Zenvia sin <c>invoiceTemplateId</c>.
 /// </summary>
 internal sealed class QuotationsWhatsAppChannelDirectory(
-    IIntegrationConnections connections, IQuotationTemplateReadiness templateReadiness, IOrderTemplateReadiness orderTemplateReadiness)
+    IIntegrationConnections connections, IQuotationTemplateReadiness templateReadiness, IOrderTemplateReadiness orderTemplateReadiness,
+    IInvoiceTemplateReadiness invoiceTemplateReadiness)
     : IWhatsAppChannelDirectory
 {
     public async Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, WhatsAppDocument document, CancellationToken cancellationToken)
@@ -50,7 +52,14 @@ internal sealed class QuotationsWhatsAppChannelDirectory(
                 continue;
             }
 
-            channels.Add(new ZenviaWhatsAppChannel(resolved.Id, resolved.Name, token, fromNumber, templateId, orderTemplateId));
+            // Igual para la factura: sin invoiceTemplateId la Zenvia no está disponible.
+            var invoiceTemplateId = Value(resolved.Fields, ZenviaFieldKeys.InvoiceTemplateId);
+            if (document == WhatsAppDocument.Invoice && invoiceTemplateId is null)
+            {
+                continue;
+            }
+
+            channels.Add(new ZenviaWhatsAppChannel(resolved.Id, resolved.Name, token, fromNumber, templateId, orderTemplateId, invoiceTemplateId));
         }
 
         return channels;
@@ -61,6 +70,7 @@ internal sealed class QuotationsWhatsAppChannelDirectory(
         {
             WhatsAppDocument.Quotation => await templateReadiness.FindApprovedAsync(tenantId, connectionId, cancellationToken) is not null,
             WhatsAppDocument.Order => await orderTemplateReadiness.FindApprovedAsync(tenantId, connectionId, cancellationToken) is not null,
+            WhatsAppDocument.Invoice => await invoiceTemplateReadiness.FindApprovedAsync(tenantId, connectionId, cancellationToken) is not null,
             _ => throw new ArgumentOutOfRangeException(nameof(document), document, "Unknown WhatsApp document."),
         };
 

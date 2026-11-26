@@ -13,8 +13,8 @@ public sealed record AutoLinkSiigoVariantsByCodeCommand(Guid TenantId, Guid Conn
 /// <see cref="SiigoCodeMatch"/> sólo variantes <b>sin vínculo</b> (uno manual o automático existente nunca se toca) y productos de Siigo
 /// <b>activos</b>. Dos productos activos con el mismo código normalizado son ambiguos: no se vincula ninguna variante con ese código
 /// (<c>skippedAmbiguous</c> cuenta variantes). Las llamadas a Siigo van primero y la configuración se lee después, para que la ventana
-/// de la versión sea la del guardado y no la de un recorrido de varias páginas. Escribe todo en una sola transacción y <b>sube la
-/// versión una vez</b>. Una conexión que no se puede usar es 409 <c>siigo.connection_unavailable</c>.
+/// de la versión sea la del guardado y no la de un recorrido de varias páginas. Escribe todo en una sola transacción, deja la marca
+/// <see cref="SiigoSettings.ProductsAutoLinkedAt"/> aunque no vincule nada (spec 2026-11-20 §9) y sube la versión una vez, sólo si vinculó. Una conexión que no se puede usar es 409 <c>siigo.connection_unavailable</c>.
 /// </summary>
 public sealed class AutoLinkSiigoVariantsByCodeHandler(
     IExecutionContext executionContext,
@@ -38,7 +38,7 @@ public sealed class AutoLinkSiigoVariantsByCodeHandler(
         await SiigoSettingsSupport.ConnectionAsync(connections, command.TenantId, command.ConnectionId, cancellationToken);
         var memberId = await memberships.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
             ?? throw SiigoAuthorization.Denied();
-        var resolution = await connections.ResolveAsync(command.TenantId, command.ConnectionId, cancellationToken);
+        var resolution = await connections.ResolveForSetupAsync(command.TenantId, command.ConnectionId, cancellationToken);
         if (resolution.Credentials is not { } credentials)
         {
             throw new ResourceConflictException(
@@ -72,12 +72,15 @@ public sealed class AutoLinkSiigoVariantsByCodeHandler(
             toLink.Add(new SiigoVariantLinkInput(variant.VariantId, candidates[0].Code, candidates[0].Id, candidates[0].Name));
         }
 
-        settings.LinkVariants(toLink, SiigoLinkOrigin.AutoCode, memberId, clock.UtcNow);
         if (toLink.Count > 0)
         {
+            settings.LinkVariants(toLink, SiigoLinkOrigin.AutoCode, memberId, clock.UtcNow);
             SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoProductLinksSupport.StepName, clock.UtcNow);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
         }
+
+        // Spec 2026-11-20 §9: la marca se deja siempre, vincule o no, para que la pantalla no vuelva a intentarlo sola al abrir el paso.
+        settings.MarkProductsAutoLinked(clock.UtcNow);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new SiigoAutoLinkResultDto(toLink.Count, skippedAmbiguous);
     }

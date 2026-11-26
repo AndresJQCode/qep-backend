@@ -30,8 +30,9 @@ public sealed record OrdersExportFilters(
     Guid? AdvisorId,
     string? Status,
     string? PaymentStatus,
-    DateOnly ConvertedFrom,
-    DateOnly ConvertedTo,
+    /// <summary>Nulas cuando se exporta por número de pedido o CUC sin rango: el archivo no corta por fecha.</summary>
+    DateOnly? ConvertedFrom,
+    DateOnly? ConvertedTo,
     string? ClientCuc,
     string? OrderNumber,
     string? Source = null,
@@ -45,11 +46,15 @@ public sealed class ExportOrdersValidator : AbstractValidator<ExportOrdersComman
 {
     public ExportOrdersValidator()
     {
+        // El rango es obligatorio sólo cuando nada más acota el archivo. Con número de pedido o CUC del cliente la
+        // pantalla busca algo puntual y no sabe en qué período cayó: pedirle fechas la obliga a adivinar.
         RuleFor(command => command.ConvertedFrom)
             .NotNull()
+            .When(command => !NarrowsWithoutDates(command))
             .WithMessage("convertedFrom is required.");
         RuleFor(command => command.ConvertedTo)
             .NotNull()
+            .When(command => !NarrowsWithoutDates(command))
             .WithMessage("convertedTo is required.");
         RuleFor(command => command.ConvertedTo)
             .GreaterThanOrEqualTo(command => command.ConvertedFrom!.Value)
@@ -60,6 +65,9 @@ public sealed class ExportOrdersValidator : AbstractValidator<ExportOrdersComman
             .When(command => command.ConvertedFrom is not null && command.ConvertedTo is not null)
             .WithMessage("The range from convertedFrom to convertedTo cannot exceed one year.");
     }
+
+    private static bool NarrowsWithoutDates(ExportOrdersCommand command) =>
+        !string.IsNullOrWhiteSpace(command.OrderNumber) || !string.IsNullOrWhiteSpace(command.ClientCuc);
 }
 
 public sealed class ExportOrdersHandler(
@@ -137,8 +145,8 @@ public sealed class ExportOrdersHandler(
                 command.AdvisorId,
                 command.Status,
                 command.PaymentStatus,
-                command.ConvertedFrom!.Value,
-                command.ConvertedTo!.Value,
+                command.ConvertedFrom,
+                command.ConvertedTo,
                 command.ClientCuc,
                 command.OrderNumber,
                 command.Source,

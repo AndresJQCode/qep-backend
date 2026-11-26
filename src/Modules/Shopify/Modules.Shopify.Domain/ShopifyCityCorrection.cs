@@ -4,9 +4,17 @@ namespace Modules.Shopify.Domain;
 /// La parte de envío de un pedido de QEP tal como la guardó Quotations (spec 2026-10-26 D-C4): es la huella con que se decide si
 /// alguien la editó después de que un sinónimo la escribiera. Vive en Domain (y no en los puertos) porque la guarda
 /// <see cref="ShopifyCityCorrection"/>, y Domain no ve Application (ShopifyLayerTests).
+/// <para><see cref="PostalCode"/> (spec 2026-11-24) es parte de la dirección: lo guardan el estado del pedido, la huella de
+/// <c>shopify.city_corrections</c> y la proyección, y la comparación de ediciones (<c>ShopifyOrderProjection.SameParty</c>) lo
+/// mira.</para>
+/// <para>En Colombia van <see cref="DepartmentId"/> y <see cref="CityId"/> y <see cref="Country"/> es <c>null</c>. Fuera (la
+/// entrega editable, spec 2026-11-24 §11) van el país, la ciudad escrita y, si el país tiene regiones,
+/// <see cref="RegionId"/>, sin ids de DIVIPOLA. La huella de un sinónimo es siempre colombiana, así que su tabla no guarda esos
+/// tres. Una proyección guardada antes de que existieran los lee en <c>null</c>.</para>
 /// </summary>
 public sealed record ShopifyShippingFingerprint(
-    string? Name, string? Phone, string? Email, string? Address, Guid DepartmentId, Guid CityId);
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null,
+    string? Country = null, string? CityName = null, Guid? RegionId = null);
 
 /// <summary>De dónde salió la huella (O8): la corrección en segundo plano de un sinónimo confirmado, o un pedido o cliente que casó
 /// por el sinónimo al importarse.</summary>
@@ -37,6 +45,8 @@ public sealed class ShopifyCityCorrection
     public const int PartyPhoneMaxLength = 32;
     public const int PartyEmailMaxLength = 254;
     public const int PartyAddressMaxLength = 255;
+    public const int PartyPostalCodeMaxLength = 20;
+    public const int PartyCityNameMaxLength = 120;
 
     private ShopifyCityCorrection()
     {
@@ -76,6 +86,9 @@ public sealed class ShopifyCityCorrection
 
     public string? PartyAddress { get; private set; }
 
+    /// <summary><c>null</c> en una huella sin código postal, incluidas las de antes de que se guardara.</summary>
+    public string? PartyPostalCode { get; private set; }
+
     public long? CustomerVersion { get; private set; }
 
     public DateTimeOffset AppliedAt { get; private set; }
@@ -85,7 +98,7 @@ public sealed class ShopifyCityCorrection
     /// <summary>La huella de la parte de envío; <c>null</c> en la de un cliente.</summary>
     public ShopifyShippingFingerprint? Party =>
         Target == ShopifyCityCorrectionTarget.Order
-            ? new ShopifyShippingFingerprint(PartyName, PartyPhone, PartyEmail, PartyAddress, DepartmentId, CityId)
+            ? new ShopifyShippingFingerprint(PartyName, PartyPhone, PartyEmail, PartyAddress, DepartmentId, CityId, PartyPostalCode)
             : null;
 
     public static ShopifyCityCorrection ForOrder(
@@ -180,14 +193,20 @@ public sealed class ShopifyCityCorrection
     private void WriteParty(ShopifyShippingFingerprint party)
     {
         ArgumentNullException.ThrowIfNull(party);
-        ArgumentOutOfRangeException.ThrowIfEqual(party.DepartmentId, Guid.Empty);
-        ArgumentOutOfRangeException.ThrowIfEqual(party.CityId, Guid.Empty);
+        // Un sinónimo es un texto de ciudad de Colombia: su huella siempre trae los dos ids.
+        var departmentId = party.DepartmentId
+            ?? throw new ArgumentException("A synonym correction is for a Colombian party, with its department.", nameof(party));
+        var cityId = party.CityId
+            ?? throw new ArgumentException("A synonym correction is for a Colombian party, with its city.", nameof(party));
+        ArgumentOutOfRangeException.ThrowIfEqual(departmentId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfEqual(cityId, Guid.Empty);
         PartyName = party.Name;
         PartyPhone = party.Phone;
         PartyEmail = party.Email;
         PartyAddress = party.Address;
-        DepartmentId = party.DepartmentId;
-        CityId = party.CityId;
+        PartyPostalCode = party.PostalCode;
+        DepartmentId = departmentId;
+        CityId = cityId;
     }
 
     private void EnsureTarget(ShopifyCityCorrectionTarget expected)

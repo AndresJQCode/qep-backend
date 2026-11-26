@@ -25,7 +25,9 @@ public sealed record CreateCustomerCommand(
     // Spec ReteICA por empresa §9.3: null no registra ningún municipio.
     IReadOnlyList<WithholdingAgentCityRequest>? WithholdingAgentCities = null,
     // Spec 2026-11-15: null crea el cliente sin empresa, como siempre.
-    Guid? CompanyId = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    Guid? CompanyId = null,
+    // Spec 2026-11-23: la region (provincia) del domicilio de un pais con catalogo distinto de Colombia; null es «sin region».
+    Guid? RegionId = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
@@ -68,6 +70,8 @@ public sealed class CreateCustomerHandler(
             geographyLookup, command.WithholdingAgentCities ?? [], cancellationToken);
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
+        _ = await CustomerRegionRules.ResolveRegionAsync(
+            geographyLookup, command.Country, command.RegionId, CustomerRegionRules.CustomerRegionInvalid, cancellationToken);
         await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command, current: null, cancellationToken);
 
@@ -148,7 +152,8 @@ public sealed class CreateCustomerHandler(
                 Address = command.Address,
                 Country = command.Country,
                 CityId = command.CityId,
-                CityName = command.CityName
+                CityName = command.CityName,
+                RegionId = command.RegionId
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.VatSurplus),

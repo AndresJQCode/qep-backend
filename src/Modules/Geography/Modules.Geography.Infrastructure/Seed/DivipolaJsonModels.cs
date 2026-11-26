@@ -5,6 +5,9 @@ namespace Modules.Geography.Infrastructure.Seed;
 
 internal sealed record DivipolaJsonDepartment(string? Code, string? Name);
 
+// El catálogo de países (Seed/Data/countries.json): "code" es ISO 3166-1 alfa-2 y "name" el nombre en español.
+internal sealed record CountryJsonEntry(string? Code, string? Name);
+
 internal sealed record DivipolaJsonCity(string? Code, string? Name, string? DepartmentCode);
 
 // El snapshot de Coordinadora (Seed/Data/coordinadora-cities.json): "code" es el código DIVIPOLA

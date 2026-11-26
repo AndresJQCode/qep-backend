@@ -153,4 +153,77 @@ public sealed class SupportTicketTypeTests
         Assert.Equal(2, type.Version);
         Assert.Equal(Now.AddHours(2), type.UpdatedAt);
     }
+
+    [Fact]
+    public void TheInternalTypeIsATaskWithoutTermNorPublication()
+    {
+        var type = SupportTicketTypeDefaults.Internal(TenantId, 9, Now);
+
+        Assert.Equal("Tarea interna", type.Name);
+        Assert.Equal(SupportTicketTypeDefaults.InternalTaskName, type.Name);
+        Assert.Null(type.TermBusinessDays);
+        Assert.False(type.TermIsLegal);
+        Assert.False(type.RequiresFormalResponse);
+        Assert.False(type.IsPublished);
+        Assert.True(type.IsActive);
+        Assert.True(type.IsInternal);
+        Assert.Equal(9, type.Position);
+        Assert.Equal(1, type.Version);
+    }
+
+    [Fact]
+    public void TheDefaultsStayTheEightExternalOnes()
+    {
+        var types = SupportTicketTypeDefaults.For(TenantId, Now);
+
+        Assert.Equal(8, types.Count);
+        Assert.All(types, type => Assert.False(type.IsInternal));
+    }
+
+    [Theory]
+    [InlineData("rename")]
+    [InlineData("publish")]
+    [InlineData("deactivate")]
+    [InlineData("term")]
+    [InlineData("formal")]
+    [InlineData("nextStep")]
+    public void UpdatingTheInternalTypeIsRejected(string change)
+    {
+        var type = SupportTicketTypeDefaults.Internal(TenantId, 9, Now);
+
+        var ex = Assert.Throws<SupportDomainException>(() => type.Update(
+            change == "rename" ? "Otra" : type.Name,
+            change == "term" ? 5 : null,
+            termIsLegal: false,
+            requiresFormalResponse: change == "formal",
+            isPublished: change == "publish",
+            isActive: change != "deactivate",
+            formalNextStep: change == "nextStep" ? "x" : null,
+            Now.AddHours(1)));
+
+        Assert.Equal(SupportErrorCodes.InternalTypeLocked, ex.Code);
+        Assert.Equal(1, type.Version);
+    }
+
+    [Fact]
+    public void UpdatingTheInternalTypeWithItsOwnValuesDoesNothing()
+    {
+        var type = SupportTicketTypeDefaults.Internal(TenantId, 9, Now);
+
+        type.Update(
+            type.Name, null, termIsLegal: false, requiresFormalResponse: false, isPublished: false, isActive: true,
+            formalNextStep: null, Now.AddHours(1));
+
+        Assert.Equal(1, type.Version);
+    }
+
+    [Fact]
+    public void TheInternalTypeCanMove()
+    {
+        var type = SupportTicketTypeDefaults.Internal(TenantId, 9, Now);
+
+        type.MoveTo(3, Now.AddHours(1));
+
+        Assert.Equal(3, type.Position);
+    }
 }

@@ -8,10 +8,13 @@ internal sealed class SupportTicketTypeRepository(SupportDbContext dbContext) : 
 {
     public async Task<IReadOnlyList<SupportTicketType>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
         await dbContext.TicketTypes
-            .Where(type => type.TenantId == tenantId)
+            .Where(type => type.TenantId == tenantId && !type.IsInternal)
             .OrderBy(type => type.Position)
             .ThenBy(type => type.Id)
             .ToListAsync(cancellationToken);
+
+    public Task<SupportTicketType?> FindInternalAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        dbContext.TicketTypes.FirstOrDefaultAsync(type => type.TenantId == tenantId && type.IsInternal, cancellationToken);
 
     public Task<SupportTicketType?> FindAsync(Guid tenantId, SupportTicketTypeId id, CancellationToken cancellationToken) =>
         dbContext.TicketTypes.FirstOrDefaultAsync(type => type.TenantId == tenantId && type.Id == id, cancellationToken);

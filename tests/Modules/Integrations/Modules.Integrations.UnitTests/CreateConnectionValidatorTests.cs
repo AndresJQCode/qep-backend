@@ -149,6 +149,7 @@ public sealed class CreateConnectionValidatorTests
     [InlineData(ZenviaFieldKeys.TemplateId, "plantilla-1")]
     [InlineData(ZenviaFieldKeys.TemplateId, "d0e79149ed6147849883d86807f46ce5")]
     [InlineData(ZenviaFieldKeys.OrderTemplateId, "x")]
+    [InlineData(ZenviaFieldKeys.InvoiceTemplateId, "x")]
     public async Task ZenviaTemplateIdMustBeAUuid(string key, string value)
     {
         var fields = new Dictionary<string, string?>

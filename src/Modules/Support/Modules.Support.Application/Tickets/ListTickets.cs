@@ -22,9 +22,19 @@ public sealed record ListTicketsQuery(
     string? Priority,
     string? Sort,
     int Page,
-    int PageSize)
+    int PageSize,
+    string? Kind = null,
+    string? CreatedBy = null)
     : IQuery<SupportTicketPageDto>
 {
+    public const string KindExternal = "external";
+
+    public const string KindInternal = "internal";
+
+    public const string KindAll = "all";
+
+    public const string CreatedByMe = "me";
+
     public const string SortReceived = "received";
 
     public const string SortPriority = "priority";
@@ -65,6 +75,13 @@ public sealed class ListTicketsValidator : AbstractValidator<ListTicketsQuery>
         RuleFor(query => query.Sort)
             .Must(sort => string.IsNullOrWhiteSpace(sort) || sort is ListTicketsQuery.SortReceived or ListTicketsQuery.SortPriority)
             .WithMessage("Sort must be received or priority.");
+        RuleFor(query => query.Kind)
+            .Must(kind => string.IsNullOrWhiteSpace(kind) ||
+                kind is ListTicketsQuery.KindExternal or ListTicketsQuery.KindInternal or ListTicketsQuery.KindAll)
+            .WithMessage("Kind must be external, internal or all.");
+        RuleFor(query => query.CreatedBy)
+            .Must(createdBy => string.IsNullOrWhiteSpace(createdBy) || createdBy == ListTicketsQuery.CreatedByMe)
+            .WithMessage("CreatedBy must be me.");
         RuleFor(query => query.Page).GreaterThanOrEqualTo(1);
         RuleFor(query => query.PageSize).InclusiveBetween(1, ListTicketsQuery.MaxPageSize);
     }
@@ -74,11 +91,13 @@ public sealed class ListTicketsValidator : AbstractValidator<ListTicketsQuery>
 /// «Vencidos»: <c>due_on</c> antes de hoy con el reloj corriendo. «Por vencer»: <c>due_on</c> entre hoy y el día hábil número
 /// <c>DueSoonBusinessDays</c> después de hoy, con el reloj corriendo y el umbral del tenant [owner 2026-11-14]; con umbral 0 no hay
 /// «por vencer». La búsqueda es por radicado si el texto lo es (<c>SOP-000002</c> o <c>2</c>); si no, por asunto, nombres del
-/// solicitante y clientes cuyo nombre coincide. El resumen es del tenant entero y no cambia con los filtros.
+/// solicitante y clientes cuyo nombre coincide. El resumen sigue el mismo alcance que la lista (el
+/// <c>kind</c> y, para quien sólo usa tareas, su participación) y no cambia con los demás filtros: así nadie cuenta tareas ajenas ni
+/// tickets de clientes (spec 2026-11-22 §5.3).
 /// </summary>
 public sealed class ListTicketsHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
+    SupportTicketScope scope,
     IMembershipDirectory membershipDirectory,
     ISupportProvisioner provisioner,
     ISupportTicketRepository tickets,
@@ -120,8 +139,10 @@ public sealed class ListTicketsHandler(
 
     public async Task<SupportTicketPageDto> HandleAsync(ListTicketsQuery query, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
+        // El permiso (403) va antes que la validación, como en las demás rutas.
+        var access = await scope.EnsureAccessAsync(query.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(query, cancellationToken);
+        var listScope = await scope.ListScopeAsync(query.TenantId, RequestedKind(query.Kind), cancellationToken);
         if (!TryParseStatuses(query.Status, out var statuses))
         {
             throw new InvalidOperationException($"Status '{query.Status}' passed validation but is not a list of ticket statuses.");
@@ -153,7 +174,12 @@ public sealed class ListTicketsHandler(
             query.Page,
             query.PageSize,
             priorities,
-            ByPriority: query.Sort == ListTicketsQuery.SortPriority);
+            ByPriority: query.Sort == ListTicketsQuery.SortPriority,
+            Kind: listScope.Kind,
+            ParticipantMemberId: listScope.ParticipantMemberId,
+            CreatedByMemberId: query.CreatedBy == ListTicketsQuery.CreatedByMe
+                ? access.MemberId ?? throw SupportAuthorization.Denied()
+                : null);
         filter = filter with { AssigneeMemberId = await AssigneeOfAsync(query, cancellationToken) };
         filter = WithDue(filter, query.Due, context.Today, dueSoonLimit);
         filter = await WithSearchAsync(filter, query.Search, cancellationToken);
@@ -163,7 +189,8 @@ public sealed class ListTicketsHandler(
             ? new SupportTicketPage([], 0)
             : await tickets.ListAsync(filter, cancellationToken);
         var items = await composer.ComposeListAsync(query.TenantId, page.Items, context, cancellationToken);
-        var totals = await tickets.TotalsAsync(query.TenantId, context.Today, dueSoonLimit, cancellationToken);
+        var totals = await tickets.TotalsAsync(
+            query.TenantId, listScope.Kind, listScope.ParticipantMemberId, context.Today, dueSoonLimit, cancellationToken);
 
         return new SupportTicketPageDto(
             items,
@@ -175,6 +202,15 @@ public sealed class ListTicketsHandler(
                 totals.Overdue,
                 totals.DueSoon));
     }
+
+    private static SupportTicketKind? RequestedKind(string? kind) =>
+        kind switch
+        {
+            ListTicketsQuery.KindExternal => SupportTicketKind.External,
+            ListTicketsQuery.KindInternal => SupportTicketKind.Internal,
+            ListTicketsQuery.KindAll => SupportTicketKind.All,
+            _ => null,
+        };
 
     // «me» es la membresía de quien llama: sin membresía activa en el tenant no es nadie, y eso es 403 como en las acciones.
     private async Task<Guid?> AssigneeOfAsync(ListTicketsQuery query, CancellationToken cancellationToken) =>

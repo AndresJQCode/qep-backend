@@ -17,6 +17,12 @@
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Application\Modules.ServiceContracts.Application.csproj" />
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Infrastructure\Modules.ServiceContracts.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Hr\Modules.Hr.Application\Modules.Hr.Application.csproj" />
+    <ProjectReference Include="..\Modules\Hr\Modules.Hr.Infrastructure\Modules.Hr.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Application\Modules.Payroll.Application.csproj" />
+    <ProjectReference Include="..\Modules\Payroll\Modules.Payroll.Infrastructure\Modules.Payroll.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Application\Modules.Scheduling.Application.csproj" />
+    <ProjectReference Include="..\Modules\Scheduling\Modules.Scheduling.Infrastructure\Modules.Scheduling.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
     <ProjectReference Include="..\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Purchases\Modules.Purchases.Application\Modules.Purchases.Application.csproj" />
@@ -33,6 +39,8 @@
     <ProjectReference Include="..\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Buyers\Modules.Buyers.Application\Modules.Buyers.Application.csproj" />
     <ProjectReference Include="..\Modules\Buyers\Modules.Buyers.Infrastructure\Modules.Buyers.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Wms\Modules.Wms.Application\Modules.Wms.Application.csproj" />
+    <ProjectReference Include="..\Modules\Wms\Modules.Wms.Infrastructure\Modules.Wms.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Application\Modules.ApiAccess.Application.csproj" />
     <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Infrastructure\Modules.ApiAccess.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Suppliers\Modules.Suppliers.Application\Modules.Suppliers.Application.csproj" />

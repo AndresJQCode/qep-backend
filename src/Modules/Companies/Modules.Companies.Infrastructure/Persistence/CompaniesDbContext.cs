@@ -26,7 +26,7 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
             // dominio que crece por pais y una constraint pediria una migracion por cada cambio.
             table.HasCheckConstraint(
                 "CK_companies_city_lane",
-                "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) OR " +
+                "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL AND region_id IS NULL) OR " +
                 "(country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
             table.HasCheckConstraint(
                 "CK_companies_document_type",
@@ -55,6 +55,10 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
         company.Property(value => value.CityName)
             .HasColumnName("city_name")
             .HasMaxLength(Company.CityNameMaxLength);
+
+        // La región (provincia) de una empresa de afuera: referencia blanda a geography.regions, sin FK entre esquemas.
+        // Nula en Colombia (lo respalda el CHECK de arriba).
+        company.Property(value => value.RegionId).HasColumnName("region_id");
 
         // FK a geography.cities(id) — otro schema, de otro modulo, de otro DbContext.
         // CompaniesDbContext no la modela con HasOne<City>(): EF Core no soporta una relacion

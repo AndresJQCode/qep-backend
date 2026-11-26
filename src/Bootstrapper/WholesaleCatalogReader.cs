@@ -17,7 +17,8 @@ internal sealed class WholesaleCatalogReader(
     IProductCategoryRepository categories,
     IProductRepository products,
     IOptionDefinitionRepository options,
-    ITaxRateRepository taxRates)
+    ITaxRateRepository taxRates,
+    IProductImageLookup images)
     : IWholesaleCatalogReader
 {
     public async Task<IReadOnlyDictionary<Guid, WholesaleCategoryRef>> FindCategoriesAsync(
@@ -44,6 +45,8 @@ internal sealed class WholesaleCatalogReader(
         Guid tenantId,
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
         int take,
         CancellationToken cancellationToken)
     {
@@ -53,8 +56,9 @@ internal sealed class WholesaleCatalogReader(
             return ([], 0);
         }
 
-        var (found, total) = await products.SearchAsync(
-            tenantId, null, null, null, isActive: true, expanded, page: 1, pageSize: take, cancellationToken);
+        var hidden = await ExpandAsync(tenantId, excludedCategoryIds is { Count: > 0 } ? excludedCategoryIds : null, cancellationToken);
+        var (found, total) = await products.SearchActiveFilteredAsync(
+            tenantId, null, null, expanded, hidden, excludedProductIds, orderByName: false, page: 1, pageSize: take, cancellationToken);
         var valueNames = await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, found, cancellationToken);
 
         var items = new List<WholesaleSampleVariant>(found.Count);
@@ -100,6 +104,8 @@ internal sealed class WholesaleCatalogReader(
         Guid tenantId,
         string currency,
         IReadOnlyCollection<Guid>? categoryIds,
+        IReadOnlyCollection<Guid>? excludedCategoryIds,
+        IReadOnlyCollection<Guid>? excludedProductIds,
         string? search,
         int page,
         int pageSize,
@@ -111,13 +117,17 @@ internal sealed class WholesaleCatalogReader(
             return ([], 0);
         }
 
-        var (found, total) = await products.SearchAsync(
+        // Spec 2026-11-20: las exclusiones se filtran en la consulta (con sus descendientes), no sobre la página: así Total y
+        // la paginación cuentan sólo lo que el distribuidor puede ver.
+        var hidden = await ExpandAsync(tenantId, excludedCategoryIds is { Count: > 0 } ? excludedCategoryIds : null, cancellationToken);
+        var (found, total) = await products.SearchActiveFilteredAsync(
             tenantId,
             string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
             null,
-            null,
-            isActive: true,
             expanded,
+            hidden,
+            excludedProductIds,
+            orderByName: false,
             page,
             pageSize,
             cancellationToken);
@@ -126,6 +136,67 @@ internal sealed class WholesaleCatalogReader(
         var items = await ToSellableAsync(tenantId, currency, ordered, product => product.Variants, cancellationToken);
         return (items, total);
     }
+
+    public async Task<IReadOnlyDictionary<Guid, WholesaleProductRef>> FindProductsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, WholesaleProductRef>();
+        }
+
+        // Acotada al tenant: un id ajeno o borrado simplemente no aparece.
+        var found = await products.FindBasicsByIdsAsync(tenantId, ids.Select(id => new ProductId(id)).ToArray(), cancellationToken);
+        return found.ToDictionary(
+            product => product.Id.Value,
+            product => new WholesaleProductRef(
+                product.Id.Value, product.SingleVariantCode, product.Name, product.CategoryId?.Value, product.VariantCount, null));
+    }
+
+    public async Task<(IReadOnlyList<WholesaleProductRef> Items, int Total)> SearchProductsAsync(
+        Guid tenantId,
+        string currency,
+        Guid? categoryId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var expanded = await ExpandAsync(tenantId, categoryId is { } chosen ? [chosen] : null, cancellationToken);
+        if (expanded is { Count: 0 })
+        {
+            return ([], 0);
+        }
+
+        // Los mismos productos que la lista puede mostrar: activos y con precio en la moneda; el Total los cuenta a ellos.
+        var (found, total) = await products.SearchActiveFilteredAsync(
+            tenantId,
+            string.IsNullOrWhiteSpace(search) ? null : search.Trim(),
+            currency,
+            expanded,
+            null,
+            null,
+            orderByName: true,
+            page,
+            pageSize,
+            cancellationToken);
+        var files = await CatalogVariantReads.LoadImagesAsync(images, found.Select(product => product.ImageFileId), cancellationToken);
+        // El orden por nombre lo pone la consulta (también con búsqueda): reordenar la página en memoria no lo arreglaría.
+        var items = found
+            .Select(product => RefOf(product, CatalogVariantReads.ImageUrlOf(product.ImageFileId, files, tenantId)))
+            .ToList();
+        return (items, total);
+    }
+
+    // El código sólo cuando lo identifica: con una sola variante, el suyo (ProductListCode, la regla de la grilla del catálogo).
+    private static WholesaleProductRef RefOf(Product product, string? imageUrl) =>
+        new(
+            product.Id.Value,
+            product.Variants.Count == 1 ? product.Variants[0].Code : null,
+            product.Name,
+            product.CategoryId?.Value,
+            product.Variants.Count,
+            imageUrl);
 
     private async Task<HashSet<Guid>?> ExpandAsync(
         Guid tenantId, IReadOnlyCollection<Guid>? categoryIds, CancellationToken cancellationToken)
@@ -159,28 +230,39 @@ internal sealed class WholesaleCatalogReader(
         var parents = (await categories.ListCategoriesWithParentsAsync(tenantId, cancellationToken))
             .ToDictionary(node => node.Id.Value, node => node.ParentId?.Value);
 
-        var items = new List<WholesaleSellableVariant>();
+        // Primero las variantes que se ofrecen; luego las fotos de todas en UNA llamada (sin N+1).
+        var sellable = new List<(Product Product, ProductVariant Variant, decimal Price)>();
         foreach (var product in found)
         {
-            var path = PathOf(product.CategoryId?.Value, parents);
+            foreach (var variant in variantsOf(product))
+            {
+                if (CatalogVariantReads.IsSellable(product, variant) && variant.PriceIn(currency) is { } price)
+                {
+                    sellable.Add((product, variant, price));
+                }
+            }
+        }
+
+        // Las fotos son del mayorista: el re-chequeo de tenant de ImageUrlOf usa SU tenant, nunca el del comprador.
+        var files = await CatalogVariantReads.LoadImagesAsync(
+            images, sellable.Select(entry => (Guid?)CatalogVariantReads.ImageFileIdOf(entry.Product, entry.Variant)), cancellationToken);
+
+        var items = new List<WholesaleSellableVariant>(sellable.Count);
+        foreach (var (product, variant, price) in sellable)
+        {
             var taxRate = product.TaxRateId is { } rateId && percentages.TryGetValue(rateId, out var percentage)
                 ? percentage
                 : 0m;
-            foreach (var variant in variantsOf(product))
-            {
-                if (!CatalogVariantReads.IsSellable(product, variant) || variant.PriceIn(currency) is not { } price)
-                {
-                    continue;
-                }
-
-                items.Add(new WholesaleSellableVariant(
-                    variant.Id.Value,
-                    variant.Code,
-                    CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
-                    price,
-                    taxRate,
-                    path));
-            }
+            items.Add(new WholesaleSellableVariant(
+                variant.Id.Value,
+                variant.Code,
+                CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
+                price,
+                taxRate,
+                PathOf(product.CategoryId?.Value, parents),
+                product.Id.Value,
+                product.Name,
+                CatalogVariantReads.ImageUrlOf(CatalogVariantReads.ImageFileIdOf(product, variant), files, tenantId)));
         }
 
         return items;

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Modules.Siigo.Application;
 using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
 
@@ -15,15 +16,22 @@ internal static class InvoiceTestData
     public static readonly Guid ProofB = Guid.Parse("0193a1b2-0006-7000-8000-000000000006");
     public static readonly DateOnly Today = new(2026, 11, 18);
     public const string BankKey = "BANCOLOMBIA|000123456";
+    public static readonly Guid Advisor = Guid.Parse("0193a1b2-000c-7000-8000-00000000000c");
 
     /// <summary>Todo vinculado: IVA 19 (y 0 sin vínculo), las dos retenciones, la cuenta de cobro, crédito a 30 días, contraentrega y
     /// el producto del flete.</summary>
     public static SiigoSettings Settings(
-        bool freightSeparate = false, bool sendToDian = false, bool sendMail = false, bool linkVariants = true, bool linkBank = true)
+        bool freightSeparate = false,
+        bool sendToDian = false,
+        bool sendMail = false,
+        bool linkVariants = true,
+        bool linkBank = true,
+        bool linkAdvisor = true,
+        SiigoPriceMode priceMode = SiigoPriceMode.BaseWithDiscount)
     {
         var settings = SiigoSettings.Create(Guid.Parse("0193a1b2-0009-7000-8000-000000000009"), Guid.Parse("0193a1b2-000a-7000-8000-00000000000a"));
         settings.AssignCompany(Guid.Parse("0193a1b2-000b-7000-8000-00000000000b"));
-        settings.UpdateDocument(new SiigoDocumentSettings("24446", "629", "10", "1", sendToDian, sendMail, freightSeparate, "FLETE"));
+        settings.UpdateDocument(new SiigoDocumentSettings("24446", "10", "1", sendToDian, sendMail, freightSeparate, "FLETE", priceMode));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "7001")]);
         settings.ReplaceWithholdingLinks(
             [new SiigoWithholdingLink(ReteFuenteRate, "8001"), new SiigoWithholdingLink(ReteIcaRate, "8002")]);
@@ -33,6 +41,11 @@ internal static class InvoiceTestData
             CreditDays: 30,
             CashOnDeliveryPaymentTypeId: "9003",
             DefaultPaymentTypeId: "9004"));
+        if (linkAdvisor)
+        {
+            settings.ReplaceSellerLinks([new SiigoSellerLink(Advisor, "629", "ANA GOMEZ")]);
+        }
+
         if (linkVariants)
         {
             var at = new DateTimeOffset(2026, 11, 18, 12, 0, 0, TimeSpan.Zero);
@@ -44,7 +57,8 @@ internal static class InvoiceTestData
     }
 
     public static SiigoBilledPartyInput Company() =>
-        new(false, SiigoPersonKind.Juridica, SiigoIdentificationKind.Nit, "900.123.456-7", "ACME SAS", "Calle 1 # 2-3", "11001", "11", "ana@acme.test", "3001234567");
+        new(false, SiigoPersonKind.Juridica, SiigoIdentificationKind.Nit, "900.123.456-7", "ACME SAS", "Calle 1 # 2-3", "11001", "11", "ana@acme.test",
+            new SiigoPhone("57", "3001234567"));
 
     /// <summary>Dos líneas: 2 × 50.000 con IVA 19 % y 3 × 33.333,333333 con 10 % de descuento y sin IVA. Productos: 209.000.</summary>
     public static SiigoInvoiceInput Order() =>
@@ -72,7 +86,9 @@ internal static class InvoiceTestData
             BuyerNotes: null,
             BilledParty: Company(),
             CompanyId: Guid.Parse("0193a1b2-000b-7000-8000-00000000000b"),
-            OrderVersion: 7);
+            OrderVersion: 7,
+            AdvisorMembershipId: Advisor,
+            AdvisorLabel: "Andrea Ritual");
 
     public static SiigoInvoiceDraft Ready(SiigoBuildResult result, SiigoInvoiceKind kind = SiigoInvoiceKind.Order) =>
         Assert.IsType<SiigoBuildResult.Ready>(result).Drafts.Single(draft => draft.Kind == kind);

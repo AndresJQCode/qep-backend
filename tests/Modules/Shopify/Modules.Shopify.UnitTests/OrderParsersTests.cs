@@ -474,6 +474,29 @@ public sealed class OrderParsersTests
         Assert.Null(snapshot.ShippingAddress);
     }
 
+    // Spec 2026-11-24: el código postal de la dirección, para no borrarlo al mandar la dirección con orderUpdate.
+    [Theory]
+    [InlineData("rest")]
+    [InlineData("graphql")]
+    public void ZipIsReadFromBothAddresses(string format)
+    {
+        var json = format == "rest"
+            ? RestOrderHead + """
+                "shipping_address": {"city": "Medellín", "zip": "050021"}, "billing_address": {"city": "Bogotá", "zip": "110111"}}
+                """
+            : GraphQlOrderHead + """
+                "shippingAddress": {"city": "Medellín", "zip": "050021"}, "billingAddress": {"city": "Bogotá", "zip": "110111"}}
+                """;
+
+        var snapshot = Parse(format, json);
+
+        Assert.Equal(("050021", "110111"), (snapshot.ShippingAddress!.Zip, snapshot.BillingAddress!.Zip));
+        // Viaja en el payload del espejo, que es de donde lo lee el envío.
+        Assert.Equal(
+            "050021",
+            ShopifyOrderIngestion.ReadPayload(ShopifyOrderIngestion.WritePayload(snapshot)).ShippingAddress!.Zip);
+    }
+
     // Un payload guardado antes de este cambio no trae id, originalQuantity ni billingAddress: se lee con sus defaults.
     [Fact]
     public void AnOldPayloadWithoutTheNewFieldsReadsDefaults()

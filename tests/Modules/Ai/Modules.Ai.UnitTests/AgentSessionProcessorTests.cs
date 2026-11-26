@@ -1,4 +1,4 @@
-﻿using BuildingBlocks.Application;
+using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Ai.Application;
 using Modules.Ai.Domain;
@@ -82,7 +82,8 @@ public sealed class AgentSessionProcessorTests
         return agent;
     }
 
-    private static Agent PublishedAgent(string provider = "anthropic", string? greeting = null, int maxReplies = 20, string trigger = "NewConversation")
+    private static Agent PublishedAgent(
+        string provider = "anthropic", string? greeting = null, int maxReplies = 20, string trigger = "NewConversation", Guid? destinationMemberId = null)
     {
         var config = AgentConfig.Default(new AgentModelRef(provider, provider == "anthropic" ? "claude-opus-5-5" : "gpt-6-luna")) with
         {
@@ -91,6 +92,11 @@ public sealed class AgentSessionProcessorTests
             Trigger = trigger,
         };
         config = config with { Handoff = config.Handoff with { MaxRepliesWithoutHuman = maxReplies } };
+        if (destinationMemberId is { } member)
+        {
+            config = config with { Handoff = config.Handoff with { Destination = AgentHandoff.ToMember, MemberId = member } };
+        }
+
         var agent = Agent.Create(Tenant, "Asesor virtual", config, By, Now);
         agent.SetConnections([Connection], Now);
         agent.Publish([], By, Now);
@@ -410,6 +416,95 @@ public sealed class AgentSessionProcessorTests
 
         Assert.Single(world.Conversations.Handoffs);
         Assert.Equal((ModelJobStatus.Done, 0), (job.Status, session.SupersededInRow));
+    }
+
+    // Una escritura de la Agenda ya ocurrió: un turno nuevo del cliente no descarta la confirmación, o el siguiente trabajo (otra llave)
+    // podría reservar de nuevo.
+    [Fact]
+    public async Task AReplyAfterASchedulingWriteIsNeverSuperseded()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = HeldJob(session, """{"type":"replied","text":"Listo, tu cita quedó para el martes.","wrote":true}""");
+        world.Sessions.Turns.Add(session.AppendTurn(AgentTurnRoleKind.Customer, Guid.CreateVersion7(), null, [], false, Now));
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Single(world.Outbound.Sends);
+        Assert.Equal((ModelJobStatus.Done, 0), (job.Status, session.SupersededInRow));
+    }
+
+    // Revisión final W1: un traspaso de herramienta o un fallo después de una escritura exitosa tampoco se descartan.
+    [Theory]
+    [InlineData("""{"type":"handed_off","reason":"appointment_change_blocked","wrote":true}""", 1)]
+    [InlineData("""{"type":"failed","kind":0,"failureReason":2,"wrote":true}""", 1)]
+    [InlineData("""{"type":"failed","kind":0,"failureReason":2}""", 0)]
+    public async Task AToolHandoffOrFailureAfterAWriteIsNeverSuperseded(string stored, int handedOff)
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = HeldJob(session, stored);
+        world.Sessions.Turns.Add(session.AppendTurn(AgentTurnRoleKind.Customer, Guid.CreateVersion7(), null, [], false, Now));
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        // Sin "wrote" (un resultado guardado antes de este campo) se lee false: se descarta como siempre.
+        Assert.Equal(handedOff == 0, job.Status == ModelJobStatus.Discarded);
+    }
+
+    // Lo contrario: sin escritura, el mismo turno nuevo sí descarta (la prueba de arriba no pasa por no mirar el turno).
+    [Fact]
+    public async Task AReplyWithoutAWriteIsStillSuperseded()
+    {
+        var world = new World();
+        var agent = PublishedAgent();
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = HeldJob(session, """{"type":"replied","text":"Hola."}""");
+        world.Sessions.Turns.Add(session.AppendTurn(AgentTurnRoleKind.Customer, Guid.CreateVersion7(), null, [], false, Now));
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Empty(world.Outbound.Sends);
+        Assert.Equal(ModelJobStatus.Discarded, job.Status);
+    }
+
+    // Spec 2026-11-23 D-3/D-6: las dos causas de traspaso de la Agenda llegan al destino que el agente tiene configurado (persona o sin
+    // asignar), no a una asesora de cotización.
+    [Theory]
+    [InlineData(AgentHandoffCodes.AppointmentChangeBlocked, true)]
+    [InlineData(AgentHandoffCodes.AppointmentChangeBlocked, false)]
+    [InlineData(AgentHandoffCodes.AppointmentCustomerUnavailable, true)]
+    [InlineData(AgentHandoffCodes.AppointmentCustomerUnavailable, false)]
+    public async Task AppointmentHandoffsGoToTheConfiguredDestination(string code, bool toMember)
+    {
+        var world = new World();
+        var destination = toMember ? Guid.CreateVersion7() : (Guid?)null;
+        var agent = PublishedAgent(destinationMemberId: destination);
+        var session = world.Sessions.Live(agent);
+        world.Conversations.State = State("Active", "Agent", agent.Id);
+        var job = HeldJob(session, $$"""{"type":"handed_off","reason":"{{code}}"}""");
+
+        await world.Worker().ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        var handoff = Assert.Single(world.Conversations.Handoffs);
+        Assert.Equal((HandoffCauseKind.AgentRequested, code, destination), (handoff.Cause.Kind, handoff.Cause.Code, handoff.AssignTo));
+        Assert.Equal((AgentSessionStatus.HandedOff, ModelJobStatus.Done), (session.Status, job.Status));
+    }
+
+    // En modo bloque el flujo decide a quién va: estas causas vuelven por «sin respuesta» con su código como motivo (no por «humano»).
+    [Theory]
+    [InlineData(AgentHandoffCodes.AppointmentChangeBlocked)]
+    [InlineData(AgentHandoffCodes.AppointmentCustomerUnavailable)]
+    public void AppointmentHandoffsLeaveABlockByNoAnswerWithTheirCode(string code)
+    {
+        var result = AgentBlockReturn.For(new AgentHandoffCause(HandoffCauseKind.AgentRequested, code, "anthropic"));
+
+        Assert.Equal((AgentBlockOutputs.NoAnswer, code), (result.Output, result.Reason));
     }
 
     // P-4: sin cliente que se pueda cotizar, el traspaso va al destino configurado y no se audita un borrador que no existe.

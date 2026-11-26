@@ -347,6 +347,9 @@ public sealed class SupportSurveySenderTests
 
         public Task<IReadOnlyList<SupportMemberRef>> ListManagersAsync(Guid tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SupportMemberRef>>([]);
+
+        public Task<IReadOnlyList<SupportMemberRef>> ListTaskMembersAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<SupportMemberRef>>([]);
     }
 
     // Sin fila de módulos el tenant los tiene todos (SupportConversationRules.IsEnabledAsync).

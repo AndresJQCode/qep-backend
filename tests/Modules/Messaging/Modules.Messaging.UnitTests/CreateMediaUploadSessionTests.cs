@@ -42,6 +42,10 @@ public sealed class CreateMediaUploadSessionTests
     [InlineData("a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 1)]
     [InlineData("a.xls", "application/vnd.ms-excel", 1)]
     [InlineData("a.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 1)]
+    [InlineData("a.ppt", "application/vnd.ms-powerpoint", 1)]
+    [InlineData("a.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", 100 * Mb)]
+    [InlineData("a.txt", "text/plain", 100 * Mb)]
+    [InlineData("a.webp", "image/webp", 500 * 1024)]
     [InlineData("a.mp4", "video/mp4", 16 * Mb)]
     [InlineData("a.3gp", "video/3gpp", 16 * Mb)]
     [InlineData("a.mp3", "audio/mpeg", 16 * Mb)]
@@ -60,7 +64,8 @@ public sealed class CreateMediaUploadSessionTests
     }
 
     [Theory]
-    [InlineData("a.webp", "image/webp", 1 * Mb)]
+    [InlineData("a.webp", "image/png", 1)]
+    [InlineData("a.txt", "application/pdf", 1)]
     [InlineData("a.mov", "video/quicktime", 1 * Mb)]
     [InlineData("a.wav", "audio/wav", 1 * Mb)]
     [InlineData("a.mp4", "audio/mp4", 1 * Mb)]
@@ -86,6 +91,9 @@ public sealed class CreateMediaUploadSessionTests
     [InlineData("a.pdf", "application/pdf", 100 * Mb + 1)]
     [InlineData("a.mp4", "video/mp4", 16 * Mb + 1)]
     [InlineData("a.mp3", "audio/mpeg", 16 * Mb + 1)]
+    [InlineData("a.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", 100 * Mb + 1)]
+    [InlineData("a.txt", "text/plain", 100 * Mb + 1)]
+    [InlineData("a.webp", "image/webp", 500 * 1024 + 1)]
     public async Task ABiggerFileThanItsLimitIsRejectedBeforeSigning(string fileName, string mimeType, long sizeBytes)
     {
         var bed = new MessagingTestBed();

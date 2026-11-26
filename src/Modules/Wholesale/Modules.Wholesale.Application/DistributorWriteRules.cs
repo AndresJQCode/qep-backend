@@ -1,5 +1,6 @@
 using BuildingBlocks.Domain.Identification;
 using FluentValidation;
+using Modules.Wholesale.Domain;
 
 namespace Modules.Wholesale.Application;
 
@@ -20,11 +21,37 @@ public static class DistributorTextLimits
 
     /// <summary>Spec 2026-11-18: el teléfono como lo escribe el mayorista, recortado, antes de normalizar a E.164.</summary>
     public const int Phone = 32;
+
+    /// <summary>El tope de <c>Company.CityNameMaxLength</c>: de la ciudad escrita nace la empresa del distribuidor.</summary>
+    public const int CityName = Distributor.CityNameMaxLength;
+
+    /// <summary>El tope de <c>CompanyContactInfo.AddressMaxLength</c>.</summary>
+    public const int Address = Distributor.AddressMaxLength;
 }
 
 public sealed class InviteDistributorValidator : AbstractValidator<InviteDistributorCommand>
 {
     public InviteDistributorValidator()
+    {
+        Include(new DistributorProfileValidator());
+        RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);
+        RuleFor(command => command.AdvisorId).NotEqual(Guid.Empty);
+        RuleFor(command => command.BillingCompanyId).NotEqual(Guid.Empty);
+        RuleFor(command => command.Phone).NoticePhone();
+        RuleFor(command => command.WhatsAppConnectionId)
+            .NotEqual(Guid.Empty)
+            .When(command => !string.IsNullOrWhiteSpace(command.Phone));
+    }
+}
+
+/// <summary>
+/// Las reglas de los datos del distribuidor, las mismas al invitar y al editarlo invitado. <c>internal</c> para que el registro
+/// por ensamblado no la inscriba como un validador más. <paramref name="demandCity"/> es <c>false</c> sólo al editar una
+/// invitación anterior a la ciudad sin tocar país ni ciudad: exigírsela dejaría sin editar a quien no la manda.
+/// </summary>
+internal sealed class DistributorProfileValidator : AbstractValidator<IDistributorProfile>
+{
+    public DistributorProfileValidator(bool demandCity = true)
     {
         RuleFor(command => command.Email)
             .Must(email => !string.IsNullOrWhiteSpace(email))
@@ -47,14 +74,30 @@ public sealed class InviteDistributorValidator : AbstractValidator<InviteDistrib
             .WithMessage("The identification type is not valid for the country.");
         RuleFor(command => command.IdentificationNumber).TrimmedText(DistributorTextLimits.IdentificationNumber);
         RuleFor(command => command.ContactName).TrimmedText(DistributorTextLimits.ContactName);
-        RuleFor(command => command.PriceListId).NotEqual(Guid.Empty);
-        RuleFor(command => command.AdvisorId).NotEqual(Guid.Empty);
-        RuleFor(command => command.BillingCompanyId).NotEqual(Guid.Empty);
-        RuleFor(command => command.Phone).NoticePhone();
-        RuleFor(command => command.WhatsAppConnectionId)
-            .NotEqual(Guid.Empty)
-            .When(command => !string.IsNullOrWhiteSpace(command.Phone));
+
+        // La ciudad se exige con las mismas reglas y los mismos nombres de propiedad que CompanyWriteRules (Companies): de ahí
+        // nace la empresa del distribuidor al aceptar, y lo que Companies rechazaría ahí se rechaza acá, al invitar. Se replica
+        // y no se incluye porque CompanyWriteRules es interna de Companies y Wholesale no la referencia: si cambian las reglas
+        // de ciudad de una, hay que cambiar la otra. Sin un país válido no hay carril que exigir: el error ya cae en Country.
+        RuleFor(command => command.CityId)
+            .Must(cityId => cityId is { } value && value != Guid.Empty)
+            .WithMessage("The city is required.")
+            .When(command => demandCity && IsCountryCode(command.Country) && IsColombian(command.Country));
+        RuleFor(command => command.CityName)
+            .Must(cityName => !string.IsNullOrWhiteSpace(cityName))
+            .WithMessage("The city is required.")
+            .When(command => demandCity && IsCountryCode(command.Country) && !IsColombian(command.Country));
+        RuleFor(command => command.CityName)
+            .Must(cityName => cityName!.Trim().Length <= DistributorTextLimits.CityName)
+            .WithMessage($"The city has at most {DistributorTextLimits.CityName} characters.")
+            .When(command => !string.IsNullOrWhiteSpace(command.CityName));
+        RuleFor(command => command.Address)
+            .Must(address => address!.Trim().Length <= DistributorTextLimits.Address)
+            .WithMessage($"The address has at most {DistributorTextLimits.Address} characters.")
+            .When(command => !string.IsNullOrWhiteSpace(command.Address));
     }
+
+    internal static bool IsColombian(string country) => string.Equals(country.Trim(), "CO", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCountryCode(string? country) =>
         country is not null && country.Trim() is { Length: 2 } code && code.All(char.IsAsciiLetter);

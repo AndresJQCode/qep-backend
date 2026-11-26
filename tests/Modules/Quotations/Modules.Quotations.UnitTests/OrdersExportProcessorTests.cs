@@ -139,7 +139,9 @@ public sealed class OrdersExportProcessorTests
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(90_000m, cells[ValorUnitIndex].Number);
         Assert.Null(cells[ValorUnitIndex].Text);
-        Assert.Equal(35_700m, cells[DescuentoIndex].Number);
+        Assert.Equal(30_000m, cells[DescuentoIndex].Number);
+        // La celda se lee junto a la base sin IVA: Cantidad × Valor Unit + Descuento = bruto sin IVA.
+        Assert.Equal(300_000m, 3m * cells[ValorUnitIndex].Number!.Value + cells[DescuentoIndex].Number!.Value);
     }
 
     private const int ValorUnitIndex = 3;
@@ -2866,6 +2868,191 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(row.Total), cells[TotalFacturadoIndex]);
     }
 
+    // Spec 2026-11-25 indicativo: las cuatro columnas de teléfono del catálogo y, al final, una fija que
+    // parece un teléfono, para ver que el interruptor no la toca.
+    private static InMemoryOrdersExportLayoutRepository PhoneColumnsLayout(bool includePhoneDialCode)
+    {
+        var layouts = new InMemoryOrdersExportLayoutRepository();
+        var layout = OrdersExportLayout.CreateDefault(TenantId, Now);
+        Assert.True(layout.Replace(
+            [
+                OrdersExportColumnSetting.Catalog("phone", "Telefono", visible: true),
+                OrdersExportColumnSetting.Catalog("customer_phone", "Telefono cliente", visible: true),
+                OrdersExportColumnSetting.Catalog("billing_phone", "Telefono facturación", visible: true),
+                OrdersExportColumnSetting.Catalog("shipping_phone", "Telefono envío", visible: true),
+                OrdersExportColumnSetting.Fixed("Linea ERP", "+573001234567", visible: true),
+            ],
+            layout.SheetName,
+            includePhoneDialCode,
+            Now));
+        layouts.Add(layout);
+        return layouts;
+    }
+
+    private static Order NewPhoneRow(string billingPhone, string shippingPhone) =>
+        NewRow(
+            "PED-2026-0001",
+            parties: new QuotationParties(
+                Billing: CompleteBillingParty("Facturas SL") with { Phone = billingPhone },
+                Shipping: CompleteShippingParty("Bodega Norte", CityId) with { Phone = shippingPhone },
+                BillingVatSurplus: false));
+
+    private static StubQuotationPhoneNumbers SplittablePhones() =>
+        new(new Dictionary<string, string>
+        {
+            ["+573001234567"] = "3001234567",
+            ["+34612345678"] = "612345678",
+            ["+573009998877"] = "3009998877",
+        });
+
+    private static StubQuotationCustomerLookup CustomerWithPhone(string phone) =>
+        new(DefaultCustomer with { Phone = phone });
+
+    private static async Task<IReadOnlyList<ExportCell>> ExportPhoneRowAsync(
+        Order row,
+        InMemoryOrdersExportLayoutRepository layouts,
+        StubQuotationPhoneNumbers phones,
+        string customerPhone = "+573009998877")
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                customers: CustomerWithPhone(customerPhone),
+                layouts: layouts,
+                phoneNumbers: phones)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        return Assert.Single(writer.Rows).Take(5).ToArray();
+    }
+
+    [Fact]
+    public async Task WithTheDialCodeSwitchOnThePhonesAreWrittenAsStored()
+    {
+        var phones = SplittablePhones();
+
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("+34612345678", "+573001234567"), PhoneColumnsLayout(includePhoneDialCode: true), phones);
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("+573001234567"),
+                ExportCell.OfText("+573009998877"),
+                ExportCell.OfText("+34612345678"),
+                ExportCell.OfText("+573001234567"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+        Assert.Empty(phones.Calls);
+    }
+
+    // Sin layout guardado el interruptor está encendido: el archivo de siempre.
+    [Fact]
+    public async Task WithoutAStoredLayoutThePhoneKeepsItsDialCode()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var phones = SplittablePhones();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: CustomerWithPhone("+573009998877"),
+                phoneNumbers: phones)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("+573009998877"), Assert.Single(writer.Rows)[17]);
+        Assert.Empty(phones.Calls);
+    }
+
+    // Cada columna parte su propio valor; la fija sale como la escribió el tenant.
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffTheFourPhoneColumnsCarryTheNationalNumber()
+    {
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("+34612345678", "+573001234567"),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            SplittablePhones());
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("3001234567"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("612345678"),
+                ExportCell.OfText("3001234567"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+    }
+
+    // Sin parte de envío, «Telefono» y el de envío caen al cliente, y se parten igual.
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffTheCustomerFallbackAlsoLosesItsDialCode()
+    {
+        var cells = await ExportPhoneRowAsync(
+            NewRow("PED-2026-0001", parties: QuotationParties.Empty),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            SplittablePhones());
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("3009998877"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+    }
+
+    // Sin «+» no se parte —aunque empiece por el código del país—, así que ni se pregunta.
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffAPhoneWithoutPlusIsWrittenAsStored()
+    {
+        var phones = new StubQuotationPhoneNumbers(
+            new Dictionary<string, string> { ["573001234567"] = "3001234567" });
+
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("573001234567", "601 555 0000"),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            phones,
+            customerPhone: "3001234567");
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("601 555 0000"),
+                ExportCell.OfText("3001234567"),
+                ExportCell.OfText("573001234567"),
+                ExportCell.OfText("601 555 0000"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+        Assert.Empty(phones.Calls);
+    }
+
+    [Fact]
+    public async Task WithTheDialCodeSwitchOffAPhoneThatCannotBeSplitIsWrittenAsStored()
+    {
+        var phones = new StubQuotationPhoneNumbers();
+
+        var cells = await ExportPhoneRowAsync(
+            NewPhoneRow("+99912", "+57573001234567"),
+            PhoneColumnsLayout(includePhoneDialCode: false),
+            phones,
+            customerPhone: "+1");
+
+        Assert.Equal(
+            [
+                ExportCell.OfText("+57573001234567"),
+                ExportCell.OfText("+1"),
+                ExportCell.OfText("+99912"),
+                ExportCell.OfText("+57573001234567"),
+                ExportCell.OfText("+573001234567"),
+            ],
+            cells);
+        Assert.Contains("+99912", phones.Calls);
+    }
+
     private static ExportJob NewJob(OrdersExportFilters? filters = null) =>
         ExportJob.Enqueue(
             Guid.CreateVersion7(),
@@ -2949,7 +3136,8 @@ public sealed class OrdersExportProcessorTests
         StubQuotationGeographyLookup? geography = null,
         StubQuotationAdvisorLookup? advisors = null,
         RecordingPaymentProofPublisher? publisher = null,
-        InMemoryOrdersExportLayoutRepository? layouts = null) =>
+        InMemoryOrdersExportLayoutRepository? layouts = null,
+        StubQuotationPhoneNumbers? phoneNumbers = null) =>
         new(repository,
             // Sin layout guardado por defecto: el archivo de siempre (spec 2026-09-24, D8).
             layouts ?? new InMemoryOrdersExportLayoutRepository(),
@@ -2966,7 +3154,8 @@ public sealed class OrdersExportProcessorTests
             publisher ?? new RecordingPaymentProofPublisher(),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
-            tenantClock ?? new FixedTenantClock(Now));
+            tenantClock ?? new FixedTenantClock(Now),
+            phoneNumbers ?? new StubQuotationPhoneNumbers());
 
     /// <summary>Un layout guardado para el tenant de las pruebas (spec 2026-09-24): lo que se
     /// pasa se completa con el catálogo, como hace Replace.</summary>

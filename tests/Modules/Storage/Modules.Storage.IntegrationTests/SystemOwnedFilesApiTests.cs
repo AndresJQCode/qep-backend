@@ -24,7 +24,7 @@ public sealed class SystemOwnedFilesApiTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static TheoryData<FileOwnerType> SystemOwners => new(FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia);
+    public static TheoryData<FileOwnerType> SystemOwners => new(FileOwnerType.SupportTicket, FileOwnerType.MessageTemplate, FileOwnerType.ChatbotMedia, FileOwnerType.HrDocument);
 
     // Un dueño de sistema nuevo tiene que entrar a SystemOwners: si no, estas pruebas dejan de cubrirlo sin ponerse rojas.
     [Fact]
@@ -68,7 +68,7 @@ public sealed class SystemOwnedFilesApiTests
         Assert.Empty(filtered);
         // El dueño de una imagen de plantilla o de un archivo de chatbot es el tenant, que la respuesta no lleva; el de un adjunto es un
         // secreto que no se filtra.
-        if (ownerType is not (FileOwnerType.MessageTemplate or FileOwnerType.ChatbotMedia))
+        if (ownerType is not (FileOwnerType.MessageTemplate or FileOwnerType.ChatbotMedia or FileOwnerType.HrDocument))
         {
             Assert.DoesNotContain(attachment.OwnerId.ToString(), await (await client.GetAsync(FilesUrl, Ct)).Content.ReadAsStringAsync(Ct),
                 StringComparison.OrdinalIgnoreCase);
@@ -138,7 +138,7 @@ public sealed class SystemOwnedFilesApiTests
     private static async Task<(Guid FileId, Guid OwnerId)> SystemOwnedFileAsync(
         StorageApiFactory factory, string connectionString, FileOwnerType ownerType)
     {
-        var ownerId = ownerType is FileOwnerType.MessageTemplate or FileOwnerType.ChatbotMedia ? TenantId : Guid.NewGuid();
+        var ownerId = ownerType is FileOwnerType.MessageTemplate or FileOwnerType.ChatbotMedia or FileOwnerType.HrDocument ? TenantId : Guid.NewGuid();
         var content = await PngAsync(32, 32);
         await using var scope = factory.Services.CreateAsyncScope();
         var uploads = scope.ServiceProvider.GetRequiredService<IStorageSystemUploads>();

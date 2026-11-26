@@ -94,6 +94,13 @@ public sealed class Membership
     /// </summary>
     public int? AdvisorCode { get; private set; }
 
+    /// <summary>
+    /// Optional work mobile in E.164, per membership (the same person can use a different number in
+    /// each company). Only the number the member or an admin typed; the HR fallback is resolved on
+    /// read and never copied here.
+    /// </summary>
+    public string? PhoneE164 { get; private set; }
+
     public DateTimeOffset InvitedAt { get; private set; }
 
     public DateTimeOffset? AcceptedAt { get; private set; }
@@ -563,18 +570,54 @@ public sealed class Membership
     /// ya tiene. Un guardado repetido no invalida el If-Match de otra pestaña ni deja auditado un
     /// cambio que no ocurrió.
     /// </returns>
-    public bool UpdateProfile(string displayName, int? advisorCode, DateTimeOffset occurredAt)
+    public bool UpdateProfile(string displayName, int? advisorCode, DateTimeOffset occurredAt) =>
+        UpdateProfile(displayName, advisorCode, PhoneChange.Keep, occurredAt).Profile;
+
+    /// <summary>
+    /// Same as the overload without a phone, plus the three-state phone. The version goes up once
+    /// when anything changed, so an admin's single save never costs two version bumps.
+    /// </summary>
+    public MembershipProfileChanges UpdateProfile(
+        string displayName,
+        int? advisorCode,
+        PhoneChange phone,
+        DateTimeOffset occurredAt)
     {
         var normalizedName = NormalizeDisplayName(displayName);
         var normalizedCode = NormalizeAdvisorCode(advisorCode);
-        if (string.Equals(DisplayName, normalizedName, StringComparison.Ordinal) &&
-            AdvisorCode == normalizedCode)
+        // Validated before touching anything, like the name and the code.
+        var normalizedPhone = phone.Provided ? MemberPhone.Normalize(phone.Value) : PhoneE164;
+
+        var profileChanged =
+            !string.Equals(DisplayName, normalizedName, StringComparison.Ordinal) ||
+            AdvisorCode != normalizedCode;
+        var phoneChanged = !string.Equals(PhoneE164, normalizedPhone, StringComparison.Ordinal);
+        if (!profileChanged && !phoneChanged)
         {
-            return false;
+            return default;
         }
 
         DisplayName = normalizedName;
         AdvisorCode = normalizedCode;
+        PhoneE164 = normalizedPhone;
+        Version++;
+        UpdatedAt = occurredAt;
+        return new MembershipProfileChanges(profileChanged, phoneChanged);
+    }
+
+    /// <summary>
+    /// The member changes their own phone; <c>null</c> or blank clears it. Valid in any state, like
+    /// the profile. Returns <c>false</c> without touching the version when nothing changed.
+    /// </summary>
+    public bool ChangeOwnPhone(string? phoneE164, DateTimeOffset occurredAt)
+    {
+        var normalized = MemberPhone.Normalize(phoneE164);
+        if (string.Equals(PhoneE164, normalized, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        PhoneE164 = normalized;
         Version++;
         UpdatedAt = occurredAt;
         return true;

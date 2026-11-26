@@ -19,6 +19,10 @@ public sealed record QuotationSettings(int MinimumUnits, IReadOnlyDictionary<str
     public static QuotationSettings Default { get; } = new(
         6, new Dictionary<string, decimal> { ["COP"] = 500_000m, ["USD"] = 200m });
 
+    /// <summary>The minimum units a tenant is born with (owner decision, 2026-11-23): one unit and no minimum totals, so no
+    /// scale discount waits on a minimum purchase until the tenant sets one.</summary>
+    public const int NewTenantMinimumUnits = 1;
+
     public decimal? MinimumTotalFor(string currency) =>
         MinimumTotals.TryGetValue(currency, out var total) ? total : null;
 

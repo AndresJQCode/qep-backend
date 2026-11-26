@@ -36,6 +36,14 @@ public static class PermissionVocabulary
         ["operate"] = "Abrir y cerrar",
         // Spec 2026-11-17 (copiloto): usar el chat no es «Ver» —no da acceso a ningún dato— y gasta saldo del tenant.
         ["use"] = "Usar",
+        // Spec 2026-11-21 (nómina): aprobar una quincena liquidada no es «Gestionar».
+        ["approve"] = "Aprobar",
+        // Spec WMS 2026-10-31 §11.5 (bodegas): operaciones de inventario con riesgo propio; ninguna es columna de la matriz.
+        ["export"] = "Exportar",
+        ["propose"] = "Proponer",
+        ["dispatch"] = "Despachar",
+        ["perform"] = "Registrar",
+        ["resolve"] = "Resolver",
     };
 
     /// <summary>
@@ -67,7 +75,11 @@ public static class PermissionVocabulary
         ["Compras"] = "Compras",
         ["Mayorista"] = "Mayorista",
         ["Siigo"] = "Siigo",
+        ["Recursos humanos"] = "Recursos humanos",
+        ["Nómina"] = "Nómina",
+        ["Agenda"] = "Agenda",
         ["Tienda"] = "Tienda",
+        ["Bodegas"] = "Bodegas",
         ["uncategorized"] = "Sin categoría",
     };
 

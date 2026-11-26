@@ -18,7 +18,8 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class SupplierGeographyLookup(
     ICityRepository cityRepository,
-    IDepartmentRepository departmentRepository) : ISupplierGeographyLookup
+    IDepartmentRepository departmentRepository,
+    IRegionRepository regionRepository) : ISupplierGeographyLookup
 {
     public async Task<SupplierCityRef?> FindCityAsync(
         Guid cityId, CancellationToken cancellationToken)
@@ -75,4 +76,20 @@ internal sealed class SupplierGeographyLookup(
             department.Id.Value,
             department.DivipolaCode,
             department.Name);
+
+    public async Task<IReadOnlyDictionary<Guid, SupplierRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken)
+    {
+        // Sin ids no se toca el repositorio: un domicilio sin region es lo comun.
+        var distinctIds = regionIds.Distinct().Select(id => new RegionId(id)).ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return new Dictionary<Guid, SupplierRegionRef>();
+        }
+
+        var regions = await regionRepository.ListByIdsAsync(distinctIds, cancellationToken);
+        return regions.ToDictionary(
+            region => region.Id.Value,
+            region => new SupplierRegionRef(region.Id.Value, region.CountryCode, region.Name));
+    }
 }

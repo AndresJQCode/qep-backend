@@ -44,7 +44,7 @@ public sealed class UpdatePurchaseOrderHandler(
 
         // D-10: editar vuelve a fijar el modo con el proveedor de hoy; un borrador de fase 2 a un vinculado pasa a vinculado acá.
         var now = clock.UtcNow;
-        order.Replace(command.SupplierId, build.SupplierTenantId, build.Currency, command.Notes, build.Lines, now);
+        order.Replace(command.SupplierId, build.SupplierTenantId, build.Currency, command.Notes, build.Lines, now, build.ShowPrices);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

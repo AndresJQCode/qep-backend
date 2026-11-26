@@ -12,7 +12,8 @@ namespace Modules.Notifications.Infrastructure.Messaging;
 // Consume del outbox de plataforma la invitación de un mayorista a un distribuidor y entrega el correo con el link. Lee el payload
 // por nombre con JsonDocument y el nombre del evento literal: este módulo no referencia Mayorista (D-18, precedente
 // SupplierExportDeliveryWorker). El destinatario viaja en el payload porque todavía no es un usuario de Identity (precedente
-// BuyerEmailDeliveryWorker). El link sale de AppBaseUrl (ruling W1). Ni el correo, ni el token, ni el link se loguean. El
+// BuyerEmailDeliveryWorker). El link sale de AppBaseUrl (ruling W1) y lleva como ?ev= la prueba de buzón del payload, si viene
+// (spec 2026-11-24; los eventos anteriores no la traen). Ni el correo, ni el token, ni la prueba, ni el link se loguean. El
 // reclamo, el lote y la cancelación son de OutboxDeliveryWorker.
 internal sealed class WholesaleInvitationDeliveryWorker(
     IServiceScopeFactory scopeFactory,
@@ -67,7 +68,7 @@ internal sealed class WholesaleInvitationDeliveryWorker(
         // envío, y se reintenta.
         var format = await ResolveEmailFormatAsync(context, payload.TenantId, stoppingToken);
         string recipient = payload.Email;
-        string link = AccountLinks.WholesaleInvitation(options.Value.AppBaseUrl, payload.Token);
+        string link = AccountLinks.WholesaleInvitation(options.Value.AppBaseUrl, payload.Token, payload.EmailProof);
         string wholesaler = wholesalerName;
         await SendAsync(
             context,
@@ -88,6 +89,7 @@ internal sealed class WholesaleInvitationDeliveryWorker(
             root.TryGetProperty("email", out var email) ? email.GetString() : null,
             root.TryGetProperty("businessName", out var businessName) ? businessName.GetString() ?? string.Empty : string.Empty,
             root.TryGetProperty("token", out var token) ? token.GetString() : null,
+            root.TryGetProperty("emailProof", out var emailProof) ? emailProof.GetString() : null,
             root.GetProperty("expiresAt").GetDateTimeOffset());
     }
 
@@ -97,5 +99,6 @@ internal sealed class WholesaleInvitationDeliveryWorker(
         string? Email,
         string BusinessName,
         string? Token,
+        string? EmailProof,
         DateTimeOffset ExpiresAt);
 }

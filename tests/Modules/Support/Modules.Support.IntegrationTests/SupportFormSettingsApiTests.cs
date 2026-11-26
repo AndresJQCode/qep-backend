@@ -92,7 +92,11 @@ public sealed class SupportFormSettingsApiTests(SharedSupportHost sharedHost) : 
             client, tenant,
             new
             {
-                isPublished = false, showDocument = false, showAddress = true, showLandline = true, businessNameRequired = true,
+                isPublished = false,
+                showDocument = false,
+                showAddress = true,
+                showLandline = true,
+                businessNameRequired = true,
                 allowAttachments = false,
             },
             version: 0);

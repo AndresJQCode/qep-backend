@@ -42,20 +42,15 @@ public static class WhatsAppChannelEndpoints
         Results.Ok(await dispatcher.QueryAsync(new GetWhatsAppChannelsQuery(tenantId, ParseDocument(document)), cancellationToken));
 
     // Por nombre y sin distinguir mayúsculas, como el recipient del envío; un valor desconocido no cae a la cotización en silencio.
-    private static WhatsAppDocument ParseDocument(string? document)
-    {
-        if (string.IsNullOrWhiteSpace(document))
+    // La lista es explícita y no sale del enum: Invoice es interno (lo usa la fachada que consume Siigo) y no es parte de este contrato.
+    private static WhatsAppDocument ParseDocument(string? document) =>
+        document?.Trim().ToUpperInvariant() switch
         {
-            return WhatsAppDocument.Quotation;
-        }
-
-        var name = Enum.GetNames<WhatsAppDocument>()
-            .FirstOrDefault(value => string.Equals(value, document.Trim(), StringComparison.OrdinalIgnoreCase));
-        return name is not null && Enum.TryParse<WhatsAppDocument>(name, out var parsed)
-            ? parsed
-            : throw new Modules.Quotations.Domain.QuotationsDomainException(
-                "quotation.whatsapp.document_invalid", $"'{document}' is not a WhatsApp document; use 'quotation' or 'order'.");
-    }
+            null or "" or "QUOTATION" => WhatsAppDocument.Quotation,
+            "ORDER" => WhatsAppDocument.Order,
+            _ => throw new Modules.Quotations.Domain.QuotationsDomainException(
+                "quotation.whatsapp.document_invalid", $"'{document}' is not a WhatsApp document; use 'quotation' or 'order'."),
+        };
 
     private static async Task<IResult> ChooseAsync(
         Guid tenantId,

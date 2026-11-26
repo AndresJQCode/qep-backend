@@ -46,4 +46,16 @@ public sealed class SupportTicketStatusesTests
         Assert.Equal(
             [SupportTicketStatus.WaitingOnCustomer, SupportTicketStatus.Resolved, SupportTicketStatus.Closed],
             SupportTicketStatuses.Ordered.Where(SupportTicketStatuses.StopsTheClock));
+
+    [Fact]
+    public void AllowedForATaskNeverOffersWaitingOnCustomer() =>
+        Assert.All(
+            SupportTicketStatuses.Ordered,
+            from => Assert.DoesNotContain(SupportTicketStatus.WaitingOnCustomer, SupportTicketStatuses.AllowedFor(from, isInternal: true)));
+
+    [Fact]
+    public void AllowedForAnExternalTicketIsAllowedFrom() =>
+        Assert.All(
+            SupportTicketStatuses.Ordered,
+            from => Assert.Equal(SupportTicketStatuses.AllowedFrom(from), SupportTicketStatuses.AllowedFor(from, isInternal: false)));
 }

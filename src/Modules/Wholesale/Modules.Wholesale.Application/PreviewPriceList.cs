@@ -1,20 +1,20 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Tenancy.Application;
-using Modules.Wholesale.Domain;
 
 namespace Modules.Wholesale.Application;
 
 /// <summary>
-/// Comando y no query aunque no escribe: exige <c>wholesale.price_list.manage</c> y corre las mismas reglas de términos que el
-/// alta (sin el nombre), como <c>PreviewPurchaseOrderCommand</c>.
+/// Comando y no query aunque no escribe: exige <c>catalog.price_list.manage</c> (spec 2026-11-22) y corre las reglas de términos de
+/// la lista (sin el nombre), como <c>PreviewPurchaseOrderCommand</c>.
 /// </summary>
 public sealed record PreviewPriceListCommand(
     Guid TenantId,
-    decimal DiscountPercent,
+    decimal AdjustmentPercent,
     string Visibility,
-    IReadOnlyList<Guid> CategoryIds)
-    : ICommand<PriceListPreviewDto>, IPriceListTermsCommand;
+    IReadOnlyList<Guid> CategoryIds,
+    IReadOnlyList<PriceListExclusionInput>? Exclusions = null)
+    : ICommand<PriceListPreviewDto>;
 
 /// <summary>
 /// «Así lo ve el distribuidor» (D-10, D-11): hasta 20 variantes vendibles en la moneda por defecto del mayorista, con su
@@ -25,7 +25,7 @@ public sealed record PreviewPriceListCommand(
 public sealed class PreviewPriceListHandler(
     IExecutionContext executionContext,
     ITenantDefaultCurrency defaultCurrency,
-    ITenantPriceRounding priceRounding,
+    IWholesalePriceLists priceLists,
     IWholesaleCatalogReader catalog,
     IValidator<PreviewPriceListCommand> validator)
     : ICommandHandler<PreviewPriceListCommand, PriceListPreviewDto>
@@ -39,7 +39,7 @@ public sealed class PreviewPriceListHandler(
 
         var currency = await defaultCurrency.GetAsync(command.TenantId, cancellationToken);
         Guid[]? categoryIds = null;
-        if (PriceListTerms.VisibilityOf(command) == PriceListVisibility.Categories)
+        if (PreviewTerms.IsCategories(command.Visibility))
         {
             var found = await catalog.FindCategoriesAsync(command.TenantId, command.CategoryIds, cancellationToken);
             categoryIds = command.CategoryIds.Where(found.ContainsKey).ToArray();
@@ -50,9 +50,33 @@ public sealed class PreviewPriceListHandler(
             }
         }
 
-        var rounding = await priceRounding.GetAsync(command.TenantId, currency, cancellationToken);
+        var exclusions = command.Exclusions ?? [];
+        var hiddenCategories = exclusions
+            .Where(item => PreviewTerms.TryParseKind(item.Kind, out var isCategory) && isCategory)
+            .Select(item => item.Id)
+            .ToArray();
+        var hiddenProducts = exclusions
+            .Where(item => PreviewTerms.TryParseKind(item.Kind, out var isCategory) && !isCategory)
+            .Select(item => item.Id)
+            .ToArray();
         var (items, totalProducts) = await catalog.SampleAsync(
-            command.TenantId, currency, categoryIds, SampleSize, cancellationToken);
+            command.TenantId, currency, categoryIds, hiddenCategories, hiddenProducts, SampleSize, cancellationToken);
+
+        // Spec 2026-11-20: cuántos esconden las exclusiones = el total del alcance sin ellas menos el total con ellas. Sólo se
+        // pregunta con exclusiones; sin ellas la vista previa cuesta lo de siempre.
+        var hidden = 0;
+        if (exclusions.Count > 0)
+        {
+            var (_, unfilteredTotal) = await catalog.SampleAsync(
+                command.TenantId, currency, categoryIds, [], [], take: 1, cancellationToken);
+            hidden = Math.Max(0, unfilteredTotal - totalProducts);
+        }
+
+        // Una lista sin guardar y sin precios fijos: el precio sale de la misma regla de Catalog que usa el distribuidor (D-2).
+        var unsaved = new WholesalePriceList(default, string.Empty, command.AdjustmentPercent, categoryIds, hiddenCategories,
+            hiddenProducts, ShowPrices: true);
+        var prices = await priceLists.PriceAsync(
+            command.TenantId, unsaved, currency, items.ToDictionary(item => item.VariantId, item => item.BasePrice), cancellationToken);
 
         return new PriceListPreviewDto(
             currency,
@@ -63,7 +87,8 @@ public sealed class PreviewPriceListHandler(
                     item.Code,
                     item.Name,
                     item.BasePrice,
-                    WholesalePricing.ListPrice(item.BasePrice, command.DiscountPercent, rounding)))
-                .ToList());
+                    prices.TryGetValue(item.VariantId, out var listed) ? listed.Price : item.BasePrice))
+                .ToList(),
+            hidden);
     }
 }

@@ -81,6 +81,11 @@ public interface IIntegrationConnections
     /// con "no hay conexión".</summary>
     Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Como <see cref="ResolveAsync"/>, pero también entrega una conexión <c>Paused</c>: es para <b>configurar</b> el consumidor
+    /// (leer listas del proveedor, vincular datos), nunca para operar. Pausar es dejar de operar, no dejar de configurar. Las demás guardas
+    /// no cambian: <c>NeedsAttention</c> sigue afuera, porque su credencial está rechazada.</summary>
+    Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Las Active de un proveedor, para que la pantalla del consumidor deje elegir una; vacío si el proveedor no
     /// es visible o no está habilitado para el tenant.</summary>
     Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken);
@@ -106,7 +111,14 @@ public sealed class IntegrationConnections(
     ITenantProviders tenantProviders,
     ISecretProtector protector) : IIntegrationConnections
 {
-    public async Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        ResolveAsync(tenantId, connectionId, allowPaused: false, cancellationToken);
+
+    public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        ResolveAsync(tenantId, connectionId, allowPaused: true, cancellationToken);
+
+    private async Task<ConnectionResolution> ResolveAsync(
+        Guid tenantId, Guid connectionId, bool allowPaused, CancellationToken cancellationToken)
     {
         var connection = await repository.FindAsync(tenantId, connectionId, cancellationToken);
         if (connection is null)
@@ -114,7 +126,9 @@ public sealed class IntegrationConnections(
             return ConnectionResolution.Unusable(ConnectionUnavailableReason.NotFound, null);
         }
 
-        if (connection.Status != ConnectionStatus.Active)
+        var usable = connection.Status == ConnectionStatus.Active
+            || (allowPaused && connection.Status == ConnectionStatus.Paused);
+        if (!usable)
         {
             return ConnectionResolution.Unusable(
                 connection.Status == ConnectionStatus.Paused

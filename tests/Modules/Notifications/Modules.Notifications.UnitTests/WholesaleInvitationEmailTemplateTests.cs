@@ -58,6 +58,16 @@ public sealed class WholesaleInvitationEmailTemplateTests
     public void TheLinkIsTheAppBaseUrlAndTheEscapedToken(string appBaseUrl, string token, string expected) =>
         Assert.Equal(expected, AccountLinks.WholesaleInvitation(appBaseUrl, token));
 
+    // Spec 2026-11-24: sólo el link del correo lleva la prueba de buzón, escapada; sin ella el link queda como antes.
+    [Theory]
+    [InlineData("https://qep.qcode.co", "abc", "p_Q-1", "https://qep.qcode.co/wholesale-invitations/abc?ev=p_Q-1")]
+    [InlineData("http://localhost:3002/", "abc", "a+b/c=", "http://localhost:3002/wholesale-invitations/abc?ev=a%2Bb%2Fc%3D")]
+    [InlineData("https://qep.qcode.co", "abc", null, "https://qep.qcode.co/wholesale-invitations/abc")]
+    [InlineData("https://qep.qcode.co", "abc", "", "https://qep.qcode.co/wholesale-invitations/abc")]
+    public void TheLinkCarriesTheEmailProofAsEvOnlyWhenThereIsOne(
+        string appBaseUrl, string token, string? emailProof, string expected) =>
+        Assert.Equal(expected, AccountLinks.WholesaleInvitation(appBaseUrl, token, emailProof));
+
     private static EmailMessage Render(string wholesalerName, string businessName) =>
         WholesaleInvitationEmailTemplate.Render("ana@distri.co", Link, wholesalerName, businessName, ExpiresAt, Colombian);
 }

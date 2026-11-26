@@ -20,10 +20,15 @@ internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
     public Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
         Task.FromException(failure);
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken) =>
+        Task.FromException(failure);
 }
 
 /// <summary>Los canales del tenant, fijos por prueba (spec 2026-10-21). Replica la única regla por documento del adaptador real
-/// (spec 2026-11-09 D6) que un handler puede notar: para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible.
+/// (spec 2026-11-09 D6) que un handler puede notar: para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible, y
+/// para una factura, una sin <c>InvoiceTemplateId</c>.
 /// <see cref="Documents"/> guarda qué documento pidió cada llamada.</summary>
 internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] channels) : IWhatsAppChannelDirectory
 {
@@ -33,9 +38,12 @@ internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] chan
     {
         Documents.Add(document);
         return Task.FromResult<IReadOnlyList<WhatsAppChannel>>(
-            document == WhatsAppDocument.Order
-                ? [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })]
-                : channels);
+            document switch
+            {
+                WhatsAppDocument.Order => [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })],
+                WhatsAppDocument.Invoice => [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { InvoiceTemplateId: null or "" })],
+                _ => channels,
+            });
     }
 }
 
@@ -76,9 +84,12 @@ internal static class WhatsAppChannels
 {
     public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-    public static ZenviaWhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
+    public const string InvoiceTemplateId = "5f6e7d8c-9b0a-4c1d-8e2f-3a4b5c6d7e8f";
+
+    public static ZenviaWhatsAppChannel Any(
+        Guid? connectionId = null, string? orderTemplateId = OrderTemplateId, string? invoiceTemplateId = InvoiceTemplateId) =>
         new(connectionId ?? Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000",
-            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
+            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId, invoiceTemplateId);
 
     public static MetaWhatsAppChannel Meta(Guid? connectionId = null) =>
         new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233");
@@ -98,10 +109,19 @@ internal sealed class RecordingZenviaSender : IZenviaWhatsAppSender
         return Task.CompletedTask;
     }
 
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppInvoiceMessage Message)> Invoices { get; } = [];
+
     public Task SendOrderAsync(
         ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
         Orders.Add((channel, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendInvoiceAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Invoices.Add((channel, message));
         return Task.CompletedTask;
     }
 }
@@ -120,10 +140,19 @@ internal sealed class RecordingMetaSender : IMetaWhatsAppSender
         return Task.CompletedTask;
     }
 
+    public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppInvoiceMessage Message)> Invoices { get; } = [];
+
     public Task SendOrderAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
         Orders.Add((channel, waId, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendInvoiceAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Invoices.Add((channel, waId, message));
         return Task.CompletedTask;
     }
 }
@@ -162,6 +191,16 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
     {
         Channel = channel;
         SentOrder = message;
+        return Task.CompletedTask;
+    }
+
+    public WhatsAppInvoiceMessage? SentInvoice { get; private set; }
+
+    public Task SendInvoiceAsync(
+        WhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        Channel = channel;
+        SentInvoice = message;
         return Task.CompletedTask;
     }
 }
@@ -472,9 +511,16 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
         Entries.Add((action, actorId));
     }
 
+    /// <summary>Los detalles de cada <see cref="PublishWithDetails"/>, en orden.</summary>
+    public List<IReadOnlyDictionary<string, string?>> Details { get; } = [];
+
     public void PublishWithDetails(
         Guid tenantId, Guid actorId, string action, string resourceId,
-        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) => Actions.Add(action);
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details)
+    {
+        Actions.Add(action);
+        Details.Add(details);
+    }
 
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
@@ -838,6 +884,26 @@ internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfSto
         return Task.FromResult(PublicUrl);
     }
 
+    /// <summary>La URL pública de la copia de una factura para Zenvia.</summary>
+    public const string InvoicePublicUrl = "https://assets-qep.example.co/invoices/abc.pdf";
+
+    /// <summary>Los bytes de cada copia de factura publicada, en orden.</summary>
+    public List<byte[]> PublishedInvoices { get; } = [];
+
+    /// <summary>Si se pone, publicar la copia de la factura lanza esta falla (bucket público sin configurar, error de R2).</summary>
+    public Exception? InvoicePublishFailure { get; set; }
+
+    public Task<string> PublishInvoiceAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken)
+    {
+        if (InvoicePublishFailure is not null)
+        {
+            throw InvoicePublishFailure;
+        }
+
+        PublishedInvoices.Add(content.ToArray());
+        return Task.FromResult(InvoicePublicUrl);
+    }
+
     public Task<string> CreateDownloadUrlAsync(
         string storageKey, string downloadFileName, CancellationToken cancellationToken)
     {
@@ -1075,6 +1141,13 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     public Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
         Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<OrderId, OrderNumberAndClient>> FindNumbersAndClientsAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<OrderId, OrderNumberAndClient>>(
+            rows
+                .Where(row => row.TenantId == tenantId && orderIds.Contains(row.Id))
+                .ToDictionary(row => row.Id, row => new OrderNumberAndClient(row.OrderNumber, row.ClientId)));
 
     // Desde las filas sembradas, que sí traen líneas: la misma regla que la consulta real.
     public Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(
@@ -1431,8 +1504,15 @@ internal sealed class StubQuotationBuyerAccountLookup(params QuotationBuyerAccou
 internal sealed class StubQuotationGeographyLookup(
     IReadOnlyDictionary<Guid, string> cityNames,
     IReadOnlyDictionary<Guid, string>? coordinadoraNames = null,
-    IReadOnlyDictionary<Guid, string>? departmentNames = null) : IQuotationGeographyLookup
+    IReadOnlyDictionary<Guid, string>? departmentNames = null,
+    IReadOnlyDictionary<Guid, QuotationRegionRef>? regions = null) : IQuotationGeographyLookup
 {
+    private readonly IReadOnlyDictionary<Guid, QuotationRegionRef> _regions =
+        regions ?? new Dictionary<Guid, QuotationRegionRef>();
+
+    /// <summary>Cuántas veces se pidieron regiones: una por lote es la aserción.</summary>
+    public int FindRegionsCalls { get; private set; }
+
     private readonly IReadOnlyDictionary<Guid, string> _coordinadoraNames =
         coordinadoraNames ?? new Dictionary<Guid, string>();
 
@@ -1483,6 +1563,14 @@ internal sealed class StubQuotationGeographyLookup(
 
     /// <summary>La referencia de municipio sale del nombre del DANE; el departamento no le importa a ninguna prueba
     /// unitaria, así que va con el id vacío y el mismo nombre.</summary>
+    public Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> FindRegionsAsync(
+        IReadOnlyCollection<Guid> regionIds, CancellationToken cancellationToken)
+    {
+        FindRegionsCalls++;
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationRegionRef>>(
+            regionIds.Where(_regions.ContainsKey).Distinct().ToDictionary(id => id, id => _regions[id]));
+    }
+
     public Task<IReadOnlyDictionary<Guid, QuotationCityRef>> FindCitiesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, QuotationCityRef>>(
@@ -1501,6 +1589,13 @@ internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
 
     public static FixedTenantModules WithoutOrders => new(
         TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders])));
+
+    /// <summary>Un tenant que sólo vende por pedidos: cotizaciones oculta, pedidos prendido.</summary>
+    public static FixedTenantModules WithoutQuotations => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations])));
+
+    public static FixedTenantModules WithoutQuotationsNorOrders => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations, TenantModuleKeys.Orders])));
 
     public int FindCalls { get; private set; }
 
@@ -1567,6 +1662,9 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
     // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
     public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
         Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
+
+    public void PublishShippingPartyChanged(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("order.shipping_party_changed", order.Id.Value, order.Total, order.Currency));
 
     /// <summary>Las líneas de cada aprobación, tal como las arma el contrato del evento.</summary>
     public List<IReadOnlyList<WholesaleApprovedLineData>> WholesaleApproved { get; } = [];
@@ -1674,10 +1772,18 @@ internal sealed class StubTenantDirectory : ITenantDirectory
     /// <summary>Cuántas veces se leyó la configuración regional del tenant.</summary>
     public int RegionalCalls { get; private set; }
 
+    /// <summary>Si se pone, la lectura regional lanza esta falla (después de contarse).</summary>
+    public Exception? RegionalFailure { get; set; }
+
     public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
         TenantId tenantId, CancellationToken cancellationToken)
     {
         RegionalCalls++;
+        if (RegionalFailure is not null)
+        {
+            throw RegionalFailure;
+        }
+
         return Task.FromResult(Regional);
     }
 

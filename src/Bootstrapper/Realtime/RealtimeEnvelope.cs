@@ -2,8 +2,10 @@ using System.Text.Json;
 
 namespace Bootstrapper.Realtime;
 
-/// <summary>Plan N8: what travels through <c>NOTIFY qep_realtime</c>. <see cref="Payload"/> is what the browser receives as is.</summary>
-internal sealed record RealtimeEnvelope(string Kind, Guid TenantId, string Topic, JsonElement Payload);
+/// <summary>Plan N8: what travels through <c>NOTIFY qep_realtime</c>. <see cref="Payload"/> is what the browser receives as is.
+/// <see cref="MemberId"/> (spec 2026-11-22) is set only for a notice to one member; a pod from before it reads the envelope without
+/// it and sends to a group nobody is in.</summary>
+internal sealed record RealtimeEnvelope(string Kind, Guid TenantId, string Topic, JsonElement Payload, Guid? MemberId = null);
 
 /// <summary>camelCase (<c>JsonSerializerDefaults.Web</c>) like <c>MessagingEventJson</c>; what the listener cannot read is dropped
 /// without bringing anything down.</summary>

@@ -35,6 +35,13 @@ public static class AiErrorCodes
     /// <summary>409 (spec 2026-11-17 D-B18): borrar un agente que usa un chatbot publicado; lleva <c>chatbots: [{ id, name }]</c>.</summary>
     public const string AgentInUseByChatbots = "ai.agent.in_use_by_chatbots";
 
+    /// <summary>404 (spec 2026-11-23 §4): el <c>templateId</c> no es de ninguna plantilla de agente del sistema; una de chatbot tampoco.</summary>
+    public const string TemplateNotFound = "ai.template.not_found";
+
+    /// <summary>422 (spec 2026-11-23 §4): alguna clave de <c>requires</c> de la plantilla no está efectiva para el tenant (por ejemplo, una
+    /// pestaña vieja que todavía mostraba la plantilla como disponible).</summary>
+    public const string TemplateModuleNotEnabled = "ai.template.module_not_enabled";
+
     /// <summary>404: una conexión que no es del tenant (no se dice de quién es).</summary>
     public const string ConnectionNotFound = "ai.connection.not_found";
 

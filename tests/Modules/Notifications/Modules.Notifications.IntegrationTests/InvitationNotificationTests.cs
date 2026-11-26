@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
@@ -63,6 +64,11 @@ public sealed class InvitationNotificationTests
             MembershipId.New(),
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // El tenant se inserta directo y después del arranque, así que nace sin los roles que el alta le sembraría.
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(Guid.Parse(SeededTenantId), TestContext.Current.CancellationToken);
     }
 
     private static async Task<string?> WaitForNotificationStatusAsync(

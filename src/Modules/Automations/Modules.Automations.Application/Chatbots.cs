@@ -797,7 +797,8 @@ public sealed class DuplicateChatbotHandler(
 /// 409 <c>has_live_runs</c> sólo si el bot de verdad atiende alguna conversación (una corrida viva que una persona no ha interrumpido,
 /// con la regla de <see cref="BotAttendance"/>): cortarla dejaría al cliente hablando solo (D-C5). Una corrida viva de una conversación
 /// resuelta, tomada o pausada por una persona no bloquea, aunque el worker todavía no la haya cerrado. La auditoría se registra antes de
-/// quitar el chatbot para que el mismo <c>SaveChangesAsync</c> confirme las dos cosas.</summary>
+/// quitar el chatbot para que el mismo <c>SaveChangesAsync</c> confirme las dos cosas; con los archivos de sus bloques «Mensaje» (spec
+/// 2026-11-18), el aviso de liberación para Storage viaja en ese mismo guardado.</summary>
 public sealed class DeleteChatbotHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
@@ -806,6 +807,7 @@ public sealed class DeleteChatbotHandler(
     IAutomationConversations conversations,
     IAutomationsUnitOfWork unitOfWork,
     IAutomationsAuditRecorder audit,
+    IChatbotMediaReleases mediaReleases,
     IClock clock)
     : ICommandHandler<DeleteChatbotCommand, bool>
 {
@@ -822,6 +824,17 @@ public sealed class DeleteChatbotHandler(
         }
 
         audit.Record(command.TenantId, executionContext.SubjectId, false, AutomationsAuditActions.ChatbotDeleted, AutomationsAuditActions.ResourceChatbot, chatbot.Id, clock.UtcNow);
+        // Spec 2026-11-18: los archivos del borrador y de cada versión se avisan a Storage en el mismo guardado. FileIdsIn no lanza: un flujo
+        // ilegible no nombra archivos, y ningún archivo hace fallar el borrado.
+        var fileIds = FlowMedia.FileIdsIn(chatbot.DraftFlowJson)
+            .Concat(chatbot.Versions.SelectMany(version => FlowMedia.FileIdsIn(version.FlowJson)))
+            .Distinct()
+            .ToList();
+        if (fileIds.Count > 0)
+        {
+            mediaReleases.Publish(command.TenantId, fileIds, clock.UtcNow);
+        }
+
         chatbots.Remove(chatbot);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;

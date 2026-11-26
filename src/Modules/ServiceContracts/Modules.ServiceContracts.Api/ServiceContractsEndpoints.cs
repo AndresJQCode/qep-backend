@@ -73,9 +73,56 @@ public static class ServiceContractsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        group.MapDelete("/services/{serviceId:guid}", DeleteServiceAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Manage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         MapTransition(group, "pause", ServiceContractTransition.Pause);
         MapTransition(group, "resume", ServiceContractTransition.Resume);
         MapTransition(group, "cancel", ServiceContractTransition.Cancel);
+
+        // Reajuste de precio por contrato (spec 2026-11-24 §8): todas escriben, con If-Match como las transiciones.
+        WithContractActionResponses(group.MapPut("/services/{serviceId:guid}/price-review", UpdatePriceReviewAsync))
+            .Accepts<PriceReviewInput>("application/json");
+
+        WithContractActionResponses(group.MapPost("/services/{serviceId:guid}/price-schedule", SchedulePriceChangeAsync))
+            .Accepts<SchedulePriceChangeRequest>("application/json");
+
+        WithContractActionResponses(group.MapDelete("/services/{serviceId:guid}/price-schedule", CancelPriceScheduleAsync));
+
+        WithContractActionResponses(group.MapPost("/services/{serviceId:guid}/keep-price", KeepPriceAsync));
+
+        // Revisiones, IPC del tenant y confirmación en lote (spec 2026-11-24 §8). Sin If-Match: la tasa usa expectedRate y el
+        // lote lleva la versión de cada contrato.
+        group.MapGet("/price-reviews", ListPriceReviewsAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Read)
+            .Produces<PriceReviewPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/price-reviews/confirm-ipc", ConfirmIpcReviewsAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Manage)
+            .Accepts<ConfirmIpcRequest>("application/json")
+            .Produces<ConfirmIpcResponseDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/ipc-rates", ListIpcRatesAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Read)
+            .Produces<IpcRateListDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/ipc-rates/{year:int}", SaveIpcRateAsync)
+            .RequireAuthorization(ServiceContractsPermissions.Manage)
+            .Accepts<SaveIpcRateRequest>("application/json")
+            .Produces<IpcRateDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Cobros (spec §4). La lista y el detalle leen; marcar pagado y corregir el pago gestionan. Sin If-Match: pagar dos
         // veces es 422 not_pending, no 412.
@@ -318,6 +365,107 @@ public static class ServiceContractsEndpoints
 
         return Results.Ok(service);
     }
+
+    // Borrado duro (spec 2026-11-19): cualquier estado, con If-Match como las transiciones.
+    private static async Task<IResult> DeleteServiceAsync(
+        Guid tenantId,
+        Guid serviceId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteServiceCommand(tenantId, serviceId, RequireVersion(httpContext)), cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ListPriceReviewsAsync(
+        Guid tenantId,
+        string? state,
+        string? assignee,
+        string? search,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int page = 1,
+        int pageSize = ListPriceReviewsQuery.DefaultPageSize) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListPriceReviewsQuery(
+                tenantId,
+                string.IsNullOrWhiteSpace(state) ? ListPriceReviewsQuery.DefaultState : state,
+                string.Equals(assignee?.Trim(), "me", StringComparison.OrdinalIgnoreCase),
+                search,
+                page,
+                pageSize),
+            cancellationToken));
+
+    private static async Task<IResult> ConfirmIpcReviewsAsync(
+        Guid tenantId,
+        ConfirmIpcRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(ConfirmIpcReviewsCommand.From(tenantId, request), cancellationToken));
+
+    private static async Task<IResult> ListIpcRatesAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new ListIpcRatesQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> SaveIpcRateAsync(
+        Guid tenantId,
+        int year,
+        SaveIpcRateRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(SaveIpcRateCommand.From(tenantId, year, request), cancellationToken));
+
+    private static RouteHandlerBuilder WithContractActionResponses(RouteHandlerBuilder route) =>
+        route.RequireAuthorization(ServiceContractsPermissions.Manage)
+            .Produces<ServiceDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
+    private static async Task<IResult> UpdatePriceReviewAsync(
+        Guid tenantId,
+        Guid serviceId,
+        PriceReviewInput request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            UpdatePriceReviewCommand.From(tenantId, serviceId, request, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> SchedulePriceChangeAsync(
+        Guid tenantId,
+        Guid serviceId,
+        SchedulePriceChangeRequest request,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            SchedulePriceChangeCommand.From(tenantId, serviceId, request, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> CancelPriceScheduleAsync(
+        Guid tenantId,
+        Guid serviceId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new CancelPriceScheduleCommand(tenantId, serviceId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> KeepPriceAsync(
+        Guid tenantId,
+        Guid serviceId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new KeepPriceCommand(tenantId, serviceId, RequireVersion(httpContext)), cancellationToken));
 
     private static async Task<IResult> ListChargesAsync(
         Guid tenantId,

@@ -6,9 +6,9 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Companies.Application;
-using Modules.Tenancy.Application;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
+using Modules.Tenancy.Application;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -78,13 +78,15 @@ internal static class SiigoApiHarness
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
-    internal sealed record RegisteredTenant(Guid TenantId, Guid OwnerUserId);
+    /// <summary><paramref name="Email"/> es el del owner, que es el asesor de los pedidos que crea (y el vendedor en Siigo).</summary>
+    internal sealed record RegisteredTenant(Guid TenantId, Guid OwnerUserId, string Email);
 
     /// <summary>Copia de <c>ShopifyApiHarness.RegisterTenantAsync</c>, en Bogotá.</summary>
     public static async Task<RegisteredTenant> RegisterTenantAsync(WebApplicationFactory<Program> factory)
     {
+        var email = $"owner-{Guid.CreateVersion7():N}@example.com";
         using var bootstrap = CreateClient(factory, Guid.CreateVersion7(), Guid.CreateVersion7());
-        bootstrap.DefaultRequestHeaders.Add("X-Email", $"owner-{Guid.CreateVersion7():N}@example.com");
+        bootstrap.DefaultRequestHeaders.Add("X-Email", email);
         bootstrap.DefaultRequestHeaders.Add("X-Email-Verified", "true");
         var response = await bootstrap.PostAsJsonAsync(
             "/api/v1/auth/register-tenant",
@@ -100,7 +102,7 @@ internal static class SiigoApiHarness
         response.EnsureSuccessStatusCode();
         var registered = await response.Content.ReadFromJsonAsync<RegisteredDto>(TestContext.Current.CancellationToken);
         Assert.NotNull(registered);
-        return new RegisteredTenant(registered.TenantId, registered.OwnerUserId);
+        return new RegisteredTenant(registered.TenantId, registered.OwnerUserId, email);
     }
 
     /// <summary><c>siigo</c> no está en <c>DefaultForNewTenants</c>: se prende por SQL, como <c>pos</c>. También lo vuelve a prender
@@ -364,6 +366,8 @@ internal static class SiigoApiHarness
             builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);
             builder.UseSetting("Integrations:SecretProtection:Keys:k1", string.Empty);
             builder.UseSetting("Siigo:PartnerId", PartnerId);
+            // El worker de las tandas no corre solo durante una prueba: cada prueba lo corre a mano con DrainAsync.
+            builder.UseSetting("Siigo:Batches:PollSeconds", "3600");
         }
     }
 

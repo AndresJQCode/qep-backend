@@ -122,4 +122,13 @@ public sealed class SupplierWriteRulesTests
 
         Assert.Contains("CityId", keys);
     }
+
+    // Region (provincia guardada, spec 2026-11-23): con Colombia la region se rechaza por campo.
+    [Fact]
+    public void AColombianSupplierWithRegionFailsOnRegionId() =>
+        Assert.Contains("RegionId", ErrorKeys(Command() with { RegionId = Guid.NewGuid() }));
+
+    [Fact]
+    public void AForeignSupplierWithRegionPasses() =>
+        Assert.Empty(ErrorKeys(Command(country: "ES", cityName: "Madrid") with { RegionId = Guid.NewGuid() }));
 }

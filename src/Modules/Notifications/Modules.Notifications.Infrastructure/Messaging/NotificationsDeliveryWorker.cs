@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Modules.Notifications.Infrastructure.InApp;
 
 namespace Modules.Notifications.Infrastructure.Messaging;
 
@@ -13,9 +14,13 @@ namespace Modules.Notifications.Infrastructure.Messaging;
 internal sealed partial class NotificationsDeliveryWorker(
     IQueueDoorbell doorbell,
     IEnumerable<OutboxDeliveryWorker> definitions,
+    IEnumerable<InAppOutboxConsumer> inAppConsumers,
     ILogger<NotificationsDeliveryWorker> logger) : BackgroundService
 {
     private readonly IReadOnlyList<OutboxDeliveryWorker> _definitions = [.. definitions];
+
+    // Spec 2026-11-22 §12: the bell's consumers share this loop and its outbox doorbell; they are not hosted services of their own.
+    private readonly IReadOnlyList<InAppOutboxConsumer> _inAppConsumers = [.. inAppConsumers];
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Delivery tick of {Consumer} failed.")]
     private static partial void LogTickFailed(ILogger logger, string consumer, Exception exception);
@@ -56,6 +61,22 @@ internal sealed partial class NotificationsDeliveryWorker(
             catch (Exception exception)
             {
                 LogTickFailed(logger, definition.ConsumerName, exception);
+            }
+        }
+
+        foreach (var consumer in _inAppConsumers)
+        {
+            try
+            {
+                more |= await consumer.DrainAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                LogTickFailed(logger, consumer.ConsumerName, exception);
             }
         }
 

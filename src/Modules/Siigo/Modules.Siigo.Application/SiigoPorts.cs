@@ -24,7 +24,12 @@ public interface ISiigoConnectionDirectory
     /// proveedor (el llamador responde 403, nunca 404).</summary>
     Task<SiigoConnectionInfo?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Las credenciales para <b>operar</b> (facturar, sellar): sólo una conexión <c>Active</c>.</summary>
     Task<SiigoConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Las credenciales para <b>configurar</b> (listas del asistente, productos y sus vínculos): también una <c>Paused</c>.
+    /// Pausar es dejar de facturar, no dejar de configurar.</summary>
+    Task<SiigoConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
     /// <summary>Todas las del tenant, por nombre.</summary>
     Task<IReadOnlyList<SiigoConnectionInfo>> ListByTenantAsync(Guid tenantId, CancellationToken cancellationToken);
@@ -48,6 +53,20 @@ public interface ISiigoCompanyDirectory
 public sealed record SiigoWithholdingRef(Guid TaxRateId, string Name, string Type, decimal Percentage);
 
 /// <summary>Catalog y Companies. Las tasas que el paso «Impuestos y retenciones» ofrece vincular.</summary>
+/// <summary>Un miembro del tenant que puede ser asesor de un pedido. <paramref name="Active"/> es false para una membresía que ya no está
+/// activa pero conserva su vínculo de vendedor.</summary>
+public sealed record SiigoMemberRef(Guid MembershipId, string? DisplayName, string? Email, bool Active);
+
+/// <summary>
+/// Spec 2026-11-20 (vendedores vinculados) §4.1: los miembros que el paso «Vendedores» ofrece. Todas las membresías activas del tenant,
+/// sin filtro de rol (el asesor de un pedido puede ser cualquier miembro), más las de <c>alsoInclude</c> (las que ya tienen vínculo)
+/// aunque no estén activas. Nunca una de otro tenant. El adaptador vive en Bootstrapper: Siigo no lee Tenancy ni Identity.
+/// </summary>
+public interface ISiigoMemberDirectory
+{
+    Task<IReadOnlyList<SiigoMemberRef>> ListAsync(Guid tenantId, IReadOnlyCollection<Guid> alsoInclude, CancellationToken cancellationToken);
+}
+
 public interface ISiigoTaxRateDirectory
 {
     /// <summary>Los porcentajes de IVA (enteros) de las tasas que usan los productos activos del tenant. Incluye siempre el 0.</summary>
@@ -76,6 +95,10 @@ public interface ISiigoSettingsRepository
     /// </summary>
     Task<SiigoSettings?> FindByCompanyAsync(
         Guid tenantId, Guid companyId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
+
+    /// <summary>Marks the row for deletion on the next save; its links go with it (cascade). Only for settings whose connection no longer
+    /// exists: <c>siigo.settings</c> has no FK to Integrations, so deleting a connection leaves its row behind.</summary>
+    void Remove(SiigoSettings settings);
 }
 
 /// <summary>Las facturas de Siigo (<c>siigo.invoices</c>). Con tracking: el llamador modifica y guarda con <see cref="ISiigoUnitOfWork"/>.
@@ -85,7 +108,33 @@ public interface ISiigoInvoiceRepository
     /// <summary>Todas las filas del pedido (de los dos tipos y de todos los estados), de la más vieja a la más nueva.</summary>
     Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 
+    /// <summary>Las filas del tenant con esos ids, en cualquier estado; las de otro tenant no salen. Sin ids, ninguna.</summary>
+    Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken);
+
+    /// <summary>Todas las facturas de flete de esos pedidos del tenant, en cualquier estado. Sin pedidos, ninguna.</summary>
+    Task<IReadOnlyList<SiigoInvoice>> ListFreightAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
+
     void Add(SiigoInvoice invoice);
+}
+
+/// <summary>Las llamadas a Siigo que fallaron (<c>siigo.call_failures</c>), sólo lectura y sin tracking: la escritura es de
+/// <see cref="ISiigoCallFailureLog"/>. Todo filtra por <c>tenant_id</c>.</summary>
+public interface ISiigoCallFailureRepository
+{
+    /// <summary>La página pedida, de la más nueva a la más vieja, y el total con los mismos filtros. Un filtro nulo no se aplica.</summary>
+    Task<(IReadOnlyList<SiigoCallFailure> Items, int Total)> SearchAsync(
+        Guid tenantId,
+        SiigoCallOperation? operation,
+        int? status,
+        DateTimeOffset? since,
+        DateTimeOffset? until,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    Task<SiigoCallFailure?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
 }
 
 /// <summary>Una variante de QEP tal como la tabla de vínculos la pinta: <paramref name="DisplayName"/> es el producto más los valores de
@@ -120,6 +169,9 @@ public interface ISiigoVariantCatalog
     Task<IReadOnlyList<SiigoVariantRef>> ListAllActiveCodesAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
+/// <summary>El número de un pedido y el nombre de su cliente, como los muestra <c>/orders</c>.</summary>
+public sealed record SiigoOrderLabel(string OrderNumber, string? CustomerName);
+
 /// <summary>
 /// Quotations. El pedido tal como el armador de la factura lo necesita, y la marca de «facturado» una vez que Siigo la creó (spec
 /// 2026-11-18 §5.5). El adaptador (<c>SiigoOrderSource</c>, Bootstrapper) llena <see cref="Invoicing.SiigoInvoiceInput"/> desde el
@@ -139,4 +191,33 @@ public interface ISiigoOrderSource
     /// <summary>Marca el pedido como facturado en Siigo con el número de la factura y su id. Idempotente.</summary>
     Task MarkInvoicedAsync(
         Guid tenantId, Guid orderId, string number, string siigoInvoiceId, Guid memberId, CancellationToken cancellationToken);
+
+    /// <summary>Si el pedido ya está marcado como facturado en Siigo con ese número. Sólo lee: la tanda lo pregunta al recuperar un envío
+    /// que no dejó resultado.</summary>
+    Task<bool> IsMarkedInvoicedAsync(Guid tenantId, Guid orderId, string number, CancellationToken cancellationToken);
+
+    /// <summary>Quita la marca de facturado en Siigo con ese número, porque la factura se anuló allá (spec 2026-11-25 §4). Con otra marca,
+    /// o sin ninguna, no hace nada.</summary>
+    /// <returns>Si el pedido perdió la marca.</returns>
+    Task<bool> UnmarkInvoicedAsync(Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken);
+
+    /// <summary>El número y el cliente de estos pedidos, en lote, para pintar una tanda (spec 2026-11-24 §5). Un id que no es del tenant
+    /// no aparece. No se guardan en Siigo: un pedido puede cambiar de cliente y la tanda mostraría el viejo.</summary>
+    Task<IReadOnlyDictionary<Guid, SiigoOrderLabel>> ListLabelsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Quotations. Entregar el PDF de una factura de Siigo al WhatsApp del cliente del pedido (spec 2026-11-21). El adaptador
+/// (<c>SiigoInvoiceWhatsApp</c>, Bootstrapper) sólo reenvía a <c>IInvoiceWhatsAppDelivery</c>: canal, teléfono, plantilla y copia pública son
+/// de Quotations y Siigo no los conoce. Los errores de dominio (<c>invoice.whatsapp.*</c>) salen tal cual.
+/// </summary>
+public interface ISiigoInvoiceWhatsApp
+{
+    /// <summary>Manda la factura. El PDF viaja en memoria: ni Siigo ni este puerto lo guardan.</summary>
+    Task SendAsync(
+        Guid tenantId, Guid orderId, string invoiceNumber, decimal? invoiceTotal, ReadOnlyMemory<byte> pdf, CancellationToken cancellationToken);
+
+    /// <summary>Si hoy se podría mandar (canal que se resuelve y cliente con teléfono). Que falte algo (sin canal, sin teléfono) responde <c>false</c>; una falla de infraestructura sí lanza, y quien la llama (la lista) decide qué hacer con ella.</summary>
+    Task<bool> CanSendAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken);
 }

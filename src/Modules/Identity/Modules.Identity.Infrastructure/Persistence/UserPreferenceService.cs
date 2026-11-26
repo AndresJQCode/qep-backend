@@ -39,13 +39,14 @@ internal sealed class UserPreferenceService(IdentityDbContext dbContext, IClock 
         string? colorScheme,
         string? mode,
         bool? messageSound,
+        string? language,
         CancellationToken cancellationToken)
     {
-        if (colorScheme is null && mode is null && messageSound is null)
+        if (colorScheme is null && mode is null && messageSound is null && language is null)
         {
             throw new IdentityDomainException(
                 "identity.preference.empty",
-                "At least one of colorScheme, mode or messageSound is required.");
+                "At least one of colorScheme, mode, messageSound or language is required.");
         }
 
         var identifier = new UserId(userId);
@@ -59,6 +60,10 @@ internal sealed class UserPreferenceService(IdentityDbContext dbContext, IClock 
         var effectiveScheme = colorScheme ?? current.ColorScheme;
         var effectiveMode = mode ?? UserPreference.ToWireValue(current.Mode);
         var effectiveSound = messageSound ?? current.MessageSound;
+        // null conserva; "" vuelve al idioma del tenant (lo guardado pasa a null).
+        var effectiveLanguage = language is null
+            ? current.Language
+            : string.IsNullOrWhiteSpace(language) ? null : language;
 
         UserPreference preferenceToSave;
         if (existing is null)
@@ -71,12 +76,13 @@ internal sealed class UserPreferenceService(IdentityDbContext dbContext, IClock 
                 effectiveScheme,
                 effectiveMode,
                 effectiveSound,
-                clock.UtcNow);
+                clock.UtcNow,
+                effectiveLanguage);
             dbContext.UserPreferences.Add(preferenceToSave);
         }
         else
         {
-            existing.Change(effectiveScheme, effectiveMode, effectiveSound, clock.UtcNow);
+            existing.Change(effectiveScheme, effectiveMode, effectiveSound, clock.UtcNow, effectiveLanguage);
             preferenceToSave = existing;
         }
 
@@ -84,6 +90,27 @@ internal sealed class UserPreferenceService(IdentityDbContext dbContext, IClock 
         return ToDto(preferenceToSave);
     }
 
+    public async Task<IReadOnlyDictionary<Guid, string?>> GetLanguagesAsync(
+        Guid userId,
+        IReadOnlyCollection<Guid> tenantIds,
+        CancellationToken cancellationToken)
+    {
+        var identifier = new UserId(userId);
+        var stored = await dbContext.UserPreferences
+            .AsNoTracking()
+            .Where(preference => preference.UserId == identifier && tenantIds.Contains(preference.TenantId))
+            .Select(preference => new { preference.TenantId, preference.Language })
+            .ToDictionaryAsync(row => row.TenantId, row => row.Language, cancellationToken);
+
+        return tenantIds.Distinct().ToDictionary(
+            tenantId => tenantId,
+            tenantId => stored.GetValueOrDefault(tenantId));
+    }
+
     private static UserPreferenceDto ToDto(UserPreference preference) =>
-        new(preference.ColorScheme, UserPreference.ToWireValue(preference.Mode), preference.MessageSound);
+        new(
+            preference.ColorScheme,
+            UserPreference.ToWireValue(preference.Mode),
+            preference.MessageSound,
+            preference.Language);
 }

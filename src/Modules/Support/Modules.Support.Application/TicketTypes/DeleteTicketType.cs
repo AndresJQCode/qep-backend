@@ -39,6 +39,12 @@ public sealed class DeleteTicketTypeHandler(
 
         var type = await types.FindAsync(command.TenantId, new SupportTicketTypeId(command.TypeId), cancellationToken)
             ?? throw SupportNotFound.TicketType(command.TypeId);
+        // El tipo interno lo siembra el módulo y no se borra (spec 2026-11-22, D11), aunque ningún ticket lo use todavía.
+        if (type.IsInternal)
+        {
+            throw new SupportDomainException(SupportErrorCodes.InternalTypeLocked, "The internal ticket type cannot be deleted.");
+        }
+
         if (type.Version != command.ExpectedVersion)
         {
             throw new RequestConcurrencyException("concurrency.conflict", "The ticket type changed after it was loaded.");

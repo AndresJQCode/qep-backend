@@ -12,7 +12,7 @@ public sealed class WholesaleLayerTests
     public void DomainDoesNotReferenceOuterLayers()
     {
         AssertDoesNotReference(
-            typeof(PriceList).Assembly,
+            typeof(Distributor).Assembly,
             typeof(WholesalePermissions).Assembly,
             typeof(WholesaleInfrastructureExtensions).Assembly,
             typeof(WholesaleEndpoints).Assembly);

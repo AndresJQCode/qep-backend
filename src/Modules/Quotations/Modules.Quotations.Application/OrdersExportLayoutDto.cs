@@ -35,13 +35,17 @@ public sealed record OrdersExportColumnDto(
 /// pantalla no se entera de otra forma. En el PUT, un <c>sheetName</c> nulo o ausente conserva el
 /// actual (D6), para que un frontend anterior a este campo no le borre el nombre al tenant al
 /// guardar columnas.
+///
+/// <c>IncludePhoneDialCode</c> (spec 2026-11-25 indicativo) es el valor efectivo: el guardado, o
+/// encendido sin fila. En el PUT, nulo o ausente conserva el actual, por la misma razón.
 /// </summary>
 public sealed record OrdersExportLayoutDto(
     Guid TenantId,
     IReadOnlyList<OrdersExportColumnDto> Columns,
     long Version,
     string SheetName,
-    string DefaultSheetName);
+    string DefaultSheetName,
+    bool IncludePhoneDialCode);
 
 public static class OrdersExportLayoutMappings
 {
@@ -51,7 +55,8 @@ public static class OrdersExportLayoutMappings
             OrdersExportLayout.Effective(stored).Select(ToDto).ToArray(),
             stored?.Version ?? OrdersExportLayout.DefaultVersion,
             OrdersExportLayout.EffectiveSheetName(stored),
-            OrdersExportLayout.DefaultSheetName);
+            OrdersExportLayout.DefaultSheetName,
+            OrdersExportLayout.EffectiveIncludePhoneDialCode(stored));
 
     private static OrdersExportColumnDto ToDto(OrdersExportColumnSetting column)
     {

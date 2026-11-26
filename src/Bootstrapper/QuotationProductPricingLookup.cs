@@ -16,10 +16,13 @@ namespace Bootstrapper;
 /// Tampoco filtra inactivas: dice si la variante se vende (<see cref="QuotationVariantPricingRef.IsActive"/>)
 /// y el resolver decide, porque revalorizar una línea ya cotizada no se bloquea por una baja.
 /// </summary>
+/// <para>Spec 2026-11-22 (D-5, D-12): los precios que entrega son los de la lista del canal —<c>Quotations</c> por defecto,
+/// <c>Store</c> para la tienda y sus pedidos—, resueltos por <see cref="IPriceListPricing"/>. Sin lista asignada, el base.</para>
 internal sealed class QuotationProductPricingLookup(
     IProductRepository repository,
     IOptionDefinitionRepository optionRepository,
-    ITaxRateRepository taxRateRepository)
+    ITaxRateRepository taxRateRepository,
+    IPriceListPricing pricing)
     : IQuotationProductPricingLookup
 {
     public async Task<QuotationVariantPricingRef?> FindVariantAsync(
@@ -31,9 +34,16 @@ internal sealed class QuotationProductPricingLookup(
 
     // Una consulta para todas las variantes, una para las opciones y una por tasa distinta:
     // revalorizar una cotización de diez líneas no cuesta veinte lecturas.
+    public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> variantIds,
+        CancellationToken cancellationToken) =>
+        FindManyAsync(tenantId, variantIds, QuotationPriceChannel.Quotations, cancellationToken);
+
     public async Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
         Guid tenantId,
         IReadOnlyCollection<Guid> variantIds,
+        QuotationPriceChannel channel,
         CancellationToken cancellationToken)
     {
         if (variantIds.Count == 0)
@@ -57,6 +67,11 @@ internal sealed class QuotationProductPricingLookup(
         var taxPercentages = await CatalogVariantReads.LoadTaxPercentagesAsync(
             taxRateRepository, tenantId, products, cancellationToken);
 
+        var list = await pricing.ListForChannelAsync(
+            tenantId, channel == QuotationPriceChannel.Store ? PriceChannel.Store : PriceChannel.Quotations, cancellationToken);
+        var book = await pricing.BookAsync(
+            tenantId, list, selected.Select(pair => PricedVariant.Of(pair.Variant)).ToList(), cancellationToken);
+
         return selected.ToDictionary(
             pair => pair.Variant.Id.Value,
             pair => new QuotationVariantPricingRef(
@@ -66,7 +81,7 @@ internal sealed class QuotationProductPricingLookup(
                 CatalogVariantReads.DisplayNameOf(pair.Product, pair.Variant, valueNames),
                 pair.Variant.Code,
                 CatalogVariantReads.IsSellable(pair.Product, pair.Variant),
-                CatalogVariantReads.PricesOf(pair.Variant),
+                book.PricesOf(pair.Variant),
                 pair.Variant.ToQuotationRefs(),
                 pair.Product.TaxRateId is { } id && taxPercentages.TryGetValue(id, out var percentage)
                     ? percentage

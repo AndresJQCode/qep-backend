@@ -865,7 +865,10 @@ public sealed class ImportCustomersHandler(
                         // Sin departamento ni ciudad en la fila se conserva el carril de ciudad guardado (pais, CityId, CityName).
                         Country = candidate.City is null ? customer.Country ?? Customer.ColombiaCountryCode : Customer.ColombiaCountryCode,
                         CityId = candidate.City is null ? customer.CityId : candidate.City.CityId,
-                        CityName = candidate.City is null ? customer.CityName : null
+                        CityName = candidate.City is null ? customer.CityName : null,
+                        // La region va con el CityName: si la fila no trae ciudad se conserva el carril entero, y con ciudad (siempre
+                        // colombiana aqui) la region se descarta.
+                        RegionId = candidate.City is null ? customer.RegionId : null
                     },
                     new CustomerCommercialInfo
                     {

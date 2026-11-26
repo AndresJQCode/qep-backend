@@ -23,7 +23,11 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
         var response = await client.GetAsync($"{SupportUrl(tenant)}/ticket-types", Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var types = (await JsonAsync(response)).EnumerateArray().ToList();
+        var listed = (await JsonAsync(response)).EnumerateArray().ToList();
+        // Los ocho de siempre y, al final, el tipo interno marcado (spec 2026-11-22, D9).
+        Assert.Equal(9, listed.Count);
+        Assert.True(listed[^1].GetProperty("isInternal").GetBoolean());
+        var types = listed.Take(8).ToList();
         Assert.Equal(
             [
                 ("Petición general", (int?)15, true, true),
@@ -61,7 +65,8 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
         Assert.Equal("Garantía", created.GetProperty("name").GetString());
         Assert.Equal(15, created.GetProperty("termBusinessDays").GetInt32());
         Assert.True(created.GetProperty("termIsLegal").GetBoolean());
-        Assert.Equal(9, created.GetProperty("position").GetInt32());
+        // El tipo interno ocupa la 9: el nuevo no empata con ella.
+        Assert.Equal(10, created.GetProperty("position").GetInt32());
         Assert.True(created.GetProperty("isActive").GetBoolean());
         Assert.Equal(1L, created.GetProperty("version").GetInt64());
         var id = created.GetProperty("id").GetGuid();
@@ -230,7 +235,7 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
         var forTickets = await JsonAsync(await client.GetAsync($"{SupportUrl(tenant)}/ticket-types", Ct));
         Assert.False(forSettings.EnumerateArray().Single(type => type.GetProperty("id").GetGuid() == id).GetProperty("isActive").GetBoolean());
         Assert.False(forTickets.EnumerateArray().Single(type => type.GetProperty("id").GetGuid() == id).GetProperty("isActive").GetBoolean());
-        Assert.Equal(8, forTickets.GetArrayLength());
+        Assert.Equal(9, forTickets.GetArrayLength());
         Assert.Equal(1, await CountAuditEntriesAsync(factory, SupportAuditActions.TicketTypeUpdated, id.ToString()));
     }
 
@@ -260,7 +265,7 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
 
     // Revisión final, m5: el alta de un tipo toma la fila de ajustes del tenant (la misma que bloquea el radicado) antes de leer la
     // posición mayor, así dos altas a la vez no comparten posición. Acá la fila la tiene otra transacción: las dos altas esperan, y al
-    // soltarla salen una tras otra con 9 y 10. Host propio: la prueba mide una espera (como SupportCustomerReferenceLockApiTests).
+    // soltarla salen una tras otra con 10 y 11 (la 9 es del tipo interno). Host propio: la prueba mide una espera (como SupportCustomerReferenceLockApiTests).
     [Fact]
     public async Task ConcurrentCreationsWaitForTheTenantRowAndGetDistinctPositions()
     {
@@ -298,7 +303,7 @@ public sealed class SupportTicketTypesApiTests(SharedSupportHost sharedHost) : I
             positions.Add((await JsonAsync(response)).GetProperty("position").GetInt32());
         }
 
-        Assert.Equal([9, 10], positions.Order());
+        Assert.Equal([10, 11], positions.Order());
     }
 
     // Fase 4a (plan G4–G6): borrar un tipo que ningún ticket usa.

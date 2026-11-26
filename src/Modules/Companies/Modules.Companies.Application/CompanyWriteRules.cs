@@ -29,6 +29,9 @@ public interface ICompanyWriteCommand
 
     string? CityName { get; }
 
+    /// <summary>La región (provincia) del domicilio; sólo para un país con catálogo distinto de Colombia.</summary>
+    Guid? RegionId { get; }
+
     string? Phone { get; }
 
     string? Email { get; }
@@ -48,7 +51,7 @@ public interface ICompanyWriteCommand
 /// los dos repos.
 ///
 /// Los nombres de propiedad viajan en PascalCase y asi los espera el consumidor
-/// (<c>FIELD_BY_BACKEND_NAME</c>): Name, TaxId, Country, DocumentType, CityId, CityName, Phone, Email, Address. Los de la coleccion llegan
+/// (<c>FIELD_BY_BACKEND_NAME</c>): Name, TaxId, Country, DocumentType, CityId, CityName, RegionId, Phone, Email, Address. Los de la coleccion llegan
 /// indexados —<c>BankAccounts[0].AccountNumber</c>— porque marcar la fila equivocada de un campo
 /// repetido es lo mismo que no marcar ninguna.
 /// </summary>
@@ -108,6 +111,14 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
         RuleFor(command => command.CityName)
             .MaximumLength(Company.CityNameMaxLength)
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
+
+        // La región sólo existe fuera de Colombia, que deriva el departamento de la ciudad: con CO se rechaza por campo en
+        // vez de caer al dominio como un 422 sin el mapa errors. Que exista y sea de ese país lo resuelve el handler.
+        RuleFor(command => command.RegionId)
+            .Null()
+            .WithMessage("A Colombian company takes its region from the city, not from a region id.")
+            .When(command => HasValidCountry(command) && IsColombian(command));
+        RuleFor(command => command.RegionId).NotEqual(Guid.Empty);
 
         RuleFor(command => command.Phone)
             .MaximumLength(CompanyContactInfo.PhoneMaxLength);

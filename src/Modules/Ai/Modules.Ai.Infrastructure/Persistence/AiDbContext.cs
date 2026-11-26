@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Modules.Ai.Application;
 using Modules.Ai.Domain;
 using Modules.Audit.Domain;
 using Modules.Audit.Infrastructure.Persistence;
@@ -79,6 +80,7 @@ public sealed class AiDbContext(DbContextOptions<AiDbContext> options) : DbConte
         // Por nombre, con el DEFAULT del spec. El centinela hace que EF escriba siempre la columna, también el 0 del enum (Draft).
         agent.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16)
             .HasDefaultValue(AgentStatus.Draft).HasSentinel((AgentStatus)(-1));
+        agent.Property(value => value.SourceTemplateId).HasColumnName("source_template_id").HasMaxLength(SystemAgentTemplate.IdMaxLength);
         agent.Property(value => value.DraftConfigJson).HasColumnName("draft_config").HasColumnType("jsonb");
         agent.Property(value => value.DraftUpdatedAt).HasColumnName("draft_updated_at");
         agent.Property(value => value.DraftUpdatedBy).HasColumnName("draft_updated_by");

@@ -25,6 +25,9 @@ public interface IMessageTemplateRepository
     /// <summary>Spec 2026-11-09 D1: la única fila <c>Order</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindOrderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-21: la única fila <c>Invoice</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindInvoiceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Soporte fase 2: la única fila <c>SupportReply</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindSupportReplyAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -36,6 +39,11 @@ public interface IMessageTemplateRepository
 
     /// <summary>Mayorista: la única fila <c>WholesaleInvitationNotice</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindWholesaleInvitationNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    /// <summary>Support task notices: the only <c>TaskNotice</c> row of the connection, tracked, or <c>null</c>.</summary>
+    Task<MessageTemplate?> FindTaskNoticeAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+    /// <summary>Agenda: la única fila <c>AppointmentReminder</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindAppointmentReminderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
     /// <summary>Todas, con tracking, por nombre e idioma en orden ordinal: el refresco las recorre y las modifica.</summary>
     Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
@@ -53,6 +61,12 @@ public interface IMessageTemplateRepository
     /// <summary>Spec 2026-11-17: si alguna plantilla guardada del tenant (de cualquier conexión) tiene ese archivo como imagen del encabezado.
     /// Lee la base, no lo rastreado: una fila agregada y sin guardar no cuenta. Crear la usa para no tomar ni liberar la imagen de otra.</summary>
     Task<bool> IsHeaderImageInUseAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-20: guarda la imagen que una plantilla dejó de usar al cambiarla. Cuenta como en uso hasta que se borre la plantilla.</summary>
+    void AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage image);
+
+    /// <summary>Spec 2026-11-20: los archivos retirados de la plantilla, para liberarlos todos al borrarla.</summary>
+    Task<IReadOnlyList<Guid>> ListRetiredHeaderImageFileIdsAsync(Guid tenantId, Guid templateId, CancellationToken cancellationToken);
 
     /// <summary>§4.1 <c>template_mirror_syncs</c>: cuándo se confirmó el espejo de la conexión contra Meta; <c>null</c> si nunca.</summary>
     Task<DateTimeOffset?> LastSyncAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
@@ -74,6 +88,13 @@ public interface IQuotationTemplateReadiness
 /// fila <c>Order</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la lee el directorio de canales (D6) y el sender al
 /// enviar (D9).</summary>
 public interface IOrderTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-21: la señal para el envío de la factura por Meta, hermana de <see cref="IOrderTemplateReadiness"/>. Devuelve la
+/// fila <c>Invoice</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>.</summary>
+public interface IInvoiceTemplateReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
@@ -107,6 +128,31 @@ public interface IWholesaleInvitationNoticeReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
+
+/// <summary>Support task notices: the readiness signal of the task notice template, sibling of <see cref="IWholesaleInvitationNoticeReadiness"/>.
+/// <c>FindApprovedAsync</c> returns the <c>TaskNotice</c> row when it is <c>APPROVED</c> on that connection, or <c>null</c>;
+/// <c>FindStatusAsync</c> returns Meta's raw status of that row, or <c>null</c> when there is none.</summary>
+public interface ITaskNoticeTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<string?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Agenda: la señal de la plantilla del recordatorio de cita, hermana de <see cref="IWholesaleInvitationNoticeReadiness"/>. Devuelve la
+/// fila <c>AppointmentReminder</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la leen el envío del recordatorio
+/// (<c>IAppointmentReminderOutbound</c>) y su adaptador de la Agenda. <c>FindStatusAsync</c> devuelve el estado de Meta de esa fila
+/// (aprobada o no), o <c>null</c> si la conexión no la tiene: lo lee el adaptador de los ajustes de la Agenda.</summary>
+public interface IAppointmentReminderReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
+    Task<AppointmentReminderTemplateStatus?> FindStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>El estado de Meta de la fila <c>AppointmentReminder</c> de una conexión, con el nombre de Meta (<c>APPROVED</c>, <c>PENDING</c>,
+/// <c>REJECTED</c>…) y su motivo, si lo hay.</summary>
+public sealed record AppointmentReminderTemplateStatus(string Status, string? StatusReason);
 
 /// <summary>Cobros recurrentes §5: la señal para el consumidor Billing, hermana de <see cref="IQuotationTemplateReadiness"/>. Devuelve la fila de ese
 /// <paramref name="kind"/> (<c>BillingReminder</c> o <c>BillingOverdue</c>) en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>. Devuelve

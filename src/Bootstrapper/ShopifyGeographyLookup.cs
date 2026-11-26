@@ -6,8 +6,10 @@ namespace Bootstrapper;
 
 /// <summary>Spec 2026-10-15 §6.2.1 paso 5 (H10): la ciudad de la dirección de envío, por nombre dentro de su departamento.
 /// Geography es global (DIVIPOLA), sin tenant. Spec 2026-10-26: casa también por sinónimo y dice por cuál (D-C13), y devuelve el
-/// departamento aunque la ciudad no case (D-C11).</summary>
-internal sealed class ShopifyGeographyLookup(IDepartmentRepository departments, ICityRepository cities) : IShopifyGeographyLookup
+/// departamento aunque la ciudad no case (D-C11). Spec 2026-11-24 §11.1: describe también la región de una dirección de fuera
+/// de Colombia.</summary>
+internal sealed class ShopifyGeographyLookup(IDepartmentRepository departments, ICityRepository cities, IRegionRepository regions)
+    : IShopifyGeographyLookup
 {
     private static readonly ShopifyCityLookup Nothing = new(null, null);
 
@@ -54,5 +56,17 @@ internal sealed class ShopifyGeographyLookup(IDepartmentRepository departments, 
 
         var city = await cities.FindAsync(new CityId(cityId), cancellationToken);
         return city is not null && city.DepartmentId == department.Id ? ShopifyCityCheck.Matches : ShopifyCityCheck.CityNotInDepartment;
+    }
+
+    public async Task<(string CountryCode, string Code)?> DescribeRegionAsync(Guid regionId, CancellationToken cancellationToken)
+    {
+        var region = await regions.FindAsync(new RegionId(regionId), cancellationToken);
+        return region is null ? null : (region.CountryCode, region.Code);
+    }
+
+    public async Task<Guid?> FindRegionAsync(string countryCode, string regionCode, CancellationToken cancellationToken)
+    {
+        var inCountry = await regions.ListByCountryAsync(countryCode, cancellationToken);
+        return inCountry.FirstOrDefault(region => string.Equals(region.Code, regionCode, StringComparison.Ordinal))?.Id.Value;
     }
 }

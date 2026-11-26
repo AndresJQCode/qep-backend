@@ -45,8 +45,12 @@ public sealed class IssueDownloadUrlHandler(
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
 
+        // I-2: el contenido de un export no es de «cualquiera con storage.file.read» del tenant.
+        FileOwnerPermissionGuard.EnsureCallerMayAccess(executionContext, resource);
+
         // Sólo un recurso disponible se puede descargar (invariante de la capacidad).
         resource.EnsureDownloadable();
+        resource.EnsureNotExpired(clock.UtcNow);
 
         string url;
         if (string.IsNullOrWhiteSpace(command.Variant)

@@ -29,10 +29,13 @@ public static class FileUploadPolicy
         };
 
     // Spec 2026-11-18: lo que un chatbot manda además de la tabla general (la columna WhatsApp de OutboundMediaPolicy de Mensajería,
-    // que una prueba de paridad del Bootstrapper compara). Sólo para ChatbotMedia: la consola no acepta video ni audio.
+    // que una prueba de paridad del Bootstrapper compara). Sólo para ChatbotMedia: la consola no acepta video, audio, PowerPoint ni texto.
     private static readonly Dictionary<string, string[]> ChatbotMediaTypes =
         new Dictionary<string, string[]>(AllowedTypes, StringComparer.OrdinalIgnoreCase)
         {
+            [".ppt"] = ["application/vnd.ms-powerpoint"],
+            [".pptx"] = ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+            [".txt"] = ["text/plain"],
             [".mp4"] = ["video/mp4"],
             [".3gp"] = ["video/3gpp"],
             [".mp3"] = ["audio/mpeg"],

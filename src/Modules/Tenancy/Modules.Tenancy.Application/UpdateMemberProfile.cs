@@ -11,6 +11,7 @@ public sealed record UpdateMemberProfileCommand(
     MembershipId MembershipId,
     string DisplayName,
     int? AdvisorCode,
+    PhoneChange Phone,
     long ExpectedVersion,
     string CorrelationId) : ICommand<MembershipListItemDto>;
 
@@ -30,6 +31,12 @@ public sealed class UpdateMemberProfileValidator : AbstractValidator<UpdateMembe
         RuleFor(command => command.AdvisorCode)
             .GreaterThan(0)
             .When(command => command.AdvisorCode is not null);
+        // Absent keeps, null clears; only text is checked. OverridePropertyName gives the form the field it can mark.
+        RuleFor(command => command.Phone.Value)
+            .Must(phone => MemberPhone.IsValid(phone!.Trim()))
+            .When(command => command.Phone.Provided && !string.IsNullOrWhiteSpace(command.Phone.Value))
+            .OverridePropertyName("Phone")
+            .WithMessage("The phone must be in E.164 format, for example +573001234567.");
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -52,7 +59,8 @@ public sealed class UpdateMemberProfileHandler(
     IExecutionContext executionContext,
     IAuditRecorder auditRecorder,
     IClock clock,
-    IValidator<UpdateMemberProfileCommand> validator)
+    IValidator<UpdateMemberProfileCommand> validator,
+    MembershipPhoneReader phones)
     : ICommandHandler<UpdateMemberProfileCommand, MembershipListItemDto>
 {
     public async Task<MembershipListItemDto> HandleAsync(
@@ -89,8 +97,10 @@ public sealed class UpdateMemberProfileHandler(
         var now = clock.UtcNow;
         // Sólo se audita y se guarda lo que cambió: un guardado sin cambios es una no-op del
         // agregado, y registrarla dejaría en la auditoría un cambio que no ocurrió.
-        if (membership.UpdateProfile(command.DisplayName, command.AdvisorCode, now))
+        var changes = membership.UpdateProfile(command.DisplayName, command.AdvisorCode, command.Phone, now);
+        if (changes.Any)
         {
+            // The audit names the phone field and never the number.
             auditRecorder.Record(
                 command.TenantId.Value,
                 executionContext.SubjectId,
@@ -98,14 +108,15 @@ public sealed class UpdateMemberProfileHandler(
                 "membership",
                 membership.Id.ToString(),
                 "success",
-                [],
+                changes.Phone ? ["phone"] : [],
                 now);
 
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         var email = await userDirectory.GetEmailAsync(membership.UserId, cancellationToken);
-        return membership.ToListItemDto(email, tenant);
+        return membership.ToListItemDto(
+            email, tenant, await phones.ForAsync(membership, cancellationToken));
     }
 
     private void EnsureAuthorized(TenantId tenantId)

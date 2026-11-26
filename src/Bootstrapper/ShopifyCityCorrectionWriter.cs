@@ -20,30 +20,50 @@ namespace Bootstrapper;
 internal sealed class ShopifyCityCorrectionWriter(IServiceScopeFactory scopes) : IShopifyCityCorrectionWriter
 {
     public async Task<ShopifyCityWriteResult> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ShopifyPartyDraft party, string notesLinePrefix, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ShopifyPartyDraft party,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(party);
         await using var scope = scopes.CreateAsyncScope();
         var outcome = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().AttachShippingAsync(
             tenantId,
             orderId,
-            new ExternalShippingParty(party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId),
+            ShopifyOrderWriter.ToExternalParty(party),
             notesLinePrefix,
+            requestedCityIds,
             cancellationToken);
         return FromOrder(outcome);
     }
 
     public async Task<ShopifyCityWriteResult> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ShopifyShippingFingerprint expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ShopifyShippingFingerprint expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(expected);
+        // La corrección de ciudad es sólo de Colombia: su huella trae siempre los dos ids.
+        var expectedDepartmentId = expected.DepartmentId
+            ?? throw new InvalidOperationException("A city correction expects a Colombian party, with its department.");
+        var expectedCityId = expected.CityId
+            ?? throw new InvalidOperationException("A city correction expects a Colombian party, with its city.");
         await using var scope = scopes.CreateAsyncScope();
         var outcome = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CorrectShippingCityAsync(
             tenantId,
             orderId,
-            new ExternalShippingParty(expected.Name, expected.Phone, expected.Email, expected.Address, expected.DepartmentId, expected.CityId),
+            new ExternalShippingParty(
+                expected.Name, expected.Phone, expected.Email, expected.Address, expectedDepartmentId, expectedCityId,
+                expected.PostalCode, expected.Country, expected.CityName, expected.RegionId),
             departmentId,
             cityId,
+            requestedCityIds,
             cancellationToken);
         return FromOrder(outcome);
     }

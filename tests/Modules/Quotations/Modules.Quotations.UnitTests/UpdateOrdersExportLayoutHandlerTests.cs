@@ -306,6 +306,82 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         Assert.Equal(0, unitOfWork.Saves);
     }
 
+    // Spec 2026-11-25 indicativo: guardar sólo el interruptor es un cambio. Sin fila, crea la fila en 2 y
+    // audita con la misma acción.
+    [Fact]
+    public async Task SavingOnlyThePhoneDialCodeSwitchWithoutARowCreatesTheRowAndAudits()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var audit = new RecordingExportAuditPublisher();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var handler = NewHandler(repository, audit, unitOfWork);
+
+        var dto = await handler.HandleAsync(
+            NewCommand(DefaultInputs(), expectedVersion: 1, includePhoneDialCode: false),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, dto.Version);
+        Assert.False(dto.IncludePhoneDialCode);
+        Assert.False(Assert.Single(repository.Layouts).IncludePhoneDialCode);
+        Assert.Equal(1, unitOfWork.Saves);
+        Assert.Equal("quotations.orders_export_layout.updated", Assert.Single(audit.Entries).Action);
+    }
+
+    // Nulo conserva el guardado: el frontend de hoy, que no manda el campo, no lo vuelve a prender.
+    [Fact]
+    public async Task WithoutThePhoneDialCodeSwitchItKeepsTheStoredOne()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var stored = OrdersExportLayout.CreateDefault(TenantId, Now.AddDays(-1));
+        Assert.True(stored.Replace(
+            OrdersExportLayout.Effective(stored: null), stored.SheetName, includePhoneDialCode: false, Now.AddDays(-1)));
+        repository.Add(stored);
+        var handler = NewHandler(repository, new RecordingExportAuditPublisher(), new CountingQuotationsUnitOfWork());
+        var columns = DefaultInputs();
+        columns[19] = columns[19] with { Header = "Correo" };
+
+        var dto = await handler.HandleAsync(
+            NewCommand(columns, expectedVersion: 2, includePhoneDialCode: null), TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, dto.Version);
+        Assert.False(dto.IncludePhoneDialCode);
+        Assert.False(stored.IncludePhoneDialCode);
+    }
+
+    [Fact]
+    public async Task WithoutARowOrAPhoneDialCodeSwitchItStaysOn()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var handler = NewHandler(repository, new RecordingExportAuditPublisher(), new CountingQuotationsUnitOfWork());
+        var columns = DefaultInputs();
+        columns[19] = columns[19] with { Header = "Correo" };
+
+        var dto = await handler.HandleAsync(
+            NewCommand(columns, expectedVersion: 1), TestContext.Current.CancellationToken);
+
+        Assert.True(dto.IncludePhoneDialCode);
+        Assert.True(Assert.Single(repository.Layouts).IncludePhoneDialCode);
+    }
+
+    [Fact]
+    public async Task SavingTheSamePhoneDialCodeSwitchIsANoOp()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var audit = new RecordingExportAuditPublisher();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var handler = NewHandler(repository, audit, unitOfWork);
+
+        var dto = await handler.HandleAsync(
+            NewCommand(DefaultInputs(), expectedVersion: 1, includePhoneDialCode: true),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, dto.Version);
+        Assert.True(dto.IncludePhoneDialCode);
+        Assert.Empty(repository.Layouts);
+        Assert.Empty(audit.Entries);
+        Assert.Equal(0, unitOfWork.Saves);
+    }
+
     private static OrdersExportLayout StoredLayout(params OrdersExportColumnSetting[] columns)
     {
         var layout = OrdersExportLayout.CreateDefault(TenantId, Now.AddDays(-1));
@@ -324,8 +400,9 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         new("Fixed", null, header, value, Visible: true);
 
     private static UpdateOrdersExportLayoutCommand NewCommand(
-        IReadOnlyList<OrdersExportColumnInput> columns, long expectedVersion, string? sheetName = null) =>
-        new(TenantId, columns, expectedVersion, "trace", sheetName);
+        IReadOnlyList<OrdersExportColumnInput> columns, long expectedVersion, string? sheetName = null,
+        bool? includePhoneDialCode = null) =>
+        new(TenantId, columns, expectedVersion, "trace", sheetName, includePhoneDialCode);
 
     private static UpdateOrdersExportLayoutHandler NewHandler(
         InMemoryOrdersExportLayoutRepository repository,

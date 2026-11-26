@@ -48,7 +48,8 @@ public sealed class QuotationPdfProvider(
         // Y el contenido configurable, una lectura más (spec 2026-11-16 §5.4): su huella se calcula antes de decidir, porque
         // cambiar un texto del PDF también lo vence.
         var pdfContent = await pdfContentStore.GetAsync(quotation.TenantId, cancellationToken);
-        var contentFingerprint = QuotationPdfSectionsBuilder.Fingerprint(pdfContent, QuotationPdfKind.Quotation);
+        var language = regional?.Language;
+        var contentFingerprint = QuotationPdfSectionsBuilder.Fingerprint(pdfContent, QuotationPdfKind.Quotation, language);
 
         // Generar cuesta una llamada de red a `qcode-pdf` mas una subida a R2, y la mayoria de
         // los pedidos son de cotizaciones que nadie toco desde el anterior.
@@ -72,7 +73,7 @@ public sealed class QuotationPdfProvider(
         // Sólo se registra el logo que de verdad se imprimió: si no se pudo leer, el PDF queda
         // sin LogoFileId, el próximo export lo ve vencido y vuelve a intentar con el logo.
         var printedLogoFileId = pdfLogo is null ? null : logo?.FileId;
-        var mapped = QuotationPdfDocumentMapper.From(response, calendar, pdfLogo, numberFormat);
+        var mapped = QuotationPdfDocumentMapper.From(response, calendar, pdfLogo, numberFormat, language);
         var content = await renderer.RenderAsync(
             mapped with { Sections = QuotationPdfSectionsBuilder.Build(pdfContent, mapped, richTextReader) }, cancellationToken);
         var storageKey = await storage.SaveAsync(

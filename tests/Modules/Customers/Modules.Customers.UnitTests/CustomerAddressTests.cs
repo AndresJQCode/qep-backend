@@ -155,4 +155,28 @@ public sealed class CustomerAddressTests
         Assert.Null(foreign.CityId);
         Assert.Equal("Madrid", foreign.CityName);
     }
+
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000a1");
+
+    [Fact]
+    public void ColombianAddressWithRegionIsRejected()
+    {
+        var customer = CreateCustomer();
+
+        var exception = Assert.Throws<CustomersDomainException>(() =>
+            customer.AddAddress(Details("CO", OtherCityId) with { RegionId = MadridRegionId }, false, Later));
+
+        Assert.Equal("customers.address.region_lane_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void ForeignAddressKeepsRegion()
+    {
+        var customer = CreateCustomer();
+
+        var added = customer.AddAddress(
+            Details("ES", cityName: "Alcalá") with { RegionId = MadridRegionId }, false, Later);
+
+        Assert.Equal(MadridRegionId, added.RegionId);
+    }
 }

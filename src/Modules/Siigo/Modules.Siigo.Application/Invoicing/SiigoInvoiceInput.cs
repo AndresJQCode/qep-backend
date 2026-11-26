@@ -25,7 +25,8 @@ public enum SiigoIdentificationKind
 }
 
 /// <summary>Una línea del pedido. <paramref name="Subtotal"/> es el de la línea <b>con el descuento aplicado y sin IVA</b>
-/// (<c>OrderItem.Subtotal</c>); el precio unitario que va a Siigo se deriva de él.</summary>
+/// (<c>OrderItem.Subtotal</c>); el precio unitario que va a Siigo se deriva de él. Un regalo (<paramref name="IsGift"/>) trae subtotal
+/// e IVA en 0 y su precio de lista con IVA incluido en <paramref name="ListUnitPrice"/>: de ahí sale la base del obsequio.</summary>
 public sealed record SiigoInvoiceLineInput(
     Guid VariantId,
     string Name,
@@ -33,11 +34,13 @@ public sealed record SiigoInvoiceLineInput(
     decimal Subtotal,
     decimal DiscountPercentage,
     int TaxPercentage,
-    decimal TaxAmount);
+    decimal TaxAmount,
+    bool IsGift = false,
+    decimal ListUnitPrice = 0m);
 
 /// <summary>Una retención <b>aplicada</b> del pedido (<paramref name="Type"/> es <c>Retefuente</c> o <c>ReteICA</c>; otro tipo es un
 /// faltante). Sólo viaja el vínculo: el monto lo calcula Siigo.</summary>
-public sealed record SiigoWithholdingInput(Guid TaxRateId, string Name, string Type, decimal Amount);
+public sealed record SiigoWithholdingInput(Guid TaxRateId, string Name, string Type, decimal Amount, decimal Percentage = 0m);
 
 /// <summary>Un comprobante de pago del pedido: cada uno es un pago de la factura, por su monto.</summary>
 public sealed record SiigoPaymentProofInput(Guid ProofId, decimal Amount);
@@ -54,13 +57,15 @@ public sealed record SiigoBilledPartyInput(
     string? CityCode,
     string? StateCode,
     string? Email,
-    string? Phone)
+    SiigoPhone? Phone)
 {
     public override string ToString() => "SiigoBilledPartyInput { }";
 }
 
 /// <summary>El pedido tal como Siigo lo necesita para armar la factura. <paramref name="CompanyId"/> elige la conexión;
-/// <paramref name="OrderVersion"/> es la versión del pedido al armar (la fila guarda si cambió después, spec §5.4).</summary>
+/// <paramref name="OrderVersion"/> es la versión del pedido al armar (la fila guarda si cambió después, spec §5.4);
+/// <paramref name="AdvisorMembershipId"/> es la membresía del asesor: su vínculo da el vendedor (spec 2026-11-20, vendedores vinculados);
+/// <paramref name="AdvisorLabel"/>, su nombre o correo para el faltante (null si ya no resuelve).</summary>
 public sealed record SiigoInvoiceInput(
     Guid OrderId,
     string OrderNumber,
@@ -81,4 +86,8 @@ public sealed record SiigoInvoiceInput(
     string? BuyerNotes,
     SiigoBilledPartyInput BilledParty,
     Guid? CompanyId,
-    long OrderVersion);
+    long OrderVersion,
+    Guid AdvisorMembershipId,
+    string? AdvisorLabel,
+    string? ShippingAddress = null,
+    string? ShippingCity = null);

@@ -54,6 +54,22 @@ public sealed class ShopifyOrderUpdateClientTests
         Assert.Contains("orderUpdate(input: $input)", JsonNode.Parse(body)!["query"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("050021")]
+    [InlineData(null)]
+    public async Task TheZipTravelsOnlyWhenThereIsOne(string? zip)
+    {
+        var (client, handler) = Bed((_, _) => Json(HttpStatusCode.OK, Updated));
+        var address = new ShopifyAddressUpdate(
+            "Laura Gómez", "", "Cra 5 # 10-20", "", "ENVIGADO", "ANT", "CO", "3001112233", null, zip);
+
+        await client.UpdateAsync(Connection, new ShopifyOrderUpdate(5550000000001, address, false, null, null), Ct);
+
+        var sent = JsonNode.Parse(Assert.Single(handler.Requests).Body)!["variables"]!["input"]!["shippingAddress"]!.AsObject();
+        Assert.Equal(zip is not null, sent.ContainsKey("zip"));
+        Assert.Equal(zip, sent["zip"]?.GetValue<string>());
+    }
+
     [Fact]
     public async Task TheAddressAndAClearedNoteTravel()
     {

@@ -22,7 +22,14 @@ public sealed class Charge
 
     public string Currency { get; private set; }
 
+    /// <summary>El ancla del ciclo que paga el cobro: inmutable y única por contrato.</summary>
+    public DateOnly PeriodDate { get; private set; }
+
+    /// <summary>El día que ve el cliente: el período, salvo en un cobro liberado de una retención.</summary>
     public DateOnly DueDate { get; private set; }
+
+    /// <summary>Nació en una revisión de un contrato <c>Manual</c> sin que nadie revisara el precio.</summary>
+    public bool PriceUnreviewed { get; private set; }
 
     public ChargeStatus Status { get; private set; }
 
@@ -38,19 +45,26 @@ public sealed class Charge
 
     public DateTimeOffset CreatedAt { get; private set; }
 
-    public static Charge Generate(ServiceContract service, DateOnly dueDate, DateTimeOffset now) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = service.TenantId,
-        ServiceId = service.Id,
-        CustomerId = service.CustomerId,
-        Amount = service.Price,
-        Currency = service.Currency,
-        DueDate = dueDate,
-        Status = ChargeStatus.Pending,
-        Version = 1,
-        CreatedAt = now,
-    };
+    /// <summary>Un cobro que vence en su período y sin marca: el caso sin reajuste de por medio.</summary>
+    public static Charge Generate(ServiceContract service, DateOnly dueDate, DateTimeOffset now) =>
+        Generate(service, dueDate, dueDate, priceUnreviewed: false, now);
+
+    public static Charge Generate(
+        ServiceContract service, DateOnly periodDate, DateOnly dueDate, bool priceUnreviewed, DateTimeOffset now) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = service.TenantId,
+            ServiceId = service.Id,
+            CustomerId = service.CustomerId,
+            Amount = service.Price,
+            Currency = service.Currency,
+            PeriodDate = periodDate,
+            DueDate = dueDate,
+            PriceUnreviewed = priceUnreviewed,
+            Status = ChargeStatus.Pending,
+            Version = 1,
+            CreatedAt = now,
+        };
 
     public void MarkPaid(DateOnly paidOn, string? note, Guid paidByMemberId, DateOnly today, DateTimeOffset now)
     {

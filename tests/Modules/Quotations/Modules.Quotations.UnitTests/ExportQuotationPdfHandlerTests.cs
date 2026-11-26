@@ -82,6 +82,36 @@ public sealed class ExportQuotationPdfHandlerTests
         Assert.Equal("Cotizacion-QUO-2026-0001.pdf", storage.RequestedFileName);
     }
 
+    // Spec 2026-11-22 (i18n): cambiar el idioma del tenant vence el PDF guardado (por la huella) y la descarga se llama como
+    // el documento en ese idioma.
+    [Fact]
+    public async Task ChangingTheTenantLanguageRegeneratesAndRenamesTheDownload()
+    {
+        var directory = new StubTenantDirectory();
+        var (handler, renderer, storage, _, _, _) = NewHandler(tenantDirectory: directory);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        directory.Regional = directory.Regional! with { Language = "es-ES" };
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, renderer.Calls);
+        Assert.Equal("es-ES", renderer.Last!.Language);
+        Assert.Equal("Presupuesto-QUO-2026-0001.pdf", storage.RequestedFileName);
+    }
+
+    [Fact]
+    public async Task ExportingTwiceInSpainDoesNotRegenerate()
+    {
+        var directory = new StubTenantDirectory();
+        directory.Regional = directory.Regional! with { Language = "es-ES" };
+        var (handler, renderer, _, _, _, _) = NewHandler(tenantDirectory: directory);
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, renderer.Calls);
+    }
+
     // El logo del tenant invalida la caché igual que un cambio de la cotización (spec 2026-09-19,
     // decisión 10): el segundo export ve otro FileId en el lookup y vuelve a generar.
     [Fact]
@@ -269,7 +299,8 @@ public sealed class ExportQuotationPdfHandlerTests
                 contentStore ?? new StubPdfContentStore(),
                 new RichTextHtmlReader()),
             storage,
-            new StubExecutionContext(SubjectId, TenantId));
+            new StubExecutionContext(SubjectId, TenantId),
+            tenantDirectory ?? new StubTenantDirectory());
 
         return (handler, renderer, storage, repository, logoLookup, quotation);
     }

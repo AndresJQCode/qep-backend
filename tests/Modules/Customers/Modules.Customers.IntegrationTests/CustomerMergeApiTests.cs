@@ -1086,4 +1086,114 @@ public sealed class CustomerMergeApiTests
             Guid tenantId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
             Task.FromResult(new CustomerMergeReferenceCounts(0, 0, 0, 0, 0));
     }
+
+    // Review Focus 5: CustomerMergeResponse es otro Response a mano, aparte de CustomerResponse; el campo nuevo tiene que llegar
+    // por los dos.
+    [Fact]
+    public async Task MergeResponseCarriesRegion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var madrid = await MadridRegionIdAsync(client);
+        await ExecuteAsync(
+            arranged.ConnectionString,
+            "UPDATE customers.customers SET country = 'ES', city_id = NULL, city_name = 'Madrid', "
+            + $"region_id = '{madrid}' WHERE id = '{arranged.Survivor}'");
+
+        var body = await MergeAsync(client, arranged.Survivor, arranged.Merged);
+
+        var region = body.GetProperty("region");
+        Assert.Equal(madrid, region.GetProperty("id").GetGuid());
+        Assert.Equal("Madrid", region.GetProperty("name").GetString());
+    }
+
+    private static async Task<Guid> PostBillingProfileAsync(
+        Arranged arranged, Guid customerId, string name, bool isPrincipal = false)
+    {
+        var response = await arranged.Client.PostAsJsonAsync(
+            $"{CustomersUrl()}/{customerId}/billing-profiles",
+            new
+            {
+                name,
+                identificationType = "NIT",
+                identificationNumber = "900123456",
+                address = "Cra 43A # 1-50",
+                cityId = arranged.CityId,
+                isPrincipal
+            },
+            TestContext.Current.CancellationToken);
+        var body = await BodyAsync(response, HttpStatusCode.OK);
+        return body.GetProperty("billingProfiles").EnumerateArray()
+            .Single(profile => profile.GetProperty("name").GetString() == name)
+            .GetProperty("id").GetGuid();
+    }
+
+    private static (Guid Id, bool IsPrincipal)[] BillingProfilesOf(JsonElement customer) =>
+        [.. customer.GetProperty("billingProfiles").EnumerateArray()
+            .Select(profile => (profile.GetProperty("id").GetGuid(), profile.GetProperty("isPrincipal").GetBoolean()))];
+
+    // Perfiles de facturación (owner, P-3): se mueven todos, sin deduplicar, y el que queda conserva su principal.
+    [Fact]
+    public async Task MergingMovesTheBillingProfilesAsNonPrincipal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var kept = await PostBillingProfileAsync(arranged, arranged.Survivor, "Comercial Andina SAS");
+        // El primero es igual al del que queda: aun así llega.
+        var twin = await PostBillingProfileAsync(arranged, arranged.Merged, "Comercial Andina SAS");
+        var other = await PostBillingProfileAsync(arranged, arranged.Merged, "Andina Norte SAS");
+
+        var body = await MergeAsync(client, arranged.Survivor, arranged.Merged);
+
+        var profiles = BillingProfilesOf(body);
+        Assert.Equal(3, profiles.Length);
+        Assert.Equal((kept, true), profiles[0]);
+        Assert.Contains((twin, false), profiles);
+        Assert.Contains((other, false), profiles);
+        Assert.Equal(
+            3L,
+            await ScalarAsync(
+                arranged.ConnectionString,
+                $"SELECT count(*) FROM customers.customer_billing_profiles WHERE customer_id = '{arranged.Survivor}'"));
+        Assert.Equal(
+            0L,
+            await ScalarAsync(
+                arranged.ConnectionString,
+                $"SELECT count(*) FROM customers.customer_billing_profiles WHERE customer_id = '{arranged.Merged}'"));
+    }
+
+    [Fact]
+    public async Task ASurvivorWithoutProfilesGetsTheOldestMovedAsPrincipal()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var other = await CreateAsync(client, arranged.CityId, arranged.ClassificationId, "OTRO", "CC", "1.020.304");
+        var first = await PostBillingProfileAsync(arranged, arranged.Merged, "Uno SAS");
+        var second = await PostBillingProfileAsync(arranged, arranged.Merged, "Dos SAS", isPrincipal: true);
+        var third = await PostBillingProfileAsync(arranged, other, "Tres SAS");
+        // El de id más nuevo pasa a ser el creado primero: manda created_at, y el id sólo desempata.
+        await ExecuteAsync(
+            arranged.ConnectionString,
+            $"UPDATE customers.customer_billing_profiles SET created_at = '2020-01-01T00:00:00Z' WHERE id = '{third}'");
+
+        var body = await MergeAsync(client, arranged.Survivor, arranged.Merged, other);
+
+        var profiles = BillingProfilesOf(body);
+        Assert.Equal(3, profiles.Length);
+        Assert.Equal((third, true), profiles[0]);
+        Assert.Contains((first, false), profiles);
+        Assert.Contains((second, false), profiles);
+        Assert.Equal(
+            1L,
+            await ScalarAsync(
+                arranged.ConnectionString,
+                $"SELECT count(*) FROM customers.customer_billing_profiles WHERE customer_id = '{arranged.Survivor}' "
+                + "AND is_principal"));
+    }
 }

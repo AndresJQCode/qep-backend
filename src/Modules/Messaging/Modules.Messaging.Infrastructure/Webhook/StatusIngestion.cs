@@ -12,13 +12,16 @@ internal enum StatusOutcome
 }
 
 /// <summary>El resultado y, con <see cref="StatusOutcome.Applied"/>, las conversaciones cuya foto cambió: el aviso en tiempo real
-/// las nombra (spec 2026-10-14).</summary>
-internal sealed record StatusApplied(StatusOutcome Outcome, IReadOnlyList<Guid> ConversationIds)
+/// las nombra (spec 2026-10-14). <paramref name="CampaignsToStop"/>: las campañas de los destinatarios que este fallo marcó, cuando su
+/// código detiene la campaña (<see cref="CampaignFailureCodes.StopsTheCampaign"/>); quien procesa la entrega las detiene.</summary>
+internal sealed record StatusApplied(StatusOutcome Outcome, IReadOnlyList<Guid> ConversationIds, IReadOnlyList<CampaignToStop>? CampaignsToStop = null)
 {
     public static readonly StatusApplied NotFound = new(StatusOutcome.NotFound, []);
 
     public static readonly StatusApplied NoChange = new(StatusOutcome.NoChange, []);
 }
+
+internal sealed record CampaignToStop(Guid CampaignId, Guid TenantId, string Code);
 
 /// <summary>Spec 2026-10-09 §7.5 («Estados»), literal: un UPDATE monótono por índice único. Si tocó el último
 /// de su conversación, actualiza la foto sin subir version ni updated_at (HOT).</summary>
@@ -73,6 +76,7 @@ internal static class StatusIngestion
             return StatusApplied.NoChange;
         }
 
+        List<CampaignToStop>? campaignsToStop = null;
         if (failureCode is { } code)
         {
             // Meta aceptó una plantilla de campaña (el destinatario quedó Sent) y avisa después que no la entregó (131042, 131050…). El
@@ -81,11 +85,20 @@ internal static class StatusIngestion
             var text = code.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var reason = CampaignFailureReasons.For(text);
             var messageIds = updated.Select(row => row.Id).ToArray();
-            await dbContext.Database.ExecuteSqlAsync(
+            var failed = await dbContext.Database.SqlQuery<FailedRecipientRow>(
                 $"""
                 UPDATE messaging.campaign_recipients SET status = 'Failed', failure_code = {text}, failure_reason = {reason}
                  WHERE message_id = ANY({messageIds}) AND status = 'Sent'
-                """, cancellationToken);
+                RETURNING campaign_id AS "CampaignId", tenant_id AS "TenantId"
+                """).ToListAsync(cancellationToken);
+
+            // Un bloqueo de la cuenta (pago, restricción…) hace fallar igual a todos los que siguen: la campaña se detiene acá, porque el worker
+            // recibió 200 y nunca vería el error. Se devuelve y no se detiene en esta transacción: la detención es la del worker
+            // (StopCampaignAsync, idempotente) y si falla, el siguiente webhook con el mismo código lo vuelve a intentar.
+            if (CampaignFailureCodes.StopsTheCampaign(code) && failed.Count > 0)
+            {
+                campaignsToStop = [.. failed.Distinct().Select(row => new CampaignToStop(row.CampaignId, row.TenantId, text))];
+            }
         }
 
         foreach (var row in updated)
@@ -97,7 +110,7 @@ internal static class StatusIngestion
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return new StatusApplied(StatusOutcome.Applied, [.. updated.Select(row => row.ConversationId).Distinct()]);
+        return new StatusApplied(StatusOutcome.Applied, [.. updated.Select(row => row.ConversationId).Distinct()], campaignsToStop);
     }
 
     /// <summary>Spec 2026-10-11 decisión 10: Meta aceptó una plantilla de marketing y la reporta después con este código, porque la persona
@@ -184,4 +197,6 @@ internal static class StatusIngestion
     }
 
     private sealed record AppliedRow(Guid Id, Guid ConversationId);
+
+    private sealed record FailedRecipientRow(Guid CampaignId, Guid TenantId);
 }

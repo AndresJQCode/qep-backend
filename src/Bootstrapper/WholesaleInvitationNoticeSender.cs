@@ -11,7 +11,12 @@ namespace Bootstrapper;
 /// <see cref="ServiceContractsMetaWhatsAppSender"/> para los cobros. Llena las tres variables propias de la plantilla
 /// (<c>nombre_contacto</c>, <c>mayorista</c> y <c>correo</c>; las fijas las pone Mensajería) y traduce el resultado a los
 /// códigos que se guardan en la invitación. El nombre del mayorista se lee al entregar, como el correo: un tenant renombrado
-/// sale con el nombre vigente. Ni el token ni el link pasan por acá.
+/// sale con el nombre vigente.
+/// <para>Spec 2026-11-19 §2: desde el evento con link, <see cref="WholesaleInvitationNotice.Link"/> llega hasta acá, pero
+/// <b>no se le pasa a Mensajería</b>. <c>PlainTemplateOutbound</c> guarda en <c>messaging.messages</c> el texto armado de la
+/// plantilla (y sus valores en el detalle) tal cual, sin forma de enmascarar un valor, y el token plano no puede guardarse. Hasta
+/// que Mensajería sepa enmascararlo y exista la plantilla con <c>{{link}}</c> (ítem aparte), el aviso sale como antes, sin
+/// link.</para>
 /// </summary>
 internal sealed partial class WholesaleInvitationNoticeSender(
     IWholesaleInvitationNoticeOutbound outbound, IWholesaleInvitationNoticeReadiness readiness, ITenantDirectory tenants)

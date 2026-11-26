@@ -134,6 +134,11 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("origin");
 
+                    b.Property<string>("PhoneE164")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("phone_e164");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -217,6 +222,12 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)")
                         .HasColumnName("display_name");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("language");
 
                     b.Property<Guid?>("LogoFileId")
                         .HasColumnType("uuid")
@@ -439,7 +450,7 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_modules", "tenancy", t =>
                         {
-                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo')");
+                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store','ai','copilot','support','purchases','wholesale','siigo','hr','payroll','scheduling','wms','projects')");
 
                             t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual','operator','invitation')");
 

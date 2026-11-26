@@ -1,0 +1,37 @@
+---
+paths:
+  - "src/Modules/Wms/**"
+  - "tests/Modules/Wms/**"
+  - "src/Bootstrapper/Wms*"
+---
+
+# WMS (bodegas, ledger de inventario y saldos)
+
+Reglas de `qep-backend` que no se deducen leyendo el código. Se cargan solas al leer o editar un
+archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAUDE.md`](../../CLAUDE.md).
+
+- **«Limpiar» `wms.stock_movements` con SQL falla a propósito**: `trg_stock_movements_immutable` lanza `wms.ledger.immutable` ante `UPDATE`/`DELETE`, también en pruebas y en local; la corrección es un `Reversal` por la API. **El `Down` de `AddInventoryLedger` está vacío a propósito**: no quita tablas, vistas ni el trigger, y después de bajarlo el `Up` no se vuelve a aplicar solo (el `CreateTable` de EF no es idempotente): el rollback es revertir el código y dejar el esquema. Un `TRUNCATE` sí pasa (no es DML por fila), sobre la tabla padre y sobre cada partición mensual: **hoy nada en el repo lo impide en producción** (`k8s/` no declara el rol ni sus privilegios y las migraciones corren con la conexión de la aplicación). Quitarle `TRUNCATE` sobre `wms.stock_movements` y sus particiones —incluidas las que crea cada mes `PartitionMaintenanceWorker`— es una tarea **pendiente de la plataforma**, en el repo `migracion-k8s`. En local no lo uses fuera de una base desechable.
+- **La clave de `stock_balances` es `UNIQUE … NULLS NOT DISTINCT`**: dos filas con `lot_id` nulo y el resto igual chocan; desde `AddHandlingUnitDimension` (D-12) la clave incluye `handling_unit_id` entre el lote y el estado, también `NULLS NOT DISTINCT` (`NULL` = suelto), y un `ON CONFLICT` a mano tiene que nombrar las siete columnas o responde `42P10`; el `Down` de esa migración está vacío y revertir sólo el código deja el upsert viejo de seis columnas en `42P10`: hay que recrear a mano el índice sin la unidad. Mientras no exista el agregado `HandlingUnit`, `InventoryLedger.PostAsync` rechaza con `InvalidOperationException` toda entrada con unidad que no sea un reverso, y `CatalogVariantUsageChecker` no cambia. Un `INSERT` a mano lleva `lot_id = NULL` para una variante sin lote, `handling_unit_id = NULL` y `allows_negative` y `warehouse_id` copiados de la ubicación; `on_hand < 0` sólo pasa el `CHECK` si `allows_negative`, que es `true` para `SUPPLIER`, `CUSTOMER` y `ADJUSTMENT` y **`false` para `TRANSIT`** aunque sea virtual. `stock_balances` no guarda si la ubicación es virtual: eso se lee de `locations.is_virtual` (las vistas y las sondas ya hacen el join).
+- **El guard del upsert es `on_hand + delta >= reserved`, y sus `CHECK` no pasan por `SaveChanges`**: el ledger escribe con `ExecuteSqlAsync`, así que un `23514` llega como `PostgresException` suelto y lo traduce `InventoryLedger` por `ConstraintName`; una rama en `WmsUnitOfWork.SaveChangesAsync` nunca se ejecutaría. Sacar más de `on_hand − reserved` es `wms.stock.insufficient` si deja `on_hand` negativo y `wms.stock.reserved` si sólo invade lo reservado.
+- **`occurredAt` tiene ventana**: `[now − 30 días, now + 5 min]`; fuera, 422 `wms.movement.occurred_at_out_of_range`, también al postear un ajuste propuesto hace tiempo con fecha física. Por eso `operation_receipts` se purga a 45 días y ninguna partición de un mes dentro de la ventana se desprende.
+- **`stock_movements` está particionada por mes de `occurred_at`, con límites en UTC**: la PK es `(id, occurred_at)`; una fila fuera de rango cae en `stock_movements_default` y se queda ahí (el trigger impide moverla); `PartitionMaintenanceWorker` asegura la del mes actual y la del siguiente y `qep_wms_partition_missing = 1` dice que no pudo; si `DEFAULT` ya tiene filas de ese mes, `CREATE TABLE … PARTITION OF` falla y se resuelve a mano en ventana. Un `SELECT` sin `occurred_at` en el `WHERE` recorre todas las particiones; `reverses_movement_id` por eso viaja con `reverses_occurred_at` y sin FK.
+- **El ledger netea y ordena las claves por `StockKeyComparer`**: un camino nuevo que escriba `stock_balances` fuera de `InventoryLedger` (no hay `DbSet`; `WmsLayerTests` lo vigila) o que tome bloqueos en otro orden reabre los deadlocks que `TwoBatchesOverTheSameMixedLotKeysInOppositeOrderNeverDeadlock` cierra. `Inventory` referencia owner, bodega y ubicación por `Guid`: no «mejores» eso con `OwnerId`/`LocationId`, que viven en `Warehousing` y `DomainAreasOnlyDependDownwards` lo prohíbe.
+- **Las rutas IK y SK devuelven la respuesta guardada con 200 aunque el original fue 201**: el recibo se escribe con `IOperationReceipts.Record` **antes** de `SaveChangesAsync`; un handler IK/SK que no lo llame pasa las pruebas de éxito y deja la operación sin idempotencia. `request_hash` sale del DTO enlazado, no del cuerpo crudo: el orden de las propiedades no importa, un campo nuevo en el DTO sí cambia el hash de un reintento viejo. `POST /adjustments/{id}/post` es **SK**: la clave es `"adjustment:{id}:post:{version}"` y el header se ignora; repetir el `post` con la versión vieja devuelve el 200 guardado, no 412. El filtro compara el tenant del contexto con el de la ruta **antes** de buscar el recibo: no lo «simplifiques» moviendo la búsqueda arriba, porque otro tenant podría sondear claves ajenas.
+- **Orden de bloqueos de las tareas: operario (`task-member:{id}`) → fila de la tarea (`LockAsync`) → saldos (dentro del ledger).**
+  `LockAsync` va siempre **antes** de `GetAsync`, también en las acciones del supervisor. Un camino nuevo que confirme sin bloquear la
+  tarea, que la cargue antes de bloquearla o que la bloquee después de postear reabre las carreras de la cola offline y los deadlocks. Y
+  quien pueda dejar una tarea en `InProgress` toma primero el lock del operario, o el choque llega al índice
+  `IX_tasks_member_in_progress` como 409 sin `taskId`.
+- **`Heartbeat` no sube `version` a propósito**: si la subiera, cada latido (2 min) dejaría en 412 la pantalla del supervisor.
+- **El barrido conserva `claimed_by_member_id` y `lease_token` al vencer**: es lo que deja reanudar una confirmación tardía y conservar
+  el token al retomar. No los «limpies»; por eso el composer sólo muestra el reclamo con la tarea `InProgress`, y `leaseToken` sólo a
+  quien la tiene.
+- **Los números de `TaskPriority` están repetidos en el SQL de `LockNextCandidateAsync`**; `TaskCandidateQueryTests` los amarra. Cambiar
+  uno sin el otro lo pone en rojo. El mismo SQL excluye lo saltado leyendo `task_events` por nombre (`kind = 'Unclaimed'`,
+  `detail = 'Skipped'`): renombrar un valor de `TaskEventKind` o de `TaskUnclaimReason` compila y rompe el filtro sin error.
+- **Un tipo de tarea nuevo necesita**: valor del enum, `CK_tasks_type` (migración), `TaskTypePermissions.For` y cada método de
+  `TaskTypePolicy`. **Un estado nuevo** entra en `CK_tasks_status`; si todavía puede confirmar, también en la lista de
+  `CatalogVariantUsageChecker`, y si es terminal, en la exclusión de `CountOpenByTypeAsync`.
+- **La FK de `task_lines.lot_id` no mira tenant, dueño ni variante**: `CreateMoveTaskHandler` lo comprueba antes de guardar, como el
+  ledger al confirmar.
+- **Los handlers que escriben al ledger abren la transacción con `await using var tx = await uow.BeginTransactionAsync(ct)`**: si `SaveChangesAsync` lanza `OperationReplayedException`, el `await using` deshace la transacción y el filtro relee el recibo; sin el `await using` la relectura corre sobre una transacción abortada y responde 500 donde tocaba 200. Y `Propose` la abre aunque no escriba movimientos: la numeración `ADJ-…` toma `pg_advisory_xact_lock` (bloqueante) y sin transacción no hay lock.

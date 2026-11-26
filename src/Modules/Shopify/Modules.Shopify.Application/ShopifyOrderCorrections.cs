@@ -442,11 +442,14 @@ public sealed class CorrectShopifyOrderHandler(
         }
     }
 
-    // El correo no cuenta en SameParty (Shopify no lo trae en la dirección), pero el asesor sí lo corrige en la parte de QEP.
+    // El correo no cuenta en SameParty (Shopify no lo trae en la dirección), pero el asesor sí lo corrige en la parte de QEP. El
+    // formulario no tiene código postal: Quotations conserva el del pedido mientras no cambie el departamento (y si cambia, la
+    // parte ya cuenta como cambiada), así que no es un cambio por sí solo.
     private static bool PartyChanged(ShopifyPartyInput input, ShopifyShippingFingerprint? current)
     {
         var candidate = new ShopifyShippingFingerprint(
-            input.Name?.Trim(), input.Phone?.Trim(), input.Email?.Trim(), input.Address?.Trim(), input.DepartmentId!.Value, input.CityId!.Value);
+            input.Name?.Trim(), input.Phone?.Trim(), input.Email?.Trim(), input.Address?.Trim(), input.DepartmentId!.Value, input.CityId!.Value,
+            current?.PostalCode);
         return !ShopifyOrderProjection.SameParty(candidate, current)
             || !string.Equals(candidate.Email, current?.Email?.Trim(), StringComparison.OrdinalIgnoreCase);
     }

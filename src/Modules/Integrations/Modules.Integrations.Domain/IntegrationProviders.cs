@@ -8,6 +8,7 @@ public static class ZenviaFieldKeys
     public const string FromNumber = "fromNumber";
     public const string TemplateId = "templateId";
     public const string OrderTemplateId = "orderTemplateId";
+    public const string InvoiceTemplateId = "invoiceTemplateId";
 }
 
 /// <summary>Spec 2026-10-09 §6.1. Los dos primeros son de sólo lectura para la pantalla; los demás son
@@ -124,7 +125,9 @@ public static class IntegrationProviders
         "zenvia",
         "Zenvia (WhatsApp)",
         IntegrationCategory.Messaging,
-        [TenantModuleKeys.Quotations],
+        // Cotizaciones y pedidos (la plantilla de pedido es un campo de la conexión): un tenant que oculta uno de los dos
+        // sigue configurándolo.
+        [TenantModuleKeys.Quotations, TenantModuleKeys.Orders],
         [
             new FieldDefinition(
                 ZenviaFieldKeys.ApiToken,
@@ -153,6 +156,14 @@ public static class IntegrationProviders
             new FieldDefinition(
                 ZenviaFieldKeys.OrderTemplateId,
                 "ID de la plantilla de pedido",
+                FieldKind.Text,
+                required: false,
+                maxLength: 36,
+                pattern: ZenviaTemplateIdPattern,
+                invalidMessage: ZenviaTemplateIdMessage),
+            new FieldDefinition(
+                ZenviaFieldKeys.InvoiceTemplateId,
+                "ID de la plantilla de factura",
                 FieldKind.Text,
                 required: false,
                 maxLength: 36,

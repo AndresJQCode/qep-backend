@@ -74,6 +74,7 @@
     <Project Path="src/Modules/Messaging/Modules.Messaging.Infrastructure/Modules.Messaging.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Notifications/">
+    <Project Path="src/Modules/Notifications/Modules.Notifications.Api/Modules.Notifications.Api.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Application/Modules.Notifications.Application.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Domain/Modules.Notifications.Domain.csproj" />
     <Project Path="src/Modules/Notifications/Modules.Notifications.Infrastructure/Modules.Notifications.Infrastructure.csproj" />
@@ -174,6 +175,36 @@
     <Project Path="tests/Modules/Loans/Modules.Loans.UnitTests/Modules.Loans.UnitTests.csproj" />
     <Project Path="tests/Modules/Loans/Modules.Loans.IntegrationTests/Modules.Loans.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Hr/">
+    <Project Path="src/Modules/Hr/Modules.Hr.Api/Modules.Hr.Api.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Application/Modules.Hr.Application.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Domain/Modules.Hr.Domain.csproj" />
+    <Project Path="src/Modules/Hr/Modules.Hr.Infrastructure/Modules.Hr.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Hr/">
+    <Project Path="tests/Modules/Hr/Modules.Hr.UnitTests/Modules.Hr.UnitTests.csproj" />
+    <Project Path="tests/Modules/Hr/Modules.Hr.IntegrationTests/Modules.Hr.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Payroll/">
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Api/Modules.Payroll.Api.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Application/Modules.Payroll.Application.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Domain/Modules.Payroll.Domain.csproj" />
+    <Project Path="src/Modules/Payroll/Modules.Payroll.Infrastructure/Modules.Payroll.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Payroll/">
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.UnitTests/Modules.Payroll.UnitTests.csproj" />
+    <Project Path="tests/Modules/Payroll/Modules.Payroll.IntegrationTests/Modules.Payroll.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Scheduling/">
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Api/Modules.Scheduling.Api.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Application/Modules.Scheduling.Application.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Domain/Modules.Scheduling.Domain.csproj" />
+    <Project Path="src/Modules/Scheduling/Modules.Scheduling.Infrastructure/Modules.Scheduling.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Scheduling/">
+    <Project Path="tests/Modules/Scheduling/Modules.Scheduling.UnitTests/Modules.Scheduling.UnitTests.csproj" />
+    <Project Path="tests/Modules/Scheduling/Modules.Scheduling.IntegrationTests/Modules.Scheduling.IntegrationTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Purchases/">
     <Project Path="src/Modules/Purchases/Modules.Purchases.Api/Modules.Purchases.Api.csproj" />
     <Project Path="src/Modules/Purchases/Modules.Purchases.Application/Modules.Purchases.Application.csproj" />
@@ -233,6 +264,16 @@
   <Folder Name="/tests/Modules/Buyers/">
     <Project Path="tests/Modules/Buyers/Modules.Buyers.UnitTests/Modules.Buyers.UnitTests.csproj" />
     <Project Path="tests/Modules/Buyers/Modules.Buyers.IntegrationTests/Modules.Buyers.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/src/Modules/Wms/">
+    <Project Path="src/Modules/Wms/Modules.Wms.Api/Modules.Wms.Api.csproj" />
+    <Project Path="src/Modules/Wms/Modules.Wms.Application/Modules.Wms.Application.csproj" />
+    <Project Path="src/Modules/Wms/Modules.Wms.Domain/Modules.Wms.Domain.csproj" />
+    <Project Path="src/Modules/Wms/Modules.Wms.Infrastructure/Modules.Wms.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Wms/">
+    <Project Path="tests/Modules/Wms/Modules.Wms.UnitTests/Modules.Wms.UnitTests.csproj" />
+    <Project Path="tests/Modules/Wms/Modules.Wms.IntegrationTests/Modules.Wms.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/src/Modules/ApiAccess/">
     <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Api/Modules.ApiAccess.Api.csproj" />

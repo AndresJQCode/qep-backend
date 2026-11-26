@@ -44,7 +44,7 @@ public sealed class ListSiigoOptionsHandler(
             throw new ResourceNotFoundException("siigo.options.list_unknown", "That Siigo list does not exist.");
         }
 
-        var resolution = await connections.ResolveAsync(query.TenantId, query.ConnectionId, cancellationToken);
+        var resolution = await connections.ResolveForSetupAsync(query.TenantId, query.ConnectionId, cancellationToken);
         if (resolution.Credentials is not { } credentials)
         {
             throw new ResourceConflictException(
@@ -56,17 +56,20 @@ public sealed class ListSiigoOptionsHandler(
         {
             return [.. (await api.ListTaxesAsync(credentials, cancellationToken))
                 .Where(tax => tax.Active)
+                .OrderBy(tax => tax.Name, StringComparer.InvariantCultureIgnoreCase)
                 .Select(tax => new SiigoOptionDto(tax.Id, tax.Name, tax.Type, tax.Percentage))];
         }
 
         var options = query.List switch
         {
             SiigoOptionLists.DocumentTypes => await api.ListDocumentTypesAsync(credentials, cancellationToken),
-            SiigoOptionLists.Users => await api.ListUsersAsync(credentials, cancellationToken),
+            SiigoOptionLists.Users => [.. (await api.ListUsersAsync(credentials, refresh: false, cancellationToken)).Select(user => new SiigoOption(user.Id, user.Name))],
             SiigoOptionLists.CostCenters => await api.ListCostCentersAsync(credentials, cancellationToken),
             SiigoOptionLists.Warehouses => await api.ListWarehousesAsync(credentials, cancellationToken),
             _ => await api.ListPaymentTypesAsync(credentials, cancellationToken),
         };
-        return [.. options.Select(option => new SiigoOptionDto(option.Id, option.Name, null, null))];
+        return [.. options
+            .OrderBy(option => option.Name, StringComparer.InvariantCultureIgnoreCase)
+            .Select(option => new SiigoOptionDto(option.Id, option.Name, null, null, option.Description))];
     }
 }

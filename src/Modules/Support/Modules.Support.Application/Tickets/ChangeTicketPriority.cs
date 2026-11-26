@@ -37,9 +37,7 @@ public sealed class ChangeTicketPriorityValidator : AbstractValidator<ChangeTick
 /// misma prioridad no escribe nada.</summary>
 public sealed class ChangeTicketPriorityHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
     ISupportRealtime realtime,
@@ -51,12 +49,10 @@ public sealed class ChangeTicketPriorityHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(ChangeTicketPriorityCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ActAsync(command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
         // El contexto lo pide el detalle de todos modos; de él sale la hora del evento.
         var context = await composer.ReadContextAsync(command.TenantId, cancellationToken);
         var now = context.Now;
@@ -67,7 +63,7 @@ public sealed class ChangeTicketPriorityHandler(
             cancellationToken);
         if (ticket.Version != version)
         {
-            await realtime.TicketChangedAsync(command.TenantId, ticket.Id.Value, CancellationToken.None);
+            await SupportTicketNotices.ChangedAsync(realtime, ticket, formerAssigneeMemberId: null, CancellationToken.None);
         }
 
         return await composer.ComposeDetailAsync(ticket, context, cancellationToken);

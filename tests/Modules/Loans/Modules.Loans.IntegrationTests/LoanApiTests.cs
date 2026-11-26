@@ -47,17 +47,17 @@ public sealed class LoanApiTests
         string cutoffRule = "EndOfMonth",
         Guid? assignee = null,
         string? note = null) => new()
-    {
-        ["customerId"] = customerId,
-        ["name"] = name,
-        ["principalAmount"] = principal,
-        ["currency"] = currency,
-        ["monthlyRatePercent"] = rate,
-        ["disbursedOn"] = disbursedOn,
-        ["cutoffRule"] = cutoffRule,
-        ["assigneeMemberId"] = assignee,
-        ["note"] = note,
-    };
+        {
+            ["customerId"] = customerId,
+            ["name"] = name,
+            ["principalAmount"] = principal,
+            ["currency"] = currency,
+            ["monthlyRatePercent"] = rate,
+            ["disbursedOn"] = disbursedOn,
+            ["cutoffRule"] = cutoffRule,
+            ["assigneeMemberId"] = assignee,
+            ["note"] = note,
+        };
 
     private static async Task<JsonElement> JsonOfAsync(HttpResponseMessage response)
     {

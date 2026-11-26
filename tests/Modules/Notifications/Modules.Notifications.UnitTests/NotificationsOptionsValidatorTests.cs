@@ -159,6 +159,60 @@ public sealed class NotificationsOptionsValidatorTests
         Assert.Contains("Notifications:AppBaseUrl must be an absolute URL.", result.Failures!);
     }
 
+    // Spec 2026-11-22 D-11: the retention of the bell is 1 to 365 days.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(366)]
+    public void RetentionDaysOutOfRangeIsInvalid(int days)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { InApp = new InAppOptions { RetentionDays = days } });
+
+        Assert.Contains(result.Failures!, failure => failure.Contains("Notifications:InApp:RetentionDays", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(90)]
+    [InlineData(365)]
+    public void RetentionDaysInRangeIsValid(int days)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { InApp = new InAppOptions { RetentionDays = days } });
+
+        Assert.True(result.Succeeded);
+    }
+
+    // Task-notices spec D-4: the wait before a task notice escalates is one global number of minutes, one minute to one day.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1441)]
+    public void RejectsAnEscalationOutsideOneMinuteToOneDay(int minutes)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { TaskNotice = new TaskNoticeOptions { EscalationAfterMinutes = minutes } });
+
+        Assert.Contains(
+            result.Failures!, failure => failure.Contains("Notifications:TaskNotice:EscalationAfterMinutes", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(30)]
+    [InlineData(1440)]
+    public void AcceptsAnEscalationInsideTheRange(int minutes)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { TaskNotice = new TaskNoticeOptions { EscalationAfterMinutes = minutes } });
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void TheEscalationDefaultsToThirtyMinutes() =>
+        Assert.Equal(30, new NotificationsOptions().TaskNotice.EscalationAfterMinutes);
+
     private static NotificationsOptionsValidator ValidatorFor(string environmentName) =>
         new(new StubHostEnvironment(environmentName));
 

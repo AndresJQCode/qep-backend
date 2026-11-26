@@ -52,6 +52,15 @@ public sealed record CustomerContactInfo
     /// </summary>
     public string? CityName { get; init; }
 
+    /// <summary>
+    /// La region (provincia) del domicilio, FK blanda a <c>geography.regions</c>, **solo para un
+    /// pais con catalogo de regiones distinto de Colombia** (hoy Espana). Colombia deriva su
+    /// departamento de <see cref="CityId"/>, asi que con <c>CO</c> una region se rechaza. El
+    /// catalogo y la pertenencia al pais los comprueba Application; el dominio solo garantiza el
+    /// carril.
+    /// </summary>
+    public Guid? RegionId { get; init; }
+
     // Espejan los anchos de columna. Salen del schema del formulario que ya existe
     // (customer-form.schema.ts); el del correo no esta ahi: 254 es el maximo de una direccion por
     // RFC 5321, el mismo que ya usa CompanyContactInfo.
@@ -84,7 +93,9 @@ public sealed record CustomerContactInfo
         Address = NormalizeAddress(Address),
         Country = NormalizeCountry(Country),
         CityId = CityId,
-        CityName = NormalizeCityName(CityName)
+        CityName = NormalizeCityName(CityName),
+        // Guid.Empty es un id roto del cliente HTTP, no una region: cuenta como ausente.
+        RegionId = RegionId == Guid.Empty ? null : RegionId
     };
 
     // A mayusculas por la misma razon que el correo va a minusculas: "co" y "CO" son el mismo

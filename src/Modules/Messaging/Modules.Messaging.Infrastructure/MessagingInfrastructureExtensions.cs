@@ -32,8 +32,14 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
+        // Spec 2026-11-21: la factura de Siigo, por el mismo núcleo que el pedido.
+        services.AddScoped<IInvoiceTemplateOutbound, InvoiceTemplateOutbound>();
         // Mayorista: el aviso por WhatsApp de una invitación de distribuidor, por el mismo núcleo que la plantilla de cobro.
         services.AddScoped<IWholesaleInvitationNoticeOutbound, WholesaleInvitationNoticeOutbound>();
+        // Support task notices: the assignment notice, through the same core as the wholesale invitation notice.
+        services.AddScoped<ITaskNoticeOutbound, TaskNoticeOutbound>();
+        // Agenda: el recordatorio de una cita por WhatsApp, por el mismo núcleo.
+        services.AddScoped<IAppointmentReminderOutbound, AppointmentReminderOutbound>();
         // Soporte fase 2 (plan E12): la respuesta de un ticket por el hilo o por la plantilla, sin las guardas de la bandeja.
         services.AddScoped<ISupportReplyOutbound, SupportReplyOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
@@ -41,6 +47,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
         // Plan 2026-11-17 Task 8: el aviso de liberación de la imagen del encabezado, en el SaveChanges de quien elimina la plantilla.
         services.AddScoped<ITemplateHeaderImageReleases, TemplateHeaderImageReleasePublisher>();
+        // Spec 2026-11-18, regla 2 del owner: qué archivos de chatbot muestra todavía un mensaje de bot (para el barrido de Storage).
+        services.AddScoped<IBotMediaReferences, BotMediaReferences>();
         // Borrar clientes (A-12 y P4): el candado compartido del cliente al colgarle una conversación, sobre la conexión de Mensajería.
         services.AddScoped<IMessagingCustomerReferenceLock, MessagingCustomerReferenceLock>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).
@@ -52,6 +60,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IAutomationInbox, AutomationInbox>();
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();
+        // Spec 2026-11-22 §8.5: the contact name of a conversation, for the bell entries that point at it.
+        services.AddScoped<IMessagingConversationLabels, MessagingConversationLabels>();
         services.AddScoped<IMessageQueries, MessageQueries>();
         services.AddScoped<IExternalMessageQueries, ExternalMessageQueries>();
         services.AddScoped<ConversationSummaryBuilder>();
@@ -123,6 +133,9 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessagingReportSource, MessagingReportSource>();
         // El cast es a propósito: las dos interfaces tienen que compartir la instancia scoped (un solo repositorio por solicitud).
         services.AddScoped<IBusinessHours>(provider => (BusinessHoursRepository)provider.GetRequiredService<IBusinessHoursRepository>());
+        // Spec 2026-11-22 D-14: the schedules as a capability shared with other modules (the contract lives in BuildingBlocks, like
+        // IUserReferenceProbe); Support counts its unassigned-ticket hours through it without referencing Messaging.
+        services.AddScoped<BuildingBlocks.Application.BusinessHours.IBusinessHoursProvider, BusinessHoursProvider>();
         // Spec 2026-10-14 §4.3: el espejo de plantillas.
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
@@ -130,6 +143,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
         // Spec 2026-11-09 D5: la del pedido, para el directorio de canales y el sender de Meta en Bootstrapper.
         services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
+        // Spec 2026-11-21: la de la factura, para el directorio de canales y el sender de Meta.
+        services.AddScoped<IInvoiceTemplateReadiness, InvoiceTemplateReadiness>();
         // Soporte fase 2: la de «Aviso de respuesta», para las opciones de respuesta de un ticket y su envío por plantilla.
         services.AddScoped<ISupportReplyTemplateReadiness, SupportReplyTemplateReadiness>();
         // Soporte fase 4b: la de «Respuesta formal», para las opciones de respuesta formal y su envío por plantilla con el PDF.
@@ -138,6 +153,10 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ISupportSurveyTemplateReadiness, SupportSurveyTemplateReadiness>();
         // Mayorista: la del aviso de invitación de distribuidor, para las conexiones que Mayorista ofrece y el envío del aviso.
         services.AddScoped<IWholesaleInvitationNoticeReadiness, WholesaleInvitationNoticeTemplateReadiness>();
+        // Support task notices: the readiness of the assignment notice template (the escalation worker and /settings/support read it).
+        services.AddScoped<ITaskNoticeTemplateReadiness, TaskNoticeTemplateReadiness>();
+        // Agenda: la del recordatorio de cita, para su envío.
+        services.AddScoped<IAppointmentReminderReadiness, AppointmentReminderTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

@@ -14,6 +14,10 @@ public static class SupportAuditActions
 
     public const string TicketPriorityChanged = "support.ticket.priority_changed";
 
+    /// <summary>Spec 2026-11-22: cambió la fecha límite de una tarea interna (o se la quitaron). Lleva sólo el nombre de campo
+    /// <c>dueOn</c>.</summary>
+    public const string TicketDueDateChanged = "support.ticket.due_date_changed";
+
     /// <summary>Fase 4a (plan G11): la prórroga. Lleva los nombres de campo <c>dueOn</c> y <c>extension</c>, nunca el motivo.</summary>
     public const string TicketExtended = "support.ticket.extended";
 

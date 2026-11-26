@@ -13,7 +13,10 @@ public sealed record WholesaleCatalogItem(
     decimal BasePrice,
     decimal DiscountPercent,
     decimal ListPrice,
-    decimal TaxRatePercent);
+    decimal TaxRatePercent,
+    Guid ProductId = default,
+    string ProductName = "",
+    string? ImageUrl = null);
 
 /// <summary>Una página del catálogo del mayorista con la lista que la precia (adenda del contrato: <c>priceList</c>).</summary>
 public sealed record WholesaleCatalogPage(
@@ -21,7 +24,11 @@ public sealed record WholesaleCatalogPage(
     string PriceListName,
     decimal DiscountPercent,
     IReadOnlyList<WholesaleCatalogItem> Items,
-    int Total);
+    int Total,
+    bool ShowPrices = true);
+
+/// <summary>Una categoría del mayorista que el distribuidor puede ver; <c>ParentId</c> nulo es raíz de su árbol visible.</summary>
+public sealed record WholesaleCategory(Guid Id, string Name, Guid? ParentId);
 
 /// <summary>
 /// El catálogo de un mayorista vinculado; adaptador en Bootstrapper sobre Wholesale (<c>WholesaleOffers</c>). Recibe los dos
@@ -31,16 +38,29 @@ public sealed record WholesaleCatalogPage(
 /// </summary>
 public interface IWholesaleCatalog
 {
+    /// <summary>
+    /// El árbol de categorías que la lista del distribuidor le deja ver (spec 2026-11-20), plano y en el orden del mayorista.
+    /// Misma verificación de relación que el catálogo: 403 <c>wholesale.relationship.inactive</c>.
+    /// </summary>
+    Task<IReadOnlyList<WholesaleCategory>> ListCategoriesAsync(
+        Guid buyerTenantId, Guid wholesalerTenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <paramref name="categoryId"/> filtra por esa categoría y sus descendientes; una fuera del árbol visible es 422
+    /// <c>wholesale.category.not_visible</c>.
+    /// </summary>
     Task<WholesaleCatalogPage> SearchAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         string? search,
+        Guid? categoryId,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
 
-    /// <summary>El precio de cada variante pedida en la moneda por defecto del mayorista; todas vienen o la llamada falla.</summary>
-    Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items)> PriceAsync(
+    /// <summary>El precio de cada variante pedida en la moneda por defecto del mayorista; todas vienen o la llamada falla. <c>ShowPrices</c>
+    /// es el flag vivo de la lista del distribuidor (spec 2026-11-19): el precio viaja igual, Compras lo enmascara en su borde.</summary>
+    Task<(string Currency, IReadOnlyDictionary<Guid, WholesaleCatalogItem> Items, bool ShowPrices)> PriceAsync(
         Guid buyerTenantId,
         Guid wholesalerTenantId,
         IReadOnlyCollection<Guid> variantIds,
@@ -66,14 +86,16 @@ public sealed record WholesaleIntakeRequest(
 
 /// <summary>
 /// El pedido que quedó en el mayorista con sus líneas, ya convertidas a la foto de la orden (costo sin IVA, D-9). Con
-/// <c>AlreadyExisted</c> es el pedido que ya estaba (D-8) y la orden adopta esas líneas.
+/// <c>AlreadyExisted</c> es el pedido que ya estaba (D-8) y la orden adopta esas líneas. <c>ShowPrices</c> es el flag vivo de la
+/// lista del distribuidor (spec 2026-11-19, D-9): en <c>false</c> la orden adopta las líneas sin montos y los recibe al aprobar.
 /// </summary>
 public sealed record WholesaleIntakeResult(
     Guid OrderId,
     string OrderNumber,
     string Currency,
     IReadOnlyList<LinkedLineSnapshot> Lines,
-    bool AlreadyExisted);
+    bool AlreadyExisted,
+    bool ShowPrices = true);
 
 /// <summary>
 /// El pedido del mayorista visto desde la orden de compra; adaptador en Bootstrapper sobre Wholesale y Quotations. Cruza
@@ -99,8 +121,26 @@ public interface IWholesaleOrderIntake
         CancellationToken cancellationToken);
 }
 
-/// <summary>La variante del catálogo propio que se encontró por código o se creó (D-18).</summary>
-public sealed record PurchasesCatalogEntry(Guid VariantId, bool Created);
+/// <summary>La variante del catálogo propio que se encontró por código o se creó (D-18). <c>ProductId</c> viene sólo si se
+/// creó: una variante hallada por código no se vuelve a leer y nadie lo necesita.</summary>
+public sealed record PurchasesCatalogEntry(Guid VariantId, bool Created, Guid? ProductId);
+
+/// <summary>
+/// La foto de un producto que Compras acaba de crear y falta copiar del catálogo del mayorista (spec 2026-11-21): de qué
+/// variante del mayorista sale y a qué producto del comprador va.
+/// </summary>
+public sealed record PendingProductImage(Guid BuyerTenantId, Guid SupplierTenantId, Guid SupplierVariantId, Guid ProductId);
+
+/// <summary>
+/// Copia la foto de la variante del mayorista al producto nuevo del comprador; adaptador en Bootstrapper sobre Catalog y
+/// Storage. Corre **después** del commit del evento, fuera de la transacción del producto: la foto es un archivo de Storage y
+/// no puede deshacerse con ella. Una falla lanza y quien llama la registra (<c>CopyPendingImagesAsync</c>): lo ya confirmado
+/// no se deshace por una foto.
+/// </summary>
+public interface IPurchasesProductImages
+{
+    Task CopyAsync(PendingProductImage image, DateTimeOffset now, CancellationToken cancellationToken);
+}
 
 /// <summary>
 /// El catálogo del comprador para la confirmación del mayorista (D-18); adaptador en Bootstrapper sobre Catalog. Busca por

@@ -6,6 +6,9 @@ public interface IChargeRepository
 {
     void AddRange(IEnumerable<Charge> charges);
 
+    /// <summary>Marca para borrar todos los cobros del servicio, de cualquier estado, y sus <c>reminder_steps</c>; se aplica al guardar.</summary>
+    Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken);
+
     Task<Charge?> FindAsync(Guid tenantId, Guid chargeId, CancellationToken cancellationToken);
 
     /// <summary>Los <c>Pending</c> de un servicio; los usa cancelar (todos pasan a <c>Cancelled</c>, §3.2).</summary>

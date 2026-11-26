@@ -32,6 +32,9 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
         var detail = await reader.GetFromJsonAsync<DistributorDetailDto>(url, Ct);
         var resend = await reader.SendAsync(
             WholesaleApiHarness.WithIfMatch(new HttpRequestMessage(HttpMethod.Post, $"{url}/resend-invitation"), distributor.Version), Ct);
+        // «Copiar» rota el token: es una escritura, como reenviar.
+        var rotate = await reader.SendAsync(
+            WholesaleApiHarness.WithIfMatch(new HttpRequestMessage(HttpMethod.Post, $"{url}/invitation-link"), distributor.Version), Ct);
         var options = await reader.GetAsync($"{WholesaleApiHarness.DistributorsUrl(tenant.TenantId)}/options", Ct);
         var lists = await reader.GetAsync(WholesaleApiHarness.PriceListsUrl(tenant.TenantId), Ct);
 
@@ -39,6 +42,7 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
         Assert.False(row.Invitation!.CanResend);
         Assert.Empty(detail!.AllowedActions);
         Assert.Equal(HttpStatusCode.Forbidden, resend.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, rotate.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, options.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, lists.StatusCode);
     }
@@ -48,7 +52,7 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
     public async Task AnAdvisorReadsDistributors()
     {
         var tenant = await WholesaleApiHarness.NewTenantAsync(Factory);
-        var advisor = Factory.Services.GetServices<RoleDefinition>().Single(role => role.Role == "advisor");
+        var advisor = Factory.Services.GetServices<RoleTemplate>().Single(role => role.Key == RoleTemplateKeys.Advisor);
         using var client = WholesaleApiHarness.CreateClient(Factory, tenant.SubjectId, tenant.TenantId, [.. advisor.Permissions]);
 
         var distributors = await client.GetAsync(WholesaleApiHarness.DistributorsUrl(tenant.TenantId), Ct);
@@ -68,9 +72,9 @@ public sealed class WholesaleAccessApiTests(SharedWholesaleHost host) : IClassFi
             Factory, TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Wholesale));
         using var manager = WholesaleApiHarness.CreateManager(Factory, tenant);
 
+        // Spec 2026-11-22: las listas de precios son de Catalog y no exigen el módulo; las rutas del distribuidor sí.
         foreach (var url in new[]
         {
-            WholesaleApiHarness.PriceListsUrl(tenant.TenantId),
             WholesaleApiHarness.DistributorsUrl(tenant.TenantId),
             $"{WholesaleApiHarness.DistributorsUrl(tenant.TenantId)}/options",
             WholesaleApiHarness.CategoriesUrl(tenant.TenantId),

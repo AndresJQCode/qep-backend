@@ -25,9 +25,14 @@ public static class WhatsAppTemplateValues
     public static string ValidUntil(DateOnly validUntil) =>
         validUntil.ToString("d 'de' MMMM 'de' yyyy", Colombia);
 
-    /// <summary>El nombre con el que el cliente recibe el PDF: <c>"Cotizacion-COT-000123.pdf"</c>.</summary>
-    public static string DocumentFileName(string quotationNumber) => $"Cotizacion-{quotationNumber}.pdf";
+    /// <summary>El nombre con el que el cliente recibe el PDF: <c>"Cotizacion-COT-000123.pdf"</c>, y en España
+    /// <c>"Presupuesto-…"</c>. La regla es la del PDF (<see cref="QuotationPdfFileName"/>).</summary>
+    public static string DocumentFileName(string quotationNumber, string? language = null) =>
+        QuotationPdfFileName.For(QuotationPdfKind.Quotation, quotationNumber, language);
 
     /// <summary>El del pedido (spec 2026-11-09 D9): <c>"Pedido-PED-000123.pdf"</c>, como lo nombra el PDF del pedido.</summary>
     public static string OrderDocumentFileName(string orderNumber) => $"Pedido-{orderNumber}.pdf";
+
+    /// <summary>El de la factura: <c>"Factura-FV-1-123.pdf"</c>.</summary>
+    public static string InvoiceDocumentFileName(string invoiceNumber) => $"Factura-{invoiceNumber}.pdf";
 }

@@ -176,7 +176,8 @@ public sealed class ClasicFlowEndToEndTests
     {
         await InboundAsync(f, Payloads.Message(WaId, wamid, Timestamp(wamid), "interactive", new JsonObject
         {
-            ["type"] = "button_reply", ["button_reply"] = new JsonObject { ["id"] = replyId, ["title"] = title },
+            ["type"] = "button_reply",
+            ["button_reply"] = new JsonObject { ["id"] = replyId, ["title"] = title },
         }));
         await DrainAutomationsAsync(f.Host);
     }
@@ -185,7 +186,8 @@ public sealed class ClasicFlowEndToEndTests
     {
         await InboundAsync(f, Payloads.Message(WaId, wamid, Timestamp(wamid), "interactive", new JsonObject
         {
-            ["type"] = "list_reply", ["list_reply"] = new JsonObject { ["id"] = rowId, ["title"] = title },
+            ["type"] = "list_reply",
+            ["list_reply"] = new JsonObject { ["id"] = rowId, ["title"] = title },
         }));
         await DrainAutomationsAsync(f.Host);
     }
@@ -224,7 +226,9 @@ public sealed class ClasicFlowEndToEndTests
         await ChooseAsync(f, "w9", failureRowId, failureTitle);
         await InboundAsync(f, Payloads.Message(WaId, "w10", Timestamp("w10"), "image", new JsonObject
         {
-            ["id"] = "media-1", ["mime_type"] = "image/jpeg", ["sha256"] = "c2hhMjU2",
+            ["id"] = "media-1",
+            ["mime_type"] = "image/jpeg",
+            ["sha256"] = "c2hhMjU2",
         }));
         await DrainMediaAsync(f.Host);
         await DrainAutomationsAsync(f.Host);
@@ -890,8 +894,12 @@ public sealed class ClasicFlowEndToEndTests
             var userId = "CO." + waId;
             var message = new JsonObject
             {
-                ["from"] = waId, ["from_user_id"] = userId, ["id"] = wamid, ["timestamp"] = timestamp.ToString(CultureInfo.InvariantCulture),
-                ["type"] = type, [type] = content,
+                ["from"] = waId,
+                ["from_user_id"] = userId,
+                ["id"] = wamid,
+                ["timestamp"] = timestamp.ToString(CultureInfo.InvariantCulture),
+                ["type"] = type,
+                [type] = content,
             };
             var value = new JsonObject
             {
@@ -899,7 +907,9 @@ public sealed class ClasicFlowEndToEndTests
                 ["metadata"] = new JsonObject { ["display_phone_number"] = "15550000000", ["phone_number_id"] = PhoneNumberId },
                 ["contacts"] = new JsonArray(new JsonObject
                 {
-                    ["profile"] = new JsonObject { ["name"] = "Laura" }, ["user_id"] = userId, ["wa_id"] = waId,
+                    ["profile"] = new JsonObject { ["name"] = "Laura" },
+                    ["user_id"] = userId,
+                    ["wa_id"] = waId,
                 }),
                 ["messages"] = new JsonArray(message),
             };

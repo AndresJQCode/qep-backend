@@ -54,7 +54,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             services.AddSingleton<IServiceContractsWhatsAppOutbound>(whatsApp);
 
             // Transparente salvo que una prueba arme `chargeClash`: ahí mete la escritura de «otra réplica» entre la lectura del
-            // servicio y el SaveChanges de la generación, el único hueco en que IX_charges_service_due puede chocar.
+            // servicio y el SaveChanges de la generación, el único hueco en que IX_charges_service_period puede chocar.
             var charges = services.Single(descriptor => descriptor.ServiceType == typeof(IChargeRepository));
             services.Remove(charges);
             services.AddScoped<IChargeRepository>(provider => new InterleavingChargeRepository(
@@ -157,7 +157,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         Assert.Equal(
             [anchor, new DateOnly(2026, 1, 10), new DateOnly(2026, 2, 10), new DateOnly(2026, 3, 10)],
             (await ChargesOfAsync(service)).Select(c => c.DueDate));
-        Assert.Equal(new DateOnly(2026, 3, 10), (await ServiceAsync(service)).LastGeneratedDueDate);
+        Assert.Equal(new DateOnly(2026, 3, 10), (await ServiceAsync(service)).LastGeneratedPeriodDate);
     }
 
     [Fact]
@@ -173,6 +173,100 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
 
         Assert.Contains(inWindow, (await ChargesOfAsync(reached)).Select(c => c.DueDate));
         Assert.DoesNotContain(outOfWindow, (await ChargesOfAsync(notYet)).Select(c => c.DueDate));
+    }
+
+    // Spec reajuste §6.4: la revisión de un contrato Ipc entra en la ventana sin precio decidido; el cobro espera y al cliente
+    // no se le manda nada.
+    [Fact]
+    public async Task AnIpcContractWhoseReviewEntersTheWindowIsHeld()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        var previous = new DateOnly(2026, 2, 12);
+        var review = new DateOnly(2026, 3, 12);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], mode: AdjustmentMode.Ipc, reviewDate: review);
+        var version = (await ServiceAsync(service)).Version;
+
+        await ProcessAsync();
+
+        Assert.Equal([previous], (await ChargesOfAsync(service)).Select(c => c.PeriodDate));
+        var stored = await ServiceAsync(service);
+        Assert.Equal(Today, stored.HeldSince);
+        Assert.Equal(version + 1, stored.Version);
+        Assert.Equal(review, stored.NextReviewDate);
+        Assert.Equal(previous, stored.LastGeneratedPeriodDate);
+        Assert.Empty(customerEmail.Sent);
+        Assert.Empty(whatsApp.Sent);
+        Assert.Empty(await MessagesAsync());
+    }
+
+    [Fact]
+    public async Task AManualContractGeneratesUnreviewedAndMovesItsReview()
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var previous = new DateOnly(2026, 2, 12);
+        var review = new DateOnly(2026, 3, 12);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], reviewDate: review);
+
+        await ProcessAsync();
+
+        var charge = (await ChargesOfAsync(service))[^1];
+        Assert.Equal((review, review, true, 100000m), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed, charge.Amount));
+        var stored = await ServiceAsync(service);
+        Assert.Equal(review.AddMonths(12), stored.NextReviewDate);
+        Assert.Null(stored.HeldSince);
+    }
+
+    [Theory]
+    [InlineData(AdjustmentMode.Ipc, PriceChangeOrigin.Ipc)]
+    [InlineData(AdjustmentMode.Manual, PriceChangeOrigin.Scheduled)]
+    public async Task AScheduledChangeAppliesInTheRunAndLeavesItsHistory(AdjustmentMode mode, PriceChangeOrigin origin)
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var previous = new DateOnly(2026, 2, 12);
+        var review = new DateOnly(2026, 3, 12);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], mode: mode, reviewDate: review);
+        var schedule = await SeedScheduleAsync(service, origin == PriceChangeOrigin.Ipc, 107000m);
+
+        await ProcessAsync();
+
+        var charge = (await ChargesOfAsync(service))[^1];
+        Assert.Equal((review, review, false, 107000m), (charge.PeriodDate, charge.DueDate, charge.PriceUnreviewed, charge.Amount));
+        var stored = await ServiceAsync(service);
+        Assert.Equal((107000m, review.AddMonths(12)), (stored.Price, stored.NextReviewDate));
+        Assert.Null(stored.HeldSince);
+        var applied = await WithDbAsync(db => db.ServicePriceSchedules.AsNoTracking().SingleAsync(s => s.Id == schedule, Ct));
+        Assert.Equal((PriceScheduleStatus.Applied, (DateOnly?)review), (applied.Status, applied.AppliedPeriodDate));
+        var change = Assert.Single(await WithDbAsync(db => db.ServicePriceChanges.AsNoTracking().ToListAsync(Ct)));
+        Assert.Equal((origin, (Guid?)schedule), (change.Origin, change.ScheduleId));
+        Assert.Equal((100000m, 107000m), (change.PreviousPrice, change.NewPrice));
+    }
+
+    // Spec reajuste §6.5: los períodos liberados juntos vencen el mismo día, cada uno con su período.
+    [Fact]
+    public async Task HeldPeriodsReleasedLateShareTheirDueDate()
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var previous = new DateOnly(2026, 1, 5);
+        var review = new DateOnly(2026, 2, 5);
+        var service = await SeedServiceAsync(
+            customer, previous, lastGenerated: previous, paidDueDates: [previous], mode: AdjustmentMode.Ipc, reviewDate: review,
+            heldOn: new DateOnly(2026, 2, 1));
+        await SeedScheduleAsync(service, ipc: true, 107000m);
+
+        await ProcessAsync();
+
+        var released = (await ChargesOfAsync(service))
+            .Where(c => c.Status == ChargeStatus.Pending).OrderBy(c => c.PeriodDate).ToList();
+        Assert.Equal([review, review.AddMonths(1)], released.Select(c => c.PeriodDate));
+        Assert.All(released, charge => Assert.Equal((Today.AddDays(5), 107000m), (charge.DueDate, charge.Amount)));
+        var stored = await ServiceAsync(service);
+        Assert.Null(stored.HeldSince);
+        Assert.Equal(review.AddMonths(1), stored.LastGeneratedPeriodDate);
     }
 
     [Fact]
@@ -421,6 +515,139 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
     }
 
+    // Spec reajuste §6.6: el digest sale aunque no haya un solo cobro de interés.
+    [Fact]
+    public async Task AMemberWithOnlyPriceReviewsGetsTheDigest()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedReviewAsync(customer, Today.AddDays(10));
+
+        await ProcessAsync();
+
+        var digest = Assert.Single(staffEmail.Sent);
+        Assert.Equal("owner@example.com", digest.ToAddress);
+        Assert.Equal(
+            new ServiceContractsPriceReviewRow(
+                "Acme", "Hosting", 100000m, "COP", Today.AddDays(10), Today.AddDays(5), "Due", 2025, true, null),
+            Assert.Single(digest.PriceReviews));
+        Assert.Empty(digest.HeldCharges);
+        Assert.Empty(digest.DueSoon);
+        Assert.Empty(digest.Overdue);
+        Assert.Empty(digest.FailedReminders);
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+    }
+
+    [Fact]
+    public async Task HeldContractsGoToTheHeldSection()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await WithDbAsync(async db =>
+        {
+            db.IpcRates.Add(IpcRate.Create(Tenant, 2025, 5.2m, null, NineLocal));
+            return await db.SaveChangesAsync(Ct);
+        });
+        var review = new DateOnly(2026, 2, 5);
+        var heldOn = new DateOnly(2026, 2, 1);
+        await SeedReviewAsync(customer, review, heldOn);
+
+        await ProcessAsync();
+
+        var digest = Assert.Single(staffEmail.Sent);
+        Assert.Equal(
+            new ServiceContractsPriceReviewRow(
+                "Acme", "Hosting", 100000m, "COP", review, review.AddDays(-5), "Held", 2025, false, heldOn),
+            Assert.Single(digest.HeldCharges));
+        Assert.Empty(digest.PriceReviews);
+    }
+
+    [Fact]
+    public async Task AContractWithoutProfileGoesToEveryManager()
+    {
+        await SeedMemberAsync(factory, "admin@example.com", "Admin", "admin");
+        await SeedMemberAsync(factory, "billing@example.com", "Billing", "billing");
+        await SeedMemberAsync(factory, "advisor@example.com", "Advisor", "advisor");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedReviewAsync(customer, Today.AddDays(10), name: "Acme hosting");
+
+        await ProcessAsync();
+
+        Assert.Equal(["admin@example.com", "billing@example.com"], staffEmail.Sent.Select(digest => digest.ToAddress).Order());
+        Assert.All(staffEmail.Sent, digest => Assert.Equal(["Acme hosting"], digest.PriceReviews.Select(row => row.ServiceName)));
+    }
+
+    // Un cambio que cubre la revisión ya la resolvió: no pide nada.
+    [Fact]
+    public async Task ScheduledContractsAreNotInTheDigest()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        var service = await SeedReviewAsync(customer, Today.AddDays(10));
+        await SeedScheduleAsync(service, ipc: true, 107000m);
+
+        await ProcessAsync();
+
+        Assert.Empty(staffEmail.Sent);
+        Assert.Empty(await DigestsAsync());
+    }
+
+    // Una réplica reclamó el digest y se cayó antes de guardar nada más: vencidos los leases, la corrida retomada vuelve a
+    // reclamarlo y publica un solo evento de revisiones.
+    [Fact]
+    public async Task TheDigestIsSentOncePerDayWithReviews()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedReviewAsync(customer, Today.AddDays(10));
+        await WithDbAsync(async db =>
+        {
+            db.TenantRuns.Add(new TenantRun { TenantId = Tenant, RunDate = Today, ClaimedUntil = NineLocal.AddMinutes(-1) });
+            db.DailyDigests.Add(new DailyDigest
+            {
+                TenantId = Tenant,
+                MemberId = assignee,
+                RunDate = Today,
+                Status = MessageDeliveryStatus.Sending,
+                ClaimedUntil = NineLocal.AddMinutes(-6),
+            });
+            return await db.SaveChangesAsync(Ct);
+        });
+
+        await ProcessAsync();
+
+        Assert.Single(staffEmail.Sent);
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+        Assert.Equal(1, await PriceReviewEventCountAsync());
+    }
+
+    // Que las revisiones no se puedan leer no deja sin digest de cobros ni deja el día abierto.
+    [Fact]
+    public async Task AFailureLoadingThePriceReviewsStillSendsTheChargeDigest()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedChargeAsync(customer, Today, name: "Dominio");
+        await SeedReviewAsync(customer, Today.AddDays(10));
+        // Sólo la carga de revisiones lee las tasas, y sólo si hay alguna revisión abierta.
+        await ExecuteSqlAsync("ALTER TABLE billing.ipc_rates RENAME TO ipc_rates_unavailable;");
+
+        await ProcessAsync();
+
+        var digest = Assert.Single(staffEmail.Sent);
+        Assert.Equal(["Dominio"], digest.DueSoon.Select(row => row.ServiceName));
+        Assert.Empty(digest.PriceReviews);
+        Assert.Empty(digest.HeldCharges);
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+        Assert.Equal(0, await PriceReviewEventCountAsync());
+        Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
+    }
+
     [Fact]
     public async Task AFailingCustomerSendDoesNotStopTheOthers()
     {
@@ -597,7 +824,9 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
 
     /// <summary>
     /// Review 9+10, T10-I2: otra réplica generó el primer período entre la lectura del servicio y el SaveChanges de esta. El
-    /// choque con IX_charges_service_due no es un error: se relee el servicio (ya avanzado) y se genera sólo lo que falta.
+    /// choque con IX_charges_service_period no es un error: se relee el servicio (ya avanzado) y se genera sólo lo que falta.
+    /// El intento perdido no deja nada: ni el programado aplicado ni su fila de historial sin el cobro que los acompaña
+    /// (spec reajuste §6.11).
     /// </summary>
     [Fact]
     public async Task AGenerationClashRereadsTheServiceAndGeneratesOnlyWhatIsLeft()
@@ -605,13 +834,21 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
         var anchor = Today.AddMonths(-2);
         var service = await SeedServiceAsync(customer, anchor, lastGenerated: anchor, paidDueDates: [anchor]);
+        var schedule = await SeedScheduleAsync(service, ipc: false, 107000m, effectiveFrom: Today);
         chargeClash.Arm(database.GetConnectionString());
 
         await ProcessAsync();
 
         Assert.Equal(2, chargeClash.AddRangeCalls);
-        Assert.Equal([anchor, Today.AddMonths(-1), Today], (await ChargesOfAsync(service)).Select(c => c.DueDate));
-        Assert.Equal(Today, (await ServiceAsync(service)).LastGeneratedDueDate);
+        var charges = await ChargesOfAsync(service);
+        Assert.Equal([anchor, Today.AddMonths(-1), Today], charges.Select(c => c.DueDate));
+        Assert.Equal([100000m, 100000m, 107000m], charges.Select(c => c.Amount));
+        var stored = await ServiceAsync(service);
+        Assert.Equal((Today, 107000m), (stored.LastGeneratedPeriodDate, stored.Price));
+        var applied = await WithDbAsync(db => db.ServicePriceSchedules.AsNoTracking().SingleAsync(s => s.Id == schedule, Ct));
+        Assert.Equal((PriceScheduleStatus.Applied, (DateOnly?)Today), (applied.Status, applied.AppliedPeriodDate));
+        var change = Assert.Single(await WithDbAsync(db => db.ServicePriceChanges.AsNoTracking().ToListAsync(Ct)));
+        Assert.Equal(((Guid?)schedule, 107000m), (change.ScheduleId, change.NewPrice));
     }
 
     /// <summary>
@@ -804,6 +1041,15 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
 
     private Task<int> ExecuteSqlAsync(string sql) => WithDbAsync(db => db.Database.ExecuteSqlRawAsync(sql, Ct));
 
+    private async Task<long> PriceReviewEventCountAsync()
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(Ct);
+        await using var command = new NpgsqlCommand(
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'billing.price-reviews.digest.v1'", connection);
+        return (long)(await command.ExecuteScalarAsync(Ct))!;
+    }
+
     private async Task ProcessAsync()
     {
         await using var scope = factory.Services.CreateAsyncScope();
@@ -867,12 +1113,27 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
         ServiceContractStatus status = ServiceContractStatus.Active,
         decimal price = 100000m,
         string currency = "COP",
-        string name = "Hosting") =>
+        string name = "Hosting",
+        AdjustmentMode mode = AdjustmentMode.Manual,
+        DateOnly? reviewDate = null,
+        DateOnly? heldOn = null) =>
         WithDbAsync(async db =>
         {
             var service = ServiceContract.Create(
                 ServiceContractId.New(), Tenant, customerId, name, price, currency, BillingCycle.Monthly, firstDueDate, NineLocal);
             service.MarkGenerated(lastGenerated);
+            if (reviewDate is { } review)
+            {
+                service.InitializePriceReview(mode, 0m, review);
+            }
+
+            // La retención como la deja la corrida de ese día: no genera nada, porque la revisión es el siguiente período.
+            if (heldOn is { } held)
+            {
+                Assert.Empty(ChargeGenerator.Generate(service, null, GenerationMode.Run, held, NineLocal).Charges);
+                Assert.Equal(held, service.HeldSince);
+            }
+
             var charges = new List<Charge>();
             foreach (var due in paidDueDates ?? [])
             {
@@ -884,7 +1145,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             charges.AddRange((pendingDueDates ?? []).Select(due => Charge.Generate(service, due, NineLocal)));
             if (status == ServiceContractStatus.Paused)
             {
-                service.Pause(NineLocal);
+                service.Pause(Today, NineLocal);
             }
 
             if (status == ServiceContractStatus.Cancelled)
@@ -903,6 +1164,35 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             db.Charges.AddRange(charges);
             await db.SaveChangesAsync(Ct);
             return service.Id;
+        });
+
+    /// <summary>
+    /// Un contrato <c>Ipc</c> cuyo siguiente período es el de revisión, con el anterior pagado. Con
+    /// <paramref name="heldOn"/> queda retenido desde ese día.
+    /// </summary>
+    private Task<ServiceContractId> SeedReviewAsync(
+        Guid customerId, DateOnly reviewDate, DateOnly? heldOn = null, string name = "Hosting")
+    {
+        var previous = reviewDate.AddMonths(-1);
+        return SeedServiceAsync(
+            customerId, previous, lastGenerated: previous, paidDueDates: [previous], name: name, mode: AdjustmentMode.Ipc,
+            reviewDate: reviewDate, heldOn: heldOn);
+    }
+
+    /// <summary>
+    /// Un cambio pendiente: confirmado con el IPC (sobre el período de revisión) o programado a mano desde
+    /// <paramref name="effectiveFrom"/>, que nulo es el período de revisión.
+    /// </summary>
+    private Task<Guid> SeedScheduleAsync(ServiceContractId serviceId, bool ipc, decimal newPrice, DateOnly? effectiveFrom = null) =>
+        WithDbAsync(async db =>
+        {
+            var service = await db.Services.SingleAsync(s => s.Id == serviceId, Ct);
+            var schedule = ipc
+                ? ServicePriceSchedule.ConfirmIpc(service, 2025, 7m, newPrice, "IPC 2025 (7,00 %)", null, NineLocal)
+                : ServicePriceSchedule.Schedule(service, null, newPrice, effectiveFrom, "Más usuarios", null, NineLocal);
+            db.ServicePriceSchedules.Add(schedule);
+            await db.SaveChangesAsync(Ct);
+            return schedule.Id;
         });
 
     /// <summary>Un cobro <c>Pending</c> con ese vencimiento en un servicio propio que ya generó hasta ahí: la corrida no le agrega nada.</summary>
@@ -976,7 +1266,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
     /// <summary>
     /// Decorador de <see cref="IChargeRepository"/>: la primera vez que la generación agrega cobros con <see cref="ChargeClash"/>
     /// armado, escribe antes —en otra conexión, como otra réplica— el primero de esos períodos y avanza el servicio hasta él, sin
-    /// tocar su versión. El SaveChanges de esta réplica choca entonces con IX_charges_service_due, no con el token.
+    /// tocar su versión. El SaveChanges de esta réplica choca entonces con IX_charges_service_period, no con el token.
     /// </summary>
     private sealed class InterleavingChargeRepository(IChargeRepository inner, ChargeClash clash) : IChargeRepository
     {
@@ -986,6 +1276,9 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             clash.BeforeAdd(list);
             inner.AddRange(list);
         }
+
+        public Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken) =>
+            inner.RemoveByServiceAsync(serviceId, cancellationToken);
 
         public Task<Charge?> FindAsync(Guid tenantId, Guid chargeId, CancellationToken cancellationToken) =>
             inner.FindAsync(tenantId, chargeId, cancellationToken);
@@ -1046,14 +1339,15 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
                 return;
             }
 
-            var first = charges.MinBy(charge => charge.DueDate)!;
+            var first = charges.MinBy(charge => charge.PeriodDate)!;
             using var npgsql = new NpgsqlConnection(connection);
             npgsql.Open();
             using var insert = new NpgsqlCommand(
                 """
-                INSERT INTO billing.charges (id, tenant_id, service_id, customer_id, amount, currency, due_date, status, version, created_at)
-                VALUES (@id, @tenant, @service, @customer, @amount, @currency, @due, 'Pending', 1, now());
-                UPDATE billing.services SET last_generated_due_date = @due WHERE id = @service;
+                INSERT INTO billing.charges
+                    (id, tenant_id, service_id, customer_id, amount, currency, period_date, due_date, status, version, created_at)
+                VALUES (@id, @tenant, @service, @customer, @amount, @currency, @period, @due, 'Pending', 1, now());
+                UPDATE billing.services SET last_generated_due_date = @period WHERE id = @service;
                 """,
                 npgsql);
             insert.Parameters.AddWithValue("id", Guid.CreateVersion7());
@@ -1062,6 +1356,7 @@ public sealed class ServiceContractsReminderProcessorTests : IAsyncLifetime
             insert.Parameters.AddWithValue("customer", first.CustomerId);
             insert.Parameters.AddWithValue("amount", first.Amount);
             insert.Parameters.AddWithValue("currency", first.Currency);
+            insert.Parameters.AddWithValue("period", first.PeriodDate);
             insert.Parameters.AddWithValue("due", first.DueDate);
             insert.ExecuteNonQuery();
         }

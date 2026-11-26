@@ -13,23 +13,29 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`CustomerMergeReferences` también escribe en `loans.loans`** (`customer_id`, sin subir versión; las cuotas no guardan cliente). Es
   una sentencia más antes de la de Shopify, que sigue siendo la última. Renombrar esa columna compila y rompe la fusión en
   ejecución; la amarran `CustomerMergeReferencesTests` y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
-- **`CatalogVariantUsageChecker` lee tablas de Quotations y Pos por nombre.** Es SQL crudo en Bootstrapper sobre
-  `quotations.quotation_items`/`order_items` (unidas a `quotations`/`orders` por el tenant) y `pos.sale_lines` (unida a
-  `pos.sales`), y corre en la conexión del `PUT` de producto para quedar dentro de su transacción. Renombrar
+- **`CatalogVariantUsageChecker` lee tablas de Quotations, Pos y Wms por nombre.** Es SQL crudo en Bootstrapper sobre
+  `quotations.quotation_items`/`order_items` (unidas a `quotations`/`orders` por el tenant), `pos.sale_lines` (unida a
+  `pos.sales`) y, de Wms, `wms.stock_movements`, `wms.stock_balances`, `wms.adjustment_lines` (unida a `wms.adjustments`
+  por el tenant, sólo los ajustes abiertos: `Proposed` y `Approved`, que todavía pueden contabilizarse), `wms.lots` y
+  `wms.task_lines` (unida a `wms.tasks` por el tenant: líneas `line_status = 'Open'` de tareas `Planned`, `Ready`,
+  `Assigned` o `InProgress`; un estado de tarea nuevo que todavía pueda confirmar entra en esa lista), y
+  corre en la conexión del `PUT` de producto para quedar dentro de su transacción. Renombrar
   `variant_id` o una de esas tablas compila, y el `GET` y el `PUT` de producto responden 500 (`42703`). Sólo
   `ProductVariantDeletionApiTests` usa un doble del puerto; el resto de las pruebas de Catalog que leen o guardan un
   producto corre el checker real contra el esquema migrado y se cae con ese 500, que no se parece a la causa. Se cambia
   junto con el checker y sus pruebas: `CatalogVariantUsageCheckerTests` (que arma réplicas mínimas de las tablas, a
-  mano: no siguen solas a la migración) y las dos `TheCatalogUsageQueryFindsTheBackfilledVariant`
-  (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`), que resuelven el checker real del contenedor y lo
-  corren contra el esquema de las migraciones.
+  mano: no siguen solas a la migración), `StockProbeTests.TheRealCheckerSeesAWmsMovementAgainstTheMigratedSchema` (y sus
+  hermanas `…AnOpenAdjustmentLineAndALot…` y `…AnOpenTaskLine…`) y las
+  dos `TheCatalogUsageQueryFindsTheBackfilledVariant` (`VariantLinesMigrationTests`, `SaleLinesVariantMigrationTests`),
+  que resuelven el checker real del contenedor y lo corren contra el esquema de las migraciones.
 - **`CustomerMergeReferences` escribe en nueve esquemas por nombre.** La fusión de clientes conoce por nombre las tablas de
   quotations, pos, pipeline, messaging, billing, loans, support, ai y shopify: es SQL crudo en Bootstrapper sobre
   `quotations.quotations`/`orders.client_id`, `pos.sales.customer_id`,
   `pipeline.deals`/`deal_quotations`/`deal_orders`/`triage_decisions.customer_id`, `messaging.conversations.customer_id`,
   `messaging.campaigns.audience_customer_ids`, `billing.services`/`charges`/`customer_profiles.customer_id`,
   `loans.loans.customer_id`, `support.tickets.customer_id` (sin subir `version`, como el préstamo), `ai.tests.customer_id` (las pruebas
-  del playground de agentes de IA; las sesiones siguen a su conversación) y `shopify.orders.qep_customer_id`, sobre la
+  del playground de agentes de IA; las sesiones siguen a su conversación), `scheduling.appointments.customer_id` (citas en
+  cualquier estado, sin subir `version`) y `shopify.orders.qep_customer_id`, sobre la
   conexión del `CustomersDbContext` para quedar dentro de su transacción. Renombrar una de esas columnas compila y la fusión
   responde 500 (`42703`); como todo es una transacción, no fusiona nada. Lo amarran `CustomerMergeReferencesTests` (réplicas
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
@@ -91,4 +97,7 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
   `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
   cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros), tickets de soporte (`support.tickets.customer_id`, motivo
-  `supportTickets`, en cualquier estado: también uno cerrado) y una conversación bloqueada.
+  `supportTickets`, en cualquier estado: también uno cerrado), citas de la Agenda (`scheduling.appointments.customer_id`, motivo
+  `schedulingAppointments`, en cualquier estado: también una cancelada, PD-6; la salida es la fusión, que las mueve sin subir `version`)
+  y una conversación bloqueada. Los amarran `CustomerMergeReferencesTests` (réplica de `scheduling.appointments`),
+  `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema` y `ADeleteIsBlockedByAnAppointmentInAnyState`.

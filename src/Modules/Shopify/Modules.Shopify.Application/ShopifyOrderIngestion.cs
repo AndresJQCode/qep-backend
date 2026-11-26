@@ -33,17 +33,48 @@ public sealed class ShopifyOrderIngestion(
 
     private const string ConcurrencyConflict = "concurrency.conflict";
 
+    // Los nombres en el payload (camelCase) de la dirección de envío y su zip.
+    private const string ShippingAddressKey = "shippingAddress";
+
+    private const string ZipKey = "zip";
+
     // §5.4: el payload del espejo es el snapshot normalizado, en camelCase como los DTO de la API.
     private static readonly JsonSerializerOptions PayloadJson = new(JsonSerializerDefaults.Web);
 
-    /// <summary>El payload del espejo de un snapshot (§5.4).</summary>
-    public static string WritePayload(ShopifyOrderSnapshot snapshot) => JsonSerializer.Serialize(snapshot, PayloadJson);
+    /// <summary>El payload del espejo de un snapshot (§5.4). Un zip desconocido (<see cref="ShopifyAddress.ZipUnrecorded"/>) se
+    /// escribe como estaba, sin la clave: reescribir un payload viejo no lo convierte en uno que dice que no tenía zip.</summary>
+    public static string WritePayload(ShopifyOrderSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.ShippingAddress is not { ZipUnrecorded: true })
+        {
+            return JsonSerializer.Serialize(snapshot, PayloadJson);
+        }
+
+        var node = JsonSerializer.SerializeToNode(snapshot, PayloadJson)!;
+        node[ShippingAddressKey]!.AsObject().Remove(ZipKey);
+        return node.ToJsonString(PayloadJson);
+    }
 
     /// <summary>El snapshot que guardó <see cref="WritePayload"/>: con él la conciliación reintenta una fila en espera (§6.4) por
-    /// el mismo camino que un pedido recién traído.</summary>
-    public static ShopifyOrderSnapshot ReadPayload(string payload) =>
-        JsonSerializer.Deserialize<ShopifyOrderSnapshot>(payload, PayloadJson)
-        ?? throw new ShopifyPayloadException("payload", "The mirror payload is empty.");
+    /// el mismo camino que un pedido recién traído. Una dirección de envío sin la clave <c>zip</c> sale con
+    /// <see cref="ShopifyAddress.ZipUnrecorded"/>.</summary>
+    public static ShopifyOrderSnapshot ReadPayload(string payload)
+    {
+        var snapshot = JsonSerializer.Deserialize<ShopifyOrderSnapshot>(payload, PayloadJson)
+            ?? throw new ShopifyPayloadException("payload", "The mirror payload is empty.");
+        return snapshot.ShippingAddress is { Zip: null } address && LacksShippingZipKey(payload)
+            ? snapshot with { ShippingAddress = address with { ZipUnrecorded = true } }
+            : snapshot;
+    }
+
+    private static bool LacksShippingZipKey(string payload)
+    {
+        using var document = JsonDocument.Parse(payload);
+        return document.RootElement.TryGetProperty(ShippingAddressKey, out var address)
+            && address.ValueKind == JsonValueKind.Object
+            && !address.TryGetProperty(ZipKey, out _);
+    }
 
     public async Task<ShopifyOrderMirror> ApplyAsync(
         ShopifyConnectionRef connection, ShopifyOrderSnapshot snapshot, CancellationToken cancellationToken)

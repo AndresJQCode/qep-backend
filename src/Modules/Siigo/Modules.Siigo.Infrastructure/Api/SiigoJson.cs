@@ -171,7 +171,7 @@ internal static class SiigoJson
         {
             ["type"] = "Customer",
             ["person_type"] = request.PersonType,
-            ["id_type"] = new { code = request.IdTypeCode },
+            ["id_type"] = request.IdTypeCode,
             ["identification"] = request.Identification,
             ["name"] = request.Name,
             ["active"] = true,
@@ -181,9 +181,17 @@ internal static class SiigoJson
                 city = new { country_code = request.CountryCode, state_code = request.StateCode, city_code = request.CityCode },
             },
         };
-        if (!string.IsNullOrWhiteSpace(request.Phone))
+        if (request.Phone is { } phone)
         {
-            body["phones"] = new[] { new { number = request.Phone } };
+            // Sin indicativo la propiedad no viaja: un diccionario la omite, un objeto anónimo la mandaría en null.
+            var entry = new Dictionary<string, string>();
+            if (phone.Indicative is { } indicative)
+            {
+                entry["indicative"] = indicative;
+            }
+
+            entry["number"] = phone.Number;
+            body["phones"] = new[] { entry };
         }
 
         if (!string.IsNullOrWhiteSpace(request.ContactEmail) || !string.IsNullOrWhiteSpace(request.ContactFirstName))

@@ -26,8 +26,8 @@ public sealed class ReorderCarriersHandler(
     public async Task<CarrierSettingsDto> HandleAsync(ReorderCarriersCommand command, CancellationToken cancellationToken)
     {
         QuotationsAuthorization.EnsureAuthorized(executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
-        await TenantModuleGuard.EnsureEnabledAsync(
-            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Quotations, cancellationToken);
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            tenantModules, command.TenantId, QuotationsModuleSets.QuotationsOrOrders, cancellationToken);
 
         var ids = command.CarrierIds ?? [];
         var existing = await carriers.ListAsync(command.TenantId, cancellationToken);

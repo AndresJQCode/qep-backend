@@ -747,6 +747,8 @@
           "Modules.Customers.Infrastructure": "[1.0.0, )",
           "Modules.Geography.Api": "[1.0.0, )",
           "Modules.Geography.Infrastructure": "[1.0.0, )",
+          "Modules.Hr.Api": "[1.0.0, )",
+          "Modules.Hr.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Api": "[1.0.0, )",
           "Modules.Integrations.Infrastructure": "[1.0.0, )",
@@ -754,7 +756,10 @@
           "Modules.Loans.Infrastructure": "[1.0.0, )",
           "Modules.Messaging.Api": "[1.0.0, )",
           "Modules.Messaging.Infrastructure": "[1.0.0, )",
+          "Modules.Notifications.Api": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
+          "Modules.Payroll.Api": "[1.0.0, )",
+          "Modules.Payroll.Infrastructure": "[1.0.0, )",
           "Modules.Pipeline.Api": "[1.0.0, )",
           "Modules.Pipeline.Infrastructure": "[1.0.0, )",
           "Modules.Platform.Api": "[1.0.0, )",
@@ -767,6 +772,8 @@
           "Modules.Quotations.Infrastructure": "[1.0.0, )",
           "Modules.Reporting.Api": "[1.0.0, )",
           "Modules.Reporting.Infrastructure": "[1.0.0, )",
+          "Modules.Scheduling.Api": "[1.0.0, )",
+          "Modules.Scheduling.Infrastructure": "[1.0.0, )",
           "Modules.ServiceContracts.Api": "[1.0.0, )",
           "Modules.ServiceContracts.Infrastructure": "[1.0.0, )",
           "Modules.Shopify.Api": "[1.0.0, )",
@@ -783,6 +790,8 @@
           "Modules.Support.Infrastructure": "[1.0.0, )",
           "Modules.Wholesale.Api": "[1.0.0, )",
           "Modules.Wholesale.Infrastructure": "[1.0.0, )",
+          "Modules.Wms.Api": "[1.0.0, )",
+          "Modules.Wms.Infrastructure": "[1.0.0, )",
           "Scalar.AspNetCore": "[2.16.16, )"
         }
       },
@@ -811,6 +820,8 @@
           "Modules.Customers.Infrastructure": "[1.0.0, )",
           "Modules.Geography.Application": "[1.0.0, )",
           "Modules.Geography.Infrastructure": "[1.0.0, )",
+          "Modules.Hr.Application": "[1.0.0, )",
+          "Modules.Hr.Infrastructure": "[1.0.0, )",
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Identity.Infrastructure": "[1.0.0, )",
           "Modules.Integrations.Application": "[1.0.0, )",
@@ -820,6 +831,8 @@
           "Modules.Messaging.Application": "[1.0.0, )",
           "Modules.Messaging.Infrastructure": "[1.0.0, )",
           "Modules.Notifications.Infrastructure": "[1.0.0, )",
+          "Modules.Payroll.Application": "[1.0.0, )",
+          "Modules.Payroll.Infrastructure": "[1.0.0, )",
           "Modules.Pipeline.Application": "[1.0.0, )",
           "Modules.Pipeline.Infrastructure": "[1.0.0, )",
           "Modules.Platform.Application": "[1.0.0, )",
@@ -832,6 +845,8 @@
           "Modules.Quotations.Infrastructure": "[1.0.0, )",
           "Modules.Reporting.Application": "[1.0.0, )",
           "Modules.Reporting.Infrastructure": "[1.0.0, )",
+          "Modules.Scheduling.Application": "[1.0.0, )",
+          "Modules.Scheduling.Infrastructure": "[1.0.0, )",
           "Modules.ServiceContracts.Application": "[1.0.0, )",
           "Modules.ServiceContracts.Infrastructure": "[1.0.0, )",
           "Modules.Shopify.Application": "[1.0.0, )",
@@ -852,6 +867,8 @@
           "Modules.Tenancy.Infrastructure": "[1.0.0, )",
           "Modules.Wholesale.Application": "[1.0.0, )",
           "Modules.Wholesale.Infrastructure": "[1.0.0, )",
+          "Modules.Wms.Application": "[1.0.0, )",
+          "Modules.Wms.Infrastructure": "[1.0.0, )",
           "SixLabors.ImageSharp": "[3.1.12, )",
           "StackExchange.Redis": "[2.13.23, )"
         }
@@ -1217,6 +1234,45 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "modules.hr.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Hr.Application": "[1.0.0, )",
+          "Modules.Hr.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.hr.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Hr.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.hr.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.hr.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
+          "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Hr.Application": "[1.0.0, )",
+          "Modules.Hr.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
       "modules.identity.application": {
         "type": "Project",
         "dependencies": {
@@ -1365,10 +1421,21 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "modules.notifications.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Notifications.Application": "[1.0.0, )",
+          "Modules.Notifications.Domain": "[1.0.0, )"
+        }
+      },
       "modules.notifications.application": {
         "type": "Project",
         "dependencies": {
-          "Modules.Notifications.Domain": "[1.0.0, )"
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Notifications.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
         }
       },
       "modules.notifications.domain": {
@@ -1389,6 +1456,43 @@
           "Modules.Notifications.Application": "[1.0.0, )",
           "Modules.Notifications.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.payroll.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Payroll.Application": "[1.0.0, )",
+          "Modules.Payroll.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.payroll.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Payroll.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.payroll.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.payroll.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Payroll.Application": "[1.0.0, )",
+          "Modules.Payroll.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
@@ -1603,6 +1707,44 @@
           "Modules.Reporting.Domain": "[1.0.0, )"
         }
       },
+      "modules.scheduling.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Scheduling.Application": "[1.0.0, )",
+          "Modules.Scheduling.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.scheduling.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Scheduling.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.scheduling.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.scheduling.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
+          "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Scheduling.Application": "[1.0.0, )",
+          "Modules.Scheduling.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
       "modules.servicecontracts.api": {
         "type": "Project",
         "dependencies": {
@@ -1692,6 +1834,7 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "FluentValidation": "[12.1.1, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
           "Modules.Audit.Domain": "[1.0.0, )",
           "Modules.Siigo.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )"
@@ -1934,6 +2077,43 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Wholesale.Application": "[1.0.0, )",
           "Modules.Wholesale.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.wms.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Wms.Application": "[1.0.0, )",
+          "Modules.Wms.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.wms.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
+          "Modules.Wms.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.wms.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.wms.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
+          "Modules.Wms.Application": "[1.0.0, )",
+          "Modules.Wms.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

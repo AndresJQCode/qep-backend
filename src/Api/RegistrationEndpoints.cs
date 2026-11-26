@@ -101,7 +101,8 @@ public static class RegistrationEndpoints
                 request.Slug,
                 request.DefaultCulture,
                 request.TimeZone,
-                request.DateFormat),
+                request.DateFormat,
+                request.Language),
             httpContext.TraceIdentifier,
             cancellationToken);
 
@@ -140,13 +141,17 @@ public static class RegistrationEndpoints
         string slug,
         string? culture,
         string? timeZone,
-        string? dateFormat) =>
+        string? dateFormat,
+        string? language = null) =>
         new(
             displayName,
             slug,
             string.IsNullOrWhiteSpace(culture) ? DefaultCulture : culture,
             string.IsNullOrWhiteSpace(timeZone) ? DefaultTimeZone : timeZone,
-            string.IsNullOrWhiteSpace(dateFormat) ? DefaultDateFormat : dateFormat);
+            string.IsNullOrWhiteSpace(dateFormat) ? DefaultDateFormat : dateFormat,
+            // Vacío cuenta como ausente: el selector del registro puede mandar "" sin elegir. Va con
+            // nombre: el parámetro posicional que sigue a DateFormat es Country.
+            Language: string.IsNullOrWhiteSpace(language) ? null : language);
 }
 
 public sealed record RegistrationPolicyResponse(bool PublicTenantSignupEnabled);
@@ -156,6 +161,8 @@ public sealed record RegisterTenantRequest(
     string Slug,
     string? DefaultCulture = null,
     string? TimeZone = null,
-    string? DateFormat = null);
+    string? DateFormat = null,
+    // Spec 2026-11-22 (i18n): es-419 | es-ES; ausente o vacío es es-419.
+    string? Language = null);
 
 public sealed record RegisterTenantResponse(Guid TenantId, Guid OwnerUserId);

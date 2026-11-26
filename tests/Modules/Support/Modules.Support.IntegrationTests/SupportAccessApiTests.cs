@@ -92,7 +92,7 @@ public sealed class SupportAccessApiTests(SharedSupportHost sharedHost) : IClass
         var response = await client.GetAsync($"{SupportUrl(tenant)}/ticket-types", Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(8, (await JsonAsync(response)).GetArrayLength());
+        Assert.Equal(9, (await JsonAsync(response)).GetArrayLength());
     }
 
     [Fact]

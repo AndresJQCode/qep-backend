@@ -47,7 +47,7 @@ public sealed class ListSiigoVariantLinksHandler(
         var settings = await settingsRepository.FindOrCreateAsync(query.TenantId, query.ConnectionId, withVariantLinks: true, cancellationToken)
             ?? throw SiigoAuthorization.Denied();
 
-        var page = query.Page ?? 1;
+        var page = Math.Min(query.Page ?? 1, SiigoProductLinksSupport.MaxPage);
         var linkedIds = settings.VariantLinks.Select(link => link.VariantId).ToArray();
         var found = await catalog.SearchAsync(
             query.TenantId,

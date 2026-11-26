@@ -94,6 +94,35 @@ public sealed class AgentActivityApiTests
         Assert.Equal(1500L, total.GetProperty("inputTokens").GetInt64());
     }
 
+    // Spec 2026-11-23 §9.5: cuenta las reservas hechas hoy en canales reales; ni la repetida (alreadyBooked: true) ni la del playground.
+    [Fact]
+    public async Task TodayCountsBookingsButNotRepeats()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var seeded = await SeedAsync(factory, database.GetConnectionString());
+        using var _ = seeded.Client;
+        var now = DateTimeOffset.UtcNow;
+        var session = await SessionAsync(seeded, Guid.CreateVersion7(), "Live", now);
+        var job = await JobAsync(seeded, session, "Done", "replied", now);
+        await ToolCallAsync(seeded, job, "call_b1", AgentToolNames.BookAppointment, now, """{"appointmentId":"a","alreadyBooked":false}""");
+        await ToolCallAsync(seeded, job, "call_b2", AgentToolNames.BookAppointment, now, """{"appointmentId":"a","alreadyBooked":true}""");
+        var playgroundJob = Guid.CreateVersion7();
+        await ExecuteAsync(
+            seeded.ConnectionString,
+            """
+            INSERT INTO ai.model_jobs (id, tenant_id, test_id, up_to_seq, status, attempts, next_attempt_at, outcome, created_at, completed_at)
+            VALUES (@id, @tenant, @test, 1, 'Done', 1, @at, 'replied', @at, @at)
+            """,
+            ("id", playgroundJob), ("tenant", Guid.Parse(TenantId)), ("test", Guid.CreateVersion7()), ("at", now));
+        await ToolCallAsync(seeded, playgroundJob, "call_b3", AgentToolNames.BookAppointment, now, """{"appointmentId":"PRUEBA-1","alreadyBooked":false}""");
+
+        var list = await JsonAsync(await seeded.Client.GetAsync($"{AiUrl()}/agents", Ct));
+
+        var today = Assert.Single(list.GetProperty("items").EnumerateArray()).GetProperty("today");
+        Assert.Equal(1, today.GetProperty("appointments").GetInt32());
+    }
+
     [Fact]
     public async Task TheSessionHistoryFiltersByAgentAndRangeNewestFirst()
     {
@@ -332,14 +361,15 @@ public sealed class AgentActivityApiTests
             ("tenant", Guid.Parse(TenantId)), ("session", session), ("seq", seq), ("role", role), ("message", message), ("job", job),
             ("sources", sources), ("at", at));
 
-    private static Task<int> ToolCallAsync(Seeded seeded, Guid job, string callId, string tool, DateTimeOffset at) =>
+    private static Task<int> ToolCallAsync(
+        Seeded seeded, Guid job, string callId, string tool, DateTimeOffset at, string result = """{"ok":true}""") =>
         ExecuteAsync(
             seeded.ConnectionString,
             """
             INSERT INTO ai.tool_calls (tenant_id, job_id, call_id, tool, arguments, result, outcome, duration_ms, created_at)
-            VALUES (@tenant, @job, @call, @tool, '{}'::jsonb, '{"ok":true}'::jsonb, 'ok', 25, @at)
+            VALUES (@tenant, @job, @call, @tool, '{}'::jsonb, CAST(@result AS jsonb), 'ok', 25, @at)
             """,
-            ("tenant", Guid.Parse(TenantId)), ("job", job), ("call", callId), ("tool", tool), ("at", at));
+            ("tenant", Guid.Parse(TenantId)), ("job", job), ("call", callId), ("tool", tool), ("result", result), ("at", at));
 
     private static Task<int> UsageAsync(
         Seeded seeded, Guid session, Guid? conversation, Guid job, string servedModel, int input, int output, int? cacheCreation, int? cacheRead,

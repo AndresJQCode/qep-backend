@@ -21,7 +21,9 @@ public sealed record CreateSupplierCommand(
     string? Category,
     string? Notes,
     IReadOnlyList<SupplierBankAccountPayload> BankAccounts,
-    IReadOnlyList<SupplierContactPayload> Contacts) : ICommand<SupplierResponse>, ISupplierWriteCommand
+    IReadOnlyList<SupplierContactPayload> Contacts,
+    // Spec 2026-11-23: la región (provincia) del domicilio de un país con catálogo distinto de Colombia; null es «sin región».
+    Guid? RegionId = null) : ICommand<SupplierResponse>, ISupplierWriteCommand
 {
     // Se aplana el cuerpo en el comando (y no se anida como Body) para que las claves de errors
     // sean Name y BankAccounts[2].Currency, no Body.Name.
@@ -41,7 +43,8 @@ public sealed record CreateSupplierCommand(
         request.Category,
         request.Notes,
         request.BankAccounts,
-        request.Contacts);
+        request.Contacts,
+        request.RegionId);
 }
 
 // Las reglas viven en SupplierWriteRules y se incluyen, no se copian: dos copias validan distinto
@@ -74,6 +77,7 @@ public sealed class CreateSupplierHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var city = await command.ResolveCityAsync(geographyLookup, cancellationToken);
+        var region = await command.ResolveRegionAsync(geographyLookup, cancellationToken);
         var now = clock.UtcNow;
 
         var supplier = Supplier.Create(command.TenantId, command.ToWriteData(), phoneNormalizer, now);
@@ -92,6 +96,6 @@ public sealed class CreateSupplierHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         // Un proveedor del formulario nunca nace vinculado: sólo la aceptación de una invitación lo vincula.
-        return supplier.ToResponse(city, linkedTenant: null);
+        return supplier.ToResponse(city, linkedTenant: null, region: region);
     }
 }

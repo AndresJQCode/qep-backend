@@ -18,7 +18,8 @@ public sealed record CreateOrderCommand(
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
-    ShippingRequest? Shipping = null) : ICommand<OrderDetailDto>, IOrderDraft;
+    ShippingRequest? Shipping = null,
+    IReadOnlyList<OrderItemAddition>? Gifts = null) : ICommand<OrderDetailDto>, IOrderDraft;
 
 /// <summary>Lo que comparten crear y previsualizar un pedido: el mismo cuerpo, las mismas reglas.</summary>
 public interface IOrderDraft
@@ -39,6 +40,10 @@ public interface IOrderDraft
 
     /// <summary>La entrega por envío (spec 2026-10-17 §5.4); null es "sin envío".</summary>
     ShippingRequest? Shipping { get; }
+
+    /// <summary>Los regalos (spec 2026-11-23): variante y cantidad, a precio de lista con el 100 % de descuento. Null es
+    /// «sin regalos». <see cref="Items"/> sigue siendo sólo las líneas pagadas.</summary>
+    IReadOnlyList<OrderItemAddition>? Gifts { get; }
 }
 
 /// <summary>
@@ -74,6 +79,15 @@ public abstract class OrderDraftValidator<TDraft> : AbstractValidator<TDraft>
             .Must(items => items.Select(line => line.VariantId).Distinct().Count() == items.Count)
             .WithMessage("La misma variante no puede aparecer más de una vez.")
             .When(draft => draft.Items is not null);
+        RuleForEach(draft => draft.Gifts).ChildRules(gift =>
+        {
+            gift.RuleFor(line => line.VariantId).NotEmpty();
+            gift.RuleFor(line => line.Quantity).GreaterThan(0m);
+        }).When(draft => draft.Gifts is not null);
+        RuleFor(draft => draft.Gifts)
+            .Must(gifts => gifts!.Select(line => line.VariantId).Distinct().Count() == gifts!.Count)
+            .WithMessage("La misma variante no puede ir más de una vez como regalo.")
+            .When(draft => draft.Gifts is not null);
         RuleFor(draft => draft.PaymentProofs).NotNull();
         RuleForEach(draft => draft.PaymentProofs).ChildRules(proof =>
         {
@@ -162,7 +176,7 @@ public sealed class CreateOrderHandler(
                 new OrderDraftInput(
                     command.TenantId, command.ClientId, advisorId, command.PaymentMethod, command.Notes,
                     command.IsRetail, command.GlobalScaleFloor, command.Parties, command.BillingAccount,
-                    command.Items, proofs, AllowIncompleteCustomer: false, command.Shipping),
+                    command.Items, proofs, AllowIncompleteCustomer: false, command.Shipping, Gifts: command.Gifts),
                 orderNumber,
                 now,
                 cancellationToken);

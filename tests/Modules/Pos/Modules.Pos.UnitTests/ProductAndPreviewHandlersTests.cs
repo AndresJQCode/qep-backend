@@ -1,5 +1,5 @@
-using BuildingBlocks.Domain.Pricing;
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Pricing;
 using FluentValidation;
 using Modules.Pos.Application;
 using Modules.Pos.Domain;

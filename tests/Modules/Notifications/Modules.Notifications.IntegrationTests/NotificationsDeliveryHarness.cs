@@ -273,7 +273,8 @@ internal sealed class NotificationsApiFactory(
     string connectionString,
     IEmailChannel? emailChannel = null,
     bool runDeliveryWorkers = false,
-    IReadOnlyDictionary<string, string>? settings = null)
+    IReadOnlyDictionary<string, string>? settings = null,
+    Action<IServiceCollection>? configureServices = null)
     : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -301,6 +302,7 @@ internal sealed class NotificationsApiFactory(
         builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
         builder.ConfigureServices(services =>
         {
+            configureServices?.Invoke(services);
             if (emailChannel is not null)
             {
                 services.RemoveAll<IEmailChannel>();

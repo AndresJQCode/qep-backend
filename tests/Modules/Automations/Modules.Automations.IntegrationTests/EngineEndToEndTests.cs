@@ -665,7 +665,10 @@ public sealed partial class EngineEndToEndTests
         public static string InboundText(string phoneNumberId, string waId, string wamid, long timestamp, string text) =>
             Messages(phoneNumberId, waId, new JsonObject
             {
-                ["from"] = waId, ["id"] = wamid, ["timestamp"] = Seconds(timestamp), ["type"] = "text",
+                ["from"] = waId,
+                ["id"] = wamid,
+                ["timestamp"] = Seconds(timestamp),
+                ["type"] = "text",
                 ["text"] = new JsonObject { ["body"] = text },
             });
 
@@ -674,10 +677,14 @@ public sealed partial class EngineEndToEndTests
         {
             var message = new JsonObject
             {
-                ["from"] = waId, ["id"] = wamid, ["timestamp"] = Seconds(timestamp), ["type"] = "interactive",
+                ["from"] = waId,
+                ["id"] = wamid,
+                ["timestamp"] = Seconds(timestamp),
+                ["type"] = "interactive",
                 ["interactive"] = new JsonObject
                 {
-                    ["type"] = "button_reply", ["button_reply"] = new JsonObject { ["id"] = replyId, ["title"] = title },
+                    ["type"] = "button_reply",
+                    ["button_reply"] = new JsonObject { ["id"] = replyId, ["title"] = title },
                 },
             };
             if (quotedWamid is not null)
@@ -698,7 +705,9 @@ public sealed partial class EngineEndToEndTests
                 ["metadata"] = new JsonObject { ["display_phone_number"] = "15550000000", ["phone_number_id"] = phoneNumberId },
                 ["contacts"] = new JsonArray(new JsonObject
                 {
-                    ["profile"] = new JsonObject { ["name"] = "Laura" }, ["user_id"] = userId, ["wa_id"] = waId,
+                    ["profile"] = new JsonObject { ["name"] = "Laura" },
+                    ["user_id"] = userId,
+                    ["wa_id"] = waId,
                 }),
                 ["messages"] = new JsonArray(message),
             };

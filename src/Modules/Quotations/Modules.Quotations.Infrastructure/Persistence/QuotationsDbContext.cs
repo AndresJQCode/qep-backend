@@ -474,6 +474,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
         party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
         party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
+        party.Property(value => value.RegionId).HasColumnName("region_id");
+        party.Property(value => value.PostalCode)
+            .HasColumnName("postal_code")
+            .HasMaxLength(QuotationPartyDetails.PostalCodeMaxLength);
 
         // Una parte por rol y por cotizacion: es lo que hace que "sin fila = usa los datos del
         // cliente" sea una regla y no una convencion. Nombrado, como el numero de cotizacion:
@@ -936,6 +940,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion<string>()
             .HasMaxLength(20);
         item.Property(value => value.CostCapturedAt).HasColumnName("cost_captured_at");
+        // Spec 2026-11-21: la línea de regalo. Sin índice: la clave (variante, regalo) la hace cumplir el dominio.
+        item.Property(value => value.IsGift).HasColumnName("is_gift").HasDefaultValue(false).IsRequired();
         item.Ignore(value => value.Amounts);
         item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
         // Mismo motivo que IX_quotation_items_variant: la consulta de uso de Catalog.
@@ -994,6 +1000,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
         party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
         party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
+        party.Property(value => value.RegionId).HasColumnName("region_id");
+        party.Property(value => value.PostalCode)
+            .HasColumnName("postal_code")
+            .HasMaxLength(QuotationPartyDetails.PostalCodeMaxLength);
 
         party.HasIndex(value => new { value.OrderId, value.Role })
             .IsUnique()
@@ -1322,6 +1332,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(OrdersExportLayout.SheetNameMaxLength)
             .IsRequired()
             .HasDefaultValue(OrdersExportLayout.DefaultSheetName);
+        // Spec 2026-11-25 indicativo: el default de la base deja toda fila que ya existía —y la que inserte
+        // un pod viejo durante el rollout— exportando el indicativo. ValueGeneratedNever es obligatorio: sin
+        // él, EF omite un `false` al insertar (es el valor CLR por defecto) y la base escribiría `true`.
+        layout.Property(value => value.IncludePhoneDialCode)
+            .HasColumnName("include_phone_dial_code")
+            .HasDefaultValue(OrdersExportLayout.DefaultIncludePhoneDialCode)
+            .ValueGeneratedNever();
 
         layout.OwnsMany(value => value.Columns, columns =>
         {

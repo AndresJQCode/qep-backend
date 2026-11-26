@@ -1,6 +1,6 @@
 using System.Threading.RateLimiting;
-using BuildingBlocks.Application;
 using Bootstrapper;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 

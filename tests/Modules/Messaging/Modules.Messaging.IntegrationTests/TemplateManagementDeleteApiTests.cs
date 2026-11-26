@@ -140,6 +140,29 @@ public sealed class TemplateManagementDeleteApiTests
     }
 
     [Fact]
+    public async Task DeletingReleasesCurrentAndRetiredImages()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var ids = await IdsByNameAsync(f);
+        var currentId = await AttachPublishedImageAsync(f, ids["promo"]);
+        var retiredId = f.Factory.TemplateImages.Seed(f.Tenant.TenantId, new byte[2048]);
+        f.Factory.TemplateImages.Files[retiredId].Published = true;
+        await ExecuteAsync(f.ConnectionString,
+            "INSERT INTO messaging.message_template_retired_header_images (id, tenant_id, template_id, file_id, public_url, retired_at) "
+            + "VALUES (@id, @t, @template, @file, @url, now())",
+            ("id", Guid.CreateVersion7()), ("t", f.Tenant.TenantId), ("template", ids["promo"]), ("file", retiredId), ("url", $"https://public.test/{retiredId}.png"));
+
+        var response = await SendAsync(f.Admin, HttpMethod.Delete, TemplateUrl(f, ids["promo"]));
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(1L, await ReleaseRowsAsync(f, currentId));
+        Assert.Equal(1L, await ReleaseRowsAsync(f, retiredId));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_template_retired_header_images"));
+    }
+
+    [Fact]
     public async Task AFailedDeleteWritesNoRelease()
     {
         await using var database = await StartDatabaseAsync();

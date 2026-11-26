@@ -73,8 +73,14 @@ internal sealed class ScheduledFixture : IDisposable
         factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.OK, """{"messaging_product":"whatsapp","messages":[{"id":"wamid.scheduled"}]}""");
         return new ScheduledFixture
         {
-            Factory = factory, Host = host, Bucket = bucket, ConnectionString = connectionString, Tenant = tenant, ConversationId = conversationId,
-            MemberId = memberId, Client = client,
+            Factory = factory,
+            Host = host,
+            Bucket = bucket,
+            ConnectionString = connectionString,
+            Tenant = tenant,
+            ConversationId = conversationId,
+            MemberId = memberId,
+            Client = client,
         };
     }
 
@@ -103,7 +109,11 @@ internal sealed class ScheduledFixture : IDisposable
         Bucket.Objects[MessagingMediaKeys.Staging(Tenant.TenantId, ConversationId, MemberId, uploadId, ".pdf")] = (Pdf(), "application/pdf");
         var response = await SendAsync(Client, HttpMethod.Post, SchedulesUrl, new
         {
-            clientId = clientId ?? Guid.CreateVersion7(), scheduledAt = scheduledAt ?? InTwoHours(), uploadId, fileName = "contrato.pdf", caption,
+            clientId = clientId ?? Guid.CreateVersion7(),
+            scheduledAt = scheduledAt ?? InTwoHours(),
+            uploadId,
+            fileName = "contrato.pdf",
+            caption,
         });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return await response.Content.ReadFromJsonAsync<JsonElement>(Ct);

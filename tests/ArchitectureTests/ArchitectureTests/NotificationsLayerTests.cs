@@ -1,14 +1,31 @@
 using System.Reflection;
+using Modules.Notifications.Api;
 using Modules.Notifications.Application;
 using Modules.Notifications.Domain;
 using Modules.Notifications.Infrastructure;
 
 namespace ArchitectureTests;
 
-// Notifications tiene tres proyectos (Domain, Application, Infrastructure) y ninguno Api,
-// así que la regla de Api que afirman los otros módulos no aplica acá.
+// Notifications tenía tres proyectos (Domain, Application, Infrastructure); la campana en la app (spec 2026-11-22) le suma
+// Modules.Notifications.Api, así que valen también las reglas de Api de los otros módulos.
 public sealed class NotificationsLayerTests
 {
+    [Fact]
+    public void ApiDoesNotReferenceInfrastructure()
+    {
+        AssertDoesNotReference(
+            typeof(NotificationEndpoints).Assembly,
+            typeof(NotificationsInfrastructureExtensions).Assembly);
+    }
+
+    [Fact]
+    public void ApplicationDoesNotReferenceApi()
+    {
+        AssertDoesNotReference(
+            typeof(IEmailChannel).Assembly,
+            typeof(NotificationEndpoints).Assembly);
+    }
+
     [Fact]
     public void DomainDoesNotReferenceOuterLayers()
     {

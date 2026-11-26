@@ -39,7 +39,8 @@ internal sealed partial class PurchaseOrderEmailSender(IEmailChannel channel, IL
                     document.Tax,
                     document.Total,
                     request.FileName,
-                    request.Pdf)),
+                    request.Pdf,
+                    document.ShowsAmounts)),
                 cancellationToken);
             return PurchaseOrderEmailResult.Sent;
         }

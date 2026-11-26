@@ -19,6 +19,7 @@ internal sealed class SiigoSettingsRepository(SiigoDbContext dbContext) : ISiigo
 
         var query = dbContext.Settings
             .Include(settings => settings.TaxLinks)
+            .Include(settings => settings.SellerLinks)
             .Include(settings => settings.WithholdingLinks)
             .Include(settings => settings.PaymentLinks)
             .AsSplitQuery();
@@ -39,6 +40,7 @@ internal sealed class SiigoSettingsRepository(SiigoDbContext dbContext) : ISiigo
         // (la tabla llega a miles de filas por conexión).
         var settings = await dbContext.Settings
             .Include(value => value.TaxLinks)
+            .Include(value => value.SellerLinks)
             .Include(value => value.WithholdingLinks)
             .Include(value => value.PaymentLinks)
             .AsSplitQuery()
@@ -52,4 +54,6 @@ internal sealed class SiigoSettingsRepository(SiigoDbContext dbContext) : ISiigo
 
         return settings;
     }
+
+    public void Remove(SiigoSettings settings) => dbContext.Settings.Remove(settings);
 }

@@ -78,6 +78,7 @@ public sealed class QuotationResponseComposer(
             cancellationToken);
         var taxUnits = await TaxUnitContextAsync(
             tenantClock, withholdingLookup, tenantId, quotation.CreatedAt, quotation.WithholdingBreakdown, cancellationToken);
+        var regionsById = await PartyRegionsAsync(geographyLookup, quotation.Parties, cancellationToken);
 
         return new QuotationResponse(
             quotation.Id,
@@ -101,7 +102,7 @@ public sealed class QuotationResponseComposer(
             quotation.RetentionAmount,
             quotation.NetTotal,
             quotation.Notes,
-            quotation.Parties.Select(ToPartyResponse).ToArray(),
+            quotation.Parties.Select(party => ToPartyResponse(party, regionsById)).ToArray(),
             quotation.BillingUsesBusinessName,
             quotation.BillingWithRetention,
             quotation.BillingVatSurplus,
@@ -286,11 +287,37 @@ public sealed class QuotationResponseComposer(
                         address.DepartmentId,
                         address.DepartmentName,
                         address.IsPrincipal,
-                        address.Country))
+                        address.Country,
+                        address.Region))
                     .ToArray(),
                 customer.Country,
                 customer.PersonType,
-                customer.IdentificationType);
+                customer.IdentificationType,
+                customer.Region,
+                (customer.BillingProfiles ?? []).Select(ToBillingProfileResponse).ToArray(),
+                customer.BillingProfileLimit,
+                customer.IdentificationNumber);
+
+    private static QuotationClientBillingProfileResponse ToBillingProfileResponse(
+        QuotationCustomerBillingProfileRef profile) =>
+        new(
+            profile.Id,
+            profile.Name,
+            profile.PersonType,
+            profile.IdentificationType,
+            profile.IdentificationNumber,
+            profile.Phone,
+            profile.Email,
+            profile.Address,
+            profile.Country,
+            profile.CityId,
+            profile.CityName,
+            profile.DepartmentId,
+            profile.DepartmentName,
+            profile.Region,
+            profile.WithholdingTaxRates,
+            profile.VatSurplus,
+            profile.IsPrincipal);
 
     // La variante puede no existir más (se borró): la línea conserva lo que la cotización
     // congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único que este lado
@@ -410,7 +437,27 @@ public sealed class QuotationResponseComposer(
             minimum.MissingUnits,
             minimum.MissingTotal);
 
-    private static QuotationPartyResponse ToPartyResponse(QuotationPartyDto party) => new(
+    /// <summary>The names of the regions the parties carry, in one geography call (none when no party has a region).
+    /// Internal because the order composer resolves its parties the same way.</summary>
+    internal static async Task<IReadOnlyDictionary<Guid, QuotationRegionRef>> PartyRegionsAsync(
+        IQuotationGeographyLookup geographyLookup,
+        IEnumerable<QuotationPartyDto> parties,
+        CancellationToken cancellationToken)
+    {
+        Guid[] regionIds = [.. parties.Where(party => party.RegionId is not null).Select(party => party.RegionId!.Value).Distinct()];
+        return regionIds.Length == 0
+            ? new Dictionary<Guid, QuotationRegionRef>()
+            : await geographyLookup.FindRegionsAsync(regionIds, cancellationToken);
+    }
+
+    internal static QuotationRegionDto? ToRegionDto(
+        Guid? regionId, IReadOnlyDictionary<Guid, QuotationRegionRef> regionsById) =>
+        regionId is { } id && regionsById.TryGetValue(id, out var region)
+            ? new QuotationRegionDto(region.Id, region.Name)
+            : null;
+
+    private static QuotationPartyResponse ToPartyResponse(
+        QuotationPartyDto party, IReadOnlyDictionary<Guid, QuotationRegionRef> regionsById) => new(
         party.Id,
         party.Role,
         party.Name,
@@ -423,7 +470,9 @@ public sealed class QuotationResponseComposer(
         party.PersonType,
         party.IdentificationType,
         party.Country,
-        party.CityName);
+        party.CityName,
+        ToRegionDto(party.RegionId, regionsById),
+        party.PostalCode);
 
     // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
     // tiene el frontend y tiene que ser uno solo para los dos módulos. Null también igual que

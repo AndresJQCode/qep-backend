@@ -290,8 +290,9 @@ public sealed partial class AgentSessionJobProcessor(
             return;
         }
 
-        // El borrador de cotización ya está escrito en Quotations: descartar su traspaso dejaría que el siguiente trabajo creara otro.
-        var wrote = outcome is AgentHandedOff { Reason: AgentHandoffCodes.QuotationDraftCreated };
+        // El borrador de cotización o la cita ya están escritos: descartar la respuesta dejaría que el siguiente trabajo (otro JobId, otra llave)
+        // creara otro borrador o reservara de nuevo.
+        var wrote = outcome is AgentReplied { Wrote: true } or AgentHandedOff { Wrote: true } or AgentTurnFailed { Wrote: true } or AgentHandedOff { Reason: AgentHandoffCodes.QuotationDraftCreated };
         if (!wrote && session.CanSupersede && await sessions.HasCustomerTurnAfterAsync(session.Id, job.UpToSeq, cancellationToken))
         {
             session.RecordSuperseded(now);
@@ -492,18 +493,18 @@ public sealed partial class AgentSessionJobProcessor(
     /// <summary>La forma guardada de una respuesta ya calculada (§6.3 paso 4); sólo la lee este procesador.</summary>
     private sealed record StoredOutcome(
         string Type, string? Text, IReadOnlyList<string>? Sources, string? Reason, string? Note, AgentFailureKind? Kind, AgentFailureReason? FailureReason,
-        string? Code, double? RetryAfterSeconds, Guid? MemberId = null, string? QuotationNumber = null)
+        string? Code, double? RetryAfterSeconds, Guid? MemberId = null, string? QuotationNumber = null, bool Wrote = false)
     {
         public static string Write(AgentTurnOutcome outcome) => JsonSerializer.Serialize(
             outcome switch
             {
-                AgentReplied replied => new StoredOutcome("replied", replied.Text, replied.SourceIds, null, null, null, null, null, null),
+                AgentReplied replied => new StoredOutcome("replied", replied.Text, replied.SourceIds, null, null, null, null, null, null, Wrote: replied.Wrote),
                 // Spec 2026-11-17 D-B8: el resumen de finish_objective va en text.
                 AgentFinished finished => new StoredOutcome("finished", finished.Summary, null, null, null, null, null, null, null),
                 AgentHandedOff handedOff => new StoredOutcome(
-                    "handed_off", null, null, handedOff.Reason, handedOff.Note, null, null, null, null, handedOff.MemberId, handedOff.QuotationNumber),
+                    "handed_off", null, null, handedOff.Reason, handedOff.Note, null, null, null, null, handedOff.MemberId, handedOff.QuotationNumber, handedOff.Wrote),
                 AgentTurnRetry retry => new StoredOutcome("retry", null, null, null, null, null, null, retry.Code, retry.RetryAfter?.TotalSeconds),
-                AgentTurnFailed failed => new StoredOutcome("failed", null, null, null, null, failed.Kind, failed.Reason, failed.Code, null),
+                AgentTurnFailed failed => new StoredOutcome("failed", null, null, null, null, failed.Kind, failed.Reason, failed.Code, null, Wrote: failed.Wrote),
                 _ => throw new InvalidOperationException($"Unknown outcome {outcome.GetType().Name}."),
             },
             Json);
@@ -513,12 +514,12 @@ public sealed partial class AgentSessionJobProcessor(
             var stored = JsonSerializer.Deserialize<StoredOutcome>(json, Json) ?? throw new InvalidOperationException("Empty stored outcome.");
             return stored.Type switch
             {
-                "replied" => new AgentReplied(stored.Text ?? string.Empty, stored.Sources ?? []),
+                "replied" => new AgentReplied(stored.Text ?? string.Empty, stored.Sources ?? [], stored.Wrote),
                 "finished" => new AgentFinished(stored.Text ?? string.Empty),
-                "handed_off" => new AgentHandedOff(stored.Reason ?? AgentHandoffReasons.All[0], stored.Note, stored.MemberId, stored.QuotationNumber),
+                "handed_off" => new AgentHandedOff(stored.Reason ?? AgentHandoffReasons.All[0], stored.Note, stored.MemberId, stored.QuotationNumber, stored.Wrote),
                 "retry" => new AgentTurnRetry(stored.Code ?? AiModelErrorCodes.ProviderUnavailable,
                     stored.RetryAfterSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null),
-                _ => new AgentTurnFailed(stored.Kind ?? AgentFailureKind.AgentFailed, stored.FailureReason ?? AgentFailureReason.ProviderError, stored.Code),
+                _ => new AgentTurnFailed(stored.Kind ?? AgentFailureKind.AgentFailed, stored.FailureReason ?? AgentFailureReason.ProviderError, stored.Code, stored.Wrote),
             };
         }
     }

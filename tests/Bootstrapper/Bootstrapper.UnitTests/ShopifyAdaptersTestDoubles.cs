@@ -152,24 +152,35 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
 
     public Func<ExternalShippingParty, ExternalShippingOutcome>? OnCorrect { get; init; }
 
-    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Shipping, string NotesLinePrefix)> Attached { get; } = [];
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Shipping, string NotesLinePrefix, IReadOnlyCollection<Guid> Requested)> Attached { get; } = [];
 
-    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Expected, Guid DepartmentId, Guid CityId)> Corrected { get; } = [];
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Expected, Guid DepartmentId, Guid CityId, IReadOnlyCollection<Guid> Requested)> Corrected { get; } = [];
 
     public Task<ExternalShippingOutcome> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty shipping,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        Attached.Add((tenantId, orderId, shipping, notesLinePrefix));
+        Attached.Add((tenantId, orderId, shipping, notesLinePrefix, requestedCityIds));
         return Task.FromResult(
             OnAttach?.Invoke(shipping) ?? new ExternalShippingOutcome(ExternalShippingOutcomeKind.Applied, shipping, null));
     }
 
     public Task<ExternalShippingOutcome> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        Corrected.Add((tenantId, orderId, expected, departmentId, cityId));
+        Corrected.Add((tenantId, orderId, expected, departmentId, cityId, requestedCityIds));
         return Task.FromResult(
             OnCorrect?.Invoke(expected)
             ?? new ExternalShippingOutcome(
@@ -323,7 +334,13 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
         Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyDictionary<CustomerId, Customer>> FindManyAsync(
-        Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
+        Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyDictionary<CustomerId, Customer>>(customers
+            .Where(customer => customer.TenantId == tenantId && customerIds.Contains(customer.Id))
+            .ToDictionary(customer => customer.Id));
+    }
 
     public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -381,6 +398,9 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
 
     public Task MoveOwnedAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<Customer> ReadSurvivorAsync(Guid tenantId, Guid survivorId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     /// <summary>Por id del fusionado; el que no está no se fusionó.</summary>
@@ -603,6 +623,9 @@ internal sealed class FakeConnectionRepository(params IntegrationConnection[] co
 
 internal sealed class FakeIntegrationConnections(params IntegrationConnection[] connections) : IIntegrationConnections
 {
+    public Task<ConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<ConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
     {
         var connection = connections.FirstOrDefault(candidate =>

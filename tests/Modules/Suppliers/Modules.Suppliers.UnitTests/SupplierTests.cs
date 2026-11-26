@@ -442,4 +442,44 @@ public sealed class SupplierTests
 
         Assert.Equal((Wholesaler, 1, Now), (supplier.LinkedTenantId, supplier.Version, supplier.UpdatedAt));
     }
+
+    // ---- Region (provincia guardada, spec 2026-11-23) ----
+
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000e1");
+
+    [Fact]
+    public void ColombianSupplierWithRegionIsRejected() =>
+        Assert.Equal(
+            "suppliers.supplier.region_lane_invalid",
+            CodeOf(() => Create(Data() with { RegionId = MadridRegionId })));
+
+    [Fact]
+    public void ForeignSupplierKeepsRegion()
+    {
+        var supplier = Create(Data(country: "ES", cityName: "Madrid") with { RegionId = MadridRegionId });
+
+        Assert.Equal(MadridRegionId, supplier.RegionId);
+    }
+
+    [Fact]
+    public void UpdateWithoutRegionClearsIt()
+    {
+        var supplier = Create(Data(country: "ES", cityName: "Madrid") with { RegionId = MadridRegionId });
+
+        supplier.Update(Data(country: "ES", cityName: "Madrid"), Phones, Later);
+
+        Assert.Null(supplier.RegionId);
+    }
+
+    [Fact]
+    public void ColombianUpdateWithRegionIsRejectedAndLeavesTheSupplierUntouched()
+    {
+        var supplier = Create(Data(country: "ES", cityName: "Madrid") with { RegionId = MadridRegionId });
+
+        var code = CodeOf(() => supplier.Update(Data() with { RegionId = MadridRegionId }, Phones, Later));
+
+        Assert.Equal("suppliers.supplier.region_lane_invalid", code);
+        Assert.Equal(MadridRegionId, supplier.RegionId);
+        Assert.Equal("ES", supplier.Contact.Country);
+    }
 }

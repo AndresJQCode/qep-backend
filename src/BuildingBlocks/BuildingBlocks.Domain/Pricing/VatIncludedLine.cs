@@ -3,9 +3,11 @@ namespace BuildingBlocks.Domain.Pricing;
 /// <summary>
 /// Importes de una línea con IVA incluido en el precio. <c>Subtotal</c> es la base sin IVA: es lo
 /// que suma el encabezado y la base sobre la que Quotations calcula la retención en la fuente.
+/// <c>DiscountAmount</c> es el descuento con IVA (el que usa POS); <c>DiscountAmountWithoutTax</c>
+/// es el mismo descuento en base sin IVA, el que guardan cotización y pedido.
 /// </summary>
 public readonly record struct VatIncludedLineAmounts(
-    decimal DiscountAmount, decimal TaxAmount, decimal Subtotal)
+    decimal DiscountAmount, decimal TaxAmount, decimal Subtotal, decimal DiscountAmountWithoutTax)
 {
     /// <summary>Lo que se cobra por la línea, IVA adentro.</summary>
     public decimal LineTotal => Subtotal + TaxAmount;
@@ -38,7 +40,16 @@ public static class VatIncludedLine
         // sobre un precio que ya lo trae cobraría el impuesto dos veces. Con tasa 0 da 0.
         var taxAmount = Round(lineTotal * taxPercentage / (100m + taxPercentage));
 
-        return new VatIncludedLineAmounts(discountAmount, taxAmount, lineTotal - taxAmount);
+        // El descuento sin IVA se deriva de las bases, no de dividir el descuento con IVA entre
+        // 1,19: así (bruto sin IVA − descuento sin IVA) cierra exacto con Subtotal, sin el centavo
+        // que dejaría redondear dos veces. Quotations y Pedidos guardan este; POS sigue usando
+        // DiscountAmount (con IVA).
+        var gross = Round(quantity * charged);
+        var grossTax = Round(gross * taxPercentage / (100m + taxPercentage));
+        var discountWithoutTax = (gross - grossTax) - (lineTotal - taxAmount);
+
+        return new VatIncludedLineAmounts(
+            discountAmount, taxAmount, lineTotal - taxAmount, discountWithoutTax);
     }
 
     /// <summary>El precio de lista con el que se cobra: redondeado con la regla.</summary>

@@ -22,9 +22,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`Pos` necesita la capacidad `pos` y no viene con el signup.** `GrantDefaultModulesOnSignup`
   concede siete módulos (los seis base y `shopify`) sin `pos`, así que en un tenant nuevo todo `/pos/*`
   da 403 aunque el rol tenga los permisos: se prende con la fila de `tenancy.tenant_modules` (spec de entitlements,
-  «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
-  reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
-  (spec 2026-10-07, «Despliegue»).
+  «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` ya no es una clave reservada: es un rol
+  sembrado en cada tenant, que el tenant puede editar o borrar (spec 2026-11-25, roles por tenant).
 - **El payload de los eventos de Quotations es contrato con Pipeline** (spec 2026-10-13 §4.5).
   `QuotationLifecycleEventPublisher` escribe `quotations.quotation.sent.v1`, `…converted.v1` y
   `quotations.order.cancelled.v1` con campos camelCase, y `QuotationEventPayloads` los lee por nombre: renombrar
@@ -43,6 +42,13 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   convertir (el `notes` del cuerpo la reemplaza; `null` hereda las de la cotización; `""` la deja vacía; nunca se
   concatenan). Un `INSERT` a mano en `quotations.orders` (siembras, pruebas) tiene que llenar las columnas propias
   y copiar `order_items`/`order_parties`: son `NOT NULL` desde `AddOrderOwnData`.
+- **La entrega de un pedido se edita; «el pedido no edita sus partes» (H5) quedó revertido sólo para la entrega** (spec
+  2026-11-24 §10, owner). `PUT /orders/{id}` y su preview aceptan `delivery` (ausente conserva), en todo origen y mientras el
+  pedido no esté facturado ni preparado (`deliveryEditable` = `IsEditable`). `Order.SetDelivery` va **antes** de la
+  facturación, las retenciones, el envío y el recálculo del pago: el envío se resuelve contra la recogida nueva, y pasar a
+  recoger limpia el envío y la contraentrega dentro del agregado, así que la fila y la auditoría `shipping_changed` se
+  calculan contra el envío de antes de la entrega. Con `delivery` en el cuerpo, los handlers llaman
+  `EnsureDeliveryEditable` antes de la guarda `not_editable`, o el motivo exacto no sale nunca.
 - **Un `FromSql` crudo debe listar todas las columnas mapeadas de la entidad.** El `SELECT … FOR UPDATE` de
   `QuotationSettingsStore` no se puede componer (EF lo envolvería en una subconsulta), así que EF no completa
   las columnas que falten: al agregar `freight_tax_rate_id` a `tenant_quotation_settings`, guardar el mínimo de
@@ -50,7 +56,11 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **Al agregar una columna al catálogo del Excel de pedidos, revisa los encabezados de las fijas de la semilla.**
   Una columna nueva cuyo encabezado choca con una visible del layout guardado nace oculta en silencio, sin
   error: la regla de choque está en
-  [README § Columnas del Excel de pedidos](README.md#columnas-del-excel-de-pedidos-por-tenant-homologación).
+  [README § Columnas del Excel de pedidos](../../README.md#columnas-del-excel-de-pedidos-por-tenant-homologación).
+- **Un `bool` con default `true` en la base lleva `ValueGeneratedNever`** (`OrdersExportLayout.IncludePhoneDialCode`, spec
+  2026-11-25). Con sólo `HasDefaultValue(true)`, EF puede omitir un `false` al insertar y la base guarda `true`, sin error. Y una
+  columna de teléfono nueva del Excel de pedidos pasa por `phoneText` en `OrdersExportProcessor.RowsFor`, o ignora el
+  interruptor del indicativo.
 - **La variante por defecto lleva el id del producto, y el relleno de `variant_id` depende de eso** (spec 2026-10-20 §8).
   `Product.Create` le da a la primera variante el id del producto —también al crear con opciones—, y `AddProductVariants`
   hizo lo mismo con cada producto que existía. Por eso `AddVariantToLines` (Quotations) y `AddVariantToSaleLines` (Pos)
@@ -108,3 +118,10 @@ validation.failed` por el `VariantId` vacío, con la clave según la ruta: `Vari
 - **El saneador de HTML vive en `BuildingBlocks.Infrastructure/RichText` y lo comparten Soporte y Quotations.** La lista de
   etiquetas y esquemas existe una sola vez: ensancharla cambia lo que aceptan los documentos legales del portal **y** el PDF de
   cotizaciones, y el lector de bloques tiene que saber pintar toda etiqueta nueva o la plantilla la pierde en silencio.
+- **Un precio de venta se lee por `IPriceListPricing`, nunca de `variant.Prices`** (spec 2026-11-22, listas de precios por canal).
+  `variant.Prices` es el precio **base**; el que cobra cada canal sale de la lista asignada (`catalog.channel_price_lists`) con
+  `PriceList.PriceFor`. `PosProductLookup`, `StoreCatalogReader` y `QuotationProductPricingLookup` arman un `PriceBook` por
+  request. Un adaptador nuevo que lea `CatalogVariantReads.PricesOf` o `variant.PriceIn` para vender compila, pasa sus pruebas sin
+  lista y cobra el base en un tenant con lista. El canal de Quotations sale del origen del pedido (`QuotationPriceChannels.For`):
+  la tienda y la edición de un pedido `Store` usan `Store`; el resto, `Quotations`. Y un precio fijo sólo reemplaza (D-2): sin
+  precio base en la moneda no hay precio, por eso los filtros SQL «tiene precio en la moneda» siguen valiendo.

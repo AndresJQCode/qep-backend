@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using BuildingBlocks.Domain.Localization;
 
 namespace Modules.Quotations.Application;
 
@@ -97,7 +98,11 @@ public sealed record QuotationPdfDocument(
     /// <summary>Las secciones configurables del tenant ya resueltas para este documento (spec 2026-11-16 §5.3), o null sin
     /// secciones. No las arma el mapper sino el proveedor, que es quien lee el contenido del tenant
     /// (<see cref="QuotationPdfSectionsBuilder.Build"/>).</summary>
-    QuotationPdfSections? Sections = null);
+    QuotationPdfSections? Sections = null,
+    /// <summary>El idioma del tenant (spec 2026-11-22, i18n): <c>es-419</c> o <c>es-ES</c>. La plantilla decide con él el
+    /// nombre del documento («Cotización» o «Presupuesto»), su concordancia y el rótulo del asesor («Comercial» en España).
+    /// El documento es del tenant, no de quien lo descarga.</summary>
+    string Language = SupportedLanguages.Default);
 
 /// <summary>
 /// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara
@@ -180,7 +185,10 @@ public sealed record QuotationPdfLine(
     /// <summary>La unidad junto a la cantidad («horas», «servicio», «unidades»), ya en español y con el plural resuelto
     /// (spec 2026-11-18 §6). Texto plano que la plantilla imprime como cadena. Null en todas las líneas de un documento
     /// cuyas líneas son todas <c>Unit</c>: así el PDF de un tenant que no usa unidades sale idéntico al de antes.</summary>
-    string? Unit = null);
+    string? Unit = null,
+    /// <summary>Código del producto de la línea, ya resuelto por el composer. Sólo lo imprime la tabla del pedido (columna
+    /// «Código»); la de la cotización no cambia. Null si la línea no lo tiene: la celda queda vacía.</summary>
+    string? ProductCode = null);
 
 /// <summary>
 /// Puerto hacia quien sabe dibujar un PDF. La implementación vive en Infrastructure porque

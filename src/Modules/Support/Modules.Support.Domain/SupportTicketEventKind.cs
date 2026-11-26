@@ -21,4 +21,7 @@ public enum SupportTicketEventKind
     Extended,
     PriorityChanged,
     PinReissued,
+
+    /// <summary>Spec 2026-11-22: cambió la fecha límite libre de una tarea interna.</summary>
+    DueDateChanged,
 }

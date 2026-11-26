@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
-using System.Net.Http.Headers;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -188,7 +188,13 @@ internal static class MessagingApiHarness
             // por defecto (100) se agota y la API responde 500 con 53300 (too many clients). Con las campañas (E3) cada host suma
             // los envíos en paralelo del worker, y la prueba de dos pods levanta tres: 800 deja margen a la suite entera.
             // That margin assumes the class parallelism capped at the top of this file (MaxParallelThreads).
-            .WithCommand("-c", "max_connections=800")
+            // fsync, synchronous_commit y full_page_writes apagados: la base es desechable y lo que se mide es la lógica,
+            // no la durabilidad.
+            .WithCommand(
+                "-c", "max_connections=800",
+                "-c", "fsync=off",
+                "-c", "synchronous_commit=off",
+                "-c", "full_page_writes=off")
             .Build();
         await container.StartAsync(CancellationToken.None);
         return new TestServer(container.GetConnectionString(), container);

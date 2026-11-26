@@ -1,6 +1,6 @@
 using BuildingBlocks.Application;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Buyers.Application;
 using Modules.Buyers.Domain;
 

@@ -1,6 +1,6 @@
 namespace Modules.ServiceContracts.Application;
 
-public sealed record ServiceContractsCustomerRef(Guid Id, string Name, string? PhoneE164, string? Email, bool IsActive);
+public sealed record ServiceContractsCustomerRef(Guid Id, string Name, string? PhoneE164, string? Email, bool IsActive, string? BusinessName = null);
 
 /// <summary>Clientes vistos desde ServiceContracts (spec §3.3); el adaptador vive en Bootstrapper, sobre <c>CustomersDbContext</c>, como <c>QuotationCustomerLookup</c>.</summary>
 public interface IServiceContractsCustomerLookup

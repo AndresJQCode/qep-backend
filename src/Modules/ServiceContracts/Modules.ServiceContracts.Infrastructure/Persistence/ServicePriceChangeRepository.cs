@@ -8,6 +8,10 @@ internal sealed class ServicePriceChangeRepository(ServiceContractsDbContext dbC
 {
     public void Add(ServicePriceChange change) => dbContext.ServicePriceChanges.Add(change);
 
+    public async Task RemoveByServiceAsync(ServiceContractId serviceId, CancellationToken cancellationToken) =>
+        dbContext.ServicePriceChanges.RemoveRange(
+            await dbContext.ServicePriceChanges.Where(change => change.ServiceId == serviceId).ToListAsync(cancellationToken));
+
     // Id de desempate: dos cambios en el mismo instante (una prueba, un reloj grueso) salen en un orden estable.
     public async Task<IReadOnlyList<ServicePriceChange>> ListByServiceAsync(
         ServiceContractId serviceId, CancellationToken cancellationToken) =>

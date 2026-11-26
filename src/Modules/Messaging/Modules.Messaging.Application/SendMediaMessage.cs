@@ -16,7 +16,10 @@ public sealed record SendMediaMessageCommand(
 public sealed class SendMediaMessageValidator : AbstractValidator<SendMediaMessageCommand>
 {
     internal static bool IsAudio(string fileName) =>
-        OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName)) is { } format && !OutboundMediaPolicy.AcceptsCaption(format);
+        OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName)) is { } format && OutboundMediaPolicy.KindOf(format) == MessageKind.Audio;
+
+    internal static bool IsSticker(string fileName) =>
+        OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName)) is { } format && OutboundMediaPolicy.KindOf(format) == MessageKind.Sticker;
 
     /// <summary>El tope de Meta para el pie de una imagen o un documento, y <c>messages.caption</c> es varchar(1024).</summary>
     public const int MaxCaptionLength = 1024;
@@ -40,6 +43,13 @@ public sealed class SendMediaMessageValidator : AbstractValidator<SendMediaMessa
             .Must(caption => string.IsNullOrWhiteSpace(caption))
             .When(command => !string.IsNullOrWhiteSpace(command.FileName) && IsAudio(command.FileName))
             .WithMessage("Los audios se envían sin texto.")
+            .OverridePropertyName("caption");
+
+        // 2026-11-22: un sticker tampoco lleva texto en WhatsApp.
+        RuleFor(command => command.Caption)
+            .Must(caption => string.IsNullOrWhiteSpace(caption))
+            .When(command => !string.IsNullOrWhiteSpace(command.FileName) && IsSticker(command.FileName))
+            .WithMessage("Los stickers se envían sin texto.")
             .OverridePropertyName("caption");
     }
 }
@@ -107,7 +117,7 @@ public sealed class SendMediaMessageHandler(
             throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "No channel accepts this file type as is.");
         }
 
-        // Spec 2026-10-14 decisión 12 y spec 2026-10-20 D2: Instagram no acepta Word, Excel, 3GP, AMR ni OGG.
+        // Spec 2026-10-14 decisión 12 y spec 2026-10-20 D2: Instagram no acepta Word, Excel, PowerPoint, texto, WebP, 3GP, AMR ni OGG.
         var channel = conversation.Channel;
         if (!OutboundMediaPolicy.IsAllowed(declared, channel))
         {
@@ -208,6 +218,9 @@ public sealed class SendMediaMessageHandler(
                     {
                         MessageKind.Image => await meta.SendImageAsync(sender!, recipient, mediaId, caption, callback, permit.Quoted?.Wamid, CancellationToken.None),
                         MessageKind.Video => await meta.SendVideoAsync(sender!, recipient, mediaId, caption, callback, permit.Quoted?.Wamid, CancellationToken.None),
+
+                        // Un WebP sólo lo admite Meta como sticker; el validador ya garantizó que no trae caption.
+                        MessageKind.Sticker => await meta.SendStickerAsync(sender!, recipient, mediaId, callback, permit.Quoted?.Wamid, CancellationToken.None),
 
                         // D5: un audio adjunto no es nota de voz; el validador ya garantizó que no trae caption.
                         MessageKind.Audio => await meta.SendAudioAsync(sender!, recipient, mediaId, voice: false, callback, permit.Quoted?.Wamid, CancellationToken.None),

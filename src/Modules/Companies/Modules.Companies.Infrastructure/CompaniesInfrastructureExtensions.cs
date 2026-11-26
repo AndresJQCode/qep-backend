@@ -26,6 +26,7 @@ public static class CompaniesInfrastructureExtensions
         services.AddScoped<ICompanyRepository, CompanyRepository>();
         services.AddScoped<ICompaniesUnitOfWork, CompaniesUnitOfWork>();
         services.AddScoped<ICompaniesAuditPublisher, CompaniesAuditPublisher>();
+        services.AddScoped<ICompanyProvisioning, CompanyProvisioning>();
 
         return services;
     }

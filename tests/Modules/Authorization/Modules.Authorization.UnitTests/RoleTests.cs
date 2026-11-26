@@ -42,7 +42,7 @@ public sealed class RoleTests
     [InlineData("   ")]
     [InlineData("con espacio")]
     [InlineData("acentuada-ñ")]
-    [InlineData("Mayuscula_guion_bajo")]
+    [InlineData("con.punto")]
     public void CreateRejectsAKeyThatIsNotASlug(string key)
     {
         var error = Assert.Throws<AuthorizationDomainException>(() => Role.Create(
@@ -75,21 +75,25 @@ public sealed class RoleTests
         Assert.Equal("authorization.role.key_reserved", error.Code);
     }
 
-    // Spec 2026-10-07: `cashier` es rol de sistema desde POS. Un custom con esa clave pisaría al
-    // de sistema en TenantRoleCatalog sin avisar.
-    [Fact]
-    public void CreateRejectsTheCashierKey()
+    // Spec 2026-11-25 (roles por tenant): las claves que se siembran son filas como cualquier otra, `_` incluido.
+    [Theory]
+    [InlineData("advisor")]
+    [InlineData("billing")]
+    [InlineData("cashier")]
+    [InlineData("scheduling_manager")]
+    [InlineData("scheduling_provider")]
+    public void CreateAcceptsTheSeededKeys(string key)
     {
-        var error = Assert.Throws<AuthorizationDomainException>(() => Role.Create(
+        var role = Role.Create(
             RoleId.New(),
             Tenant,
-            "cashier",
-            "Mi cajero",
+            key,
+            "Nombre",
             "Descripcion",
             ["advisorship.read"],
-            DateTimeOffset.UnixEpoch));
+            DateTimeOffset.UnixEpoch);
 
-        Assert.Equal("authorization.role.key_reserved", error.Code);
+        Assert.Equal(key, role.Key);
     }
 
     [Fact]

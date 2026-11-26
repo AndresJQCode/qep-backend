@@ -15,8 +15,7 @@ public sealed record GetReplyDocumentDownloadCommand(Guid TenantId, Guid TicketI
 /// </summary>
 public sealed class GetReplyDocumentDownloadHandler(
     IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportReplyRepository replies,
     ISupportDocumentStorage storage,
     ISupportAuditPublisher auditPublisher,
@@ -31,10 +30,10 @@ public sealed class GetReplyDocumentDownloadHandler(
 
     public async Task<SupportDocumentLinkDto> HandleAsync(GetReplyDocumentDownloadCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, command.TenantId, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
 
         var ticketId = new SupportTicketId(command.TicketId);
-        _ = await tickets.FindAsync(command.TenantId, ticketId, cancellationToken) ?? throw SupportNotFound.Ticket(command.TicketId);
+        _ = await scope.ViewAsync(command.TenantId, command.TicketId, cancellationToken);
         var document = await replies.FindDocumentAsync(command.TenantId, ticketId, command.ReplyId, cancellationToken)
             ?? throw new ResourceNotFoundException(
                 SupportErrorCodes.ReplyDocumentNotFound, $"Reply '{command.ReplyId}' has no formal document in this ticket.");

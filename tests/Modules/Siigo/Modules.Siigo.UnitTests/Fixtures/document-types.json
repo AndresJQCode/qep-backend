@@ -1,1 +1,1 @@
-[{"id":24446,"code":"1","name":"Factura de venta","type":"FV","active":true},{"id":99,"code":"2","name":"Inactiva","type":"FV","active":false}]
+[{"id":24446,"code":"1","name":"Factura de venta","description":"Factura de venta electrónica","type":"FV","active":true},{"id":99,"code":"2","name":"Inactiva","type":"FV","active":false}]

@@ -22,18 +22,18 @@ public sealed record UpdateSiigoPaymentsCommand(
     long ExpectedVersion) : ICommand<SiigoSettingsDto>;
 
 /// <summary>La forma del cuerpo: claves de cuenta sin repetir, y los días de crédito de 1 a 365 y sólo con su forma de pago (el dominio
-/// lo exige igual, con su código; acá el error lleva el campo).</summary>
+/// lo exige igual, con su código; acá el error lleva el campo). Una cuenta nula falla en su propio campo.</summary>
 public sealed class UpdateSiigoPaymentsValidator : AbstractValidator<UpdateSiigoPaymentsCommand>
 {
     public UpdateSiigoPaymentsValidator()
     {
         RuleFor(command => command.Accounts)
             .NotNull()
-            .Must(accounts => accounts!.Select(account => account.BankAccountKey).Distinct(StringComparer.Ordinal).Count() == accounts!.Count)
+            .Must(accounts => SiigoSettingsSupport.HasNoRepeated(accounts!, account => account.BankAccountKey))
             .When(command => command.Accounts is not null)
             .WithMessage("A bank account cannot repeat.")
             .OverridePropertyName("accounts");
-        RuleForEach(command => command.Accounts).ChildRules(account =>
+        RuleForEach(command => command.Accounts).NotNull().ChildRules(account =>
         {
             account.RuleFor(value => value.BankAccountKey).NotEmpty().MaximumLength(BankAccountKey.MaxLength).OverridePropertyName("bankAccountKey");
             account.RuleFor(value => value.SiigoPaymentTypeId).MaximumLength(SiigoTaxLink.TaxIdMaxLength).OverridePropertyName("siigoPaymentTypeId");
@@ -65,6 +65,7 @@ public sealed class UpdateSiigoPaymentsHandler(
     ISiigoSettingsRepository settingsRepository,
     ISiigoCompanyDirectory companies,
     ISiigoTaxRateDirectory taxRates,
+    ISiigoMemberDirectory members,
     ISiigoUnitOfWork unitOfWork,
     ISiigoAuditRecorder auditRecorder,
     IClock clock,
@@ -87,6 +88,6 @@ public sealed class UpdateSiigoPaymentsHandler(
             command.DefaultPaymentTypeId));
         SiigoSettingsSupport.Audit(auditRecorder, executionContext, settings, SiigoSettingsSteps.Payments, clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, cancellationToken);
+        return await SiigoSettingsSupport.ToDtoAsync(settings, connection, companies, taxRates, members, cancellationToken);
     }
 }

@@ -200,7 +200,9 @@ public sealed class ShopifyOrderEditDecisionsTests
         Assert.Equal([("Note", "Conflict", "qep_changed")], Groups(edit));
         world.Edit.World.Writer.States[OrderId] = world.Edit.World.Writer.States[OrderId] with
         {
-            BuyerNotes = "C", IsEditable = false, IsPrepared = true,
+            BuyerNotes = "C",
+            IsEditable = false,
+            IsPrepared = true,
         };
 
         var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Decider.AcceptAsync(ImporterWorld.TenantId, edit.Id, Ct));

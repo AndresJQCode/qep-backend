@@ -77,6 +77,32 @@ public sealed class PosProductLookupTests
         Assert.Equal("Shampoo 400 ml", variant.Name);
     }
 
+    // Spec 2026-11-22 (D-5): la caja cobra con la lista del canal POS, y sólo con ésa.
+    [Fact]
+    public async Task ThePosPricesWithThePosChannelList()
+    {
+        var product = NewProduct(imageFileId: null, baseUsd: 3.25m);
+        var pricing = new FakePriceListPricing(PriceChannel.Pos, factor: 2m);
+        var lookup = Lookup(new FakeProductRepository(product), pricing: pricing);
+
+        var found = await lookup.FindManyAsync(TenantId, [product.Id.Value], Ct);
+
+        Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 23_800m, ["USD"] = 6.50m }, found[product.Id.Value].Prices);
+        Assert.Equal([PriceChannel.Pos], pricing.RequestedChannels);
+    }
+
+    // Una lista de otro canal no toca el POS.
+    [Fact]
+    public async Task AStoreListDoesNotChangeThePos()
+    {
+        var product = NewProduct(imageFileId: null);
+        var lookup = Lookup(new FakeProductRepository(product), pricing: new FakePriceListPricing(PriceChannel.Store, factor: 2m));
+
+        var found = await lookup.FindManyAsync(TenantId, [product.Id.Value], Ct);
+
+        Assert.Equal(11_900m, found[product.Id.Value].Prices["COP"]);
+    }
+
     // Enfoque de revisión 4: «7702000000017» es el Code del shampoo y el código de barras de la camiseta L. Gana el código
     // de barras, y el Code ni se consulta.
     [Fact]
@@ -243,9 +269,10 @@ public sealed class PosProductLookupTests
         FakeProductRepository products,
         FakeOptionDefinitionRepository? options = null,
         FakeProductImageLookup? images = null,
-        FakeProductCategoryRepository? categories = null) =>
+        FakeProductCategoryRepository? categories = null,
+        FakePriceListPricing? pricing = null) =>
         new(products, options ?? new FakeOptionDefinitionRepository(), new FakeTaxRateRepository(), images ?? new FakeProductImageLookup(),
-            categories ?? new FakeProductCategoryRepository());
+            categories ?? new FakeProductCategoryRepository(), pricing ?? new FakePriceListPricing());
 
     private static PosProductLookup LookupFor(Guid fileId, ProductImageRef image, out Guid variantId)
     {

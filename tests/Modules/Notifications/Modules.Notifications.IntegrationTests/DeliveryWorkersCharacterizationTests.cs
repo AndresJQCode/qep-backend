@@ -20,6 +20,7 @@ public sealed class DeliveryWorkersCharacterizationTests
         { "quotations.export-ready.v1", QuotationsExportReadyEmailTemplate.TemplateRef },
         { "quotations.export-failed.v1", QuotationsExportFailedEmailTemplate.TemplateRef },
         { "suppliers.export-ready.v1", SupplierExportEmailTemplate.TemplateRef },
+        { "wms.export-ready.v1", WmsExportEmailTemplate.TemplateRef },
     };
 
     [Theory]
@@ -50,6 +51,7 @@ public sealed class DeliveryWorkersCharacterizationTests
     [InlineData("catalog.product-export-ready.v1", ProductExportEmailTemplate.TemplateRef)]
     [InlineData("quotations.export-ready.v1", QuotationsExportReadyEmailTemplate.TemplateRef)]
     [InlineData("suppliers.export-ready.v1", SupplierExportEmailTemplate.TemplateRef)]
+    [InlineData("wms.export-ready.v1", WmsExportEmailTemplate.TemplateRef)]
     public async Task EachExportEmailUsesTheTenantRegionalFormat(string eventName, string templateRef)
     {
         await using var database = await StartDatabaseAsync();
@@ -120,47 +122,57 @@ public sealed class DeliveryWorkersCharacterizationTests
     // Los payloads tal como los escriben los productores: Tenancy anida el tenantId en "value".
     private static string PayloadFor(
         string eventName, Guid tenantId, Guid subjectId, int count = 3, DateTimeOffset? expiresAt = null) => eventName switch
-    {
-        "tenancy.membership-invited.v1" => JsonSerializer.Serialize(
-            new { userId = subjectId, tenantId = new { value = tenantId }, token = "invitation-token" }),
-        "customers.export-ready.v1" => JsonSerializer.Serialize(new
         {
-            tenantId,
-            subjectId,
-            downloadUrl = "https://r2.test/exports/clientes.xlsx?X-Amz-Signature=abc",
-            fileName = "clientes.xlsx",
-            customerCount = count,
-            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
-        }),
-        "catalog.product-export-ready.v1" => JsonSerializer.Serialize(new
-        {
-            tenantId,
-            subjectId,
-            downloadUrl = "https://r2.test/exports/productos.xlsx?X-Amz-Signature=abc",
-            fileName = "productos.xlsx",
-            productCount = count,
-            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
-        }),
-        "quotations.export-ready.v1" => JsonSerializer.Serialize(new
-        {
-            tenantId,
-            subjectId,
-            kind = "Quotations",
-            downloadUrl = "https://r2.test/exports/cotizaciones.xlsx?X-Amz-Signature=abc",
-            fileName = "cotizaciones-2026-09-13-1530.xlsx",
-            rowCount = count,
-            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
-        }),
-        "quotations.export-failed.v1" => JsonSerializer.Serialize(new { tenantId, subjectId, kind = "Orders" }),
-        "suppliers.export-ready.v1" => JsonSerializer.Serialize(new
-        {
-            tenantId,
-            subjectId,
-            downloadUrl = "https://r2.test/exports/proveedores.xlsx?X-Amz-Signature=abc",
-            fileName = "proveedores.xlsx",
-            supplierCount = count,
-            expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
-        }),
-        _ => throw new ArgumentOutOfRangeException(nameof(eventName), eventName, "No payload for this event."),
-    };
+            "tenancy.membership-invited.v1" => JsonSerializer.Serialize(
+                new { userId = subjectId, tenantId = new { value = tenantId }, token = "invitation-token" }),
+            "customers.export-ready.v1" => JsonSerializer.Serialize(new
+            {
+                tenantId,
+                subjectId,
+                downloadUrl = "https://r2.test/exports/clientes.xlsx?X-Amz-Signature=abc",
+                fileName = "clientes.xlsx",
+                customerCount = count,
+                expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
+            }),
+            "catalog.product-export-ready.v1" => JsonSerializer.Serialize(new
+            {
+                tenantId,
+                subjectId,
+                downloadUrl = "https://r2.test/exports/productos.xlsx?X-Amz-Signature=abc",
+                fileName = "productos.xlsx",
+                productCount = count,
+                expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
+            }),
+            "quotations.export-ready.v1" => JsonSerializer.Serialize(new
+            {
+                tenantId,
+                subjectId,
+                kind = "Quotations",
+                downloadUrl = "https://r2.test/exports/cotizaciones.xlsx?X-Amz-Signature=abc",
+                fileName = "cotizaciones-2026-09-13-1530.xlsx",
+                rowCount = count,
+                expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
+            }),
+            "quotations.export-failed.v1" => JsonSerializer.Serialize(new { tenantId, subjectId, kind = "Orders" }),
+            "suppliers.export-ready.v1" => JsonSerializer.Serialize(new
+            {
+                tenantId,
+                subjectId,
+                downloadUrl = "https://r2.test/exports/proveedores.xlsx?X-Amz-Signature=abc",
+                fileName = "proveedores.xlsx",
+                supplierCount = count,
+                expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
+            }),
+            "wms.export-ready.v1" => JsonSerializer.Serialize(new
+            {
+                tenantId,
+                subjectId,
+                fileId = Guid.CreateVersion7(),
+                downloadUrl = "https://r2.test/exports/saldos.xlsx?X-Amz-Signature=abc",
+                fileName = "saldos.xlsx",
+                rowCount = count,
+                expiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddHours(24),
+            }),
+            _ => throw new ArgumentOutOfRangeException(nameof(eventName), eventName, "No payload for this event."),
+        };
 }

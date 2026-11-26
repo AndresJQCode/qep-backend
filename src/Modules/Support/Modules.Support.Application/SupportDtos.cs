@@ -21,7 +21,8 @@ public sealed record SupportTicketTypeDto(
     int Position,
     long Version,
     bool InUse,
-    string? FormalNextStep);
+    string? FormalNextStep,
+    bool IsInternal = false);
 
 /// <summary>El umbral de «por vencer» del tenant [owner 2026-11-14]. Viaja con su rango (<c>Min</c> y <c>Max</c>) para que el
 /// formulario de ajustes no lo repita; 0 significa «apagado». Un tenant que nunca guardó ve 3. <c>FormalNextStep</c> (fase 4b, H6) es
@@ -36,7 +37,50 @@ public sealed record SupportSettingsDto(
     bool SurveyEnabled,
     int AutoCloseBusinessDays,
     int MinAutoCloseBusinessDays,
-    int MaxAutoCloseBusinessDays);
+    int MaxAutoCloseBusinessDays,
+    SupportUnassignedAlertDto UnassignedAlert,
+    SupportTaskNoticeDto TaskNotice);
+
+/// <summary>Task-notices spec 2026-11-22 §5.4: the WhatsApp connection chosen for task notices (null = none, notices go by email), the ones
+/// to choose from with the state of the template on each, and the global wait before escalating. The chosen id is shown even when it is no
+/// longer among <c>Connections</c>.</summary>
+public sealed record SupportTaskNoticeDto(
+    Guid? WhatsAppConnectionId, IReadOnlyList<SupportTaskNoticeConnectionDto> Connections, int EscalationAfterMinutes);
+
+public sealed record SupportTaskNoticeConnectionDto(Guid ConnectionId, string Name, string? PhoneNumber, string TemplateStatus);
+
+/// <summary>
+/// Spec 2026-11-22 §8.6: the «ticket sin asignar» alert, with everything the settings screen needs to draw it without crossing data
+/// (BFF). <c>ScheduleId</c> is what is stored (null = the default) and <c>Schedule</c> is what rules today and why; the options of schedule
+/// and recipient travel here, under Support's own settings permission, so whoever configures Support can choose without reading
+/// Messaging or the assignees list. <c>HasWeeklyHours</c> false warns that a schedule never opens through its week (the alert would
+/// never go out); date exceptions are not looked at.
+/// </summary>
+public sealed record SupportUnassignedAlertDto(
+    bool Enabled,
+    int ThresholdHours,
+    int MinThresholdHours,
+    int MaxThresholdHours,
+    Guid? ScheduleId,
+    SupportAlertScheduleDto Schedule,
+    IReadOnlyList<SupportAlertScheduleOptionDto> ScheduleOptions,
+    string TimeZone,
+    int MaxRecipients,
+    IReadOnlyList<SupportAlertRecipientDto> Recipients,
+    IReadOnlyList<SupportAlertRecipientOptionDto> RecipientOptions,
+    int ActiveRecipientCount);
+
+/// <summary><c>Source</c>: <c>Chosen</c> (the stored one exists), <c>Default</c> (none chosen: the default rules), <c>ChosenMissing</c>
+/// (the stored one was deleted: the default rules, or nothing if there is none; <c>Id</c> and <c>Name</c> are the ones that rule) or
+/// <c>None</c> (no schedule rules: around the clock).</summary>
+public sealed record SupportAlertScheduleDto(string Source, Guid? Id, string? Name);
+
+public sealed record SupportAlertScheduleOptionDto(Guid Id, string Name, bool IsDefault, bool HasWeeklyHours);
+
+/// <summary><c>CanReceive</c>: active and with <c>support.ticket.manage</c> today. In the order they were saved.</summary>
+public sealed record SupportAlertRecipientDto(Guid MemberId, string Name, bool CanReceive);
+
+public sealed record SupportAlertRecipientOptionDto(Guid MemberId, string Name);
 
 /// <summary>
 /// La configuración vigente del formulario público (fase 3, plan F14). <c>Version</c> es la de la última fila (0 sin filas: el
@@ -187,7 +231,9 @@ public sealed record SupportTicketListItemDto(
     DateTimeOffset ReceivedAt,
     DateOnly? DueOn,
     string DueState,
-    int? BusinessDaysLeft);
+    int? BusinessDaysLeft,
+    bool IsInternal = false,
+    SupportMemberDto? CreatedBy = null);
 
 /// <summary>El detalle del ticket. <c>AllowedTransitions</c> sale de la máquina de estados del dominio: el selector de estado no la
 /// repite. <c>Version</c> va en el <c>If-Match</c> de las acciones. <c>IssuedPin</c> (fase 4a, plan G3) trae el PIN de consulta sólo
@@ -208,7 +254,7 @@ public sealed record SupportTicketDetailDto(
     SupportClockDto Clock,
     string Intake,
     string? ManualMedium,
-    string ReplyChannel,
+    string? ReplyChannel,
     SupportCustomerRefDto? Customer,
     SupportRequesterDto? Requester,
     SupportMemberDto? Assignee,
@@ -229,7 +275,9 @@ public sealed record SupportTicketDetailDto(
     IReadOnlyList<SupportLegalAcceptanceDto> LegalAcceptances,
     string? IssuedPin,
     IReadOnlyList<SupportSurveyDto> Surveys,
-    string? ConsultUrl = null);
+    string? ConsultUrl = null,
+    bool IsInternal = false,
+    SupportMemberDto? CreatedBy = null);
 
 /// <summary>
 /// One legal acceptance of a public filing (spec 2026-11-15 §7, plan L19), in the order <c>PrivacyNotice</c>, <c>AnonymousNotice</c>,
@@ -525,9 +573,11 @@ internal static class SupportDtoMapping
         type.Position,
         type.Version,
         inUse,
-        type.FormalNextStep);
+        type.FormalNextStep,
+        type.IsInternal);
 
-    public static SupportSettingsDto ToDto(SupportTenantSettings settings) => new(
+    public static SupportSettingsDto ToDto(
+        SupportTenantSettings settings, SupportUnassignedAlertDto unassignedAlert, SupportTaskNoticeDto taskNotice) => new(
         settings.DueSoonBusinessDays,
         SupportTenantSettings.MinDueSoonBusinessDays,
         SupportTenantSettings.MaxDueSoonBusinessDays,
@@ -536,5 +586,7 @@ internal static class SupportDtoMapping
         settings.SurveyEnabled,
         settings.AutoCloseBusinessDays,
         SupportTenantSettings.MinAutoCloseBusinessDays,
-        SupportTenantSettings.MaxAutoCloseBusinessDays);
+        SupportTenantSettings.MaxAutoCloseBusinessDays,
+        unassignedAlert,
+        taskNotice);
 }

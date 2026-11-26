@@ -44,9 +44,12 @@ internal sealed class CopilotArgumentException(string argument) : Exception($"Th
 /// </list>
 /// Nunca con el principal de servicio de los agentes, nunca con un tenant que no sea el del hilo (D-C15).
 /// </summary>
+/// <remarks>
+/// Los permisos y los módulos se resuelven con los servicios del scope de <b>cada llamada</b>, no con los del trabajo:
+/// <c>AuthorizationService</c> y <c>MembershipDirectory</c> son scoped y el segundo memoiza la membresía por scope, así que con los del
+/// trabajo la primera resolución valía para todas las herramientas siguientes (un miembro suspendido o sin el rol seguía consultando).
+/// </remarks>
 internal sealed class CopilotToolExecutor(
-    IAuthorizationService authorization,
-    ITenantModules tenantModules,
     IServiceScopeFactory scopeFactory,
     IEnumerable<ICopilotTool> tools) : ICopilotToolExecutor
 {
@@ -55,13 +58,15 @@ internal sealed class CopilotToolExecutor(
     public async Task<IReadOnlyList<AiToolDefinition>?> ListAvailableAsync(CopilotPrincipal principal, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(principal);
-        var permissions = await authorization.ResolvePermissionsAsync(principal.UserId, principal.TenantId, cancellationToken);
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var permissions = await scope.ServiceProvider.GetRequiredService<IAuthorizationService>()
+            .ResolvePermissionsAsync(principal.UserId, principal.TenantId, cancellationToken);
         if (permissions is null)
         {
             return null;
         }
 
-        var modules = await tenantModules.FindAsync(principal.TenantId, cancellationToken);
+        var modules = await scope.ServiceProvider.GetRequiredService<ITenantModules>().FindAsync(principal.TenantId, cancellationToken);
         // Todas, sin recortar: el tope de 20 de Anthropic es de las estrictas, y éstas no lo son (CopilotReportTools.Contract).
         return
         [
@@ -81,14 +86,25 @@ internal sealed class CopilotToolExecutor(
             return CopilotToolResult.Error(AgentToolErrors.UnknownTool);
         }
 
-        // D-C3: en cada llamada, no al empezar el trabajo. Lo que el miembro perdió entre dos herramientas, el copiloto también lo pierde.
-        var permissions = await authorization.ResolvePermissionsAsync(principal.UserId, principal.TenantId, cancellationToken);
+        // D-C3: en cada llamada, no al empezar el trabajo, y en un scope propio (ver remarks), aparte del delegado de abajo: ese no debe
+        // resolver nada antes de entrar al contexto del miembro. Lo que el miembro perdió entre dos herramientas, el copiloto también lo pierde.
+        IReadOnlyCollection<string>? permissions;
+        Modules.Tenancy.Domain.TenantModuleSet? modules;
+        await using (var check = scopeFactory.CreateAsyncScope())
+        {
+            permissions = await check.ServiceProvider.GetRequiredService<IAuthorizationService>()
+                .ResolvePermissionsAsync(principal.UserId, principal.TenantId, cancellationToken);
+            modules = permissions is null
+                ? null
+                : await check.ServiceProvider.GetRequiredService<ITenantModules>().FindAsync(principal.TenantId, cancellationToken);
+        }
+
         if (permissions is null)
         {
             return CopilotToolResult.Error(CopilotToolErrors.MemberInactive);
         }
 
-        if (!Allows(permissions, await tenantModules.FindAsync(principal.TenantId, cancellationToken), tool.Contract))
+        if (!Allows(permissions, modules, tool.Contract))
         {
             return CopilotToolResult.Error(CopilotToolErrors.NoPermission);
         }

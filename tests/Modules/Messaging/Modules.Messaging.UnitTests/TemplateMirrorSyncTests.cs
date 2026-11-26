@@ -118,6 +118,24 @@ public sealed class TemplateMirrorSyncTests
         Assert.Equal(1, rig.UnitOfWork.Saves);
     }
 
+    /// <summary>Spec 2026-11-20: quitar la fila lleva en cascada las imágenes retiradas; sin avisarlas quedarían publicadas para siempre.</summary>
+    [Fact]
+    public async Task ASyncThatRemovesATemplatePublishesTheReleaseOfItsRetiredImagesToo()
+    {
+        var rig = NewRig(Listed("1", "queda"));
+        var currentId = Guid.CreateVersion7();
+        var retiredId = Guid.CreateVersion7();
+        var template = MirroredWithImage("2", "con_imagen", currentId);
+        rig.Repository.Rows.Add(template);
+        rig.Repository.AddRetiredHeaderImage(MessageTemplateRetiredHeaderImage.Create(TenantId, template.Id, retiredId, "https://public.test/old.png", Now));
+
+        await rig.Sync.RunAsync(TenantId, ConnectionId, Source, Ct);
+
+        Assert.Equal(
+            new[] { currentId, retiredId }.Order(),
+            rig.Releases.Published.Select(p => p.FileId).Order());
+    }
+
     [Fact]
     public async Task AnImageTemplateMetaStillListsPublishesNothing()
     {

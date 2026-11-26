@@ -32,8 +32,7 @@ public sealed class LinkTicketCustomerValidator : AbstractValidator<LinkTicketCu
 public sealed class LinkTicketCustomerHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
-    IMembershipDirectory membershipDirectory,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportCustomerLookup customers,
     ISupportUnitOfWork unitOfWork,
     ISupportAuditPublisher auditPublisher,
@@ -46,12 +45,13 @@ public sealed class LinkTicketCustomerHandler(
 
     public async Task<SupportTicketDetailDto> HandleAsync(LinkTicketCustomerCommand command, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureAsync(
-            executionContext, tenantModules, command.TenantId, SupportPermissions.Manage, cancellationToken);
+        await scope.EnsureAccessAsync(command.TenantId, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var (ticket, actor) = await SupportTicketActions.LoadAsync(
-            executionContext, membershipDirectory, tickets, command.TenantId, command.TicketId, command.ExpectedVersion, cancellationToken);
+        var (ticket, actor) = await scope.ManageAsync(command.TenantId, command.TicketId, cancellationToken);
+        SupportTicketScope.EnsureVersion(ticket, command.ExpectedVersion);
+        // Una tarea no tiene cliente: se rechaza antes de buscar el cliente, que no tiene por qué existir para saberlo.
+        SupportTicketScope.EnsureExternal(ticket);
         if (command.CustomerId is { } customerId && customerId != ticket.CustomerId)
         {
             await SupportTicketRules.EnsureCustomerAsync(tenantModules, customers, command.TenantId, customerId, cancellationToken);

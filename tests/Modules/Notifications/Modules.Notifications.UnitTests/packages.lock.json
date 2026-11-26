@@ -319,7 +319,10 @@
       "modules.notifications.application": {
         "type": "Project",
         "dependencies": {
-          "Modules.Notifications.Domain": "[1.0.0, )"
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Notifications.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
         }
       },
       "modules.notifications.domain": {

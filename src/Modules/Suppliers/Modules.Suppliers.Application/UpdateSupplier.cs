@@ -22,7 +22,9 @@ public sealed record UpdateSupplierCommand(
     string? Category,
     string? Notes,
     IReadOnlyList<SupplierBankAccountPayload> BankAccounts,
-    IReadOnlyList<SupplierContactPayload> Contacts) : ICommand<SupplierResponse>, ISupplierWriteCommand
+    IReadOnlyList<SupplierContactPayload> Contacts,
+    // Spec 2026-11-23: la región (provincia) del domicilio de un país con catálogo distinto de Colombia; null es «sin región».
+    Guid? RegionId = null) : ICommand<SupplierResponse>, ISupplierWriteCommand
 {
     public static UpdateSupplierCommand From(Guid tenantId, Guid supplierId, SupplierWriteRequest request) => new(
         tenantId,
@@ -41,7 +43,8 @@ public sealed record UpdateSupplierCommand(
         request.Category,
         request.Notes,
         request.BankAccounts,
-        request.Contacts);
+        request.Contacts,
+        request.RegionId);
 }
 
 public sealed class UpdateSupplierValidator : AbstractValidator<UpdateSupplierCommand>
@@ -76,6 +79,7 @@ public sealed class UpdateSupplierHandler(
             ?? throw SupplierNotFound.For(command.SupplierId);
 
         var city = await command.ResolveCityAsync(geographyLookup, cancellationToken);
+        var region = await command.ResolveRegionAsync(geographyLookup, cancellationToken);
         var now = clock.UtcNow;
 
         supplier.Update(command.ToWriteData(), phoneNormalizer, now);
@@ -91,6 +95,7 @@ public sealed class UpdateSupplierHandler(
         return supplier.ToResponse(
             city,
             await supplier.ResolveLinkedTenantAsync(tenantDirectory, cancellationToken),
-            await supplier.ResolveRelationshipStatusAsync(relationships, cancellationToken));
+            await supplier.ResolveRelationshipStatusAsync(relationships, cancellationToken),
+            region);
     }
 }

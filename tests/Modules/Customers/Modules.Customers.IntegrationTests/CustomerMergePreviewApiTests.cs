@@ -9,13 +9,16 @@ using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 namespace Modules.Customers.IntegrationTests;
 
 /// <summary>Spec 2026-10-24 §3.4: la vista previa de la fusión cuenta lo que pasaría y no escribe nada. El contrato con el
-/// frontend (B1, B2, B4): <c>survivor.version</c> entero, <c>moves</c> con las nueve clases (también <c>Contacts</c>) también en cero, <c>filledFields</c>
+/// frontend (B1, B2, B4): <c>survivor.version</c> entero, <c>moves</c> con las diez clases (también <c>Contacts</c>) también en cero, <c>filledFields</c>
 /// por nombre y <c>documentsDiffer</c> sobre el número normalizado.</summary>
 public sealed class CustomerMergePreviewApiTests
 {
     private const string SharedNumber = "92-1396892";
     private static readonly string[] EveryMove =
-        ["Quotations", "Orders", "Conversations", "PosSales", "Deals", "Notes", "Addresses", "Tags", "Contacts"];
+    [
+        "Quotations", "Orders", "Conversations", "PosSales", "Deals", "Notes", "Addresses", "BillingProfiles", "Tags",
+        "Contacts"
+    ];
 
     private sealed record Arranged(
         string ConnectionString, HttpClient Client, Guid CityId, Guid ClassificationId, Guid Survivor, Guid Merged);
@@ -140,6 +143,39 @@ public sealed class CustomerMergePreviewApiTests
         {
             Assert.Equal(0, Move(preview, kind));
         }
+    }
+
+    [Fact]
+    public async Task ThePreviewCountsBillingProfiles()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        foreach (var (customer, name) in new[]
+        {
+            (arranged.Survivor, "Del que queda SAS"),
+            (arranged.Merged, "Uno SAS"),
+            (arranged.Merged, "Dos SAS")
+        })
+        {
+            var posted = await client.PostAsJsonAsync(
+                $"{CustomersUrl()}/{customer}/billing-profiles",
+                new
+                {
+                    name,
+                    identificationType = "NIT",
+                    identificationNumber = "900123456",
+                    address = "Cra 43A # 1-50",
+                    cityId = arranged.CityId
+                },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, posted.StatusCode);
+        }
+
+        var preview = await PreviewAsync(client, arranged.Survivor, arranged.Merged);
+
+        Assert.Equal(2, Move(preview, "BillingProfiles"));
     }
 
     [Fact]
@@ -374,7 +410,7 @@ public sealed class CustomerMergePreviewApiTests
 
         Assert.Equal(1, Move(preview, "Contacts"));
         Assert.True(preview.GetProperty("companyConflict").GetBoolean());
-        Assert.Equal(9, preview.GetProperty("moves").GetArrayLength());
+        Assert.Equal(EveryMove.Length, preview.GetProperty("moves").GetArrayLength());
 
         var calm = await PreviewAsync(client, arranged.Survivor, arranged.Merged);
         Assert.Equal(0, Move(calm, "Contacts"));

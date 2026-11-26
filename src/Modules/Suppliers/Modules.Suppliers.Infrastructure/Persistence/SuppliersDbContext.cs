@@ -72,6 +72,9 @@ public sealed class SuppliersDbContext(DbContextOptions<SuppliersDbContext> opti
         supplier.Property(value => value.CityName)
             .HasColumnName("city_name")
             .HasMaxLength(Supplier.CityNameMaxLength);
+        // La región (provincia) de un proveedor de afuera: referencia blanda a geography.regions, sin FK entre esquemas.
+        // Sin CHECK nuevo: el carril lo impone el dominio y el validador (spec 2026-11-23).
+        supplier.Property(value => value.RegionId).HasColumnName("region_id");
         supplier.Property(value => value.PhoneE164)
             .HasColumnName("phone_e164")
             .HasMaxLength(16);

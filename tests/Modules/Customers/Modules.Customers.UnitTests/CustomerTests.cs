@@ -1477,4 +1477,58 @@ public sealed class CustomerTests
         Assert.Empty(customer.WithholdingTaxRateIds);
         Assert.Equal(3, customer.Version);
     }
+
+    private static readonly Guid MadridRegionId = Guid.Parse("01900000-0000-7000-8000-0000000000a1");
+
+    [Fact]
+    public void ForeignCustomerKeepsRegion()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
+            contact: ForeignContact() with { RegionId = MadridRegionId },
+            seedAddressBook: false);
+
+        Assert.Equal(MadridRegionId, customer.RegionId);
+    }
+
+    [Fact]
+    public void ColombianCustomerWithRegionIsRejected()
+    {
+        var exception = Assert.Throws<CustomersDomainException>(
+            () => Create(contact: ValidContact() with { RegionId = MadridRegionId }));
+
+        Assert.Equal("customers.customer.region_lane_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void EmptyRegionIdIsNoRegion()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
+            contact: ForeignContact() with { RegionId = Guid.Empty },
+            seedAddressBook: false);
+
+        Assert.Null(customer.RegionId);
+    }
+
+    [Fact]
+    public void UpdateWithoutRegionClearsIt()
+    {
+        var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
+            contact: ForeignContact() with { RegionId = MadridRegionId },
+            seedAddressBook: false);
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(IdentificationType.Pasaporte, "X1234567"),
+            null,
+            ForeignContact(),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.RegionId);
+    }
 }

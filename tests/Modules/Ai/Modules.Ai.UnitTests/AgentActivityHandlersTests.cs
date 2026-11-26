@@ -208,7 +208,8 @@ public sealed class AgentActivityHandlersTests
             [("Connection", null, null, null), ("ChatbotBlock", (Guid?)gone, null, null), ("ChatbotBlock", chatbot, "Bienvenida", "done")],
             activity.Sessions.Select(session => (session.Origin, session.Chatbot?.Id, session.Chatbot?.Name, session.Output)));
         Assert.Single(names.Asked);
-        Assert.Equal([gone, chatbot], names.Asked[0].Order());
+        // Se ordenan los dos lados: dos Guid v7 del mismo milisegundo no salen en orden de creación (los bits bajos son aleatorios).
+        Assert.Equal(new[] { gone, chatbot }.Order(), names.Asked[0].Order());
     }
 
     [Fact]

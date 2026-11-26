@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Companies.Application;
 using Modules.Companies.Domain;
 using Npgsql;
@@ -52,6 +53,31 @@ internal sealed class CompaniesUnitOfWork(CompaniesDbContext dbContext) : ICompa
                 "companies.company.in_use",
                 "The company cannot be deleted because another record references it.");
         }
+    }
+
+    public async Task<ICompaniesTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new CompaniesTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    public Task LockProvisioningAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        // Fuera de una transacción el candado se soltaría al terminar la sentencia y no serializaría nada.
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException(
+                "LockProvisioningAsync requires an open transaction (BeginTransactionAsync).");
+        }
+
+        var key = tenantId.ToString("D");
+        return dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock({CompanyProvisioningLock.Namespace}, hashtext({key}))", cancellationToken);
+    }
+
+    private sealed class CompaniesTransaction(IDbContextTransaction transaction) : ICompaniesTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
+
+        // Disponer sin commit hace rollback, y el rollback es lo que suelta los candados.
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }
 
     // Dos SQLSTATE y no uno: una clave foránea NO ACTION (la de EF por defecto) da 23503, pero una

@@ -45,6 +45,12 @@ internal sealed partial class ZenviaWhatsAppSender(
     private static partial void LogOrderAccepted(
         ILogger logger, string orderNumber, string messageId);
 
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "WhatsApp invoice {InvoiceNumber} accepted by Zenvia as message {MessageId}.")]
+    private static partial void LogInvoiceAccepted(
+        ILogger logger, string invoiceNumber, string messageId);
+
     public async Task SendQuotationAsync(
         ZenviaWhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
@@ -153,6 +159,62 @@ internal sealed partial class ZenviaWhatsAppSender(
         {
             var messageId = ReadMessageId(body);
             LogOrderAccepted(logger, message.OrderNumber, messageId);
+        }
+    }
+
+    /// <summary>
+    /// La factura, por su propia plantilla (<see cref="ZenviaWhatsAppChannel.InvoiceTemplateId"/>). Mismos campos que el pedido
+    /// con <c>invoice_number</c>. Los códigos son de factura (<c>invoice.whatsapp.*</c>).
+    /// </summary>
+    public async Task SendInvoiceAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppInvoiceMessage message, CancellationToken cancellationToken)
+    {
+        // Defensa: el directorio de canales ya deja fuera de las facturas una Zenvia sin plantilla de factura, así que acá
+        // no debería llegar.
+        if (string.IsNullOrWhiteSpace(channel.InvoiceTemplateId))
+        {
+            throw new QuotationsDomainException(
+                "invoice.whatsapp.send_failed",
+                "The WhatsApp channel has no invoice template: invoices cannot be sent by WhatsApp yet.");
+        }
+
+        var to = WhatsAppPhone.Normalize(message.ToPhone);
+        if (to is null)
+        {
+            throw new QuotationsDomainException(
+                "invoice.whatsapp.recipient_missing",
+                "The recipient has no phone number to send the invoice to.");
+        }
+
+        var documentUrl = RequireDocumentUrl(message.DocumentUrl);
+
+        var payload = new
+        {
+            from = channel.FromNumber,
+            to,
+            contents = new object[]
+            {
+                new
+                {
+                    type = "template",
+                    templateId = channel.InvoiceTemplateId,
+                    fields = new
+                    {
+                        fullname = message.FullName,
+                        invoice_number = message.InvoiceNumber,
+                        total = WhatsAppTemplateValues.Total(message.Total, message.Currency, message.NumberFormat),
+                        documentUrl,
+                    },
+                },
+            },
+        };
+
+        var body = await PostAsync(channel, payload, "invoice.whatsapp.send_failed", cancellationToken);
+
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            var messageId = ReadMessageId(body);
+            LogInvoiceAccepted(logger, message.InvoiceNumber, messageId);
         }
     }
 

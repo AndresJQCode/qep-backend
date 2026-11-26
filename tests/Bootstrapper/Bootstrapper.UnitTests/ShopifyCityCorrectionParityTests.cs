@@ -15,7 +15,11 @@ public sealed class ShopifyCityCorrectionParityTests
     public void PartyWidthsMatchTheOrderParty() =>
         Assert.Equal(
             (QuotationPartyDetails.NameMaxLength, QuotationPartyDetails.PhoneMaxLength, QuotationPartyDetails.EmailMaxLength,
-                QuotationPartyDetails.AddressMaxLength),
+                QuotationPartyDetails.AddressMaxLength, QuotationPartyDetails.PostalCodeMaxLength),
             (ShopifyCityCorrection.PartyNameMaxLength, ShopifyCityCorrection.PartyPhoneMaxLength, ShopifyCityCorrection.PartyEmailMaxLength,
-                ShopifyCityCorrection.PartyAddressMaxLength));
+                ShopifyCityCorrection.PartyAddressMaxLength, ShopifyCityCorrection.PartyPostalCodeMaxLength));
+
+    [Fact]
+    public void TheCityNameWidthMatchesQuotations() =>
+        Assert.Equal(QuotationPartyDetails.CityNameMaxLength, ShopifyCityCorrection.PartyCityNameMaxLength);
 }

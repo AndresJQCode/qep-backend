@@ -60,3 +60,25 @@ internal sealed class CountingDepartmentRepository(params Department[] departmen
     public Task<Department?> FindByNameAsync(string name, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 }
+
+internal sealed class CountingRegionRepository(params Region[] regions) : IRegionRepository
+{
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<Region>> ListByIdsAsync(
+        IReadOnlyCollection<RegionId> regionIds, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyList<Region>>(
+            regions.Where(region => regionIds.Contains(region.Id)).ToList());
+    }
+
+    public Task<IReadOnlyList<Region>> ListByCountryAsync(string countryCode, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Region>>(regions.Where(region => region.CountryCode == countryCode).ToList());
+
+    public Task<Region?> FindAsync(RegionId regionId, CancellationToken cancellationToken) =>
+        Task.FromResult(regions.FirstOrDefault(region => region.Id == regionId));
+
+    public Task<IReadOnlyList<RegionCity>> ListCitiesAsync(RegionId regionId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}

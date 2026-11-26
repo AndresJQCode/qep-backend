@@ -246,6 +246,7 @@ public sealed class ScheduledMessageExecutor(
             MessageKind.Image => await meta.SendImageAsync(sender!, recipient, mediaId!, caption, callback, null, CancellationToken.None),
             MessageKind.Video => await meta.SendVideoAsync(sender!, recipient, mediaId!, caption, callback, null, CancellationToken.None),
             MessageKind.Audio => await meta.SendAudioAsync(sender!, recipient, mediaId!, voice: message.IsVoiceNote, callback, null, CancellationToken.None),
+            MessageKind.Sticker => await meta.SendStickerAsync(sender!, recipient, mediaId!, callback, null, CancellationToken.None),
             MessageKind.Document => await meta.SendDocumentAsync(
                 sender!, recipient, mediaId!, message.MediaFileName!, caption, callback, null, CancellationToken.None),
             _ => throw new InvalidOperationException($"A scheduled message cannot be of kind {message.Kind}."),

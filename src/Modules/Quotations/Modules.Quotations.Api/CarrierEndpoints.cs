@@ -11,7 +11,7 @@ namespace Modules.Quotations.Api;
 /// <summary>
 /// Transportadoras y el IVA del envío (spec 2026-10-17 §4.3). Los permisos de settings, como el
 /// resto de la configuración de Quotations (H13), salvo <c>/shipping-options</c>, que lee quien
-/// cotiza (D-F3). Cada mutación devuelve lo que la pantalla repinta: la transportadora tocada, o la
+/// cotiza (D-F3) o quien lee pedidos: un tenant puede ocultar cotizaciones y seguir vendiendo por pedidos. Cada mutación devuelve lo que la pantalla repinta: la transportadora tocada, o la
 /// pantalla entera cuando el cambio la afecta toda (reordenar, la tasa, quién paga el envío).
 /// </summary>
 public static class CarrierEndpoints
@@ -78,7 +78,7 @@ public static class CarrierEndpoints
 
         tenant.MapGet("/shipping-options", GetShippingOptionsAsync)
             .WithTags("Quotations")
-            .RequireAuthorization(QuotationsPermissions.QuotationRead)
+            .RequireAuthorization(QuotationsPolicies.ShippingOptionsRead)
             .Produces<ShippingOptionsResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 

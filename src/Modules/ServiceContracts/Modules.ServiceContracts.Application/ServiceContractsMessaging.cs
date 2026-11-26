@@ -46,7 +46,26 @@ public sealed record ServiceContractsDigestRow(
     DateOnly DueDate,
     string? FailureCode);
 
-/// <summary>El email diario al encargado (§3.3, paso 5).</summary>
+/// <summary>
+/// Una revisión de precio abierta en el email diario (spec reajuste §6.6). <c>State</c> es el nombre del estado (<c>Due</c> o
+/// <c>Held</c>); <c>IpcYear</c> es nulo en <c>Manual</c>; <c>IpcMissing</c> dice que ese año todavía no tiene tasa cargada.
+/// </summary>
+public sealed record ServiceContractsPriceReviewRow(
+    string CustomerName,
+    string ServiceName,
+    decimal CurrentPrice,
+    string Currency,
+    DateOnly ReviewPeriodDate,
+    DateOnly GenerationDate,
+    string State,
+    int? IpcYear,
+    bool IpcMissing,
+    DateOnly? HeldSince);
+
+/// <summary>
+/// El email diario al encargado (§3.3, paso 5). <c>PriceReviews</c> (por revisar) y <c>HeldCharges</c> (retenidos) vienen
+/// ordenadas por fecha de generación (spec reajuste §6.6).
+/// </summary>
 public sealed record ServiceContractsDigestEmail(
     string ToAddress,
     string MemberName,
@@ -55,4 +74,6 @@ public sealed record ServiceContractsDigestEmail(
     IReadOnlyList<ServiceContractsDigestRow> Overdue,
     IReadOnlyList<ServiceContractsDigestRow> FailedReminders,
     IReadOnlyList<CurrencyAmountDto> OverdueTotalByCurrency,
-    ServiceContractsEmailFormat Format);
+    ServiceContractsEmailFormat Format,
+    IReadOnlyList<ServiceContractsPriceReviewRow> PriceReviews,
+    IReadOnlyList<ServiceContractsPriceReviewRow> HeldCharges);

@@ -59,6 +59,62 @@ public sealed class TenantModuleGuardTests
         Assert.Equal([TenantId], modules.Asked);
     }
 
+    // La configuración de envíos la comparten cotizaciones y pedidos: basta con que uno de los dos esté prendido.
+    private static readonly TenantModuleKey[] QuotationsOrOrders = [TenantModuleKeys.Quotations, TenantModuleKeys.Orders];
+
+    [Fact]
+    public async Task AnyOfPassesWhenOnlyTheSecondModuleIsOn()
+    {
+        var modules = new FixedTenantModules(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Quotations])));
+
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            modules, TenantId, QuotationsOrOrders, TestContext.Current.CancellationToken);
+
+        Assert.Equal([TenantId], modules.Asked);
+    }
+
+    [Fact]
+    public async Task AnyOfPassesWhenOnlyTheFirstModuleIsOn()
+    {
+        var modules = new FixedTenantModules(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders, TenantModuleKeys.Shopify,
+                TenantModuleKeys.Store, TenantModuleKeys.Wholesale, TenantModuleKeys.Siigo])));
+
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            modules, TenantId, QuotationsOrOrders, TestContext.Current.CancellationToken);
+
+        Assert.Equal([TenantId], modules.Asked);
+    }
+
+    [Fact]
+    public async Task AnyOfIsForbiddenWhenNoneIsOn()
+    {
+        var modules = new FixedTenantModules(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except(
+                [TenantModuleKeys.Quotations, TenantModuleKeys.Orders, TenantModuleKeys.Shopify,
+                    TenantModuleKeys.Store, TenantModuleKeys.Wholesale, TenantModuleKeys.Siigo])));
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            TenantModuleGuard.EnsureAnyEnabledAsync(
+                modules, TenantId, QuotationsOrOrders, TestContext.Current.CancellationToken));
+
+        Assert.Equal(TenantModuleGuard.ModuleNotEnabledCode, error.Code);
+        Assert.Equal([TenantId], modules.Asked);
+    }
+
+    // Igual que EnsureEnabledAsync: null = tenant simulado por el stub, no se bloquea.
+    [Fact]
+    public async Task AnyOfDoesNotBlockATenantWithoutRow()
+    {
+        var modules = new FixedTenantModules(null);
+
+        await TenantModuleGuard.EnsureAnyEnabledAsync(
+            modules, TenantId, QuotationsOrOrders, TestContext.Current.CancellationToken);
+
+        Assert.Equal([TenantId], modules.Asked);
+    }
+
     // Fail closed: sin fila del tenant el guard normal deja pasar (stub); el de las claves de API, no.
     [Fact]
     public async Task FailClosedDeniesAnUnknownTenant()

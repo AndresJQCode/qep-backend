@@ -89,9 +89,10 @@ public sealed class TenantRoleCatalog(
         var custom = await customRoleReader.ListAsync(tenantId, cancellationToken);
         foreach (var role in custom)
         {
-            // `Role.Create` ya rechaza una clave reservada, asi que esto no deberia pisar un
-            // rol de sistema. Se indexa igual por clave —y no se suma a ciegas— para que si
-            // una fila vieja se colara, el catalogo siga teniendo una definicion por clave.
+            // `Role.Create` ya rechaza la unica clave reservada (`admin`), asi que esto no deberia
+            // pisar el rol de sistema. Se indexa igual por clave —y no se suma a ciegas— para que
+            // si una fila vieja se colara, el catalogo siga teniendo una definicion por clave. Los
+            // roles sembrados de fabrica llegan por aca, como cualquier otro del tenant.
             catalog[role.Key] = new TenantRoleDefinition(
                 role.Id.Value,
                 role.Key,

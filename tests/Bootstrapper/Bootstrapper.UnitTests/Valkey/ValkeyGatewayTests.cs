@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using BuildingBlocks.Observability;
 using Bootstrapper.Valkey;
+using BuildingBlocks.Observability;
 using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,6 +61,21 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
 
         Assert.Equal(new ValkeyAttempt<long>(true, 1), attempt);
         Assert.Equal(0, harness.Recorder.Fallbacks("presence"));
+        Assert.Equal("ok", Assert.Single(harness.Recorder.Operations("presence")).Outcome);
+    }
+
+    [Fact]
+    public async Task AnOperationThatValkeyRejectsRecordsAnError()
+    {
+        await using var harness = await Harness.StartAsync(ValkeyTestServer.ConnectionString(server.Container, asQep: false));
+        var ct = TestContext.Current.CancellationToken;
+        var key = "qep:t:" + Guid.NewGuid();
+        await harness.Gateway.TryAsync(ValkeyArea.Presence, db => db.StringSetAsync(key, "text"), ct);
+
+        var attempt = await harness.Gateway.TryAsync(ValkeyArea.Sessions, db => db.StringIncrementAsync(key), ct);
+
+        Assert.False(attempt.Succeeded);
+        Assert.Equal("error", Assert.Single(harness.Recorder.Operations("sessions")).Outcome);
     }
 
     [Fact]
@@ -75,6 +90,9 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
 
         Assert.False(attempt.Succeeded);
         Assert.Equal(1, harness.Recorder.Fallbacks("presence"));
+        Assert.Equal(1, harness.Recorder.Fallbacks("presence", "NotConnected"));
+        // Sin conexión no hubo operación: no hay duración que medir.
+        Assert.Empty(harness.Recorder.Operations("presence"));
     }
 
     // Review Focus 3: Valkey lento, no caído. La operación queda colgada y el gateway tiene que soltarla a tiempo.
@@ -98,11 +116,24 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
             Assert.False(attempt.Succeeded);
             Assert.True(stopwatch.ElapsedMilliseconds < 500, $"Tardó {stopwatch.ElapsedMilliseconds} ms.");
             Assert.Equal(1, harness.Recorder.Fallbacks("rate_limiting"));
+            Assert.Equal(1, harness.Recorder.Fallbacks("rate_limiting", "TimeoutException"));
+            // La operación soltada sigue viva: todavía no tiene duración (sólo el PING de arriba).
+            Assert.Equal("ok", Assert.Single(harness.Recorder.Operations("rate_limiting")).Outcome);
         }
         finally
         {
             await server.Container.ExecAsync(["valkey-cli", "CLIENT", "UNPAUSE"], ct);
         }
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (harness.Recorder.Operations("rate_limiting").Count < 2 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50, ct);
+        }
+
+        // Lo que se quiere saber en producción: cuánto tardó de verdad la que pasó el tope.
+        var late = Assert.Single(harness.Recorder.Operations("rate_limiting"), o => o.Outcome == "late");
+        Assert.True(late.Seconds >= 0.1, $"Midió {late.Seconds} s.");
     }
 
     // Contenedor propio: detenerlo dejaría sin Valkey al resto de las pruebas de la clase.
@@ -258,7 +289,7 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
     private sealed class Recorder : IDisposable
     {
         private readonly MeterListener _listener = new();
-        private readonly List<(string Instrument, string? Area, long Value)> _measurements = [];
+        private readonly List<(string Instrument, string? Area, string? Reason, long Value)> _measurements = [];
 
         public Recorder(IMeterFactory factory)
         {
@@ -271,7 +302,46 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => Add(instrument, value, tags));
             _listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) => Add(instrument, value, tags));
+            _listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => AddDuration(instrument, value, tags));
             _listener.Start();
+        }
+
+        private readonly List<(string? Area, string? Outcome, double Seconds)> _operations = [];
+
+        /// <summary>Las duraciones medidas de un área, con su resultado.</summary>
+        public IReadOnlyList<(string? Area, string? Outcome, double Seconds)> Operations(string area)
+        {
+            lock (_operations)
+            {
+                return [.. _operations.Where(o => o.Area == area)];
+            }
+        }
+
+        private void AddDuration(Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags)
+        {
+            if (instrument.Name != "qep.valkey.operation.duration")
+            {
+                return;
+            }
+
+            string? area = null;
+            string? outcome = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "area")
+                {
+                    area = tag.Value as string;
+                }
+                else if (tag.Key == "outcome")
+                {
+                    outcome = tag.Value as string;
+                }
+            }
+
+            lock (_operations)
+            {
+                _operations.Add((area, outcome, value));
+            }
         }
 
         public long Fallbacks(string area)
@@ -279,6 +349,17 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
             lock (_measurements)
             {
                 return _measurements.Where(m => m.Instrument == "qep.valkey.fallbacks" && m.Area == area).Sum(m => m.Value);
+            }
+        }
+
+        /// <summary>Los respaldos de un área con ese motivo (<c>NotConnected</c> o el tipo de la excepción).</summary>
+        public long Fallbacks(string area, string reason)
+        {
+            lock (_measurements)
+            {
+                return _measurements
+                    .Where(m => m.Instrument == "qep.valkey.fallbacks" && m.Area == area && m.Reason == reason)
+                    .Sum(m => m.Value);
             }
         }
 
@@ -301,17 +382,22 @@ public sealed class ValkeyGatewayTests(ValkeyPlainServer server) : IClassFixture
         private void Add(Instrument instrument, long value, ReadOnlySpan<KeyValuePair<string, object?>> tags)
         {
             string? area = null;
+            string? reason = null;
             foreach (var tag in tags)
             {
                 if (tag.Key == "area")
                 {
                     area = tag.Value as string;
                 }
+                else if (tag.Key == "reason")
+                {
+                    reason = tag.Value as string;
+                }
             }
 
             lock (_measurements)
             {
-                _measurements.Add((instrument.Name, area, value));
+                _measurements.Add((instrument.Name, area, reason, value));
             }
         }
     }

@@ -154,6 +154,8 @@ public sealed class FilePublicationTests
 
     private sealed class UnconfiguredPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public bool IsConfigured => false;
 
         public Task CopyFromPrivateAsync(string privateKey, string publicKey, CancellationToken cancellationToken) =>
@@ -175,6 +177,8 @@ public sealed class FilePublicationTests
     // Un bucket sin objetos: borrar no encuentra nada y no falla, como DeleteObject de R2 (204 aunque la clave no exista).
     private sealed class MissingObjectsPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public int DeleteCalls { get; private set; }
 
         public bool IsConfigured => true;
@@ -201,6 +205,8 @@ public sealed class FilePublicationTests
     // original queda en `Copies` hasta el catch, que la borra por su cuenta.
     private sealed class FailingOnVariantPublicObjectStorage : IPublicObjectStorage
     {
+        public Task UploadAsync(string publicKey, ReadOnlyMemory<byte> content, string contentType, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Dictionary<string, string> Copies { get; } = new(StringComparer.Ordinal);
 
         public bool IsConfigured => true;

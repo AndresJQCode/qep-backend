@@ -13,7 +13,8 @@ public sealed class TenantRegistrationService(
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
     IClock clock,
-    ITenantSlugAvailability slugAvailability)
+    ITenantSlugAvailability slugAvailability,
+    IEnumerable<INewTenantProvisioning> provisioning)
     : ITenantRegistration
 {
     private static readonly string[] AdminRoles = [Membership.AdminRole];
@@ -23,7 +24,7 @@ public sealed class TenantRegistrationService(
     {
         // Mismas reglas y códigos que Tenant.Create: el formato falla antes de tocar la base.
         var slug = Tenant.EnsureValidRegistration(
-            data.Slug, data.DisplayName, data.DefaultCulture, data.TimeZone, data.DateFormat);
+            data.Slug, data.DisplayName, data.DefaultCulture, data.TimeZone, data.DateFormat, data.Country, data.Language);
 
         if (await slugAvailability.IsTakenAsync(slug, cancellationToken))
         {
@@ -53,7 +54,9 @@ public sealed class TenantRegistrationService(
             data.TimeZone,
             data.DateFormat,
             membershipId,
-            now);
+            now,
+            data.Country,
+            data.Language);
         tenantRepository.Add(tenant);
 
         // Spec 2026-10-07, «Alta por signup»: los módulos del tenant se commitean con el tenant y la
@@ -89,6 +92,7 @@ public sealed class TenantRegistrationService(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await ProvisionAsync(tenant.Id, cancellationToken);
         return tenant.Id.Value;
     }
 
@@ -130,7 +134,9 @@ public sealed class TenantRegistrationService(
             data.TimeZone,
             data.DateFormat,
             membershipId,
-            now);
+            now,
+            data.Country,
+            data.Language);
         tenantRepository.Add(tenant);
 
         foreach (var key in modules)
@@ -158,7 +164,17 @@ public sealed class TenantRegistrationService(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await scope.CommitAsync(cancellationToken);
+        await ProvisionAsync(tenant.Id, cancellationToken);
         return true;
+    }
+
+    /// <summary>En orden de registro y uno por vez: lo que uno deje subir corta los que siguen.</summary>
+    private async Task ProvisionAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        foreach (var step in provisioning)
+        {
+            await step.ProvisionAsync(tenantId, cancellationToken);
+        }
     }
 
     /// <summary>

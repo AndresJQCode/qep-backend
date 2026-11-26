@@ -7,7 +7,7 @@ namespace Bootstrapper;
 
 /// <summary>
 /// Soporte retiene a un usuario mientras alguna de sus membresías sea la responsable de un ticket (<c>tickets.assignee_member_id</c>)
-/// o haya actuado en su traza (<c>ticket_events.actor_member_id</c>), haya escrito una respuesta (<c>ticket_replies.author_member_id</c>)
+/// o lo haya radicado (<c>tickets.created_by_member_id</c>, spec 2026-11-22), o haya actuado en su traza (<c>ticket_events.actor_member_id</c>), haya escrito una respuesta (<c>ticket_replies.author_member_id</c>)
 /// o haya resuelto un entrante sin clasificar (<c>unclassified_messages.resolved_by_member_id</c>), o haya guardado una versión del
 /// formulario público o de los textos legales (<c>form_versions.created_by</c>, <c>legal_text_versions.created_by</c>, fase 3) o de un
 /// documento legal (<c>legal_document_versions.created_by</c>, spec 2026-11-15, plan L22), o haya
@@ -35,6 +35,7 @@ internal sealed class SupportUserReferenceProbe(
         foreach (var membershipId in membershipIds)
         {
             if (await dbContext.Tickets.AnyAsync(ticket => ticket.AssigneeMemberId == membershipId, cancellationToken) ||
+                await dbContext.Tickets.AnyAsync(ticket => ticket.CreatedByMemberId == membershipId, cancellationToken) ||
                 await dbContext.TicketEvents.AnyAsync(item => item.ActorMemberId == membershipId, cancellationToken) ||
                 await dbContext.TicketReplies.AnyAsync(reply => reply.AuthorMemberId == membershipId, cancellationToken) ||
                 await dbContext.UnclassifiedMessages.AnyAsync(

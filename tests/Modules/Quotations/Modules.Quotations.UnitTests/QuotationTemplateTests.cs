@@ -356,14 +356,63 @@ public sealed partial class QuotationTemplateTests
         Assert.Contains("if not es-pedido [", source, StringComparison.Ordinal);
     }
 
-    // «Emitida» concuerda con «la cotización»; el pedido es masculino.
+    // «Emitida» concuerda con «la cotización»; el pedido y el presupuesto de España son masculinos.
     [Fact]
     public async Task TheIssueDateAgreesWithTheDocumentGender()
     {
         var (source, _, _) = await CapturedRequestAsync(Minimal() with { Kind = QuotationPdfKind.Order });
 
-        Assert.Contains("if es-pedido { \"Emitido\" } else { \"Emitida\" }", source, StringComparison.Ordinal);
+        Assert.Contains("#let masculino = es-pedido or espana", source, StringComparison.Ordinal);
+        Assert.Contains("if masculino { \"Emitido\" } else { \"Emitida\" }", source, StringComparison.Ordinal);
         Assert.DoesNotContain("renglon(\"Emitida\"", source, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-22 (i18n): el idioma del tenant viaja en `data`; sin tocarlo, es-419.
+    [Fact]
+    public async Task ThePayloadCarriesTheLanguage()
+    {
+        var (_, spain, _) = await CapturedRequestAsync(Minimal() with { Language = "es-ES" });
+        var (_, defaults, _) = await CapturedRequestAsync(Minimal());
+
+        Assert.Equal("es-ES", spain.GetProperty("language").GetString());
+        Assert.Equal("es-419", defaults.GetProperty("language").GetString());
+    }
+
+    // En España la cotización es «presupuesto» (masculino: «Emitido», «Válido hasta») y el asesor, «comercial».
+    [Fact]
+    public async Task InSpainTheQuotationPrintsAsABudgetWithACommercial()
+    {
+        var text = await RenderedTextAsync(Complete() with { Language = "es-ES" });
+
+        Assert.Contains("Presupuesto", text, StringComparison.Ordinal);
+        Assert.Contains("Emitido", text, StringComparison.Ordinal);
+        Assert.Contains("Válido hasta", text, StringComparison.Ordinal);
+        Assert.Contains("Comercial", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cotización", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Emitida", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Asesor", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InLatinAmericaTheQuotationPrintsAsBefore()
+    {
+        var text = await RenderedTextAsync(Complete());
+
+        Assert.Contains("Cotización", text, StringComparison.Ordinal);
+        Assert.Contains("Emitida", text, StringComparison.Ordinal);
+        Assert.Contains("Válida hasta", text, StringComparison.Ordinal);
+        Assert.Contains("Asesor", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Presupuesto", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InSpainTheOrderStaysAnOrderWithACommercial()
+    {
+        var text = await RenderedTextAsync(Complete() with { Kind = QuotationPdfKind.Order, ValidUntil = null, Language = "es-ES" });
+
+        Assert.Contains("Pedido", text, StringComparison.Ordinal);
+        Assert.Contains("Comercial", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Presupuesto", text, StringComparison.Ordinal);
     }
 
     // Spec 2026-10-23 D-R1: los separadores del tenant viajan en `data`; sin tocarlos, los colombianos.
@@ -448,6 +497,44 @@ public sealed partial class QuotationTemplateTests
 
         Assert.Contains("horas", withUnits, StringComparison.Ordinal);
         Assert.DoesNotContain("horas", withoutUnits, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheOrderTableHasItemNumberAndCodeColumns()
+    {
+        var text = await RenderedTextAsync(Complete() with
+        {
+            Kind = QuotationPdfKind.Order,
+            ValidUntil = null,
+            Items =
+            [
+                new QuotationPdfLine("Cable por metro", 2m, 35900m, 15m, 30515m, 61030m, ProductCode: "CAB-001"),
+                new QuotationPdfLine("Tornillo", 1m, 1500m, 0m, 1500m, 1500m, ProductCode: "TOR-002"),
+            ],
+        });
+
+        foreach (var expected in new[]
+        {
+            // Los rótulos del encabezado salen en mayúsculas (`rotulo`).
+            "# ITEM", "CÓDIGO", "DESCRIPCIÓN", "CANTIDAD", "VR. UNITARIO", "VR. TOTAL", "CAB-001", "TOR-002",
+        })
+        {
+            Assert.Contains(expected, text, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("VALOR CON DESCUENTO", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheQuotationTableKeepsItsColumns()
+    {
+        var text = await RenderedTextAsync(Complete() with
+        {
+            Items = [new QuotationPdfLine("Tornillo", 1m, 1500m, 0m, 1500m, 1500m, ProductCode: "TOR-002")],
+        });
+
+        Assert.DoesNotContain("TOR-002", text, StringComparison.Ordinal);
+        Assert.Contains("PRODUCTO", text, StringComparison.Ordinal);
     }
 
     private static QuotationPdfDocument WithFractionalQuantities(QuotationPdfDocument document) =>

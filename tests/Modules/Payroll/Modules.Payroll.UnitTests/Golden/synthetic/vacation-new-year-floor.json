@@ -1,0 +1,171 @@
+{
+  "name": "vacation-new-year-floor",
+  "source": "synthetic",
+  "description": "Enero entero de vacaciones con salario mínimo: el piso del SMMLV nuevo (1 900 000) supera el IBC anterior, deja 5 964 pesos de diferencia y el tope por neto no los retiene.",
+  "legal": "legal/2027-01-01-smmlv-1900000.json",
+  "covers": [
+    "WorkedDaysRule",
+    "SalaryRule",
+    "MonthIncomeRule",
+    "TransportAllowanceRule",
+    "IbcRule",
+    "EmployeeDeductionsRule",
+    "EmployerContributionsRule",
+    "ProvisionsRule",
+    "PayrollEngine",
+    "VacationDaysRule"
+  ],
+  "input": {
+    "employeeId": "11111111-1111-1111-1111-111111111111",
+    "period": {
+      "start": "2027-01-16",
+      "end": "2027-01-31",
+      "half": "Second"
+    },
+    "settings": {
+      "transportFrequency": "Biweekly",
+      "transportCapBase": "SalaryOnly",
+      "overtimeBase": "SalaryOnly",
+      "exonerated": true
+    },
+    "contractStart": "2025-01-01",
+    "salaries": [
+      {
+        "effectiveDate": "2025-01-01",
+        "monthlyAmount": 1750905,
+        "teleworker": false
+      },
+      {
+        "effectiveDate": "2027-01-01",
+        "monthlyAmount": 1900000,
+        "teleworker": false
+      }
+    ],
+    "workplace": {
+      "name": "Sede principal",
+      "riskClass": "I",
+      "highRiskPension": false
+    },
+    "prior": {
+      "workedDays": 0,
+      "salaryRaw": 0,
+      "salary": 0,
+      "transportRaw": 0,
+      "transport": 0,
+      "overtime": 0,
+      "salaryIncome": 0,
+      "nonSalaryIncome": 0,
+      "healthEmployee": 0,
+      "pensionEmployee": 0,
+      "solidarityFund": 0,
+      "healthEmployer": 0,
+      "pensionEmployer": 114000,
+      "arl": 0,
+      "compensationFund": 35100,
+      "icbf": 0,
+      "sena": 0
+    },
+    "vacations": [
+      {
+        "vacationId": "01900000-0000-7000-8000-000000000a06",
+        "origin": "Qep",
+        "startDate": "2026-12-28",
+        "endDate": "2027-01-31",
+        "businessDays": 24,
+        "paidHere": false,
+        "salaryAtStart": 1750905,
+        "salaryRecordDate": "2025-01-01",
+        "previousMonthIbc": 1750905,
+        "previousIbcSource": "Qep",
+        "monthVacationPay": null,
+        "monthAdvance": {
+          "health": 70036,
+          "pension": 70036,
+          "solidarityFund": 0
+        }
+      }
+    ]
+  },
+  "expected": {
+    "workedDays": 0,
+    "vacationDays": 15,
+    "finalSettlementPending": false,
+    "negativeNet": false,
+    "lines": [
+      {
+        "code": "salary",
+        "amount": 0
+      },
+      {
+        "code": "transport_allowance",
+        "amount": 0
+      },
+      {
+        "code": "ibc",
+        "amount": 1900000
+      },
+      {
+        "code": "health_employee",
+        "amount": 0
+      },
+      {
+        "code": "pension_employee",
+        "amount": 0
+      },
+      {
+        "code": "health_employer",
+        "amount": 0
+      },
+      {
+        "code": "pension_employer",
+        "amount": 114000
+      },
+      {
+        "code": "arl",
+        "amount": 0
+      },
+      {
+        "code": "compensation_fund",
+        "amount": 35000
+      },
+      {
+        "code": "icbf",
+        "amount": 0
+      },
+      {
+        "code": "sena",
+        "amount": 0
+      },
+      {
+        "code": "severance",
+        "amount": 72925
+      },
+      {
+        "code": "severance_interest",
+        "amount": 8755
+      },
+      {
+        "code": "premium",
+        "amount": 72925
+      },
+      {
+        "code": "vacation",
+        "amount": 36506
+      }
+    ],
+    "net": 0,
+    "employerCost": 340111
+  },
+  "notes": [
+    "SMMLV 2027 sintético = 1 900 000. Vacaciones 2026-12-28..2027-01-31 pagadas en diciembre: IBC anterior 1 750 905, anticipo guardado para enero 70 036 de salud y 70 036 de pensión",
+    "prior = primera de enero, entera de vacaciones: 0 días trabajados; su IBC fue max(1 750 905 × 15 ÷ 30 = 875 452,5; 1 900 000 × 15 ÷ 30 = 950 000) = 950 000; su salud y pensión salieron en 0 (tope por neto, sin devengo); pensión empleador techo100(950 000 × 0,12) = 114 000; caja techo100(875 452,5 × 0,04) = 35 100; ARL 0",
+    "días de nómina de las vacaciones: 2026-12-28..31 = 3; 2027-01-01..15 = 15; 2027-01-16..31 = 15; de esta quincena 15; del mes 30; días trabajados = 0",
+    "salary = 0 (último registro 1 900 000 desde 2027-01-01: SalaryInForce); transport = 0",
+    "IBC: base trabajada 0 + parte de vacaciones 1 750 905 × 30 ÷ 30 = 1 750 905; piso 1 900 000 × (0 + 30) ÷ 30 = 1 900 000 → ibc = 1 900 000",
+    "health_employee: due = round(1 900 000 × 0,04) = 76 000 − 0 (a) − min(70 036, 76 000) (b) = 5 964 > 0; no hay devengo → 0 con la nota de 5964 pesos (decisión del owner); pension_employee igual",
+    "pension_employer = techo100(1 900 000 × 0,12 = 228 000) − 114 000 = 114 000; arl sobre base 0 = 0",
+    "compensation_fund = techo100(1 750 905 × 0,04 = 70 036,2) − 35 100 = 70 100 − 35 100 = 35 000",
+    "provisiones: valor de los 15 días = 1 750 905 × 15 ÷ 30 = 875 452,5; cesantías = prima = round(72 925,19) = 72 925; intereses = round(8 754,525) = 8 755; vacaciones = round(36 506,37) = 36 506",
+    "net = 0; employerCost = 114 000 + 35 000 + 72 925 + 8 755 + 72 925 + 36 506 = 340 111"
+  ]
+}

@@ -2,10 +2,14 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Modules.Customers.Application;
 using Modules.Quotations.Application;
 using Modules.Siigo.Application;
+using Modules.Siigo.Application.Invoicing;
 using Modules.Siigo.Domain;
+using Modules.Siigo.Infrastructure.Batches;
+using Modules.Tenancy.Application;
 using static Modules.Siigo.IntegrationTests.SiigoApiHarness;
 
 namespace Modules.Siigo.IntegrationTests;
@@ -104,7 +108,8 @@ internal static class SiigoInvoicingHarness
         bool freightSeparate = false,
         bool freight = false,
         bool linkProduct = true,
-        bool markPaid = true)
+        bool markPaid = true,
+        bool advisorLinked = true)
     {
         var connectionString = database.GetConnectionString();
         var siigo = new FakeSiigoApi();
@@ -144,7 +149,7 @@ internal static class SiigoInvoicingHarness
         }
 
         siigo.AddProduct("p-100", SiigoCode, "Aceite esencial Siigo");
-        await ConfigureSettingsAsync(factory, tenant, connectionId, company, variantId, sendToDian, freightSeparate, linkProduct);
+        await ConfigureSettingsAsync(factory, tenant, connectionId, company, variantId, sendToDian, freightSeparate, linkProduct, advisorLinked);
 
         // Lo feliz de Siigo: el cliente no existe y la factura se crea.
         siigo.OnRequest("/v1/customers", call => call.Method == HttpMethod.Get
@@ -172,14 +177,15 @@ internal static class SiigoInvoicingHarness
         Guid variantId,
         bool sendToDian,
         bool freightSeparate,
-        bool linkProduct)
+        bool linkProduct,
+        bool linkAdvisor)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var repository = scope.ServiceProvider.GetRequiredService<ISiigoSettingsRepository>();
         var settings = await repository.FindOrCreateAsync(tenant.TenantId, connectionId, withVariantLinks: true, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException("The settings of the connection were not created.");
         settings.AssignCompany(company.Id);
-        settings.UpdateDocument(new SiigoDocumentSettings("24446", "629", "11", "3", sendToDian, false, freightSeparate, "FLETE"));
+        settings.UpdateDocument(new SiigoDocumentSettings("24446", "11", "3", sendToDian, false, freightSeparate, "FLETE"));
         settings.ReplaceTaxLinks([new SiigoTaxLink(19, "13156")]);
         settings.UpdatePayments(new SiigoPaymentSettings(
             [new SiigoPaymentLink(BankAccountKey.Normalize(company.BankName, company.AccountNumber)!, "5101")],
@@ -187,6 +193,15 @@ internal static class SiigoInvoicingHarness
             CreditDays: 30,
             CashOnDeliveryPaymentTypeId: "5103",
             DefaultPaymentTypeId: "5101"));
+        // El vendedor es el usuario de Siigo vinculado al asesor del pedido, que es el owner que lo creó (spec 2026-11-20).
+        if (linkAdvisor)
+        {
+            var owner = await scope.ServiceProvider.GetRequiredService<IMembershipDirectory>()
+                .FindActiveMembershipIdAsync(tenant.OwnerUserId, tenant.TenantId, TestContext.Current.CancellationToken)
+                ?? throw new InvalidOperationException("The owner has no active membership.");
+            settings.ReplaceSellerLinks([new SiigoSellerLink(owner, "629", "ANA GOMEZ")]);
+        }
+
         if (linkProduct)
         {
             settings.LinkVariant(
@@ -206,6 +221,52 @@ internal static class SiigoInvoicingHarness
     public static async Task<JsonElement> GetOrderAsync(InvoicingWorld world) =>
         (await ReadAsync(await world.Client.GetAsync($"/api/v1/tenants/{world.TenantId}/orders/{world.OrderId}", TestContext.Current.CancellationToken)))
         .GetProperty("order");
+
+    /// <summary>
+    /// Factura el pedido del mundo como lo hace la pantalla (spec 2026-11-24, etapa contract): una tanda de ese pedido y una pasada del
+    /// worker. Devuelve el <c>GET …/siigo-invoice</c> del pedido, o el ítem de la tanda cuando salió <c>Skipped</c> o <c>Failed</c> (ahí
+    /// puede no haber fila). <paramref name="payments"/> son las formas de pago elegidas.
+    /// </summary>
+    public static async Task<JsonElement> IssueThroughBatchAsync(InvoicingWorld world, object? payments = null)
+    {
+        var item = await RunBatchOfOneAsync(world, payments);
+        return item.GetProperty("status").GetString() is "Skipped" or "Failed"
+            ? item
+            : await ReadAsync(await world.Client.GetAsync(world.BaseRoute, TestContext.Current.CancellationToken));
+    }
+
+    /// <summary><see cref="IssueThroughBatchAsync"/> para el pedido que tiene que quedar facturado o por confirmar: las filas de sus
+    /// facturas. Falla si la tanda lo saltó o lo dio por fallido.</summary>
+    public static async Task<JsonElement> IssueRowsThroughBatchAsync(InvoicingWorld world)
+    {
+        var result = await IssueThroughBatchAsync(world);
+        Assert.True(result.ValueKind == JsonValueKind.Array, result.ToString());
+        return result;
+    }
+
+    /// <summary>Una tanda del pedido del mundo y una pasada del worker de ese host: el ítem tal como la pantalla de la tanda lo lee.</summary>
+    public static async Task<JsonElement> RunBatchOfOneAsync(InvoicingWorld world, object? payments = null)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var route = $"/api/v1/tenants/{world.TenantId}/siigo/invoice-batches";
+        var created = await ReadAsync(await world.Client.PostAsJsonAsync(route, new { orderIds = new[] { world.OrderId }, payments }, ct));
+        await world.Factory.Services.GetServices<IHostedService>().OfType<SiigoInvoiceBatchWorker>().Single().DrainAsync(ct);
+        var batch = await ReadAsync(await world.Client.GetAsync($"{route}/{created.GetProperty("id").GetGuid()}", ct));
+        // Una excepción que el ejecutor no traduce la traga el worker y deja la tanda abierta: sin esto la prueba seguiría como si nada.
+        Assert.Equal("Finished", batch.GetProperty("status").GetString());
+        return batch.GetProperty("items")[0];
+    }
+
+    /// <summary>
+    /// La emisión que el worker corre por cada pedido, sin crear una tanda. Para dejar una factura antes de preparar un ítem cortado, y
+    /// para competir dos emisiones del mismo pedido (dos tandas abiertas de un pedido no pueden existir).
+    /// </summary>
+    public static async Task<SiigoBatchItemOutcome> IssueWithoutBatchAsync(InvoicingWorld world)
+    {
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<ISiigoBatchItemInvoker>()
+            .InvokeAsync(world.TenantId, world.Tenant.OwnerUserId, world.OrderId, null, TestContext.Current.CancellationToken);
+    }
 
     /// <summary>El cuerpo de cada <c>POST /v1/invoices</c> que recibió el doble, en orden.</summary>
     public static IReadOnlyList<FakeSiigoCall> InvoiceCalls(FakeSiigoApi siigo) =>

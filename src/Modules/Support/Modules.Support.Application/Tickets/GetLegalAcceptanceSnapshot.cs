@@ -17,9 +17,7 @@ public sealed record GetLegalAcceptanceSnapshotQuery(Guid TenantId, Guid TicketI
 /// console unsanitized. The stored evidence is not touched.</para>
 /// </summary>
 public sealed class GetLegalAcceptanceSnapshotHandler(
-    IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    ISupportTicketRepository tickets,
+    SupportTicketScope scope,
     ISupportLegalAcceptanceRepository acceptances,
     ISupportHtmlSanitizer sanitizer)
     : IQueryHandler<GetLegalAcceptanceSnapshotQuery, SupportLegalAcceptanceSnapshotDto>
@@ -27,10 +25,10 @@ public sealed class GetLegalAcceptanceSnapshotHandler(
     public async Task<SupportLegalAcceptanceSnapshotDto> HandleAsync(
         GetLegalAcceptanceSnapshotQuery query, CancellationToken cancellationToken)
     {
-        await SupportAuthorization.EnsureCanViewAsync(executionContext, tenantModules, query.TenantId, cancellationToken);
+        await scope.EnsureAccessAsync(query.TenantId, cancellationToken);
         var kind = SupportLegalDocuments.ParseKind(query.Kind);
         var ticketId = new SupportTicketId(query.TicketId);
-        _ = await tickets.FindAsync(query.TenantId, ticketId, cancellationToken) ?? throw SupportNotFound.Ticket(query.TicketId);
+        _ = await scope.ViewAsync(query.TenantId, query.TicketId, cancellationToken);
 
         var acceptance = await acceptances.FindAsync(query.TenantId, ticketId, kind, cancellationToken)
             ?? throw new ResourceNotFoundException(

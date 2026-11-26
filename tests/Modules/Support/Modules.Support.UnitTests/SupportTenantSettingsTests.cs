@@ -153,9 +153,10 @@ public sealed class SupportTenantSettingsTests
     {
         var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
 
-        var changes = settings.Update(6, "  Puedes acudir a la SIC.  ", surveyEnabled: true, autoCloseBusinessDays: 9, Now.AddHours(1));
+        var changes = settings.Update(
+            6, "  Puedes acudir a la SIC.  ", surveyEnabled: true, autoCloseBusinessDays: 9, settings.UnassignedAlert, null, Now.AddHours(1));
 
-        Assert.Equal(new SupportTenantSettingsChanges(true, true, true, true), changes);
+        Assert.Equal(new SupportTenantSettingsChanges(true, true, true, true, false, false), changes);
         Assert.Equal(
             (6, "Puedes acudir a la SIC.", true, 9, 2L, Now.AddHours(1)),
             (settings.DueSoonBusinessDays, settings.FormalNextStep, settings.SurveyEnabled, settings.AutoCloseBusinessDays,
@@ -166,9 +167,9 @@ public sealed class SupportTenantSettingsTests
     public void AnUpdateWithTheSameValuesIsANoOp()
     {
         var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
-        settings.Update(6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 9, Now.AddHours(1));
+        settings.Update(6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 9, settings.UnassignedAlert, null, Now.AddHours(1));
 
-        var changes = settings.Update(6, " Texto ", surveyEnabled: true, autoCloseBusinessDays: 9, Now.AddHours(2));
+        var changes = settings.Update(6, " Texto ", surveyEnabled: true, autoCloseBusinessDays: 9, settings.UnassignedAlert, null, Now.AddHours(2));
 
         Assert.False(changes.Any);
         Assert.Equal((2L, Now.AddHours(1)), (settings.Version, settings.UpdatedAt));
@@ -181,12 +182,120 @@ public sealed class SupportTenantSettingsTests
         var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
 
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => settings.Update(6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 31, Now.AddHours(1)));
+            () => settings.Update(6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 31, settings.UnassignedAlert, null, Now.AddHours(1)));
 
         Assert.Equal(
             (3, (string?)null, false, 5, 1L),
             (settings.DueSoonBusinessDays, settings.FormalNextStep, settings.SurveyEnabled, settings.AutoCloseBusinessDays,
                 settings.Version));
+    }
+
+    private static readonly Guid Ana = Guid.Parse("0193a000-0000-7000-8000-0000000000a1");
+    private static readonly Guid Bruno = Guid.Parse("0193a000-0000-7000-8000-0000000000a2");
+
+    private static SupportUnassignedAlertSettings Alert(
+        bool enabled = true, int hours = 4, Guid? schedule = null, params Guid[] recipients) =>
+        new(enabled, hours, schedule, recipients.Length == 0 && enabled ? [Ana] : recipients);
+
+    private static SupportTenantSettings Apply(SupportTenantSettings settings, SupportUnassignedAlertSettings alert, DateTimeOffset at)
+    {
+        settings.Update(
+            settings.DueSoonBusinessDays, settings.FormalNextStep, settings.SurveyEnabled, settings.AutoCloseBusinessDays, alert, settings.TaskNoticeConnectionId, at);
+        return settings;
+    }
+
+    // Spec 2026-11-22 §7: off by default, four hours, the default schedule, nobody chosen.
+    [Fact]
+    public void ANewRowHasTheUnassignedAlertOff()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        Assert.False(settings.UnassignedAlert.Enabled);
+        Assert.Equal(4, settings.UnassignedAlert.ThresholdHours);
+        Assert.Null(settings.UnassignedAlert.ScheduleId);
+        Assert.Empty(settings.UnassignedAlert.RecipientIds);
+        Assert.Null(settings.UnassignedAlertEnabledAt);
+        Assert.Equal((1, 72, 20), (
+            SupportUnassignedAlertSettings.MinThresholdHours,
+            SupportUnassignedAlertSettings.MaxThresholdHours,
+            SupportUnassignedAlertSettings.MaxRecipients));
+    }
+
+    [Fact]
+    public void UpdateBumpsTheVersionOnceWithTheAlert()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        var schedule = Guid.CreateVersion7();
+
+        var changes = settings.Update(
+            6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 9, Alert(true, 8, schedule, Ana, Bruno), null, Now.AddHours(1));
+
+        Assert.True(changes.UnassignedAlert);
+        Assert.Equal(2L, settings.Version);
+        Assert.Equal(
+            (true, 8, (Guid?)schedule), (settings.UnassignedAlertEnabled, settings.UnassignedAlertHours, settings.UnassignedAlertScheduleId));
+        Assert.Equal([Ana, Bruno], settings.UnassignedAlertRecipientIds);
+    }
+
+    [Fact]
+    public void ARepeatedAlertChangesNothingAndTheOrderOfRecipientsCounts()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        Apply(settings, Alert(true, 4, null, Ana, Bruno), Now.AddHours(1));
+
+        var same = settings.Update(3, null, false, 5, Alert(true, 4, null, Ana, Bruno), null, Now.AddHours(2));
+        var reordered = settings.Update(3, null, false, 5, Alert(true, 4, null, Bruno, Ana), null, Now.AddHours(3));
+
+        Assert.False(same.Any);
+        Assert.True(reordered.UnassignedAlert);
+        Assert.Equal(3L, settings.Version);
+    }
+
+    [Fact]
+    public void EnablingSetsEnabledAtAndReEnablingMovesIt()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        Apply(settings, Alert(true, 4, null, Ana), Now.AddHours(1));
+        Assert.Equal(Now.AddHours(1), settings.UnassignedAlertEnabledAt);
+
+        // Another threshold while it stays on does not move the floor of the clock.
+        Apply(settings, Alert(true, 6, null, Ana), Now.AddHours(2));
+        Assert.Equal(Now.AddHours(1), settings.UnassignedAlertEnabledAt);
+
+        // Off keeps it; on again moves it, so a ticket that waited while it was off does not alert at once.
+        Apply(settings, Alert(false, 6, null, Ana), Now.AddHours(3));
+        Assert.Equal(Now.AddHours(1), settings.UnassignedAlertEnabledAt);
+        Apply(settings, Alert(true, 6, null, Ana), Now.AddHours(4));
+        Assert.Equal(Now.AddHours(4), settings.UnassignedAlertEnabledAt);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(73)]
+    [InlineData(-1)]
+    public void ThresholdOutOfRangeIsRejected(int hours)
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => Apply(settings, Alert(true, hours, null, Ana), Now.AddHours(1)));
+
+        Assert.Equal(1L, settings.Version);
+        Assert.False(settings.UnassignedAlertEnabled);
+    }
+
+    [Fact]
+    public void TheRecipientsMustBeFewDistinctAndNotEmptyWhenEnabled()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        var twentyOne = Enumerable.Range(0, 21).Select(_ => Guid.CreateVersion7()).ToArray();
+
+        Assert.Throws<ArgumentException>(() => Apply(settings, Alert(true, 4, null, twentyOne), Now.AddHours(1)));
+        Assert.Throws<ArgumentException>(() => Apply(settings, Alert(true, 4, null, Ana, Ana), Now.AddHours(1)));
+        Assert.Throws<ArgumentException>(() => Apply(settings, new SupportUnassignedAlertSettings(true, 4, null, []), Now.AddHours(1)));
+        // Off with nobody is the stored default and is fine.
+        Apply(settings, new SupportUnassignedAlertSettings(false, 4, null, []), Now.AddHours(1));
+        Assert.Equal(1L, settings.Version);
     }
 
     // Fase 4b, revisión del bloque C (2026-11-16): el frontend publicado manda sólo el umbral. La encuesta y el cierre automático son
@@ -216,5 +325,59 @@ public sealed class SupportTenantSettingsTests
             TenantId, new Modules.Support.Application.UpdateSupportSettingsRequest(3), 1);
 
         Assert.True(command.SurveyEnabled is null && command.AutoCloseBusinessDays is null && command.FormalNextStep is null);
+    }
+
+    // Task-notices spec 2026-11-22 §5.4: the WhatsApp connection of the task notices is one more group of the same PUT.
+    [Fact]
+    public void ChangingTheTaskNoticeConnectionBumpsTheVersionOnce()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        var connection = Guid.CreateVersion7();
+
+        var changes = settings.Update(
+            6, "Texto", surveyEnabled: true, autoCloseBusinessDays: 9, settings.UnassignedAlert, connection, Now.AddHours(1));
+
+        Assert.Equal(new SupportTenantSettingsChanges(true, true, true, true, false, true), changes);
+        Assert.Equal((connection, 2L), (settings.TaskNoticeConnectionId, settings.Version));
+    }
+
+    [Fact]
+    public void TheSameConnectionChangesNothing()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        var connection = Guid.CreateVersion7();
+        settings.Update(3, null, false, 5, settings.UnassignedAlert, connection, Now.AddHours(1));
+
+        var changes = settings.Update(3, null, false, 5, settings.UnassignedAlert, connection, Now.AddHours(2));
+
+        Assert.False(changes.Any);
+        Assert.Equal((2L, Now.AddHours(1)), (settings.Version, settings.UpdatedAt));
+    }
+
+    [Fact]
+    public void ClearingTheConnectionIsAChange()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        settings.Update(3, null, false, 5, settings.UnassignedAlert, Guid.CreateVersion7(), Now.AddHours(1));
+
+        var changes = settings.Update(3, null, false, 5, settings.UnassignedAlert, null, Now.AddHours(2));
+
+        Assert.True(changes.TaskNotice);
+        Assert.Null(settings.TaskNoticeConnectionId);
+        Assert.Equal(3L, settings.Version);
+    }
+
+    [Fact]
+    public void TheShortcutsKeepTheConnection()
+    {
+        var settings = SupportTenantSettings.CreateDefault(TenantId, Now);
+        var connection = Guid.CreateVersion7();
+        settings.Update(3, null, false, 5, settings.UnassignedAlert, connection, Now.AddHours(1));
+
+        settings.ChangeDueSoon(7, Now.AddHours(2));
+        settings.ChangeSurvey(true, 8, Now.AddHours(3));
+        settings.ChangeFormalNextStep("Texto", Now.AddHours(4));
+
+        Assert.Equal(connection, settings.TaskNoticeConnectionId);
     }
 }

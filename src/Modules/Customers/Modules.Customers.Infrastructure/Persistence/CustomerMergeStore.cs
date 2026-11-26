@@ -105,13 +105,25 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
         var ids = ToCustomerIds(customerIds);
         if (ids.Length == 0)
         {
-            return new CustomerMergeOwnedCounts(0, 0);
+            return new CustomerMergeOwnedCounts(0, 0, 0);
         }
 
         var notes = await dbContext.CustomerNotes
             .CountAsync(note => note.TenantId == tenantId && ids.Contains(note.CustomerId), cancellationToken);
         var addresses = await OwnedAddresses(tenantId, ids).CountAsync(cancellationToken);
-        return new CustomerMergeOwnedCounts(notes, addresses);
+        var billingProfiles = await OwnedBillingProfiles(tenantId, ids).CountAsync(cancellationToken);
+        return new CustomerMergeOwnedCounts(notes, addresses, billingProfiles);
+    }
+
+    public Task<Customer> ReadSurvivorAsync(Guid tenantId, Guid survivorId, CancellationToken cancellationToken)
+    {
+        var id = new CustomerId(survivorId);
+        return dbContext.Customers
+            .AsNoTracking()
+            .Include(customer => customer.Addresses)
+            .Include(customer => customer.BillingProfiles)
+            .AsSingleQuery()
+            .SingleAsync(customer => customer.TenantId == tenantId && customer.Id == id, cancellationToken);
     }
 
     public async Task MoveOwnedAsync(
@@ -142,12 +154,49 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
                     .SetProperty(address => address.CustomerId, survivor)
                     .SetProperty(address => address.IsPrincipal, false),
                 cancellationToken);
+        await MoveBillingProfilesAsync(tenantId, survivor, ids, cancellationToken);
         // Spec 2026-10-26 D-7: el historial de consentimiento es del cliente y pasa entero al que queda. Sólo cambia customer_id
         // (es prueba legal: nada se recalcula ni se renumera, y el vigente sigue saliendo de (occurred_at, sequence)). El
         // tenant filtra: las filas de otro tenant no se tocan aunque su id venga en la lista.
         _ = await dbContext.DataConsents
             .Where(consent => consent.TenantId == tenantId && ids.Contains(consent.CustomerId))
             .ExecuteUpdateAsync(setters => setters.SetProperty(consent => consent.CustomerId, survivor), cancellationToken);
+    }
+
+    // Owner, 2026-11-25: se mueven todos, sin deduplicar y sin tope, como no principales. A diferencia de la libreta de
+    // direcciones, el que queda puede no tener ningún perfil: entonces el movido más antiguo (created_at, id) queda
+    // principal, porque una libreta con perfiles siempre tiene uno.
+    private async Task MoveBillingProfilesAsync(
+        Guid tenantId, CustomerId survivor, CustomerId[] ids, CancellationToken cancellationToken)
+    {
+        // Antes de mover: después ya no se distingue lo propio de lo recibido.
+        var survivorHadProfiles = await OwnedBillingProfiles(tenantId, [survivor]).AnyAsync(cancellationToken);
+        var oldest = await OwnedBillingProfiles(tenantId, ids)
+            .OrderBy(profile => profile.CreatedAt)
+            .ThenBy(profile => profile.Id)
+            .Select(profile => profile.Id)
+            .Take(1)
+            .ToListAsync(cancellationToken);
+        if (oldest.Count == 0)
+        {
+            return;
+        }
+
+        _ = await OwnedBillingProfiles(tenantId, ids)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(profile => profile.CustomerId, survivor)
+                    .SetProperty(profile => profile.IsPrincipal, false),
+                cancellationToken);
+        if (survivorHadProfiles)
+        {
+            return;
+        }
+
+        var principal = oldest[0];
+        _ = await dbContext.CustomerBillingProfiles
+            .Where(profile => profile.Id == principal)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(profile => profile.IsPrincipal, true), cancellationToken);
     }
 
     public async Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
@@ -185,6 +234,12 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
         dbContext.CustomerAddresses.Where(address =>
             ids.Contains(address.CustomerId) &&
             dbContext.Customers.Any(customer => customer.TenantId == tenantId && customer.Id == address.CustomerId));
+
+    // Igual que OwnedAddresses: la tabla no tiene tenant_id.
+    private IQueryable<CustomerBillingProfile> OwnedBillingProfiles(Guid tenantId, CustomerId[] ids) =>
+        dbContext.CustomerBillingProfiles.Where(profile =>
+            ids.Contains(profile.CustomerId) &&
+            dbContext.Customers.Any(customer => customer.TenantId == tenantId && customer.Id == profile.CustomerId));
 
     private static Guid[] Distinct(IReadOnlyCollection<Guid> customerIds)
     {

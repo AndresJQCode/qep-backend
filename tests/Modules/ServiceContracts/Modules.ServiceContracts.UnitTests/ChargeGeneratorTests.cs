@@ -23,7 +23,7 @@ public sealed class ChargeGeneratorTests
 
         var charge = Assert.Single(charges);
         Assert.Equal(new DateOnly(2026, 6, 1), charge.DueDate);
-        Assert.Equal(new DateOnly(2026, 6, 1), service.LastGeneratedDueDate);
+        Assert.Equal(new DateOnly(2026, 6, 1), service.LastGeneratedPeriodDate);
         Assert.Empty(ChargeGenerator.Generate(service, Today, Now));
     }
 
@@ -61,7 +61,7 @@ public sealed class ChargeGeneratorTests
     public void NothingIsGeneratedForAPausedOrCancelledService()
     {
         var paused = NewService("2026-01-10");
-        paused.Pause(Now);
+        paused.Pause(Today, Now);
         var cancelled = NewService("2026-01-10");
         cancelled.Cancel(Now);
 
@@ -80,7 +80,7 @@ public sealed class ChargeGeneratorTests
         Assert.Equal("USD", charge.Currency);
     }
 
-    // Task 2 diferido: NextDueDateToGenerate ignora ReactivatedOn mientras LastGeneratedDueDate sea null. Es inalcanzable porque
+    // Task 2 diferido: NextPeriodToGenerate ignora ReactivatedOn mientras LastGeneratedPeriodDate sea null. Es inalcanzable porque
     // el alta genera de inmediato; esta prueba fija que Generate deja siempre una marca, caiga donde caiga el primer vencimiento.
     [Theory]
     [InlineData(-400)]
@@ -96,7 +96,7 @@ public sealed class ChargeGeneratorTests
         var charges = ChargeGenerator.Generate(service, Today, Now);
 
         Assert.NotEmpty(charges);
-        Assert.NotNull(service.LastGeneratedDueDate);
-        Assert.Equal(charges[^1].DueDate, service.LastGeneratedDueDate);
+        Assert.NotNull(service.LastGeneratedPeriodDate);
+        Assert.Equal(charges[^1].DueDate, service.LastGeneratedPeriodDate);
     }
 }

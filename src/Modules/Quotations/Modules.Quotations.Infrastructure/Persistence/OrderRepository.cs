@@ -76,6 +76,23 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .ToDictionaryAsync(order => order.Id, order => order.OrderNumber, cancellationToken);
     }
 
+    public async Task<IReadOnlyDictionary<OrderId, OrderNumberAndClient>> FindNumbersAndClientsAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken)
+    {
+        if (orderIds.Count == 0)
+        {
+            return new Dictionary<OrderId, OrderNumberAndClient>();
+        }
+
+        var ids = orderIds.ToArray();
+        return await dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId && ids.Contains(order.Id))
+            .Select(order => new { order.Id, order.OrderNumber, order.ClientId })
+            .ToDictionaryAsync(
+                order => order.Id, order => new OrderNumberAndClient(order.OrderNumber, order.ClientId), cancellationToken);
+    }
+
     // La regla de Order.RequiresShipping en SQL (spec 2026-11-18 §5), como la de cotizaciones: la búsqueda del listado no
     // trae las líneas, y cargarlas para esto sería toda la página de líneas para un booleano.
     public async Task<IReadOnlySet<Guid>> FindIdsRequiringShippingAsync(

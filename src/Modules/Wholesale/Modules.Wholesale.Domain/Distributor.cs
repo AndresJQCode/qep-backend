@@ -1,3 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Wholesale.Domain;
 
 /// <summary>
@@ -12,7 +16,7 @@ public sealed class Distributor
     /// <summary>La misma vigencia que la invitación de un miembro (<c>Membership.DefaultInvitationTimeToLive</c>).</summary>
     public static readonly TimeSpan InvitationTimeToLive = TimeSpan.FromHours(72);
 
-    private const int TokenHashLength = 64;
+    private const int Sha256HexLength = 64;
 
     // EF Core materializa por acá; Invite es el único punto de entrada de código.
     private Distributor()
@@ -44,7 +48,8 @@ public sealed class Distributor
 
     public string ContactName { get; private set; }
 
-    /// <summary>Recortado y en minúsculas: el correo al que se ata la invitación.</summary>
+    /// <summary>Recortado y en minúsculas. Nace con el que escribe el mayorista; al aceptar queda el de la cuenta que acepta
+    /// (<see cref="ReplaceEmail"/>).</summary>
     public string Email { get; private set; }
 
     public PriceListId PriceListId { get; private set; }
@@ -72,6 +77,13 @@ public sealed class Distributor
 
     public DateTimeOffset? ActivatedAt { get; private set; }
 
+    /// <summary>
+    /// Cuándo empezó la primera aceptación que llegó a escribir en otro módulo (<see cref="StartAcceptance"/>). No consume la
+    /// invitación ni cambia el estado, y no se borra: lo que ese intento haya creado sigue existiendo. Mientras esté puesta no
+    /// se cambia el documento. <c>null</c> también en las aceptaciones a medias anteriores a la columna.
+    /// </summary>
+    public DateTimeOffset? AcceptanceStartedAt { get; private set; }
+
     public long Version { get; private set; }
 
     /// <summary>
@@ -83,10 +95,33 @@ public sealed class Distributor
     /// <summary>El número de WhatsApp del mayorista que manda el aviso; sólo existe junto a <see cref="Phone"/>.</summary>
     public Guid? WhatsAppConnectionId { get; private set; }
 
+    /// <summary>La ciudad de Geography del distribuidor colombiano; con ella nace su empresa al aceptar. <c>null</c> en
+    /// invitaciones de antes de la migración o de otro país.</summary>
+    public Guid? CityId { get; private set; }
+
+    /// <summary>La ciudad escrita a mano cuando el país no es Colombia.</summary>
+    public string? CityName { get; private set; }
+
+    public string? Address { get; private set; }
+
+    /// <summary>
+    /// La ciudad que pide el país para crear su empresa: <see cref="CityId"/> en «CO», <see cref="CityName"/> afuera. Sin ella,
+    /// aceptar no crea la empresa (invitaciones anteriores a la migración).
+    /// </summary>
+    public bool HasCompanyCity => Country == ColombiaCode ? CityId is not null : CityName is not null;
+
     public DistributorInvitation Invitation { get; private set; }
 
     /// <summary>E.164: «+» y hasta 15 dígitos.</summary>
     public const int PhoneMaxLength = 16;
+
+    /// <summary>Igual a <c>Company.CityNameMaxLength</c> (Wholesale no referencia Companies).</summary>
+    public const int CityNameMaxLength = 120;
+
+    /// <summary>Igual a <c>CompanyContactInfo.AddressMaxLength</c> (Wholesale no referencia Companies).</summary>
+    public const int AddressMaxLength = 200;
+
+    private const string ColombiaCode = "CO";
 
     public static Distributor Invite(
         Guid tenantId,
@@ -104,7 +139,11 @@ public sealed class Distributor
         Guid reservedTenantId,
         string? phone,
         Guid? whatsAppConnectionId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Guid? cityId = null,
+        string? cityName = null,
+        string? address = null,
+        string? emailProofHash = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
         ArgumentException.ThrowIfNullOrWhiteSpace(businessName);
@@ -113,6 +152,7 @@ public sealed class Distributor
         ArgumentException.ThrowIfNullOrWhiteSpace(identificationNumber);
         ArgumentException.ThrowIfNullOrWhiteSpace(contactName);
         EnsureTokenHash(tokenHash);
+        EnsureEmailProofHash(emailProofHash);
         if (reservedTenantId == Guid.Empty)
         {
             throw new ArgumentException("The reserved tenant id cannot be empty.", nameof(reservedTenantId));
@@ -140,7 +180,11 @@ public sealed class Distributor
             Version = 1,
             Phone = noticePhone,
             WhatsAppConnectionId = noticeConnection,
-            Invitation = DistributorInvitation.Issue(tokenHash, reservedTenantId, withNotice: noticePhone is not null, now),
+            CityId = cityId == Guid.Empty ? null : cityId,
+            CityName = NullIfBlank(cityName),
+            Address = NullIfBlank(address),
+            Invitation = DistributorInvitation.Issue(
+                tokenHash, emailProofHash, reservedTenantId, withNotice: noticePhone is not null, now),
         };
     }
 
@@ -184,6 +228,62 @@ public sealed class Distributor
         return true;
     }
 
+    /// <summary>
+    /// Decisión del owner 2026-11-24: los datos que el mayorista llenó al invitar (correo, razón social, país, documento,
+    /// contacto, ciudad y dirección) se editan sólo mientras está invitado; afuera no hace nada y devuelve <c>false</c>, como
+    /// <see cref="ChangeNoticeTarget"/>. Recibe los valores finales (Application ya mezcló lo que el cuerpo no trae con lo
+    /// guardado) y los recorta como <see cref="Invite"/>. Con otro país, el tipo de documento tiene que seguir siendo válido
+    /// para él. Cambiar el correo <b>no</b> reenvía la invitación ni rota el token: eso es «Reenviar». Sí anula la prueba de
+    /// buzón (spec 2026-11-24), sin rotar el token: la que llegó al correo anterior no puede crear la cuenta del nuevo. No
+    /// sube <see cref="Version"/>: lo hace <see cref="ChangeTerms"/>, que corre en el mismo <c>PUT</c>.
+    /// </summary>
+    public bool ChangeProfile(
+        string email,
+        string businessName,
+        string country,
+        string identificationType,
+        string identificationNumber,
+        string contactName,
+        Guid? cityId,
+        string? cityName,
+        string? address)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        ArgumentException.ThrowIfNullOrWhiteSpace(businessName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(country);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identificationType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identificationNumber);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contactName);
+        if (Status != DistributorStatus.Invited)
+        {
+            return false;
+        }
+
+        var normalizedCountry = country.Trim().ToUpperInvariant();
+        var normalizedType = identificationType.Trim().ToUpperInvariant();
+        if (!DocumentTypesByCountry.IsAllowed(normalizedType, normalizedCountry))
+        {
+            throw new ArgumentException("The identification type is not valid for the country.", nameof(identificationType));
+        }
+
+        var normalizedEmail = NormalizeEmail(email);
+        if (normalizedEmail != Email)
+        {
+            Invitation.ForgetEmailProof();
+        }
+
+        Email = normalizedEmail;
+        BusinessName = businessName.Trim();
+        Country = normalizedCountry;
+        IdentificationType = normalizedType;
+        IdentificationNumber = identificationNumber.Trim();
+        ContactName = contactName.Trim();
+        CityId = cityId == Guid.Empty ? null : cityId;
+        CityName = NullIfBlank(cityName);
+        Address = NullIfBlank(address);
+        return true;
+    }
+
     /// <summary>Lista, asesor y empresa facturadora; en cualquier estado.</summary>
     public void ChangeTerms(PriceListId priceListId, Guid advisorMemberId, Guid billingCompanyId, DateTimeOffset now)
     {
@@ -196,12 +296,14 @@ public sealed class Distributor
     /// <summary>Token y vigencia nuevos (72 h desde ahora); el link anterior deja de existir. Sólo mientras está invitada,
     /// aunque la invitación ya haya vencido: reenviar es como se renueva. Sube la generación del aviso: con teléfono queda
     /// pendiente si <paramref name="noticeQueued"/> (se escribió su evento) y si no, fallido con <c>whatsapp_unavailable</c>
-    /// (la conexión guardada ya no está lista); sin teléfono no hay aviso.</summary>
-    public void ResendInvitation(string tokenHash, bool noticeQueued, DateTimeOffset now)
+    /// (la conexión guardada ya no está lista); sin teléfono no hay aviso. La prueba de buzón queda en
+    /// <paramref name="emailProofHash"/>, la del correo que se reenvía; sin ella, anulada.</summary>
+    public void ResendInvitation(string tokenHash, bool noticeQueued, DateTimeOffset now, string? emailProofHash = null)
     {
         EnsureTokenHash(tokenHash);
+        EnsureEmailProofHash(emailProofHash);
         EnsureStatus(DistributorStatus.Invited);
-        Invitation.Rotate(tokenHash, now);
+        Invitation.Rotate(tokenHash, emailProofHash, now);
         if (Phone is null)
         {
             Invitation.SetNotice(null, null);
@@ -215,6 +317,19 @@ public sealed class Distributor
             Invitation.SetNotice(InvitationNoticeStatus.Failed, DistributorInvitation.WhatsAppUnavailableCode);
         }
 
+        Touch(now);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-19 §1, «Copiar»: token y vigencia nuevos (72 h desde ahora), como al reenviar, pero sin publicar nada ni
+    /// tocar el estado del aviso. Sólo mientras está invitada, aunque la invitación haya vencido. Anula la prueba de buzón: el
+    /// link copiado no llega por correo.
+    /// </summary>
+    public void RotateInvitationLink(string tokenHash, DateTimeOffset now)
+    {
+        EnsureTokenHash(tokenHash);
+        EnsureStatus(DistributorStatus.Invited);
+        Invitation.Rotate(tokenHash, emailProofHash: null, now);
         Touch(now);
     }
 
@@ -242,9 +357,63 @@ public sealed class Distributor
         _ => InvitationViewState.Accepted,
     };
 
+    /// <summary>
+    /// Spec 2026-11-19 §6: el correo de la cuenta que acepta reemplaza al que escribió el mayorista. Sólo mientras está invitada
+    /// (después es <c>wholesale.distributor.invalid_transition</c>) y normalizado como al invitar. Devuelve <c>true</c> y sube
+    /// <see cref="Version"/> sólo si cambió: el mismo correo con otras mayúsculas o espacios no escribe nada. Un cambio anula la
+    /// prueba de buzón (spec 2026-11-24): era del correo anterior.
+    /// </summary>
+    public bool ReplaceEmail(string email, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(email);
+        EnsureStatus(DistributorStatus.Invited);
+        var normalized = NormalizeEmail(email);
+        if (normalized == Email)
+        {
+            return false;
+        }
+
+        Invitation.ForgetEmailProof();
+        Email = normalized;
+        Touch(now);
+        return true;
+    }
+
     /// <summary>Si el correo de la sesión es el de la invitación, sin importar mayúsculas ni espacios alrededor.</summary>
     public bool InvitedEmailMatches(string? email) =>
         !string.IsNullOrWhiteSpace(email) && string.Equals(email.Trim(), Email, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Spec 2026-11-24: si quien acepta demuestra que controla el buzón invitado. Sólo mientras está invitada, con la prueba
+    /// vigente (<paramref name="emailProofHash"/> es su SHA-256, comparado en tiempo constante) y con el correo invitado,
+    /// normalizado como al invitar y comparado carácter a carácter: así lo distingue Identity, y comparar sin mayúsculas daría
+    /// por iguales direcciones que allá son cuentas distintas. El vencimiento lo revisa quien acepta, antes, en el mismo
+    /// request.
+    /// </summary>
+    public bool ProvesInvitedMailbox(string emailProofHash, string? email) =>
+        Status == DistributorStatus.Invited
+        && Invitation.EmailProofHash is { } stored
+        && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(stored), Encoding.ASCII.GetBytes(emailProofHash))
+        && !string.IsNullOrWhiteSpace(email)
+        && NormalizeEmail(email) == Email;
+
+    /// <summary>
+    /// Deja constancia de que una aceptación va a escribir en otros módulos; se confirma <b>antes</b> de esa primera escritura.
+    /// La primera vez sube <see cref="Version"/> —un <c>PUT</c> con la anterior pierde por concurrencia— y devuelve
+    /// <c>true</c>; después no cambia nada. Sólo mientras está invitada; el vencimiento lo revisa quien acepta.
+    /// </summary>
+    public bool StartAcceptance(DateTimeOffset now)
+    {
+        EnsureStatus(DistributorStatus.Invited);
+        if (AcceptanceStartedAt is not null)
+        {
+            return false;
+        }
+
+        AcceptanceStartedAt = now;
+        Touch(now);
+        return true;
+    }
 
     /// <summary>
     /// Consume la invitación y activa la relación. Sólo invitada y sin vencer: una relación ya aceptada (activa o bloqueada)
@@ -281,6 +450,8 @@ public sealed class Distributor
         _ => [],
     };
 
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 
     // Sin teléfono no hay conexión; con teléfono la conexión es obligatoria (la resuelve Application antes de llegar acá).
@@ -306,12 +477,26 @@ public sealed class Distributor
     /// </summary>
     private static void EnsureTokenHash(string tokenHash)
     {
-        if (tokenHash is not { Length: TokenHashLength } || !tokenHash.All(IsLowercaseHex))
+        if (!IsSha256Hex(tokenHash))
         {
             throw new ArgumentException("The token hash must be a lowercase hex SHA-256.", nameof(tokenHash));
         }
+    }
 
-        static bool IsLowercaseHex(char value) => value is (>= '0' and <= '9') or (>= 'a' and <= 'f');
+    // La misma red para la prueba de buzón, que puede no existir.
+    private static void EnsureEmailProofHash(string? emailProofHash)
+    {
+        if (emailProofHash is not null && !IsSha256Hex(emailProofHash))
+        {
+            throw new ArgumentException("The email proof hash must be a lowercase hex SHA-256.", nameof(emailProofHash));
+        }
+    }
+
+    private static bool IsSha256Hex(string? value)
+    {
+        return value is { Length: Sha256HexLength } && value.All(IsLowercaseHex);
+
+        static bool IsLowercaseHex(char character) => character is (>= '0' and <= '9') or (>= 'a' and <= 'f');
     }
 
     private void EnsureStatus(DistributorStatus expected)

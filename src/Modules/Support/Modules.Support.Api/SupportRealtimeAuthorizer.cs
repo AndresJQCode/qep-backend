@@ -8,42 +8,42 @@ using Modules.Tenancy.Domain;
 namespace Modules.Support.Api;
 
 /// <summary>
-/// Spec 2026-11-15 §5.1 (plan N4): who may listen to Support on the app hub. The same rule as reading a ticket over HTTP
-/// (<c>SupportPolicies.TicketView</c>: read or manage, with the <c>support</c> module on), but resolved from the database for the
-/// connection's member, because the hub has no request claims for a <c>Subscribe</c> sent long after the handshake. A ticket topic
-/// also needs the ticket to belong to the connection's tenant. Presence is writing, so it needs <c>support.ticket.manage</c>.
+/// Spec 2026-11-15 §5.1 (plan N4) and spec 2026-11-22 §5.6: who may listen to Support on the app hub. The same table as over HTTP
+/// (<see cref="SupportTicketAccessPolicy"/>), but resolved from the database for the connection's member, because the hub has no
+/// request claims for a <c>Subscribe</c> sent long after the handshake: a member who lost <c>support.task.use</c> loses the task even
+/// if she is still its creator or assignee. The inbox is for who reads or manages. <c>support:tasks:{memberId}</c> is only the
+/// connection's own member. A ticket topic needs the ticket to belong to the connection's tenant and at least the view level.
+/// Presence is writing, so it needs the act level: a manager, or a participant of a task.
 /// </summary>
 internal sealed class SupportRealtimeAuthorizer(
     ITenantModules tenantModules,
     ISupportMemberPermissions permissions,
     ISupportTicketRepository tickets) : IRealtimeTopicAuthorizer
 {
-    private static readonly string[] ViewPermissions = [SupportPermissions.Read, SupportPermissions.Manage];
+    private static readonly string[] ReadOnly = [SupportPermissions.Read];
 
-    private static readonly string[] ManagePermissions = [SupportPermissions.Manage];
+    private static readonly string[] ManageOnly = [SupportPermissions.Manage];
+
+    private static readonly string[] TaskUseOnly = [SupportPermissions.TaskUse];
 
     public string Prefix => SupportRealtimeTopics.Prefix;
 
     public string ForbiddenCode => SupportErrorCodes.RealtimeTopicForbidden;
 
     public Task<bool> CanSubscribeAsync(Guid tenantId, Guid memberId, string topic, CancellationToken cancellationToken) =>
-        AllowsAsync(tenantId, memberId, topic, ViewPermissions, inboxAllowed: true, cancellationToken);
+        AllowsAsync(tenantId, memberId, topic, presence: false, cancellationToken);
 
-    /// <summary>Plan N5: presence only makes sense on one ticket, never on the inbox.</summary>
+    /// <summary>Plan N5: presence only makes sense on one ticket, never on the inbox nor on a tasks topic.</summary>
     public Task<bool> CanSetPresenceAsync(Guid tenantId, Guid memberId, string topic, CancellationToken cancellationToken) =>
-        AllowsAsync(tenantId, memberId, topic, ManagePermissions, inboxAllowed: false, cancellationToken);
+        AllowsAsync(tenantId, memberId, topic, presence: true, cancellationToken);
 
     private async Task<bool> AllowsAsync(
-        Guid tenantId,
-        Guid memberId,
-        string topic,
-        IReadOnlyCollection<string> required,
-        bool inboxAllowed,
-        CancellationToken cancellationToken)
+        Guid tenantId, Guid memberId, string topic, bool presence, CancellationToken cancellationToken)
     {
-        Guid ticketId = Guid.Empty;
         var isInbox = string.Equals(topic, SupportRealtimeTopics.Inbox, StringComparison.Ordinal);
-        if (!(isInbox && inboxAllowed) && !SupportRealtimeTopics.TryParseTicket(topic, out ticketId))
+        var isTasks = SupportRealtimeTopics.TryParseTasks(topic, out var tasksOwner);
+        var isTicket = SupportRealtimeTopics.TryParseTicket(topic, out var ticketId);
+        if (presence ? !isTicket : !(isInbox || isTasks || isTicket))
         {
             return false;
         }
@@ -55,13 +55,30 @@ internal sealed class SupportRealtimeAuthorizer(
             return false;
         }
 
-        if (!await permissions.HasAnyAsync(tenantId, memberId, required, cancellationToken))
+        var grants = new SupportGrants(
+            await permissions.HasAnyAsync(tenantId, memberId, ReadOnly, cancellationToken),
+            await permissions.HasAnyAsync(tenantId, memberId, ManageOnly, cancellationToken),
+            await permissions.HasAnyAsync(tenantId, memberId, TaskUseOnly, cancellationToken));
+        if (isInbox)
+        {
+            return grants.Read || grants.Manage;
+        }
+
+        if (isTasks)
+        {
+            // Only her own: nobody, not even a manager, listens to another member's tasks.
+            return tasksOwner == memberId && (grants.TaskUse || grants.Manage || grants.Read);
+        }
+
+        // The repository filters by tenant: a ticket of another tenant is the same as one that does not exist.
+        var ticket = await tickets.FindAsync(tenantId, new SupportTicketId(ticketId), cancellationToken);
+        if (ticket is null)
         {
             return false;
         }
 
-        // The repository filters by tenant: a ticket of another tenant is the same as one that does not exist.
-        return isInbox || await tickets.FindAsync(tenantId, new SupportTicketId(ticketId), cancellationToken) is not null;
+        var level = SupportTicketAccessPolicy.For(grants, ticket, memberId);
+        return presence ? level is SupportTicketAccessLevel.Act : level is not SupportTicketAccessLevel.None;
     }
 }
 

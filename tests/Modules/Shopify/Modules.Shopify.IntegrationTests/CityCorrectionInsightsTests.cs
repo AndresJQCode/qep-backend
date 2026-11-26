@@ -162,6 +162,26 @@ public sealed class CityCorrectionInsightsTests
         Assert.False(Assert.Single(await insights.ReadCorrectionsAsync(synonymId, Ct)).StillAsWritten);
     }
 
+    // El código postal es un campo más de la huella: la recorrección ya no tocaría ese pedido.
+    [Fact]
+    public async Task APostalCodeEditedBySqlIsNotStillAsWritten()
+    {
+        await using var shop = await CalliShop.StartAsync(zip: "760001");
+        await shop.SeedResolveAsync();
+        await shop.DrainCorrectionsAsync();
+        var synonymId = new CitySynonymId(shop.SynonymId);
+        await using var scope = shop.Factory.Services.CreateAsyncScope();
+        var insights = scope.ServiceProvider.GetRequiredService<ICityCorrectionInsights>();
+        Assert.True(Assert.Single(await insights.ReadCorrectionsAsync(synonymId, Ct)).StillAsWritten);
+
+        await ExecuteAsync(
+            shop.ConnectionString,
+            "UPDATE quotations.order_parties SET postal_code = '760002' WHERE order_id = @order AND role = 'Shipping'",
+            ("order", shop.OrderId));
+
+        Assert.False(Assert.Single(await insights.ReadCorrectionsAsync(synonymId, Ct)).StillAsWritten);
+    }
+
     // La otra mitad: un cliente sigue como se escribió mientras su versión sea la de la huella.
     [Fact]
     public async Task ACustomerEditedAfterTheCorrectionIsNotStillAsWritten()

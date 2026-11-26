@@ -57,7 +57,7 @@ public sealed class LinkSiigoVariantHandler(
         var variant = (await catalog.SearchAsync(command.TenantId, null, [command.VariantId], null, 0, 1, cancellationToken)).Items
             .SingleOrDefault()
             ?? throw new SiigoDomainException(SiigoErrorCodes.ProductVariantNotFound, "The variant does not exist in this tenant.");
-        var resolution = await connections.ResolveAsync(command.TenantId, command.ConnectionId, cancellationToken);
+        var resolution = await connections.ResolveForSetupAsync(command.TenantId, command.ConnectionId, cancellationToken);
         if (resolution.Credentials is not { } credentials)
         {
             throw new ResourceConflictException(

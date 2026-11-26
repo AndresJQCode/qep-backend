@@ -28,9 +28,9 @@ internal sealed class QuotationFileLookup(
         Guid tenantId, Guid fileId, CancellationToken cancellationToken)
     {
         var resource = await repository.GetAsync(new FileResourceId(fileId), cancellationToken);
-        // Un archivo de dueño de sistema (adjunto de Soporte) no existe para Quotations: no se adjunta a un pedido (fix round 1 del
-        // Bloque D de Soporte fase 3).
-        return resource is null || SystemOwnedFiles.Includes(resource.OwnerType)
+        // Un archivo de dueño de sistema (adjunto de Soporte) o que pide un permiso extra (export de WMS) no existe para Quotations:
+        // no se adjunta a un pedido (FileOwnerModules.IsReferenceableByOtherModules).
+        return resource is null || !FileOwnerModules.IsReferenceableByOtherModules(resource.OwnerType)
             ? null
             : ToRef(resource);
     }
@@ -48,7 +48,7 @@ internal sealed class QuotationFileLookup(
         var resources = await repository.ListByIdsAsync(
             fileIds.Distinct().Select(fileId => new FileResourceId(fileId)).ToArray(), cancellationToken);
         return resources
-            .Where(resource => resource.TenantId == tenantId && !SystemOwnedFiles.Includes(resource.OwnerType))
+            .Where(resource => resource.TenantId == tenantId && FileOwnerModules.IsReferenceableByOtherModules(resource.OwnerType))
             .ToDictionary(resource => resource.Id.Value, ToRef);
     }
 
@@ -77,7 +77,7 @@ internal sealed class QuotationFileLookup(
 
         // Mismo código para "no existe" y "es de otro tenant": distinguirlos confirmaría que el
         // id existe en otro tenant, justo lo que la frontera esconde.
-        if (resource.TenantId != tenantId || SystemOwnedFiles.Includes(resource.OwnerType))
+        if (resource.TenantId != tenantId || !FileOwnerModules.IsReferenceableByOtherModules(resource.OwnerType))
         {
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");

@@ -15,8 +15,19 @@ public sealed record SiigoSettingsDto(
     SiigoDocumentDto Document,
     SiigoTaxesDto Taxes,
     SiigoPaymentsDto Payments,
+    IReadOnlyList<SiigoSellerDto> Sellers,
+    DateTimeOffset? SellersAutoLinkedAt,
+    DateTimeOffset? ProductsAutoLinkedAt,
     long Version,
     IReadOnlyList<SiigoStepReadinessDto> Readiness);
+
+/// <summary>Una fila del paso «Vendedores» (spec 2026-11-20): un miembro y el usuario de Siigo vinculado, o null. <paramref name="Name"/> es
+/// el nombre de la membresía (puede faltar); <paramref name="Active"/> false es un miembro que ya no está pero conserva su vínculo.</summary>
+public sealed record SiigoSellerDto(
+    Guid MembershipId, string? Name, string? Email, bool Active, string? SiigoUserId, string? SiigoUserName);
+
+/// <summary>La respuesta de <c>POST …/sellers/auto-link</c>: cuántos se vincularon y la configuración que quedó.</summary>
+public sealed record SiigoSellerAutoLinkResultDto(int Linked, SiigoSettingsDto Settings);
 
 /// <summary>El nombre y el estado de la conexión en Integrations (<c>Active</c>, <c>Paused</c>, <c>NeedsAttention</c>).</summary>
 public sealed record SiigoConnectionDto(string Name, string Status);
@@ -24,13 +35,13 @@ public sealed record SiigoConnectionDto(string Name, string Status);
 /// <summary>El paso «Documento». <c>SendToDian</c> es <c>false</c> de fábrica: la pantalla avisa mientras esté apagado.</summary>
 public sealed record SiigoDocumentDto(
     string? DocumentTypeId,
-    string? SellerId,
     string? CostCenterId,
     string? WarehouseId,
     bool SendToDian,
     bool SendMail,
     bool FreightSeparateInvoice,
-    string? FreightProductCode);
+    string? FreightProductCode,
+    string PriceMode);
 
 /// <summary>El paso «Impuestos y retenciones»: el IVA por porcentaje y las retenciones de la empresa, cada uno con su impuesto de
 /// Siigo (<c>null</c> es «sin vincular»).</summary>
@@ -58,5 +69,5 @@ public sealed record SiigoAccountLinkDto(string BankAccountKey, string? BankName
 /// falta.</summary>
 public sealed record SiigoStepReadinessDto(string Step, bool Complete, IReadOnlyList<string> MissingCodes);
 
-/// <summary>Una opción de una lista de Siigo para un selector. <c>Type</c> y <c>Percentage</c> sólo viajan en la lista de impuestos.</summary>
-public sealed record SiigoOptionDto(string Id, string Name, string? Type, decimal? Percentage);
+/// <summary>Una opción de una lista de Siigo para un selector. <c>Type</c> y <c>Percentage</c> sólo viajan en la lista de impuestos; <c>Description</c>, cuando Siigo la trae (tipos de documento).</summary>
+public sealed record SiigoOptionDto(string Id, string Name, string? Type, decimal? Percentage, string? Description = null);

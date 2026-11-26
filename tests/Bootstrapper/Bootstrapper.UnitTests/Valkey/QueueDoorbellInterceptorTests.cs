@@ -24,6 +24,7 @@ public sealed class QueueDoorbellInterceptorTests(DoorbellDatabase database) : I
     [InlineData("quotations.export_jobs", DoorbellQueues.Export)]
     [InlineData("support.ticket_surveys", DoorbellQueues.SupportSurvey)]
     [InlineData("shopify.product_imports", DoorbellQueues.ShopifyProducts)]
+    [InlineData("siigo.invoice_batch_items", DoorbellQueues.SiigoInvoice)]
     public async Task InsertIntoEachDoorbellTableRingsItsQueue(string table, string queue)
     {
         var doorbell = new RecordingDoorbell();
@@ -140,7 +141,7 @@ public sealed class DoorbellDatabase : IAsyncLifetime
         await using var context = NewContext(new QueueDoorbellInterceptorTests.RecordingDoorbell());
         await context.Database.ExecuteSqlRawAsync(
             """
-            CREATE SCHEMA platform; CREATE SCHEMA messaging; CREATE SCHEMA shopify; CREATE SCHEMA quotations; CREATE SCHEMA support;
+            CREATE SCHEMA platform; CREATE SCHEMA messaging; CREATE SCHEMA shopify; CREATE SCHEMA quotations; CREATE SCHEMA support; CREATE SCHEMA siigo;
             CREATE TABLE platform.outbox_messages (id uuid PRIMARY KEY);
             CREATE TABLE platform.outbox_messages_archive (id uuid PRIMARY KEY);
             CREATE TABLE messaging.automation_inbox (id uuid PRIMARY KEY);
@@ -151,6 +152,7 @@ public sealed class DoorbellDatabase : IAsyncLifetime
             CREATE TABLE quotations.export_jobs (id uuid PRIMARY KEY);
             CREATE TABLE support.ticket_surveys (id uuid PRIMARY KEY);
             CREATE TABLE shopify.product_imports (id uuid PRIMARY KEY);
+            CREATE TABLE siigo.invoice_batch_items (id uuid PRIMARY KEY);
             """,
             TestContext.Current.CancellationToken);
     }

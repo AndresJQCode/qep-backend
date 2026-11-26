@@ -26,9 +26,14 @@ internal sealed class SiigoConnectionDirectory(IIntegrationConnectionRepository 
                 : null;
     }
 
-    public async Task<SiigoConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    public async Task<SiigoConnectionResolution> ResolveAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        ToSiigo(await connections.ResolveAsync(tenantId, connectionId, cancellationToken));
+
+    public async Task<SiigoConnectionResolution> ResolveForSetupAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        ToSiigo(await connections.ResolveForSetupAsync(tenantId, connectionId, cancellationToken));
+
+    private static SiigoConnectionResolution ToSiigo(ConnectionResolution resolution)
     {
-        var resolution = await connections.ResolveAsync(tenantId, connectionId, cancellationToken);
         if (resolution.Connection is not { } connection)
         {
             return new SiigoConnectionResolution(null, ConnectionReasonCodes.Of(resolution.Unavailable!.Value));
