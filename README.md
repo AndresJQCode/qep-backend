@@ -6853,7 +6853,7 @@ postear un ajuste propuesto hace tiempo con fecha física. La ventana es la que 
 | Worker | Qué hace | Opciones (por defecto) |
 | --- | --- | --- |
 | `BalanceChangePublisher` | Vacía `wms.balance_change_queue` y publica `wms.balance.changed.v1` al outbox | `BalanceChangePublishSeconds` (10) |
-| `BalanceReconciliationWorker` | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige** | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30) |
+| `BalanceReconciliationWorker` | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige**. Con dos pods, un candado por bodega evita la fila repetida | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30) |
 | `PartitionMaintenanceWorker` | Asegura la partición del mes actual y la del siguiente de `stock_movements` | `PartitionSweepHours` (24) |
 | `WmsHousekeepingWorker` | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`) | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
 | `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`) | — |

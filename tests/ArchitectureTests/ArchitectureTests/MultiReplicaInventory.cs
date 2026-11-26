@@ -140,6 +140,8 @@ public static class MultiReplicaInventory
             "Modules/Integrations/Modules.Integrations.Infrastructure/Persistence/IntegrationsUnitOfWork.cs:33 — pg_try_advisory_xact_lock(ShopifyTokenLock.Namespace, hashtext(id)) por conexión"),
         new("Modules.Integrations.Infrastructure.Meta.InstagramTokenRefreshWorker", WorkerClassification.AdvisoryLock,
             "Modules/Integrations/Modules.Integrations.Infrastructure/Persistence/IntegrationsUnitOfWork.cs:43 — pg_try_advisory_xact_lock(InstagramTokenLock.Namespace, hashtext(id)) por conexión (owner, 2026-11-14)"),
+        new("Modules.Wms.Infrastructure.Workers.BalanceReconciliationWorker", WorkerClassification.AdvisoryLock,
+            "Modules/Wms/Modules.Wms.Infrastructure/Persistence/BalanceReconciliation.cs:73-79 — pg_advisory_xact_lock(WmsLockNamespace, hashtext('balance-check:{bodega}')) en su propia sentencia antes de cada tanda y en la misma transacción READ COMMITTED que el INSERT con NOT EXISTS (:128): el segundo pod espera, ve la fila ya confirmada y no la duplica (los dos recorren y miden; no corrigen saldos). Lo amarra BalanceReconciliationTests.TwoConcurrentReconciliationsRecordOneCheckPerDriftKey"),
 
         // --- Idempotent: el segundo pod no encuentra nada que hacer. ---
         new("Modules.Integrations.Infrastructure.SecretProtection.ConnectionSecretRekeyWorker", WorkerClassification.Idempotent,
@@ -207,10 +209,6 @@ public static class MultiReplicaInventory
             "Bootstrapper/Realtime/RealtimeEventsListener.cs:107 — LISTEN qep_realtime por pod para las conexiones del hub global de ese pod (plan 2026-11-15, N7)"),
         new("Bootstrapper.Realtime.RealtimePresenceSweeper", WorkerClassification.PerPod,
             "Bootstrapper/Realtime/RealtimePresenceSweeper.cs:23 — relee cada 5 s la presencia de los grupos que este pod entregó y la reentrega sólo a sus conexiones, sin NOTIFY (plan 2026-11-15, N10)"),
-
-        // --- Unsafe. ---
-        new("Modules.Wms.Infrastructure.Workers.BalanceReconciliationWorker", WorkerClassification.Unsafe,
-            "Modules/Wms/Modules.Wms.Infrastructure/Persistence/BalanceReconciliation.cs:112 — la diferencia se inserta en wms.balance_checks con un NOT EXISTS por día sin índice único ni candado: dos pods conciliando a la vez pueden duplicar la fila (no corrige saldos)"),
 
         // --- OffInProduction. ---
         new("Bootstrapper.Seeding.ExportLoadSeedWorker", WorkerClassification.OffInProduction,
@@ -290,7 +288,7 @@ public static class MultiReplicaInventory
         new("Modules.Wms.Infrastructure.WmsMetrics", StateClassification.PerPodByDesign,
             "Modules/Wms/Modules.Wms.Infrastructure/WmsMetrics.cs:15-17 — la última lectura de cada gauge en el pod, sin etiqueta de tenant; el dashboard agrega con max"),
         new("Modules.Wms.Infrastructure.Workers.BalanceReconciliationWorker", StateClassification.PerPodByDesign,
-            "Modules/Wms/Modules.Wms.Infrastructure/Workers/BalanceReconciliationWorker.cs:21-22 — la marca de «hoy ya corrió» es de cada pod; lo que duplica entre pods lo cubre su entrada Unsafe de Workers"),
+            "Modules/Wms/Modules.Wms.Infrastructure/Workers/BalanceReconciliationWorker.cs:21-22 — la marca de «hoy ya corrió» es de cada pod; lo que dos pods harían doble lo cubre su entrada AdvisoryLock de Workers"),
     ];
 
     /// <summary>

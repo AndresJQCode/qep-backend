@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Modules.Wms.Application;
 
@@ -64,10 +65,25 @@ internal sealed class BalanceReconciliation(WmsDbContext dbContext) : IBalanceRe
             """)
             .ToListAsync(cancellationToken);
 
+    // El NOT EXISTS de la tanda no alcanza entre pods: dos pasadas a la vez no ven la fila sin confirmar de la otra y la insertan dos
+    // veces. El candado por bodega las pone en fila. Va en su propia sentencia y antes de la tanda, en READ COMMITTED: así la tanda toma
+    // su snapshot ya con el candado y ve lo que confirmó el otro pod. Una transacción por tanda, para no retenerlo toda la bodega.
+    private async Task<int> CheckBatchAsync(Guid tenantId, Guid warehouseId, Guid after, Guid upper, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        var lockKey = "balance-check:" + warehouseId.ToString("D");
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({WmsUnitOfWork.WmsLockNamespace}, hashtext({lockKey}))", cancellationToken);
+
+        var drifts = await RecordDriftAsync(tenantId, warehouseId, after, upper, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return drifts;
+    }
+
     // Una sola sentencia lee el ledger y los saldos con el mismo snapshot: movimiento y saldo commitean juntos, así que una escritura
     // concurrente no fabrica diferencias. No corrige nada. Devuelve cuántas claves difieren, NO cuántas filas insertó: una repetición el
     // mismo día no duplica la fila (dedupe por clave y día UTC) pero la diferencia sigue ahí, y el gauge no debe apagarse.
-    private async Task<int> CheckBatchAsync(Guid tenantId, Guid warehouseId, Guid after, Guid upper, CancellationToken cancellationToken) =>
+    private async Task<int> RecordDriftAsync(Guid tenantId, Guid warehouseId, Guid after, Guid upper, CancellationToken cancellationToken) =>
         (await dbContext.Database.SqlQuery<int>(
             $"""
             WITH drift AS (

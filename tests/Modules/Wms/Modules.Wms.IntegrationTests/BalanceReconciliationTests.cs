@@ -5,6 +5,8 @@ using Modules.Wms.Application;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Infrastructure;
 using Modules.Wms.Infrastructure.Workers;
+using Npgsql;
+using Testcontainers.PostgreSql;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
 using static Modules.Wms.IntegrationTests.WmsLedgerSeeding;
 
@@ -62,6 +64,78 @@ public sealed class BalanceReconciliationTests
 
         Assert.Equal(1L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.balance_checks"));
         Assert.Equal(1L, WmsGaugeReader.Read(factory, "qep.wms.balance.drift"));
+    }
+
+    // Dos pods concilian la misma bodega a la vez: sin el candado por bodega, los dos leen «hoy no hay fila» y la insertan dos veces.
+    // No depende de ganar una carrera: un trigger propio de esta base deja cada INSERT esperando un candado que sostiene la prueba, así
+    // que las dos pasadas quedan detenidas a la vez, antes de que alguna confirme, y recién ahí se sueltan.
+    [Fact]
+    public async Task TwoConcurrentReconciliationsRecordOneCheckPerDriftKey()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await StockAsync(factory, s, s.BinA, 10);
+        await StockAsync(factory, s, s.Receiving, 4);
+        await ExecuteAsync(database, "UPDATE wms.stock_balances SET on_hand = 7 WHERE location_id = @a", ("a", s.BinA));
+        await ExecuteAsync(database, "UPDATE wms.stock_balances SET on_hand = 1 WHERE location_id = @r", ("r", s.Receiving));
+        await ExecuteAsync(
+            database,
+            """
+            CREATE FUNCTION wms.test_hold_balance_check() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN PERFORM pg_advisory_xact_lock_shared(990001); RETURN NEW; END $$;
+            CREATE TRIGGER trg_test_hold_balance_check BEFORE INSERT ON wms.balance_checks
+                FOR EACH ROW EXECUTE FUNCTION wms.test_hold_balance_check()
+            """);
+        var worker = factory.Services.GetRequiredService<BalanceReconciliationWorker>();
+        await using var holder = new NpgsqlConnection(database.GetConnectionString());
+        await holder.OpenAsync(token);
+        await using var hold = await holder.BeginTransactionAsync(token);
+        await using (var take = new NpgsqlCommand("SELECT pg_advisory_xact_lock(990001)", holder, hold))
+        {
+            await take.ExecuteNonQueryAsync(token);
+        }
+
+        var first = Task.Run(() => worker.RunOnceAsync(token), token);
+        var second = Task.Run(() => worker.RunOnceAsync(token), token);
+        await WaitForAdvisoryWaitersAsync(database, 2);
+        await hold.RollbackAsync(token);
+        var drifts = await Task.WhenAll(first, second);
+
+        // Las dos siguen reportando las dos diferencias, pero cada clave quedó registrada una sola vez.
+        Assert.Equal([2L, 2L], drifts);
+        Assert.Equal(0L, WmsGaugeReader.Read(factory, "qep.wms.reconciliation.failed"));
+        Assert.Equal(2L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.balance_checks"));
+        Assert.Equal(
+            2L,
+            await ScalarAsync<long>(database, "SELECT count(DISTINCT location_id) FROM wms.balance_checks"));
+    }
+
+    // Espera a que haya esa cantidad de sesiones de esta base detenidas en un advisory lock.
+    private static async Task WaitForAdvisoryWaitersAsync(PostgreSqlContainer database, long expected)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        long waiting = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            waiting = await ScalarAsync<long>(
+                database,
+                """
+                SELECT count(*) FROM pg_locks
+                WHERE locktype = 'advisory' AND NOT granted
+                  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                """);
+            if (waiting == expected)
+            {
+                return;
+            }
+
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail($"Expected {expected} sessions waiting on an advisory lock, found {waiting}.");
     }
 
     [Fact]
