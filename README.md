@@ -6780,8 +6780,9 @@ El nivel rápido toma lo cambiado desde el punto en que la rama se separó de la
 compilación (con `--no-restore`: restaura antes en un worktree nuevo), `ArchitectureTests`, las unitarias de cada módulo
 tocado, `Bootstrapper.UnitTests` si tocaste `Bootstrapper` o `Api`, y **sólo las clases de integración nuevas o
 modificadas**. No corre las demás clases de integración que tu cambio pueda romper; esas aparecen en la corrida
-completa. Lee los avisos: dicen qué quedó sin probar. El reporte queda en `TestResults\feature\report.md`, y sale con 1
-si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
+completa. Lee los avisos: dicen qué quedó sin probar y qué «Requiere autorización del owner» antes del merge (una
+prueba de `ArchitectureTests` modificada o una referencia nueva entre módulos). El reporte queda en
+`TestResults\feature\report.md`, y sale con 1 si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
 
 Un reporte completo en verde vale para el commit que dice su encabezado, con el árbol limpio. Para programarlo todas las
 noches (se registra una vez, desde la raíz del checkout que quieras probar):
