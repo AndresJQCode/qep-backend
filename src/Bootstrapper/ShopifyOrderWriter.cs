@@ -147,10 +147,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
                     : new ShippingDetails(
                         shipping.CarrierId, shipping.CarrierName, ToChargeMode(shipping.ChargeMode), shipping.FreightAmount,
                         shipping.FreightTaxPercentage, shipping.CashOnDelivery),
-            draft.ShippingParty is not { } party
-                ? null
-                : new ExternalShippingParty(
-                    party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode),
+            draft.ShippingParty is not { } party ? null : ToExternalParty(party),
             draft.ReplaceBuyerNotes,
             draft.BuyerNotes,
             ShopifyOrderImporter.RawAddressLabel,
@@ -209,7 +206,8 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             ? null
             : new QuotationPartyRequest(
                 shippingParty.Name, null, shippingParty.Phone, shippingParty.Email, shippingParty.Address,
-                shippingParty.DepartmentId, shippingParty.CityId, PostalCode: shippingParty.PostalCode);
+                shippingParty.DepartmentId, shippingParty.CityId, Country: shippingParty.Country, CityName: shippingParty.CityName,
+                RegionId: shippingParty.RegionId, PostalCode: shippingParty.PostalCode);
 
         return new ExternalOrderDraft(
             draft.TenantId,
@@ -241,6 +239,13 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
             draft.ExternalShippingTitle,
             draft.BuyerNotes);
     }
+
+    /// <summary>El borrador de la parte como lo recibe Quotations. Lo usan los tres adaptadores que la escriben: un campo que no
+    /// pase por acá se pierde en la edición, la corrección del asesor o la de ciudad.</summary>
+    internal static ExternalShippingParty ToExternalParty(ShopifyPartyDraft party) =>
+        new(
+            party.Name, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId, party.PostalCode, party.Country,
+            party.CityName, party.RegionId);
 
     // Spec 2026-10-26 D-C4: la parte de envío como la guardó Quotations. Una guardada está completa (OrderParty.IsComplete): en
     // Colombia vienen siempre departamento y ciudad, y fuera, la ciudad escrita; si no, es un error de programación y no una huella

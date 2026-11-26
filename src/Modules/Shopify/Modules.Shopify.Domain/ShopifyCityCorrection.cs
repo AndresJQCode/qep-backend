@@ -46,6 +46,7 @@ public sealed class ShopifyCityCorrection
     public const int PartyEmailMaxLength = 254;
     public const int PartyAddressMaxLength = 255;
     public const int PartyPostalCodeMaxLength = 20;
+    public const int PartyCityNameMaxLength = 120;
 
     private ShopifyCityCorrection()
     {

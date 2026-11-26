@@ -18,4 +18,8 @@ public sealed class ShopifyCityCorrectionParityTests
                 QuotationPartyDetails.AddressMaxLength, QuotationPartyDetails.PostalCodeMaxLength),
             (ShopifyCityCorrection.PartyNameMaxLength, ShopifyCityCorrection.PartyPhoneMaxLength, ShopifyCityCorrection.PartyEmailMaxLength,
                 ShopifyCityCorrection.PartyAddressMaxLength, ShopifyCityCorrection.PartyPostalCodeMaxLength));
+
+    [Fact]
+    public void TheCityNameWidthMatchesQuotations() =>
+        Assert.Equal(QuotationPartyDetails.CityNameMaxLength, ShopifyCityCorrection.PartyCityNameMaxLength);
 }

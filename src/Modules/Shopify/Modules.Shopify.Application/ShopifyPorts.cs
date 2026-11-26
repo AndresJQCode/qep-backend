@@ -438,9 +438,12 @@ public sealed record ShopifyOrderLineDraft(
 
 /// <summary>La parte de envío del pedido (§6.2.3 paso 2, H25), sólo cuando la dirección de Shopify quedó completa.
 /// <paramref name="PostalCode"/> es el zip de la dirección (<see cref="ShopifyOrderImporter.ShippingPostalCode"/>): sin él, una
-/// edición de dirección hecha en Shopify borraría el código postal del pedido.</summary>
+/// edición de dirección hecha en Shopify borraría el código postal del pedido. Los campos y su orden son los de
+/// <see cref="ShopifyShippingFingerprint"/>: en Colombia van <paramref name="DepartmentId"/> y <paramref name="CityId"/>; fuera,
+/// <paramref name="Country"/>, <paramref name="CityName"/> y, si se pudo traducir la provincia, <paramref name="RegionId"/>.</summary>
 public sealed record ShopifyPartyDraft(
-    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null);
+    string? Name, string? Phone, string? Email, string? Address, Guid? DepartmentId, Guid? CityId, string? PostalCode = null,
+    string? Country = null, string? CityName = null, Guid? RegionId = null);
 
 /// <summary>
 /// El envío resuelto por el importador (§6.2.2). <see cref="ChargeMode"/> es el nombre del modo de Quotations (<c>Charged</c>,
