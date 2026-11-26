@@ -3264,7 +3264,7 @@ public static class QepServiceCollectionExtensions
         // en un tenant sin Agenda, así que la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS.
         // Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador.
         services.AddSingleton(new RoleDefinition(
-            SystemRoleKeys.SchedulingManager,
+            RoleTemplateKeys.SchedulingManager,
             "Gestor de agenda",
             "Ve y administra las agendas de todos los médicos o recursos: citas, franjas y bloqueos.",
             "Tenancy",
@@ -3276,7 +3276,7 @@ public static class QepServiceCollectionExtensions
                 SchedulingPermissions.AgendaReadAll
             ]));
         services.AddSingleton(new RoleDefinition(
-            SystemRoleKeys.SchedulingProvider,
+            RoleTemplateKeys.SchedulingProvider,
             "Profesional de agenda",
             "Ve y administra su propia agenda: la del recurso vinculado a su usuario.",
             "Tenancy",
