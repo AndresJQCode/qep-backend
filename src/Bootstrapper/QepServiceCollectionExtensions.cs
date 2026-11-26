@@ -1351,6 +1351,24 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Wms.Application.ListTaskAssigneesQuery, Modules.Wms.Application.TaskAssigneesDto>,
             Modules.Wms.Application.ListTaskAssigneesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetMyTasksQuery, Modules.Wms.Application.MyTasksDto>,
+            Modules.Wms.Application.GetMyTasksHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.NextTaskCommand, Modules.Wms.Application.NextTaskResultDto>,
+            Modules.Wms.Application.NextTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ClaimTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ClaimTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.HeartbeatTaskCommand, Modules.Wms.Application.TaskLeaseDto>,
+            Modules.Wms.Application.HeartbeatTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UnclaimTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.UnclaimTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ConfirmTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ConfirmTaskLineHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

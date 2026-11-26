@@ -136,6 +136,35 @@ public sealed record TaskAssigneeDto(Guid MemberId, string Name);
 
 public sealed record TaskAssigneesDto(IReadOnlyList<TaskAssigneeDto> Items);
 
+/// <summary>La tarea en curso (con su token) y las asignadas que esperan. El operario no ve el pool (DA-09).</summary>
+public sealed record MyTasksDto(TaskDto? Current, IReadOnlyList<TaskSummaryDto> Assigned);
+
+/// <summary><c>Task</c> nulo: no hay nada para hacer, y la ruta responde 204.</summary>
+public sealed record NextTaskResultDto(TaskDto? Task);
+
+public sealed record TaskLeaseDto(DateTimeOffset LeaseExpiresAt);
+
+public sealed record NextTaskRequest(Guid WarehouseId, string? DeviceId);
+
+public sealed record ClaimTaskRequest(string? DeviceId);
+
+public sealed record HeartbeatTaskRequest(Guid LeaseToken);
+
+/// <summary><c>Reason</c> es el nombre del motivo: <c>ShiftEnd</c>, <c>CannotReach</c>, <c>Skipped</c> u <c>Other</c>.</summary>
+public sealed record UnclaimTaskRequest(Guid LeaseToken, string? Reason);
+
+/// <summary>Lo que la app escaneó. <c>OccurredAt</c> es la hora del escaneo, no la del envío; <c>OverrideReason</c> sólo hace falta
+/// si el destino no es el planeado.</summary>
+public sealed record ConfirmTaskLineRequest(
+    Guid LeaseToken,
+    Guid FromLocationId,
+    Guid ToLocationId,
+    Guid? LotId,
+    decimal Quantity,
+    string? OverrideReason,
+    DateTimeOffset? OccurredAt,
+    string? DeviceId) : IIdempotentRequest;
+
 /// <summary>Cuerpo de <c>publish</c> y <c>unassign</c>. Las acciones del supervisor llevan la versión que leyó (412 si cambió).
 /// </summary>
 public sealed record TaskVersionRequest(long Version);

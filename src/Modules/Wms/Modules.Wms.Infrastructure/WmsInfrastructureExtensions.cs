@@ -49,6 +49,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<AdjustmentDtoComposer>();
         services.AddScoped<WarehouseTaskDtoComposer>();
         services.AddScoped<SupervisorTaskRunner>();
+        services.AddScoped<OperatorTaskGuard>();
         services.AddScoped<IImportPreviewStore, ImportPreviewStore>();
         services.AddSingleton<IInitialBalanceSheetReader, ClosedXmlInitialBalanceSheetReader>();
         services.AddSingleton<IStockExportBuilder, ClosedXmlStockExportBuilder>();
