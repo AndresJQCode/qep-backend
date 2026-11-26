@@ -72,4 +72,15 @@ public static class SpainProvinceCodes
         var normalized = ineCode?.Trim();
         return string.IsNullOrEmpty(normalized) ? null : All.GetValueOrDefault(normalized);
     }
+
+    private static readonly Dictionary<string, string> IneByIso =
+        All.ToDictionary(entry => entry.Value, entry => entry.Key, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>El camino de vuelta: el código del INE de la provincia con ese código ISO (el <c>province_code</c> de Shopify),
+    /// o <c>null</c> si no es una de las 52.</summary>
+    public static string? IneFor(string? isoCode)
+    {
+        var normalized = isoCode?.Trim();
+        return string.IsNullOrEmpty(normalized) ? null : IneByIso.GetValueOrDefault(normalized);
+    }
 }
