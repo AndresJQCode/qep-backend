@@ -269,6 +269,10 @@ public sealed class SiigoSavedInvoiceQueueReadTests
             return MarkFailure is null ? Task.CompletedTask : Task.FromException(MarkFailure);
         }
 
+        public Task<bool> UnmarkInvoicedAsync(
+            Guid tenantId, Guid orderId, string number, Guid memberId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<SiigoInvoiceInput?> GetAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -326,6 +330,10 @@ public sealed class SiigoSavedInvoiceQueueReadTests
     {
         public Task<IReadOnlyList<SiigoInvoice>> ListByOrderAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<SiigoInvoice>>([row]);
+
+        public Task<IReadOnlyList<SiigoInvoice>> ListFreightAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> orderIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<IReadOnlyList<SiigoInvoice>> ListByIdsAsync(
             Guid tenantId, IReadOnlyCollection<Guid> invoiceIds, CancellationToken cancellationToken) =>

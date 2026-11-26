@@ -31,6 +31,10 @@ public sealed class OrdersExportLayout
     /// <summary>El tope de Excel para el nombre de una hoja (D4).</summary>
     public const int SheetNameMaxLength = 31;
 
+    /// <summary>Los teléfonos salen como están guardados, con su indicativo: así sale sin layout guardado, y así
+    /// dejó la migración toda fila que ya existía (spec 2026-11-25 indicativo).</summary>
+    public const bool DefaultIncludePhoneDialCode = true;
+
     // Excel reserva "History" para el historial de cambios de un libro compartido (D4).
     private const string ReservedSheetName = "History";
 
@@ -42,6 +46,7 @@ public sealed class OrdersExportLayout
     private OrdersExportLayout()
     {
         SheetName = DefaultSheetName;
+        IncludePhoneDialCode = DefaultIncludePhoneDialCode;
     }
 
     private OrdersExportLayout(
@@ -50,6 +55,7 @@ public sealed class OrdersExportLayout
         TenantId = tenantId;
         _columns.AddRange(columns);
         SheetName = DefaultSheetName;
+        IncludePhoneDialCode = DefaultIncludePhoneDialCode;
         Version = DefaultVersion;
         UpdatedAt = now;
     }
@@ -65,6 +71,13 @@ public sealed class OrdersExportLayout
     /// <see cref="Version"/>— y no una configuración aparte. Recortado y válido para Excel (D4).
     /// </summary>
     public string SheetName { get; private set; }
+
+    /// <summary>
+    /// Si las columnas de teléfono del catálogo salen con el indicativo del país (spec 2026-11-25
+    /// indicativo). Apagado, el Excel escribe el número nacional de lo que se pueda partir. Es parte del
+    /// layout, como <see cref="SheetName"/>. No toca lo guardado en el pedido ni las columnas fijas.
+    /// </summary>
+    public bool IncludePhoneDialCode { get; private set; }
 
     public long Version { get; private set; }
 
@@ -97,9 +110,21 @@ public sealed class OrdersExportLayout
     /// con el nombre de la hoja (spec 2026-10-05). El no-op compara columnas <b>y</b> nombre (D5):
     /// guardar sólo el nombre es un cambio, sube la versión y se audita. El nombre se recorta y se
     /// compara ordinal, como un encabezado: <c>pedidos</c> es un cambio, <c>" Pedidos "</c> no.
+    /// Conserva <see cref="IncludePhoneDialCode"/>.
     /// </summary>
     public bool Replace(
-        IReadOnlyList<OrdersExportColumnSetting> columns, string sheetName, DateTimeOffset now)
+        IReadOnlyList<OrdersExportColumnSetting> columns, string sheetName, DateTimeOffset now) =>
+        Replace(columns, sheetName, IncludePhoneDialCode, now);
+
+    /// <summary>
+    /// El layout entero, con el interruptor del indicativo (spec 2026-11-25): guardar sólo el
+    /// interruptor es un cambio, igual que sólo el nombre.
+    /// </summary>
+    public bool Replace(
+        IReadOnlyList<OrdersExportColumnSetting> columns,
+        string sheetName,
+        bool includePhoneDialCode,
+        DateTimeOffset now)
     {
         // Antes de completar: una llave que no es del catálogo es un error del cuerpo, no algo que
         // Effective descarte en silencio (eso es para lo ya guardado cuando el catálogo cambia).
@@ -108,7 +133,9 @@ public sealed class OrdersExportLayout
         Validate(completed);
         var normalizedSheetName = NormalizeSheetName(sheetName);
 
-        if (IsSameAs(completed) && string.Equals(SheetName, normalizedSheetName, StringComparison.Ordinal))
+        if (IsSameAs(completed)
+            && string.Equals(SheetName, normalizedSheetName, StringComparison.Ordinal)
+            && IncludePhoneDialCode == includePhoneDialCode)
         {
             return false;
         }
@@ -116,6 +143,7 @@ public sealed class OrdersExportLayout
         _columns.Clear();
         _columns.AddRange(completed);
         SheetName = normalizedSheetName;
+        IncludePhoneDialCode = includePhoneDialCode;
         Version++;
         UpdatedAt = now;
         return true;
@@ -142,6 +170,11 @@ public sealed class OrdersExportLayout
     /// <see cref="DefaultSheetName"/> sin fila (D3).</summary>
     public static string EffectiveSheetName(OrdersExportLayout? stored) =>
         stored?.SheetName ?? DefaultSheetName;
+
+    /// <summary>El interruptor que ven GET y el processor: el de la fila, o
+    /// <see cref="DefaultIncludePhoneDialCode"/> sin fila (spec 2026-11-25 indicativo).</summary>
+    public static bool EffectiveIncludePhoneDialCode(OrdersExportLayout? stored) =>
+        stored?.IncludePhoneDialCode ?? DefaultIncludePhoneDialCode;
 
     private static string NormalizeSheetName(string? sheetName)
     {

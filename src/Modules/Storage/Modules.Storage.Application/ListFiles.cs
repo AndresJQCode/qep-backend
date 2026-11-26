@@ -33,9 +33,16 @@ public sealed class ListFilesHandler(
         // en SQL y no en memoria, para que totalCount y la paginación sigan siendo ciertos. Con el
         // tenant simulado por el stub (null) no se excluye nada.
         var modules = await tenantModules.FindAsync(query.TenantId, cancellationToken);
-        // Fix round 1 del Bloque D: los dueños de sistema no se listan nunca, ni con el tenant simulado.
         IReadOnlyCollection<FileOwnerType> disabled = modules is null ? [] : FileOwnerModules.OwnerTypesDisabledIn(modules);
-        IReadOnlyCollection<FileOwnerType> excludedOwnerTypes = [.. disabled.Union(SystemOwnedFiles.OwnerTypes)];
+
+        // Fix round 1 del Bloque D: los dueños de sistema no se listan nunca, ni con el tenant simulado.
+        // I-2: lo mismo con el permiso extra del dueño (el export de WMS pide wms.stock.export): sin él ni se lista.
+        IReadOnlyCollection<FileOwnerType> excludedOwnerTypes =
+        [
+            .. disabled
+                .Union(SystemOwnedFiles.OwnerTypes)
+                .Union(FileOwnerModules.OwnerTypesLackingPermission(executionContext.HasPermission))
+        ];
 
         var page = Math.Max(query.Page, 1);
         var pageSize = query.PageSize is < 1 or > 100 ? 20 : query.PageSize;

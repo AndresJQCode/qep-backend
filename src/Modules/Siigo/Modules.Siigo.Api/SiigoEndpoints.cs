@@ -168,6 +168,17 @@ public static class SiigoEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-25: «Ya la anulé en Siigo». Sin cuerpo: verifica en Siigo cada factura viva del pedido y, si todas están
+        // anuladas, lo suelta. No anula nada allá.
+        invoice.MapPost("/annulment", ConfirmAnnulmentAsync)
+            .Produces<IReadOnlyList<SiigoInvoiceDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status502BadGateway)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         // Spec 2026-11-21: las llamadas a Siigo que fallaron, con su curl y la respuesta. Lectura sola; expiran a los 7 días.
         var failures = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/siigo/call-failures")
@@ -290,6 +301,10 @@ public static class SiigoEndpoints
         Guid tenantId, Guid orderId, SiigoResolveInvoiceRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(
             new ResolveSiigoInvoiceCommand(tenantId, orderId, request.Kind, request.Outcome, request.Number), cancellationToken));
+
+    private static async Task<IResult> ConfirmAnnulmentAsync(
+        Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ConfirmSiigoAnnulmentCommand(tenantId, orderId), cancellationToken));
 
     private static async Task<IResult> ListProductsAsync(
         Guid tenantId,

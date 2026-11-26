@@ -114,7 +114,8 @@ public sealed record OrderDto(
     OrderWholesaleState? Wholesale = null,
     /// <summary>Quién emitió la factura: <c>siigo</c> si la creó la integración, <c>null</c> en una marca manual (spec 2026-11-18
     /// §5.5). BFF: la pantalla escribe «Facturado en Siigo FV-1-123» y esconde «Revertir facturación» sin conocer la integración;
-    /// con un proveedor, revertir es una nota crédito y la API responde 422. El id de la factura en el proveedor no viaja.</summary>
+    /// con un proveedor, esa acción responde 422: la marca se quita cuando la factura se anula allá y la integración lo verifica (spec
+    /// 2026-11-25). El id de la factura en el proveedor no viaja.</summary>
     string? InvoiceProvider = null,
     /// <summary>El número de la factura del proveedor (<c>FV-1-123</c>); <c>null</c> en una marca manual.</summary>
     string? InvoiceNumber = null,

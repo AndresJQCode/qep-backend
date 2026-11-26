@@ -104,8 +104,8 @@ public sealed class NotificationsDeliveryWorkerTests
         Assert.Single(hosted, descriptor => descriptor.ImplementationType == typeof(TaskNoticeEscalationWorker));
         Assert.Equal(3, hosted.Count);
         // 14 con la invitación de mayorista (spec 2026-11-17); 15 con el código de correo y 17 con los dos avisos de correo
-        // cambiado del distribuidor (spec 2026-11-19).
-        Assert.Equal(17, services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)
+        // cambiado del distribuidor (spec 2026-11-19); 18 con el export de saldos de WMS.
+        Assert.Equal(18,services.Count(descriptor => descriptor.ServiceType == typeof(OutboxDeliveryWorker)
             && descriptor.Lifetime == ServiceLifetime.Singleton));
     }
 

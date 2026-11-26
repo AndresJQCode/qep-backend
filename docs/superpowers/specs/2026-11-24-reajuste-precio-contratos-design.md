@@ -276,7 +276,8 @@ retenido.
 - **En uso:** un año está en uso mientras algún cambio programado **`Pending`** lo use. Uno en uso no se edita (422
   `billing.ipc.in_use`). Los `Applied` no cuentan: ya copiaron `ipc_rate` y editar la tasa no los toca **(decisión del diseño,
   revisable)**. Un IPC mal escrito se corrige cancelando los cambios programados pendientes que lo usan, editando la tasa y
-  volviendo a confirmar; lo ya aplicado y generado no se reescribe (§6.10).
+  volviendo a confirmar; lo ya aplicado y generado no se reescribe (§6.10). El chequeo de uso no compite con la confirmación:
+  ambos pasan por un candado sobre la fila de la tasa (§6.11).
 - **Confirmación:** por cada contrato elegido se crea un cambio programado `source = Ipc` con `effective_from =
   periodo_de_revision`, `ipc_year`, `ipc_rate`, `extra_points` y `new_price` (el calculado, o el que escribió la persona), y se
   corre la generación en modo `Run` si el período ya está en la ventana. Cada contrato va en **su propia transacción**, con su
@@ -335,6 +336,14 @@ mismo, es §11, P-1.
   aunque `expectedRate` no coincida. Dos primeras escrituras simultáneas del mismo año siguen respondiendo
   `409 billing.concurrent_first_write` a la que pierde el insert (existe, `ServiceContractsUnitOfWork.cs:62`). No hay «última
   escritura gana».
+- **Guardar la tasa y confirmar con ella se excluyen** con un candado de fila sobre `billing.ipc_rates`, en una transacción
+  explícita `READ COMMITTED` por cada ítem de la confirmación y por cada `PUT`; la tasa y los datos del contrato que deciden el
+  resultado se leen después de tomarlo (el redondeo del tenant y «hoy» se leen una vez por lote). La confirmación lo toma compartido (`FOR SHARE`): los ítems de un mismo año no se esperan ni se tumban entre sí.
+  El `PUT` lo toma exclusivo (`FOR UPDATE`): mientras un ítem tiene la tasa, espera y después ve el cambio programado nuevo
+  (`billing.ipc.in_use`); mientras el `PUT` la tiene, el ítem espera y lee la tasa nueva
+  (`billing.price_review.price_changed`). Una primera tasa no tiene fila que bloquear: ningún ítem puede confirmar con ella y
+  dos primeras escrituras las separa la clave primaria. La confirmación en lote es el único camino que crea un cambio
+  programado a partir de la tasa: «programar» es manual y «Mantener precio» y editar el reajuste no la leen.
 - Avisos: el digest diario ya es idempotente por `(member, today)`; la campana por `dedupe_key` del día.
 
 ### 6.12 Interacciones con lo que existe

@@ -39,6 +39,8 @@
     <ProjectReference Include="..\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Buyers\Modules.Buyers.Application\Modules.Buyers.Application.csproj" />
     <ProjectReference Include="..\Modules\Buyers\Modules.Buyers.Infrastructure\Modules.Buyers.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Wms\Modules.Wms.Application\Modules.Wms.Application.csproj" />
+    <ProjectReference Include="..\Modules\Wms\Modules.Wms.Infrastructure\Modules.Wms.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Application\Modules.ApiAccess.Application.csproj" />
     <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Infrastructure\Modules.ApiAccess.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Suppliers\Modules.Suppliers.Application\Modules.Suppliers.Application.csproj" />

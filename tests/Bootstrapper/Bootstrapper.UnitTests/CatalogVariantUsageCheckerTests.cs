@@ -50,6 +50,102 @@ public sealed class CatalogVariantUsageCheckerTests
         Assert.Equal(new HashSet<Guid> { quoted, ordered, sold }, used.ToHashSet());
     }
 
+    // WMS-D: una variante con movimientos o saldos en el ledger no se borra (spec 2026-10-31 §17), aunque ninguna línea la venda.
+    [Fact]
+    public async Task CheckerFindsVariantUsedOnlyByAWmsMovementOrBalance()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var moved = Guid.CreateVersion7();
+        var balanced = Guid.CreateVersion7();
+        var unused = Guid.CreateVersion7();
+        var otherTenantMoved = Guid.CreateVersion7();
+        var otherTenantBalanced = Guid.CreateVersion7();
+
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.stock_movements (tenant_id, variant_id) VALUES ('{TenantId}', '{moved}'), ('{OtherTenantId}', '{otherTenantMoved}');
+            INSERT INTO wms.stock_balances (tenant_id, variant_id) VALUES ('{TenantId}', '{balanced}'), ('{OtherTenantId}', '{otherTenantBalanced}');
+            """);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId, [moved, balanced, unused, otherTenantMoved, otherTenantBalanced], TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HashSet<Guid> { moved, balanced }, used.ToHashSet());
+    }
+
+    // Un ajuste abierto (Proposed o Approved) todavía puede contabilizarse y escribiría un movimiento inmutable sobre la variante: no se
+    // borra aunque aún no tenga movimientos. Uno Posted ya dejó su movimiento (lo cubre stock_movements) y uno Rejected no escribe nada.
+    // Un lote también ata a la variante.
+    [Fact]
+    public async Task CheckerFindsVariantUsedOnlyByAnOpenAdjustmentLineOrALot()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var proposed = Guid.CreateVersion7();
+        var approved = Guid.CreateVersion7();
+        var posted = Guid.CreateVersion7();
+        var rejected = Guid.CreateVersion7();
+        var lotted = Guid.CreateVersion7();
+        var unused = Guid.CreateVersion7();
+        var otherTenantProposed = Guid.CreateVersion7();
+        var otherTenantLotted = Guid.CreateVersion7();
+
+        await AddAdjustmentLineAsync(database, TenantId, "Proposed", proposed);
+        await AddAdjustmentLineAsync(database, TenantId, "Approved", approved);
+        await AddAdjustmentLineAsync(database, TenantId, "Posted", posted);
+        await AddAdjustmentLineAsync(database, TenantId, "Rejected", rejected);
+        await AddAdjustmentLineAsync(database, OtherTenantId, "Proposed", otherTenantProposed);
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.lots (tenant_id, variant_id) VALUES ('{TenantId}', '{lotted}'), ('{OtherTenantId}', '{otherTenantLotted}');
+            """);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId,
+            [proposed, approved, posted, rejected, lotted, unused, otherTenantProposed, otherTenantLotted],
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HashSet<Guid> { proposed, approved, lotted }, used.ToHashSet());
+    }
+
+    // Una línea abierta de una tarea sin terminar todavía va a escribir en el ledger (spec 2026-11-26, DA-37). Una línea cerrada ya
+    // dejó su movimiento o no escribirá ninguno, y una tarea terminada no tiene líneas abiertas.
+    [Fact]
+    public async Task CheckerFindsVariantUsedOnlyByAnOpenTaskLine()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var planned = Guid.CreateVersion7();
+        var ready = Guid.CreateVersion7();
+        var assigned = Guid.CreateVersion7();
+        var inProgress = Guid.CreateVersion7();
+        var done = Guid.CreateVersion7();
+        var cancelled = Guid.CreateVersion7();
+        var closedLine = Guid.CreateVersion7();
+        var otherTenant = Guid.CreateVersion7();
+
+        await AddTaskLineAsync(database, TenantId, "Planned", "Open", planned);
+        await AddTaskLineAsync(database, TenantId, "Ready", "Open", ready);
+        await AddTaskLineAsync(database, TenantId, "Assigned", "Open", assigned);
+        await AddTaskLineAsync(database, TenantId, "InProgress", "Open", inProgress);
+        await AddTaskLineAsync(database, TenantId, "Done", "Done", done);
+        await AddTaskLineAsync(database, TenantId, "Cancelled", "Cancelled", cancelled);
+        await AddTaskLineAsync(database, TenantId, "InProgress", "Cancelled", closedLine);
+        await AddTaskLineAsync(database, OtherTenantId, "Ready", "Open", otherTenant);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId,
+            [planned, ready, assigned, inProgress, done, cancelled, closedLine, otherTenant],
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HashSet<Guid> { planned, ready, assigned, inProgress }, used.ToHashSet());
+    }
+
     // Sin ids no consulta: ni siquiera hacen falta las tablas.
     [Fact]
     public async Task NoVariantsGiveNothingWithoutQuerying()
@@ -104,7 +200,25 @@ public sealed class CatalogVariantUsageCheckerTests
             CREATE TABLE quotations.order_items (order_id uuid NOT NULL REFERENCES quotations.orders (id), variant_id uuid NOT NULL);
             CREATE TABLE pos.sales (id uuid PRIMARY KEY, tenant_id uuid NOT NULL);
             CREATE TABLE pos.sale_lines (sale_id uuid NOT NULL REFERENCES pos.sales (id), variant_id uuid NOT NULL);
+            CREATE SCHEMA wms;
+            CREATE TABLE wms.stock_movements (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
+            CREATE TABLE wms.stock_balances (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
+            CREATE TABLE wms.lots (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
+            CREATE TABLE wms.adjustments (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, status text NOT NULL);
+            CREATE TABLE wms.adjustment_lines (adjustment_id uuid NOT NULL REFERENCES wms.adjustments (id), variant_id uuid NOT NULL);
+            CREATE TABLE wms.tasks (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, status text NOT NULL);
+            CREATE TABLE wms.task_lines (task_id uuid NOT NULL REFERENCES wms.tasks (id), variant_id uuid NOT NULL, line_status text NOT NULL);
             """);
+
+    private static async Task AddTaskLineAsync(
+        PostgreSqlContainer database, Guid tenantId, string status, string lineStatus, Guid variantId)
+    {
+        var task = Guid.CreateVersion7();
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.tasks (id, tenant_id, status) VALUES ('{task}', '{tenantId}', '{status}');
+            INSERT INTO wms.task_lines (task_id, variant_id, line_status) VALUES ('{task}', '{variantId}', '{lineStatus}');
+            """);
+    }
 
     private static Task AddQuotationLineAsync(PostgreSqlContainer database, Guid tenantId, Guid variantId) =>
         AddLineAsync(database, "quotations.quotations", "quotations.quotation_items", "quotation_id", tenantId, variantId);
@@ -114,6 +228,15 @@ public sealed class CatalogVariantUsageCheckerTests
 
     private static Task AddSaleLineAsync(PostgreSqlContainer database, Guid tenantId, Guid variantId) =>
         AddLineAsync(database, "pos.sales", "pos.sale_lines", "sale_id", tenantId, variantId);
+
+    private static async Task AddAdjustmentLineAsync(PostgreSqlContainer database, Guid tenantId, string status, Guid variantId)
+    {
+        var adjustment = Guid.CreateVersion7();
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.adjustments (id, tenant_id, status) VALUES ('{adjustment}', '{tenantId}', '{status}');
+            INSERT INTO wms.adjustment_lines (adjustment_id, variant_id) VALUES ('{adjustment}', '{variantId}');
+            """);
+    }
 
     // Los nombres de tabla son constantes de esta clase, nunca entrada: por eso van interpolados.
     private static async Task AddLineAsync(

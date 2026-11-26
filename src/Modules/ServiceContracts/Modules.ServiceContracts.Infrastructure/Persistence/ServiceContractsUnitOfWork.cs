@@ -1,7 +1,9 @@
+using System.Data;
 using System.Data.Common;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Modules.ServiceContracts.Application;
 using Modules.ServiceContracts.Domain;
@@ -28,6 +30,12 @@ internal sealed partial class ServiceContractsUnitOfWork(
     private const string PendingScheduleIndex = "IX_service_price_schedules_pending";
 
     public void Clear() => dbContext.ChangeTracker.Clear();
+
+    // READ COMMITTED dicho y no heredado de la base: los candados de la tasa necesitan que cada sentencia tome su propia foto, para
+    // ver lo que confirmó aquel a quien se esperó. El contexto no usa una estrategia que reintente, así que se abre directo.
+    public async Task<IServiceContractsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new ServiceContractsTransaction(
+            await dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken));
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Billing batch item failed on the database and was answered as a conflict.")]
     private static partial void LogBatchItemFailed(ILogger logger, Exception exception);
@@ -117,4 +125,11 @@ internal sealed partial class ServiceContractsUnitOfWork(
 
     private static RequestConcurrencyException ConcurrencyConflict(Exception exception) =>
         new("concurrency.conflict", "The billing record changed while the update was being committed.", exception);
+
+    private sealed class ServiceContractsTransaction(IDbContextTransaction transaction) : IServiceContractsTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
+
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
+    }
 }

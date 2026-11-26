@@ -132,6 +132,21 @@ public static class ShopifyInfrastructureExtensions
     }
 
     /// <summary>
+    /// Spec 2026-11-24 §11.1.1: el consumidor de los eventos de pedido de Quotations (<c>shopify.quotation-order-events</c>), que
+    /// encola a Shopify la dirección cambiada en «Editar pedido», y su worker. Sin esto el evento se publica y la dirección nunca
+    /// llega a la tienda, sin error en ningún lado (lo amarra <c>CompositionRootTests</c>). El aplicador depende de
+    /// <see cref="IShopifyConnectionDirectory"/>, que registra Bootstrapper. Las pruebas quitan el worker y corren el consumidor
+    /// (<c>ProcessBatchAsync</c>) a mano.
+    /// </summary>
+    public static IServiceCollection AddShopifyQuotationOrderEvents(this IServiceCollection services)
+    {
+        services.AddScoped<ShopifyShippingPartyChangedApplier>();
+        services.AddSingleton<QuotationOrderEventsProcessor>();
+        services.AddHostedService<QuotationOrderEventsWorker>();
+        return services;
+    }
+
+    /// <summary>
     /// Spec 2026-11-14 §5: el envío a Shopify de las correcciones (<c>orderUpdate</c>) y su worker. El cliente usa el mismo
     /// <c>shopify.admin</c> (sin redirecciones, sin loggers de headers) que registra <see cref="AddShopifyInfrastructure"/>. El
     /// procesador depende de <see cref="IShopifyConnectionDirectory"/>, <see cref="IShopifyOrderWriter"/> e

@@ -286,6 +286,18 @@ public sealed class ShopifyImportResultTests
         Assert.DoesNotContain("shipping_address_unresolved", row.Warnings ?? string.Empty, StringComparison.Ordinal);
     }
 
+    // El zip de la dirección de envío queda en la parte del pedido.
+    [Fact]
+    public async Task ImportedColombianOrdersKeepTheZipOnTheParty()
+    {
+        var world = WorldWithMedellin();
+        var snapshot = Order(address: Medellin with { Zip = " 050021 " }, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal("050021", Assert.Single(world.Writer.Creates).Draft.ShippingParty!.PostalCode);
+    }
+
     // Sin nombre ni teléfono en la dirección, salen del comprador.
     [Fact]
     public async Task ShippingPartyTakesTheBuyerNameAndPhoneWhenTheAddressHasNone()

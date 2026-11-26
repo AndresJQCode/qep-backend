@@ -61,7 +61,8 @@ public sealed class ConfirmIpcReviewsValidator : AbstractValidator<ConfirmIpcRev
 /// La confirmación en lote del IPC de un año (spec reajuste §6.7). Cada contrato va en su propia transacción, con su versión, y
 /// responde su propio resultado: uno que falla no tumba a los demás ni deja nada escrito. El precio se vuelve a calcular aquí y
 /// tiene que ser el que la persona vio. Confirmar crea el cambio programado en el período de revisión y, si ese período ya está
-/// en la ventana o retenido, genera en la misma transacción.
+/// en la ventana o retenido, genera en la misma transacción. Esa transacción sostiene la tasa del año con un candado compartido,
+/// así que nadie la cambia entre que se lee y que el cambio queda guardado.
 /// </summary>
 public sealed class ConfirmIpcReviewsHandler(
     IExecutionContext executionContext,
@@ -148,6 +149,13 @@ public sealed class ConfirmIpcReviewsHandler(
     /// <summary>Null si quedó confirmado; si no, el código del primer chequeo que no pasa, en el orden del plan.</summary>
     private async Task<string?> ConfirmAsync(Batch batch, ConfirmIpcItemInput item, CancellationToken cancellationToken)
     {
+        // Cada rechazo sale sin confirmar: la transacción se revierte al liberarla y suelta el candado.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        // Antes de cualquier lectura que decida: si alguien está guardando la tasa, aquí se espera y se lee la nueva; mientras
+        // este ítem no termine, quien quiera guardarla espera y después encuentra el cambio programado. Se lee por contrato: si la
+        // editaron durante el lote, quien vio la anterior recibe price_changed, y el motivo y el cambio programado copian la que
+        // vale ahora.
+        var rate = await ipcRates.FindForShareAsync(batch.TenantId, batch.Year, cancellationToken);
         var service = await services.FindAsync(batch.TenantId, new ServiceContractId(item.ServiceId!.Value), cancellationToken);
         if (service is null)
         {
@@ -183,10 +191,6 @@ public sealed class ConfirmIpcReviewsHandler(
             return ServiceContractsErrorCodes.PriceReviewYearMismatch;
         }
 
-        // La tasa se lee por contrato (el contexto se vació antes de este ítem, así que viene de la base): si alguien la editó
-        // durante el lote, quien vio la anterior recibe price_changed, y el motivo y el cambio programado copian la que vale
-        // ahora. Sin candado: una edición que entre entre esta lectura y el guardado todavía puede pasar.
-        var rate = await ipcRates.FindAsync(batch.TenantId, batch.Year, cancellationToken);
         var rounding = await RoundingAsync(batch, service.Currency, cancellationToken);
         var computed = rate is null ? null : PriceReview.IpcPrice(service.Price, rate.Rate, service.IpcExtraPoints, rounding);
         if (rate is null || computed is null || computed != item.ExpectedPrice)
@@ -217,6 +221,7 @@ public sealed class ConfirmIpcReviewsHandler(
             ConfirmedFields,
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return null;
     }
 
@@ -238,7 +243,7 @@ public sealed class ConfirmIpcReviewsHandler(
         var confirmed = await services.FindManyAsync(tenantId, ids, cancellationToken);
         var customerRefs = (await customers.FindManyAsync(
                 tenantId, confirmed.Select(service => service.CustomerId).Distinct().ToArray(), cancellationToken))
-            .ToDictionary(customer => customer.Id, customer => new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email));
+            .ToDictionary(customer => customer.Id, customer => new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.BusinessName));
 
         return (await composer.ComposeSummariesAsync(tenantId, confirmed, customerRefs, cancellationToken))
             .ToDictionary(service => service.Id);

@@ -164,8 +164,9 @@ public sealed class ShopifyCitySynonymEventApplier(
 /// importador siembra sin mensaje, así que un pedido reimportado puede sembrar otro) y un <c>Recorrect</c> cuya huella ya está en
 /// la ciudad del sinónimo terminan <c>Skipped</c> sin llamar a Quotations ni a Customers.</item>
 /// <item>Antes de cada escritura anota en la fila la ciudad que pide (<see cref="IShopifyCityCorrectionJobQueue.RecordRequestedCityAsync"/>,
-/// en su propia sentencia) y le pasa al escritor todas las que pidió el trabajo: así Customers reconoce un reintento suyo y no
-/// confunde lo que hizo una persona con lo que hizo un intento anterior.</item>
+/// en su propia sentencia) y le pasa al escritor todas las que pidió el trabajo: así Customers y Quotations reconocen un reintento
+/// suyo y no confunden lo que hizo una persona con lo que hizo un intento anterior (gana la persona: el trabajo termina
+/// <c>Skipped</c>).</item>
 /// <item>Escribe por <see cref="IShopifyCityCorrectionWriter"/>, que confirma en su propio scope. Con éxito, también con
 /// <c>AlreadyApplied</c> (un intento anterior escribió y cayó antes de guardar acá), la huella guarda la ciudad que de verdad quedó
 /// escrita, que en un reintento puede ser la que el sinónimo tenía antes. Cualquier rechazo termina <c>Skipped</c> con su motivo,
@@ -323,7 +324,7 @@ public sealed class ShopifyCityCorrectionProcessor(
             var requested = await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
             var recorrected = job.Target == ShopifyCityCorrectionTarget.Order
                 ? await writer.CorrectShippingCityAsync(
-                    job.TenantId, job.TargetId, existing!.Party!, synonym.DepartmentId, synonym.CityId, cancellationToken)
+                    job.TenantId, job.TargetId, existing!.Party!, synonym.DepartmentId, synonym.CityId, requested, cancellationToken)
                 : await writer.CorrectCustomerCityAsync(
                     job.TenantId, job.TargetId, existing!.CustomerVersion!.Value, existing.CityId, synonym.CityId, requested,
                     cancellationToken);
@@ -345,10 +346,12 @@ public sealed class ShopifyCityCorrectionProcessor(
                 return (null, ShopifyCityCorrectionSkipReasons.PartyIncomplete);
             }
 
-            var party = new ShopifyPartyDraft(fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId);
-            await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
+            var party = new ShopifyPartyDraft(
+                fields.Name, fields.Phone, fields.Email, fields.Address, synonym.DepartmentId, synonym.CityId,
+                ShopifyOrderImporter.ShippingPostalCode(snapshot));
+            var requested = await queue.RecordRequestedCityAsync(job.Id, synonym.CityId, cancellationToken);
             return (await writer.AttachShippingAsync(
-                job.TenantId, job.TargetId, party, ShopifyOrderImporter.RawAddressLabel, cancellationToken), null);
+                job.TenantId, job.TargetId, party, ShopifyOrderImporter.RawAddressLabel, requested, cancellationToken), null);
         }
 
         // D-C5: con la configuración actual de la tienda; si ya no tiene clasificación por defecto, el cliente sigue incompleto.

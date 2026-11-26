@@ -1860,6 +1860,30 @@ Spec 2026-11-15 §4 (`docs/superpowers/specs/2026-11-15-store-order-buyer-link-d
   con ese correo o no está verificada: un solo código para los dos), `422 order.order.source_invalid` (el pedido no es de la tienda), `403`
   (sin permiso o de otro tenant, nunca 404).
 
+#### La entrega editable
+
+Spec 2026-11-24 §10 y §11 (`docs/superpowers/specs/2026-11-24-perfiles-de-facturacion-backend-handoff.md`). En **todo origen**.
+
+- `PUT /orders/{id}` y `POST /orders/{id}/preview` aceptan
+  `delivery: { "isStorePickup": bool, "shipping": QuotationPartyRequest | null }`. **Ausente conserva** la entrega (un frontend
+  viejo no la toca). `shipping: null` con envío es la dirección del cliente. Pasar a recoger quita la dirección y limpia el
+  envío, contraentrega incluida. Al guardar, una parte propia debe venir completa; el cálculo previo la acepta a medias.
+- El pedido responde `order.deliveryEditable`: `true` mientras esté abierto, sin preparar, sin facturar y, si es mayorista, sin
+  aprobar.
+- Un cambio deja en el historial una fila `PartiesChanged` y la auditoría `quotation.order.delivery_changed`.
+- Errores (422): `order.order.already_invoiced`, `order.order.already_prepared` (facturado gana) y `order.order.not_editable`;
+  `order.delivery.shipping_party_on_pickup`, `order.delivery.address_required` (de recoger a los datos de un cliente sin
+  domicilio), `order.shipping.party_incomplete` (sólo al guardar), `quotations.party.region_invalid` con
+  `errors["Delivery.Shipping.RegionId"]` y `quotations.party.postal_code_too_long` con
+  `errors["Delivery.Shipping.PostalCode"]`.
+- **Pedido de Shopify** (§11.1). Cuando, enviando, cambia la parte propia, se rechaza lo que el envío a la tienda no podría
+  mandar, también en el cálculo previo: `order.delivery.shopify_party_required` (volver a la dirección del cliente),
+  `order.delivery.shopify_region_required` (España sin región) y `order.delivery.shopify_region_unmapped`. **El código postal
+  nunca es obligatorio** (owner, 2026-11-25).
+- **Evento** `quotations.order.shipping-party-changed.v1`, payload `{ tenantId, orderId, source, occurredAt }`: al outbox en la
+  transacción del pedido, sólo en un pedido de Shopify, enviando y con la parte propia cambiada. Lo consume Shopify, que encola
+  el envío de la dirección (ver [Integración con Shopify](#integración-con-shopify)). Recoger no publica nada.
+
 #### Los cuatro ejes del pedido
 
 Desde el spec 2026-11-10 el pedido tiene cuatro ejes independientes, al estilo de Shopify. Viajan por
@@ -2387,6 +2411,23 @@ encabezado, sin distinguir mayúsculas), `all_hidden`, `too_many_fixed_columns` 
 `quotations.orders_export_layout.updated` sólo si algo cambió. No hay `DELETE`: restaurar es un
 `PUT` con el catálogo en su orden, nombres y visibilidad por defecto, sin fijas.
 
+**Indicativo de los teléfonos** (spec 2026-11-25). El layout lleva un interruptor, `includePhoneDialCode`, que el `GET`
+devuelve siempre (`true` sin nada guardado) y el `PUT` acepta opcional: ausente o `null` conserva el actual. Se guarda con las
+mismas reglas que `sheetName` —permisos, `If-Match`, auditoría y no-op—, y cambiar sólo el interruptor es un cambio. Toda fila
+que ya existía quedó en `true` (migración `AddOrdersExportLayoutPhoneDialCode`, aditiva). Sólo toca las cuatro columnas de
+teléfono del catálogo —`phone`, `customer_phone`, `billing_phone` y `shipping_phone`—; las fijas salen como se escribieron.
+
+| `includePhoneDialCode` | Teléfono guardado                     | Sale en el Excel |
+| ---------------------- | ------------------------------------- | ---------------- |
+| `true`                 | cualquiera                            | como está        |
+| `false`                | `+573001234567`                       | `3001234567`     |
+| `false`                | `+34612345678`                        | `612345678`      |
+| `false`                | sin `+` (`3001234567`, `573001234567`) | como está       |
+| `false`                | con `+` y no se puede partir          | como está        |
+
+El número se parte con `libphonenumber` (`IPhoneNumberSplitter` de Customers, detrás del puerto `IQuotationPhoneNumbers`); lo que
+no es un número válido no se puede partir.
+
 `Observaciones` (`notes`) sale de las notas del pedido (`Order.Notes`, spec 2026-10-15), sin tope de
 largo. Al convertir, las notas del pedido son un solo campo, nunca una concatenación: el `notes` del
 cuerpo la reemplaza tal cual, `null` (o ausente) hereda las de la cotización y `""` la deja sin notas.
@@ -2465,7 +2506,8 @@ vuelve a subir.
 
 Spec `2026-10-24-fusion-de-clientes`. Junta clientes duplicados en uno; **no se puede deshacer**.
 
-- **Rutas** (`customers.customer.merge`, riesgo `high`; lo tienen por defecto los roles de sistema `admin` y `advisor`, en código):
+- **Rutas** (`customers.customer.merge`, riesgo `high`; de fábrica lo tienen `admin`, el rol de sistema, y `advisor`, el rol
+  sembrado en cada tenant):
   `GET /customers/{survivorId}/merge-preview?mergedCustomerIds=…` (1 a 10 ids distintos, sin el que queda) y
   `POST /customers/{survivorId}/merge` con `If-Match: "<survivor.version>"` y `{ "mergedCustomerIds": [...] }`. Sin `If-Match`
   responde 428; con una versión vieja, 412 `concurrency.conflict` (la pantalla pide de nuevo la vista previa).
@@ -2898,9 +2940,17 @@ El tenant se resuelve del claim JWT (no de header ni subdominio en runtime).
 `IExecutionContext.TenantId` lo expone vía `HttpExecutionContext`, que lee el
 `ClaimsPrincipal` actual. La autorización es por claims de permiso
 (`RequireClaim(QepClaimTypes.Permission, permiso)`), con policies armadas
-dinámicamente por módulo. Los roles no están hardcodeados: `RoleDefinition` /
-`RoleCatalog` mapean un rol (p. ej. `admin`, `advisor`) a un
-conjunto de permisos.
+dinámicamente por módulo. El único rol de sistema es `admin` (`RoleDefinition` /
+`RoleCatalog`, en código); los demás son filas de `authorization.roles` de cada
+tenant, que él edita o borra desde `/authorization/roles`.
+
+Cinco de esas filas (`advisor`, `billing`, `cashier`, `scheduling_manager` y
+`scheduling_provider`) nacen de plantillas (`RoleTemplate`) que se siembran una sola
+vez por tenant, con marca en `authorization.role_seeds`: en el alta (si falla, queda
+un log `Error` y el alta sigue) y al arrancar, después de la semilla y bajo el candado
+de arranque (si falla, el arranque falla). Un permiso nuevo en una plantilla sólo
+llega a los tenants nuevos. Un rol no se puede borrar mientras lo tenga una membresía
+`Invited`, `Active` o `Suspended` (`422 authorization.role.in_use`).
 
 ### Acceso cruzado entre módulos, controlado
 
@@ -3054,15 +3104,16 @@ Meta» la muestra como «hace X»; no hay alerta de silencio (owner, 2026-11-16)
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
-El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Platform`. Valkey **no** entra a
+El cliente de Valkey (spec 2026-11-13) publica tres métricas en el meter `Qep.Platform`. Valkey **no** entra a
 `/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
 
 | Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
 | ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
 | `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
 | `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area,reason}` | `area`, `reason` | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch`. `reason` es `NotConnected` (el multiplexer no estaba conectado), `TimeoutException` (pasó `OperationTimeoutMs`, 100 ms por defecto) o el tipo de la excepción (`RedisConnectionException`, `RedisServerException` con un `NOPERM` de la ACL…) |
+| `qep.valkey.operation.duration` | `qep_valkey_operation_duration_seconds` (histograma) | `area`, `outcome` | Cuánto tarda cada operación pedida con `ValkeyGateway.TryAsync`, medida desde el pod. `outcome`: `ok`, `error`, `late` (pasó el tope y después respondió; se mide al terminar) y `late_error` (pasó el tope y después falló). No mide `Publish` ni `Subscribe`, y sin conexión no hay operación que medir |
 
-La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
+La alerta sobre las dos primeras no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
 
 **Limitadores compartidos (D-3, `Valkey:Areas:RateLimiting`).** Las siete políticas de ventana fija de `Program.cs` y el
 límite por clave de la API externa pasan por `SharedRateLimitPartitions`. Con el área prendida cuentan en Valkey, en la
@@ -3115,12 +3166,22 @@ que pasa entre un área y la siguiente:
 sum by (reason) (increase(qep_valkey_fallbacks_total{area="<etiqueta>"}[1h]))
 ```
 
-Si da distinto de cero, `reason` dice por qué: `TimeoutException` apunta a latencia hacia Valkey (el tope es
-`OperationTimeoutMs`, 100 ms), `NotConnected` a una reconexión del cliente, y `RedisServerException` a un comando que la
-ACL de producción rechaza. Antes de la etiqueta los respaldos de horario laboral del 2026-11-23 (Presence 23 y RateLimiting
-11 en un pod de 18 h) no se podían atribuir. La serie vieja sin `reason` sigue en Prometheus hasta que vence su retención.
+tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida
+del pod). Si da distinto de cero, `reason` dice por qué: `TimeoutException` es una operación que no respondió en
+`OperationTimeoutMs` (100 ms) —desde el pod no se distingue si tardó Valkey, la red o el propio proceso—,
+`NotConnected` una reconexión del cliente, y `RedisServerException` un comando que la ACL de producción rechaza. La serie
+vieja sin `reason` sigue en Prometheus hasta que vence su retención.
 
-tiene que dar 0 o sin datos en condiciones normales (la serie no existe hasta el primer respaldo de esa área en la vida del pod). Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
+Cuánto tardan de verdad las que pasan el tope se ve en el histograma:
+
+```promql
+sum by (le, area) (increase(qep_valkey_operation_duration_seconds_bucket{outcome=~"late.*"}[24h]))
+sum by (area, outcome) (increase(qep_valkey_operation_duration_seconds_count[24h]))
+histogram_quantile(0.999, sum by (le, area) (rate(qep_valkey_operation_duration_seconds_bucket[1h])))
+```
+
+Si las `late` caben casi todas bajo `le="0.15"` o `le="0.25"`, el tope está corto; si caen en segundos, el problema no se
+arregla subiéndolo. La segunda consulta da la proporción real de operaciones que se pierden. Para confirmar qué áreas están prendidas, en PowerShell (el ConfigMap no lleva
 secretos; nunca `get secret -o yaml` ni `-o json`):
 
 ```powershell
@@ -3207,6 +3268,12 @@ público de Soporte) no existen para la consola: `GET /files` no los lista ni fi
 storage.file.not_found` (el mismo de otro tenant) y `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`. Se crean,
 completan y bajan sólo por `IStorageSystemUploads`, desde el módulo dueño. Ver [Formulario público de
 Soporte](#formulario-público-de-soporte-fase-3).
+
+**Archivos que piden un permiso extra.** Los tipos de `FileOwnerModules.RequiredPermissionByOwnerType` (hoy `WmsExport`, el Excel de
+saldos de Bodegas, con `wms.stock.export`) exigen ese permiso además del `storage.file.*` de la ruta: sin él, `GET /files` no los lista y
+toda ruta por id (descarga, publicación, despublicación, metadatos, completar, cancelar, borrar) responde `403 authorization.denied`.
+Tampoco los ven Catalog ni Quotations: para ellos el id no existe. `WmsExport` además lo genera el servidor (`ServerGeneratedFiles`), así
+que `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`.
 
 ### Reportes exportados (`exports/`)
 
@@ -5257,13 +5324,31 @@ atributos) viaja a Shopify.
   (`ShopifyCityCorrectionProcessor`, `Applied` o `AlreadyApplied`), la parte escrita pasa a la proyección (no la tocó el
   asesor) y se encola `[ShippingAddress]` en el mismo guardado de la huella. Si el asesor ya había editado la parte, el trabajo
   sale `Skipped` con `shipping_changed` y nada viaja: gana el asesor.
+- **La dirección cambiada en «Editar pedido» también viaja** (spec 2026-11-24 §11.1, ver [La entrega
+  editable](#la-entrega-editable)). `QuotationOrderEventsWorker` llama cada 10 s al consumidor
+  `shopify.quotation-order-events`, que lee `quotations.order.shipping-party-changed.v1` del outbox y encola
+  `[ShippingAddress]` (fusionado con el envío abierto; `Held` con `connection_inactive` si la conexión no está operativa). No
+  escribe el pedido ni mueve la proyección: una edición posterior de Shopify sobre la dirección es conflicto y gana QEP.
+  Pasar a recoger no viaja: `orderUpdate` no cambia el método de entrega.
+- **El código postal es parte de la dirección.** La importación, las ediciones de Shopify y la corrección de ciudad por
+  sinónimo ponen el `zip` en la parte (uno de más de 20 caracteres se omite), la huella (`shopify.city_corrections.postal_code`)
+  y la proyección lo guardan, y la comparación lo mira; «Cambios por revisar» trae la fila `zip` en el grupo `ShippingAddress`.
+  Un pedido sin código postal no toma como cambio un `zip` que Shopify no modificó. Un payload guardado antes de que el espejo
+  leyera el zip no tiene la clave (distinto de `"zip": null`): de ese zip desconocido no sale ningún cambio.
+- **El eco de una dirección de fuera de Colombia** se reconoce comparando lo que llega con lo que el envío de la parte del pedido
+  mandaría (`ShopifyPushAddress`, la misma regla de los dos lados): si coincide, no hay cambio; si no, es conflicto
+  `city_unresolved`, porque las ciudades de afuera todavía no se importan.
 - **El envío.** `ShopifyOrderPushWorker` corre cada 10 s, en lotes de 50, y manda `orderUpdate` (GraphQL, `shopify.admin`) con
   los valores que el pedido tiene **al mandar**: la dirección con el nombre de QEP en `firstName` y la dirección en `address1`
-  (`lastName` y `address2` vacíos, D12), la ciudad y el departamento con sus nombres de QEP y el `provinceCode` de
-  `ColombiaProvinceCodes`, y la `company` y el `countryCode` del **último** snapshot, porque `orderUpdate` reemplaza la
-  dirección entera. El `zip` es el `postalCode` de la parte de QEP; sin él, el del último snapshot sólo si país y provincia de
-  la parte son los del snapshot; si no, no viaja. La corrección del panel no recibe código postal y conserva el que tenga el
-  pedido. La nota es `BuyerNotes` y los atributos, `qep_attributes` o los del último snapshot. Sólo manda los grupos
+  (`lastName` y `address2` vacíos, D12) y la `company` del **último** snapshot, porque `orderUpdate` reemplaza la dirección
+  entera. En Colombia, la ciudad y el departamento con sus nombres de QEP, el `provinceCode` de `ColombiaProvinceCodes` y el
+  `countryCode` del último snapshot si es Colombia (`CO` si no). Fuera de Colombia, el país y la ciudad escrita de la parte y el
+  `provinceCode` de su región (`SpainProvinceCodes`, INE → ISO 3166-2; un país sin regiones va sin `provinceCode`), con las
+  mismas reglas con las que se rechaza el guardado (`ShopifyShippingAddressRules`). El `zip` es el `postalCode` de la parte de
+  QEP; sin él, el del último snapshot sólo si país y provincia de la parte son los del snapshot; si no, no viaja. La corrección
+  del panel no recibe código postal: conserva el del pedido mientras no cambie el departamento y, si cambia, lo borra. La nota es
+  `BuyerNotes` y los atributos,
+  `qep_attributes` o los del último snapshot. Sólo manda los grupos
   del envío. Reintenta (8 intentos; esperas de 10 s, 1 min, 5 min, 15 min, 30 min, 1 h, 2 h y 4 h, o el `Retry-After` si es
   mayor) ante 429, `THROTTLED`, 5xx, red, 401, 402 y token vencido (`AccessToken` nulo, sin llamar a Shopify); termina
   `Failed` con `user_error` (`userErrors`; al log sólo van los campos, nunca el mensaje), `order_not_found`, `rejected` (otro
@@ -5529,8 +5614,8 @@ Responde `202` y un worker factura cada pedido como la persona que pidió la tan
 `GET …/siigo/invoice-batches/{batchId}` y todas las tandas con `GET …/siigo/invoice-batches`. Un pedido que ya está en una tanda sin
 terminar es `409 siigo.invoice_batch.order_in_progress`. La factura de un pedido se consulta y se atiende bajo
 `/api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice` (`GET`, `/availability`, `/preview`, `/{invoiceId}/pdf`,
-`/{invoiceId}/send-whatsapp`, `/stamp` y `/resolve`); esa ruta no genera facturas. `GET …/preview` devuelve la factura armada, los
-faltantes y la propuesta de pagos sin llamar a Siigo. Crear la factura espera a Siigo hasta 120 s; todo lo demás, 30 s.
+`/{invoiceId}/send-whatsapp`, `/stamp`, `/resolve` y `/annulment`); esa ruta no genera facturas. `GET …/preview` devuelve la factura
+armada, los faltantes y la propuesta de pagos sin llamar a Siigo. Crear la factura espera a Siigo hasta 120 s; todo lo demás, 30 s.
 Cada fila que devuelven `GET`, `/stamp` y `/resolve` trae `orderMarkFailed`: va en `true` en la factura del pedido que existe en
 Siigo cuando el pedido no lleva su marca (o no se pudo leer) y ninguna tanda sin terminar lo tiene; otra tanda del pedido la completa
 sin crear otra factura. La de flete siempre va en `false`. Mientras una tanda sin terminar tenga el pedido, `canResend` va en `false`,
@@ -5538,7 +5623,7 @@ en esas filas y en los ítems de las tandas.
 
 - Un candado por pedido (`pg_advisory_xact_lock`) serializa el envío. Con una fila vigente `Pending` se reenvían **los mismos
   bytes con la misma `Idempotency-Key`**; `Created`, `Stamped`, `StampRejected` y `Unknown` se devuelven sin llamar a Siigo;
-  `Rejected` y `Failed` arman una fila nueva.
+  `Rejected`, `Failed` y `Annulled` arman una fila nueva.
 - Si no se sabe si Siigo creó la factura (timeout, red, 5xx, 429 o un error de servicio de Siigo), la fila queda por confirmar
   (`Pending`) y el ítem `ToConfirm`: una persona la reenvía con otra tanda o la resuelve (`POST …/resolve` con `exists` o `missing`;
   `missing` espera 10 minutos desde el último envío sin respuesta). No hay reintentos automáticos. Una `Pending` de más de 24 h pasa a
@@ -5559,7 +5644,28 @@ en esas filas y en los ítems de las tandas.
   persona la revisa en Siigo antes de prenderlo. Una factura emitida no se borra, y no hay empresa de pruebas de Siigo: es la única red.
 - El flete va como un ítem de la factura del pedido o, si la conexión lo pide (`freight_separate_invoice`), en su propia factura.
 - Mientras exista una factura viva, la marca manual y la anulación del pedido responden `409 order.order.external_invoice_pending`.
-  Un pedido facturado en Siigo no se revierte con QEP (`422 order.order.invoiced_externally`): revertir es una nota crédito.
+  Un pedido facturado en Siigo no se revierte con la acción manual (`422 order.order.invoiced_externally`): el pedido se libera cuando
+  QEP verifica que la factura se anuló en Siigo (`/annulment`, abajo). Una factura aprobada por la DIAN se corrige con una nota
+  crédito, que QEP no maneja.
+
+**Anulada en Siigo** (spec `2026-11-25-siigo-anular-factura-design.md`). QEP no anula facturas: una persona la anula (o la borra) en
+Siigo Nube y después llama `POST …/siigo-invoice/annulment` (sin cuerpo, permiso `siigo.invoice.issue`). QEP lee en Siigo cada factura
+vigente del pedido y, **sólo si todas están anuladas** (la del pedido y la de flete), pasan a `Annulled` (con `errorCode`
+`siigo.invoice.annulled_in_siigo` o `siigo.invoice.deleted_in_siigo`), el pedido pierde la marca de facturado y se puede volver a
+facturar. Responde `200` con las filas actuales. Ante cualquier duda no cambia nada: `422` `siigo.invoice.annulment_unverifiable`
+(una factura `Pending`, `Unknown` o resuelta a mano sin id de Siigo), `siigo.invoice.not_annulled` o
+`siigo.invoice.annulment_unclear` (respuesta no reconocida, o anulada y aprobada por la DIAN a la vez), los tres con
+`details = { kind, number }`; además `404 siigo.invoice.not_found`, `409 siigo.invoice_batch.order_in_progress` o
+`siigo.connection_unavailable`, `502 siigo.invoice.siigo_service`, `503 siigo.unavailable` y `422 siigo.invoice.state_invalid` si no
+hay nada que anular. Hasta verificar qué contesta Siigo con una factura **borrada**, borrarla no libera el pedido: sale como respuesta
+no reconocida y queda en `call_failures` (operación `InvoiceRead`).
+
+`GET …/siigo-invoice` y la respuesta de `/annulment` suman dos campos a cada fila (en `/stamp` y `/resolve` van en `false`):
+
+- `canConfirmAnnulment`: sólo en la fila del pedido; la pantalla ofrece «Ya la anulé en Siigo» cuando va en `true`. Exige que ninguna
+  tanda sin terminar tenga el pedido y que toda factura vigente se pueda verificar, o que haya que reintentar la marca.
+- `orderUnmarkFailed`: la factura del pedido quedó `Annulled` pero el pedido sigue marcado con su número. Repetir la acción reintenta
+  sólo la marca, sin llamar a Siigo.
 
 **Enviar la factura por WhatsApp** (spec `2026-11-21-siigo-invoice-whatsapp-design.md`).
 `POST /api/v1/tenants/{tenantId}/orders/{orderId}/siigo-invoice/{invoiceId}/send-whatsapp` (permiso `siigo.invoice.issue`, sin cuerpo,
@@ -5641,7 +5747,7 @@ Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana 
 como estaban, porque ya estaban desplegados.
 
 **Permisos y roles.** `billing.service.read` (toda lectura de la lista de servicios, cobros y perfil) y `billing.service.manage` (todo
-lo que escribe, y también la configuración). Los llevan `admin` y el rol de sistema `billing` («Facturación»); ningún otro. Ambos
+lo que escribe, y también la configuración). De fábrica los llevan `admin` y el rol sembrado `billing` («Facturación»); ningún otro. Ambos
 declaran `RequiredModules: [billing]`: con el módulo apagado el editor de roles no los ofrece y la API responde un `403` pelado, sin
 el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca se muestran opciones que el tenant no tiene).
 
@@ -5762,7 +5868,7 @@ Soporte](#formulario-público-de-soporte-fase-3)); la encuesta llega después. S
 entran por puertos con adaptador en Bootstrapper (`SupportBusinessCalendarSource`, `SupportCustomerLookup`, `SupportMemberDirectory`).
 
 **Permisos y roles.** `support.ticket.read`, `support.ticket.manage` y `support.settings.manage` (`SupportPermissions`, categoría
-«Soporte», los tres exigen el módulo `support`). `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
+«Soporte», los tres exigen el módulo `support`). De fábrica, `admin` tiene los tres; `advisor`, `read` y `manage`; `billing` y `cashier`, ninguno.
 Las lecturas usan dos políticas que aceptan más de un permiso (`SupportPolicies`): `support.ticket.view` (`read` o `manage`) y
 `support.settings.view` (`read`, `manage` o `settings.manage`). Quien ve tickets ve **todos** los del tenant: no hay «sólo los míos».
 Con el módulo apagado, toda ruta responde 403.
@@ -6683,6 +6789,192 @@ réplica lleva su propia cuenta en memoria y el límite efectivo se multiplica p
 `sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí
 se auditan (`api_access.key.created`, `api_access.key.revoked`).
 
+### Módulo Wms (bodegas)
+
+Módulo `Modules.Wms.{Domain,Application,Infrastructure,Api}`, esquema `wms`, clave de módulo `wms` (`Dependencies = [Catalog]`, última de
+`TenantModuleKeys.All`, fuera de `DefaultForNewTenants`: nace apagado). Es la fase 1 de
+[`docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md`](docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md): bodegas,
+árbol de ubicaciones, dueños, unidades de medida y perfil logístico de las variantes. El libro de inventario (WMS-D) está descrito en la subsección «Inventario (WMS): ledger y saldos» más abajo. Rutas bajo
+`/api/v1/tenants/{tenantId}/wms` (`X-Tenant-Id`).
+
+**Cómo se prende.** Por la consola de operador: `POST /api/v1/tenants/{tenantId}/operator/tenants/{targetTenantId}/modules/changes`, que escribe
+la fila de `tenancy.tenant_modules` con `module_key = 'wms'` (con `catalog` ya prendido). Mientras el frontend no conozca la clave `wms`, la
+pantalla del operador oculta el módulo y se prende llamando a la API. Sin la fila, todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la ruta, 403 `authorization.denied`, nunca 404.
+
+**Permisos.** Diecisiete, `wms.<recurso>.<acción>` (`WmsPermissions`), cada uno con su política en `AddAuthorization` y
+`RequiredModules: [wms]`. Sólo el rol de sistema `admin` los trae; ningún otro. Las rutas de Bodegas usan cuatro: `wms.warehouse.manage`,
+`wms.owner.manage`, `wms.profile.manage` y `wms.document.read`; las de inventario suman `wms.stock.read`, `wms.stock.export`,
+`wms.adjustment.propose` y `wms.adjustment.approve`; las de tareas, `wms.task.manage` y `wms.putaway.perform`. El resto es de fases
+posteriores.
+
+**Lo que nace solo.**
+
+- **Con cada bodega:** las ubicaciones virtuales `SUPPLIER`, `CUSTOMER`, `ADJUSTMENT` y `TRANSIT`, y la zona `RECEIVING` con el muelle
+  `REC-01`. Las virtuales son de solo lectura: un `PUT` sobre una con cuerpo válido responde 422 `wms.location.virtual_immutable` (un
+  cuerpo inválido responde antes `validation.failed`, también 422), y no se borran ni se les imprime etiqueta. `RECEIVING` y `REC-01`
+  tampoco se borran (mismo código). Un nodo con hijos o con saldo tampoco se borra.
+- **En el primer acceso del tenant** (los `GET` de bodegas, dueños, unidades y perfiles, y sus `POST`/`PUT`; no `GET …/locations` ni `scannable`, y no al prender el módulo:
+  Tenancy no avisa): el dueño `Self` y las seis
+  unidades `UND, KG, G, L, ML, M`. Lo escribe `IWmsProvisioner` con `INSERT … ON CONFLICT DO NOTHING`; una consulta directa a
+  `wms.owners` de un tenant que nunca entró devuelve cero filas, y no es un error.
+- **Perfil sin fila:** el `GET /variant-profiles` lo calcula en memoria con `version: 0`; el `PUT` con `version: 0` lo crea.
+
+**`scannable` y el `ETag`.** `GET …/locations/scannable` devuelve `{ id, code, path, role }` de las ubicaciones no virtuales de la bodega y
+un `etag` que cambia cuando cambia cualquiera. La app lo guarda y manda `If-None-Match`: igual → 304 sin cuerpo. Es la cache con la que
+el escáner resuelve un código contra su bodega.
+
+**P-1: los identificadores de ubicación no se escriben.** `wms.identifiers` es único por `(tenant_id, value)` y el código de una
+ubicación es único **por bodega**: la segunda bodega repetiría `SUPPLIER` o `REC-01`. La app resuelve el código contra el `scannable` de
+su bodega, no contra `identifiers`. El spec §25 queda por corregir.
+
+**Etiquetas (RF-004).** `POST …/locations/labels` con `{ locationIds }` (1 a 500; uno ajeno a la bodega es 422 `wms.location.not_found`)
+devuelve un PDF con una etiqueta de 60×30 mm por ubicación, en Code 128 (paquete `@preview/tiaoma` de Typst). Sale por `qcode-pdf` con la
+**misma clave de cotizaciones** (`Quotations:Pdf`), desde `WmsPdfGateway` en Bootstrapper: el módulo no ve esa clave. Si el servicio no
+resuelve el paquete o cae, la respuesta es 422 `wms.label.render_failed` con el mensaje del compilador. La prueba contra el servicio real
+es manual (se necesita la clave del developer, nunca en un log); las automáticas sustituyen el renderer.
+
+**Migraciones:** `Tenancy` `AddWmsModuleKey` (el CHECK de `tenant_modules` admite `wms`) y `Wms` `InitialWms` (esquema `wms`).
+
+#### Inventario (WMS): ledger y saldos
+
+Fase 2 del mismo spec (WMS-D). El inventario es un **ledger inmutable**: `wms.stock_movements` guarda cada movimiento con origen y
+destino (par de claves `StockKey`: dueño, ubicación, variante, lote y estado) y `wms.stock_balances` es el saldo derivado, que sólo
+escribe `InventoryLedger` en la misma transacción. Nada se edita: `trg_stock_movements_immutable` lanza `wms.ledger.immutable` ante
+cualquier `UPDATE` o `DELETE`, y un error se corrige con un movimiento de **reverso** (`POST /stock/movements/{id}/reverse`), que apunta
+al original. Quitarle al rol de la aplicación el `TRUNCATE` sobre `wms.stock_movements` y sobre cada una de sus particiones mensuales es
+una tarea **pendiente de la plataforma** (repo `migracion-k8s`), no una migración: hoy nada en `k8s/` lo hace y las migraciones corren con la conexión de la aplicación. Las lecturas salen de `wms.v_stock_rows` y `wms.v_stock_summary`, donde viven las fórmulas de disponible, picking, recibido y
+bloqueado. Las sondas de «con existencias» (`hasStock` del perfil, borrar una ubicación, desactivar un dueño) cuentan saldo físico: una
+ubicación no virtual con `on_hand` o `reserved` distinto de cero. Una variante con movimientos o saldos en el ledger tampoco se borra
+de Catalog (`CatalogVariantUsageChecker`): se desactiva.
+
+La clave del saldo incluye además la **unidad logística** (`handling_unit_id`, caja o palet; D-12): `NULL` es stock suelto, y el
+movimiento guarda la de cada extremo (`from_handling_unit_id`, `to_handling_unit_id`). En WMS-D va siempre en `NULL`, salvo lo que copie
+un reverso: el agregado `HandlingUnit`, su tabla y sus rutas llegan con el corte que confirme recepciones.
+
+**Rutas** (bajo `/api/v1/tenants/{tenantId}/wms`). **IK** exige el header `Idempotency-Key`; **SK** deriva la clave en el servidor.
+
+| Ruta | Permiso | Idempotencia |
+| --- | --- | --- |
+| `GET /stock` | `wms.stock.read` | — |
+| `GET /stock/summary` | `wms.stock.read` | — |
+| `GET /stock/movements` | `wms.stock.read` | — |
+| `POST /stock/export` | `wms.stock.export` | — (entrega por correo) |
+| `POST /stock/movements/{id}/reverse` | `wms.adjustment.approve` | IK |
+| `GET /adjustments` | `wms.document.read` | — |
+| `POST /adjustments` | `wms.adjustment.propose` | IK |
+| `POST /adjustments/{id}/approve` | `wms.adjustment.approve` | — (versión) |
+| `POST /adjustments/{id}/reject` | `wms.adjustment.approve` | — (versión) |
+| `POST /adjustments/{id}/post` | `wms.adjustment.approve` | SK: `adjustment:{id}:post:{version}`; el header se ignora |
+| `POST /imports/initial-balances/preview` | `wms.adjustment.propose` | — (no escribe saldos) |
+| `POST /imports/initial-balances/commit` | `wms.adjustment.propose` | IK |
+
+**`Idempotency-Key`.** Sin header en una ruta IK: 428 `wms.idempotency_key_required`. Misma clave y mismo cuerpo: la respuesta guardada
+con **200** (aunque el original fuera 201). Misma clave con otro cuerpo: 409 `wms.idempotency_key_reused`. El `request_hash` sale del DTO
+enlazado, no del cuerpo crudo. La clave de otro tenant es 403, nunca una respuesta guardada ajena. Los recibos (`wms.operation_receipts`)
+se purgan a los 45 días (`Wms:Workers:ReceiptRetentionDays`). Repetir `post` con una versión vieja devuelve el 200 guardado, no 412.
+
+**Ventana de `occurredAt`.** `[ahora − 30 días, ahora + 5 min]`; fuera de ella, 422 `wms.movement.occurred_at_out_of_range`, también al
+postear un ajuste propuesto hace tiempo con fecha física. La ventana es la que permite purgar los recibos a 45 días.
+
+**Workers** (opciones `Wms:Workers:*`, validadas al arrancar; un cero o un negativo tumba el arranque):
+
+| Worker | Qué hace | Opciones (por defecto) |
+| --- | --- | --- |
+| `BalanceChangePublisher` | Vacía `wms.balance_change_queue` y publica `wms.balance.changed.v1` al outbox | `BalanceChangePublishSeconds` (10) |
+| `BalanceReconciliationWorker` | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige**. Con dos pods, un candado por bodega evita la fila repetida | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30) |
+| `PartitionMaintenanceWorker` | Asegura la partición del mes actual y la del siguiente de `stock_movements` | `PartitionSweepHours` (24) |
+| `WmsHousekeepingWorker` | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`) | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
+| `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`) | — |
+| `TaskLeaseSweeper` | Devuelve al pool (o a su asignado) las tareas con el lease vencido; toma las filas con `FOR UPDATE SKIP LOCKED`, así dos pods reparten trabajo | `TaskLeaseSweepSeconds` (60; de 10 a 600) |
+
+`WorkerStartupSeconds` (30) retrasa la primera pasada de los tres workers del ledger y del barrido de tareas: con un intervalo largo y un
+despliegue por commit, el pod se reiniciaría antes de que el temporizador cumpliera.
+
+**Métricas** (meter `Qep.Wms`, sin etiqueta de tenant): `qep.wms.movements` (contador, etiqueta `reason`), `qep.wms.confirm.duration`
+(histograma, ms), `qep.wms.balance.drift` (claves distintas en la última conciliación), `qep.wms.partition.missing` (1 si falta la
+partición del mes actual o del siguiente) y `qep.wms.reconciliation.failed` (bodegas que la última conciliación no pudo revisar). En
+Prometheus salen como `qep_wms_movements_total`, `qep_wms_balance_drift`, `qep_wms_partition_missing` y `qep_wms_reconciliation_failed`
+(el histograma agrega el sufijo de unidad del exportador). Las alertas viven en el repo de plataforma (`migracion-k8s`), no acá.
+
+**Partición faltante.** `stock_movements` está particionada por mes de `occurred_at`, con límites en UTC. Si `qep_wms_partition_missing`
+vale 1, el worker no pudo crear la partición. Las filas fuera de rango caen en `stock_movements_default` y **se quedan ahí** (el trigger
+impide moverlas). Se **crea** la partición (`CREATE TABLE wms.stock_movements_yYYYYmMM PARTITION OF wms.stock_movements FOR VALUES FROM … TO …`)
+y **nunca se desprende** una existente. Si `DEFAULT` ya tiene filas de ese mes, el `CREATE … PARTITION OF` falla y se resuelve a mano en
+ventana de mantenimiento. Un `SELECT` sin `occurred_at` en el `WHERE` recorre todas las particiones.
+
+**Carga inicial por Excel.** `POST /imports/initial-balances/preview?warehouseId=…&ownerId=…` (multipart, campo `file`) lee la primera hoja
+y ubica por cabecera, no por posición, seis columnas: `code`, `location`, `lot`, `expiration`, `quantity` y `uom`. **Tope de 500 filas
+por archivo** (más es 422 `wms.import.too_many_rows`): la carga es un solo batch del ledger y cada fila un movimiento. El archivo admite
+5 MB comprimido, 20 MB descomprimido y 100 entradas (si no, 422 `wms.import.invalid_file`). El preview responde **200 aunque haya
+problemas**: cada fila lleva sus `issues` y `canCommit` es `false` si hay alguno; si una clave (dueño, ubicación, variante, lote) ya tiene
+saldo, la fila trae el issue bloqueante `wms.import.stock_exists`, así que un complemento va por ajustes. `POST /imports/initial-balances/commit`
+con `{ previewId, version }` y `Idempotency-Key` responde 201, o **422 `wms.import.invalid_file` si queda algún issue**. El preview vive 30 minutos.
+
+**Export.** `POST /stock/export` responde 202 y no devuelve el archivo: arma el Excel, lo guarda en Storage y publica `wms.export-ready.v1`;
+`WmsExportDeliveryWorker` manda el enlace de descarga por correo y la campana de quien lo pidió recibe un `ExportReady` con
+`exportKind: "Stock"`.
+
+**Regla pendiente de confirmación del owner.** Con saldo, además del rastreo, no se puede cambiar la unidad base, bajar la precisión
+ni cambiar el factor de una presentación existente: 422 `wms.profile.base_uom_change_requires_identification`. RF-010 sólo nombra el
+rastreo; si el owner prefiere otra regla, se relaja en `VariantLogisticsProfile.Update`.
+
+**Migraciones:** `Wms` `AddInventoryLedger` (ledger, saldos, vistas, partición y trigger). Su `Down` está vacío a propósito (ver `CLAUDE.md`).
+
+#### Tareas de bodega (motor de tareas)
+
+Spec [`docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md`](docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md)
+§6. Una tarea (`wms.tasks`, con `task_lines` y `task_events`) es una intención; el ledger es el hecho. Crear, asignar, priorizar o
+cancelar nunca mueve stock: sólo la confirmación de una línea, que escribe un movimiento `InternalMove` con documento
+`("Task", taskId, lineId)`. En este corte hay un solo tipo, `Move` (movimiento interno), y ejecutarlo exige `wms.putaway.perform`.
+
+**Estados.** `Planned` (creada sin publicar o retenida), `Ready` (en el pool), `Assigned` (preasignada), `InProgress` (reclamada con lease),
+`Done` y `Cancelled` (terminales). Cada transición sube `version` y deja un evento; el latido no.
+
+**Supervisor** (bajo `/api/v1/tenants/{tenantId}/wms`). Las acciones llevan `version` (412 `concurrency.conflict`), responden la tarea
+sin `events` y se auditan.
+
+| Ruta | Permiso | Cuerpo / idempotencia |
+| --- | --- | --- |
+| `POST /tasks` | `wms.task.manage` | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
+| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | — |
+| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué |
+| `GET /tasks/assignees?warehouseId&type` | `wms.task.manage` | Membresías activas con el permiso del tipo |
+| `GET /tasks/{id}` | `wms.document.read` | La única respuesta con `events` |
+| `POST /tasks/{id}/publish`, `/unassign` | `wms.task.manage` | `{ version }` |
+| `POST /tasks/{id}/hold` | `wms.task.manage` | `{ version, reason? }` |
+| `POST /tasks/{id}/assign` | `wms.task.manage` | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress` |
+| `POST /tasks/{id}/priority` | `wms.task.manage` | `{ priority, urgent, version }` |
+| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel` | `wms.task.manage` | `{ reason, version }` |
+
+**Operario.** La ruta exige `wms.document.read` y el handler, además, el permiso del tipo.
+
+| Ruta | Cuerpo | Respuesta |
+| --- | --- | --- |
+| `GET /tasks/mine?warehouseId` | — | `{ current, assigned }` |
+| `POST /tasks/next` | `{ warehouseId, deviceId }` | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso |
+| `POST /tasks/{id}/claim` | `{ deviceId }` | 200 |
+| `POST /tasks/{id}/heartbeat` | `{ leaseToken }` | 200 `{ leaseExpiresAt }` |
+| `POST /tasks/{id}/unclaim` | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`) | 200 |
+| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200 |
+
+**Lease.** `claimedBy*`, `leaseExpiresAt` y `leaseToken` sólo viajan con la tarea `InProgress`, y `leaseToken` sólo a quien la tiene. El
+lease de `Move` dura 15 minutos; el latido y cada confirmación lo renuevan. Al vencer, el barrido devuelve la tarea y conserva quién la
+reclamó y su token: una **confirmación tardía** con ese token la reanuda si nadie más la tomó (si quien confirma ya tiene otra en curso,
+se aplica sin reanudar). Latir y soltar exigen el lease vigente. La misma persona que retoma desde el mismo celular conserva el token.
+`next` no vuelve a ofrecer durante 15 minutos lo que la persona soltó con `Skipped`, salvo que se lo asignen. Los eventos de una
+confirmación llevan la hora del escaneo (`occurredAt`).
+
+**Códigos.** 404 `wms.task.not_found` (tarea o línea). 409 `wms.task.lease_lost`, `wms.task.member_busy` (con `taskId`; falta cuando lo
+detecta el índice único). 422 `wms.task.invalid_transition` (con `from` y `action`), `wms.task.assigned_to_other`,
+`wms.task.assignee_not_eligible`, `wms.task.location_invalid`, `wms.task.location_mismatch`, `wms.task.lot_mismatch`,
+`wms.task.quantity_exceeds_remaining`, `wms.task.line_invalid`. Al crear llegan además `wms.profile.variant_unknown`,
+`wms.uom.precision_exceeded` y `wms.lot.not_found` (404); al confirmar, los del ledger (`wms.stock.insufficient`,
+`wms.location.blocked`, `wms.lot.required`, `wms.movement.occurred_at_out_of_range`…) tal cual.
+
+Una variante con una línea abierta en una tarea sin terminar no se borra de Catalog.
+
+**Migraciones:** `Wms` `AddWarehouseTasks`.
+
 ## Verificación
 
 ```powershell
@@ -6710,8 +7002,9 @@ El nivel rápido toma lo cambiado desde el punto en que la rama se separó de la
 compilación (con `--no-restore`: restaura antes en un worktree nuevo), `ArchitectureTests`, las unitarias de cada módulo
 tocado, `Bootstrapper.UnitTests` si tocaste `Bootstrapper` o `Api`, y **sólo las clases de integración nuevas o
 modificadas**. No corre las demás clases de integración que tu cambio pueda romper; esas aparecen en la corrida
-completa. Lee los avisos: dicen qué quedó sin probar. El reporte queda en `TestResults\feature\report.md`, y sale con 1
-si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
+completa. Lee los avisos: dicen qué quedó sin probar y qué «Requiere autorización del owner» antes del merge (una
+prueba de `ArchitectureTests` modificada o una referencia nueva entre módulos). El reporte queda en
+`TestResults\feature\report.md`, y sale con 1 si un paso falla, no deja `.trx` o su filtro no ejecuta ninguna prueba.
 
 Un reporte completo en verde vale para el commit que dice su encabezado, con el árbol limpio. Para programarlo todas las
 noches (se registra una vez, desde la raíz del checkout que quieras probar):

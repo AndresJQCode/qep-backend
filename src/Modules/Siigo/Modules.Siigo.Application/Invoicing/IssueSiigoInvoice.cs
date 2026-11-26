@@ -47,7 +47,7 @@ public sealed class IssueSiigoInvoiceValidator : AbstractValidator<IssueSiigoInv
 /// <see cref="SiigoInvoice.SendLease"/>) no se vuelve a mandar: es lo que hace que dos «Generar factura» a la vez creen una sola.</description></item>
 /// <item><description><c>Created</c>, <c>Stamped</c>, <c>StampRejected</c>, <c>Unknown</c> → se devuelve tal cual, sin llamar a Siigo. Una
 /// del pedido ya creada se vuelve a marcar en el pedido (idempotente): cubre el corte entre crear la factura y marcarlo.</description></item>
-/// <item><description><c>Rejected</c>, <c>Failed</c> o ninguna → se arma una fila nueva: pedido, validaciones (§6.1), faltantes (422
+/// <item><description><c>Rejected</c>, <c>Failed</c>, <c>Annulled</c> o ninguna → se arma una fila nueva: pedido, validaciones (§6.1), faltantes (422
 /// <c>not_ready</c>), cuadre previo (422 <c>totals_mismatch</c>), cliente en Siigo (se busca y, si no está, se crea), filas <c>Pending</c> con
 /// la petición entera y commit.</description></item>
 /// </list>

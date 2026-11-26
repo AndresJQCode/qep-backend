@@ -88,7 +88,9 @@ using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using Modules.Wholesale.Application;
 using Modules.Wholesale.Infrastructure;
+using Modules.Wms.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using WmsPermissions = Modules.Wms.Application.WmsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using StorePermissions = Modules.Store.Application.StorePermissions;
@@ -1225,6 +1227,148 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Support.Application.SupportTicketScope>();
         // Spec 2026-11-22 §8.6: the settings DTO with the unassigned-alert block (names, options and the schedule that rules).
         services.AddScoped<Modules.Support.Application.SupportSettingsComposer>();
+
+        // Wms, spec WMS 2026-10-31. A mano y con ruta completa, como Loans: un handler olvidado responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListWarehousesQuery, Modules.Wms.Application.WarehousesDto>,
+            Modules.Wms.Application.ListWarehousesHandler>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Wms.Application.CreateWarehouseValidator>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.RenderLocationLabelsCommand, Modules.Wms.Application.LocationLabelsPdf>,
+            Modules.Wms.Application.RenderLocationLabelsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
+            Modules.Wms.Application.CreateWarehouseHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UpdateWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
+            Modules.Wms.Application.UpdateWarehouseHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListLocationsQuery, Modules.Wms.Application.LocationsDto>,
+            Modules.Wms.Application.ListLocationsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateLocationCommand, Modules.Wms.Application.LocationDto>,
+            Modules.Wms.Application.CreateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UpdateLocationCommand, Modules.Wms.Application.LocationDto>,
+            Modules.Wms.Application.UpdateLocationHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.DeleteLocationCommand, bool>,
+            Modules.Wms.Application.DeleteLocationHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetScannableLocationsQuery, Modules.Wms.Application.ScannableLocationsDto>,
+            Modules.Wms.Application.GetScannableLocationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListOwnersQuery, Modules.Wms.Application.OwnersDto>,
+            Modules.Wms.Application.ListOwnersHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateOwnerCommand, Modules.Wms.Application.OwnerDto>,
+            Modules.Wms.Application.CreateOwnerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UpdateOwnerCommand, Modules.Wms.Application.OwnerDto>,
+            Modules.Wms.Application.UpdateOwnerHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListUomsQuery, Modules.Wms.Application.UomsDto>,
+            Modules.Wms.Application.ListUomsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateUomCommand, Modules.Wms.Application.UomDto>,
+            Modules.Wms.Application.CreateUomHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetVariantProfilesQuery, Modules.Wms.Application.VariantProfilesDto>,
+            Modules.Wms.Application.GetVariantProfilesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UpdateVariantProfileCommand, Modules.Wms.Application.VariantProfileDto>,
+            Modules.Wms.Application.UpdateVariantProfileHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetStockQuery, Modules.Wms.Application.StockPageDto>,
+            Modules.Wms.Application.GetStockHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetStockSummaryQuery, Modules.Wms.Application.StockSummaryDto>,
+            Modules.Wms.Application.GetStockSummaryHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListStockMovementsQuery, Modules.Wms.Application.MovementPageDto>,
+            Modules.Wms.Application.ListStockMovementsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListAdjustmentsQuery, Modules.Wms.Application.AdjustmentPageDto>,
+            Modules.Wms.Application.ListAdjustmentsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ProposeAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.ProposeAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ApproveAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.ApproveAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.PostAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.PostAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.RejectAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.RejectAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ReverseMovementCommand, Modules.Wms.Application.MovementDto>,
+            Modules.Wms.Application.ReverseMovementHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.PreviewInitialBalancesCommand, Modules.Wms.Application.InitialBalancePreviewDto>,
+            Modules.Wms.Application.PreviewInitialBalancesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CommitInitialBalancesCommand, Modules.Wms.Application.InitialBalanceCommitDto>,
+            Modules.Wms.Application.CommitInitialBalancesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ExportStockCommand, Modules.Wms.Application.StockExportAcceptedDto>,
+            Modules.Wms.Application.ExportStockHandler>();
+        // Tareas de bodega (spec 2026-11-26 §6.11).
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateMoveTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CreateMoveTaskHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetTaskQuery, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.GetTaskHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListTasksQuery, Modules.Wms.Application.TaskPageDto>,
+            Modules.Wms.Application.ListTasksHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.PublishTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.PublishTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.HoldTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.HoldTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.AssignTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.AssignTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UnassignTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.UnassignTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ChangeTaskPriorityCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ChangeTaskPriorityHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CancelTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CancelTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CancelTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CancelTaskLineHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetTaskBoardQuery, Modules.Wms.Application.TaskBoardDto>,
+            Modules.Wms.Application.GetTaskBoardHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListTaskAssigneesQuery, Modules.Wms.Application.TaskAssigneesDto>,
+            Modules.Wms.Application.ListTaskAssigneesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetMyTasksQuery, Modules.Wms.Application.MyTasksDto>,
+            Modules.Wms.Application.GetMyTasksHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.NextTaskCommand, Modules.Wms.Application.NextTaskResultDto>,
+            Modules.Wms.Application.NextTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ClaimTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ClaimTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.HeartbeatTaskCommand, Modules.Wms.Application.TaskLeaseDto>,
+            Modules.Wms.Application.HeartbeatTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UnclaimTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.UnclaimTaskHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ConfirmTaskLineCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.ConfirmTaskLineHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1632,6 +1776,9 @@ public static class QepServiceCollectionExtensions
         // distribuidor para la línea que el mayorista agrega al editar (D-5).
         services.AddScoped<IWholesaleOrderGateway, WholesaleOrderGateway>();
         services.AddScoped<IWholesaleLinePricing, QuotationsWholesaleLinePricing>();
+        // El alta los corre en el orden en que se registran. El de roles va primero (spec 2026-11-25): un fallo de Quotations sube,
+        // y no puede dejar al tenant sin sus roles.
+        services.AddScoped<Modules.Tenancy.Application.INewTenantProvisioning, TenantRolesProvisioning>();
         services.AddScoped<Modules.Tenancy.Application.INewTenantProvisioning, QuotationsNewTenantProvisioning>();
         // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
         services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
@@ -2018,6 +2165,7 @@ public static class QepServiceCollectionExtensions
         services.AddSupportInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
         services.AddBuyersInfrastructure(configuration);
+        services.AddWmsInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -2177,6 +2325,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<IssueSiigoInvoiceCommand, IReadOnlyList<SiigoInvoiceDto>>, IssueSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<StampSiigoInvoiceCommand, SiigoInvoiceDto>, StampSiigoInvoiceHandler>();
         services.AddScoped<ICommandHandler<ResolveSiigoInvoiceCommand, SiigoInvoiceDto>, ResolveSiigoInvoiceHandler>();
+        services.AddScoped<ICommandHandler<ConfirmSiigoAnnulmentCommand, IReadOnlyList<SiigoInvoiceDto>>, ConfirmSiigoAnnulmentHandler>();
         services.AddScoped<ICommandHandler<SendSiigoInvoiceWhatsAppCommand, SiigoInvoiceWhatsAppSent>, SendSiigoInvoiceWhatsAppHandler>();
         // Spec 2026-11-21: la tanda de facturación. El invocador corre el handler de arriba como quien la pidió.
         services.AddScoped<ICommandHandler<CreateSiigoInvoiceBatchCommand, SiigoInvoiceBatchDto>, CreateSiigoInvoiceBatchHandler>();
@@ -2222,6 +2371,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyOrderNumbers, ShopifyOrderNumbers>();
         services.AddScoped<IShopifyTenantConnections, ShopifyTenantConnections>();
         services.AddScoped<IShopifyStoreReferences, ShopifyStoreReferences>();
+        // Spec 2026-11-24 §11.1.4: la otra dirección, Quotations → Shopify: «Editar pedido» pregunta si Shopify puede recibir la
+        // dirección antes de guardarla.
+        services.AddScoped<IExternalOrderDeliveryCheck, ExternalOrderDeliveryCheck>();
         // Spec 2026-11-17 §5.4: productos desde Shopify. El escritor enrola un CatalogDbContext de un scope hijo en la transacción
         // de Shopify; la imagen va por la subida de servidor de Storage, fuera de esa transacción; la reautorización es el inicio A
         // de la instalación de Integrations.
@@ -2253,6 +2405,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IShopifyCitySynonymLookup, ShopifyCitySynonymLookup>();
         services.AddScoped<IShopifyCityCorrectionWriter, ShopifyCityCorrectionWriter>();
         services.AddShopifyCityCorrections();
+        // Spec 2026-11-24 §11.1.1: la dirección cambiada en «Editar pedido» (evento de Quotations en el outbox) se encola como
+        // envío a Shopify.
+        services.AddShopifyQuotationOrderEvents();
         // Spec 2026-10-26 D-C3b: lo que la consola de ciudades lee de pedidos, clientes, huellas, tenants y usuarios, que
         // Geography no referencia. Scoped como el GeographyDbContext sobre el que corre.
         services.AddScoped<ICityCorrectionInsights, CityCorrectionInsights>();
@@ -2460,6 +2615,7 @@ public static class QepServiceCollectionExtensions
 
         // Y entre `suppliers` y `storage`, con el mismo adaptador para su exportación.
         services.AddScoped<ISupplierExportStorage, SupplierExportStorage>();
+        services.AddScoped<Modules.Wms.Application.IWmsExportStorage, WmsExportStorage>();
 
         // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
         services.AddScoped<IExportFileStorage, ExportFileStorage>();
@@ -2795,6 +2951,20 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Buyers.Application.ReplaceBuyerProfileFromOrder>();
         services.AddScoped<Modules.Store.Application.IStoreBuyerAccounts, StoreBuyerAccounts>();
 
+        // Wms (spec WMS 2026-10-31 §1.3): variantes y ciudades entran por puertos propios; Wms no referencia Catalog ni Geography.
+        services.AddScoped<Modules.Wms.Application.IWmsCatalogReader, WmsCatalogReader>();
+        services.AddScoped<Modules.Wms.Application.IWmsGeographyReader, WmsGeographyReader>();
+        // Tareas de bodega (spec 2026-11-26): nombres y permisos de las membresías.
+        services.AddScoped<Modules.Wms.Application.IWmsMemberDirectory, WmsMemberDirectory>();
+
+        // Etiquetas de ubicación (RF-004, P-9): el servicio y la clave son los de Quotations:Pdf, que Wms no ve. Singleton con timeout propio,
+        // como AddPdfRenderer: el default de HttpClient son 100 s y qcode-pdf corta la compilación a los 15. La fábrica va tipada con
+        // el concreto para que MultiReplicaInventoryTests lo vea y lo escanee (spec 2026-10-29, D-6).
+        services.AddSingleton<Modules.Wms.Application.IWmsPdfGateway, WmsPdfGateway>(sp =>
+            new WmsPdfGateway(
+                new HttpClient { Timeout = TimeSpan.FromSeconds(30) },
+                sp.GetRequiredService<IOptions<QuotationsOptions>>()));
+
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
         // lo impide a proposito — y el composition root cablea los puertos que declara
@@ -2862,6 +3032,8 @@ public static class QepServiceCollectionExtensions
         // cuando existen (cotizaciones y pedidos).
         services.AddScoped<ExportJobRunner>();
         services.AddScoped<IExportJobProcessor, QuotationsExportProcessor>();
+        // El Excel de pedidos sin indicativo (spec 2026-11-25): el partidor es de Customers.
+        services.AddScoped<IQuotationPhoneNumbers, QuotationPhoneNumbers>();
         services.AddScoped<IExportJobProcessor, OrdersExportProcessor>();
 
         // Reporting es el caso extremo del mismo patron (CAT-05): el modulo no tiene tablas
@@ -2908,9 +3080,9 @@ public static class QepServiceCollectionExtensions
         return services;
     }
 
-    // Registra la capacidad Authorization y el catálogo de roles de sistema de tenancy.
-    // Las definiciones de rol se versionan en código; las referencias de rol de la membresía
-    // (ADR 0016) mapean a estos permisos. Los roles custom/de base y los globales van después.
+    // Registra la capacidad Authorization, el catálogo de sistema (sólo admin) y las plantillas de los roles que se siembran en
+    // cada tenant. Las referencias de rol de la membresía (ADR 0016) mapean a la definición de admin o a una fila de
+    // authorization.roles del tenant.
     private static void AddAuthorizationCapability(
         IServiceCollection services,
         IConfiguration configuration)
@@ -2925,6 +3097,10 @@ public static class QepServiceCollectionExtensions
         // por request sea correcto — el scope dura lo que el request.
         services.AddScoped<ITenantRoleCatalog, TenantRoleCatalog>();
         services.AddAuthorizationInfrastructure(configuration);
+        // Spec 2026-11-25 (roles por tenant): se llaman en el alta del tenant y al arrancar, nunca al resolver permisos. La lista
+        // de tenants sale de Tenancy por este adaptador: Authorization no lee sus tablas.
+        services.AddScoped<ITenantRoleSeeder, TenantRoleSeeder>();
+        services.AddScoped<IRoleSeedTenantSource, TenancyRoleSeedTenantSource>();
         // IAuthorizationService lo registra AddQepValkey (spec 2026-11-13, D-5): AuthorizationService tal cual con
         // Valkey:Areas:Permissions apagado, o decorado por la caché de permisos con el área prendida.
         services.AddScoped<IRolePermissionChecker, RolePermissionChecker>();
@@ -3093,7 +3269,7 @@ public static class QepServiceCollectionExtensions
                 PayrollPermissions.PeriodManage,
                 PayrollPermissions.PeriodApprove,
                 PayrollPermissions.SettingsManage,
-                // Spec 2026-11-21 (Agenda): admin lleva los cinco; los dos roles de sistema de la Agenda llevan los operativos y ninguno
+                // Spec 2026-11-21 (Agenda): admin lleva los cinco; las dos plantillas de la Agenda llevan los operativos y ninguna
                 // la configuración (servicios, reglas y estructura son del administrador).
                 SchedulingPermissions.AppointmentRead,
                 SchedulingPermissions.AppointmentManage,
@@ -3116,14 +3292,33 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.ProductCostManage,
                 // Spec 2026-11-22 (D-10): listas de precios por canal; las administra quien administra el catálogo.
                 CatalogPermissions.PriceListManage,
-                ReportingPermissions.MarginRead
+                ReportingPermissions.MarginRead,
+                // Spec WMS 2026-10-31 §11.5: de fábrica sólo en admin; el resto de roles los recibe como rol custom del tenant.
+                WmsPermissions.WarehouseManage,
+                WmsPermissions.OwnerManage,
+                WmsPermissions.ProfileManage,
+                WmsPermissions.DocumentRead,
+                WmsPermissions.StockRead,
+                WmsPermissions.StockExport,
+                WmsPermissions.AdjustmentPropose,
+                WmsPermissions.AdjustmentApprove,
+                WmsPermissions.PurchaseOrderManage,
+                WmsPermissions.TransferManage,
+                WmsPermissions.TransferDispatch,
+                WmsPermissions.ReceiptPerform,
+                WmsPermissions.PutawayPerform,
+                WmsPermissions.DiscrepancyResolve,
+                WmsPermissions.CountPerform,
+                WmsPermissions.CountApprove,
+                WmsPermissions.TaskManage
             ]));
-        services.AddSingleton(new RoleDefinition(
-            "advisor",
+        // Spec 2026-11-25 (roles por tenant): admin es el único rol de sistema. Los cinco de abajo son plantillas: no conceden
+        // nada ni salen en ningún catálogo; TenantRoleSeeder crea con ellas las filas de authorization.roles de cada tenant, que
+        // el tenant edita o borra. Un permiso nuevo en una plantilla sólo llega a los tenants nuevos.
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.Advisor,
             "Asesor",
             "Gestiona clientes y consulta los datos maestros con los que cotiza.",
-            "Tenancy",
-            "medium",
             [
                 TenancyPermissions.SettingsRead,
                 TenancyPermissions.AdvisorshipRead,
@@ -3184,12 +3379,10 @@ public static class QepServiceCollectionExtensions
                 // editar y bloquear, y las listas de precios, son de admin.
                 WholesalePermissions.DistributorRead
             ]));
-        services.AddSingleton(new RoleDefinition(
-            "billing",
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.Billing,
             "Facturación",
             "Consulta la información de clientes necesaria para facturar.",
-            "Tenancy",
-            "medium",
             [
                 TenancyPermissions.SettingsRead,
                 CustomersPermissions.CustomerRead,
@@ -3237,14 +3430,12 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
         // dibuja y elige o crea el cliente de la venta por /pos/customers, sin el padrón de Clientes
-        // (spec 2026-10-14, decisión 4). Un tenant que quiera cajeros con descuento hace un
-        // rol custom.
-        services.AddSingleton(new RoleDefinition(
-            "cashier",
+        // (spec 2026-10-14, decisión 4). Un tenant que quiera cajeros con descuento edita este
+        // rol o hace uno propio.
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.Cashier,
             "Cajero",
             "Vende en el punto de venta y abre y cierra su propia caja.",
-            "Tenancy",
-            "medium",
             [
                 PosPermissions.SaleRead,
                 PosPermissions.SaleCreate,
@@ -3253,28 +3444,25 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-11-22 (tareas internas) D-4: cualquier miembro crea y trabaja tareas; no ve tickets de clientes.
                 SupportPermissions.TaskUse
             ]));
-        // Spec 2026-11-21 (Agenda), D-13: roles de sistema en código, no se crean al activar el módulo; con el módulo apagado no son
-        // asignables (RoleAssignability). Llevan sólo permisos de la Agenda, a propósito: uno de núcleo (Clientes) los haría asignables
-        // en un tenant sin Agenda, así que la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS.
-        // Ninguno lleva `settings.manage`: servicios, reglas y estructura son del administrador.
-        services.AddSingleton(new RoleDefinition(
-            SystemRoleKeys.SchedulingManager,
+        // Spec 2026-11-21 (Agenda): su D-13 (roles de sistema en código) la reemplaza el spec 2026-11-25; se siembran como los
+        // demás, en todo tenant y no al activar el módulo, y con el módulo apagado no son asignables (RoleAssignability). Llevan
+        // sólo permisos de la Agenda, a propósito: uno de núcleo (Clientes) los haría asignables en un tenant sin Agenda, así que
+        // la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como en el POS. Ninguno lleva
+        // `settings.manage`: servicios, reglas y estructura son del administrador.
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.SchedulingManager,
             "Gestor de agenda",
             "Ve y administra las agendas de todos los médicos o recursos: citas, franjas y bloqueos.",
-            "Tenancy",
-            "medium",
             [
                 SchedulingPermissions.AppointmentRead,
                 SchedulingPermissions.AppointmentManage,
                 SchedulingPermissions.AvailabilityManage,
                 SchedulingPermissions.AgendaReadAll
             ]));
-        services.AddSingleton(new RoleDefinition(
-            SystemRoleKeys.SchedulingProvider,
+        services.AddSingleton(new RoleTemplate(
+            RoleTemplateKeys.SchedulingProvider,
             "Profesional de agenda",
             "Ve y administra su propia agenda: la del recurso vinculado a su usuario.",
-            "Tenancy",
-            "medium",
             [
                 SchedulingPermissions.AppointmentRead,
                 SchedulingPermissions.AppointmentManage,
@@ -4491,6 +4679,178 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("store.settings", "Configuración de la tienda", "manage"),
         });
+        // Spec WMS 2026-10-31 §11.5: nunca se muestran permisos que el tenant no tiene. Con [wms], ModuleEntitlementMask quita el
+        // permiso al apagar el módulo y el editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.WarehouseManage,
+            "Gestionar bodegas",
+            "Permite crear y editar bodegas y sus ubicaciones.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.warehouse", "Bodegas y ubicaciones", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.OwnerManage,
+            "Gestionar dueños del inventario",
+            "Permite crear y editar los dueños a los que pertenece el inventario.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.owner", "Dueños del inventario", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.ProfileManage,
+            "Gestionar perfiles de variante",
+            "Permite definir cómo se maneja cada variante en bodega: unidad de medida, seguimiento, conversiones e identificadores.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.profile", "Perfiles de variante", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.DocumentRead,
+            "Ver bodegas y documentos de inventario",
+            "Permite consultar bodegas, ubicaciones, documentos y tareas del inventario.",
+            "Bodegas",
+            "low",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.document", "Documentos de inventario", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.StockRead,
+            "Ver existencias",
+            "Permite consultar las existencias por variante, ubicación y dueño.",
+            "Bodegas",
+            "low",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.stock", "Existencias", "read"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.StockExport,
+            "Exportar existencias",
+            "Permite descargar las existencias del inventario a un archivo.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.stock", "Existencias", "export"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.AdjustmentPropose,
+            "Proponer ajustes de inventario",
+            "Permite proponer un ajuste para corregir las existencias de una ubicación.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.adjustment", "Ajustes de inventario", "propose"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.AdjustmentApprove,
+            "Aprobar ajustes de inventario",
+            "Permite aprobar los ajustes propuestos, que modifican las existencias.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.adjustment", "Ajustes de inventario", "approve"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.PurchaseOrderManage,
+            "Gestionar órdenes de compra",
+            "Permite crear y gestionar las órdenes de compra a proveedores.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.purchase_order", "Órdenes de compra", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.TransferManage,
+            "Gestionar traslados",
+            "Permite crear y gestionar traslados entre bodegas y ubicaciones.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.transfer", "Traslados", "manage"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.TransferDispatch,
+            "Despachar traslados",
+            "Permite despachar un traslado y sacar la mercancía de su ubicación de origen.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.transfer", "Traslados", "dispatch"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.ReceiptPerform,
+            "Recibir mercancía",
+            "Permite registrar la recepción de mercancía en la bodega.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.receipt", "Recepción de mercancía", "perform"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.PutawayPerform,
+            "Ubicar mercancía recibida",
+            "Permite llevar la mercancía recibida a su ubicación de almacenamiento.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.putaway", "Ubicación de mercancía", "perform"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.DiscrepancyResolve,
+            "Resolver discrepancias de recepción",
+            "Permite resolver las diferencias entre lo pedido y lo recibido.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.discrepancy", "Discrepancias de recepción", "resolve"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.CountPerform,
+            "Contar inventario",
+            "Permite registrar los conteos físicos de una ubicación.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.count", "Conteos", "perform"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.CountApprove,
+            "Aprobar conteos",
+            "Permite aprobar los conteos, que ajustan las existencias a lo contado.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.count", "Conteos", "approve"),
+        });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.TaskManage,
+            "Supervisar tareas de bodega",
+            "Permite crear, asignar, priorizar y cancelar las tareas de los operarios de bodega.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.task", "Tareas de bodega", "manage"),
+        });
     }
 
     private static void AddAuthentication(
@@ -5055,7 +5415,59 @@ public static class QepServiceCollectionExtensions
             // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
             .AddPolicy(
                 ApiAccessPermissions.ApiKeyManage,
-                policy => AddPermissionRequirement(policy, ApiAccessPermissions.ApiKeyManage));
+                policy => AddPermissionRequirement(policy, ApiAccessPermissions.ApiKeyManage))
+            // Spec WMS 2026-10-31 §11.5: la otra mitad de los dieciséis permisos wms.*; sin ellas el síntoma es 500, no 403.
+            .AddPolicy(
+                WmsPermissions.WarehouseManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.WarehouseManage))
+            .AddPolicy(
+                WmsPermissions.OwnerManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.OwnerManage))
+            .AddPolicy(
+                WmsPermissions.ProfileManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.ProfileManage))
+            .AddPolicy(
+                WmsPermissions.DocumentRead,
+                policy => AddPermissionRequirement(policy, WmsPermissions.DocumentRead))
+            .AddPolicy(
+                WmsPermissions.StockRead,
+                policy => AddPermissionRequirement(policy, WmsPermissions.StockRead))
+            .AddPolicy(
+                WmsPermissions.StockExport,
+                policy => AddPermissionRequirement(policy, WmsPermissions.StockExport))
+            .AddPolicy(
+                WmsPermissions.AdjustmentPropose,
+                policy => AddPermissionRequirement(policy, WmsPermissions.AdjustmentPropose))
+            .AddPolicy(
+                WmsPermissions.AdjustmentApprove,
+                policy => AddPermissionRequirement(policy, WmsPermissions.AdjustmentApprove))
+            .AddPolicy(
+                WmsPermissions.PurchaseOrderManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.PurchaseOrderManage))
+            .AddPolicy(
+                WmsPermissions.TransferManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.TransferManage))
+            .AddPolicy(
+                WmsPermissions.TransferDispatch,
+                policy => AddPermissionRequirement(policy, WmsPermissions.TransferDispatch))
+            .AddPolicy(
+                WmsPermissions.ReceiptPerform,
+                policy => AddPermissionRequirement(policy, WmsPermissions.ReceiptPerform))
+            .AddPolicy(
+                WmsPermissions.PutawayPerform,
+                policy => AddPermissionRequirement(policy, WmsPermissions.PutawayPerform))
+            .AddPolicy(
+                WmsPermissions.DiscrepancyResolve,
+                policy => AddPermissionRequirement(policy, WmsPermissions.DiscrepancyResolve))
+            .AddPolicy(
+                WmsPermissions.CountPerform,
+                policy => AddPermissionRequirement(policy, WmsPermissions.CountPerform))
+            .AddPolicy(
+                WmsPermissions.CountApprove,
+                policy => AddPermissionRequirement(policy, WmsPermissions.CountApprove))
+            .AddPolicy(
+                WmsPermissions.TaskManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.TaskManage));
     }
 
     private static void AddPermissionRequirement(

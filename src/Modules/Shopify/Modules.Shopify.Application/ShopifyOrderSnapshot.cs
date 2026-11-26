@@ -106,4 +106,12 @@ public sealed record ShopifyAddress(
     string? CountryCode,
     string? Phone,
     string? Company = null,
-    string? Zip = null);
+    string? Zip = null)
+{
+    /// <summary>El payload se guardó antes de que el espejo leyera el zip y no tiene la clave: no se sabe cuál había. Distinto de
+    /// <c>"zip": null</c>, que sí dice que no tenía. De un zip desconocido no sale ningún cambio. No es parte del payload: lo pone
+    /// <see cref="ShopifyOrderIngestion.ReadPayload"/>, y <see cref="ShopifyOrderIngestion.WritePayload"/> vuelve a omitir la
+    /// clave.</summary>
+    [JsonIgnore]
+    public bool ZipUnrecorded { get; init; }
+}

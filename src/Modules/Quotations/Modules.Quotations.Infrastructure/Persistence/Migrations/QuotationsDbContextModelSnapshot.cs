@@ -854,6 +854,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<bool>("IncludePhoneDialCode")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("include_phone_dial_code");
+
                     b.Property<string>("SheetName")
                         .IsRequired()
                         .ValueGeneratedOnAdd()

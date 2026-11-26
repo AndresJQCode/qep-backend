@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "payroll", "scheduling"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "payroll", "scheduling", "wms"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -181,7 +181,7 @@ public sealed class TenantModuleKeysTests
     public void PayrollIsAKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Payroll, TenantModuleKey.Parse("payroll"));
-        Assert.Equal(25, TenantModuleKeys.All.Count);
+        Assert.Equal(26, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Payroll, TenantModuleKeys.DefaultForNewTenants);
     }
 
@@ -189,19 +189,27 @@ public sealed class TenantModuleKeysTests
     public void PayrollDependsOnHr() =>
         Assert.Equal([TenantModuleKeys.Hr], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Payroll));
 
-    // Spec 2026-11-21 (Agenda): toda cita es de un cliente; se prende por tenant.
+    // Spec 2026-11-21 (Agenda): toda cita es de un cliente; se prende por tenant. Ya no es la última: wms va después.
     [Fact]
-    public void SchedulingIsTheLastKnownKeyOutsideTheDefaults()
+    public void SchedulingIsAKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Scheduling, TenantModuleKey.Parse("scheduling"));
-        Assert.Equal("scheduling", TenantModuleKeys.All[^1].Value);
-        Assert.Equal(25, TenantModuleKeys.All.Count);
+        Assert.Equal(26, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Scheduling, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]
     public void SchedulingDependsOnCustomers() =>
         Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Scheduling));
+
+    // Spec WMS 2026-10-31 §1.1: inventario de variantes del catálogo; se prende por tenant.
+    [Fact]
+    public void WmsIsLastDependsOnCatalogAndIsOffForNewTenants()
+    {
+        Assert.Equal("wms", TenantModuleKeys.All[^1].Value);
+        Assert.Equal([TenantModuleKeys.Catalog], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Wms));
+        Assert.DoesNotContain(TenantModuleKeys.Wms, TenantModuleKeys.DefaultForNewTenants);
+    }
 
     [Fact]
     public void MessagingHasNoDependencies() =>

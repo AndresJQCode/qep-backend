@@ -511,9 +511,16 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
         Entries.Add((action, actorId));
     }
 
+    /// <summary>Los detalles de cada <see cref="PublishWithDetails"/>, en orden.</summary>
+    public List<IReadOnlyDictionary<string, string?>> Details { get; } = [];
+
     public void PublishWithDetails(
         Guid tenantId, Guid actorId, string action, string resourceId,
-        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details) => Actions.Add(action);
+        string outcome, DateTimeOffset occurredAt, IReadOnlyDictionary<string, string?> details)
+    {
+        Actions.Add(action);
+        Details.Add(details);
+    }
 
     public void PublishByIntegration(
         Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
@@ -1655,6 +1662,9 @@ internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLife
     // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
     public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
         Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
+
+    public void PublishShippingPartyChanged(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("order.shipping_party_changed", order.Id.Value, order.Total, order.Currency));
 
     /// <summary>Las líneas de cada aprobación, tal como las arma el contrato del evento.</summary>
     public List<IReadOnlyList<WholesaleApprovedLineData>> WholesaleApproved { get; } = [];

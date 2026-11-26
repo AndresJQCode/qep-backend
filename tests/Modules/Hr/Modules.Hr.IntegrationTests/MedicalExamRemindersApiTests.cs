@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Authorization.Application;
 using Modules.Hr.Application.MedicalExams;
 using Npgsql;
 using static Modules.Hr.IntegrationTests.HrApiHarness;
@@ -82,6 +83,13 @@ public sealed class MedicalExamRemindersApiTests : IClassFixture<HrApiFixture>
     private async Task<(HrTenant Tenant, SeededSetup Setup, Guid FirstAdmin, Guid SecondAdmin)> SeedAsync(bool employees = true, bool admins = true)
     {
         var tenant = await NewTenantAsync(_fixture);
+        // The tenant is inserted directly: without the factory roles the advisor would be excluded for naming a role that does
+        // not exist, not for being an advisor.
+        await using (var seeding = _fixture.Factory.Services.CreateAsyncScope())
+        {
+            await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>().SeedAsync(tenant.Id, Ct);
+        }
+
         var setup = await SeedSetupAsync(tenant);
         if (employees)
         {

@@ -31,6 +31,14 @@ public static partial class SiigoApiErrors
     public static bool IsServiceUnavailable(IReadOnlyList<SiigoError> errors) =>
         errors.Count > 0 && errors.All(error => ServiceCodes.Contains(error.Code));
 
+    /// <summary>
+    /// Los códigos con que Siigo dice sin ambigüedad que una factura no existe: sólo un 404 con <b>todos</b> sus errores en esta lista
+    /// cuenta como «borrada» (spec 2026-11-25, anulación §2). <b>Nace vacía:</b> qué contesta Siigo con una factura borrada no está
+    /// verificado (spec, «Verificación pendiente»), y un 404 pelado también es una ruta mal armada o una <c>BaseUrl</c> equivocada. Se
+    /// llena sólo con la respuesta real de Siigo, que queda en <c>siigo.call_failures</c> (operación <c>InvoiceRead</c>).
+    /// </summary>
+    public static IReadOnlySet<string> InvoiceNotFoundCodes { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>De a cuántos productos pide Siigo cada página del auto-vínculo.</summary>
     public const int ProductsPageSize = 100;
 

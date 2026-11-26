@@ -55,6 +55,7 @@ internal sealed class ShopifyEditTestWorld
             World.Resolver,
             World.Customers,
             World.UnresolvedCities,
+            World.Geography,
             Clock);
 
     public ShopifyOrderEdits Detector => new(Planner, World.Writer, Edits, Clock);

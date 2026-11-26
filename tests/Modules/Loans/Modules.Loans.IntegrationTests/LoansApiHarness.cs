@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Modules.Authorization.Application;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Loans.Application;
@@ -43,7 +44,7 @@ internal static class LoansApiHarness
     }
 
     /// <summary>
-    /// Siembra la fila del tenant y sus módulos. Inserta únicamente las claves que faltan, por lo
+    /// Siembra la fila del tenant, sus roles de fábrica y sus módulos. Inserta únicamente las claves que faltan, por lo
     /// que se puede llamar dos veces sobre el mismo tenant.
     /// </summary>
     public static async Task SeedTenantAsync(
@@ -71,6 +72,11 @@ internal static class LoansApiHarness
                 now));
             await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
+
+        // El tenant se inserta directo y después del arranque, así que nace sin los roles que el alta le sembraría.
+        await using var seeding = factory.Services.CreateAsyncScope();
+        await seeding.ServiceProvider.GetRequiredService<ITenantRoleSeeder>()
+            .SeedAsync(id.Value, TestContext.Current.CancellationToken);
 
         foreach (var key in modules ?? TenantModuleKeys.All)
         {
@@ -135,7 +141,7 @@ internal static class LoansApiHarness
     }
 
     /// <summary>
-    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> y <c>billing</c> conceden
+    /// Siembra una membresía del tenant (con su usuario) con un rol de fábrica: <c>admin</c> y <c>billing</c> conceden
     /// <c>loans.loan.manage</c>, <c>advisor</c> no. <paramref name="removed"/> la deja quitada.
     /// </summary>
     public static async Task<Guid> SeedMemberAsync(

@@ -135,6 +135,6 @@ public sealed class ServiceDetailComposer(
         var customer = await customers.FindAsync(tenantId, customerId, cancellationToken);
         return customer is null
             ? new CustomerRefDto(customerId, ChargeDtoComposer.UnknownCustomerName, null, null)
-            : new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email);
+            : new CustomerRefDto(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.BusinessName);
     }
 }

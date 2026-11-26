@@ -1332,6 +1332,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(OrdersExportLayout.SheetNameMaxLength)
             .IsRequired()
             .HasDefaultValue(OrdersExportLayout.DefaultSheetName);
+        // Spec 2026-11-25 indicativo: el default de la base deja toda fila que ya existía —y la que inserte
+        // un pod viejo durante el rollout— exportando el indicativo. ValueGeneratedNever es obligatorio: sin
+        // él, EF omite un `false` al insertar (es el valor CLR por defecto) y la base escribiría `true`.
+        layout.Property(value => value.IncludePhoneDialCode)
+            .HasColumnName("include_phone_dial_code")
+            .HasDefaultValue(OrdersExportLayout.DefaultIncludePhoneDialCode)
+            .ValueGeneratedNever();
 
         layout.OwnsMany(value => value.Columns, columns =>
         {

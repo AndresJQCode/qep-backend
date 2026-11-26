@@ -122,4 +122,18 @@ public interface IExternalOrderInvoicing
         string externalId,
         Guid memberId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Quita la marca de facturado de esa factura de <paramref name="provider"/> (<see cref="Order.RevertExternalInvoicing"/>), con
+    /// historial <c>InvoicingReverted</c> y la auditoría <c>quotation.order.invoice_reverted</c> con <c>provider</c> y <c>number</c>.
+    /// Sin marca o con otra no escribe nada. Reintenta una vez ante <c>RequestConcurrencyException</c>.
+    /// </summary>
+    /// <returns>Si el pedido perdió la marca.</returns>
+    Task<bool> RevertExternalInvoicingAsync(
+        Guid tenantId,
+        Guid orderId,
+        string provider,
+        string number,
+        Guid memberId,
+        CancellationToken cancellationToken);
 }

@@ -31,6 +31,14 @@ public sealed class ServiceContractsPriceReviewApiTests
 
     private static readonly string[] ConfirmedFields = ["newPrice", "effectiveFrom", "reason", "ipcYear", "ipcRate", "extraPoints"];
 
+    /// <summary>Como se ven en <c>pg_stat_activity</c> las dos lecturas con candado de la tasa.</summary>
+    private const string SharedRateLock = "%billing.ipc_rates%FOR SHARE%";
+
+    private const string ExclusiveRateLock = "%billing.ipc_rates%FOR UPDATE%";
+
+    // Por debajo del tiempo límite de un comando de Npgsql (30 s): una espera que no se suelta falla aquí y no como error de base.
+    private static readonly TimeSpan Patience = TimeSpan.FromSeconds(20);
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     // Los tenants de las pruebas viven en America/Bogota (UTC-5, sin horario de verano): la «hoy» del tenant.
@@ -705,6 +713,27 @@ public sealed class ServiceContractsPriceReviewApiTests
         Assert.True(errors.TryGetProperty("PageSize", out _));
     }
 
+    // Un esquema que JsonSchemaExporter no puede armar tumba el documento entero, y expectedRate es un JsonElement.
+    [Fact]
+    public async Task TheOpenApiDocumentStillBuildsWithTheRateAndReviewRoutes()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/openapi/v1.json", Ct);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await BodyAsync(response));
+        var document = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var paths = document.GetProperty("paths").EnumerateObject().Select(path => path.Name).ToArray();
+        const string billing = "/api/v1/tenants/{tenantId}/billing";
+        Assert.Contains($"{billing}/ipc-rates", paths);
+        Assert.Contains($"{billing}/ipc-rates/{{year}}", paths);
+        Assert.Contains($"{billing}/price-reviews", paths);
+        Assert.Contains($"{billing}/price-reviews/confirm-ipc", paths);
+    }
+
     [Fact]
     public async Task SavingTheFirstRateNeedsANullExpectedRate()
     {
@@ -817,25 +846,185 @@ public sealed class ServiceContractsPriceReviewApiTests
     }
 
     // El orden de dos requests no se controla: aquí la escritura de la otra persona entra, sin falta, entre la lectura y el
-    // guardado. Con fila guardada la frena el token de versión (R-4); sin ella, la clave primaria.
-    [Theory]
-    [InlineData(true, "billing.ipc.rate_changed")]
-    [InlineData(false, "billing.concurrent_first_write")]
-    public async Task ARateWrittenBetweenTheReadAndTheSaveIsNeverOverwritten(bool alreadyStored, string code)
+    // guardado. Sin fila guardada no hay candado que la detenga y la frena la clave primaria; con fila, espera
+    // (ASaveWaitsForAnotherWriterOfTheRateAndNeverOverwritesIt).
+    [Fact]
+    public async Task ARateFirstWrittenBetweenTheReadAndTheSaveIsNeverOverwritten()
     {
         var interleave = new RateInterleave();
         await using var world = await World.OpenAsync(services => Interleave(services, interleave));
         var year = TenantToday.Year - 1;
-        if (alreadyStored)
-        {
-            await world.SaveRateAsync(year, 5m);
-        }
 
-        interleave.AfterNextFind(() => world.WriteRateBehindTheBackAsync(year, 7m));
-        var response = await world.PutRateAsync(year, 6m, alreadyStored ? 5m : null);
+        interleave.AfterNextLock(() => world.WriteRateBehindTheBackAsync(year, 7m));
+        var response = await world.PutRateAsync(year, 6m, null);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal(code, await CodeOfAsync(response));
+        Assert.Equal("billing.concurrent_first_write", await CodeOfAsync(response));
+        Assert.Equal(7m, Assert.Single(await world.RatesAsync()).Rate);
+    }
+
+    // La otra persona es una transacción aparte que ya cambió la fila y no ha confirmado.
+    [Fact]
+    public async Task ASaveWaitsForAnotherWriterOfTheRateAndNeverOverwritesIt()
+    {
+        await using var world = await World.OpenAsync();
+        var year = TenantToday.Year - 1;
+        await world.SaveRateAsync(year, 5m);
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        await using var writer = await db.Database.BeginTransactionAsync(Ct);
+        await db.Database.ExecuteSqlAsync(
+            $"UPDATE billing.ipc_rates SET rate = 7, version = version + 1 WHERE tenant_id = {Tenant} AND year = {year}", Ct);
+
+        var save = world.PutRateAsync(year, 6m, 5m);
+        await world.WaitUntilBlockedAsync(ExclusiveRateLock, save);
+        await writer.CommitAsync(Ct);
+        var response = await save.WaitAsync(Patience, Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("billing.ipc.rate_changed", await CodeOfAsync(response));
+        var stored = Assert.Single(await world.RatesAsync());
+        Assert.Equal((7m, 2), (stored.Rate, stored.Version));
+    }
+
+    // Una confirmación a medio camino, hecha a mano en otra transacción: tiene la tasa compartida y su cambio sin confirmar.
+    [Fact]
+    public async Task ASaveWaitsForTheHolderOfTheSharedRateAndThenSeesItsPendingChange()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        await using var holder = await db.Database.BeginTransactionAsync(Ct);
+        Assert.NotNull(await scope.ServiceProvider.GetRequiredService<IIpcRateRepository>().FindForShareAsync(Tenant, year, Ct));
+        var contract = (await new ServiceContractRepository(db).FindAsync(Tenant, new ServiceContractId(service), Ct))!;
+        db.ServicePriceSchedules.Add(ServicePriceSchedule.ConfirmIpc(
+            contract, year, 5.2m, 105200m, $"IPC {year} (5,20 %)", memberId: null, DateTimeOffset.UtcNow));
+        await db.SaveChangesAsync(Ct);
+
+        var save = world.PutRateAsync(year, 6m, 5.2m);
+        await world.WaitUntilBlockedAsync(ExclusiveRateLock, save);
+        await holder.CommitAsync(Ct);
+        var response = await save.WaitAsync(Patience, Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.ipc.in_use", await CodeOfAsync(response));
+        Assert.Equal(5.2m, Assert.Single(await world.RatesAsync()).Rate);
+    }
+
+    [Fact]
+    public async Task AConfirmWaitsForTheWriterOfTheRateAndThenReadsTheNewOne()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var item = new { serviceId = service, version = await world.VersionAsync(service), expectedPrice = 105200m };
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        await using var writer = await db.Database.BeginTransactionAsync(Ct);
+        await db.Database.ExecuteSqlAsync(
+            $"UPDATE billing.ipc_rates SET rate = 7, version = version + 1 WHERE tenant_id = {Tenant} AND year = {year}", Ct);
+
+        var confirm = world.ConfirmAsync(year, item);
+        await world.WaitUntilBlockedAsync(SharedRateLock, confirm);
+        await writer.CommitAsync(Ct);
+        var result = Assert.Single(await confirm.WaitAsync(Patience, Ct));
+
+        Assert.Equal(("Failed", "billing.price_review.price_changed"), (result.Outcome, result.Code));
+        Assert.Equal(0, await world.CountSchedulesAsync());
+    }
+
+    // Dos lotes del mismo año comparten la tasa: ninguno espera ni falla por el otro.
+    [Fact]
+    public async Task ConfirmingDoesNotWaitForAnotherHolderOfTheSharedRate()
+    {
+        await using var world = await World.OpenAsync();
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var item = new { serviceId = service, version = await world.VersionAsync(service), expectedPrice = 105200m };
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ServiceContractsDbContext>();
+        await using var holder = await db.Database.BeginTransactionAsync(Ct);
+        Assert.NotNull(await scope.ServiceProvider.GetRequiredService<IIpcRateRepository>().FindForShareAsync(Tenant, year, Ct));
+
+        // La otra transacción sigue abierta mientras responde.
+        var result = Assert.Single(await world.ConfirmAsync(year, item).WaitAsync(Patience, Ct));
+
+        Assert.Equal(("Confirmed", (string?)null), (result.Outcome, result.Code));
+        await holder.RollbackAsync(Ct);
+    }
+
+    // La confirmación real, detenida justo después de tomar la tasa: guardar otra no puede colarse antes de su cambio programado.
+    [Fact]
+    public async Task AConfirmHoldsTheRateUntilItsPendingChangeIsCommitted()
+    {
+        var interleave = new RateInterleave();
+        await using var world = await World.OpenAsync(services => Interleave(services, interleave));
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var item = new { serviceId = service, version = await world.VersionAsync(service), expectedPrice = 105200m };
+        var pause = new Pause();
+        interleave.AfterNextLock(pause.WaitAsync);
+
+        var confirm = world.ConfirmAsync(year, item);
+        Task<HttpResponseMessage> save;
+        try
+        {
+            await pause.Reached.WaitAsync(Patience, Ct);
+            save = world.PutRateAsync(year, 6m, 5.2m);
+            await world.WaitUntilBlockedAsync(ExclusiveRateLock, save);
+        }
+        finally
+        {
+            pause.Release();
+        }
+
+        var result = Assert.Single(await confirm.WaitAsync(Patience, Ct));
+        var response = await save.WaitAsync(Patience, Ct);
+
+        Assert.Equal(("Confirmed", (string?)null), (result.Outcome, result.Code));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.ipc.in_use", await CodeOfAsync(response));
+        Assert.Equal(5.2m, Assert.Single(await world.RatesAsync()).Rate);
+    }
+
+    // El guardado real, detenido justo después de tomar la tasa, antes de mirar el uso y de escribir.
+    [Fact]
+    public async Task ASaveHoldsTheRateUntilItIsCommitted()
+    {
+        var interleave = new RateInterleave();
+        await using var world = await World.OpenAsync(services => Interleave(services, interleave));
+        var (service, period) = await world.SeedDueAsync(AdjustmentMode.Ipc);
+        var year = period.Year - 1;
+        await world.SaveRateAsync(year, 5.2m);
+        var item = new { serviceId = service, version = await world.VersionAsync(service), expectedPrice = 105200m };
+        var pause = new Pause();
+        interleave.AfterNextLock(pause.WaitAsync);
+
+        var save = world.PutRateAsync(year, 7m, 5.2m);
+        Task<IReadOnlyList<ConfirmIpcResultDto>> confirm;
+        try
+        {
+            await pause.Reached.WaitAsync(Patience, Ct);
+            confirm = world.ConfirmAsync(year, item);
+            await world.WaitUntilBlockedAsync(SharedRateLock, confirm);
+        }
+        finally
+        {
+            pause.Release();
+        }
+
+        var response = await save.WaitAsync(Patience, Ct);
+        var result = Assert.Single(await confirm.WaitAsync(Patience, Ct));
+
+        Assert.True(response.IsSuccessStatusCode, await BodyAsync(response));
+        Assert.Equal(("Failed", "billing.price_review.price_changed"), (result.Outcome, result.Code));
+        Assert.Equal(0, await world.CountSchedulesAsync());
         Assert.Equal(7m, Assert.Single(await world.RatesAsync()).Rate);
     }
 
@@ -1240,14 +1429,38 @@ public sealed class ServiceContractsPriceReviewApiTests
         return (await response.Content.ReadFromJsonAsync<ServiceDetailDto>(Ct))!;
     }
 
-    /// <summary>Corre una vez, justo después de la próxima lectura de una tasa.</summary>
+    /// <summary>Corre una vez, justo después de la próxima lectura de una tasa: sin candado o con él.</summary>
     private sealed class RateInterleave
     {
-        private Func<Task>? action;
+        private Func<Task>? afterFind;
 
-        public void AfterNextFind(Func<Task> next) => action = next;
+        private Func<Task>? afterLock;
 
-        public Task RunAsync() => Interlocked.Exchange(ref action, null) is { } next ? next() : Task.CompletedTask;
+        public void AfterNextFind(Func<Task> next) => afterFind = next;
+
+        public void AfterNextLock(Func<Task> next) => afterLock = next;
+
+        public Task RunAfterFindAsync() => Interlocked.Exchange(ref afterFind, null) is { } next ? next() : Task.CompletedTask;
+
+        public Task RunAfterLockAsync() => Interlocked.Exchange(ref afterLock, null) is { } next ? next() : Task.CompletedTask;
+    }
+
+    /// <summary>Detiene a quien llegue a <see cref="WaitAsync"/> hasta <see cref="Release"/>.</summary>
+    private sealed class Pause
+    {
+        private readonly TaskCompletionSource reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private readonly TaskCompletionSource released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Reached => reached.Task;
+
+        public Task WaitAsync()
+        {
+            reached.TrySetResult();
+            return released.Task;
+        }
+
+        public void Release() => released.TrySetResult();
     }
 
     /// <summary>Envuelve el repositorio de tasas para meter una escritura justo después de la próxima lectura.</summary>
@@ -1266,7 +1479,21 @@ public sealed class ServiceContractsPriceReviewApiTests
         public async Task<IpcRate?> FindAsync(Guid tenantId, int year, CancellationToken cancellationToken)
         {
             var found = await inner.FindAsync(tenantId, year, cancellationToken);
-            await interleave.RunAsync();
+            await interleave.RunAfterFindAsync();
+            return found;
+        }
+
+        public async Task<IpcRate?> FindForShareAsync(Guid tenantId, int year, CancellationToken cancellationToken)
+        {
+            var found = await inner.FindForShareAsync(tenantId, year, cancellationToken);
+            await interleave.RunAfterLockAsync();
+            return found;
+        }
+
+        public async Task<IpcRate?> FindForUpdateAsync(Guid tenantId, int year, CancellationToken cancellationToken)
+        {
+            var found = await inner.FindForUpdateAsync(tenantId, year, cancellationToken);
+            await interleave.RunAfterLockAsync();
             return found;
         }
 
@@ -1497,6 +1724,32 @@ public sealed class ServiceContractsPriceReviewApiTests
                 WithVersion(HttpMethod.Post, $"{ServiceUrl(serviceId)}/{verb}", await VersionAsync(serviceId)), Ct);
 
         public Task<int> CountSchedulesAsync() => WithDbAsync(db => db.ServicePriceSchedules.CountAsync(Ct));
+
+        /// <summary>
+        /// Espera a que Postgres muestre una sentencia que contiene <paramref name="statement"/> detenida por el candado de otra
+        /// sesión. Falla si <paramref name="operation"/> termina sin haber esperado. Mira desde una conexión propia y sin
+        /// transacción, que dentro de una <c>pg_stat_activity</c> no se refresca.
+        /// </summary>
+        public async Task WaitUntilBlockedAsync(string statement, Task operation)
+        {
+            await using var connection = new NpgsqlConnection(Database.GetConnectionString());
+            await connection.OpenAsync(Ct);
+            await using var blocked = new NpgsqlCommand(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_stat_activity
+                    WHERE cardinality(pg_blocking_pids(pid)) > 0 AND query LIKE @statement)
+                """,
+                connection);
+            blocked.Parameters.AddWithValue("statement", statement);
+            var deadline = DateTime.UtcNow + Patience;
+            while (!(bool)(await blocked.ExecuteScalarAsync(Ct))!)
+            {
+                Assert.False(operation.IsCompleted, "The operation finished without waiting for the lock.");
+                Assert.True(DateTime.UtcNow < deadline, "Postgres never showed the operation waiting for the lock.");
+                await Task.Delay(TimeSpan.FromMilliseconds(20), Ct);
+            }
+        }
 
         public async Task<PriceReviewPageDto> ReviewsAsync(string query = "") =>
             (await Manager.GetFromJsonAsync<PriceReviewPageDto>($"{ServiceContractsUrl()}/price-reviews{query}", Ct))!;

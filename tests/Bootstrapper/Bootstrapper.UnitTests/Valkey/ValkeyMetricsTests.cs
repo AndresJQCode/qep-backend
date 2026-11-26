@@ -62,4 +62,57 @@ public sealed class ValkeyMetricsTests
             [("presence", "TimeoutException", 1L), ("rate_limiting", "NotConnected", 1L)],
             seen);
     }
+
+    // Los límites de los buckets son los que dejan ver si una operación que pasó el tope de 100 ms terminó a los 120 ms o a
+    // los 2 s: con los buckets por defecto de OpenTelemetry (pensados en milisegundos) todo caería en el primero.
+    [Fact]
+    public async Task AnOperationRecordsItsDurationInSecondsWithBucketsAroundTheTimeout()
+    {
+        await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+        var factory = provider.GetRequiredService<IMeterFactory>();
+        var options = Options.Create(new ValkeyOptions { Enabled = true });
+        await using var connection = new ValkeyConnection(
+            new ConfigurationBuilder().Build(), options, NullLogger<ValkeyConnection>.Instance);
+        var metrics = new ValkeyMetrics(factory, connection);
+        var seen = new List<(string? Area, string? Outcome, double Value)>();
+        IReadOnlyList<double>? boundaries = null;
+        string? unit = null;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (ReferenceEquals(instrument.Meter.Scope, factory)
+                && instrument is Histogram<double> { Name: "qep.valkey.operation.duration" } histogram)
+            {
+                boundaries = histogram.Advice?.HistogramBucketBoundaries;
+                unit = histogram.Unit;
+                l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
+        {
+            string? area = null;
+            string? outcome = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "area")
+                {
+                    area = tag.Value as string;
+                }
+                else if (tag.Key == "outcome")
+                {
+                    outcome = tag.Value as string;
+                }
+            }
+
+            seen.Add((area, outcome, value));
+        });
+        listener.Start();
+
+        metrics.RecordOperation(ValkeyArea.Sessions, ValkeyOperationOutcome.Late, TimeSpan.FromMilliseconds(120));
+
+        Assert.Equal([("sessions", "late", 0.12)], seen);
+        Assert.Equal("s", unit);
+        Assert.NotNull(boundaries);
+        Assert.Superset(new HashSet<double> { 0.1, 0.125, 0.15, 0.25, 0.5, 1 }, boundaries.ToHashSet());
+    }
 }

@@ -185,7 +185,7 @@ public sealed class ListPriceReviewsHandler(
             }
 
             var customer = customerRefs.TryGetValue(service.CustomerId, out var found)
-                ? new CustomerRefDto(found.Id, found.Name, found.PhoneE164, found.Email)
+                ? new CustomerRefDto(found.Id, found.Name, found.PhoneE164, found.Email, found.BusinessName)
                 : new CustomerRefDto(service.CustomerId, ChargeDtoComposer.UnknownCustomerName, null, null);
             rows.Add(new PriceReviewRowDto(
                 new PriceReviewServiceRefDto(

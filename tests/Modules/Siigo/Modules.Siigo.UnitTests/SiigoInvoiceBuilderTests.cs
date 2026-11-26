@@ -407,7 +407,8 @@ public sealed class SiigoInvoiceBuilderTests
         var balance = payments[1];
 
         // Spec 2026-11-20: el saldo usa la forma de pago de la cuenta de cobro, igual que los comprobantes, y vence el día de la factura.
-        Assert.False(payments[0].TryGetProperty("due_date", out _));
+        // El comprobante también lleva vencimiento: Siigo rechaza con `parameter_required` una forma de pago que lo maneja.
+        Assert.Equal("2026-11-18", payments[0].GetProperty("due_date").GetString());
         Assert.Equal(9001, balance.GetProperty("id").GetInt32());
         Assert.Equal(109000m, balance.GetProperty("value").GetDecimal());
         Assert.Equal("2026-11-18", balance.GetProperty("due_date").GetString());
@@ -530,7 +531,7 @@ public sealed class SiigoInvoiceBuilderTests
         var payments = json.RootElement.GetProperty("payments");
         Assert.Equal(1, payments.GetArrayLength());
         Assert.Equal(9122879.99m, payments[0].GetProperty("value").GetDecimal());
-        Assert.False(payments[0].TryGetProperty("due_date", out _));
+        Assert.Equal("2026-11-18", payments[0].GetProperty("due_date").GetString());
     }
 
     // Siigo aplica ReteFuente por ítem y redondea cada una (2,5 % de 100,20 = 2,505 → 2,51; dos líneas: 5,02); QEP la saca sobre la base

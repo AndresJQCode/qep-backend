@@ -44,7 +44,18 @@ foreach ($project in $projects | Where-Object { $_ -like "*.IntegrationTests.csp
         ForEach-Object { $sources[(ConvertTo-RepoPath $_.FullName)] = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 }
 }
 
-$plan = Get-TestPlan -ChangedFiles $changed -Projects $projects -TestSources $sources
+# El formato se fija aquí: con diff.noprefix, diff.mnemonicprefix, color forzado o un diff externo en la configuración
+# de git, las referencias nuevas pasarían sin aviso.
+$projectDiff = @(git -c core.quotepath=false diff --no-renames --no-color --no-ext-diff --no-textconv `
+    --src-prefix=a/ --dst-prefix=b/ --unified=0 $mergeBase -- "*.csproj")
+if ($LASTEXITCODE -ne 0) { throw "git diff falló; no se puede saber qué referencias cambiaron." }
+# Un proyecto sin agregar a git no sale en el diff: todas sus líneas son nuevas.
+foreach ($file in git -c core.quotepath=false ls-files --others --exclude-standard -- "*.csproj") {
+    $projectDiff += "diff --git a/$file b/$file"
+    $projectDiff += @(Get-Content -LiteralPath $file -Encoding UTF8 | ForEach-Object { "+$_" })
+}
+
+$plan = Get-TestPlan -ChangedFiles $changed -Projects $projects -TestSources $sources -ProjectDiff $projectDiff
 
 Write-Host "Cambios contra ${Base}: $($changed.Count) archivos. Pasos:" -ForegroundColor Cyan
 foreach ($step in $plan.Steps) {

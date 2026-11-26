@@ -4,6 +4,7 @@ paths:
   - "tests/Modules/Siigo/**"
   - "src/Bootstrapper/SiigoOpenInvoiceCheck.cs"
   - "src/Bootstrapper/SiigoInvoiceWhatsApp.cs"
+  - "src/Bootstrapper/SiigoOrderSource.cs"
 ---
 
 # Siigo (facturación de pedidos)
@@ -18,6 +19,15 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **«Enviar a la DIAN» (`send_to_dian`) nace apagado y prenderlo lo decide quien configura.** No hay empresa de pruebas de Siigo:
   cada factura sale contra la cuenta real, y una emitida a la DIAN no se borra. Con el interruptor apagado la factura queda creada y
   sin emitir, y una persona la revisa en Siigo. Una prueba o un seed nunca lo prende.
+- **En `POST /v1/customers`, `id_type` es texto (`"13"`), no `{ "code": "13" }`:** el objeto sólo viene en las respuestas. Con el objeto Siigo
+  responde `invalid_type` en `id_type` y no se crea ningún cliente (producción, 2026-11-24 y 25). Una prueba unitaria que fija la forma
+  del cuerpo no la valida contra Siigo: la documentación de la petición es la que manda.
+- **El documento sale a Siigo sin separadores y el NIT sin dígito de verificación** (`SiigoCustomerMapper.Identification`; owner,
+  2026-11-25; Siigo rechazó con 400 la búsqueda de una identificación con puntos). CC: sólo dígitos. NIT: se quita un guion con un solo
+  dígito al final o, sin él, el décimo dígito de un número que empiece por 8 o 9 y cuadre con el algoritmo de la DIAN; un guion en otra
+  parte no corta nada. CE y pasaporte: sólo letras y dígitos ASCII. Lo guardado en QEP no cambia, y un reenvío manda los bytes ya
+  guardados, con la forma que tenían. Si Siigo ya tiene un cliente con otra forma del documento, la búsqueda no lo encuentra y la
+  siguiente factura armada intenta crear otro.
 - **Las retenciones no van todas en el mismo lugar:** ReteFuente se manda en los `taxes` de **cada ítem** (después del IVA) y ReteICA
   en `retentions` de la factura. Sólo se manda el id del vínculo: el monto lo calcula Siigo. ReteIVA y autorretención no se mandan
   (decisión pendiente, V-7).
@@ -81,10 +91,21 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   errores) y cada escritura borra de paso hasta 200 filas de más de 7 días, de todos los tenants (sin worker). Se leen con `siigo.calls.read`
   (de fábrica `admin` y `billing`, éste por decisión del owner del 2026-11-25; soporte recibe un rol personalizado) en `GET …/siigo/call-failures` (sin curl ni cuerpo) y `…/{id}` (con ellos):
   llevan datos del cliente. El log de requests (`platform/request-log`) conserva sólo la excepción, ligada por `TraceId`; no lleva el curl.
-- **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected` y
-  `Failed`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`, `order_id` o
-  `tenant_id` compila y deja ambas operaciones en 500.
+- **Una factura viva bloquea la marca manual y la anulación del pedido** (`IExternalInvoiceStatus`): todo estado menos `Rejected`,
+  `Failed` y `Annulled`. Es SQL crudo sobre `siigo.invoices` en el Bootstrapper (`SiigoOpenInvoiceCheck`): renombrar `status`,
+  `order_id` o `tenant_id` compila y deja ambas operaciones en 500. La misma lista está en el filtro del índice
+  `IX_invoices_tenant_order_kind` y en `SiigoInvoice.IsLive`: un estado nuevo se decide en los tres.
   **Con el módulo `siigo` apagado no bloquea nada** (sin módulo no hay pantalla para resolver una `Pending`); un tenant sin Siigo sigue marcando a mano como siempre.
+- **Soltar un pedido por una factura anulada en Siigo se verifica, es todo o nada y guarda Siigo primero** (spec 2026-11-25, `POST
+  …/siigo-invoice/annulment`). QEP no anula allá: lee cada factura viva y sólo si **todas** (la del pedido y la de flete) contestan
+  anuladas pasan a `Annulled`. Falla cerrado: lo que no se entiende, y una anulada que además dice `stamp.status = Accepted`, no cambia
+  nada; liberar con la factura viva deja facturar otra vez y duplica un documento legal. **`SiigoApiErrors.InvoiceNotFoundCodes` está
+  vacía a propósito:** ningún 404 cuenta como «borrada» (un 404 pelado también es una ruta o una `BaseUrl` mal armada) hasta tener la
+  respuesta real de Siigo, que queda en `call_failures` como `InvoiceRead`; se llena sólo con esa evidencia y su prueba. Las filas se
+  guardan con el candado del pedido y **la marca se quita después del commit**: al revés, un fallo al guardar dejaría el pedido libre
+  con la fila `Created` y la siguiente emisión lo volvería a marcar. Si falla la marca, `orderUnmarkFailed` lo dice y repetir la acción
+  la reintenta sin llamar a Siigo. Una marca manual o de otro número no se toca. Una respuesta nueva con filas del pedido tiene que
+  calcular `canConfirmAnnulment` y `orderUnmarkFailed`.
 - **Si la factura existe en Siigo pero el pedido no se puede marcar** (se anuló o alguien lo marcó a mano en medio), la fila queda
   `Created` y el ítem de la tanda lleva `orderMarkFailed`; la siguiente tanda del pedido reintenta sólo la marca. Nunca deja la
   emisión fallando.
@@ -111,13 +132,31 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   camino o uno cortado hace menos de 8 minutos) → `ToConfirm` con esa fila y el código del fallo. Ya facturada (`Created`, `Stamped`,
   `StampRejected`) → `Invoiced` con su número e id, y `orderMarkFailed` salvo que una lectura confirme la marca (`SiigoOrderMark`, como
   la recuperación de una tanda; decidido el 2026-11-25). **Salvo que la de flete siga `Pending`:** el reenvío era para mandarla, así que
-  el ítem sale `Failed` con el código del fallo; «facturado» la dejaría sin mandar sin que nadie lo vea.
+  el ítem sale `Failed` con `siigo.invoice.freight_pending`; «facturado» la dejaría sin mandar sin que nadie lo vea.
+- **Con la del pedido en Siigo, un ítem sólo sale `Invoiced` si su de flete, cuando la tiene, también está allá** (decidido el
+  2026-11-25). Al cerrar (`SiigoBatchItemInvoker.Map` y `SiigoInvoiceBatchWorker.RecoverAsync`) sólo se mira la `Pending`: sale `Failed`
+  sin `invoice_id` con `siigo.invoice.freight_pending`. **Lo demás se decide al leer** (`SiigoInvoiceBatchItem.Effective`), en ítems
+  guardados `ToConfirm` e `Invoiced`: de flete `Pending` → `Sending` mientras se manda y si no `Failed` con `freight_pending`;
+  `Rejected`, `Failed` o `Annulled` → `Failed` con `siigo.invoice.freight_not_created` (QEP no la vuelve a armar: se crea en Siigo); `Unknown` →
+  `ToConfirm` con `siigo.invoice.freight_unconfirmed` y sin acciones (las de la tanda actúan sobre la factura del pedido). Los códigos
+  son propios para que nadie cree otra vez en Siigo la del pedido; el motivo de la de flete se ve en el pedido. La de flete de una
+  factura es la más nueva del pedido creada con ella o después (`SiigoInvoiceBatchViews.FreightsAsync`). Una lectura nueva de ítems
+  tiene que pasársela a `Effective`: es un parámetro opcional y sin él responde `Invoiced`. Reintentar el pedido manda sólo la de flete
+  `Pending` y vuelve a marcarlo.
+- **Un ítem enlazado a una fila `Annulled` se lee `Failed` con el código de la fila, esté guardado `ToConfirm` o `Invoiced`** (spec
+  2026-11-25 §1), sin número ni acciones y con `orderMarkFailed` en `false`. Se decide antes que la de flete, así que ninguno vuelve a
+  leerse facturado, tampoco el ítem viejo de un pedido que se volvió a facturar.
+- **El `orderMarkFailed` de un ítem guardado `ToConfirm` se calcula al leer el detalle de la tanda** (`SiigoOrderMark.IsMissingAsync`,
+  sólo con su factura ya en Siigo y sin una tanda que tenga el pedido): el ítem no lo guarda. La lista de tandas no lo lleva. Un ítem
+  cerrado `Failed` por la de flete tampoco lo guarda: el aviso lo calculan las filas del pedido.
 - **El `errorCode` de un ítem `ToConfirm` depende de cuál se escribió de último** (`SiigoInvoiceBatchItem.Effective`, decidido el
   2026-11-25): mientras la fila no cambie desde que el ítem se cerró (`updated_at` de la fila ≤ el del ítem) ves el del ítem, que dice
   por qué no salió el reenvío; si la fila cambia después (otro reenvío, vencimiento, resolución), manda la fila. Si el que manda viene
   vacío, ves el otro. Por eso el ítem se guarda **después** de su fila y cerrado no se vuelve a escribir: si tocas el `updated_at` de un
   ítem cerrado, o escribes una fila sin mover el suyo, muestras el código equivocado. Cuando el que ves no es el de la fila,
   `siigoErrors` viaja vacío (`SiigoInvoiceBatchItemDto.From`): el `error_detail` de la fila es de otro intento.
+- **«No existe» se ofrece con `canResolveMissing`, no con `canResolve`** (decidido el 2026-11-25): es `canResolve` y ninguna tanda con
+  el pedido, en las filas y en los ítems. «Existe» sí se acepta con una tanda, así que `canResolve` no lo mira.
 - **`canResolve` es el mismo en las filas del pedido y en los ítems de las tandas** (`SiigoInvoice.OffersResolution`: `Unknown`, una
   `Pending` vencida que todavía no se expiró, o por confirmar). El endpoint acepta más (`IsResolvable`: cualquier `Pending` que nadie
   esté mandando); no uses ése para dibujar la acción. `missingAvailableAt` sólo viaja con `canResolve`.
@@ -127,6 +166,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   hay y **sin retenciones** (no tiene base). No suma al `computedOrderTotal`: el total sin IVA del regalo es 0 y los pagos no cambian. Un regalo
   de una variante o un IVA sin vincular sale como faltante igual que una línea pagada. **No está probado contra una factura real de Siigo:**
   verifícalo con `send_to_dian` apagado antes de confiar en `tax_base` y `taxpayer`.
+- **El teléfono del cliente nuevo se parte en `SiigoOrderSource`** (Bootstrapper; spec 2026-11-25) con `IPhoneNumberSplitter` de
+  Customers, porque Siigo no lo referencia: región `CO` por defecto (país de la parte vacío o `CO`) y, si no, el país de la parte. Lo que no
+  se puede partir viaja crudo y `SiigoCustomerMapper` deja sólo dígitos: si el número queda vacío o pasa de 10, **omite `phones`** y el
+  cliente se crea igual; sin indicativo utilizable el objeto no lleva la propiedad `indicative`. **No está probado contra Siigo real.**
 - **La factura no lleva `additional_fields.purchase_order`.** Siigo lo rechaza con `document_settings` (`Params: ["additional_fields.purchase_order"]`) si el
   tipo de comprobante no tiene la orden de compra configurada, y Ritual Botánico factura sin él. El número del pedido ya va en `observations`.
 - **Los pagos suman el total que calcula Siigo, no el de QEP.** QEP saca el IVA de un precio con IVA incluido como bruto − neto; Siigo lo redondea por
@@ -139,6 +182,12 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   Siigo rechazó con `invalid_total_payments`. `RetentionRoundingDelta` recalcula la retención por ítem con el porcentaje del pedido
   (`SiigoWithholdingInput.Percentage`) y corrige los pagos sólo si la diferencia es de redondeo (hasta `Tolerance`); más que eso es otra base u otro
   porcentaje y se deja rechazar a la vista. ReteICA va en la factura y no se corrige: no se conoce cómo la redondea Siigo.
+- **Todo pago lleva `due_date` = fecha de la factura, comprobantes incluidos** (owner, 2026-11-25). Que una forma de pago maneje
+  vencimiento se configura en Siigo, y sin el campo rechaza con `parameter_required` en `payments[n].due_date` (observado con un
+  comprobante). Se envía siempre, sin leer la marca de `/payment-types`: la forma de pago puede cambiar en Siigo en cualquier momento.
+  **Sin probar contra Siigo:** que una forma sin vencimiento acepte el campo (a la fecha ninguna factura aceptada en producción lo había
+  llevado). La documentación además admite un solo pago cuando la forma maneja vencimiento; QEP no junta pagos, así que un pedido con
+  dos pagos en una de ésas puede salir rechazado.
 - **El PDF de la factura no se guarda: se pide a Siigo en cada descarga** (`GET …/siigo-invoice/{invoiceId}/pdf`, `GetSiigoInvoicePdfHandler`).
   Mismo permiso que generar (`siigo.invoice.issue`: de fábrica `admin` y `billing`), así que un rol con ese permiso también lo ve. Siigo lo
   entrega como `{"base64": "…"}` (campo tomado de la documentación del SDK, no probado contra una cuenta real: si falla, mirar ese campo
@@ -167,8 +216,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   reenvía una persona (mismos bytes y clave) o la resuelve, y a las 24 h pasa a `Unknown`. Un rechazo de datos en un **primer** intento, o
   una conexión caída, lo dejan `Failed`; un rechazo de datos en el reenvío de una que ya tuvo un envío sin respuesta deja la fila `Pending`
   y el ítem sale `ToConfirm`. **Un ítem recuperado (lease vencido) o cortado por el apagado nunca llama a Siigo:** toma el estado de la fila `Order` viva del
-  pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced`, ninguna → `Failed` con `siigo.invoice.interrupted`). Una creada sale con
-  `orderMarkFailed` salvo que el pedido ya lleve la marca de ese número: la recuperación sólo lo lee (5 s de plazo; si la lectura falla,
+  pedido (`Pending`/`Unknown` → `ToConfirm`, creada → `Invoiced` salvo con la de flete `Pending` —arriba—, ninguna → `Failed` con
+  `siigo.invoice.interrupted`). Una creada que sale facturada lleva `orderMarkFailed` salvo que el pedido ya lleve la marca de ese número: la recuperación sólo lo lee (5 s de plazo; si la lectura falla,
   también avisa) y reenviar es lo que lo marca. El corte por apagado guarda ese resultado con `CancellationToken.None` y relanza la
   cancelación. `ToConfirm` cierra el ítem: al leerlo, su estado sigue a la factura (`SiigoInvoiceBatchItem.Effective`), así que un reenvío
   desde otra tanda o una resolución desde el pedido se ven sin escribir en el ítem. Una tanda de **un** pedido puede llevar las formas de

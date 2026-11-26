@@ -151,13 +151,13 @@ public sealed class PartyPostalCodeApiTests(SharedQuotationsHost sharedHost) : I
         }
     }
 
-    // El PUT del pedido todavía no edita la entrega (eso es de la rama de perfiles de facturación): la conversión la copia y
-    // editar el pedido la conserva. Las rutas que responden sólo el pedido (/cancel…) también la traen.
+    // La conversión copia la entrega y un PUT del pedido sin el bloque `delivery` la conserva. Las rutas que responden
+    // sólo el pedido (/cancel…) también la traen.
     [Fact]
     public async Task ConvertingCopiesThePostalCodeAndEditingTheOrderKeepsIt()
     {
         var factory = await sharedHost.StartTestAsync();
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);

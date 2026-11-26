@@ -69,6 +69,25 @@ public static class SiigoErrorCodes
     /// <summary>404: el pedido no tiene factura de Siigo de ese tipo.</summary>
     public const string InvoiceNotFound = "siigo.invoice.not_found";
 
+    /// <summary>422: una factura vigente del pedido no se puede verificar en Siigo (está por confirmar, es <c>Unknown</c> o se resolvió a
+    /// mano sin id); <c>details = { kind, number }</c>.</summary>
+    public const string InvoiceAnnulmentUnverifiable = "siigo.invoice.annulment_unverifiable";
+
+    /// <summary>422: Siigo dice que la factura no está anulada; <c>details = { kind, number }</c>.</summary>
+    public const string InvoiceNotAnnulled = "siigo.invoice.not_annulled";
+
+    /// <summary>422: la respuesta de Siigo no se reconoce o es contradictoria, así que no se libera nada;
+    /// <c>details = { kind, number }</c>.</summary>
+    public const string InvoiceAnnulmentUnclear = "siigo.invoice.annulment_unclear";
+
+    // El motivo por el que una factura quedó Annulled: no son respuestas HTTP, viajan en la fila (`error_code`) y en el ítem de la tanda.
+
+    /// <summary>Una persona la anuló en Siigo y QEP lo verificó.</summary>
+    public const string InvoiceAnnulledInSiigo = "siigo.invoice.annulled_in_siigo";
+
+    /// <summary>Una persona la borró en Siigo y QEP lo verificó.</summary>
+    public const string InvoiceDeletedInSiigo = "siigo.invoice.deleted_in_siigo";
+
     // El motivo por el que una factura sigue Pending (spec 2026-11-21 siigo-motivo-pendiente): no son respuestas HTTP, viajan en la fila
     // (`error_code`) y la pantalla las traduce.
 
@@ -90,6 +109,18 @@ public static class SiigoErrorCodes
 
     /// <summary>El envío se cortó sin registrar resultado (el proceso murió o se redesplegó): no se sabe si la factura salió.</summary>
     public const string InvoiceInterrupted = "siigo.invoice.interrupted";
+
+    /// <summary>La factura del pedido existe en Siigo y la de flete sigue <c>Pending</c>, haya salido o no. Sólo viaja en un ítem de
+    /// tanda: la pantalla avisa que la del pedido no se vuelve a crear y que falta la de flete.</summary>
+    public const string InvoiceFreightPending = "siigo.invoice.freight_pending";
+
+    /// <summary>La factura del pedido existe en Siigo y la de flete no se creó (Siigo la rechazó o alguien declaró que no existe): QEP
+    /// no la vuelve a armar. Sólo viaja en un ítem de tanda.</summary>
+    public const string InvoiceFreightNotCreated = "siigo.invoice.freight_not_created";
+
+    /// <summary>La factura del pedido existe en Siigo y no se sabe si la de flete también (<c>Unknown</c>): la resuelve una persona desde
+    /// el pedido. Sólo viaja en un ítem de tanda.</summary>
+    public const string InvoiceFreightUnconfirmed = "siigo.invoice.freight_unconfirmed";
 
     /// <summary>Una persona declaró que la factura por confirmar no existe en Siigo (lo dice la tanda que la había dejado así).</summary>
     public const string InvoiceResolvedMissing = "siigo.invoice.resolved_missing";

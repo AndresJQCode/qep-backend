@@ -19,9 +19,16 @@ namespace Modules.Siigo.Application.Invoicing;
 /// «Enviando…»); <c>canResend</c> y <c>canResolve</c>, si ofrece «Reintentar» y «Existe en Siigo» / «No existe»; y
 /// <c>missingAvailableAt</c>, desde cuándo se puede declarar que no existe, si todavía hay que esperar. Van calculados porque la pantalla
 /// no ve desde cuándo se está mandando ni el reloj de 24 horas. <c>canResend</c> va en <c>false</c> mientras una tanda sin terminar tenga el
-/// pedido (ítem <c>Pending</c> o <c>Sending</c>): otra tanda respondería 409. <c>canResolve</c> sólo se ofrece en una <c>Unknown</c> o por confirmar: una
+/// pedido (ítem <c>Pending</c> o <c>Sending</c>): otra tanda respondería 409. <c>canResolveMissing</c> dice si «No existe» se acepta hoy: <c>canResolve</c> y ninguna tanda con el pedido (409);
+/// «Existe» sí se acepta. <c>canResolve</c> sólo se ofrece en una <c>Unknown</c> o por confirmar: una
 /// que nunca salió el endpoint la acepta, pero ofrecer ahí «Existe / No existe» confunde. La de flete no se ofrece (y el endpoint la
 /// rechaza) mientras la del pedido siga abierta: nunca salió.</para>
+/// <para>Spec 2026-11-25 (anulación) §5: <c>canConfirmAnnulment</c> dice si la pantalla ofrece «Ya la anulé en Siigo». Sólo en la fila del
+/// pedido, nunca mientras una tanda sin terminar lo tenga, y cuando toda factura vigente del pedido se puede verificar (o cuando hay que
+/// reintentar la marca). La pantalla no puede deducirlo: no ve si cada fila tiene id de Siigo ni las tandas, ni cruza la de flete.
+/// <c>orderUnmarkFailed</c> avisa que la factura del pedido quedó <c>Annulled</c> pero el pedido sigue marcado con ese número: la misma
+/// acción lo reintenta. Los dos los calculan la lista y la respuesta de <c>…/annulment</c>; sellar y resolver los traen en
+/// <c>false</c>.</para>
 /// </summary>
 public sealed record SiigoInvoiceDto(
     Guid Id,
@@ -43,17 +50,24 @@ public sealed record SiigoInvoiceDto(
     bool AwaitingConfirmation = false,
     bool CanResend = false,
     bool CanResolve = false,
-    DateTimeOffset? MissingAvailableAt = null)
+    DateTimeOffset? MissingAvailableAt = null,
+    bool CanResolveMissing = false,
+    bool CanConfirmAnnulment = false,
+    bool OrderUnmarkFailed = false)
 {
     /// <param name="queued">Una tanda sin terminar tiene el pedido.</param>
     /// <param name="waitsForOrder">Es la de flete y la del pedido sigue abierta.</param>
+    /// <param name="canConfirmAnnulment">Ver <see cref="SiigoOrderMark.CanConfirmAnnulment"/>.</param>
+    /// <param name="orderUnmarkFailed">La fila quedó anulada y el pedido sigue marcado con su número.</param>
     public static SiigoInvoiceDto From(
         SiigoInvoice invoice,
         DateTimeOffset now,
         bool orderMarkFailed = false,
         bool canSendWhatsApp = false,
         bool queued = false,
-        bool waitsForOrder = false)
+        bool waitsForOrder = false,
+        bool canConfirmAnnulment = false,
+        bool orderUnmarkFailed = false)
     {
         var awaitingConfirmation = invoice.IsAwaitingConfirmation(now);
         var canResolve = !waitsForOrder && invoice.OffersResolution(now);
@@ -77,12 +91,15 @@ public sealed record SiigoInvoiceDto(
             awaitingConfirmation,
             !queued && invoice.CanResend(now),
             canResolve,
-            canResolve ? invoice.MissingAvailableAt(now) : null);
+            canResolve ? invoice.MissingAvailableAt(now) : null,
+            canResolve && !queued,
+            canConfirmAnnulment,
+            orderUnmarkFailed);
     }
 }
 
 /// <summary>Un pago de la factura armada. <paramref name="ProofId"/> dice de qué comprobante sale; <c>null</c> es el saldo.</summary>
-public sealed record SiigoDraftPaymentDto(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly? DueDate);
+public sealed record SiigoDraftPaymentDto(Guid? ProofId, string SiigoPaymentTypeId, decimal Value, DateOnly DueDate);
 
 /// <summary>Una factura armada que todavía no se mandó: su tipo, lo que suman sus pagos y los pagos propuestos.</summary>
 public sealed record SiigoInvoiceDraftDto(string Kind, decimal Total, IReadOnlyList<SiigoDraftPaymentDto> Payments);

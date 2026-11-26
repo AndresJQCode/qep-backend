@@ -447,7 +447,8 @@ public sealed class Order
     public const int InvoiceExternalIdMaxLength = 64;
 
     /// <summary>Quién emitió la factura: <c>siigo</c> si la creó una integración (spec 2026-11-18 §5.5), <c>null</c> si la marca es
-    /// manual (alguien la hizo afuera y sólo dejó constancia). Una factura de un proveedor no se revierte desde QEP.</summary>
+    /// manual (alguien la hizo afuera y sólo dejó constancia). La marca de un proveedor no se revierte con <see cref="RevertInvoicing"/>:
+    /// sólo se quita cuando su factura se anuló allá (<see cref="RevertExternalInvoicing"/>).</summary>
     public string? InvoiceProvider { get; private set; }
 
     /// <summary>El número que el proveedor le dio a la factura (<c>FV-1-123</c> en Siigo). <c>null</c> en una marca manual.</summary>
@@ -1838,6 +1839,34 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>
+    /// Quita la marca de un proveedor externo cuya factura se anuló allá (spec 2026-11-25 §4). Sólo suelta la marca de <b>ese</b>
+    /// proveedor y <b>ese</b> número. Sin marca, o con otra (manual, otro número u otro proveedor), no hace nada: la anulación ya está
+    /// guardada en el proveedor y una marca puesta en medio es una declaración de la persona que no se borra desde aquí.
+    /// </summary>
+    /// <returns>Si el pedido perdió la marca.</returns>
+    public bool RevertExternalInvoicing(string provider, string number, MemberId revertedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(number);
+
+        if (!IsInvoiced
+            || !string.Equals(InvoiceProvider, provider, StringComparison.Ordinal)
+            || !string.Equals(InvoiceNumber, number, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        InvoicedBy = null;
+        InvoicedAt = null;
+        InvoiceProvider = null;
+        InvoiceNumber = null;
+        InvoiceExternalId = null;
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     public void RevertInvoicing(MemberId revertedBy, DateTimeOffset occurredAt)
     {
         if (!IsInvoiced)
@@ -1847,7 +1876,8 @@ public sealed class Order
                 "Only an invoiced order can have its invoicing reverted.");
         }
 
-        // Revertir una factura de Siigo es una nota crédito, fuera de alcance (spec §2 y §5.5): sólo se revierte la marca manual.
+        // Esta acción sólo revierte la marca manual. La de un proveedor externo se quita con RevertExternalInvoicing, cuando QEP verifica
+        // que la factura se anuló allá (spec 2026-11-25 §4); las notas crédito siguen fuera de alcance.
         if (InvoiceProvider is not null)
         {
             throw new QuotationsDomainException(
@@ -2156,18 +2186,21 @@ public sealed class Order
 
     /// <summary>
     /// Spec 2026-10-26 §4.4: agrega la parte de envío que Shopify no pudo completar al crear el pedido (la ciudad
-    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte, en esa ciudad o en otra (un
-    /// reintento, desvío S1: la misma parte en otra ciudad se toma como puesta por un intento anterior con la ciudad que el
-    /// sinónimo tenía entonces, o cambiada después por la entrega editable; el consumidor lee la que quedó en
-    /// <see cref="Shipping"/>).
+    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte en una de
+    /// <paramref name="requestedCityIds"/>, las ciudades que el consumidor pidió hasta ahora (un reintento, desvío S1: la puso un
+    /// intento anterior con la ciudad que el sinónimo tenía entonces; el consumidor lee la que quedó en <see cref="Shipping"/>).
+    /// En una ciudad que nadie pidió la puso una persona por la entrega editable o la corrección del panel: es otra parte
+    /// (<c>order.order.shipping_party_present</c>).
     /// Quita de las notas toda línea que empiece por <paramref name="notesLinePrefix"/> (ordinal): la dirección en
     /// crudo que se anotó mientras no había parte. Sólo pedidos externos pendientes, sin recogida en tienda y sin
     /// otra parte de envío; la parte debe quedar completa. No recalcula totales.
     /// </summary>
-    public bool AttachExternalShipping(QuotationPartyDetails shipping, string notesLinePrefix, DateTimeOffset occurredAt)
+    public bool AttachExternalShipping(
+        QuotationPartyDetails shipping, string notesLinePrefix, IReadOnlyCollection<Guid> requestedCityIds, DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(shipping);
         ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
+        ArgumentNullException.ThrowIfNull(requestedCityIds);
         EnsureEditable("The shipping party can only be attached while the order is editable.");
         if (!IsExternal)
         {
@@ -2184,7 +2217,7 @@ public sealed class Order
         var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping);
         if (Shipping is { } current)
         {
-            return SameExceptCity(current.ToDetails(), candidate.ToDetails())
+            return SameExceptCity(current.ToDetails(), candidate.ToDetails()) && IsRequestedCity(current, requestedCityIds)
                 ? false
                 : throw new QuotationsDomainException(
                     ExternalOrderErrors.ShippingPartyPresent, "The order already has another shipping party.");
@@ -2261,17 +2294,22 @@ public sealed class Order
 
     /// <summary>
     /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
-    /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, lanza
-    /// <c>order.order.shipping_party_changed</c>. <c>true</c> si cambió; <c>false</c> si la parte ya no está en la ciudad de
-    /// <paramref name="expected"/> (un reintento: la llevó un intento anterior, a ésta o a la que el sinónimo tenía entonces, y el
-    /// consumidor cayó antes de actualizar su huella; lee la que quedó en <see cref="Shipping"/>).
+    /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, o la llevó a una ciudad que no
+    /// está en <paramref name="requestedCityIds"/> (una persona), lanza <c>order.order.shipping_party_changed</c>. <c>true</c> si
+    /// cambió; <c>false</c> si la parte ya está en el destino o en otra de las ciudades que el consumidor pidió (un reintento: la
+    /// llevó un intento anterior a la que el sinónimo tenía entonces y el consumidor cayó antes de actualizar su huella; lee la
+    /// que quedó en <see cref="Shipping"/>).
     /// </summary>
     public bool CorrectExternalShippingCity(
-        QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
+        QuotationPartyDetails expected, Guid departmentId, Guid cityId, IReadOnlyCollection<Guid> requestedCityIds,
+        DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(requestedCityIds);
         EnsureEditable("The shipping city can only be corrected while the order is editable.");
-        if (Shipping is not { } party || !SameExceptCity(party.ToDetails(), expected))
+        if (Shipping is not { } party
+            || !SameExceptCity(party.ToDetails(), expected)
+            || (party.ToDetails() != expected && !IsRequestedCity(party, requestedCityIds)))
         {
             throw new QuotationsDomainException(
                 ExternalOrderErrors.ShippingPartyChanged, "The shipping party is no longer the one the platform sent.");
@@ -2484,10 +2522,15 @@ public sealed class Order
     // confirma una persona en QEP), así que una fuente nueva no hereda por descarte el trato de integración.
     private bool IsExternal => Source is OrderSource.Shopify;
 
-    // Spec 2026-10-26 y desvío S1: una parte de envío igual salvo el departamento y la ciudad se toma como la que puso la
-    // plataforma (en otra ciudad del mismo sinónimo), no como una de otra persona.
+    // Spec 2026-10-26 y desvío S1: una parte de envío igual salvo el departamento y la ciudad puede ser la que puso la
+    // plataforma en otra ciudad del mismo sinónimo. Sólo lo es si además esa ciudad la pidió el consumidor (IsRequestedCity):
+    // desde la entrega editable, una persona cambia sólo la ciudad.
     private static bool SameExceptCity(QuotationPartyDetails party, QuotationPartyDetails other) =>
         party with { DepartmentId = other.DepartmentId, CityId = other.CityId } == other;
+
+    // La misma señal con que Customers distingue el reintento de un trabajo de lo que hizo una persona.
+    private static bool IsRequestedCity(OrderParty party, IReadOnlyCollection<Guid> requestedCityIds) =>
+        party.CityId is { } cityId && requestedCityIds.Contains(cityId);
 
     private void EnsureEditable(string message)
     {

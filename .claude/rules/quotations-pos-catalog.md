@@ -22,9 +22,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`Pos` necesita la capacidad `pos` y no viene con el signup.** `GrantDefaultModulesOnSignup`
   concede siete módulos (los seis base y `shopify`) sin `pos`, así que en un tenant nuevo todo `/pos/*`
   da 403 aunque el rol tenga los permisos: se prende con la fila de `tenancy.tenant_modules` (spec de entitlements,
-  «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` es clave de rol de sistema
-  reservada: antes de desplegar se comprueba que ningún tenant tenga un rol custom con esa clave
-  (spec 2026-10-07, «Despliegue»).
+  «Operación»). En pruebas, `PosApiHarness.EnablePosAsync`. Y `cashier` ya no es una clave reservada: es un rol
+  sembrado en cada tenant, que el tenant puede editar o borrar (spec 2026-11-25, roles por tenant).
 - **El payload de los eventos de Quotations es contrato con Pipeline** (spec 2026-10-13 §4.5).
   `QuotationLifecycleEventPublisher` escribe `quotations.quotation.sent.v1`, `…converted.v1` y
   `quotations.order.cancelled.v1` con campos camelCase, y `QuotationEventPayloads` los lee por nombre: renombrar
@@ -58,6 +57,10 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   Una columna nueva cuyo encabezado choca con una visible del layout guardado nace oculta en silencio, sin
   error: la regla de choque está en
   [README § Columnas del Excel de pedidos](../../README.md#columnas-del-excel-de-pedidos-por-tenant-homologación).
+- **Un `bool` con default `true` en la base lleva `ValueGeneratedNever`** (`OrdersExportLayout.IncludePhoneDialCode`, spec
+  2026-11-25). Con sólo `HasDefaultValue(true)`, EF puede omitir un `false` al insertar y la base guarda `true`, sin error. Y una
+  columna de teléfono nueva del Excel de pedidos pasa por `phoneText` en `OrdersExportProcessor.RowsFor`, o ignora el
+  interruptor del indicativo.
 - **La variante por defecto lleva el id del producto, y el relleno de `variant_id` depende de eso** (spec 2026-10-20 §8).
   `Product.Create` le da a la primera variante el id del producto —también al crear con opciones—, y `AddProductVariants`
   hizo lo mismo con cada producto que existía. Por eso `AddVariantToLines` (Quotations) y `AddVariantToSaleLines` (Pos)

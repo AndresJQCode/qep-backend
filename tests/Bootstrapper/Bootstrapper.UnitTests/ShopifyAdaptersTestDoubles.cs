@@ -152,24 +152,35 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
 
     public Func<ExternalShippingParty, ExternalShippingOutcome>? OnCorrect { get; init; }
 
-    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Shipping, string NotesLinePrefix)> Attached { get; } = [];
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Shipping, string NotesLinePrefix, IReadOnlyCollection<Guid> Requested)> Attached { get; } = [];
 
-    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Expected, Guid DepartmentId, Guid CityId)> Corrected { get; } = [];
+    public List<(Guid TenantId, Guid OrderId, ExternalShippingParty Expected, Guid DepartmentId, Guid CityId, IReadOnlyCollection<Guid> Requested)> Corrected { get; } = [];
 
     public Task<ExternalShippingOutcome> AttachShippingAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty shipping, string notesLinePrefix, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty shipping,
+        string notesLinePrefix,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        Attached.Add((tenantId, orderId, shipping, notesLinePrefix));
+        Attached.Add((tenantId, orderId, shipping, notesLinePrefix, requestedCityIds));
         return Task.FromResult(
             OnAttach?.Invoke(shipping) ?? new ExternalShippingOutcome(ExternalShippingOutcomeKind.Applied, shipping, null));
     }
 
     public Task<ExternalShippingOutcome> CorrectShippingCityAsync(
-        Guid tenantId, Guid orderId, ExternalShippingParty expected, Guid departmentId, Guid cityId, CancellationToken cancellationToken)
+        Guid tenantId,
+        Guid orderId,
+        ExternalShippingParty expected,
+        Guid departmentId,
+        Guid cityId,
+        IReadOnlyCollection<Guid> requestedCityIds,
+        CancellationToken cancellationToken)
     {
         Calls++;
-        Corrected.Add((tenantId, orderId, expected, departmentId, cityId));
+        Corrected.Add((tenantId, orderId, expected, departmentId, cityId, requestedCityIds));
         return Task.FromResult(
             OnCorrect?.Invoke(expected)
             ?? new ExternalShippingOutcome(

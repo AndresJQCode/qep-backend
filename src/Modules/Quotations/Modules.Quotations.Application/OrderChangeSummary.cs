@@ -206,6 +206,10 @@ public static class OrderChangeSummary
     public static string InvoicedExternally(string provider, string number) =>
         Trim($"Facturado en {ProviderDisplayName(provider)}, factura {number}.");
 
+    /// <summary>La factura se anuló en el proveedor externo y el pedido perdió su marca (spec 2026-11-25 §4).</summary>
+    public static string ExternalInvoiceAnnulled(string provider, string number) =>
+        Trim($"Se anuló en {ProviderDisplayName(provider)} la factura {number}; el pedido quedó sin facturar.");
+
     private static string ProviderDisplayName(string provider) =>
         string.Equals(provider, "siigo", StringComparison.OrdinalIgnoreCase) ? "Siigo" : provider;
 

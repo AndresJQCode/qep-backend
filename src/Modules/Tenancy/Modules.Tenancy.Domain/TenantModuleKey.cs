@@ -123,8 +123,12 @@ public static class TenantModuleKeys
     /// funciona y sólo el recordatorio por WhatsApp no se ofrece.</summary>
     public static readonly TenantModuleKey Scheduling = TenantModuleKey.Define("scheduling");
 
+    /// <summary>Spec WMS 2026-10-31 §1.1: inventario de las variantes del catálogo. Depende de <see cref="Catalog"/> y queda
+    /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Wms = TenantModuleKey.Define("wms");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo, Hr, Payroll, Scheduling];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Store, Ai, Copilot, Support, Purchases, Wholesale, Siigo, Hr, Payroll, Scheduling, Wms];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -163,6 +167,8 @@ public static class TenantModuleKeys
         [Payroll] = [Hr],
         // Spec 2026-11-21 (Agenda): toda cita es de un cliente.
         [Scheduling] = [Customers],
+        // Spec WMS 2026-10-31 §1.1: el inventario es de variantes del catálogo.
+        [Wms] = [Catalog],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>
