@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "payroll", "scheduling", "wms"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store", "ai", "copilot", "support", "purchases", "wholesale", "siigo", "hr", "payroll", "scheduling", "wms", "projects"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -181,7 +181,7 @@ public sealed class TenantModuleKeysTests
     public void PayrollIsAKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Payroll, TenantModuleKey.Parse("payroll"));
-        Assert.Equal(26, TenantModuleKeys.All.Count);
+        Assert.Equal(27, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Payroll, TenantModuleKeys.DefaultForNewTenants);
     }
 
@@ -194,7 +194,7 @@ public sealed class TenantModuleKeysTests
     public void SchedulingIsAKnownKeyOutsideTheDefaults()
     {
         Assert.Same(TenantModuleKeys.Scheduling, TenantModuleKey.Parse("scheduling"));
-        Assert.Equal(26, TenantModuleKeys.All.Count);
+        Assert.Equal(27, TenantModuleKeys.All.Count);
         Assert.DoesNotContain(TenantModuleKeys.Scheduling, TenantModuleKeys.DefaultForNewTenants);
     }
 
@@ -202,13 +202,22 @@ public sealed class TenantModuleKeysTests
     public void SchedulingDependsOnCustomers() =>
         Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Scheduling));
 
-    // Spec WMS 2026-10-31 §1.1: inventario de variantes del catálogo; se prende por tenant.
+    // Spec WMS 2026-10-31 §1.1: inventario de variantes del catálogo; se prende por tenant. Ya no es la última: proyectos va
+    // después.
     [Fact]
-    public void WmsIsLastDependsOnCatalogAndIsOffForNewTenants()
+    public void WmsDependsOnCatalogAndIsOffForNewTenants()
     {
-        Assert.Equal("wms", TenantModuleKeys.All[^1].Value);
         Assert.Equal([TenantModuleKeys.Catalog], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Wms));
         Assert.DoesNotContain(TenantModuleKeys.Wms, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-26 (cotizaciones de proyecto): una cotización de proyecto se convierte en pedido; se prende por tenant.
+    [Fact]
+    public void ProjectsIsLastDependsOnQuotationsAndOrdersAndIsOffForNewTenants()
+    {
+        Assert.Equal("projects", TenantModuleKeys.All[^1].Value);
+        Assert.Equal([TenantModuleKeys.Quotations, TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Projects));
+        Assert.DoesNotContain(TenantModuleKeys.Projects, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]
