@@ -306,6 +306,10 @@ public interface IShopifyGeographyLookup
     /// <summary>Spec 2026-11-24 §11.1: la región de una dirección de fuera de Colombia, con su país y su código oficial en él (el
     /// INE en España); <c>null</c> si no existe. Con <see cref="ShopifyShippingAddressRules"/> sale el <c>provinceCode</c>.</summary>
     Task<(string CountryCode, string Code)?> DescribeRegionAsync(Guid regionId, CancellationToken cancellationToken);
+
+    /// <summary>El camino de vuelta, para la dirección que llega de Shopify: el id de la región con ese código oficial en ese país
+    /// (<paramref name="countryCode"/> en mayúscula), o <c>null</c> si Geography no la tiene.</summary>
+    Task<Guid?> FindRegionAsync(string countryCode, string regionCode, CancellationToken cancellationToken);
 }
 
 /// <summary>Una ciudad de Geography por sus nombres, como los guarda la semilla (mayúsculas y con tildes).</summary>

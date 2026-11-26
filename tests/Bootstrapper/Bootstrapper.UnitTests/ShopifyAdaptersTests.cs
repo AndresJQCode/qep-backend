@@ -1224,6 +1224,17 @@ public sealed class ShopifyAdaptersTests
         Assert.Null(await lookup.DescribeRegionAsync(Guid.CreateVersion7(), Ct));
     }
 
+    [Fact]
+    public async Task GeographyLookupFindsARegionByCountryAndCode()
+    {
+        var madrid = Region.Create(RegionId.New(), "ES", "28", "Madrid");
+        var lookup = new ShopifyGeographyLookup(new NamedDepartments(), new NamedCities(), new CountingRegionRepository(madrid));
+
+        Assert.Equal(madrid.Id.Value, await lookup.FindRegionAsync("ES", "28", Ct));
+        Assert.Null(await lookup.FindRegionAsync("ES", "99", Ct));
+        Assert.Null(await lookup.FindRegionAsync("FR", "28", Ct));
+    }
+
     // ---- Armado ----
 
     private static ShopifyCityCorrectionWriter CityCorrectionWriter(
