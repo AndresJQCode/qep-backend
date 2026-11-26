@@ -584,9 +584,11 @@ public sealed class ShopifyGraphQlQueryContractTests
 
                 break;
             default:
-                // Sólo lo que el parser lee: un derivado sin setter (ShopifyLine.IsRemoved) no viene de la consulta.
+                // Sólo lo que el parser lee: un derivado sin setter (ShopifyLine.IsRemoved) no viene de la consulta, y una marca
+                // fuera del payload (ShopifyAddress.ZipUnrecorded, JsonIgnore) la pone quien lee el espejo.
                 foreach (var property in value.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                    .Where(property => property.SetMethod is not null))
+                    .Where(property => property.SetMethod is not null
+                        && !property.IsDefined(typeof(System.Text.Json.Serialization.JsonIgnoreAttribute), inherit: false)))
                 {
                     AssertPopulated(property.GetValue(value), $"{path}.{property.Name}");
                 }
