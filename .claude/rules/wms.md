@@ -17,4 +17,21 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
 - **`stock_movements` está particionada por mes de `occurred_at`, con límites en UTC**: la PK es `(id, occurred_at)`; una fila fuera de rango cae en `stock_movements_default` y se queda ahí (el trigger impide moverla); `PartitionMaintenanceWorker` asegura la del mes actual y la del siguiente y `qep_wms_partition_missing = 1` dice que no pudo; si `DEFAULT` ya tiene filas de ese mes, `CREATE TABLE … PARTITION OF` falla y se resuelve a mano en ventana. Un `SELECT` sin `occurred_at` en el `WHERE` recorre todas las particiones; `reverses_movement_id` por eso viaja con `reverses_occurred_at` y sin FK.
 - **El ledger netea y ordena las claves por `StockKeyComparer`**: un camino nuevo que escriba `stock_balances` fuera de `InventoryLedger` (no hay `DbSet`; `WmsLayerTests` lo vigila) o que tome bloqueos en otro orden reabre los deadlocks que `TwoBatchesOverTheSameMixedLotKeysInOppositeOrderNeverDeadlock` cierra. `Inventory` referencia owner, bodega y ubicación por `Guid`: no «mejores» eso con `OwnerId`/`LocationId`, que viven en `Warehousing` y `DomainAreasOnlyDependDownwards` lo prohíbe.
 - **Las rutas IK y SK devuelven la respuesta guardada con 200 aunque el original fue 201**: el recibo se escribe con `IOperationReceipts.Record` **antes** de `SaveChangesAsync`; un handler IK/SK que no lo llame pasa las pruebas de éxito y deja la operación sin idempotencia. `request_hash` sale del DTO enlazado, no del cuerpo crudo: el orden de las propiedades no importa, un campo nuevo en el DTO sí cambia el hash de un reintento viejo. `POST /adjustments/{id}/post` es **SK**: la clave es `"adjustment:{id}:post:{version}"` y el header se ignora; repetir el `post` con la versión vieja devuelve el 200 guardado, no 412. El filtro compara el tenant del contexto con el de la ruta **antes** de buscar el recibo: no lo «simplifiques» moviendo la búsqueda arriba, porque otro tenant podría sondear claves ajenas.
+- **Orden de bloqueos de las tareas: operario (`task-member:{id}`) → fila de la tarea (`LockAsync`) → saldos (dentro del ledger).**
+  `LockAsync` va siempre **antes** de `GetAsync`, también en las acciones del supervisor. Un camino nuevo que confirme sin bloquear la
+  tarea, que la cargue antes de bloquearla o que la bloquee después de postear reabre las carreras de la cola offline y los deadlocks. Y
+  quien pueda dejar una tarea en `InProgress` toma primero el lock del operario, o el choque llega al índice
+  `IX_tasks_member_in_progress` como 409 sin `taskId`.
+- **`Heartbeat` no sube `version` a propósito**: si la subiera, cada latido (2 min) dejaría en 412 la pantalla del supervisor.
+- **El barrido conserva `claimed_by_member_id` y `lease_token` al vencer**: es lo que deja reanudar una confirmación tardía y conservar
+  el token al retomar. No los «limpies»; por eso el composer sólo muestra el reclamo con la tarea `InProgress`, y `leaseToken` sólo a
+  quien la tiene.
+- **Los números de `TaskPriority` están repetidos en el SQL de `LockNextCandidateAsync`**; `TaskCandidateQueryTests` los amarra. Cambiar
+  uno sin el otro lo pone en rojo. El mismo SQL excluye lo saltado leyendo `task_events` por nombre (`kind = 'Unclaimed'`,
+  `detail = 'Skipped'`): renombrar un valor de `TaskEventKind` o de `TaskUnclaimReason` compila y rompe el filtro sin error.
+- **Un tipo de tarea nuevo necesita**: valor del enum, `CK_tasks_type` (migración), `TaskTypePermissions.For` y cada método de
+  `TaskTypePolicy`. **Un estado nuevo** entra en `CK_tasks_status`; si todavía puede confirmar, también en la lista de
+  `CatalogVariantUsageChecker`, y si es terminal, en la exclusión de `CountOpenByTypeAsync`.
+- **La FK de `task_lines.lot_id` no mira tenant, dueño ni variante**: `CreateMoveTaskHandler` lo comprueba antes de guardar, como el
+  ledger al confirmar.
 - **Los handlers que escriben al ledger abren la transacción con `await using var tx = await uow.BeginTransactionAsync(ct)`**: si `SaveChangesAsync` lanza `OperationReplayedException`, el `await using` deshace la transacción y el filtro relee el recibo; sin el `await using` la relectura corre sobre una transacción abortada y responde 500 donde tocaba 200. Y `Propose` la abre aunque no escriba movimientos: la numeración `ADJ-…` toma `pg_advisory_xact_lock` (bloqueante) y sin transacción no hay lock.

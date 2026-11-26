@@ -807,7 +807,35 @@ en `develop`.
   `--filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Tasks"`, `WmsPersistenceTests`, `WmsUnitOfWorkTests`,
   `WmsUserReferenceProbeTests` e `InventoryLedgerPostingTests`.
 
-### Pendiente para el bloque C
+### Bloque C
+
+- **Las acciones del supervisor bloquean la fila** (`LockAsync` y después `GetAsync`) dentro de una transacción, además de comparar
+  `version`: así una acción nunca cruza sus escrituras con una confirmación a medias.
+- **Confirmar toma primero el lock del operario** (`task-member:{id}`), como `next` y `claim`: es el orden global y lo que hace segura
+  la lectura de «ya tiene otra en curso» (DA-32).
+- **Decisiones nuevas** DA-32 a DA-37 (spec §13), con un commit cada una (DA-35 sólo documenta lo que el dominio ya hacía).
+- **`ConfirmLine`** recibe además `occurredAt` y `memberIsBusy`, opcionales. La ventana de `occurredAt` la valida también el dominio,
+  antes de reanudar, con el código del ledger.
+- **DA-33:** el filtro de lo saltado no aplica a lo que el supervisor le asignó a esa persona.
+- **Puerto:** se agregaron `CountOpenByTypeAsync` (`byType`) y `FindClaimedAtAsync` (`operators.since`, el último evento `Claimed`;
+  el DTO lo admite nulo).
+- **Reclamar la tarea que ya tiene en curso** la devuelve sin cambios, como repetir `next`. «Mis tareas» exige el permiso de algún tipo
+  y filtra por los permitidos.
+- **Crear** valida además el lote (404 `wms.lot.not_found` si no es de la variante y el dueño: la FK no lo mira), la precisión
+  (`wms.uom.precision_exceeded`), una cantidad menor que 10^12 y líneas nulas; envía a la base (`FlushAsync`) antes de componer.
+- **`GET /tasks/assignees`** no comprueba que la bodega exista: sólo acota la autorización.
+- **Confirmar** una línea registra `qep.wms.confirm.duration`.
+- **Pruebas:** como la integración no se podía correr, los casos de uso también tienen pruebas unitarias con dobles en memoria
+  (`Modules.Wms.UnitTests/Tasks/TaskWorld*.cs`) y `TaskRoutesTests` fija rutas y políticas.
+  `TwoConfirmationsOfTheSameTaskSerialize` termina en versión 4.
+- **Arquitectura:** `CompositionRootTests` cambió (131 permisos y la fila `wms.task.manage`). Necesita autorización del owner junto
+  con `WmsLayerTests` y `MultiReplicaInventory` (O-7).
+- **Sin ejecutar:** ninguna prueba de integración, `Bootstrapper.UnitTests` ni `.\scripts\test-feature.ps1` (había otra suite con
+  contenedores en la máquina). Antes de mergear hay que correr, además de las listadas en el bloque B,
+  `--filter "FullyQualifiedName~Modules.Wms.IntegrationTests.Tasks"`, `StockProbeTests`, la clase
+  `CatalogVariantUsageCheckerTests` y `.\scripts\test-feature.ps1`.
+
+### Pendiente para el bloque C (resuelto en el bloque C)
 
 - `GetWithEventsAsync` trae los eventos sin orden: el composer los ordena (viñeta siguiente).
 - `TaskBoardDto.byType` no tiene consulta en el puerto (`CountByStatusAsync` es por estado).

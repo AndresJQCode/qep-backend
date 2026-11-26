@@ -6780,10 +6780,11 @@ Módulo `Modules.Wms.{Domain,Application,Infrastructure,Api}`, esquema `wms`, cl
 la fila de `tenancy.tenant_modules` con `module_key = 'wms'` (con `catalog` ya prendido). Mientras el frontend no conozca la clave `wms`, la
 pantalla del operador oculta el módulo y se prende llamando a la API. Sin la fila, todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la ruta, 403 `authorization.denied`, nunca 404.
 
-**Permisos.** Dieciséis, `wms.<recurso>.<acción>` (`WmsPermissions`), cada uno con su política en `AddAuthorization` y
+**Permisos.** Diecisiete, `wms.<recurso>.<acción>` (`WmsPermissions`), cada uno con su política en `AddAuthorization` y
 `RequiredModules: [wms]`. Sólo el rol de sistema `admin` los trae; ningún otro. Las rutas de Bodegas usan cuatro: `wms.warehouse.manage`,
 `wms.owner.manage`, `wms.profile.manage` y `wms.document.read`; las de inventario suman `wms.stock.read`, `wms.stock.export`,
-`wms.adjustment.propose` y `wms.adjustment.approve`. El resto es de fases posteriores.
+`wms.adjustment.propose` y `wms.adjustment.approve`; las de tareas, `wms.task.manage` y `wms.putaway.perform`. El resto es de fases
+posteriores.
 
 **Lo que nace solo.**
 
@@ -6863,9 +6864,10 @@ postear un ajuste propuesto hace tiempo con fecha física. La ventana es la que 
 | `PartitionMaintenanceWorker` | Asegura la partición del mes actual y la del siguiente de `stock_movements` | `PartitionSweepHours` (24) |
 | `WmsHousekeepingWorker` | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`) | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
 | `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`) | — |
+| `TaskLeaseSweeper` | Devuelve al pool (o a su asignado) las tareas con el lease vencido; toma las filas con `FOR UPDATE SKIP LOCKED`, así dos pods reparten trabajo | `TaskLeaseSweepSeconds` (60; de 10 a 600) |
 
-`WorkerStartupSeconds` (30) retrasa la primera pasada de los tres workers del ledger: con un intervalo largo y un despliegue por commit, el
-pod se reiniciaría antes de que el temporizador cumpliera.
+`WorkerStartupSeconds` (30) retrasa la primera pasada de los tres workers del ledger y del barrido de tareas: con un intervalo largo y un
+despliegue por commit, el pod se reiniciaría antes de que el temporizador cumpliera.
 
 **Métricas** (meter `Qep.Wms`, sin etiqueta de tenant): `qep.wms.movements` (contador, etiqueta `reason`), `qep.wms.confirm.duration`
 (histograma, ms), `qep.wms.balance.drift` (claves distintas en la última conciliación), `qep.wms.partition.missing` (1 si falta la
@@ -6896,6 +6898,61 @@ ni cambiar el factor de una presentación existente: 422 `wms.profile.base_uom_c
 rastreo; si el owner prefiere otra regla, se relaja en `VariantLogisticsProfile.Update`.
 
 **Migraciones:** `Wms` `AddInventoryLedger` (ledger, saldos, vistas, partición y trigger). Su `Down` está vacío a propósito (ver `CLAUDE.md`).
+
+#### Tareas de bodega (motor de tareas)
+
+Spec [`docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md`](docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md)
+§6. Una tarea (`wms.tasks`, con `task_lines` y `task_events`) es una intención; el ledger es el hecho. Crear, asignar, priorizar o
+cancelar nunca mueve stock: sólo la confirmación de una línea, que escribe un movimiento `InternalMove` con documento
+`("Task", taskId, lineId)`. En este corte hay un solo tipo, `Move` (movimiento interno), y ejecutarlo exige `wms.putaway.perform`.
+
+**Estados.** `Planned` (creada sin publicar o retenida), `Ready` (en el pool), `Assigned` (preasignada), `InProgress` (reclamada con lease),
+`Done` y `Cancelled` (terminales). Cada transición sube `version` y deja un evento; el latido no.
+
+**Supervisor** (bajo `/api/v1/tenants/{tenantId}/wms`). Las acciones llevan `version` (412 `concurrency.conflict`), responden la tarea
+sin `events` y se auditan.
+
+| Ruta | Permiso | Cuerpo / idempotencia |
+| --- | --- | --- |
+| `POST /tasks` | `wms.task.manage` | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
+| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | — |
+| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué |
+| `GET /tasks/assignees?warehouseId&type` | `wms.task.manage` | Membresías activas con el permiso del tipo |
+| `GET /tasks/{id}` | `wms.document.read` | La única respuesta con `events` |
+| `POST /tasks/{id}/publish`, `/unassign` | `wms.task.manage` | `{ version }` |
+| `POST /tasks/{id}/hold` | `wms.task.manage` | `{ version, reason? }` |
+| `POST /tasks/{id}/assign` | `wms.task.manage` | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress` |
+| `POST /tasks/{id}/priority` | `wms.task.manage` | `{ priority, urgent, version }` |
+| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel` | `wms.task.manage` | `{ reason, version }` |
+
+**Operario.** La ruta exige `wms.document.read` y el handler, además, el permiso del tipo.
+
+| Ruta | Cuerpo | Respuesta |
+| --- | --- | --- |
+| `GET /tasks/mine?warehouseId` | — | `{ current, assigned }` |
+| `POST /tasks/next` | `{ warehouseId, deviceId }` | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso |
+| `POST /tasks/{id}/claim` | `{ deviceId }` | 200 |
+| `POST /tasks/{id}/heartbeat` | `{ leaseToken }` | 200 `{ leaseExpiresAt }` |
+| `POST /tasks/{id}/unclaim` | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`) | 200 |
+| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200 |
+
+**Lease.** `claimedBy*`, `leaseExpiresAt` y `leaseToken` sólo viajan con la tarea `InProgress`, y `leaseToken` sólo a quien la tiene. El
+lease de `Move` dura 15 minutos; el latido y cada confirmación lo renuevan. Al vencer, el barrido devuelve la tarea y conserva quién la
+reclamó y su token: una **confirmación tardía** con ese token la reanuda si nadie más la tomó (si quien confirma ya tiene otra en curso,
+se aplica sin reanudar). Latir y soltar exigen el lease vigente. La misma persona que retoma desde el mismo celular conserva el token.
+`next` no vuelve a ofrecer durante 15 minutos lo que la persona soltó con `Skipped`, salvo que se lo asignen. Los eventos de una
+confirmación llevan la hora del escaneo (`occurredAt`).
+
+**Códigos.** 404 `wms.task.not_found` (tarea o línea). 409 `wms.task.lease_lost`, `wms.task.member_busy` (con `taskId`; falta cuando lo
+detecta el índice único). 422 `wms.task.invalid_transition` (con `from` y `action`), `wms.task.assigned_to_other`,
+`wms.task.assignee_not_eligible`, `wms.task.location_invalid`, `wms.task.location_mismatch`, `wms.task.lot_mismatch`,
+`wms.task.quantity_exceeds_remaining`, `wms.task.line_invalid`. Al crear llegan además `wms.profile.variant_unknown`,
+`wms.uom.precision_exceeded` y `wms.lot.not_found` (404); al confirmar, los del ledger (`wms.stock.insufficient`,
+`wms.location.blocked`, `wms.lot.required`, `wms.movement.occurred_at_out_of_range`…) tal cual.
+
+Una variante con una línea abierta en una tarea sin terminar no se borra de Catalog.
+
+**Migraciones:** `Wms` `AddWarehouseTasks`.
 
 ## Verificación
 
