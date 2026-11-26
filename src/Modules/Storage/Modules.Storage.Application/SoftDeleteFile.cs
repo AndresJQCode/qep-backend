@@ -39,6 +39,7 @@ public sealed class SoftDeleteFileHandler(
         // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
         // de cualquier otra regla o efecto.
         await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
+        FileOwnerPermissionGuard.EnsureCallerMayAccess(executionContext, resource);
 
         // Spec 2026-09-16, D15: antes de tocar el bucket. La copia pública de un comprobante adjunto
         // es la que enlaza el Excel.

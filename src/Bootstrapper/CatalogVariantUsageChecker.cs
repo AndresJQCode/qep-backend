@@ -28,6 +28,23 @@ namespace Bootstrapper;
 /// ejecución con <c>42703 undefined_column</c>: las pruebas gemelas contra el esquema migrado son
 /// <c>VariantLinesMigrationTests</c> y <c>SaleLinesVariantMigrationTests</c>
 /// (<c>TheCatalogUsageQueryFindsTheBackfilledVariant</c>).
+///
+/// **El ledger de WMS también cuenta como uso** (spec WMS 2026-10-31 §17): <c>wms.stock_movements</c> y <c>wms.stock_balances</c>
+/// llevan <c>tenant_id</c> y <c>variant_id</c> propios, sin join. Una variante con un solo movimiento —aunque su saldo haya vuelto a
+/// cero— no se borra, se desactiva: el historial del ledger es inmutable y no puede quedar apuntando a una variante que no existe.
+/// Renombrar esas columnas compila y rompe esta consulta con <c>42703</c>; la amarran <c>CatalogVariantUsageCheckerTests</c> (réplica
+/// a mano) y <c>StockProbeTests.TheRealCheckerSeesAWmsMovementAgainstTheMigratedSchema</c> (esquema migrado).
+///
+/// **También cuentan lo que todavía puede escribir en el ledger** (revisión final de WMS-D): las líneas de un ajuste abierto
+/// (<c>wms.adjustment_lines</c> unida a <c>wms.adjustments</c> por el tenant, con estado <c>Proposed</c> o <c>Approved</c>, que se guardan
+/// como texto) y los lotes (<c>wms.lots</c>). Un ajuste propuesto sobre una variante sin movimientos no la protegía: Catalog la borraba y
+/// el posteo escribía después un movimiento inmutable sobre una variante inexistente. <c>Posted</c> ya lo cubre su movimiento y
+/// <c>Rejected</c> no escribe nada. Amarra el esquema migrado <c>StockProbeTests.TheRealCheckerSeesAnOpenAdjustmentLineAndALotAgainstTheMigratedSchema</c>.
+///
+/// Por lo mismo cuentan las líneas abiertas de las tareas de bodega sin terminar (spec 2026-11-26, DA-37):
+/// <c>wms.task_lines.variant_id</c> con <c>line_status = 'Open'</c>, unida a <c>wms.tasks</c> por el tenant, con estado
+/// <c>Planned</c>, <c>Ready</c>, <c>Assigned</c> o <c>InProgress</c> (como texto). Un estado de tarea nuevo que todavía pueda
+/// confirmar entra aquí. Amarra el esquema migrado <c>StockProbeTests.TheRealCheckerSeesAnOpenTaskLineAgainstTheMigratedSchema</c>.
 /// </summary>
 internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVariantUsageChecker
 {
@@ -44,7 +61,7 @@ internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVa
 
         var ids = variantIds.Distinct().ToArray();
 
-        // UNION ya deduplica: es el SELECT DISTINCT de las tres tablas en una sola ida.
+        // UNION ya deduplica: es el SELECT DISTINCT de todas las tablas en una sola ida.
         var used = await catalog.Database.SqlQuery<Guid>($"""
             SELECT qi.variant_id AS "Value"
             FROM quotations.quotation_items qi
@@ -60,6 +77,29 @@ internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVa
             FROM pos.sale_lines sl
             JOIN pos.sales s ON s.id = sl.sale_id
             WHERE s.tenant_id = {tenantId} AND sl.variant_id = ANY({ids})
+            UNION
+            SELECT m.variant_id
+            FROM wms.stock_movements m
+            WHERE m.tenant_id = {tenantId} AND m.variant_id = ANY({ids})
+            UNION
+            SELECT b.variant_id
+            FROM wms.stock_balances b
+            WHERE b.tenant_id = {tenantId} AND b.variant_id = ANY({ids})
+            UNION
+            SELECT al.variant_id
+            FROM wms.adjustment_lines al
+            JOIN wms.adjustments a ON a.id = al.adjustment_id
+            WHERE a.tenant_id = {tenantId} AND a.status IN ('Proposed', 'Approved') AND al.variant_id = ANY({ids})
+            UNION
+            SELECT l.variant_id
+            FROM wms.lots l
+            WHERE l.tenant_id = {tenantId} AND l.variant_id = ANY({ids})
+            UNION
+            SELECT tl.variant_id
+            FROM wms.task_lines tl
+            JOIN wms.tasks t ON t.id = tl.task_id
+            WHERE t.tenant_id = {tenantId} AND t.status IN ('Planned', 'Ready', 'Assigned', 'InProgress')
+              AND tl.line_status = 'Open' AND tl.variant_id = ANY({ids})
             """).ToListAsync(cancellationToken);
 
         return used.ToHashSet();

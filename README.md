@@ -3269,6 +3269,12 @@ storage.file.not_found` (el mismo de otro tenant) y `POST /files` con ese `owner
 completan y bajan sólo por `IStorageSystemUploads`, desde el módulo dueño. Ver [Formulario público de
 Soporte](#formulario-público-de-soporte-fase-3).
 
+**Archivos que piden un permiso extra.** Los tipos de `FileOwnerModules.RequiredPermissionByOwnerType` (hoy `WmsExport`, el Excel de
+saldos de Bodegas, con `wms.stock.export`) exigen ese permiso además del `storage.file.*` de la ruta: sin él, `GET /files` no los lista y
+toda ruta por id (descarga, publicación, despublicación, metadatos, completar, cancelar, borrar) responde `403 authorization.denied`.
+Tampoco los ven Catalog ni Quotations: para ellos el id no existe. `WmsExport` además lo genera el servidor (`ServerGeneratedFiles`), así
+que `POST /files` con ese `ownerType` es `422 storage.file.owner_type_invalid`.
+
 ### Reportes exportados (`exports/`)
 
 La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y las de los
@@ -6791,6 +6797,192 @@ réplica lleva su propia cuenta en memoria y el límite efectivo se multiplica p
 **Autoría.** El mensaje queda firmado con la clave (`sent_by_kind = 4`, `sent_by_api_key_id`, `sent_by_api_key_name`) y el hilo lo muestra como
 `sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí
 se auditan (`api_access.key.created`, `api_access.key.revoked`).
+
+### Módulo Wms (bodegas)
+
+Módulo `Modules.Wms.{Domain,Application,Infrastructure,Api}`, esquema `wms`, clave de módulo `wms` (`Dependencies = [Catalog]`, última de
+`TenantModuleKeys.All`, fuera de `DefaultForNewTenants`: nace apagado). Es la fase 1 de
+[`docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md`](docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md): bodegas,
+árbol de ubicaciones, dueños, unidades de medida y perfil logístico de las variantes. El libro de inventario (WMS-D) está descrito en la subsección «Inventario (WMS): ledger y saldos» más abajo. Rutas bajo
+`/api/v1/tenants/{tenantId}/wms` (`X-Tenant-Id`).
+
+**Cómo se prende.** Por la consola de operador: `POST /api/v1/tenants/{tenantId}/operator/tenants/{targetTenantId}/modules/changes`, que escribe
+la fila de `tenancy.tenant_modules` con `module_key = 'wms'` (con `catalog` ya prendido). Mientras el frontend no conozca la clave `wms`, la
+pantalla del operador oculta el módulo y se prende llamando a la API. Sin la fila, todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la ruta, 403 `authorization.denied`, nunca 404.
+
+**Permisos.** Diecisiete, `wms.<recurso>.<acción>` (`WmsPermissions`), cada uno con su política en `AddAuthorization` y
+`RequiredModules: [wms]`. Sólo el rol de sistema `admin` los trae; ningún otro. Las rutas de Bodegas usan cuatro: `wms.warehouse.manage`,
+`wms.owner.manage`, `wms.profile.manage` y `wms.document.read`; las de inventario suman `wms.stock.read`, `wms.stock.export`,
+`wms.adjustment.propose` y `wms.adjustment.approve`; las de tareas, `wms.task.manage` y `wms.putaway.perform`. El resto es de fases
+posteriores.
+
+**Lo que nace solo.**
+
+- **Con cada bodega:** las ubicaciones virtuales `SUPPLIER`, `CUSTOMER`, `ADJUSTMENT` y `TRANSIT`, y la zona `RECEIVING` con el muelle
+  `REC-01`. Las virtuales son de solo lectura: un `PUT` sobre una con cuerpo válido responde 422 `wms.location.virtual_immutable` (un
+  cuerpo inválido responde antes `validation.failed`, también 422), y no se borran ni se les imprime etiqueta. `RECEIVING` y `REC-01`
+  tampoco se borran (mismo código). Un nodo con hijos o con saldo tampoco se borra.
+- **En el primer acceso del tenant** (los `GET` de bodegas, dueños, unidades y perfiles, y sus `POST`/`PUT`; no `GET …/locations` ni `scannable`, y no al prender el módulo:
+  Tenancy no avisa): el dueño `Self` y las seis
+  unidades `UND, KG, G, L, ML, M`. Lo escribe `IWmsProvisioner` con `INSERT … ON CONFLICT DO NOTHING`; una consulta directa a
+  `wms.owners` de un tenant que nunca entró devuelve cero filas, y no es un error.
+- **Perfil sin fila:** el `GET /variant-profiles` lo calcula en memoria con `version: 0`; el `PUT` con `version: 0` lo crea.
+
+**`scannable` y el `ETag`.** `GET …/locations/scannable` devuelve `{ id, code, path, role }` de las ubicaciones no virtuales de la bodega y
+un `etag` que cambia cuando cambia cualquiera. La app lo guarda y manda `If-None-Match`: igual → 304 sin cuerpo. Es la cache con la que
+el escáner resuelve un código contra su bodega.
+
+**P-1: los identificadores de ubicación no se escriben.** `wms.identifiers` es único por `(tenant_id, value)` y el código de una
+ubicación es único **por bodega**: la segunda bodega repetiría `SUPPLIER` o `REC-01`. La app resuelve el código contra el `scannable` de
+su bodega, no contra `identifiers`. El spec §25 queda por corregir.
+
+**Etiquetas (RF-004).** `POST …/locations/labels` con `{ locationIds }` (1 a 500; uno ajeno a la bodega es 422 `wms.location.not_found`)
+devuelve un PDF con una etiqueta de 60×30 mm por ubicación, en Code 128 (paquete `@preview/tiaoma` de Typst). Sale por `qcode-pdf` con la
+**misma clave de cotizaciones** (`Quotations:Pdf`), desde `WmsPdfGateway` en Bootstrapper: el módulo no ve esa clave. Si el servicio no
+resuelve el paquete o cae, la respuesta es 422 `wms.label.render_failed` con el mensaje del compilador. La prueba contra el servicio real
+es manual (se necesita la clave del developer, nunca en un log); las automáticas sustituyen el renderer.
+
+**Migraciones:** `Tenancy` `AddWmsModuleKey` (el CHECK de `tenant_modules` admite `wms`) y `Wms` `InitialWms` (esquema `wms`).
+
+#### Inventario (WMS): ledger y saldos
+
+Fase 2 del mismo spec (WMS-D). El inventario es un **ledger inmutable**: `wms.stock_movements` guarda cada movimiento con origen y
+destino (par de claves `StockKey`: dueño, ubicación, variante, lote y estado) y `wms.stock_balances` es el saldo derivado, que sólo
+escribe `InventoryLedger` en la misma transacción. Nada se edita: `trg_stock_movements_immutable` lanza `wms.ledger.immutable` ante
+cualquier `UPDATE` o `DELETE`, y un error se corrige con un movimiento de **reverso** (`POST /stock/movements/{id}/reverse`), que apunta
+al original. Quitarle al rol de la aplicación el `TRUNCATE` sobre `wms.stock_movements` y sobre cada una de sus particiones mensuales es
+una tarea **pendiente de la plataforma** (repo `migracion-k8s`), no una migración: hoy nada en `k8s/` lo hace y las migraciones corren con la conexión de la aplicación. Las lecturas salen de `wms.v_stock_rows` y `wms.v_stock_summary`, donde viven las fórmulas de disponible, picking, recibido y
+bloqueado. Las sondas de «con existencias» (`hasStock` del perfil, borrar una ubicación, desactivar un dueño) cuentan saldo físico: una
+ubicación no virtual con `on_hand` o `reserved` distinto de cero. Una variante con movimientos o saldos en el ledger tampoco se borra
+de Catalog (`CatalogVariantUsageChecker`): se desactiva.
+
+La clave del saldo incluye además la **unidad logística** (`handling_unit_id`, caja o palet; D-12): `NULL` es stock suelto, y el
+movimiento guarda la de cada extremo (`from_handling_unit_id`, `to_handling_unit_id`). En WMS-D va siempre en `NULL`, salvo lo que copie
+un reverso: el agregado `HandlingUnit`, su tabla y sus rutas llegan con el corte que confirme recepciones.
+
+**Rutas** (bajo `/api/v1/tenants/{tenantId}/wms`). **IK** exige el header `Idempotency-Key`; **SK** deriva la clave en el servidor.
+
+| Ruta | Permiso | Idempotencia |
+| --- | --- | --- |
+| `GET /stock` | `wms.stock.read` | — |
+| `GET /stock/summary` | `wms.stock.read` | — |
+| `GET /stock/movements` | `wms.stock.read` | — |
+| `POST /stock/export` | `wms.stock.export` | — (entrega por correo) |
+| `POST /stock/movements/{id}/reverse` | `wms.adjustment.approve` | IK |
+| `GET /adjustments` | `wms.document.read` | — |
+| `POST /adjustments` | `wms.adjustment.propose` | IK |
+| `POST /adjustments/{id}/approve` | `wms.adjustment.approve` | — (versión) |
+| `POST /adjustments/{id}/reject` | `wms.adjustment.approve` | — (versión) |
+| `POST /adjustments/{id}/post` | `wms.adjustment.approve` | SK: `adjustment:{id}:post:{version}`; el header se ignora |
+| `POST /imports/initial-balances/preview` | `wms.adjustment.propose` | — (no escribe saldos) |
+| `POST /imports/initial-balances/commit` | `wms.adjustment.propose` | IK |
+
+**`Idempotency-Key`.** Sin header en una ruta IK: 428 `wms.idempotency_key_required`. Misma clave y mismo cuerpo: la respuesta guardada
+con **200** (aunque el original fuera 201). Misma clave con otro cuerpo: 409 `wms.idempotency_key_reused`. El `request_hash` sale del DTO
+enlazado, no del cuerpo crudo. La clave de otro tenant es 403, nunca una respuesta guardada ajena. Los recibos (`wms.operation_receipts`)
+se purgan a los 45 días (`Wms:Workers:ReceiptRetentionDays`). Repetir `post` con una versión vieja devuelve el 200 guardado, no 412.
+
+**Ventana de `occurredAt`.** `[ahora − 30 días, ahora + 5 min]`; fuera de ella, 422 `wms.movement.occurred_at_out_of_range`, también al
+postear un ajuste propuesto hace tiempo con fecha física. La ventana es la que permite purgar los recibos a 45 días.
+
+**Workers** (opciones `Wms:Workers:*`, validadas al arrancar; un cero o un negativo tumba el arranque):
+
+| Worker | Qué hace | Opciones (por defecto) |
+| --- | --- | --- |
+| `BalanceChangePublisher` | Vacía `wms.balance_change_queue` y publica `wms.balance.changed.v1` al outbox | `BalanceChangePublishSeconds` (10) |
+| `BalanceReconciliationWorker` | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige**. Con dos pods, un candado por bodega evita la fila repetida | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30) |
+| `PartitionMaintenanceWorker` | Asegura la partición del mes actual y la del siguiente de `stock_movements` | `PartitionSweepHours` (24) |
+| `WmsHousekeepingWorker` | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`) | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
+| `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`) | — |
+| `TaskLeaseSweeper` | Devuelve al pool (o a su asignado) las tareas con el lease vencido; toma las filas con `FOR UPDATE SKIP LOCKED`, así dos pods reparten trabajo | `TaskLeaseSweepSeconds` (60; de 10 a 600) |
+
+`WorkerStartupSeconds` (30) retrasa la primera pasada de los tres workers del ledger y del barrido de tareas: con un intervalo largo y un
+despliegue por commit, el pod se reiniciaría antes de que el temporizador cumpliera.
+
+**Métricas** (meter `Qep.Wms`, sin etiqueta de tenant): `qep.wms.movements` (contador, etiqueta `reason`), `qep.wms.confirm.duration`
+(histograma, ms), `qep.wms.balance.drift` (claves distintas en la última conciliación), `qep.wms.partition.missing` (1 si falta la
+partición del mes actual o del siguiente) y `qep.wms.reconciliation.failed` (bodegas que la última conciliación no pudo revisar). En
+Prometheus salen como `qep_wms_movements_total`, `qep_wms_balance_drift`, `qep_wms_partition_missing` y `qep_wms_reconciliation_failed`
+(el histograma agrega el sufijo de unidad del exportador). Las alertas viven en el repo de plataforma (`migracion-k8s`), no acá.
+
+**Partición faltante.** `stock_movements` está particionada por mes de `occurred_at`, con límites en UTC. Si `qep_wms_partition_missing`
+vale 1, el worker no pudo crear la partición. Las filas fuera de rango caen en `stock_movements_default` y **se quedan ahí** (el trigger
+impide moverlas). Se **crea** la partición (`CREATE TABLE wms.stock_movements_yYYYYmMM PARTITION OF wms.stock_movements FOR VALUES FROM … TO …`)
+y **nunca se desprende** una existente. Si `DEFAULT` ya tiene filas de ese mes, el `CREATE … PARTITION OF` falla y se resuelve a mano en
+ventana de mantenimiento. Un `SELECT` sin `occurred_at` en el `WHERE` recorre todas las particiones.
+
+**Carga inicial por Excel.** `POST /imports/initial-balances/preview?warehouseId=…&ownerId=…` (multipart, campo `file`) lee la primera hoja
+y ubica por cabecera, no por posición, seis columnas: `code`, `location`, `lot`, `expiration`, `quantity` y `uom`. **Tope de 500 filas
+por archivo** (más es 422 `wms.import.too_many_rows`): la carga es un solo batch del ledger y cada fila un movimiento. El archivo admite
+5 MB comprimido, 20 MB descomprimido y 100 entradas (si no, 422 `wms.import.invalid_file`). El preview responde **200 aunque haya
+problemas**: cada fila lleva sus `issues` y `canCommit` es `false` si hay alguno; si una clave (dueño, ubicación, variante, lote) ya tiene
+saldo, la fila trae el issue bloqueante `wms.import.stock_exists`, así que un complemento va por ajustes. `POST /imports/initial-balances/commit`
+con `{ previewId, version }` y `Idempotency-Key` responde 201, o **422 `wms.import.invalid_file` si queda algún issue**. El preview vive 30 minutos.
+
+**Export.** `POST /stock/export` responde 202 y no devuelve el archivo: arma el Excel, lo guarda en Storage y publica `wms.export-ready.v1`;
+`WmsExportDeliveryWorker` manda el enlace de descarga por correo y la campana de quien lo pidió recibe un `ExportReady` con
+`exportKind: "Stock"`.
+
+**Regla pendiente de confirmación del owner.** Con saldo, además del rastreo, no se puede cambiar la unidad base, bajar la precisión
+ni cambiar el factor de una presentación existente: 422 `wms.profile.base_uom_change_requires_identification`. RF-010 sólo nombra el
+rastreo; si el owner prefiere otra regla, se relaja en `VariantLogisticsProfile.Update`.
+
+**Migraciones:** `Wms` `AddInventoryLedger` (ledger, saldos, vistas, partición y trigger). Su `Down` está vacío a propósito (ver `CLAUDE.md`).
+
+#### Tareas de bodega (motor de tareas)
+
+Spec [`docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md`](docs/superpowers/specs/2026-11-26-wms-tareas-y-operaciones-design.md)
+§6. Una tarea (`wms.tasks`, con `task_lines` y `task_events`) es una intención; el ledger es el hecho. Crear, asignar, priorizar o
+cancelar nunca mueve stock: sólo la confirmación de una línea, que escribe un movimiento `InternalMove` con documento
+`("Task", taskId, lineId)`. En este corte hay un solo tipo, `Move` (movimiento interno), y ejecutarlo exige `wms.putaway.perform`.
+
+**Estados.** `Planned` (creada sin publicar o retenida), `Ready` (en el pool), `Assigned` (preasignada), `InProgress` (reclamada con lease),
+`Done` y `Cancelled` (terminales). Cada transición sube `version` y deja un evento; el latido no.
+
+**Supervisor** (bajo `/api/v1/tenants/{tenantId}/wms`). Las acciones llevan `version` (412 `concurrency.conflict`), responden la tarea
+sin `events` y se auditan.
+
+| Ruta | Permiso | Cuerpo / idempotencia |
+| --- | --- | --- |
+| `POST /tasks` | `wms.task.manage` | IK. `{ warehouseId, ownerId?, priority?, dueAt?, note?, publish = true, assignToMemberId?, lines: [{ variantId, lotId?, stockStatus = "Available", fromLocationId, toLocationId, quantity }] }` → 201 |
+| `GET /tasks?warehouseId&status&type&assignedMemberId&page&pageSize` | `wms.document.read` | — |
+| `GET /tasks/summary?warehouseId` | `wms.document.read` | Tablero: `byStatus` y `byType` completos, también en cero, y quién tiene qué |
+| `GET /tasks/assignees?warehouseId&type` | `wms.task.manage` | Membresías activas con el permiso del tipo |
+| `GET /tasks/{id}` | `wms.document.read` | La única respuesta con `events` |
+| `POST /tasks/{id}/publish`, `/unassign` | `wms.task.manage` | `{ version }` |
+| `POST /tasks/{id}/hold` | `wms.task.manage` | `{ version, reason? }` |
+| `POST /tasks/{id}/assign` | `wms.task.manage` | `{ memberId, version, reason? }`; motivo obligatorio si estaba `InProgress` |
+| `POST /tasks/{id}/priority` | `wms.task.manage` | `{ priority, urgent, version }` |
+| `POST /tasks/{id}/cancel`, `/lines/{lineId}/cancel` | `wms.task.manage` | `{ reason, version }` |
+
+**Operario.** La ruta exige `wms.document.read` y el handler, además, el permiso del tipo.
+
+| Ruta | Cuerpo | Respuesta |
+| --- | --- | --- |
+| `GET /tasks/mine?warehouseId` | — | `{ current, assigned }` |
+| `POST /tasks/next` | `{ warehouseId, deviceId }` | 200 la tarea ya reclamada; **204** si no hay ninguna. Repetirla devuelve la que tiene en curso |
+| `POST /tasks/{id}/claim` | `{ deviceId }` | 200 |
+| `POST /tasks/{id}/heartbeat` | `{ leaseToken }` | 200 `{ leaseExpiresAt }` |
+| `POST /tasks/{id}/unclaim` | `{ leaseToken, reason }` (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`) | 200 |
+| `POST /tasks/{id}/lines/{lineId}/confirm` (IK) | `{ leaseToken, fromLocationId, toLocationId, lotId?, quantity, overrideReason?, occurredAt, deviceId }` | 200 |
+
+**Lease.** `claimedBy*`, `leaseExpiresAt` y `leaseToken` sólo viajan con la tarea `InProgress`, y `leaseToken` sólo a quien la tiene. El
+lease de `Move` dura 15 minutos; el latido y cada confirmación lo renuevan. Al vencer, el barrido devuelve la tarea y conserva quién la
+reclamó y su token: una **confirmación tardía** con ese token la reanuda si nadie más la tomó (si quien confirma ya tiene otra en curso,
+se aplica sin reanudar). Latir y soltar exigen el lease vigente. La misma persona que retoma desde el mismo celular conserva el token.
+`next` no vuelve a ofrecer durante 15 minutos lo que la persona soltó con `Skipped`, salvo que se lo asignen. Los eventos de una
+confirmación llevan la hora del escaneo (`occurredAt`).
+
+**Códigos.** 404 `wms.task.not_found` (tarea o línea). 409 `wms.task.lease_lost`, `wms.task.member_busy` (con `taskId`; falta cuando lo
+detecta el índice único). 422 `wms.task.invalid_transition` (con `from` y `action`), `wms.task.assigned_to_other`,
+`wms.task.assignee_not_eligible`, `wms.task.location_invalid`, `wms.task.location_mismatch`, `wms.task.lot_mismatch`,
+`wms.task.quantity_exceeds_remaining`, `wms.task.line_invalid`. Al crear llegan además `wms.profile.variant_unknown`,
+`wms.uom.precision_exceeded` y `wms.lot.not_found` (404); al confirmar, los del ledger (`wms.stock.insufficient`,
+`wms.location.blocked`, `wms.lot.required`, `wms.movement.occurred_at_out_of_range`…) tal cual.
+
+Una variante con una línea abierta en una tarea sin terminar no se borra de Catalog.
+
+**Migraciones:** `Wms` `AddWarehouseTasks`.
 
 ## Verificación
 

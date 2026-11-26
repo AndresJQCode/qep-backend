@@ -29,8 +29,8 @@ archivo que coincide con `paths` (arriba). Las reglas generales están en [`CLAU
   pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la
   liquidación (`IOutboundMessages`, `OutboundSettlement`) se prueba también con `QuotationTemplateOutboundTests`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los veinticuatro módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
-  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Purchases, Quotations, Reporting, Shopify, Storage, Store, Suppliers, Support y Tenancy — cada
+  Los veinticinco módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Purchases, Quotations, Reporting, Shopify, Storage, Store, Suppliers, Support, Tenancy y Wms — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,

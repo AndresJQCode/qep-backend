@@ -258,6 +258,8 @@
           "Modules.Tenancy.Infrastructure": "[1.0.0, )",
           "Modules.Wholesale.Application": "[1.0.0, )",
           "Modules.Wholesale.Infrastructure": "[1.0.0, )",
+          "Modules.Wms.Application": "[1.0.0, )",
+          "Modules.Wms.Infrastructure": "[1.0.0, )",
           "SixLabors.ImageSharp": "[3.1.12, )",
           "StackExchange.Redis": "[2.13.23, )"
         }
@@ -1423,6 +1425,43 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Wholesale.Application": "[1.0.0, )",
           "Modules.Wholesale.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.wms.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Wms.Application": "[1.0.0, )",
+          "Modules.Wms.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.wms.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
+          "Modules.Wms.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.wms.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.wms.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "ClosedXML": "[0.105.1, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )",
+          "Modules.Wms.Application": "[1.0.0, )",
+          "Modules.Wms.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

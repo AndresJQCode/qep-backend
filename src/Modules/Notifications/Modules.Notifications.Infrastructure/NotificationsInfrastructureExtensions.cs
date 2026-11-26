@@ -62,6 +62,8 @@ public static class NotificationsInfrastructureExtensions
         services.AddSingleton<OutboxDeliveryWorker, CustomerExportDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, ProductExportDeliveryWorker>();
         services.AddSingleton<OutboxDeliveryWorker, SupplierExportDeliveryWorker>();
+        // Spec WMS 2026-10-31, S15: el export de saldos de bodega.
+        services.AddSingleton<OutboxDeliveryWorker, WmsExportDeliveryWorker>();
         // Spec 2026-11-17 (mayorista): la invitación a un distribuidor, con el link armado sobre AppBaseUrl (ruling W1).
         services.AddSingleton<OutboxDeliveryWorker, WholesaleInvitationDeliveryWorker>();
         // Spec 2026-11-19 §6: el correo del distribuidor cambió al aceptar. Un consumidor por dirección, cada uno con su inbox.

@@ -145,6 +145,16 @@ internal sealed class AllowAllExecutionContext(Guid tenantId) : IExecutionContex
     public bool HasPermission(string permission) => true;
 }
 
+/// <summary>Un miembro con todos los permisos menos uno: el permiso extra del dueño del archivo.</summary>
+internal sealed class ExecutionContextLacking(Guid tenantId, string missingPermission) : IExecutionContext
+{
+    public Guid SubjectId { get; } = Guid.CreateVersion7();
+
+    public TenantId TenantId { get; } = new(tenantId);
+
+    public bool HasPermission(string permission) => !string.Equals(permission, missingPermission, StringComparison.Ordinal);
+}
+
 internal sealed class FixedClock(DateTimeOffset now) : IClock
 {
     public DateTimeOffset UtcNow { get; } = now;

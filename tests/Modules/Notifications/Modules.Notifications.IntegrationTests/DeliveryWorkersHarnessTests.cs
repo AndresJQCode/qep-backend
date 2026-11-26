@@ -6,7 +6,7 @@ using static Modules.Notifications.IntegrationTests.NotificationsDeliveryHarness
 namespace Modules.Notifications.IntegrationTests;
 
 /// <summary>El interruptor del harness: sin él, cada prueba que llama a DrainAsync competiría con el
-/// bucle de correo del host, que drena los trece consumidores (spec 2026-11-13, D-7).</summary>
+/// bucle de correo del host, que drena todos los consumidores (spec 2026-11-13, D-7).</summary>
 public sealed class DeliveryWorkersHarnessTests
 {
     [Fact]
@@ -28,7 +28,7 @@ public sealed class DeliveryWorkersHarnessTests
 
         var loop = Assert.Single(factory.Services.GetServices<IHostedService>(), service => IsDeliveryWorker(service.GetType()));
         Assert.IsType<NotificationsDeliveryWorker>(loop);
-        // Los mismos que registra AddNotificationsInfrastructure (NotificationsDeliveryWorkerTests): 17 desde spec 2026-11-19.
-        Assert.Equal(17, factory.Services.GetServices<OutboxDeliveryWorker>().Count());
+        // Los mismos que registra AddNotificationsInfrastructure (NotificationsDeliveryWorkerTests): 18 con el export de WMS.
+        Assert.Equal(18, factory.Services.GetServices<OutboxDeliveryWorker>().Count());
     }
 }

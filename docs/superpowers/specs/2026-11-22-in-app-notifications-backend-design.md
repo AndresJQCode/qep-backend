@@ -129,7 +129,7 @@ Lo verificado leyendo el código de `develop` (`c9282c9af`), y lo que cambia del
 | `kind` | Origen | Destinatario | Se guarda |
 | --- | --- | --- | --- |
 | `ConversationAssigned` | `messaging.conversation.assigned.v1` (nuevo) | la membresía destino | sí |
-| `ExportReady` | `catalog.product-export-ready.v1`, `customers.export-ready.v1`, `suppliers.export-ready.v1`, `quotations.export-ready.v1` | quien pidió (usuario → membresía) | sí |
+| `ExportReady` | `catalog.product-export-ready.v1`, `customers.export-ready.v1`, `suppliers.export-ready.v1`, `quotations.export-ready.v1`, `wms.export-ready.v1` (saldos de Bodegas) | quien pidió (usuario → membresía) | sí |
 | `ExportFailed` | `quotations.export-failed.v1` | quien pidió | sí |
 | `SupportCustomerReplied` | `support.ticket.customer-replied.v1` (nuevo) | `SupportTicket.AssigneeMemberId` | sí |
 | `SupportTicketUnassigned` | `support.ticket.unassigned-alert.v1` (nuevo) | los miembros elegidos por el tenant | sí |
@@ -147,7 +147,8 @@ Reglas por tipo:
   (`Conversation.HandOffAutomation`, llamado desde `AutomationConversations.cs:110` y `AiConversations.cs:89`). **No** `Taken` ni
   `AutoTaken` (quien recibe es quien actúa), ni el `Taken` de `ConversationOpener`. **[owner]**
 - **Exportaciones**: productos, clientes y proveedores sólo tienen «lista»; sus fallas son errores HTTP síncronos y no dejan
-  entrada. Cotizaciones y pedidos tienen las dos. **[owner]**
+  entrada. Cotizaciones y pedidos tienen las dos. **[owner]** El export de saldos de Bodegas (`exportKind: "Stock"`) también
+  sólo tiene «lista»: se arma dentro del request.
 - **`SupportCustomerReplied`**: sólo cuando un entrante vinculado pasa el ticket de `WaitingOnCustomer` a `Open`
   (`SupportThreadRules.ReopenIfWaiting`, único punto de ese cambio, con tres llamadores) **y** el ticket tiene responsable, **y** quien
   causó el cambio no es ese responsable (en `AssignUnclassified` lo causa un asesor; en el seguidor del hilo, el sistema). Sin responsable no hay aviso
@@ -284,7 +285,7 @@ genérico. `data` según `kind` (los nombres son contrato; `null` es explícito,
 | `kind` | `data` |
 | --- | --- |
 | `ConversationAssigned` | `{ conversationId, reason: "Transferred" \| "Inherited" \| "Handoff", actorName: string \| null, contactName: string \| null }` |
-| `ExportReady` | `{ exportKind: "Products" \| "Customers" \| "Suppliers" \| "Quotations" \| "Orders", fileName, rowCount, expiresAt, downloadUrl: string \| null }` |
+| `ExportReady` | `{ exportKind: "Products" \| "Customers" \| "Suppliers" \| "Quotations" \| "Orders" \| "Stock", fileName, rowCount, expiresAt, downloadUrl: string \| null }` |
 | `ExportFailed` | `{ exportKind: "Quotations" \| "Orders" }` |
 | `SupportCustomerReplied` | `{ ticketId, ticketNumber }` |
 | `SupportTicketUnassigned` | `{ ticketId, ticketNumber, thresholdHours }` |
@@ -582,7 +583,7 @@ Consumidores (todos en `Notifications.Infrastructure`, drenados por `Notificatio
 | Consumidor | Eventos |
 | --- | --- |
 | `notifications.in-app.conversations` | `messaging.conversation.assigned.v1` |
-| `notifications.in-app.exports` | los cinco de exportación |
+| `notifications.in-app.exports` | los seis de exportación |
 | `notifications.in-app.support` | `support.ticket.customer-replied.v1`, `support.ticket.unassigned-alert.v1` |
 | `notifications.in-app.wholesale` | `quotations.order.created.v1`, `quotations.order.wholesale-approved.v1`, `quotations.order.wholesale-cancelled.v1` |
 | `notifications.in-app.billing` | `billing.charges.overdue-digest.v1`, `billing.price-reviews.digest.v1` |

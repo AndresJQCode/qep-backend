@@ -79,9 +79,18 @@ desplegó, y las decisiones pendientes.
   Co-Authored-By: Claude <modelo que escribió el cambio> <noreply@anthropic.com>
   ```
 
-  El nombre sale de la primera línea de `ListAgents` («This session is …»). Un subagente no lo
-  deduce: quien lo lanza le pasa las dos líneas en el encargo. El autor de Git no se cambia. Los
-  commits ya hechos no se reescriben.
+  El nombre de la sesión es el título que el owner ve en su pestaña. Se lee **justo antes de cada
+  commit**, porque puede cambiar; el título puesto a mano gana sobre el automático. En Bash:
+
+  ```bash
+  t=$(cat "$HOME"/.claude/projects/*/"$CLAUDE_CODE_SESSION_ID".jsonl)
+  { grep '^{"type":"custom-title"' <<<"$t" | tail -1; grep '^{"type":"ai-title"' <<<"$t" | tail -1; } |
+    head -1 | sed -E 's/.*"(customTitle|aiTitle)":"(([^"\\]|\\.)*)".*/\2/'
+  ```
+
+  Si no devuelve nada, se usa el nombre de la primera línea de `ListAgents` («This session is …»).
+  Un subagente no lo deduce: quien lo lanza le pasa las líneas `Session:` y `Co-Authored-By:` en el
+  encargo. El autor de Git no se cambia. Los commits ya hechos no se reescriben.
 - **Antes de commitear se comprueba la rama, y si es la por defecto (`main`) se crea una
   primero.** La comprobación es `git branch --show-current` **en ese momento**, no lo que se
   haya leído al abrir la sesión: el 2026-09-05 el snapshot del arranque decía `main` mientras
@@ -230,6 +239,7 @@ si vas a tocar un módulo, abre su regla antes (o lee primero un archivo del mó
 | [`infra-valkey-sesiones`](.claude/rules/infra-valkey-sesiones.md) | Valkey, sesiones, permisos, timbres y tiempo real: limitadores, ACL, cachés de sesión y permisos, colas con timbre, listener y presencia |
 | [`tenancy-y-servicios`](.claude/rules/tenancy-y-servicios.md) | Tenancy, Identidad, contratos de servicio y API externa: registro de tenant, roles asignables, módulo billing, claves de API |
 | [`siigo`](.claude/rules/siigo.md) | Siigo (facturación de pedidos): registro legal de facturas, DIAN apagado por defecto, retenciones, `error_detail`, bloqueo de marca manual y anulación |
+| [`wms`](.claude/rules/wms.md) | WMS (bodegas, ledger y saldos): ledger inmutable, clave de `stock_balances`, particiones, ventana de `occurredAt`, idempotencia |
 
 Una regla nueva va al archivo de su módulo, no acá. Si lee o escribe columnas o tablas de otro
 módulo por nombre, va en `sql-entre-modulos`: sus paths (Bootstrapper y migraciones) la cargan
