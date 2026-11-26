@@ -342,6 +342,8 @@ public sealed class WarehouseTask
     /// <param name="occurredAt">Cuándo se escaneó, dentro de la ventana del ledger; sin él, <paramref name="now"/>. Es la fecha de
     /// los hechos que la confirmación deja en la historia y la de cierre (DA-36); el lease y la actividad usan
     /// <paramref name="now"/>.</param>
+    /// <param name="memberIsBusy">La persona ya tiene otra tarea en curso: una confirmación tardía se anota sin reanudar ésta, que
+    /// sigue donde está y sin lease (DA-32).</param>
     public WarehouseTaskLine ConfirmLine(
         Guid memberId,
         Guid leaseToken,
@@ -349,7 +351,8 @@ public sealed class WarehouseTask
         Guid lineId,
         decimal quantity,
         DateTimeOffset now,
-        DateTimeOffset? occurredAt = null)
+        DateTimeOffset? occurredAt = null,
+        bool memberIsBusy = false)
     {
         var lease = CheckLease(memberId, leaseToken);
         if (lease == LeaseCheck.Lost)
@@ -380,14 +383,23 @@ public sealed class WarehouseTask
         LedgerEntryRules.EnsureOccurredAtInWindow(scannedAt, now);
 
         // Después de validar: una confirmación rechazada no reanuda nada.
-        if (lease == LeaseCheck.Resumable)
+        var staysReleased = lease == LeaseCheck.Resumable && memberIsBusy;
+        if (lease == LeaseCheck.Resumable && !memberIsBusy)
         {
             Status = WarehouseTaskStatus.InProgress;
             Record(TaskEventKind.LeaseResumed, memberId, scannedAt, deviceId: device);
         }
 
         line.Confirm(quantity);
-        Renew(now);
+        if (staysReleased)
+        {
+            LastActivityAt = now;
+        }
+        else
+        {
+            Renew(now);
+        }
+
         Version++;
         Record(TaskEventKind.LineConfirmed, memberId, scannedAt, deviceId: device, lineId: lineId, quantity: quantity);
         CloseIfFinished(memberId, scannedAt);

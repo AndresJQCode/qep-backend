@@ -331,6 +331,8 @@ grande que la pida: es un término más de la misma fórmula. El tablero muestra
   token, del mismo operario, y nadie más reclamó la tarea, el servidor **la reanuda** (vuelve a `InProgress`, renueva el lease, evento
   `LeaseResumed`) y aplica la confirmación: la mercancía ya se movió en el piso y rechazarla dejaría el sistema mintiendo. Si otro la
   reclamó, el token cambió: 409 `wms.task.lease_lost`, y desde T2 la confirmación rechazada se registra como novedad `SYNC_CONFLICT`.
+  Si quien confirma tarde ya tiene otra tarea en curso, la confirmación se aplica igual pero la vieja no vuelve a `InProgress` (DA-32).
+  Una tarea retenida (`hold`, vuelve a `Planned`) rechaza las confirmaciones tardías (DA-35).
 - **Soltar** (`unclaim`): el operario devuelve la tarea con motivo (`ShiftEnd`, `CannotReach`, `Skipped`, `Other`). Vuelve a `Ready`
   (deja de estar asignada si lo estaba a él). Con stock en mano no se puede soltar: primero entrega lo que lleva.
 
@@ -980,6 +982,7 @@ Tomadas con criterio conservador porque el owner no podía contestar. Cada una d
 | DA-29 | Número de tarea `TSK-yyyyMMdd-NNNN` por tenant, con el lock de numeración de los ajustes | Secuencia global | Otro formato en pantalla |
 | DA-30 | Recepción no ciega (la app muestra lo esperado), como el supuesto P-7 del spec de recepción | Ciega por tenant | Un parámetro |
 | DA-31 | Sin plantillas de rol nuevas («Operario de bodega», «Supervisor de bodega»); el tenant arma sus roles | Plantillas de fábrica | `RoleTemplate` nuevos (sólo llegan a tenants nuevos) |
+| DA-32 | Una confirmación tardía de quien ya tiene otra tarea en curso se aplica sin devolver la vieja a `InProgress` ni darle lease: queda donde está (`Ready` o `Assigned`) o se cierra si era lo último | 409 `wms.task.member_busy` | Mercancía ya movida que el sistema no registra |
 | DA-34 | La misma persona que retoma desde el mismo celular su reclamo vencido conserva el `leaseToken`: lo que dejó en cola sigue valiendo. Desde otro celular, o si otro la tuvo en medio, el token cambia | Token nuevo en cada reclamo | La cola offline se rechaza con `wms.task.lease_lost` |
 | DA-36 | Los eventos que deja una confirmación y `completed_at` llevan la hora del escaneo (`occurredAt`, dentro de la ventana del ledger), no la de sincronización; el lease y `last_activity_at` usan la del servidor | Hora del servidor | Los indicadores medirían la sincronización, no el trabajo |
 

@@ -98,7 +98,7 @@ public sealed class ConfirmTaskLineHandler(
         var task = await tasks.GetAsync(command.TenantId, command.TaskId, cancellationToken)
             ?? throw WmsNotFound.Task(command.TaskId);
         await guard.EnsureCanPerformAsync(command.TenantId, task, cancellationToken);
-        OperatorTaskGuard.EnsureLease(task, member, command.LeaseToken);
+        var lease = OperatorTaskGuard.EnsureLease(task, member, command.LeaseToken);
 
         // El dominio trata una línea ajena como error de cableado: el 404 sale de acá.
         var line = task.FindLine(command.LineId) ?? throw WmsNotFound.TaskLine(command.LineId);
@@ -110,8 +110,12 @@ public sealed class ConfirmTaskLineHandler(
 
         var lot = line.LotId?.Value ?? command.LotId;
         var occurredAt = command.OccurredAt!.Value;
+        // DA-32: bajo el lock de la persona, si mientras tanto tomó otra tarea ésta no vuelve a InProgress. Lo que movió en el piso se
+        // anota igual.
+        var busy = lease == LeaseCheck.Resumable
+            && await tasks.FindInProgressOfMemberAsync(command.TenantId, member, cancellationToken) is not null;
         task.ConfirmLine(
-            member, command.LeaseToken, command.DeviceId, line.Id, command.Quantity, clock.UtcNow, occurredAt);
+            member, command.LeaseToken, command.DeviceId, line.Id, command.Quantity, clock.UtcNow, occurredAt, busy);
 
         var owner = task.OwnerId.Value;
         var entry = new LedgerEntry(

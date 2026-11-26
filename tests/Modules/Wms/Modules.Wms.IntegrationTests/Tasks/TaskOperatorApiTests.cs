@@ -225,6 +225,33 @@ public sealed class TaskOperatorApiTests
         Assert.Equal(["LeaseResumed", "LineConfirmed", "Completed"], history.Skip(resumed).Take(3));
     }
 
+    // DA-32: contra el índice de «una tarea en curso por operario», que reanudar violaría.
+    [Fact]
+    public async Task ALateConfirmationWithAnotherTaskInProgressIsApplied()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var floor = await ArrangeFloorAsync(database, factory);
+        using var _c = floor.Client;
+        var old = await NextAsync(floor.Client, floor.Setup.WarehouseId);
+        var sweeper = factory.Services.GetServices<IHostedService>().OfType<TaskLeaseSweeper>().Single();
+        Assert.Equal(1, await sweeper.RunOnceAsync(DateTimeOffset.UtcNow.AddMinutes(16), Ct));
+        var other = await CreateAsync(
+            floor.Setup.Manager,
+            Body(floor.Setup, [Line(floor.Setup.VariantId, floor.Setup.BinA, floor.Destination, 1)]));
+        await ActionAsync(floor.Client, other.Id, "claim", new { deviceId = "zebra-01" });
+
+        var response = await ConfirmRawAsync(
+            floor.Client, old.Id, old.Lines[0].Id, ConfirmBody(old, old.LeaseToken!.Value, 2));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var applied = await ReadAsync<TaskDto>(response);
+        Assert.Equal(("Ready", 2m), (applied.Status, applied.Lines[0].QuantityConfirmed));
+        Assert.Equal("InProgress", (await GetAsync(floor.Setup.Manager, other.Id)).Status);
+        Assert.Equal(1L, await TaskMovementsAsync(database));
+    }
+
     [Fact]
     public async Task AWrongSourceIs422LocationMismatch()
     {

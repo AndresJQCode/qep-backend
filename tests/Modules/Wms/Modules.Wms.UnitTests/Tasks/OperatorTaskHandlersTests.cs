@@ -128,6 +128,26 @@ public sealed class OperatorTaskHandlersTests
         Assert.Equal(3m, Assert.Single(dto.Lines).QuantityRemaining);
     }
 
+    // DA-32: la mercancía ya se movió. Se anota sin dejarle a la persona dos tareas en curso.
+    [Fact]
+    public async Task ALateConfirmationWithAnotherTaskInProgressIsAppliedWithoutResuming()
+    {
+        var world = new TaskWorld();
+        var (old, command) = ClaimedByCaller(world, quantity: 2);
+        old.ExpireLease(TaskWorld.Start.AddMinutes(16));
+        var current = world.AddTask();
+        current.Claim(TaskWorld.Member, TaskWorld.Device, TaskWorld.Start.AddMinutes(17));
+        world.Now = TaskWorld.Start.AddMinutes(18);
+
+        var dto = await ConfirmAsync(world, command);
+
+        Assert.Equal(("Ready", 2m), (dto.Status, dto.Lines[0].QuantityConfirmed));
+        Assert.Null(dto.LeaseToken);
+        Assert.Equal(WarehouseTaskStatus.InProgress, current.Status);
+        Assert.Single(world.Posted);
+        Assert.Contains("save", world.Log);
+    }
+
     // DA-36: la historia de la tarea cuenta cuándo se escaneó, no cuándo llegó.
     [Fact]
     public async Task TheTaskHistoryKeepsTheScanTimeNotTheSyncTime()

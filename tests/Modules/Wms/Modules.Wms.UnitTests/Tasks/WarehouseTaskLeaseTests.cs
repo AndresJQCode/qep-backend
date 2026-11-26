@@ -462,6 +462,45 @@ public sealed class WarehouseTaskLeaseTests
         Assert.Equal(TaskEventKind.LeaseExpired, task.Events[^1].Kind);
     }
 
+    // DA-32: quien ya tiene otra tarea en curso no puede recibir esta de vuelta, pero lo que movió se anota.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ALateConfirmationOfABusyMemberLeavesTheTaskWhereItIs(bool assigned)
+    {
+        var (task, token) = Claimed(assignTo: assigned ? Member : null);
+        task.ExpireLease(Expired);
+        var status = task.Status;
+        var synced = Expired.AddMinutes(1);
+
+        task.ConfirmLine(Member, token, Device, task.Lines[0].Id, 2, synced, memberIsBusy: true);
+
+        Assert.Equal(status, task.Status);
+        Assert.Equal(2, task.Lines[0].QuantityConfirmed);
+        Assert.Null(task.LeaseExpiresAt);
+        Assert.Equal(token, task.LeaseToken);
+        Assert.Equal(synced, task.LastActivityAt);
+        Assert.Equal(4, task.Version);
+        Assert.Equal(
+            [TaskEventKind.LeaseExpired, TaskEventKind.LineConfirmed], task.Events.TakeLast(2).Select(e => e.Kind));
+        // Lo que sigue en la cola de la app se sigue aceptando.
+        Assert.Equal(LeaseCheck.Resumable, task.CheckLease(Member, token));
+    }
+
+    [Fact]
+    public void ALateConfirmationOfABusyMemberCanFinishTheTask()
+    {
+        var (task, token) = Claimed();
+        task.ExpireLease(Expired);
+
+        task.ConfirmLine(Member, token, Device, task.Lines[0].Id, 5, Expired, memberIsBusy: true);
+
+        Assert.Equal(WarehouseTaskStatus.Done, task.Status);
+        Assert.Equal(Expired, task.CompletedAt);
+        Assert.Null(task.LeaseToken);
+        Assert.DoesNotContain(task.Events, e => e.Kind == TaskEventKind.LeaseResumed);
+    }
+
     // DA-36: los hechos de una confirmación llevan la hora del escaneo; el lease y la actividad, la del servidor.
     [Fact]
     public void ALateSyncKeepsTheScanTimeInTheHistory()
