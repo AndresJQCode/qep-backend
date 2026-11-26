@@ -422,6 +422,125 @@ public sealed class SiigoBatchItemEffectiveStateTests
         Assert.Equal((SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.timeout"), (state.Status, state.ErrorCode));
     }
 
+    [Theory]
+    [InlineData("rejected", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_not_created")]
+    [InlineData("failed", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_not_created")]
+    [InlineData("unknown", SiigoInvoiceBatchItemStatus.ToConfirm, "siigo.invoice.freight_unconfirmed")]
+    [InlineData("pending", SiigoInvoiceBatchItemStatus.Failed, "siigo.invoice.freight_pending")]
+    public void AnOrderWhoseFreightIsNotInSiigoNeverLooksInvoiced(
+        string freightCase, SiigoInvoiceBatchItemStatus status, string code)
+    {
+        var invoice = Unanswered();
+        var resolved = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+        // El que se guardó facturado, porque la de flete fue rechazada en la misma emisión o cambió después, se lee igual.
+        var stored = NewItem();
+        stored.MarkInvoiced("FV-1-9", Now, invoice.Id);
+
+        foreach (var item in new[] { resolved, stored })
+        {
+            var state = item.Effective(invoice, Now, FreightIn(invoice, freightCase));
+
+            Assert.Equal(new SiigoBatchItemState(status, code, null, false, false, null), state);
+        }
+    }
+
+    [Fact]
+    public void AStoredInvoicedItemWithItsFreightInSiigoKeepsWhatItSaved()
+    {
+        var invoice = Unanswered();
+        invoice.ResolveExists("FV-1-9", Now);
+        var item = NewItem();
+        item.MarkInvoiced("FV-1-9", Now, invoice.Id);
+
+        var state = item.Effective(invoice, Now, FreightIn(invoice, "created"));
+
+        Assert.Equal(new SiigoBatchItemState(SiigoInvoiceBatchItemStatus.Invoiced, null, "FV-1-9", false, false, null), state);
+    }
+
+    [Fact]
+    public void AStoredInvoicedItemWhoseFreightIsBeingSentLooksSending()
+    {
+        var invoice = Unanswered();
+        invoice.ResolveExists("FV-1-9", Now);
+        var item = NewItem();
+        item.MarkInvoiced("FV-1-9", Now, invoice.Id);
+        var freight = PendingFreight(invoice);
+        freight.BeginSend(Now);
+
+        var state = item.Effective(invoice, Now.AddMinutes(1), freight);
+
+        Assert.Equal(SiigoInvoiceBatchItemStatus.Sending, state.Status);
+    }
+
+    [Theory]
+    [InlineData("rejected")]
+    [InlineData("unknown")]
+    public void AFreightCodeCarriesNoSiigoErrorsOfTheOrderRow(string freightCase)
+    {
+        var invoice = UnansweredByADeadService();
+        var item = ToConfirm(invoice);
+        invoice.ResolveExists("FV-1-9", Now);
+
+        var dto = SiigoInvoiceBatchItemDto.From(
+            item, item.Effective(invoice, Now, FreightIn(invoice, freightCase)), invoice, null, false);
+
+        Assert.Empty(dto.SiigoErrors);
+        Assert.False(dto.CanResend);
+        Assert.False(dto.CanResolve);
+    }
+
+    // «Existe» se acepta con el pedido en una tanda; «No existe» responde 409.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void MissingIsNotOfferedWhileABatchHoldsTheOrder(bool queued, bool canResolveMissing)
+    {
+        var invoice = Unanswered();
+        var item = ToConfirm(invoice);
+        var now = Now.AddMinutes(10);
+
+        var dto = SiigoInvoiceBatchItemDto.From(item, item.Effective(invoice, now), invoice, null, queued);
+        var row = SiigoInvoiceDto.From(invoice, now, queued: queued);
+
+        Assert.Equal((true, canResolveMissing), (dto.CanResolve, dto.CanResolveMissing));
+        Assert.Equal((true, canResolveMissing), (row.CanResolve, row.CanResolveMissing));
+    }
+
+    [Fact]
+    public void ARowThatOffersNoResolutionDoesNotOfferMissingEither()
+    {
+        var invoice = NewInvoice();
+        invoice.BeginSend(Now);
+
+        var row = SiigoInvoiceDto.From(invoice, Now);
+
+        Assert.Equal((false, false), (row.CanResolve, row.CanResolveMissing));
+    }
+
+    private static SiigoInvoice FreightIn(SiigoInvoice order, string freightCase)
+    {
+        var freight = PendingFreight(order);
+        switch (freightCase)
+        {
+            case "created":
+                freight.BeginSend(Now);
+                freight.MarkCreated("id-2", "FV-1-10", 10m, null, Now);
+                break;
+            case "rejected":
+                freight.MarkRejected("siigo.invoice.rejected", "invalid_reference", null, Now);
+                break;
+            case "failed":
+                freight.MarkFailed("siigo.invoice.order_rejected", "Discarded.", Now);
+                break;
+            case "unknown":
+                freight.ExpireIfStale(Now + SiigoInvoice.StaleAfter + TimeSpan.FromMinutes(1));
+                break;
+        }
+
+        return freight;
+    }
+
     // El detalle de la fila del pedido es de otro intento: no explica que falte la de flete.
     [Fact]
     public void AFreightPendingItemCarriesNoSiigoErrors()

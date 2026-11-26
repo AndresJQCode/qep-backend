@@ -44,7 +44,7 @@ public sealed record SiigoInvoiceBatchDto(
     /// <param name="invoices">Las filas de factura enlazadas a los ítems, por id.</param>
     /// <param name="labels">Número y cliente de los pedidos de la tanda, por id de pedido.</param>
     /// <param name="queuedOrderIds">Los pedidos de la tanda que están en un ítem sin terminar, de ésta o de otra.</param>
-    /// <param name="pendingFreight">La de flete <c>Pending</c> de los pedidos que la necesitan, por id de pedido.</param>
+    /// <param name="freights">La de flete de cada factura del pedido que existe en Siigo, por el id de ésta.</param>
     /// <param name="unmarkedOrderIds">Los que al leer tienen la factura en Siigo y el pedido sin la marca.</param>
     public static SiigoInvoiceBatchDto From(
         SiigoInvoiceBatch batch,
@@ -52,7 +52,7 @@ public sealed record SiigoInvoiceBatchDto(
         IReadOnlyDictionary<Guid, SiigoOrderLabel> labels,
         IReadOnlyCollection<Guid> queuedOrderIds,
         DateTimeOffset now,
-        IReadOnlyDictionary<Guid, SiigoInvoice>? pendingFreight = null,
+        IReadOnlyDictionary<Guid, SiigoInvoice>? freights = null,
         IReadOnlyCollection<Guid>? unmarkedOrderIds = null)
     {
         ArgumentNullException.ThrowIfNull(batch);
@@ -62,7 +62,7 @@ public sealed record SiigoInvoiceBatchDto(
             {
                 var invoice = SiigoInvoiceBatchViews.Linked(item, invoices);
                 return (Item: item, Invoice: invoice,
-                    State: item.Effective(invoice, now, pendingFreight?.GetValueOrDefault(item.OrderId)));
+                    State: item.Effective(invoice, now, SiigoInvoiceBatchViews.Linked(item, freights)));
             })
             .ToList();
         var states = items.Select(row => row.State).ToList();
@@ -103,6 +103,7 @@ public sealed record SiigoInvoiceBatchDto(
 /// <paramref name="CanResolve"/> y <paramref name="MissingAvailableAt"/> (desde cuándo se acepta «No existe», si todavía hay que esperar)
 /// van calculados porque la pantalla no ve desde cuándo se está mandando ni el reloj de 24 horas. <paramref name="CanResend"/> va en
 /// <c>false</c> mientras una tanda sin terminar tenga el pedido (otra respondería 409), aunque este ítem siga por confirmar.
+/// <paramref name="CanResolveMissing"/> es <paramref name="CanResolve"/> con la misma salvedad: «No existe» respondería 409, «Existe» no.
 /// </summary>
 public sealed record SiigoInvoiceBatchItemDto(
     Guid OrderId,
@@ -118,7 +119,8 @@ public sealed record SiigoInvoiceBatchItemDto(
     bool OrderMarkFailed,
     bool CanResend,
     bool CanResolve,
-    DateTimeOffset? MissingAvailableAt)
+    DateTimeOffset? MissingAvailableAt,
+    bool CanResolveMissing = false)
 {
     /// <param name="queued">Un ítem sin terminar tiene el pedido.</param>
     /// <param name="unmarked">La lectura vio la factura en Siigo y el pedido sin la marca.</param>
@@ -132,10 +134,11 @@ public sealed record SiigoInvoiceBatchItemDto(
     {
         ArgumentNullException.ThrowIfNull(item);
         ArgumentNullException.ThrowIfNull(state);
-        // El detalle de la fila explica el código de la fila: si por confirmar se muestra otro (el del ítem), o que falta la de flete,
+        // El detalle de la fila explica el código de la fila: si por confirmar se muestra otro (el del ítem), o uno de la de flete,
         // es de otro intento.
         var explainsAnotherCode = state.ErrorCode != invoice?.ErrorCode
-            && (state.Status == SiigoInvoiceBatchItemStatus.ToConfirm || state.ErrorCode == SiigoErrorCodes.InvoiceFreightPending);
+            && (state.Status == SiigoInvoiceBatchItemStatus.ToConfirm
+                || state.ErrorCode is SiigoErrorCodes.InvoiceFreightPending or SiigoErrorCodes.InvoiceFreightNotCreated);
         return new(
             item.OrderId,
             item.Position,
@@ -150,7 +153,8 @@ public sealed record SiigoInvoiceBatchItemDto(
             item.OrderMarkFailed || unmarked,
             !queued && state.CanResend,
             state.CanResolve,
-            state.MissingAvailableAt);
+            state.MissingAvailableAt,
+            !queued && state.CanResolve);
     }
 
     // error_detail va como «codigo; invalid_total_payments: total»: de cada parte sólo el código. Lo que traiga espacios no lo es.
@@ -177,12 +181,12 @@ public sealed record SiigoInvoiceBatchSummaryDto(
         SiigoInvoiceBatch batch,
         IReadOnlyDictionary<Guid, SiigoInvoice> invoices,
         DateTimeOffset now,
-        IReadOnlyDictionary<Guid, SiigoInvoice>? pendingFreight = null)
+        IReadOnlyDictionary<Guid, SiigoInvoice>? freights = null)
     {
         ArgumentNullException.ThrowIfNull(batch);
         var states = batch.Items
             .Select(item => item.Effective(
-                SiigoInvoiceBatchViews.Linked(item, invoices), now, pendingFreight?.GetValueOrDefault(item.OrderId)))
+                SiigoInvoiceBatchViews.Linked(item, invoices), now, SiigoInvoiceBatchViews.Linked(item, freights)))
             .ToList();
         var finishedAt = batch.ReadFinishedAt();
         return new(
@@ -205,8 +209,9 @@ internal static class SiigoInvoiceBatchViews
     /// <param name="finishedAt">El de <see cref="SiigoInvoiceBatch.ReadFinishedAt"/>.</param>
     public static string StatusOf(DateTimeOffset? finishedAt) => finishedAt is null ? "InProgress" : "Finished";
 
-    public static SiigoInvoice? Linked(SiigoInvoiceBatchItem item, IReadOnlyDictionary<Guid, SiigoInvoice> invoices) =>
-        item.InvoiceId is { } id ? invoices.GetValueOrDefault(id) : null;
+    /// <summary>Lo que el diccionario tiene para la factura enlazada al ítem, o <c>null</c>.</summary>
+    public static SiigoInvoice? Linked(SiigoInvoiceBatchItem item, IReadOnlyDictionary<Guid, SiigoInvoice>? invoices) =>
+        item.InvoiceId is { } id ? invoices?.GetValueOrDefault(id) : null;
 
     /// <summary>Las filas de factura enlazadas a esos ítems, por id, en una sola consulta.</summary>
     public static async Task<IReadOnlyDictionary<Guid, SiigoInvoice>> LinkedInvoicesAsync(
@@ -219,11 +224,11 @@ internal static class SiigoInvoiceBatchViews
         return (await invoices.ListByIdsAsync(tenantId, ids, cancellationToken)).ToDictionary(invoice => invoice.Id);
     }
 
-    /// <summary>La fila enlazada de un pedido guardado por confirmar cuya factura ya existe en Siigo, o <c>null</c>. Sólo en ésos la
-    /// lectura cambia lo que dice el ítem: la de flete y la marca del pedido.</summary>
-    public static SiigoInvoice? ConfirmedInvoiceOf(
+    /// <summary>La fila enlazada de un pedido facturado o por confirmar cuya factura existe en Siigo, o <c>null</c>. Sólo en ésos la
+    /// lectura mira la de flete.</summary>
+    public static SiigoInvoice? InvoiceInSiigoOf(
         SiigoInvoiceBatchItem item, IReadOnlyDictionary<Guid, SiigoInvoice> invoices) =>
-        item.Status == SiigoInvoiceBatchItemStatus.ToConfirm
+        item.Status is SiigoInvoiceBatchItemStatus.Invoiced or SiigoInvoiceBatchItemStatus.ToConfirm
         && Linked(item, invoices) is
         {
             Status: SiigoInvoiceStatus.Created or SiigoInvoiceStatus.Stamped or SiigoInvoiceStatus.StampRejected,
@@ -231,18 +236,31 @@ internal static class SiigoInvoiceBatchViews
             ? invoice
             : null;
 
-    /// <summary>La de flete <c>Pending</c> de esos pedidos, por id de pedido, en una sola consulta.</summary>
-    public static async Task<IReadOnlyDictionary<Guid, SiigoInvoice>> PendingFreightAsync(
+    /// <summary>La de flete de cada una de esas facturas, por el id de la del pedido, en una sola consulta: la más nueva creada con ella o
+    /// después. Una anterior es de un intento del pedido que ya no vale.</summary>
+    public static async Task<IReadOnlyDictionary<Guid, SiigoInvoice>> FreightsAsync(
         ISiigoInvoiceRepository invoices,
         Guid tenantId,
         IEnumerable<SiigoInvoiceBatchItem> items,
         IReadOnlyDictionary<Guid, SiigoInvoice> linked,
         CancellationToken cancellationToken)
     {
-        Guid[] orderIds = [.. items.Where(item => ConfirmedInvoiceOf(item, linked) is not null).Select(item => item.OrderId).Distinct()];
-        return (await invoices.ListPendingFreightAsync(tenantId, orderIds, cancellationToken))
-            .GroupBy(freight => freight.OrderId)
-            .ToDictionary(group => group.Key, group => group.MaxBy(freight => freight.CreatedAt)!);
+        SiigoInvoice[] orderInvoices =
+            [.. items.Select(item => InvoiceInSiigoOf(item, linked)).OfType<SiigoInvoice>().DistinctBy(invoice => invoice.Id)];
+        Guid[] orderIds = [.. orderInvoices.Select(invoice => invoice.OrderId).Distinct()];
+        var byOrder = (await invoices.ListFreightAsync(tenantId, orderIds, cancellationToken)).ToLookup(freight => freight.OrderId);
+        var freights = new Dictionary<Guid, SiigoInvoice>();
+        foreach (var invoice in orderInvoices)
+        {
+            if (byOrder[invoice.OrderId]
+                    .Where(freight => freight.CreatedAt >= invoice.CreatedAt)
+                    .MaxBy(freight => freight.CreatedAt) is { } freight)
+            {
+                freights[invoice.Id] = freight;
+            }
+        }
+
+        return freights;
     }
 }
 
@@ -436,20 +454,20 @@ public sealed class GetSiigoInvoiceBatchHandler(
         var labels = await orders.ListLabelsAsync(query.TenantId, orderIds, cancellationToken);
         // Una sola pregunta por todos los pedidos, después de leer las facturas.
         var queued = await batches.ListOpenOrderIdsAsync(query.TenantId, orderIds, cancellationToken);
-        var pendingFreight = await SiigoInvoiceBatchViews.PendingFreightAsync(
-            invoices, query.TenantId, batch.Items, linked, cancellationToken);
+        var freights = await SiigoInvoiceBatchViews.FreightsAsync(invoices, query.TenantId, batch.Items, linked, cancellationToken);
         // Un ítem que quedó por confirmar no guarda si el pedido se marcó: cuando su factura ya existe, se pregunta al leer.
         var unmarked = new HashSet<Guid>();
         foreach (var item in batch.Items)
         {
-            if (SiigoInvoiceBatchViews.ConfirmedInvoiceOf(item, linked) is { } invoice
+            if (item.Status == SiigoInvoiceBatchItemStatus.ToConfirm
+                && SiigoInvoiceBatchViews.InvoiceInSiigoOf(item, linked) is { } invoice
                 && await SiigoOrderMark.IsMissingAsync(orders, invoice, queued.Contains(item.OrderId), logger, cancellationToken))
             {
                 unmarked.Add(item.OrderId);
             }
         }
 
-        return SiigoInvoiceBatchDto.From(batch, linked, labels, queued, clock.UtcNow, pendingFreight, unmarked);
+        return SiigoInvoiceBatchDto.From(batch, linked, labels, queued, clock.UtcNow, freights, unmarked);
     }
 }
 
@@ -496,15 +514,17 @@ public sealed class ListSiigoInvoiceBatchesHandler(
         var page = SiigoCallFailurePaging.NormalizePage(Int(query.Page) ?? 1);
         var pageSize = SiigoCallFailurePaging.NormalizePageSize(Int(query.PageSize) ?? 0);
         var (items, total) = await batches.SearchAsync(query.TenantId, page, pageSize, cancellationToken);
-        // Sólo un pedido guardado por confirmar sigue a su factura: de los demás no hace falta la fila.
-        SiigoInvoiceBatchItem[] toConfirm =
-            [.. items.SelectMany(batch => batch.Items).Where(item => item.Status == SiigoInvoiceBatchItemStatus.ToConfirm)];
-        var linked = await SiigoInvoiceBatchViews.LinkedInvoicesAsync(invoices, query.TenantId, toConfirm, cancellationToken);
-        var pendingFreight = await SiigoInvoiceBatchViews.PendingFreightAsync(
-            invoices, query.TenantId, toConfirm, linked, cancellationToken);
+        // Sólo un pedido guardado por confirmar o facturado sigue a sus facturas: de los demás no hace falta la fila.
+        SiigoInvoiceBatchItem[] following =
+        [
+            .. items.SelectMany(batch => batch.Items)
+                .Where(item => item.Status is SiigoInvoiceBatchItemStatus.ToConfirm or SiigoInvoiceBatchItemStatus.Invoiced),
+        ];
+        var linked = await SiigoInvoiceBatchViews.LinkedInvoicesAsync(invoices, query.TenantId, following, cancellationToken);
+        var freights = await SiigoInvoiceBatchViews.FreightsAsync(invoices, query.TenantId, following, linked, cancellationToken);
         var now = clock.UtcNow;
         return new SiigoInvoiceBatchPageDto(
-            [.. items.Select(batch => SiigoInvoiceBatchSummaryDto.From(batch, linked, now, pendingFreight))], total, page, pageSize);
+            [.. items.Select(batch => SiigoInvoiceBatchSummaryDto.From(batch, linked, now, freights))], total, page, pageSize);
     }
 
     private static int? Int(string? value) => ListSiigoCallFailuresQueryParser.TryInt(value, out var parsed) ? parsed : null;

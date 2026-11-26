@@ -19,7 +19,8 @@ namespace Modules.Siigo.Application.Invoicing;
 /// «Enviando…»); <c>canResend</c> y <c>canResolve</c>, si ofrece «Reintentar» y «Existe en Siigo» / «No existe»; y
 /// <c>missingAvailableAt</c>, desde cuándo se puede declarar que no existe, si todavía hay que esperar. Van calculados porque la pantalla
 /// no ve desde cuándo se está mandando ni el reloj de 24 horas. <c>canResend</c> va en <c>false</c> mientras una tanda sin terminar tenga el
-/// pedido (ítem <c>Pending</c> o <c>Sending</c>): otra tanda respondería 409. <c>canResolve</c> sólo se ofrece en una <c>Unknown</c> o por confirmar: una
+/// pedido (ítem <c>Pending</c> o <c>Sending</c>): otra tanda respondería 409. <c>canResolveMissing</c> dice si «No existe» se acepta hoy: <c>canResolve</c> y ninguna tanda con el pedido (409);
+/// «Existe» sí se acepta. <c>canResolve</c> sólo se ofrece en una <c>Unknown</c> o por confirmar: una
 /// que nunca salió el endpoint la acepta, pero ofrecer ahí «Existe / No existe» confunde. La de flete no se ofrece (y el endpoint la
 /// rechaza) mientras la del pedido siga abierta: nunca salió.</para>
 /// </summary>
@@ -43,7 +44,8 @@ public sealed record SiigoInvoiceDto(
     bool AwaitingConfirmation = false,
     bool CanResend = false,
     bool CanResolve = false,
-    DateTimeOffset? MissingAvailableAt = null)
+    DateTimeOffset? MissingAvailableAt = null,
+    bool CanResolveMissing = false)
 {
     /// <param name="queued">Una tanda sin terminar tiene el pedido.</param>
     /// <param name="waitsForOrder">Es la de flete y la del pedido sigue abierta.</param>
@@ -77,7 +79,8 @@ public sealed record SiigoInvoiceDto(
             awaitingConfirmation,
             !queued && invoice.CanResend(now),
             canResolve,
-            canResolve ? invoice.MissingAvailableAt(now) : null);
+            canResolve ? invoice.MissingAvailableAt(now) : null,
+            canResolve && !queued);
     }
 }
 

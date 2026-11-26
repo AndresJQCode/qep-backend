@@ -95,6 +95,14 @@ public static class SiigoErrorCodes
     /// tanda: la pantalla avisa que la del pedido no se vuelve a crear y que falta la de flete.</summary>
     public const string InvoiceFreightPending = "siigo.invoice.freight_pending";
 
+    /// <summary>La factura del pedido existe en Siigo y la de flete no se creó (Siigo la rechazó o alguien declaró que no existe): QEP
+    /// no la vuelve a armar. Sólo viaja en un ítem de tanda.</summary>
+    public const string InvoiceFreightNotCreated = "siigo.invoice.freight_not_created";
+
+    /// <summary>La factura del pedido existe en Siigo y no se sabe si la de flete también (<c>Unknown</c>): la resuelve una persona desde
+    /// el pedido. Sólo viaja en un ítem de tanda.</summary>
+    public const string InvoiceFreightUnconfirmed = "siigo.invoice.freight_unconfirmed";
+
     /// <summary>Una persona declaró que la factura por confirmar no existe en Siigo (lo dice la tanda que la había dejado así).</summary>
     public const string InvoiceResolvedMissing = "siigo.invoice.resolved_missing";
 
