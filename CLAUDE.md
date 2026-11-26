@@ -20,6 +20,17 @@ repo es un **estado**, no la autoridad. Antes de concluir que algo falta ahí:
 `git -C ../qep-frontend branch --show-current`, y si el dato no aparece,
 `git -C ../qep-frontend log -S "<término>" --all` más `git branch -a --contains <sha>`.
 
+## Cada agente trabaja en su repo
+
+Decisión del owner, 2026-11-26. Los agentes de este repo **no hacen tareas de `qep-frontend`** (ni de otro repo): no
+escriben archivos, specs ni planes allá, no crean ramas ni worktrees, no commitean y no lanzan subagentes para hacerlo.
+**Leer** el otro repo para verificar un contrato sí se puede.
+
+Cuando un trabajo cruza repos, terminas la parte del backend y **le entregas al owner un prompt** para la sesión del otro
+repo. El prompt se entiende sin esta conversación: qué se pide y por qué, el contrato (rutas, campos, permisos y códigos
+de error verificados en el código), la ruta del spec del backend, la rama y el commit donde está, si ya se mergeó o
+desplegó, y las decisiones pendientes.
+
 ## Reglas duras
 
 - **Nunca imprimir el valor de un secreto.** `dotnet user-secrets list` y equivalentes se
