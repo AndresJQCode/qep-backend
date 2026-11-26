@@ -14,7 +14,7 @@ public sealed class TenantRegistrationService(
     IOutboxWriter outboxWriter,
     IClock clock,
     ITenantSlugAvailability slugAvailability,
-    INewTenantProvisioning provisioning)
+    IEnumerable<INewTenantProvisioning> provisioning)
     : ITenantRegistration
 {
     private static readonly string[] AdminRoles = [Membership.AdminRole];
@@ -92,7 +92,7 @@ public sealed class TenantRegistrationService(
         }
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        await provisioning.ProvisionAsync(tenant.Id, cancellationToken);
+        await ProvisionAsync(tenant.Id, cancellationToken);
         return tenant.Id.Value;
     }
 
@@ -164,8 +164,17 @@ public sealed class TenantRegistrationService(
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await scope.CommitAsync(cancellationToken);
-        await provisioning.ProvisionAsync(tenant.Id, cancellationToken);
+        await ProvisionAsync(tenant.Id, cancellationToken);
         return true;
+    }
+
+    /// <summary>En orden de registro y uno por vez: lo que uno deje subir corta los que siguen.</summary>
+    private async Task ProvisionAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        foreach (var step in provisioning)
+        {
+            await step.ProvisionAsync(tenantId, cancellationToken);
+        }
     }
 
     /// <summary>

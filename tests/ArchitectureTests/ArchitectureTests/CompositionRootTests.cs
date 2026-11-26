@@ -391,10 +391,10 @@ public sealed class CompositionRootTests
         Assert.Equal(["operator.cities.read", "operator.cities.manage"], cityPermissions);
         Assert.All(cityPermissions, permission =>
         {
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
             var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == permission);
             Assert.Equal("Operator", definition.Category);
             Assert.Empty(definition.RequiredModules!);
@@ -410,10 +410,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("operator.usage.read", OperatorPermissions.UsageRead);
-        Assert.Contains(OperatorPermissions.UsageRead, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(OperatorPermissions.UsageRead, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(OperatorPermissions.UsageRead, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(OperatorPermissions.UsageRead, catalog.PermissionsFor("cashier"));
+        Assert.Contains(OperatorPermissions.UsageRead, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(OperatorPermissions.UsageRead, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == OperatorPermissions.UsageRead);
         Assert.Equal("Operator", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -431,10 +431,10 @@ public sealed class CompositionRootTests
         Assert.Equal(["catalog.product_cost.read", "catalog.product_cost.manage", "reporting.margin.read"], permissions);
         Assert.All(permissions, permission =>
         {
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         });
         var all = catalog.ListPermissions();
         Assert.Equal([ModuleKeys.Catalog],
@@ -469,9 +469,9 @@ public sealed class CompositionRootTests
         using var provider = BuildPlatformServices().BuildServiceProvider();
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
-        Assert.Contains(MessagingPermissions.CampaignManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.CampaignManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.CampaignManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.CampaignManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.CampaignManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.CampaignManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.CampaignManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -486,9 +486,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.quick_reply.manage", MessagingPermissions.QuickReplyManage);
-        Assert.Contains(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.QuickReplyManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.QuickReplyManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.QuickReplyManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -503,9 +503,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.resolution_reason.manage", MessagingPermissions.ResolutionReasonManage);
-        Assert.Contains(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("admin"));
-        Assert.Contains(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.ResolutionReasonManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.ResolutionReasonManage, FactoryPermissions(provider, "admin"));
+        Assert.Contains(MessagingPermissions.ResolutionReasonManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.ResolutionReasonManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.ResolutionReasonManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -520,10 +520,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("customers.customer.merge", CustomersPermissions.CustomerMerge);
-        Assert.Contains(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("admin"));
-        Assert.Contains(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("cashier"));
+        Assert.Contains(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "admin"));
+        Assert.Contains(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerMerge, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerMerge);
         Assert.Equal("Customers", definition.Category);
         Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
@@ -537,10 +537,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("customers.customer.delete", CustomersPermissions.CustomerDelete);
-        Assert.Contains(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("cashier"));
+        Assert.Contains(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerDelete);
         Assert.Equal("Customers", definition.Category);
         Assert.Equal("high", definition.RiskLevel);
@@ -556,10 +556,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("customers.data_consent.revoke", CustomersPermissions.DataConsentRevoke);
-        Assert.Contains(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("admin"));
-        Assert.Contains(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("cashier"));
+        Assert.Contains(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "admin"));
+        Assert.Contains(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.DataConsentRevoke);
         Assert.Equal("Customers", definition.Category);
         Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
@@ -574,10 +574,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.business_hours.manage", MessagingPermissions.BusinessHoursManage);
-        Assert.Contains(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, catalog.PermissionsFor("cashier"));
+        Assert.Contains(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(MessagingPermissions.BusinessHoursManage, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.BusinessHoursManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -592,9 +592,9 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("messaging.template.manage", MessagingPermissions.TemplateManage);
-        Assert.Contains(MessagingPermissions.TemplateManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(MessagingPermissions.TemplateManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(MessagingPermissions.TemplateManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(MessagingPermissions.TemplateManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(MessagingPermissions.TemplateManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(MessagingPermissions.TemplateManage, FactoryPermissions(provider, "billing"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == MessagingPermissions.TemplateManage);
         Assert.Equal("Messaging", definition.Category);
         Assert.Empty(definition.RequiredModules!);
@@ -614,7 +614,7 @@ public sealed class CompositionRootTests
             [IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage];
 
         Assert.All(integrationsPermissions, permission =>
-            Assert.Contains(permission, catalog.PermissionsFor("admin")));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         var definitions = catalog.ListPermissions()
             .Where(definition => integrationsPermissions.Contains(definition.Permission))
             .ToArray();
@@ -638,7 +638,7 @@ public sealed class CompositionRootTests
 
         foreach (var role in new[] { "admin", "advisor" })
         {
-            Assert.All(messagingPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor(role)));
+            Assert.All(messagingPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -663,13 +663,13 @@ public sealed class CompositionRootTests
             [PipelinePermissions.DealRead, PipelinePermissions.DealManage, PipelinePermissions.SettingsManage];
 
         Assert.Equal(["pipeline.deal.read", "pipeline.deal.manage", "pipeline.settings.manage"], pipelinePermissions);
-        Assert.All(pipelinePermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
-        Assert.Contains(PipelinePermissions.DealRead, catalog.PermissionsFor("advisor"));
-        Assert.Contains(PipelinePermissions.DealManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(PipelinePermissions.SettingsManage, catalog.PermissionsFor("advisor"));
+        Assert.All(pipelinePermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
+        Assert.Contains(PipelinePermissions.DealRead, FactoryPermissions(provider, "advisor"));
+        Assert.Contains(PipelinePermissions.DealManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(PipelinePermissions.SettingsManage, FactoryPermissions(provider, "advisor"));
         foreach (var role in new[] { "billing", "cashier" })
         {
-            Assert.All(pipelinePermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+            Assert.All(pipelinePermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -693,10 +693,10 @@ public sealed class CompositionRootTests
         string[] automationsPermissions = [AutomationsPermissions.ChatbotRead, AutomationsPermissions.ChatbotManage];
 
         Assert.Equal(["automations.chatbot.read", "automations.chatbot.manage"], automationsPermissions);
-        Assert.All(automationsPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        Assert.All(automationsPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         foreach (var role in new[] { "advisor", "billing", "cashier" })
         {
-            Assert.All(automationsPermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+            Assert.All(automationsPermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -721,10 +721,10 @@ public sealed class CompositionRootTests
         string[] aiPermissions = [AiPermissions.AgentRead, AiPermissions.AgentManage];
 
         Assert.Equal(["ai.agent.read", "ai.agent.manage"], aiPermissions);
-        Assert.All(aiPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        Assert.All(aiPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         foreach (var role in new[] { "advisor", "billing", "cashier" })
         {
-            Assert.All(aiPermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+            Assert.All(aiPermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -763,10 +763,10 @@ public sealed class CompositionRootTests
         string[] copilotPermissions = [AiPermissions.CopilotUse, AiPermissions.CopilotManage];
 
         Assert.Equal(["ai.copilot.use", "ai.copilot.manage"], copilotPermissions);
-        Assert.All(copilotPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        Assert.All(copilotPermissions, permission => Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         foreach (var role in new[] { "advisor", "billing", "cashier" })
         {
-            Assert.All(copilotPermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+            Assert.All(copilotPermissions, permission => Assert.DoesNotContain(permission, FactoryPermissions(provider, role)));
         }
 
         var definitions = catalog.ListPermissions()
@@ -804,7 +804,7 @@ public sealed class CompositionRootTests
             [OperatorPermissions.TenantsRead, OperatorPermissions.ModulesManage, OperatorPermissions.TenantsManage];
 
         Assert.All(operatorPermissions, permission =>
-            Assert.Contains(permission, catalog.PermissionsFor("admin")));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin")));
         Assert.All(
             catalog.ListPermissions().Where(definition => operatorPermissions.Contains(definition.Permission)),
             definition =>
@@ -851,15 +851,14 @@ public sealed class CompositionRootTests
     public void ThePosCustomerPermissionRequiresPosAndCustomersAndGoesToAdminAndCashier()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definition = RegisteredPermissionDefinitions()
             .Single(item => item.Permission == PosPermissions.SaleCustomer);
 
         Assert.Equal([ModuleKeys.Pos, ModuleKeys.Customers], definition.RequiredModules!.ToArray());
-        Assert.Contains(PosPermissions.SaleCustomer, catalog.PermissionsFor("admin"));
-        Assert.Contains(PosPermissions.SaleCustomer, catalog.PermissionsFor("cashier"));
-        Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(PosPermissions.SaleCustomer, catalog.PermissionsFor("billing"));
+        Assert.Contains(PosPermissions.SaleCustomer, FactoryPermissions(provider, "admin"));
+        Assert.Contains(PosPermissions.SaleCustomer, FactoryPermissions(provider, "cashier"));
+        Assert.DoesNotContain(PosPermissions.SaleCustomer, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(PosPermissions.SaleCustomer, FactoryPermissions(provider, "billing"));
     }
 
     /// <summary>
@@ -870,7 +869,6 @@ public sealed class CompositionRootTests
     public void TheSuppliersPermissionsRequireTheSuppliersModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -878,10 +876,10 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Suppliers", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Suppliers], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.Contains(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.Contains(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
@@ -894,7 +892,6 @@ public sealed class CompositionRootTests
     public void TheServiceContractsPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -902,10 +899,10 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Contratos de servicio", definitions[permission].Category);
             Assert.Equal([ModuleKeys.ServiceContracts], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.Contains(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.Contains(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
@@ -917,7 +914,6 @@ public sealed class CompositionRootTests
     public void TheLoansPermissionsRequireTheLoansModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -925,10 +921,10 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Préstamos", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Loans], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.Contains(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.Contains(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
@@ -940,7 +936,6 @@ public sealed class CompositionRootTests
     public void TheHrPermissionsRequireTheHrModuleAndGoOnlyToAdmin()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -966,10 +961,10 @@ public sealed class CompositionRootTests
             Assert.Equal("Recursos humanos", definition.Category);
             Assert.Equal([ModuleKeys.Hr], definition.RequiredModules!.ToArray());
             Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
@@ -981,7 +976,6 @@ public sealed class CompositionRootTests
     public void ThePayrollPermissionsRequireThePayrollModuleAndGoOnlyToAdmin()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -1001,23 +995,22 @@ public sealed class CompositionRootTests
             Assert.Equal("Nómina", definition.Category);
             Assert.Equal([ModuleKeys.Payroll], definition.RequiredModules!.ToArray());
             Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
     /// <summary>
     /// Spec 2026-11-21 (Agenda): los cinco permisos exigen el módulo <c>scheduling</c> (apagado, el editor de roles los oculta y la API
-    /// responde un 403 pelado) y de fábrica van a <c>admin</c> y a los dos roles de sistema de la Agenda; ni asesor, ni facturación, ni
+    /// responde un 403 pelado) y de fábrica van a <c>admin</c> y a las dos plantillas de la Agenda; ni asesor, ni facturación, ni
     /// cajero. Configurar servicios, reglas y estructura (<c>settings.manage</c>) es sólo de admin.
     /// </summary>
     [Fact]
     public void TheSchedulingPermissionsRequireTheModuleAndGoToAdminAndTheSchedulingRoles()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -1041,14 +1034,14 @@ public sealed class CompositionRootTests
             Assert.Equal("Agenda", definition.Category);
             Assert.Equal([ModuleKeys.Scheduling], definition.RequiredModules!.ToArray());
             Assert.Equal((entity, entityLabel, action), (definition.Shape!.Entity, definition.Shape.EntityLabel, definition.Shape.Action));
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
 
-        string[] manager = [.. catalog.PermissionsFor("scheduling_manager")];
-        string[] schedulingProvider = [.. catalog.PermissionsFor("scheduling_provider")];
+        string[] manager = [.. FactoryPermissions(provider, "scheduling_manager")];
+        string[] schedulingProvider = [.. FactoryPermissions(provider, "scheduling_provider")];
         Assert.Equal(
             new[]
             {
@@ -1068,24 +1061,22 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// Los roles de sistema de la Agenda concedían sólo permisos de la Agenda: con el módulo apagado no son asignables, y con él prendido
-    /// sí. Si llevaran un permiso de núcleo (por ejemplo el de Clientes), un tenant sin Agenda vería «Gestor de agenda» en su lista
-    /// (<c>RoleAssignability</c>, spec 2026-11-15). Por eso la búsqueda y el alta de clientes de la cita irán por la propia Agenda, como
-    /// en el POS (spec 2026-10-14, decisión 4).
+    /// Las plantillas de la Agenda conceden sólo permisos de la Agenda: con el módulo apagado sus roles no son asignables, y con él
+    /// prendido sí. Si llevaran un permiso de núcleo (por ejemplo el de Clientes), un tenant sin Agenda vería «Gestor de agenda» en su
+    /// lista (<c>RoleAssignability</c>, spec 2026-11-15). Por eso la búsqueda y el alta de clientes de la cita irán por la propia
+    /// Agenda, como en el POS (spec 2026-10-14, decisión 4).
     /// </summary>
     [Fact]
     public void TheSchedulingRolesAreAssignableOnlyWithTheSchedulingModule()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var mask = provider.GetRequiredService<ModuleEntitlementMask>();
         var withScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All);
         var withoutScheduling = Modules.Tenancy.Domain.TenantModuleSet.FromStored(ModuleKeys.All.Where(key => key != ModuleKeys.Scheduling));
 
         foreach (var role in new[] { "scheduling_manager", "scheduling_provider" })
         {
-            Assert.Contains(role, catalog.ListRoles().Select(definition => definition.Role));
-            var permissions = catalog.PermissionsFor(role);
+            var permissions = FactoryPermissions(provider, role);
             Assert.All(permissions, permission => Assert.StartsWith("scheduling.", permission));
             Assert.True(RoleAssignability.IsAssignable(permissions, withScheduling, isOperatorTenant: false, mask));
             Assert.False(RoleAssignability.IsAssignable(permissions, withoutScheduling, isOperatorTenant: false, mask));
@@ -1117,7 +1108,6 @@ public sealed class CompositionRootTests
     public void ThePurchasesPermissionsRequireThePurchasesModuleAndGoOnlyToAdmin()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
@@ -1127,10 +1117,10 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Compras", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Purchases], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
     }
 
@@ -1142,7 +1132,7 @@ public sealed class CompositionRootTests
     public void TheBillingRoleReadsCompaniesAndConnectionsWithoutManagingThem()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var billing = provider.GetRequiredService<IRoleCatalog>().PermissionsFor("billing");
+        var billing = FactoryPermissions(provider, "billing");
 
         Assert.Contains(CompaniesPermissions.CompanyRead, billing);
         Assert.DoesNotContain(CompaniesPermissions.CompanyManage, billing);
@@ -1158,7 +1148,6 @@ public sealed class CompositionRootTests
     public void TheSiigoPermissionsRequireTheSiigoModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
         var all = new[] { SiigoPermissions.SettingsManage, SiigoPermissions.InvoiceIssue, SiigoPermissions.CallsRead };
@@ -1167,15 +1156,15 @@ public sealed class CompositionRootTests
         foreach (var permission in all)
         {
             Assert.Equal([ModuleKeys.Siigo], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "advisor"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
 
-        Assert.Contains(SiigoPermissions.InvoiceIssue, catalog.PermissionsFor("billing"));
-        Assert.Contains(SiigoPermissions.SettingsManage, catalog.PermissionsFor("billing"));
+        Assert.Contains(SiigoPermissions.InvoiceIssue, FactoryPermissions(provider, "billing"));
+        Assert.Contains(SiigoPermissions.SettingsManage, FactoryPermissions(provider, "billing"));
         // Decisión del owner (2026-11-25): quien factura ve las fallas de sus llamadas, aunque lleven datos del cliente.
-        Assert.Contains(SiigoPermissions.CallsRead, catalog.PermissionsFor("billing"));
+        Assert.Contains(SiigoPermissions.CallsRead, FactoryPermissions(provider, "billing"));
     }
 
     /// <summary>
@@ -1186,7 +1175,6 @@ public sealed class CompositionRootTests
     public void TheWholesalePermissionsRequireTheWholesaleModuleAndGoToAdminAndReadToAdvisor()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
         var all = new[] { WholesalePermissions.DistributorRead, WholesalePermissions.DistributorManage };
@@ -1196,14 +1184,14 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Mayorista", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Wholesale], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
 
-        Assert.Contains(WholesalePermissions.DistributorRead, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(WholesalePermissions.DistributorManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(WholesalePermissions.PriceListManage, catalog.PermissionsFor("advisor"));
+        Assert.Contains(WholesalePermissions.DistributorRead, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(WholesalePermissions.DistributorManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(WholesalePermissions.PriceListManage, FactoryPermissions(provider, "advisor"));
     }
 
     /// <summary>
@@ -1222,10 +1210,10 @@ public sealed class CompositionRootTests
         Assert.Equal(CatalogPermissions.PriceListManage, WholesalePermissions.PriceListManage);
         Assert.Equal("Catalog", definition.Category);
         Assert.Equal([ModuleKeys.Catalog], definition.RequiredModules!.ToArray());
-        Assert.Contains(CatalogPermissions.PriceListManage, catalog.PermissionsFor("admin"));
+        Assert.Contains(CatalogPermissions.PriceListManage, FactoryPermissions(provider, "admin"));
         foreach (var role in new[] { "advisor", "billing", "cashier" })
         {
-            Assert.DoesNotContain(CatalogPermissions.PriceListManage, catalog.PermissionsFor(role));
+            Assert.DoesNotContain(CatalogPermissions.PriceListManage, FactoryPermissions(provider, role));
         }
 
         Assert.DoesNotContain(RegisteredPermissionDefinitions(), item => item.Permission == "wholesale.price_list.manage");
@@ -1239,7 +1227,6 @@ public sealed class CompositionRootTests
     public void TheSupportPermissionsRequireTheSupportModuleAdminGetsAllThreeAndAdvisorReadAndManage()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
         var all = new[] { SupportPermissions.Read, SupportPermissions.Manage, SupportPermissions.SettingsManage };
@@ -1249,17 +1236,17 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Soporte", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Support], definitions[permission].RequiredModules!.ToArray());
-            Assert.Contains(permission, catalog.PermissionsFor("admin"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
-            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            Assert.Contains(permission, FactoryPermissions(provider, "admin"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "billing"));
+            Assert.DoesNotContain(permission, FactoryPermissions(provider, "cashier"));
         }
 
         Assert.Equal("low", definitions[SupportPermissions.Read].RiskLevel);
         Assert.Equal("medium", definitions[SupportPermissions.Manage].RiskLevel);
         Assert.Equal("medium", definitions[SupportPermissions.SettingsManage].RiskLevel);
-        Assert.Contains(SupportPermissions.Read, catalog.PermissionsFor("advisor"));
-        Assert.Contains(SupportPermissions.Manage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(SupportPermissions.SettingsManage, catalog.PermissionsFor("advisor"));
+        Assert.Contains(SupportPermissions.Read, FactoryPermissions(provider, "advisor"));
+        Assert.Contains(SupportPermissions.Manage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(SupportPermissions.SettingsManage, FactoryPermissions(provider, "advisor"));
     }
 
     /// <summary>Spec 2026-11-22 (tareas internas, §5.6): <c>support.task.use</c> es de riesgo bajo, exige el módulo Soporte y lo llevan
@@ -1268,7 +1255,6 @@ public sealed class CompositionRootTests
     public void TheTaskUsePermissionIsLowNeedsSupportAndEveryFactoryRoleHasIt()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definition = RegisteredPermissionDefinitions().Single(d => d.Permission == SupportPermissions.TaskUse);
 
         Assert.Equal("support.task.use", SupportPermissions.TaskUse);
@@ -1279,7 +1265,7 @@ public sealed class CompositionRootTests
         Assert.Equal(new PermissionShape("support.task", "Tareas internas", "use"), definition.Shape);
         foreach (var role in new[] { "admin", "advisor", "billing", "cashier" })
         {
-            Assert.Contains(SupportPermissions.TaskUse, catalog.PermissionsFor(role));
+            Assert.Contains(SupportPermissions.TaskUse, FactoryPermissions(provider, role));
         }
     }
 
@@ -1334,17 +1320,16 @@ public sealed class CompositionRootTests
     public void TheStoreSettingsPermissionRequiresTheStoreModuleAndGoesOnlyToAdmin()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
-        var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definition = Assert.Single(
             RegisteredPermissionDefinitions(), candidate => candidate.Permission == StorePermissions.SettingsManage);
 
         Assert.Equal("store.settings.manage", StorePermissions.SettingsManage);
         Assert.Equal("Tienda", definition.Category);
         Assert.Equal([ModuleKeys.Store], definition.RequiredModules!.ToArray());
-        Assert.Contains(StorePermissions.SettingsManage, catalog.PermissionsFor("admin"));
+        Assert.Contains(StorePermissions.SettingsManage, FactoryPermissions(provider, "admin"));
         foreach (var role in new[] { "advisor", "billing", "cashier" })
         {
-            Assert.DoesNotContain(StorePermissions.SettingsManage, catalog.PermissionsFor(role));
+            Assert.DoesNotContain(StorePermissions.SettingsManage, FactoryPermissions(provider, role));
         }
     }
 
@@ -1876,6 +1861,56 @@ public sealed class CompositionRootTests
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ChatbotEditorBuilder>());
     }
 
+    /// <summary>Spec 2026-11-25 (roles por tenant): sólo <c>admin</c> se define en código. Una definición más volvería a reservar
+    /// permisos por clave, y un rol del tenant con esa clave la pisaría.</summary>
+    [Fact]
+    public void OnlyAdminIsASystemRole()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("admin", Assert.Single(catalog.ListRoles()).Role);
+    }
+
+    /// <summary>Las cinco plantillas con las que se siembra cada tenant, con los mismos nombres de siempre.</summary>
+    [Fact]
+    public void TheFiveTemplatesAreRegisteredWithTodaysNames()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+
+        var templates = provider.GetServices<RoleTemplate>().ToArray();
+
+        Assert.Equal(
+            new (string, string)[]
+            {
+                (RoleTemplateKeys.Advisor, "Asesor"),
+                (RoleTemplateKeys.Billing, "Facturación"),
+                (RoleTemplateKeys.Cashier, "Cajero"),
+                (RoleTemplateKeys.SchedulingManager, "Gestor de agenda"),
+                (RoleTemplateKeys.SchedulingProvider, "Profesional de agenda"),
+            },
+            templates
+                .Select(template => (template.Key, template.DisplayName))
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal));
+    }
+
+    /// <summary>El catálogo de permisos sólo ofrece lo que concede algún rol de sistema: un permiso de una plantilla que
+    /// <c>admin</c> no llevara no se podría marcar ni guardar (<c>authorization.role.permission_unknown</c>).</summary>
+    [Fact]
+    public void EveryRoleTemplateIsASubsetOfAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var offered = provider.GetRequiredService<IRoleCatalog>().ListPermissions()
+            .Select(permission => permission.Permission)
+            .ToHashSet(StringComparer.Ordinal);
+        var templates = provider.GetServices<RoleTemplate>().ToArray();
+
+        Assert.NotEmpty(templates);
+        Assert.All(templates, template => Assert.Empty(
+            template.Permissions.Where(permission => !offered.Contains(permission))
+                .Select(permission => $"{template.Key}: {permission}")));
+    }
+
     [Fact]
     public void TheContainerCanBuildTheEntitlementMask()
     {
@@ -1893,10 +1928,10 @@ public sealed class CompositionRootTests
         var catalog = provider.GetRequiredService<IRoleCatalog>();
 
         Assert.Equal("developer.api_key.manage", ApiAccessPermissions.ApiKeyManage);
-        Assert.Contains(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("admin"));
-        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("advisor"));
-        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("billing"));
-        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("cashier"));
+        Assert.Contains(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "admin"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "advisor"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "billing"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, FactoryPermissions(provider, "cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == ApiAccessPermissions.ApiKeyManage);
         Assert.Equal("Developer", definition.Category);
         Assert.Equal([ModuleKeys.Developer], definition.RequiredModules);
@@ -1923,6 +1958,13 @@ public sealed class CompositionRootTests
         Assert.Equal(ModuleKeys.Messaging.Value, scope.RequiredModule);
         Assert.True(scope.RestrictableByConnection);
     }
+
+    /// <summary>Lo que concede un rol de fábrica: <c>admin</c> sale del catálogo de sistema y los demás de la plantilla con la que se
+    /// siembra cada tenant.</summary>
+    private static IReadOnlyCollection<string> FactoryPermissions(IServiceProvider provider, string role) =>
+        role == "admin"
+            ? provider.GetRequiredService<IRoleCatalog>().PermissionsFor(role)
+            : provider.GetServices<RoleTemplate>().Single(template => template.Key == role).Permissions;
 
     private static ApiScopeDefinition[] RegisteredApiScopes() =>
         BuildPlatformServices()

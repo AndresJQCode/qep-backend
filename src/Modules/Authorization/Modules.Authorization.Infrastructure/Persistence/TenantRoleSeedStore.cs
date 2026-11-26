@@ -38,6 +38,9 @@ internal sealed class TenantRoleSeedStore(AuthorizationDbContext dbContext) : IT
         try
         {
             // Un solo SaveChanges: EF lo envuelve en una transacción, así que quedan los roles y la marca o nada.
+            // Dos siembras a la vez no se bloquean entre sí en círculo porque EF ordena estos inserts por nombre de tabla:
+            // authorization.role_seeds va antes que authorization.roles, así que la segunda espera en PK_role_seeds sin tener
+            // ningún otro candado. Si renombras cualquiera de las dos tablas, ese orden tiene que seguir igual.
             await dbContext.SaveChangesAsync(cancellationToken);
             return true;
         }
