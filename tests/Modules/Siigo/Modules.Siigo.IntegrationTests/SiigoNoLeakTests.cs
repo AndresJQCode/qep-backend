@@ -236,6 +236,48 @@ public sealed class SiigoNoLeakTests
         }
     }
 
+    /// <summary>
+    /// Spec 2026-11-25 (anulación) §2: la factura que Siigo devuelve trae datos del cliente. Cuando la respuesta no se reconoce, sólo
+    /// queda en <c>siigo.call_failures</c> (es su propósito): no sale en el 422 de <c>…/annulment</c>, ni en un log, ni en la auditoría.
+    /// </summary>
+    [Fact]
+    public async Task AnUnrecognizedInvoiceReadNeverLeaksTheCustomerThroughTheAnnulment()
+    {
+        const string marker = "annulment-customer-sentinel-5e2a";
+        const string siigoInvoiceId = "d1b6c0a2-77aa-4e5f-9a0c-0a1b2c3d4e5f";
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await IssueRowsThroughBatchAsync(world);
+        // 200 sin el booleano «annulled»: respuesta no reconocida.
+        world.Siigo.On(
+            $"/v1/invoices/{siigoInvoiceId}",
+            HttpStatusCode.OK,
+            $$$"""{"id":"{{{siigoInvoiceId}}}","customer":{"identification":"{{{marker}}}","name":["{{{marker}}}"]}}""");
+        var logs = new RecordingLoggerProvider();
+        using var factory = world.Factory.WithWebHostBuilder(builder => builder
+            .ConfigureServices(services => services.AddSingleton<ILoggerProvider>(logs))
+            .ConfigureLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddFilter<RecordingLoggerProvider>(null, LogLevel.Trace)));
+        using var client = CreateClient(factory, world.Tenant.OwnerUserId, world.TenantId, InvoicerPermissions);
+
+        using var response = await client.PostAsync(world.BaseRoute + "/annulment", null, Ct);
+        var body = await response.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(response.StatusCode == HttpStatusCode.UnprocessableEntity, $"{(int)response.StatusCode}: {body}");
+        Assert.Contains("siigo.invoice.annulment_unclear", body, StringComparison.Ordinal);
+        // Control positivo: el host registró en Trace y el dato sí llegó desde Siigo (quedó en la falla guardada).
+        Assert.Contains(logs.Entries, entry => entry.Level == LogLevel.Trace);
+        Assert.Contains(
+            marker,
+            await ScalarAsync<string>(
+                world.ConnectionString,
+                "SELECT coalesce(string_agg(f::text, E'\n'), '') FROM siigo.call_failures f WHERE operation = 'InvoiceRead'"),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(marker, body, StringComparison.Ordinal);
+        Assert.DoesNotContain(logs.Entries, entry => entry.Message.Contains(marker, StringComparison.Ordinal));
+        var audit = await ScalarAsync<string>(world.ConnectionString, "SELECT coalesce(string_agg(e::text, E'\n'), '') FROM audit.entries e");
+        Assert.DoesNotContain(marker, audit, StringComparison.Ordinal);
+    }
+
     private sealed class RecordingLoggerProvider : ILoggerProvider
     {
         private readonly ConcurrentQueue<(string Category, LogLevel Level, string Message)> _entries = new();
