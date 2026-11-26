@@ -345,9 +345,10 @@ punto es una casilla: se marca `[x]` con la fecha cuando el owner lo prueba, y e
   - **Por verificar contra una tienda de Shopify:** que el eco de una dirección de España vuelva como se envió, y si
     `orderUpdate` borra el código postal cuando no se envía (pedidos cuyo último webhook es anterior al despliegue del
     código postal). Los códigos de provincia de España coinciden con `Shopify/worldwide`, no probados contra la API.
-- **Siigo, flete pendiente en las tandas (`6d0e93c63`): el frontend (`94989785`) sale antes o junto con el backend.**
-  Sin el mensaje de `siigo.invoice.freight_pending`, la fila muestra un error genérico bajo «No se facturó» aunque la
-  factura del pedido exista, y alguien podría crearla otra vez en Siigo. Sin migraciones.
+- **Siigo, flete en las tandas (`6d0e93c63` y `555832473`): el frontend (`e666c6cb`) sale antes o junto con el
+  backend.** Sin los mensajes de `siigo.invoice.freight_pending`, `freight_not_created` y `freight_unconfirmed`, la fila
+  muestra un error genérico aunque la factura del pedido exista, y alguien podría crearla otra vez en Siigo. Sin
+  migraciones.
 - **Siigo, facturación en segundo plano: desplegada (2026-11-25, según el owner), sin pasos pendientes.** Backend
   `main` `6f56c7265` (etapas *expand* y *contract* y los menores) y frontend `main` `472eda35` (factura por tandas)
   salieron juntos. El owner corrió después la consulta de las filas que el relleno de
@@ -605,6 +606,16 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`555832473`, `--no-ff`, sin push) **estados del flete y «No existe» en las tandas
+  de Siigo** (`fix/siigo-flete-estados`, `3b0fd032d`; frontend `e666c6cb`, que incluye `94343fe1`, el aviso de pedido
+  sin marcar de `fix/siigo-aviso-marca-tanda`). Un ítem sólo se lee «Facturado» si la de flete, cuando la tiene, existe
+  en Siigo, también en tandas ya guardadas: `Rejected` o declarada inexistente → `Failed` con
+  `siigo.invoice.freight_not_created`; `Unknown` → por confirmar con `siigo.invoice.freight_unconfirmed`, sin acciones.
+  Filas e ítems suman `canResolveMissing`: «No existe» queda deshabilitada mientras una tanda tiene el pedido. Cierra
+  los tres menores del 2026-11-25. QEP sigue sin poder volver a generar una de flete rechazada. Pruebas sobre el árbol
+  mergeado: backend build sin avisos, Siigo unitarias 547, `Bootstrapper.UnitTests` filtrado 134, `ArchitectureTests`
+  filtrado 94; frontend `tsc`, lint, formato y 1664 pruebas de Siigo y pedidos. **La integración no corrió** y no se
+  corrió `scripts/test-feature.ps1` (decisión del owner).
 - 2026-11-25 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **teléfono con indicativo del país y cliente
   de Siigo** (`feature/telefono-pais`; backend `da98b8e20`, hasta `1c9c7c1c9`; frontend `494cbeed4`, hasta `aa50f7d2`).
   **Siigo:** `id_type` del cliente viaja como texto, el documento del comprador sin separadores ni dígito de verificación
