@@ -249,6 +249,45 @@ public sealed class SiigoInvoiceAnnulmentApiTests
         await AssertNothingChangedAsync(world);
     }
 
+    [Fact]
+    public async Task APausedConnectionIs409AndSiigoIsNotRead()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database);
+        await IssueRowsThroughBatchAsync(world);
+        AnnulledInSiigo(world, OrderInvoiceId);
+        await ExecuteAsync(world.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+
+        var response = await PostAnnulmentAsync(world);
+
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "siigo.connection_unavailable");
+        await AssertNothingChangedAsync(world);
+        Assert.Equal(0, InvoiceReads(world));
+    }
+
+    // Todo o nada también cuando lo que falla es la segunda lectura: la del pedido ya se confirmó y aun así no se toca.
+    [Fact]
+    public async Task SiigoDownOnTheSecondReadChangesNeitherInvoice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var world = await ArrangeAsync(database, freightSeparate: true, freight: true);
+        world.Siigo.AddProduct("p-f", "FLETE", "Flete");
+        var calls = 0;
+        world.Siigo.OnRequest("/v1/invoices", _ => Interlocked.Increment(ref calls) == 1
+            ? Created("FV-1-123", OrderInvoiceId, 0m)
+            : Created("FV-1-124", "id-f", 0m));
+        await IssueRowsThroughBatchAsync(world);
+        AnnulledInSiigo(world, OrderInvoiceId);
+        world.Siigo.On("/v1/invoices/id-f", HttpStatusCode.ServiceUnavailable, "{}");
+
+        var response = await PostAnnulmentAsync(world);
+
+        await AssertProblemAsync(response, HttpStatusCode.ServiceUnavailable, "siigo.unavailable");
+        Assert.Equal(1, world.Siigo.CallsTo($"/v1/invoices/{OrderInvoiceId}"));
+        Assert.Equal(1, world.Siigo.CallsTo("/v1/invoices/id-f"));
+        await AssertNothingChangedAsync(world, "Order:Created,Freight:Created");
+    }
+
     // Review Focus 3: doble pulsación o repetir después del éxito.
     [Fact]
     public async Task RepeatingAfterSuccessIsIdempotentAndDoesNotCallSiigo()
@@ -513,10 +552,10 @@ public sealed class SiigoInvoiceAnnulmentApiTests
         Assert.Equal(("siigo", "FV-1-123"), (Text(order, "invoiceProvider"), Text(order, "invoiceNumber")));
     }
 
-    // Un pedido con una sola factura creada: la fila, la marca y la auditoría siguen como estaban.
-    private static async Task AssertNothingChangedAsync(InvoicingWorld world)
+    // Las facturas creadas (sin más datos, sólo la del pedido), la marca y la auditoría siguen como estaban.
+    private static async Task AssertNothingChangedAsync(InvoicingWorld world, string statuses = "Order:Created")
     {
-        Assert.Equal("Order:Created", await StatusesAsync(world));
+        Assert.Equal(statuses, await StatusesAsync(world));
         await AssertStillMarkedAsync(world);
         Assert.Equal(
             0,
