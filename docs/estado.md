@@ -606,6 +606,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-25 — Mergeado a `develop` (`2b8bd0637`, `--no-ff`, sin push) **los dos menores del aviso de autorización**
+  (`fix/architecture-warning-minors`, `e1010a865`). El diff de los `.csproj` fija su formato, así que la configuración
+  de git ya no oculta referencias nuevas, y renombrar un proyecto dentro del mismo módulo y capa no pide autorización.
+  Pruebas: `TestSelection.Tests.ps1` en verde; no se corrió `test-feature.ps1`.
 - 2026-11-25 — Mergeado a `develop` (`46daf9b63`, `--no-ff`, sin push) **aviso de autorización para cambios de
   arquitectura** (`feature/architecture-guardian`, `d569d2276`). `.\scripts\test-feature.ps1` avisa «Requiere
   autorización del owner» cuando la rama cambia una prueba de `tests/ArchitectureTests/` o agrega una referencia entre
