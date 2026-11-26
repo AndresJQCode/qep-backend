@@ -64,6 +64,7 @@ public static class WmsAuditActions
         public const string Movement = "wms.stock_movement";
         public const string Import = "wms.import";
         public const string Export = "wms.export";
+        public const string Task = "wms.task";
     }
 
     public const string WarehouseCreated = "wms.warehouse.created";
@@ -83,6 +84,17 @@ public static class WmsAuditActions
     public const string StockImported = "wms.stock.imported";
     public const string MovementReversed = "wms.movement.reversed";
     public const string StockExported = "wms.stock.exported";
+
+    // Sólo las acciones del supervisor se auditan (spec 2026-11-26 §6.12): las del operario quedan en la historia de la tarea y en
+    // el movimiento del ledger.
+    public const string TaskCreated = "wms.task.created";
+    public const string TaskPublished = "wms.task.published";
+    public const string TaskHeld = "wms.task.held";
+    public const string TaskAssigned = "wms.task.assigned";
+    public const string TaskUnassigned = "wms.task.unassigned";
+    public const string TaskPriorityChanged = "wms.task.priority_changed";
+    public const string TaskCancelled = "wms.task.cancelled";
+    public const string TaskLineCancelled = "wms.task.line_cancelled";
 }
 
 public interface IWarehouseRepository

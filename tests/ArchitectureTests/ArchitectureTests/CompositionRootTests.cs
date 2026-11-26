@@ -345,7 +345,7 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21 y las cinco <c>scheduling.*</c> del spec 2026-11-21 (Agenda) y las dieciséis <c>wms.*</c> del spec WMS 2026-10-31 §11.5.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29 y las tres <c>support.*</c> del spec 2026-11-14 y las dos <c>purchases.order.*</c> del spec 2026-11-17 y las tres <c>wholesale.*</c> del spec 2026-11-17 (mayorista) y las dos <c>siigo.*</c> del spec 2026-11-18 y las cinco <c>hr.*</c> del spec 2026-11-20 y las cuatro <c>payroll.*</c> del spec 2026-11-21 y las cinco <c>scheduling.*</c> del spec 2026-11-21 (Agenda) y las dieciséis <c>wms.*</c> del spec WMS 2026-10-31 §11.5 y <c>wms.task.manage</c> del spec 2026-11-26.</summary>
     [Fact]
     public void PermissionDiscoveryFindsTheHundredAndThirtyConstants()
     {
@@ -378,7 +378,8 @@ public sealed class CompositionRootTests
         // + los dos de parámetros legales del operador (operator.legal_parameters.read|manage, spec 2026-11-22).
         // + the two hr.medical.* permissions (spec 2026-11-23).
         // + los dieciséis de bodegas (wms, spec WMS 2026-10-31 §11.5).
-        Assert.Equal(130, PermissionConstants().Length);
+        // + el de supervisar tareas de bodega (wms.task.manage, spec 2026-11-26).
+        Assert.Equal(131, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -930,8 +931,8 @@ public sealed class CompositionRootTests
         }
     }
 
-    /// <summary>Spec WMS 2026-10-31 §11.5: dieciséis permisos con [wms] (la máscara los quita con el módulo apagado), categoría
-    /// Bodegas, todos en admin y en ninguna plantilla de rol: el resto es rol custom del tenant.</summary>
+    /// <summary>Spec WMS 2026-10-31 §11.5 y spec 2026-11-26 §6.11: diecisiete permisos con [wms] (la máscara los quita con el módulo
+    /// apagado), categoría Bodegas, todos en admin y en ninguna plantilla de rol: el resto es rol custom del tenant.</summary>
     [Fact]
     public void TheWmsPermissionsRequireTheWmsModuleAndGoOnlyToAdmin()
     {
@@ -956,6 +957,7 @@ public sealed class CompositionRootTests
             (WmsPermissions.DiscrepancyResolve, "wms.discrepancy", "Discrepancias de recepción", "resolve"),
             (WmsPermissions.CountPerform, "wms.count", "Conteos", "perform"),
             (WmsPermissions.CountApprove, "wms.count", "Conteos", "approve"),
+            (WmsPermissions.TaskManage, "wms.task", "Tareas de bodega", "manage"),
         ];
         Assert.Equal(
             typeof(WmsPermissions).GetFields().Select(field => (string)field.GetRawConstantValue()!).Order(StringComparer.Ordinal),

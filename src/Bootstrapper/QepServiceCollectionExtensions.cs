@@ -1314,6 +1314,16 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.ExportStockCommand, Modules.Wms.Application.StockExportAcceptedDto>,
             Modules.Wms.Application.ExportStockHandler>();
+        // Tareas de bodega (spec 2026-11-26 §6.11).
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateMoveTaskCommand, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.CreateMoveTaskHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.GetTaskQuery, Modules.Wms.Application.TaskDto>,
+            Modules.Wms.Application.GetTaskHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListTasksQuery, Modules.Wms.Application.TaskPageDto>,
+            Modules.Wms.Application.ListTasksHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -2898,6 +2908,8 @@ public static class QepServiceCollectionExtensions
         // Wms (spec WMS 2026-10-31 §1.3): variantes y ciudades entran por puertos propios; Wms no referencia Catalog ni Geography.
         services.AddScoped<Modules.Wms.Application.IWmsCatalogReader, WmsCatalogReader>();
         services.AddScoped<Modules.Wms.Application.IWmsGeographyReader, WmsGeographyReader>();
+        // Tareas de bodega (spec 2026-11-26): nombres y permisos de las membresías.
+        services.AddScoped<Modules.Wms.Application.IWmsMemberDirectory, WmsMemberDirectory>();
 
         // Etiquetas de ubicación (RF-004, P-9): el servicio y la clave son los de Quotations:Pdf, que Wms no ve. Singleton con timeout propio,
         // como AddPdfRenderer: el default de HttpClient son 100 s y qcode-pdf corta la compilación a los 15. La fábrica va tipada con
@@ -3251,7 +3263,8 @@ public static class QepServiceCollectionExtensions
                 WmsPermissions.PutawayPerform,
                 WmsPermissions.DiscrepancyResolve,
                 WmsPermissions.CountPerform,
-                WmsPermissions.CountApprove
+                WmsPermissions.CountApprove,
+                WmsPermissions.TaskManage
             ]));
         // Spec 2026-11-25 (roles por tenant): admin es el único rol de sistema. Los cinco de abajo son plantillas: no conceden
         // nada ni salen en ningún catálogo; TenantRoleSeeder crea con ellas las filas de authorization.roles de cada tenant, que
@@ -4782,6 +4795,16 @@ public static class QepServiceCollectionExtensions
         {
             Shape = new("wms.count", "Conteos", "approve"),
         });
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.TaskManage,
+            "Supervisar tareas de bodega",
+            "Permite crear, asignar, priorizar y cancelar las tareas de los operarios de bodega.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms])
+        {
+            Shape = new("wms.task", "Tareas de bodega", "manage"),
+        });
     }
 
     private static void AddAuthentication(
@@ -5395,7 +5418,10 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, WmsPermissions.CountPerform))
             .AddPolicy(
                 WmsPermissions.CountApprove,
-                policy => AddPermissionRequirement(policy, WmsPermissions.CountApprove));
+                policy => AddPermissionRequirement(policy, WmsPermissions.CountApprove))
+            .AddPolicy(
+                WmsPermissions.TaskManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.TaskManage));
     }
 
     private static void AddPermissionRequirement(

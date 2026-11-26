@@ -144,7 +144,9 @@ internal static partial class WmsApiHarness
     }
 
     /// <summary>La membresía activa de quien llama: copia de <c>LoansApiHarness.SeedCallerMembershipAsync</c>, que WMS-B no trajo.</summary>
-    public static async Task<Guid> SeedCallerMembershipAsync(QepApiFactory factory, string tenantId = TenantId, string subjectId = SubjectId)
+    /// <param name="roles">Los roles de la membresía; sin indicar, <c>admin</c>.</param>
+    public static async Task<Guid> SeedCallerMembershipAsync(
+        QepApiFactory factory, string tenantId = TenantId, string subjectId = SubjectId, IReadOnlyCollection<string>? roles = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
@@ -152,10 +154,12 @@ internal static partial class WmsApiHarness
         var ct = TestContext.Current.CancellationToken;
         var now = DateTimeOffset.UtcNow;
 
-        var user = User.CreateInvited(UserId.Parse(subjectId), $"caller-{tenantId[^2..]}@example.com", now);
+        // El correo sale del sujeto y del tenant: dos membresías del mismo tenant no pueden compartirlo.
+        var user = User.CreateInvited(
+            UserId.Parse(subjectId), $"caller-{subjectId[^4..]}-{tenantId[^2..]}@example.com", now);
         identity.Users.Add(user);
         var membership = Membership.CreateActive(
-            MembershipId.New(), user.Id.Value, new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId)), ["admin"], "test", now);
+            MembershipId.New(), user.Id.Value, new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId)), roles ?? ["admin"], "test", now);
         membership.UpdateProfile("Caller", null, now);
         tenancy.Memberships.Add(membership);
         await identity.SaveChangesAsync(ct);

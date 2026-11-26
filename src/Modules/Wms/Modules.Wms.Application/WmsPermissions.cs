@@ -1,7 +1,8 @@
 namespace Modules.Wms.Application;
 
 /// <summary>
-/// Spec WMS 2026-10-31 §11.5 y RF-100: dieciséis permisos <c>wms.&lt;recurso&gt;.&lt;acción&gt;</c>, todos con
+/// Spec WMS 2026-10-31 §11.5 y RF-100, más el del motor de tareas (spec 2026-11-26 §6.11): diecisiete permisos
+/// <c>wms.&lt;recurso&gt;.&lt;acción&gt;</c>, todos con
 /// <c>RequiredModules: [wms]</c> (con el módulo apagado la máscara de entitlements los quita). Se registran todos desde el primer
 /// corte aunque sus casos de uso lleguen después: <c>CompositionRootTests</c> exige definición y política por cada constante, y
 /// sin la política <c>RequireAuthorization</c> no resuelve y el síntoma es 500, no 403.
@@ -55,4 +56,7 @@ public static class WmsPermissions
 
     /// <summary>Aprobar un conteo.</summary>
     public const string CountApprove = "wms.count.approve";
+
+    /// <summary>Supervisar tareas: crear, asignar, priorizar, cancelar.</summary>
+    public const string TaskManage = "wms.task.manage";
 }

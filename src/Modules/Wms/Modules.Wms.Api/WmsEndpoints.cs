@@ -24,6 +24,7 @@ public static class WmsEndpoints
         StockEndpoints.Map(group);
         AdjustmentEndpoints.Map(group);
         ImportEndpoints.Map(group);
+        TaskEndpoints.Map(group);
 
         return endpoints;
     }

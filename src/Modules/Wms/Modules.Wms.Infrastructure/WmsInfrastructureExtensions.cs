@@ -47,6 +47,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IWarehouseTaskRepository, WarehouseTaskRepository>();
         services.AddScoped<IWmsEventPublisher, WmsEventPublisher>();
         services.AddScoped<AdjustmentDtoComposer>();
+        services.AddScoped<WarehouseTaskDtoComposer>();
         services.AddScoped<IImportPreviewStore, ImportPreviewStore>();
         services.AddSingleton<IInitialBalanceSheetReader, ClosedXmlInitialBalanceSheetReader>();
         services.AddSingleton<IStockExportBuilder, ClosedXmlStockExportBuilder>();

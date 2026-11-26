@@ -25,7 +25,7 @@ internal static partial class WmsApiHarness
     public const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
     public const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
 
-    /// <summary>Las dieciséis constantes de <see cref="WmsPermissions"/>: quien administra el módulo en las pruebas.</summary>
+    /// <summary>Las diecisiete constantes de <see cref="WmsPermissions"/>: quien administra el módulo en las pruebas.</summary>
     public static readonly string[] AllPermissions =
     [
         WmsPermissions.WarehouseManage,
@@ -44,6 +44,7 @@ internal static partial class WmsApiHarness
         WmsPermissions.DiscrepancyResolve,
         WmsPermissions.CountPerform,
         WmsPermissions.CountApprove,
+        WmsPermissions.TaskManage,
     ];
 
     public static string WmsUrl(string tenantId = TenantId) => $"/api/v1/tenants/{tenantId}/wms";
